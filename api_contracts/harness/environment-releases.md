@@ -657,100 +657,80 @@ At launch the gateway, for a job with `release_composition`:
 
 ### 7.5 Adaptation
 
-Adaptation turns a release suite and a customer's agent into a binding and a
-suite the agent runs (plan §6). It is a hosted job whose payload is an ordinary
-validated hosted job for the agent, with `metadata.adaptation =
-{environment: [{digest, name, object_key}], suite: {digest, name, object_key},
-agent_version_id}`.
+Adaptation binds a customer's agent to a release suite (plan §6). It never
+changes the suite: a scenario the binding cannot reach is reported
+`unscorable`, and a suite change is a separate scenario edit. It is a hosted
+job whose payload is an ordinary validated hosted job for the agent, with
+`metadata.adaptation = {environment: [{digest, name, object_key}], suite:
+{digest, name, object_key}, agent_version_id}`.
 
 **Launch.** The gateway delivers the releases as for a run (§6 layout, no
-binding or manifest) and runs, with the job's target-provider secrets and the
-simulator's Vertex credentials:
+binding or manifest) and runs the control process:
 
 ```text
 python -m fi.alk.harness.adaptation hosted --job /work/job.json \
   --releases /work/releases --output /work/authoring/adaptation
 ```
 
-It starts no chat coordinator: the adaptation process is the conversation's
-only consumer, through the existing conversation endpoints
-(`hosted_conversation.ConversationClient`, capability at
-`/run/futureagi/conversation.json`). Target-provider secrets arrive in
-`/run/futureagi/secrets.json`. It proves on a scratch PostgreSQL 16 cluster it
-starts from the snapshot's binaries. Exit codes: `0` completed, `2` failed with
+It reads the target-provider key from `/run/futureagi/secrets.json` (deleting
+the file), inspects the agent (`inspect_provider_target`, then
+`admit_provider_tools`, §6.3), starts a scratch PostgreSQL 16 cluster from the
+snapshot's binaries, writes `profile.json` and then `inputs.json`, and waits for
+`/work/authoring/.futureagi-build-finished.json`. The gateway then puts "Bind
+this agent to the environment…" into the job's conversation, which starts the
+environment's builder (`hosted_chat_entrypoint`, control-only) beside it, as for
+a build. The builder opens the `bind-agent` skill with the adaptation tools; the
+provider key never reaches it. Exit codes: `0` completed, `2` failed with
 `result.json` written; both are settled from the output. Any other exit takes
 the existing crash and infrastructure-retry path. `metadata.adaptation` also
 carries the agent reference (§2.4). Adaptation jobs are followed as jobs
 (`harness-jobs/{id}/`) and never listed as environments; a message to a
 finished one is refused (409 `conversation_closed`).
 
-**Stages** (`stage_changed`): `inspecting`, `mapping`, `proving`, `asking`,
-`proposing`, `sealing`.
-1. Inspect: `inspect_provider_target` with the read-only key, then
-   `admit_provider_tools` (§6.3).
-2. Map: `canonical` when every admitted tool is an environment tool with the
-   same name; `conversation_only` when none is admitted; otherwise the harness
-   (Vertex Gemini, `ALK_HARNESS_MODEL`) drafts a `tool_routed` binding and the
-   agent-vocabulary trajectories, which must seal (§2.4.2).
-3. Prove (`tool_routed`): `prove_binding` (§2.4.3). Failures go back to the
-   drafter with the reasons, at most 3 rounds; then the job fails with
-   `binding_unproved`.
-4. Ask: one question per configurable parameter (id `parameter:<name>`;
-   options: `allowed`, else `true`/`false` for a boolean, else the default) and
-   per agent rule (id `agent_rule:<rule id>`; options `yes`, `no`). Defaults are
-   the base suite's values. Answers form the `policy_profile`
-   (`scored_agent_rules` = rules answered `yes`). Proposal ids are
-   `<action>:<scenario_key>`; `assistant_message` payloads carry the text as both
-   `content` and `text` (the platform's ingest reads `text`).
-5. Propose: `drop` for every scenario that is `unscorable` or does not prove
-   under the profile; `specialize` for scenarios the harness rewrites in the
-   agent's domain (persona and instruction only, same solution and checks);
-   `add` for custom scenarios the harness writes (setup, solution, checks), each
-   proved before it is proposed. The user approves or rejects each.
-6. Seal: when every base scenario is kept, none is specialized or added, and
-   the profile equals the base suite's, the result uses the base suite;
-   otherwise a derived suite (`parent` = the base suite) sealed and proved on
-   PostgreSQL. Then the binding is sealed.
+**Mode.** `canonical` when every admitted tool is an environment tool with the
+same name; `conversation_only` when none is admitted; otherwise `tool_routed`,
+and the builder writes the binding.
 
-**Conversation events** (harness → platform):
+**Tools** (the builder drafts; code decides):
 
-| Event `kind` | `payload` | Platform message | Answered by command |
-|---|---|---|---|
-| `stage_changed` | `{from, to}` | | |
-| `assistant_message` | `{content}` | `message` | |
-| `question_requested` | `{prompt, options: [{value, label}], question: {id, kind: "parameter" or "agent_rule", name, default}}` | `question` | `user_response`, `reply_to` the question, `payload: {value}` |
-| `confirmation_requested` | `{prompt, proposal: {id, action: "drop", "specialize" or "add", scenario_key, reason, preview: {name, instruction, persona}}}` | `confirmation` | `approval`, `reply_to` the proposal, `payload: {approved: bool}` |
+| Tool | What code does |
+|---|---|
+| `world_rows` | at most 200 rows of one world table |
+| `submit_binding` | `{binding, trajectories, extension_candidates}`; refused unless it seals (§2.4.2), every trajectory key is a suite scenario and every call names an admitted agent tool |
+| `run_proof` | `prove_binding` (§2.4.3) on the base suite; per scenario `proved`, `failed` or `unscorable` with the reason |
+| `report_conflicts` | `[{rule, agent}]`: every policy rule the agent's own instructions contradict or ignore; `rule` must be a policy rule id; an empty list when there are none |
+| `finish_adaptation` | refuses until, for `tool_routed`, the current binding passed `run_proof` (no `failed`, at least one `proved`) and conflicts were reported; then code asks the person to approve (`yes`/`no`) and seals |
+| `stop_adaptation` | ends the job failed: `adaptation_declined` after a declined approval, else `binding_unproved` |
 
-A `user_message` while a question or proposal is pending is answered with an
-`assistant_message` repeating it.
+The builder retries within its turn budget; there is no fixed round limit. The
+approval is a builder question (`question_requested`, `{prompt, options}`,
+answered by a `user_response` replying to it).
 
 **Outputs** in `/work/authoring/adaptation/`:
 
 | File | Content |
 |---|---|
-| `result.json` | `{schema_version: "futureagi.adaptation-result.v1", status: "completed" or "failed", failure: {code, message} or null, environment: [{digest, name}], base_suite: {digest}, suite: {digest, name, derived: bool}, binding: {digest, mode}, alignment, answers: {question id: value}, proposals: [{id, action, scenario_key, reason, approved}]}` |
-| `profile.json` | the inspected agent profile (secrets redacted) and its admission list |
+| `result.json` | `{schema_version: "futureagi.adaptation-result.v1", status: "completed" or "failed", failure: {code, message} or null, environment: [{digest, name}], suite: {digest, name, derived: false}, binding: {digest, mode}, alignment}` |
+| `profile.json`, `inputs.json` | the inspected agent profile (secrets redacted) and its admission list; the release paths and scratch DSN the builder works with |
 | `binding.json`, `binding-proof.json` | the sealed binding; the proof for `tool_routed` |
-| `suite/` | the derived suite, sealed and proved, with `proofs.json` and `provision.json`; absent when the base suite is used |
+| `state.json` | the builder's latest binding, proof and conflicts, so a reopened session carries on |
 
 `alignment` is `{mode, admission: [ToolAdmission], mapped: [{agent_tool,
 steps: [environment tool]}], unsupported: [{agent_tool, reason}],
 extension_candidates: [{agent_tool, reason}], unscorable: [{scenario_key,
-reason}]}`. Extension candidates are agent tools no environment tool can serve;
-building them is step 5.
+reason}], conflicts: [{rule, policy, agent}]}`. Extension candidates are agent
+tools no environment tool can serve; building them is step 5.
 
 **Completion.** When the job's process exits, the gateway packs
 `/work/authoring/adaptation` and `complete_adaptation`
-(`services/harness_releases.py`): for `completed`, refuses a `tool_routed`
-result (`binding_unproved`) unless `binding-proof.json` has `passed` and its
-binding, suite and environment digests equal the binding's, the composed
-suite's and the binding's environment (adaptation proves against the final
-suite; `compose` never sees the proof, so this is the gate); then registers the
-derived suite (organization-owned, the same checks as §7.2) when there is one,
-stores the binding (`HarnessAgentBinding`) and creates the composition with
-them, then
-records `metadata.adaptation_result = {composition_id, suite_digest,
-binding_digest, mode}` and completes the job; for `failed`, fails the job with
+(`services/harness_releases.py`): for `completed`, refuses a result whose suite
+is not the base suite (`adaptation_result_invalid`) and a `tool_routed` result
+(`binding_unproved`) unless `binding-proof.json` has `passed` and its binding,
+suite and environment digests equal the binding's, the base suite's and the
+binding's environment; then stores the binding (`HarnessAgentBinding`) and
+creates the composition on the base suite, records
+`metadata.adaptation_result = {composition_id, suite_digest, binding_digest,
+mode}` and completes the job; for `failed`, fails the job with
 `result.failure` (or `adaptation_result_missing` when `result.json` is absent or
 unreadable). `conversation_only` results complete the job with
 `composition_id: null` and `compose: {code: "compose_unsupported"}`.

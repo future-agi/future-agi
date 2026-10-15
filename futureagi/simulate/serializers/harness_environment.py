@@ -544,7 +544,8 @@ class HarnessCompositionSerializer(serializers.Serializer):
     """What a composition is made of: releases, suite, binding and its proof.
 
     ``alignment`` is the adaptation's alignment (admission, mapped and unsupported tools,
-    extension candidates, unscorable scenarios); null for a canonical composition.
+    extension candidates, unscorable scenarios, policy conflicts); null for a canonical
+    composition.
     """
 
     environment = HarnessCompositionReleaseSerializer(many=True)

@@ -304,6 +304,7 @@ export default function CompositionPanel({ composition }) {
     .filter(Boolean);
   const counts = proofSummary(composition.binding_proof);
   const unscorable = composition.alignment?.unscorable || [];
+  const conflicts = composition.alignment?.conflicts || [];
   return (
     <Stack spacing={2} sx={{ p: 2 }}>
       <SectionCard
@@ -363,9 +364,32 @@ export default function CompositionPanel({ composition }) {
         </SectionCard>
       )}
 
+      {conflicts.length > 0 && (
+        <SectionCard
+          title={`Policy conflicts (${conflicts.length})`}
+          subtitle="Where your agent's instructions differ from the policy its runs are scored against"
+        >
+          <Stack spacing={1} sx={{ p: 2 }}>
+            {conflicts.map((item) => (
+              <Box key={item.rule}>
+                <Typography sx={{ typography: "s2", fontFamily: "monospace" }}>
+                  {item.rule}
+                </Typography>
+                <Typography sx={{ typography: "s2" }}>
+                  Policy: {displayText(item.policy)}
+                </Typography>
+                <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+                  Your agent: {displayText(item.agent)}
+                </Typography>
+              </Box>
+            ))}
+          </Stack>
+        </SectionCard>
+      )}
+
       <SectionCard
         title="Policy profile"
-        subtitle="The answers the suite was proved under"
+        subtitle="The policy settings the suite was proved under"
       >
         <PolicyProfile profile={suite.policy_profile} />
       </SectionCard>

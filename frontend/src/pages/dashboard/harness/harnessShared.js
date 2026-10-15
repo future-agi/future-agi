@@ -375,27 +375,30 @@ export const shortDigest = (digest) => {
   return hex ? hex.slice(0, 12) : "";
 };
 
-// The adaptation stages ALK reports through stage_changed, in order (environment-releases.md §7.5).
-export const ADAPTATION_STAGES = [
-  "inspecting",
-  "mapping",
-  "proving",
-  "asking",
-  "proposing",
-  "sealing",
+// The adaptation's steps (environment-releases.md §7.5), each done once the builder's tool for it
+// succeeded. A backend may prefix a tool with its server (`mcp__adaptation__run_proof`).
+export const ADAPTATION_STEPS = [
+  { key: "binding", label: "Binding drafted", tool: "submit_binding" },
+  { key: "proof", label: "Binding proved", tool: "run_proof" },
+  { key: "conflicts", label: "Policy conflicts reviewed", tool: "report_conflicts" },
+  { key: "sealed", label: "Approved and sealed", tool: "finish_adaptation" },
 ];
 
-// Where an adaptation is: the latest stage ALK moved to. The conversation keeps the stage
-// itself; the stage_changed events cover a conversation read before it caught up.
-export const adaptationStage = (conversation) => {
-  if (ADAPTATION_STAGES.includes(conversation?.stage))
-    return conversation.stage;
-  const moves = (conversation?.events || []).filter(
-    (event) =>
-      event?.kind === "stage_changed" &&
-      ADAPTATION_STAGES.includes(event?.payload?.to),
-  );
-  return moves.length ? moves[moves.length - 1].payload.to : null;
+// Which steps are done, from the conversation's tool results in order. A new binding voids the
+// proof of the one before it, so an earlier proof never shows a later binding as proved.
+export const adaptationProgress = (conversation) => {
+  const done = new Set();
+  for (const event of conversation?.events || []) {
+    if (event?.kind !== "tool_result" || event?.payload?.is_error) continue;
+    const tool = String(event?.payload?.tool || "");
+    const step = ADAPTATION_STEPS.find(
+      (one) => tool === one.tool || tool.endsWith(`__${one.tool}`),
+    );
+    if (!step) continue;
+    if (step.key === "binding") done.delete("proof");
+    done.add(step.key);
+  }
+  return done;
 };
 
 // The request body adaptation and composition share (environment-releases.md §7.6). The

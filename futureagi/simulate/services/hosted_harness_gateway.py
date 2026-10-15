@@ -212,6 +212,24 @@ def _ask_harness_to_build(
     )
 
 
+def _ask_harness_to_adapt(
+    job: HostedHarnessJob, attempt: HostedHarnessAttempt, endpoint_base_url: str
+) -> None:
+    """Put the adaptation request into the job's conversation; its harness binds the agent."""
+    from simulate.services.hosted_harness_conversation import enqueue_message
+    from simulate.tasks.hosted_harness_conversation import schedule_conversation_runtime
+
+    conversation, _message, _created = enqueue_message(
+        job,
+        content=(
+            "Bind this agent to the environment: write the binding, prove it, report where "
+            "the agent's instructions conflict with the policy, then finish."
+        ),
+        client_request_id=f"adapt-{attempt.id}",
+    )
+    schedule_conversation_runtime(str(conversation.id), endpoint_base_url)
+
+
 def _alk_source_overlay() -> bytes | None:
     """The ALK source a development chat sandbox runs instead of its image's, when configured."""
     root = str(getattr(settings, "ALK_HOSTED_SOURCE_OVERLAY", "") or "").strip()
@@ -2419,26 +2437,6 @@ class HostedHarnessGateway:
                 updated_at=timezone.now(),
             )
             sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
-            if adaptation is not None:
-                # The adaptation process is the conversation's only consumer: it asks and reads
-                # answers through the conversation endpoints, so no chat process is started.
-                conversation_capability = issue_conversation_capability(
-                    conversation,
-                    endpoint_base_url=endpoint_base_url,
-                    provider_ref=str(sandbox.id),
-                    attempt=attempt,
-                    ttl_seconds=ttl_seconds,
-                    runtime_name=selected_snapshot,
-                    runtime_digest=registered_snapshot_digest,
-                )
-                sandbox.fs.upload_file(
-                    json.dumps(
-                        conversation_capability.document,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode(),
-                    _CHAT_CAPABILITIES_PATH,
-                )
             from simulate.services.harness_usage import record_sandbox_runtime
 
             record_sandbox_runtime(attempt, started=True)
@@ -2528,7 +2526,6 @@ class HostedHarnessGateway:
                 "chmod 0600 /work/job.json /run/futureagi/secrets.json "
                 "/run/futureagi/capabilities.json "
                 f"{_CHAT_POLICY_PATH} "
-                + (f"{_CHAT_CAPABILITIES_PATH} " if adaptation is not None else "")
                 + f"{_SIMULATOR_SECRETS_PATH} "
                 + (authoring_secrets_path if authoring_target_secrets else ""),
                 timeout=120,
@@ -2631,13 +2628,13 @@ class HostedHarnessGateway:
             sandbox.fs.upload_file(
                 str(command.cmd_id).encode(), _ENTRYPOINT_COMMAND_ID_FILE
             )
-            if adaptation is not None:
-                record_runtime_started(conversation)
             attempt.state = HostedHarnessAttempt.State.RUNNING
             attempt.heartbeat_at = timezone.now()
             attempt.save(update_fields=["state", "heartbeat_at", "updated_at"])
             if harness_builds:
                 _ask_harness_to_build(job, attempt, endpoint_base_url)
+            elif adaptation is not None:
+                _ask_harness_to_adapt(job, attempt, endpoint_base_url)
             return attempt
         except Exception as exc:
             provider_status_code = getattr(exc, "status_code", None)
@@ -2847,14 +2844,6 @@ class HostedHarnessGateway:
         Liveness is the process's own command polling, not a provider probe, and no provider
         call is made while the conversation row is locked.
         """
-        from simulate.services.harness_releases import adaptation_of
-
-        if adaptation_of(job) is not None:
-            # The adaptation process polls this conversation's commands itself; starting a chat
-            # process beside it would give the conversation a second consumer.
-            return HostedHarnessConversationLease.no_workspace_objects.filter(
-                conversation=conversation
-            ).first()
         terminal_states = {
             HostedHarnessJob.State.COMPLETED,
             HostedHarnessJob.State.FAILED,
