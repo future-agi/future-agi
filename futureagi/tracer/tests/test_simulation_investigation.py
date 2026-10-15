@@ -1,5 +1,6 @@
 """Per-call Debug Analysis of a simulation run and its Omega claim boundaries."""
 
+import json
 import uuid
 from copy import deepcopy
 from datetime import timedelta
@@ -372,6 +373,118 @@ def test_debug_evidence_carries_the_runs_live_eval_verdicts(
             "reason": "Replied in Spanish throughout.",
         }
     ]
+
+
+def test_debug_claim_budget_covers_reading_a_whole_call_and_listening_to_it(
+    auth_client, organization, workspace
+):
+    scenario = Scenarios.objects.create(
+        name="Booking",
+        source="Booking policy",
+        organization=organization,
+        workspace=workspace,
+    )
+    execution, _ = _execution(
+        organization, workspace, scenario, "budget", CallExecution.CallStatus.COMPLETED
+    )
+    auth_client.post(f"/simulate/test-executions/{execution.id}/debug-analysis/")
+
+    claim = claim_due_investigations(
+        worker_id="test-worker", engine_version="omega-v1", limit=1
+    )["claims"][0]
+
+    assert claim["limits"]["max_model_calls"] == 18
+    assert claim["limits"]["deadline_seconds"] == 300
+
+
+def test_debug_evidence_carries_what_both_sides_were_told_and_the_recordings(
+    auth_client, organization, workspace
+):
+    scenario = Scenarios.objects.create(
+        name="Booking",
+        source="Booking policy",
+        organization=organization,
+        workspace=workspace,
+    )
+    execution, call = _execution(
+        organization, workspace, scenario, "context", CallExecution.CallStatus.COMPLETED
+    )
+    store = "https://recordings.example.test/alk-harness"
+    call.duration_seconds = 146
+    call.user_interruption_count = 2
+    call.call_metadata = {
+        "agent_prompt": "Offer the standard RideX ride only.",
+        "dynamic_prompt": "You are a customer in a hurry.",
+        "system_prompt": "You are a customer in a hurry.",
+        "initial_message": "Hi!",
+        "interrupt_sensitivity": 0.5,
+        "call_channel": "livekit",
+        "harness_outcome_status": "failed",
+        "hosted_harness_receipt": {
+            "status": "failed",
+            "call": {"stop_reason": "simulator_end_call"},
+            "sub_goals": [
+                {
+                    "name": "exact_greeting",
+                    "held": False,
+                    "reason": "The greeting was cut short.",
+                }
+            ],
+        },
+        "hosted_harness_artifacts": {
+            "recording_assistant": {
+                "url": f"{store}/agent",
+                "content_type": "audio/wav",
+            },
+            # Neither of these can be fetched and decoded by the audio model.
+            "recording_customer": {
+                "url": "http://localhost:9005/caller",
+                "content_type": "audio/wav",
+            },
+            "recording_stereo": {
+                "url": f"{store}/stereo",
+                "content_type": "application/octet-stream",
+            },
+            "transcript": {
+                "url": f"{store}/transcript",
+                "content_type": "application/json",
+            },
+        },
+    }
+    call.save(
+        update_fields=["duration_seconds", "user_interruption_count", "call_metadata"]
+    )
+    auth_client.post(f"/simulate/test-executions/{execution.id}/debug-analysis/")
+    claim = claim_due_investigations(
+        worker_id="test-worker", engine_version="omega-v1", limit=1
+    )["claims"][0]
+
+    evidence = simulation_evidence_page(
+        attempt_id=claim["attempt_id"], lease_token=claim["lease_token"], cursor=0
+    )["calls"][0]
+
+    assert evidence["context"] == {
+        "agent": {"prompt": "Offer the standard RideX ride only."},
+        "simulated_caller": {
+            "prompt": "You are a customer in a hurry.",
+            "initial_message": "Hi!",
+            "interrupt_sensitivity": 0.5,
+        },
+        "call": {
+            "channel": "livekit",
+            "stop_reason": "simulator_end_call",
+            "duration_seconds": 146,
+            "user_interruption_count": 2,
+        },
+    }
+    assert evidence["recordings"] == [
+        {"track": "assistant", "url": f"{store}/agent", "format": "wav"}
+    ]
+    # A verdict reaches Omega only as an evaluation, never inside the context.
+    assert "cut short" not in json.dumps(evidence["context"])
+    # Omega reads top to bottom: purpose and instructions precede the dialogue.
+    keys = list(evidence)
+    assert keys.index("goals") < keys.index("context") < keys.index("transcript")
 
 
 @override_settings(
