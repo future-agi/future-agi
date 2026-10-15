@@ -1,11 +1,14 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { AGENT_SUMMARY_COPY } from "./overview.constants";
+import PromptDrawer from "./PromptDrawer";
 
-export default function AgentSummarySection({ subject }) {
+export default function AgentSummarySection({ subject, systemPrompt, systemPromptOrigin }) {
+  const [promptOpen, setPromptOpen] = useState(false);
   const title = subject
     ? AGENT_SUMMARY_COPY.agentTitle(subject.name, subject.active_version)
     : AGENT_SUMMARY_COPY.noAgentTitle;
@@ -44,7 +47,27 @@ export default function AgentSummarySection({ subject }) {
           <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold", mt: 0.25 }}>{title}</Typography>
           {body && <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>{body}</Typography>}
         </Box>
+        {systemPrompt && (
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            startIcon={<Iconify icon="solar:document-text-linear" width={16} />}
+            onClick={() => setPromptOpen(true)}
+          >
+            {AGENT_SUMMARY_COPY.viewPrompt}
+          </Button>
+        )}
       </Stack>
+      {systemPrompt && (
+        <PromptDrawer
+          open={promptOpen}
+          onClose={() => setPromptOpen(false)}
+          agentName={subject?.name}
+          prompt={systemPrompt}
+          origin={systemPromptOrigin}
+        />
+      )}
     </Box>
   );
 }
@@ -55,4 +78,6 @@ AgentSummarySection.propTypes = {
     versions_count: PropTypes.number,
     active_version: PropTypes.string,
   }),
+  systemPrompt: PropTypes.string,
+  systemPromptOrigin: PropTypes.object,
 };

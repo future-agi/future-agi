@@ -26,7 +26,7 @@ export default function StateSummary({ env, envState, counts, onGo }) {
     { id: "scenarios", label: "Scenarios", value: scenarioCount, icon: "solar:layers-minimalistic-linear", to: "scenarios" },
     { id: "evals", label: "Evaluations", value: evalCount, icon: "solar:shield-check-linear", to: "evals" },
     { id: "runs", label: "Runs", value: runCount, icon: "solar:play-circle-linear", to: "runs", disabled: !runCount },
-    { id: "rules", label: "Hard rules", value: ruleCount, icon: "solar:shield-keyhole-linear", to: "contract" },
+    { id: "rules", label: "Hard rules", value: ruleCount, icon: "solar:shield-keyhole-linear", to: "contract", focus: "guardrails" },
   ];
 
   return (
@@ -35,7 +35,7 @@ export default function StateSummary({ env, envState, counts, onGo }) {
         {tiles.map((t) => (
           <Box
             key={t.id}
-            onClick={t.disabled ? undefined : () => onGo?.(t.to)}
+            onClick={t.disabled ? undefined : () => onGo?.(t.to, t.focus)}
             sx={{
               flex: 1, minWidth: 0, p: 1.75, borderRadius: 1.5,
               border: "1px solid", borderColor: "divider",

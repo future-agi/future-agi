@@ -328,14 +328,18 @@ describe("counts", () => {
 
 describe("useWorkspaceTab", () => {
   function Probe() {
-    const { tab, setTab } = useWorkspaceTab();
+    const { tab, focus, setTab } = useWorkspaceTab();
     const [params] = useSearchParams();
     return (
       <>
         <span data-testid="tab">{tab}</span>
         <span data-testid="param">{params.get("tab") || ""}</span>
+        <span data-testid="focus">{focus || ""}</span>
         <button type="button" onClick={() => setTab("runs")}>
           go runs
+        </button>
+        <button type="button" onClick={() => setTab("contract", "guardrails")}>
+          go rules
         </button>
       </>
     );
@@ -347,6 +351,18 @@ describe("useWorkspaceTab", () => {
         <Probe />
       </MemoryRouter>,
     );
+
+  it("carries a focus target with the tab and clears it on the next plain switch", async () => {
+    const user = userEvent.setup();
+    renderProbe("/env?tab=overview");
+
+    await user.click(screen.getByText("go rules"));
+    expect(screen.getByTestId("tab")).toHaveTextContent("contract");
+    expect(screen.getByTestId("focus")).toHaveTextContent("guardrails");
+
+    await user.click(screen.getByText("go runs"));
+    expect(screen.getByTestId("focus")).toHaveTextContent("");
+  });
 
   it("reads a valid ?tab=", () => {
     renderProbe("/env?tab=scenarios");

@@ -36,9 +36,11 @@ const BRANCHES = [
 // more") lifts the cap and shows every item.
 const MAX_LEAVES = 5;
 
-export default function CapabilityGraph({ env, envState, data }) {
+export default function CapabilityGraph({ env, envState, data, initialFocus }) {
   const theme = useTheme();
-  const [focus, setFocus] = useState(null);
+  const [focus, setFocus] = useState(
+    BRANCHES.some((branch) => branch.id === initialFocus) ? initialFocus : null,
+  );
   const contract = contractFor(env);
 
   // Non-backed fallback: personas derived from scenario personas (deduped).
@@ -270,4 +272,5 @@ CapabilityGraph.propTypes = {
     personas: PropTypes.arrayOf(PropTypes.string),
     guardrails: PropTypes.arrayOf(PropTypes.string),
   }),
+  initialFocus: PropTypes.string,
 };

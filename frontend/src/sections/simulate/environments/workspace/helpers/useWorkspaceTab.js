@@ -14,11 +14,13 @@ export default function useWorkspaceTab() {
   const raw = params.get("tab");
   const tab = TAB_IDS.includes(raw) ? raw : DEFAULT_TAB;
 
-  const setTab = (next) => {
+  const setTab = (next, focus) => {
     const q = new URLSearchParams(params);
     q.set("tab", next);
+    if (focus) q.set("focus", focus);
+    else q.delete("focus");
     setParams(q, { replace: true });
   };
 
-  return { tab, setTab };
+  return { tab, focus: params.get("focus"), setTab };
 }

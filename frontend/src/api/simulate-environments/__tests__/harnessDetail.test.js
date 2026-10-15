@@ -34,7 +34,10 @@ const DETAIL = {
     agent: "Customer Support Agent",
     one_liner: "Handles refund conversations",
     modality: "voice",
+    domain: { id: "order-support", label: "Order Support" },
     call_direction: "inbound",
+    system_prompt: "You are a support agent. Never invent availability.",
+    system_prompt_origin: { kind: "prompt", path: "support/prompt.txt", line: 1 },
     system_prompt_excerpt: "You are a support agent…",
     tools: [
       {
@@ -43,10 +46,24 @@ const DETAIL = {
         arg_types: { order_id: "str" },
         description: "Look an order up",
         requires: [],
+        origin: { kind: "code", path: "support/agent.py", line: 12 },
+        effect: "Reads one order without changing it",
       },
     ],
     real_use_cases: ["Fetch order by ID", "Refund up to the order total"],
     hard_constraints: ["Refunds above $200 need supervisor approval"],
+    hard_constraint_details: [
+      {
+        text: "Refunds above $200 need supervisor approval",
+        origin: { kind: "prompt", field: "system_prompt" },
+      },
+    ],
+    real_use_case_details: [
+      {
+        text: "Fetch order by ID",
+        origin: { kind: "provider_tool_list", field: "lookup_order" },
+      },
+    ],
     amendments: [
       { subject: "tool removed - lookup_order", note: "no runnable seam in the source" },
       { subject: "", note: "a line that carries no reason" },
@@ -67,6 +84,36 @@ const DETAIL = {
       ended_reasons: ["assistant-ended-call", "customer-ended-call"],
     },
     chosen_evals: ["cs_policy"],
+    data_store: {
+      kind: "postgres",
+      host: "orders-db",
+      port: 5432,
+      database: "support",
+      schema_from: "db/schema.sql",
+    },
+    data_schema: {
+      orders: { id: "TEXT PRIMARY KEY", status: "TEXT NOT NULL" },
+      refunds: { id: "TEXT PRIMARY KEY", order_id: "TEXT NOT NULL" },
+    },
+    data_schema_columns: {
+      orders: [{ name: "id", type: "TEXT", pk: true, nullable: false }],
+    },
+    tool_entrypoints: [
+      {
+        tool: "lookup_order",
+        mode: "construct",
+        module: "support.agent",
+        callable: "SupportAgent.lookup_order",
+        factory: "SupportAgent(state)",
+        first_arg: "self",
+        source: {
+          path: "support/agent.py",
+          line_start: 12,
+          line_end: 13,
+          code: "def lookup_order(self, order_id):\n    return self.orders[order_id]",
+        },
+      },
+    ],
   },
   world: {
     runtime: { services: ["agent", "tools-api"] },
@@ -122,7 +169,8 @@ describe("harnessDetailToEnvironment", () => {
     const { env } = harnessDetailToEnvironment(DETAIL);
     expect(env.id).toBe("0b1c");
     expect(env.name).toBe("ride-voice-agent");
-    expect(env.domain).toBe("Logistics");
+    expect(env.domain).toBe("Order Support");
+    expect(env.domainTag).toEqual({ id: "order-support", label: "Order Support" });
     expect(env.agentType).toBe("voice");
     expect(env.surface).toBe("voice");
     expect(env.buildStatus).toBe("ready");
@@ -156,7 +204,15 @@ describe("harnessDetailToEnvironment", () => {
     expect(env.endConditions).toMatchObject({ max_turns: 12, clock: "real-time" });
     expect(env.subGoals[0].name).toBe("refund_refused_on_expired_card");
     expect(env.useCases).toContain("Refund up to the order total");
+    expect(env.useCaseDetails[0].origin.kind).toBe("provider_tool_list");
+    expect(env.ruleDetails[0].origin.kind).toBe("prompt");
     expect(env.callDirection).toBe("inbound");
+    expect(env.systemPrompt).toBe("You are a support agent. Never invent availability.");
+    expect(env.systemPromptOrigin).toEqual({
+      kind: "prompt",
+      path: "support/prompt.txt",
+      line: 1,
+    });
     expect(env.systemPromptExcerpt).toBe("You are a support agent…");
     expect(env.evalPreset).toEqual(["cs_policy"]);
   });
@@ -170,6 +226,70 @@ describe("harnessDetailToEnvironment", () => {
     expect(env.seed.services).toEqual(["agent", "tools-api"]);
     expect(env.stores).toHaveLength(1);
     expect(env.personas[0].name).toBe("Priya Raman");
+  });
+
+  it("leaves ALK's internal tables out of the seed tables", () => {
+    const { env } = harnessDetailToEnvironment({
+      ...DETAIL,
+      world: {
+        ...DETAIL.world,
+        stores: [
+          {
+            capability: "world_db",
+            engine: "postgres",
+            tables: [
+              { name: "_alk_tool_trace", rows: 0, internal: true },
+              { name: "harness_seed_sentinel", rows: 1, internal: true },
+              { name: "bookings", rows: 12, internal: false },
+            ],
+          },
+        ],
+      },
+    });
+    expect(env.seed.tables.map((table) => table.name)).toEqual(["bookings"]);
+  });
+
+  it("leaves ALK's internal tables out of the seed tables and the schema", () => {
+    const { env } = harnessDetailToEnvironment({
+      ...DETAIL,
+      contract: {
+        ...DETAIL.contract,
+        data_schema: { bookings: { id: "string" }, _alk_tool_trace: null },
+        data_schema_columns: { bookings: [{ name: "id" }], harness_seed_sentinel: null },
+      },
+      world: {
+        ...DETAIL.world,
+        stores: [
+          {
+            capability: "world_db",
+            engine: "postgres",
+            tables: [
+              { name: "_alk_tool_trace", rows: 0, internal: true },
+              { name: "harness_seed_sentinel", rows: 1, internal: true },
+              { name: "bookings", rows: 12, internal: false },
+            ],
+          },
+        ],
+      },
+    });
+    expect(env.seed.tables.map((table) => table.name)).toEqual(["bookings"]);
+    expect(Object.keys(env.dataSchema)).toEqual(["bookings"]);
+    expect(Object.keys(env.dataSchemaColumns)).toEqual(["bookings"]);
+  });
+
+  it("keeps real datastore, schema and tool-entrypoint details for Contract", () => {
+    const { env } = harnessDetailToEnvironment(DETAIL);
+    expect(env.dataStore).toMatchObject({ kind: "postgres", database: "support" });
+    expect(env.dataSchema.orders).toEqual({
+      id: "TEXT PRIMARY KEY",
+      status: "TEXT NOT NULL",
+    });
+    expect(env.dataSchemaColumns.orders[0]).toMatchObject({ name: "id", pk: true });
+    expect(env.tools[0].origin.path).toBe("support/agent.py");
+    expect(env.toolEntrypoints[0]).toMatchObject({
+      tool: "lookup_order",
+      callable: "SupportAgent.lookup_order",
+    });
   });
 
   it("maps scenarios to pool rows with real sub-goals and use_case", () => {
@@ -243,5 +363,82 @@ describe("harnessDetailToEnvironment", () => {
       world: null,
     };
     expect(harnessDetailToEnvironment(running).env.buildStatus).toBe("ready");
+  });
+
+  it("passes tool effect, certification, world facts and actors through", () => {
+    const evidence = {
+      origin: { kind: "file", path: "tools.py", line: 3 },
+      excerpt: "SELECT * FROM orders",
+    };
+    const certification = {
+      tool: "lookup_order",
+      availability: "runtime_only",
+      probe_mode: "runtime_only",
+      reason: "Observed during the call only",
+    };
+    const actor = {
+      name: "supervisor",
+      role: "approves refunds over $200",
+      origin: { kind: "system_prompt", field: "general_prompt" },
+    };
+    const detail = {
+      ...DETAIL,
+      contract: {
+        ...DETAIL.contract,
+        tools: [{ ...DETAIL.contract.tools[0], effect_kind: "read", effect_evidence: evidence }],
+        tool_certification: [certification],
+        base_environment: { orders: [{ id: "order-1" }] },
+        refusal_signature: "Order not found",
+        actors: [actor],
+      },
+      world: {
+        ...DETAIL.world,
+        runtime: { services: ["agent"], readiness: { path: "/health" } },
+      },
+      scenarios: [
+        {
+          ...DETAIL.scenarios[0],
+          sub_goals: [
+            { name: "identity_checked", what: "Identity was checked", kind: "judge", output: "pass_fail", overlay: "authentication" },
+          ],
+        },
+      ],
+    };
+
+    const { env, envState } = harnessDetailToEnvironment(detail);
+
+    expect(env.tools[0]).toMatchObject({
+      effectKind: "read",
+      effectEvidence: evidence,
+      certification,
+    });
+    expect(env.baseEnvironment).toEqual({ orders: [{ id: "order-1" }] });
+    expect(env.refusalSignature).toBe("Order not found");
+    expect(env.actors).toEqual([actor]);
+    expect(env.runtime).toEqual({ readiness: { path: "/health" } });
+    expect(envState.scenarios[0].subTasks[0]).toMatchObject({
+      output: "pass_fail",
+      overlay: "authentication",
+    });
+  });
+
+  it("leaves the new fields empty when the contract does not carry them", () => {
+    const { env } = harnessDetailToEnvironment(DETAIL);
+
+    expect(env.tools[0]).toMatchObject({ effectKind: null, effectEvidence: null, certification: null });
+    expect(env.baseEnvironment).toBeNull();
+    expect(env.refusalSignature).toBeNull();
+    expect(env.actors).toBeNull();
+    expect(env.runtime).toBeNull();
+  });
+
+  it("treats the empty world facts a provider build sends as absent", () => {
+    const { env } = harnessDetailToEnvironment({
+      ...DETAIL,
+      contract: { ...DETAIL.contract, base_environment: {}, refusal_signature: "" },
+    });
+
+    expect(env.baseEnvironment).toBeNull();
+    expect(env.refusalSignature).toBeNull();
   });
 });

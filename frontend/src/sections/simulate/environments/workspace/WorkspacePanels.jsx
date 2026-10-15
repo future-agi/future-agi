@@ -39,6 +39,7 @@ export default function WorkspacePanels({
   serverEnvState = envState,
   patch,
   tab,
+  focus,
   onTabChange,
   locked = false,
   backed = false,
@@ -80,9 +81,9 @@ export default function WorkspacePanels({
     tabs.find((t) => t.id === tab) ||
     tabs.find((t) => t.id === "overview");
 
-  const go = (tabId) => {
+  const go = (tabId, target) => {
     if (!tabs.some((t) => t.id === tabId)) return;
-    onTabChange(tabId);
+    onTabChange(tabId, target);
   };
 
   const openRun = (run) => {
@@ -102,7 +103,7 @@ export default function WorkspacePanels({
   const renderBody = () => {
     switch (current.id) {
       case "contract":
-        return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} graphData={graphData} />;
+        return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} graphData={graphData} focus={focus} />;
       case "scenarios":
         return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} onStartRun={onStartRun} canRun={canRun} />;
       case "evals":
@@ -205,6 +206,7 @@ WorkspacePanels.propTypes = {
   serverEnvState: PropTypes.object,
   patch: PropTypes.func.isRequired,
   tab: PropTypes.string,
+  focus: PropTypes.string,
   onTabChange: PropTypes.func.isRequired,
   locked: PropTypes.bool,
   backed: PropTypes.bool,

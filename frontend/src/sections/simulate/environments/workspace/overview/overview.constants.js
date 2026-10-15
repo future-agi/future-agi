@@ -31,23 +31,16 @@ export const OVERVIEW_COPY = {
   amendmentsEmpty: "No amendments. Nothing was changed after reading.",
   seededTitle: "Seeded data",
   dependsTitle: "What it depends on",
-  dependsSubtitle: "Built and torn down with the environment",
+  dependsSubtitle: "What the environment builds, and the services the agent calls",
   dependsEmpty: "No dependencies recorded for this environment.",
+  dependsBuilt: "Built and torn down with the environment",
+  dependsRuntime: "Services the agent calls",
   seedBlurb: (rows) =>
     `${rows.toLocaleString()} rows that fill this environment before your agent arrives: the world it actually works in. Rebuilt for every task, so nothing carries over.`,
   usedBy: (name) => `used by ${Array.isArray(name) ? name.join(", ") : name}`,
 };
 
 // The agent summary (test-subject) card copy.
-export const SOURCE_READ_COPY = {
-  title: "Read from source",
-  tools: "Tools",
-  toolsHint: "from the agent config & call-graph",
-  rules: "Rules",
-  rulesHint: "hard constraints the agent must hold",
-  count: (n) => `${n} found`,
-};
-
 export const AGENT_SUMMARY_COPY = {
   label: "Test subject",
   connected: "Connected",
@@ -60,6 +53,12 @@ export const AGENT_SUMMARY_COPY = {
   fork: "Fork to edit",
   manage: "Manage versions",
   attach: "Attach agent",
+  viewPrompt: "View prompt",
+  promptTitle: (name) => `${name || "Agent"} · prompt`,
+  promptLines: (n) => `${n} ${n === 1 ? "line" : "lines"}`,
+  copyPrompt: "Copy prompt",
+  copied: "Copied to clipboard",
+  copyFailed: "Couldn't copy the prompt",
 };
 
 // The environment shape Overview reads. Local PropTypes.shape (Phase-2 owns the
@@ -69,15 +68,24 @@ export const ENV_SHAPE = PropTypes.shape({
   name: PropTypes.string,
   surface: PropTypes.string,
   domain: PropTypes.string,
+  domainTag: PropTypes.shape({ id: PropTypes.string, label: PropTypes.string }),
   description: PropTypes.string,
   tools: PropTypes.arrayOf(
     PropTypes.shape({
       name: PropTypes.string,
       desc: PropTypes.string,
       args: PropTypes.arrayOf(PropTypes.string),
+      origin: PropTypes.shape({
+        kind: PropTypes.string,
+        path: PropTypes.string,
+        field: PropTypes.string,
+        line: PropTypes.number,
+      }),
     })
   ),
   rules: PropTypes.arrayOf(PropTypes.string),
+  ruleDetails: PropTypes.arrayOf(PropTypes.object),
+  useCaseDetails: PropTypes.arrayOf(PropTypes.object),
   parallelism: PropTypes.shape({
     requested: PropTypes.number,
     admitted: PropTypes.number,
@@ -142,10 +150,13 @@ export const packStatsFor = (env) => {
   };
 };
 
-// The rule rows Overview renders. ALK sends the rule text only; per-rule origin
-// is not reported yet, so nothing is derived.
 export const ruleRowsFor = (env) =>
-  (env?.rules || []).map((subject, i) => ({ id: `rule-${i}`, subject }));
+  (env?.rules || []).map((subject, i) => ({
+    id: `rule-${i}`,
+    subject,
+    origin: (env?.ruleDetails || []).find((detail) => detail.text === subject)
+      ?.origin,
+  }));
 
 // The "agent moved ahead" refresh banner copy.
 export const REFRESH_COPY = {

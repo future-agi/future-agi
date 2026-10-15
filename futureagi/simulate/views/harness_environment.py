@@ -11,7 +11,9 @@ from simulate.models import AgentDefinition, HostedHarnessJob
 from simulate.serializers.harness_environment import (
     HarnessEnvironmentAddEvaluationSerializer,
     HarnessEnvironmentAvailableEvalsSerializer,
+    HarnessEnvironmentDetailQuerySerializer,
     HarnessEnvironmentDetailSerializer,
+    HarnessEnvironmentDetailV2Serializer,
     HarnessEnvironmentEvalEditSerializer,
     HarnessEnvironmentListQuerySerializer,
     HarnessEnvironmentListResponseSerializer,
@@ -38,7 +40,7 @@ from simulate.services.harness_provider import (
     request_workspace,
     scope_jobs,
 )
-from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_contracts import ManagementAPIAutoSchema, validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.pagination import ExtendedPageNumberPagination
 
@@ -91,6 +93,21 @@ def _uuid_or_none(value):
         return None
 
 
+class HarnessEnvironmentDetailAutoSchema(ManagementAPIAutoSchema):
+    def get_response_serializers(self):
+        return {
+            **super().get_response_serializers(),
+            200: HarnessEnvironmentDetailSerializer,
+        }
+
+    def get_responses(self):
+        responses = super().get_responses()
+        responses["200"]["x-contract-version-2"] = self.serializer_to_schema(
+            HarnessEnvironmentDetailV2Serializer()
+        )
+        return responses
+
+
 class HarnessEnvironmentViewSet(viewsets.ViewSet):
     """The environments surface: list, delete, and start a simulation.
 
@@ -141,7 +158,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         page = paginator.paginate_queryset(self._queryset(request), request, view=self)
         return paginator.get_paginated_response([environment_row(job) for job in page])
 
-    @swagger_auto_schema(responses={200: HarnessEnvironmentDetailSerializer})
+    @validated_request(
+        query_serializer=HarnessEnvironmentDetailQuerySerializer,
+        auto_schema=HarnessEnvironmentDetailAutoSchema,
+    )
     def retrieve(self, request, pk=None):
         """One environment: overview, contract, world, scenarios, evaluations, settings.
 
@@ -154,7 +174,11 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 {"detail": "Environment not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        return Response(environment_detail(job))
+        version = request.validated_query_data["contract_version"]
+        detail = environment_detail(job, contract_version=version)
+        if version == 2:
+            return Response(HarnessEnvironmentDetailV2Serializer(detail).data)
+        return Response(detail)
 
     @validated_request(
         request_serializer=HarnessEnvironmentRenameSerializer,

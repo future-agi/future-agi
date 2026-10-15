@@ -38,25 +38,69 @@ export function SeededDataCard({ env }) {
 SeededDataCard.propTypes = { env: ENV_SHAPE.isRequired };
 
 // The services built and torn down with the environment.
-export function DependsOnCard({ dependsOn }) {
-  const rows = dependsOn || [];
+const DEPENDENCY_SHAPE = PropTypes.arrayOf(
+  PropTypes.shape({
+    name: PropTypes.string,
+    kind: PropTypes.string,
+    provides: PropTypes.string,
+    usedBy: PropTypes.oneOfType([PropTypes.string, PropTypes.arrayOf(PropTypes.string)]),
+  }),
+);
+
+export function DependsOnCard({ dependsOn, runtimeDependsOn }) {
+  const built = dependsOn || [];
+  const runtime = runtimeDependsOn || [];
+  const groups = [
+    { id: "built", label: OVERVIEW_COPY.dependsBuilt, rows: built },
+    { id: "runtime", label: OVERVIEW_COPY.dependsRuntime, rows: runtime },
+  ].filter((group) => group.rows.length);
   return (
     <SectionCard title={OVERVIEW_COPY.dependsTitle} subtitle={OVERVIEW_COPY.dependsSubtitle}>
-      {rows.length === 0 ? (
+      {groups.length === 0 ? (
         <Box sx={{ p: 2.5 }}>
           <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
             {OVERVIEW_COPY.dependsEmpty}
           </Typography>
         </Box>
       ) : (
-      <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-        {rows.map((d) => (
-          <Box key={d.name} sx={{ px: 2.5, py: 1.5 }}>
-            <Stack direction="row" alignItems="center" spacing={1}>
-              <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold", fontFamily: MONO }}>{d.name}</Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{d.kind}</Typography>
-            </Stack>
-            <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}>{d.provides}</Typography>
+        groups.map((group, index) => (
+          <Box key={group.id} sx={{ borderTop: index ? "1px solid" : "none", borderColor: "divider" }}>
+            <Typography
+              sx={{
+                px: 2.5,
+                pt: 1.5,
+                typography: "s3",
+                fontWeight: "fontWeightBold",
+                color: "text.subtitle",
+                textTransform: "uppercase",
+                letterSpacing: 0.4,
+              }}
+            >
+              {group.label}
+            </Typography>
+            <DependencyRows rows={group.rows} />
+          </Box>
+        ))
+      )}
+    </SectionCard>
+  );
+}
+DependsOnCard.propTypes = {
+  dependsOn: DEPENDENCY_SHAPE,
+  runtimeDependsOn: DEPENDENCY_SHAPE,
+};
+
+function DependencyRows({ rows }) {
+  return (
+    <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+      {rows.map((d) => (
+        <Box key={d.name} sx={{ px: 2.5, py: 1.5 }}>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold", fontFamily: MONO }}>{d.name}</Typography>
+            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{d.kind}</Typography>
+          </Stack>
+          <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}>{d.provides}</Typography>
+          {d.usedBy?.length > 0 && (
             <Typography
               sx={{
                 typography: "s3",
@@ -68,20 +112,10 @@ export function DependsOnCard({ dependsOn }) {
             >
               {OVERVIEW_COPY.usedBy(d.usedBy)}
             </Typography>
-          </Box>
-        ))}
-      </Stack>
-      )}
-    </SectionCard>
+          )}
+        </Box>
+      ))}
+    </Stack>
   );
 }
-DependsOnCard.propTypes = {
-  dependsOn: PropTypes.arrayOf(
-    PropTypes.shape({
-      name: PropTypes.string,
-      kind: PropTypes.string,
-      provides: PropTypes.string,
-      usedBy: PropTypes.string,
-    })
-  ),
-};
+DependencyRows.propTypes = { rows: DEPENDENCY_SHAPE };

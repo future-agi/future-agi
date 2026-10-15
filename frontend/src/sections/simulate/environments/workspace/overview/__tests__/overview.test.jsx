@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { render } from "src/utils/test-utils";
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
@@ -43,10 +44,35 @@ describe("OverviewPanel", () => {
     expect(screen.getByText("LiveKit")).toBeInTheDocument();
   });
 
-  // The Tools and Hard-rules cards were removed from the Overview panel as
-  // duplicates of the Contract tab, so their panel-level tests went with them.
-  // ToolsCard/HardRulesCard are still exercised where they render (the direct
-  // HardRulesCard test below; ToolsCard on the Contract tab).
+  it("shows the authored domain and item-level origins", async () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        domainTag: { id: "guest-booking", label: "Guest Booking" },
+        ruleDetails: [
+          {
+            text: MOCK_WORLD.rules[0],
+            origin: { kind: "provider_system_prompt", field: "system_prompt" },
+          },
+        ],
+        useCases: ["Book a guest ride"],
+        useCaseDetails: [
+          {
+            text: "Book a guest ride",
+            origin: { kind: "provider_tool_list", field: "book_ride" },
+          },
+        ],
+      },
+    });
+
+    expect(screen.getByText("Domain")).toBeInTheDocument();
+    expect(screen.getByText("Guest Booking")).toBeInTheDocument();
+    expect(screen.getByText("SYSTEM PROMPT")).toBeInTheDocument();
+    expect(screen.getByText("TOOL LIST")).toBeInTheDocument();
+    expect(screen.getByText("book_ride")).toBeInTheDocument();
+    await userEvent.hover(screen.getByText("SYSTEM PROMPT"));
+    expect(await screen.findByText("system_prompt")).toBeInTheDocument();
+  });
 
   it("renders each hard rule as text, with no invented origin chip", () => {
     render(<HardRulesCard env={MOCK_WORLD} />);
@@ -55,8 +81,7 @@ describe("OverviewPanel", () => {
     MOCK_WORLD.rules.forEach((rule) =>
       expect(screen.getByText(rule)).toBeInTheDocument(),
     );
-    // …but ALK reports no per-rule origin, and the chips used to be derived by
-    // position (first two CODE, last PROSE, rest PROMPT). None of them ship.
+    // A legacy environment with no reported origins still gets no fabricated badges.
     expect(screen.queryByText("CODE")).toBeNull();
     expect(screen.queryByText("PROMPT")).toBeNull();
     expect(screen.queryByText("PROSE")).toBeNull();
@@ -73,11 +98,9 @@ describe("OverviewPanel", () => {
       },
     });
 
-    // Empty §6 arrays render honest empty states, not fixture rows. The stores
-    // read-out went with SourceToSandboxMap, whose origins and sandbox targets
-    // were derived by position and keyword rather than reported by ALK.
+    // Empty §6 arrays render honest empty states, not fixture rows.
     expect(screen.getByText(/No amendments/)).toBeInTheDocument();
-    expect(screen.queryByText(/No stores seeded/)).toBeNull();
+    expect(screen.getByText(/No stores seeded/)).toBeInTheDocument();
     // "What it depends on" populates from real contract.dependencies.
     expect(screen.getByText("postgres")).toBeInTheDocument();
     expect(screen.getByText("Stores rider rows")).toBeInTheDocument();
@@ -85,9 +108,34 @@ describe("OverviewPanel", () => {
     expect(screen.queryByText("Actors")).toBeNull();
   });
 
-  // The Seeded-data card was removed from Overview; stores now live only in the
-  // source→sandbox map (covered by the SourceToSandboxMap suite in
-  // overviewExtras). Its panel-level test went with it.
+  it("lists the services the agent calls apart from what the environment builds", () => {
+    renderPanel({
+      backedWorld: {
+        stores: [],
+        amendments: [],
+        dependencies: [],
+        runtimeDependencies: [
+          { name: "retell", kind: "transport", what: "Retell voice platform", used_by: [] },
+          { name: "elevenlabs", kind: "transport", what: "Voice synthesis", used_by: ["response_engine"] },
+        ],
+      },
+    });
+
+    expect(screen.queryByText(/No dependencies recorded/)).toBeNull();
+    expect(screen.getByText("Services the agent calls")).toBeInTheDocument();
+    expect(screen.queryByText("Built and torn down with the environment")).toBeNull();
+    expect(screen.getByText("retell")).toBeInTheDocument();
+    expect(screen.getByText("used by response_engine")).toBeInTheDocument();
+    expect(screen.getAllByText(/^used by/)).toHaveLength(1);
+  });
+
+  it("says no dependencies were recorded when both lists are empty", () => {
+    renderPanel({
+      backedWorld: { stores: [], amendments: [], dependencies: [], runtimeDependencies: [] },
+    });
+
+    expect(screen.getByText(/No dependencies recorded/)).toBeInTheDocument();
+  });
 
   // The "Manage versions" agent card + its version drawer are commented out
   // (picked up later), so their tests — attach-agent disabled, open the drawer,

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
 
 import { render } from "src/utils/test-utils";
 import StateSummary from "../StateSummary";
@@ -19,6 +19,20 @@ describe("StateSummary", () => {
     expect(screen.getByText("8")).toBeInTheDocument();
     expect(screen.getByText("13")).toBeInTheDocument();
     expect(screen.queryByText("2")).toBeNull();
+  });
+
+  it("opens the Contract tab on its guardrails when the hard rules tile is clicked", () => {
+    const onGo = vi.fn();
+    render(
+      <StateSummary
+        env={{ rules: ["a"] }}
+        envState={{ scenarios: [], evals: [], runs: [] }}
+        onGo={onGo}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Hard rules"));
+    expect(onGo).toHaveBeenCalledWith("contract", "guardrails");
   });
 
   it("falls back to the client store when no counts are passed", () => {

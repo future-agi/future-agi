@@ -1133,6 +1133,7 @@ import type {
   SimulateApiHarnessConversationsCommandsParams,
   SimulateApiHarnessConversationsSessionStoreParams,
   SimulateApiHarnessEnvironmentsListParams,
+  SimulateApiHarnessEnvironmentsReadParams,
   SimulateApiHarnessJobsSecretFileUploadBody,
   SimulateApiHarnessJobsSourceUploadBody,
   SimulateApiLivekitWebhookCreateBody,
@@ -58540,8 +58541,27 @@ export type simulateApiHarnessEnvironmentsReadResponse =
   | simulateApiHarnessEnvironmentsReadResponseSuccess
   | simulateApiHarnessEnvironmentsReadResponseError;
 
-export const getSimulateApiHarnessEnvironmentsReadUrl = (id: string) => {
-  return `/simulate/api/harness-environments/${id}/`;
+export const getSimulateApiHarnessEnvironmentsReadUrl = (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/`;
 };
 
 /**
@@ -58551,10 +58571,11 @@ yet is null, so the client renders "building" rather than an empty pane.
  */
 export const simulateApiHarnessEnvironmentsRead = async (
   id: string,
+  params?: SimulateApiHarnessEnvironmentsReadParams,
   options?: RequestInit,
 ): Promise<simulateApiHarnessEnvironmentsReadResponse> => {
   return apiMutator<simulateApiHarnessEnvironmentsReadResponse>(
-    getSimulateApiHarnessEnvironmentsReadUrl(id),
+    getSimulateApiHarnessEnvironmentsReadUrl(id, params),
     {
       ...options,
       method: "GET",

@@ -104,3 +104,57 @@ export const CONTRACT_COPY = {
 };
 
 export const GAP_LEGEND_ORDER = ["blocking", "assumed", "resolved"];
+
+export const TOOL_EFFECTS = {
+  read: { label: "reads", color: BUILD_TONES.green, icon: "solar:eye-linear" },
+  write: { label: "writes", color: BUILD_TONES.amber, icon: "solar:pen-linear" },
+  external: { label: "external", color: BUILD_TONES.blue, icon: "solar:global-linear" },
+  control: { label: "control", color: BUILD_TONES.accent, icon: "solar:tuning-linear" },
+};
+
+export const TOOL_AVAILABILITY = {
+  certified: { label: "certified", color: BUILD_TONES.green },
+  runtime_only: { label: "runtime only", color: BUILD_TONES.amber },
+  rejected: { label: "rejected", color: BUILD_TONES.red },
+};
+
+export const WORLD_FACTS_COPY = {
+  effectWhy: (effect) => `Why it ${effect}`,
+  availabilityTooltip: (probeMode, reason) =>
+    [probeMode && `Probed as ${probeMode.replaceAll("_", " ")}`, reason].filter(Boolean).join(". "),
+  startingData: "Starting data",
+  startingDataFile: "base_environment",
+  rows: (count) => `${count.toLocaleString()} rows`,
+  startingRows: (count) => `${count.toLocaleString()} rows · starting data`,
+  refusalLabel: "When nothing matches, the agent hears",
+  runtimeLabel: "Runtime",
+  runtimeFile: "world.runtime",
+};
+
+export const END_CONDITIONS_COPY = {
+  title: "Run end conditions",
+  subtitle: "When a run is over, and which kind of over it was",
+  maxTurns: (turns) => `${turns} turns`,
+  maxTurnsNote: "Ceiling across the suite. Each scenario carries its own.",
+  maxDuration: (seconds) => `${seconds}s`,
+  maxDurationNote: "The job's wall-clock limit.",
+  seedValue: (value) => `Deterministic seed · ${value}`,
+  seedControls: (controls) =>
+    controls.length
+      ? `Fixes ${controls.map((control) => control.replaceAll("_", " ")).join(", ")}. The same seed replays the same world.`
+      : "The same seed replays the same world.",
+  noSeed: "No seed was set for this environment, so runs are not replayed from one.",
+};
+
+export const ACTORS_COPY = {
+  title: "Actors",
+  subtitle: "Other parties the agent's instructions name",
+  count: (n) => `${n} actors`,
+};
+
+export const SUB_GOALS_COPY = {
+  title: "Sub-goals",
+  subtitle: "What a run is checked on, and how each check reports",
+  count: (n) => `${n} sub-goals`,
+  output: (output) => output.replaceAll("_", "/"),
+};

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import RlContractPanel from "../RlContractPanel";
 
 // A voice environment with two tools, two hard rules and a seeded table —
@@ -14,6 +14,20 @@ const voiceEnv = {
   ],
   rules: ["Never disclose another caller's data.", "Only refund verified callers."],
   seed: { tables: [{ name: "customers", rows: 240, note: "40 with saved cards" }] },
+  dataStore: {
+    kind: "postgres",
+    host: "support-db",
+    port: 5432,
+    database: "support",
+    schema_from: "db/schema.sql",
+    password: "must-not-render",
+  },
+  dataSchema: {
+    customers: { id: "TEXT PRIMARY KEY", status: "TEXT NOT NULL" },
+  },
+  dataSchemaColumns: {
+    audits: [{ name: "event_id", type: "UUID", pk: true, nullable: false }],
+  },
 };
 
 const renderPanel = (props = {}) =>
@@ -38,20 +52,29 @@ describe("RlContractPanel", () => {
     renderPanel();
     expect(screen.getByText("World state · database")).toBeInTheDocument();
     expect(screen.getAllByText("Tools").length).toBeGreaterThan(0);
-    // The synthesised handler/check source cards are gone: their bodies were
-    // generated from the env manifest by _fixtures/envInternals, not read from
-    // the job.
+    // Synthetic handler/check source remains gone. Tool rows now expand to the
+    // real contract and entrypoint evidence read from the job.
     expect(screen.queryByText("Tool implementations")).toBeNull();
     expect(screen.queryByText("Check implementations")).toBeNull();
+    expect(screen.getByText("support-db")).toBeInTheDocument();
+    expect(screen.getByText("••••••")).toBeInTheDocument();
+    expect(screen.queryByText("must-not-render")).toBeNull();
+
+    fireEvent.click(screen.getByText("customers"));
+    expect(screen.getByText("TEXT PRIMARY KEY")).toBeInTheDocument();
+    expect(screen.getByText("TEXT NOT NULL")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("audits"));
+    expect(screen.getByText("UUID · PK · NOT NULL")).toBeInTheDocument();
   });
 
-  it("renders the run end conditions — terminate, truncate, clock and seed", () => {
+  it("renders the run end conditions with terminate and truncate, and hides clock and seed", () => {
     renderPanel();
     expect(screen.getByText("Run end conditions")).toBeInTheDocument();
     expect(screen.getByText("Terminate")).toBeInTheDocument();
     expect(screen.getByText("Truncate")).toBeInTheDocument();
-    expect(screen.getByText(/^Clock ·/)).toBeInTheDocument();
-    expect(screen.getByText("Deterministic seed")).toBeInTheDocument();
+    expect(screen.queryByText(/^Clock ·/)).toBeNull();
+    expect(screen.queryByText(/^Deterministic seed/)).toBeNull();
   });
 
   it("lists each declared tool with its description and no inferred effect chip", () => {
@@ -78,6 +101,61 @@ describe("RlContractPanel", () => {
     expect(screen.getByText("billing.refund")).toBeInTheDocument();
     // lookup_account has no entrypoint, so it carries no invented location.
     expect(screen.queryByText(/lookup_account\./)).toBeNull();
+
+    fireEvent.click(screen.getAllByText("issue_refund")[0]);
+    expect(screen.getAllByText("Tool contract and entrypoint").length).toBeGreaterThan(0);
+    expect(screen.getByText(/"callable": "refund"/)).toBeInTheDocument();
+  });
+
+  it("shows the reported origin for each tool", () => {
+    renderPanel({
+      env: {
+        ...voiceEnv,
+        tools: [
+          {
+            name: "lookup_account",
+            desc: "Reads the caller's account.",
+            origin: { kind: "code", path: "support/tools.py", line: 18 },
+          },
+          {
+            name: "issue_refund",
+            desc: "Refunds a charge.",
+            origin: { kind: "provider_tool_list", field: "issue_refund" },
+          },
+        ],
+      },
+    });
+
+    expect(screen.getByText("CODE")).toBeInTheDocument();
+    expect(screen.getByText("TOOL LIST")).toBeInTheDocument();
+    expect(screen.getByText("support/tools.py:18")).toBeInTheDocument();
+    expect(screen.getAllByText("issue_refund").length).toBeGreaterThan(0);
+  });
+
+  it("shows the exact tool source when ALK supplied it", () => {
+    renderPanel({
+      env: {
+        ...voiceEnv,
+        toolEntrypoints: [
+          {
+            tool: "issue_refund",
+            module: "billing",
+            callable: "refund",
+            source: {
+              path: "billing.py",
+              line_start: 8,
+              line_end: 9,
+              code: "def refund(charge_id):\n    return ledger.refund(charge_id)",
+            },
+          },
+        ],
+      },
+    });
+
+    fireEvent.click(screen.getAllByText("issue_refund")[0]);
+    expect(screen.getByText("Source snippet")).toBeInTheDocument();
+    expect(screen.getByText("billing.py")).toBeInTheDocument();
+    expect(screen.getByText(/ledger\.refund/)).toBeInTheDocument();
   });
 
   it("no longer mounts the dummy Actors section (commented out, to be picked up later)", () => {

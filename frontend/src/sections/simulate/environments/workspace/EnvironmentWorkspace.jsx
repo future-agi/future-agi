@@ -98,7 +98,7 @@ export default function EnvironmentWorkspace() {
     envId,
     building || buildFailed ? undefined : bootstrapState,
   );
-  const { tab, setTab } = useWorkspaceTab();
+  const { tab, focus, setTab } = useWorkspaceTab();
   const {
     exhaustionError,
     handleError: handleCreditError,
@@ -322,7 +322,7 @@ export default function EnvironmentWorkspace() {
   const locked = source === "client" && !!envState.seededFromTemplate;
 
   const activeTab = tab;
-  const onTabChange = (id) => setTab(id);
+  const onTabChange = (id, target) => setTab(id, target);
 
   const onFork = () => {
     const fork = buildFork(env, envState, new Date().toISOString());
@@ -385,6 +385,7 @@ export default function EnvironmentWorkspace() {
           stores: backedDetail.world?.stores ?? [],
           amendments: backedDetail.contract?.amendments ?? [],
           dependencies: backedDetail.contract?.dependencies ?? [],
+          runtimeDependencies: backedDetail.contract?.runtime_dependencies ?? [],
         }
       : undefined;
   // Real capability-graph branches for a backed env: tools names,
@@ -447,6 +448,7 @@ export default function EnvironmentWorkspace() {
             serverEnvState={serverEnvState}
             patch={patch}
             tab={activeTab}
+            focus={focus}
             onTabChange={onTabChange}
             locked={locked}
             backed={source === "harness"}

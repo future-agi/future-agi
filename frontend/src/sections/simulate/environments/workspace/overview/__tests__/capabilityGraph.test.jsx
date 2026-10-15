@@ -31,6 +31,21 @@ describe("CapabilityGraph", () => {
     expect(screen.getByText("none yet")).toBeInTheDocument();
   });
 
+  it("opens on the branch it was asked to focus", () => {
+    render(
+      <CapabilityGraph
+        env={env}
+        envState={{}}
+        initialFocus="guardrails"
+        data={{ tools: ["book_ride"], flows: [], personas: [], guardrails: ["Never invent a fare"] }}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: "Guardrails" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("Never invent a fare")).toBeInTheDocument();
+    expect(screen.queryByText("book_ride")).toBeNull();
+  });
+
   it("caps a long branch at 5 and surfaces the rest without moving the view", () => {
     const flows = Array.from({ length: 8 }, (_, i) => `flow-${i}`);
     render(

@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
+import CustomTooltip from "src/components/tooltip";
 import { ORIGIN_KINDS } from "../buildEnvironment/provenance.constants";
 
 // A single provenance chip: the short origin tag with a tooltip that spells out
@@ -9,25 +10,30 @@ import { ORIGIN_KINDS } from "../buildEnvironment/provenance.constants";
 export default function OriginChip({ origin, file, line, showPath = true }) {
   const meta = ORIGIN_KINDS[origin];
   if (!meta) return null;
+  const location = [file, line]
+    .filter((value) => value !== undefined && value !== null && value !== "")
+    .join(":");
 
   return (
-    <Tooltip
+    <CustomTooltip
+      show
       arrow
+      size="small"
       placement="top"
       title={
-        <Box sx={{ maxWidth: 300, py: 0.5 }}>
+        <Box sx={{ maxWidth: 300 }}>
           <Typography sx={{ typography: "s3", fontWeight: "fontWeightBold", mb: 0.25 }}>{meta.label}</Typography>
           <Typography sx={{ typography: "s3" }}>{meta.note}</Typography>
-          {file && (
+          {location && (
             <Typography sx={{ typography: "s3", mt: 0.75, fontFamily: "ui-monospace, Menlo, monospace", opacity: 0.75 }}>
-              {file}:{line}
+              {location}
             </Typography>
           )}
         </Box>
       }
     >
       <Stack direction="row" alignItems="center" spacing={0.75} sx={{ flexShrink: 0, cursor: "default" }}>
-        {showPath && file && (
+        {showPath && location && (
           <Typography
             noWrap
             sx={{
@@ -35,7 +41,7 @@ export default function OriginChip({ origin, file, line, showPath = true }) {
               display: { xs: "none", lg: "block" }, maxWidth: 300,
             }}
           >
-            {file}:{line}
+              {location}
           </Typography>
         )}
         <Typography
@@ -48,7 +54,7 @@ export default function OriginChip({ origin, file, line, showPath = true }) {
           {meta.short}
         </Typography>
       </Stack>
-    </Tooltip>
+    </CustomTooltip>
   );
 }
 OriginChip.propTypes = {

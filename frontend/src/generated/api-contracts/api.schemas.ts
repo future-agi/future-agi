@@ -17210,10 +17210,104 @@ export interface HarnessEnvironmentOverviewApi {
   agent: HarnessEnvironmentAgentApi;
 }
 
+export interface HarnessEnvironmentOriginApi {
+  /** @minLength 1 */
+  kind: string;
+  path?: string;
+  field?: string;
+  line?: number;
+  /** @minLength 1 */
+  sha256?: string;
+}
+
+export interface HarnessEnvironmentContractItemApi {
+  /** @minLength 1 */
+  text: string;
+  /** @minLength 1 */
+  short?: string;
+  origin?: HarnessEnvironmentOriginApi;
+  enforced_by?: string[];
+  sub_goal?: string;
+}
+
+export interface HarnessEnvironmentSchemaColumnApi {
+  /** @minLength 1 */
+  name: string;
+  type: string;
+  enum?: string[];
+  pk?: boolean;
+  nullable?: boolean;
+  /** @minLength 1 */
+  references?: string;
+}
+
+export type HarnessEnvironmentSchemaTableApiForeignKeysItem = {
+  [key: string]: unknown;
+};
+
+export interface HarnessEnvironmentSchemaTableApi {
+  /** @minLength 1 */
+  name: string;
+  columns: HarnessEnvironmentSchemaColumnApi[];
+  primary_key: string[];
+  foreign_keys: HarnessEnvironmentSchemaTableApiForeignKeysItem[];
+}
+
+export type HarnessEnvironmentToolCertificationApiAvailability =
+  (typeof HarnessEnvironmentToolCertificationApiAvailability)[keyof typeof HarnessEnvironmentToolCertificationApiAvailability];
+
+export const HarnessEnvironmentToolCertificationApiAvailability = {
+  certified: "certified",
+  runtime_only: "runtime_only",
+  rejected: "rejected",
+} as const;
+
+export type HarnessEnvironmentToolCertificationApiProbeMode =
+  (typeof HarnessEnvironmentToolCertificationApiProbeMode)[keyof typeof HarnessEnvironmentToolCertificationApiProbeMode];
+
+export const HarnessEnvironmentToolCertificationApiProbeMode = {
+  read_only: "read_only",
+  disposable_world: "disposable_world",
+  provider_sandbox: "provider_sandbox",
+  runtime_only: "runtime_only",
+} as const;
+
+export interface HarnessEnvironmentToolCertificationApi {
+  /** @minLength 1 */
+  tool: string;
+  availability: HarnessEnvironmentToolCertificationApiAvailability;
+  probe_mode: HarnessEnvironmentToolCertificationApiProbeMode;
+  reason: string;
+}
+
 export interface HarnessEnvironmentAmendmentApi {
   subject: string;
   /** @minLength 1 */
   note: string;
+}
+
+export type HarnessEnvironmentAmendmentDetailApiKind =
+  (typeof HarnessEnvironmentAmendmentDetailApiKind)[keyof typeof HarnessEnvironmentAmendmentDetailApiKind];
+
+export const HarnessEnvironmentAmendmentDetailApiKind = {
+  unreachable_tool: "unreachable_tool",
+  contract_change: "contract_change",
+} as const;
+
+export interface HarnessEnvironmentAmendmentDetailApi {
+  /** @minLength 1 */
+  subject: string;
+  kind: HarnessEnvironmentAmendmentDetailApiKind;
+  /** @minLength 1 */
+  reason: string;
+}
+
+export interface HarnessEnvironmentActorApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  role: string;
+  origin: HarnessEnvironmentOriginApi;
 }
 
 export type HarnessEnvironmentCatalogueSubGoalApiKind =
@@ -17241,11 +17335,17 @@ export const HarnessEnvironmentEndConditionsApiClock = {
   stepped: "stepped",
 } as const;
 
+export interface HarnessEnvironmentSeedApi {
+  value: number;
+  controls: string[];
+}
+
 export interface HarnessEnvironmentEndConditionsApi {
   max_turns: number;
   max_duration_seconds: number;
   clock: HarnessEnvironmentEndConditionsApiClock;
   ended_reasons: string[];
+  seed?: HarnessEnvironmentSeedApi;
 }
 
 export type HarnessEnvironmentProvenanceApiBuiltBy =
@@ -17274,6 +17374,8 @@ export interface HarnessEnvironmentProvenanceApi {
   authored_at: HarnessEnvironmentProvenanceApiAuthoredAt;
 }
 
+export type HarnessEnvironmentContractApiDomain = { [key: string]: unknown };
+
 export type HarnessEnvironmentContractApiToolsItem = { [key: string]: unknown };
 
 export type HarnessEnvironmentContractApiRuntime = { [key: string]: unknown };
@@ -17290,25 +17392,51 @@ export type HarnessEnvironmentContractApiToolEntrypointsItem = {
   [key: string]: unknown;
 };
 
+/**
+ * ALK datastore facts. configured_by remains a string; optional location and configuration {source, ref, section} carry observed configuration evidence.
+ */
 export type HarnessEnvironmentContractApiDataStore = { [key: string]: unknown };
+
+export type HarnessEnvironmentContractApiDataSchema = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractApiDataSchemaColumns = {
+  [key: string]: HarnessEnvironmentSchemaColumnApi[];
+};
 
 export interface HarnessEnvironmentContractApi {
   agent?: string;
   one_liner?: string;
   modality?: string;
   call_direction?: string;
+  domain?: HarnessEnvironmentContractApiDomain;
+  system_prompt?: string;
+  system_prompt_origin?: HarnessEnvironmentOriginApi;
   system_prompt_excerpt?: string;
+  /** ALK tool specifications, including origin, legacy effect text, optional effect_kind (read, write, external, control), and effect_evidence {origin, excerpt}. */
   tools?: HarnessEnvironmentContractApiToolsItem[];
   real_use_cases?: string[];
+  real_use_case_details?: HarnessEnvironmentContractItemApi[];
   hard_constraints?: string[];
+  hard_constraint_details?: HarnessEnvironmentContractItemApi[];
   runtime?: HarnessEnvironmentContractApiRuntime;
   dependencies?: HarnessEnvironmentContractApiDependenciesItem[];
+  /** Runtime dependencies with used_by containing only consumers identified by ALK. */
   runtime_dependencies?: HarnessEnvironmentContractApiRuntimeDependenciesItem[];
   implementation?: string;
+  /** Implementation seams with source code where available, implementation_origin, and provider_function {url, parameters} for provider functions. Parameters retain the provider JSON Schema after secret redaction. */
   tool_entrypoints?: HarnessEnvironmentContractApiToolEntrypointsItem[];
+  /** ALK datastore facts. configured_by remains a string; optional location and configuration {source, ref, section} carry observed configuration evidence. */
   data_store?: HarnessEnvironmentContractApiDataStore;
+  data_schema?: HarnessEnvironmentContractApiDataSchema;
+  data_schema_columns?: HarnessEnvironmentContractApiDataSchemaColumns;
+  data_schema_tables?: HarnessEnvironmentSchemaTableApi[];
+  tool_certification?: HarnessEnvironmentToolCertificationApi[];
   open_questions?: string[];
   amendments: HarnessEnvironmentAmendmentApi[];
+  amendment_details?: HarnessEnvironmentAmendmentDetailApi[];
+  actors?: HarnessEnvironmentActorApi[];
   sub_goals: HarnessEnvironmentCatalogueSubGoalApi[];
   end_conditions: HarnessEnvironmentEndConditionsApi;
   notes?: string;
@@ -17325,6 +17453,8 @@ export interface HarnessEnvironmentStoreTableApi {
   /** @minLength 1 */
   name: string;
   rows: number;
+  internal?: boolean;
+  columns?: HarnessEnvironmentSchemaColumnApi[];
 }
 
 export interface HarnessEnvironmentStoreApi {
@@ -17511,6 +17641,251 @@ export interface HarnessEnvironmentDetailApi {
   scenarios: HarnessEnvironmentScenarioApi[];
   evaluations: HarnessEnvironmentEvaluationsApi;
   settings: HarnessEnvironmentSettingsApi;
+}
+
+export type HarnessEnvironmentDetailV2ApiContractVersion =
+  (typeof HarnessEnvironmentDetailV2ApiContractVersion)[keyof typeof HarnessEnvironmentDetailV2ApiContractVersion];
+
+export const HarnessEnvironmentDetailV2ApiContractVersion = {
+  NUMBER_2: 2,
+} as const;
+
+export type HarnessEnvironmentToolV2ApiEffect =
+  (typeof HarnessEnvironmentToolV2ApiEffect)[keyof typeof HarnessEnvironmentToolV2ApiEffect];
+
+export const HarnessEnvironmentToolV2ApiEffect = {
+  read: "read",
+  write: "write",
+  external: "external",
+  control: "control",
+} as const;
+
+export type HarnessEnvironmentToolV2ApiEffectKind =
+  (typeof HarnessEnvironmentToolV2ApiEffectKind)[keyof typeof HarnessEnvironmentToolV2ApiEffectKind];
+
+export const HarnessEnvironmentToolV2ApiEffectKind = {
+  read: "read",
+  write: "write",
+  external: "external",
+  control: "control",
+} as const;
+
+export interface HarnessEnvironmentEffectEvidenceApi {
+  origin: HarnessEnvironmentOriginApi;
+  /** @minLength 1 */
+  excerpt: string;
+}
+
+export type HarnessEnvironmentToolV2ApiArgTypes = { [key: string]: string };
+
+export type HarnessEnvironmentToolV2ApiArgValues = { [key: string]: unknown };
+
+export interface HarnessEnvironmentToolV2Api {
+  /** @minLength 1 */
+  name: string;
+  args?: string[];
+  arg_types?: HarnessEnvironmentToolV2ApiArgTypes;
+  arg_values?: HarnessEnvironmentToolV2ApiArgValues;
+  description?: string;
+  origin?: HarnessEnvironmentOriginApi;
+  effect: HarnessEnvironmentToolV2ApiEffect;
+  effect_legacy: string;
+  effect_kind?: HarnessEnvironmentToolV2ApiEffectKind;
+  effect_evidence?: HarnessEnvironmentEffectEvidenceApi;
+  requires?: string[];
+}
+
+export type HarnessEnvironmentToolEntrypointV2ApiOrigin =
+  (typeof HarnessEnvironmentToolEntrypointV2ApiOrigin)[keyof typeof HarnessEnvironmentToolEntrypointV2ApiOrigin];
+
+export const HarnessEnvironmentToolEntrypointV2ApiOrigin = {
+  provider_builtin: "provider_builtin",
+  provider_custom_function: "provider_custom_function",
+  source: "source",
+} as const;
+
+export type HarnessEnvironmentToolEntrypointV2ApiImplementationOrigin =
+  (typeof HarnessEnvironmentToolEntrypointV2ApiImplementationOrigin)[keyof typeof HarnessEnvironmentToolEntrypointV2ApiImplementationOrigin];
+
+export const HarnessEnvironmentToolEntrypointV2ApiImplementationOrigin = {
+  provider_builtin: "provider_builtin",
+  provider_custom_function: "provider_custom_function",
+  source: "source",
+} as const;
+
+export interface HarnessEnvironmentToolSourceApi {
+  /** @minLength 1 */
+  path: string;
+  /** @minimum 1 */
+  line_start: number;
+  /** @minimum 1 */
+  line_end: number;
+  /** @minLength 1 */
+  code: string;
+}
+
+export type HarnessEnvironmentProviderFunctionApiParameters = {
+  [key: string]: unknown;
+};
+
+export interface HarnessEnvironmentProviderFunctionApi {
+  /** @minLength 1 */
+  url?: string;
+  parameters?: HarnessEnvironmentProviderFunctionApiParameters;
+}
+
+export interface HarnessEnvironmentToolEntrypointV2Api {
+  /** @minLength 1 */
+  tool: string;
+  mode?: string;
+  module?: string;
+  callable?: string;
+  factory?: string;
+  first_arg?: string;
+  service?: string;
+  endpoint?: string;
+  method?: string;
+  notes?: string;
+  origin: HarnessEnvironmentToolEntrypointV2ApiOrigin;
+  origin_evidence: HarnessEnvironmentOriginApi;
+  implementation_origin?: HarnessEnvironmentToolEntrypointV2ApiImplementationOrigin;
+  source?: HarnessEnvironmentToolSourceApi;
+  provider_function?: HarnessEnvironmentProviderFunctionApi;
+}
+
+export type HarnessEnvironmentStoreConfigurationApiSource =
+  (typeof HarnessEnvironmentStoreConfigurationApiSource)[keyof typeof HarnessEnvironmentStoreConfigurationApiSource];
+
+export const HarnessEnvironmentStoreConfigurationApiSource = {
+  environment: "environment",
+  file: "file",
+  provider_field: "provider_field",
+  system_prompt: "system_prompt",
+} as const;
+
+export interface HarnessEnvironmentStoreConfigurationApi {
+  source: HarnessEnvironmentStoreConfigurationApiSource;
+  /** @minLength 1 */
+  ref: string;
+  /** @minLength 1 */
+  section?: string;
+}
+
+export type HarnessEnvironmentDataStoreV2ApiLocation =
+  (typeof HarnessEnvironmentDataStoreV2ApiLocation)[keyof typeof HarnessEnvironmentDataStoreV2ApiLocation];
+
+export const HarnessEnvironmentDataStoreV2ApiLocation = {
+  external_db: "external_db",
+  in_process: "in_process",
+  prompt_embedded: "prompt_embedded",
+  provider_kb: "provider_kb",
+  none: "none",
+} as const;
+
+export interface HarnessEnvironmentDataStoreV2Api {
+  kind?: string;
+  version?: string;
+  configured_by: HarnessEnvironmentStoreConfigurationApi;
+  configured_by_legacy: string;
+  configuration?: HarnessEnvironmentStoreConfigurationApi;
+  location?: HarnessEnvironmentDataStoreV2ApiLocation;
+  config_key?: string;
+  host?: string;
+  port?: number;
+  database?: string;
+  user?: string;
+  password_from?: string;
+  schema_from?: string;
+  loaded_by?: string;
+  loader_module?: string;
+}
+
+export type HarnessEnvironmentAmendmentV2ApiKind =
+  (typeof HarnessEnvironmentAmendmentV2ApiKind)[keyof typeof HarnessEnvironmentAmendmentV2ApiKind];
+
+export const HarnessEnvironmentAmendmentV2ApiKind = {
+  unreachable_tool: "unreachable_tool",
+  contract_change: "contract_change",
+} as const;
+
+export interface HarnessEnvironmentAmendmentV2Api {
+  subject: string;
+  kind: HarnessEnvironmentAmendmentV2ApiKind;
+  /** @minLength 1 */
+  reason: string;
+}
+
+export type HarnessEnvironmentContractV2ApiDomain = { [key: string]: unknown };
+
+export type HarnessEnvironmentContractV2ApiRuntime = { [key: string]: unknown };
+
+export type HarnessEnvironmentContractV2ApiDependenciesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractV2ApiRuntimeDependenciesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractV2ApiDataSchema = {
+  [key: string]: HarnessEnvironmentSchemaColumnApi[];
+};
+
+export type HarnessEnvironmentContractV2ApiDataSchemaColumns = {
+  [key: string]: HarnessEnvironmentSchemaColumnApi[];
+};
+
+export type HarnessEnvironmentContractV2ApiDataSchemaLegacy = {
+  [key: string]: unknown;
+};
+
+export interface HarnessEnvironmentContractV2Api {
+  agent?: string;
+  one_liner?: string;
+  modality?: string;
+  call_direction?: string;
+  domain?: HarnessEnvironmentContractV2ApiDomain;
+  system_prompt?: string;
+  system_prompt_origin?: HarnessEnvironmentOriginApi;
+  system_prompt_excerpt?: string;
+  tools: HarnessEnvironmentToolV2Api[];
+  real_use_cases: HarnessEnvironmentContractItemApi[];
+  real_use_case_details?: HarnessEnvironmentContractItemApi[];
+  hard_constraints: HarnessEnvironmentContractItemApi[];
+  hard_constraint_details?: HarnessEnvironmentContractItemApi[];
+  runtime?: HarnessEnvironmentContractV2ApiRuntime;
+  dependencies?: HarnessEnvironmentContractV2ApiDependenciesItem[];
+  /** Runtime dependencies with used_by containing only consumers identified by ALK. */
+  runtime_dependencies?: HarnessEnvironmentContractV2ApiRuntimeDependenciesItem[];
+  implementation?: string;
+  tool_entrypoints: HarnessEnvironmentToolEntrypointV2Api[];
+  data_store: HarnessEnvironmentDataStoreV2Api;
+  data_schema: HarnessEnvironmentContractV2ApiDataSchema;
+  data_schema_columns?: HarnessEnvironmentContractV2ApiDataSchemaColumns;
+  data_schema_tables?: HarnessEnvironmentSchemaTableApi[];
+  tool_certification?: HarnessEnvironmentToolCertificationApi[];
+  open_questions?: string[];
+  amendments: HarnessEnvironmentAmendmentV2Api[];
+  amendment_details?: HarnessEnvironmentAmendmentDetailApi[];
+  actors?: HarnessEnvironmentActorApi[];
+  sub_goals: HarnessEnvironmentCatalogueSubGoalApi[];
+  end_conditions: HarnessEnvironmentEndConditionsApi;
+  notes?: string;
+  chosen_evals?: string[];
+  provenance: HarnessEnvironmentProvenanceApi;
+  data_schema_legacy: HarnessEnvironmentContractV2ApiDataSchemaLegacy;
+  amendments_legacy: HarnessEnvironmentAmendmentApi[];
+}
+
+export interface HarnessEnvironmentDetailV2Api {
+  id: string;
+  overview: HarnessEnvironmentOverviewApi;
+  contract: HarnessEnvironmentContractV2Api;
+  world: HarnessEnvironmentWorldApi;
+  scenarios: HarnessEnvironmentScenarioApi[];
+  evaluations: HarnessEnvironmentEvaluationsApi;
+  settings: HarnessEnvironmentSettingsApi;
+  contract_version: HarnessEnvironmentDetailV2ApiContractVersion;
 }
 
 export interface HarnessEnvironmentRenameApi {
@@ -34705,6 +35080,21 @@ export type SimulateApiHarnessEnvironmentsListParams = {
    */
   limit?: number;
 };
+
+export type SimulateApiHarnessEnvironmentsReadParams = {
+  /**
+   * Version 1 preserves legacy field shapes. Version 2 returns rich contract fields, described by the response's x-contract-version-2 schema.
+   */
+  contract_version?: SimulateApiHarnessEnvironmentsReadContractVersion;
+};
+
+export type SimulateApiHarnessEnvironmentsReadContractVersion =
+  (typeof SimulateApiHarnessEnvironmentsReadContractVersion)[keyof typeof SimulateApiHarnessEnvironmentsReadContractVersion];
+
+export const SimulateApiHarnessEnvironmentsReadContractVersion = {
+  NUMBER_1: 1,
+  NUMBER_2: 2,
+} as const;
 
 export type SimulateApiHarnessJobsSecretFileUploadBody = {
   /** Credential file; transferred without entering job JSON. */

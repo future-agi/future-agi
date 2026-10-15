@@ -105,13 +105,11 @@ describe("Overview extras wired into OverviewPanel", () => {
     scenarios: [],
   };
 
-  it("no longer renders the source-to-sandbox map on an env with a derived world", () => {
+  it("renders the source-to-sandbox map on an env with a derived world", () => {
     render(
       <OverviewPanel env={MOCK_WORLD} envState={connected} patch={vi.fn()} onGo={vi.fn()} agentConnected />
     );
-    // The map's origin chips and sandbox targets were derived by position and
-    // keyword rather than reported by ALK, so the panel dropped it.
-    expect(screen.queryByText("How the world was built")).toBeNull();
+    expect(screen.getByText("How the world was built")).toBeInTheDocument();
   });
 
   it("renders the next-steps checklist only when there is no agent and no derived world", () => {
@@ -180,33 +178,156 @@ describe("NextStepsChecklist", () => {
 });
 
 describe("SourceToSandboxMap", () => {
-  const renderMap = (props = {}) => render(<SourceToSandboxMap env={MOCK_WORLD} {...props} />);
+  const renderMap = (env = {}, props = {}) =>
+    render(<SourceToSandboxMap env={{ ...MOCK_WORLD, ...env }} {...props} />);
 
-  it("renders the source and sandbox columns for the env", () => {
+  it("renders the source and sandbox columns with each group's count", () => {
     renderMap();
     expect(screen.getByText("How the world was built")).toBeInTheDocument();
     expect(screen.getByText("Read from source")).toBeInTheDocument();
     expect(screen.getByText("In the sandbox world")).toBeInTheDocument();
-    // a mapped tool row and a seeded store row (issue_refund is unique to the
-    // tools group; verify_identity also stands in as the external-service actor)
-    expect(screen.getByText("issue_refund")).toBeInTheDocument();
-    expect(screen.getByText("customers · 240")).toBeInTheDocument();
+    expect(screen.getByText(`${MOCK_WORLD.tools.length} mapped`)).toBeInTheDocument();
+    expect(screen.getByText("customers")).toBeInTheDocument();
+    expect(screen.getByText("240 rows seeded")).toBeInTheDocument();
   });
 
-  it("is a read-only ledger — no resolve homework (that moved to the Contract tab)", () => {
+  it("states a tool's sandbox target only from the effect ALK reported", () => {
+    renderMap({
+      tools: [
+        { name: "lookup_order", effectKind: "read", origin: { kind: "tool_list", field: "lookup_order" } },
+        { name: "issue_refund" },
+      ],
+    });
+    expect(screen.getByText("reads from the sandbox")).toBeInTheDocument();
+    expect(screen.getByText("effect not reported")).toBeInTheDocument();
+    expect(screen.getByText("TOOL LIST")).toBeInTheDocument();
+    expect(screen.queryByText("writes to the sandbox")).toBeNull();
+  });
+
+  it("says what enforces a rule and which sub-goal checks it", () => {
+    renderMap({
+      rules: ["Verify identity", "Be polite"],
+      ruleDetails: [
+        {
+          text: "Verify identity",
+          enforced_by: ["prompt"],
+          sub_goal: "identity_checked",
+          origin: { kind: "system_prompt", field: "general_prompt" },
+        },
+        { text: "Be polite" },
+      ],
+    });
+    expect(screen.getByText("enforced by prompt · checked by identity_checked")).toBeInTheDocument();
+    expect(screen.getByText("enforcement not reported")).toBeInTheDocument();
+    expect(screen.getByText("SYSTEM PROMPT")).toBeInTheDocument();
+  });
+
+  it("names a rule by its short label and shows the full rule under it", () => {
+    const text =
+      "Use simple, everyday words. Avoid fan slang and technical terms. If you must use a One Piece word, explain it in a few plain words.";
+    renderMap({
+      rules: [text, "Be polite"],
+      ruleDetails: [{ text, short: "simple_words_explain_terms", enforced_by: ["prompt"] }],
+    });
+
+    expect(screen.getByText("simple_words_explain_terms")).toBeInTheDocument();
+    const fullRule = screen.getByText(text);
+    expect(fullRule).toBeInTheDocument();
+    expect(getComputedStyle(fullRule).whiteSpace).not.toBe("nowrap");
+    const unlabelled = screen.getByText("Be polite");
+    expect(getComputedStyle(unlabelled).whiteSpace).not.toBe("nowrap");
+  });
+
+  it("lists the backed stores' tables, or says none were seeded", () => {
+    const { unmount } = renderMap({}, { stores: [{ capability: "orders", tables: [{ name: "orders", rows: 8 }] }] });
+    expect(screen.getByText("orders")).toBeInTheDocument();
+    expect(screen.getByText("8 rows seeded")).toBeInTheDocument();
+    unmount();
+
+    renderMap({}, { stores: [] });
+    expect(screen.getByText("No stores seeded for this environment.")).toBeInTheDocument();
+  });
+
+  it("hides ALK's internal tables from the stores group", () => {
+    renderMap(
+      {},
+      {
+        stores: [
+          {
+            capability: "world_db",
+            tables: [
+              { name: "_alk_tool_trace", rows: 0, internal: true },
+              { name: "harness_seed_sentinel", rows: 1, internal: true },
+              { name: "bookings", rows: 12 },
+            ],
+          },
+        ],
+      },
+    );
+    expect(screen.getByText("bookings")).toBeInTheDocument();
+    expect(screen.queryByText("_alk_tool_trace")).toBeNull();
+    expect(screen.queryByText("harness_seed_sentinel")).toBeNull();
+  });
+
+  it("hides ALK's internal tables and lists starting-data collections as stores", () => {
+    renderMap(
+      { baseEnvironment: { patients: [{ id: "p1" }, { id: "p2" }], notes: "free text" } },
+      {
+        stores: [
+          {
+            capability: "world_db",
+            tables: [
+              { name: "_alk_tool_trace", rows: 0, internal: true },
+              { name: "harness_seed_sentinel", rows: 1, internal: true },
+              { name: "bookings", rows: 12 },
+            ],
+          },
+        ],
+      },
+    );
+    expect(screen.getByText("bookings")).toBeInTheDocument();
+    expect(screen.getByText("patients")).toBeInTheDocument();
+    expect(screen.getByText("2 rows in starting data")).toBeInTheDocument();
+    expect(screen.queryByText("notes")).toBeNull();
+    expect(screen.queryByText("_alk_tool_trace")).toBeNull();
+    expect(screen.queryByText("harness_seed_sentinel")).toBeNull();
+  });
+
+  it("shows the actors group only when the contract names actors", () => {
+    const { unmount } = renderMap();
+    expect(screen.queryByText("Actors")).toBeNull();
+    unmount();
+
+    renderMap({ actors: [{ name: "supervisor", role: "approves refunds over $200" }] });
+    expect(screen.getByText("Actors")).toBeInTheDocument();
+    expect(screen.getByText("supervisor")).toBeInTheDocument();
+    expect(screen.getByText("approves refunds over $200")).toBeInTheDocument();
+  });
+
+  it("shows a full tool name in a tooltip only when the row cuts it off", async () => {
+    const user = userEvent.setup();
+    const tool = "lookup_prescription_history_for_verified_caller";
+    const widths = (scroll, client) => {
+      vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(scroll);
+      vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(client);
+    };
+
+    widths(100, 100);
+    const { unmount } = renderMap({ tools: [{ name: tool }], rules: [] });
+    await user.hover(screen.getByText(tool));
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    unmount();
+
+    widths(500, 100);
+    renderMap({ tools: [{ name: tool }], rules: [] });
+    await user.hover(screen.getByText(tool));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(tool);
+    vi.restoreAllMocks();
+  });
+
+  it("is a read-only ledger with no resolve prompt or confirmed mark", () => {
     renderMap();
-    // Every tool row states a sandbox target rather than holding one open with a
-    // "Needs your answer" prompt; the read/write override lives on Contract now.
     expect(screen.queryByText("Needs your answer")).toBeNull();
-    expect(screen.queryByRole("button", { name: /confirm read-only/i })).toBeNull();
-  });
-
-  it("reflects a tool-effect override set on the Contract tab (you-confirmed + overridden target)", () => {
-    // issue_refund heuristically classifies as a write ("writes to the sandbox").
-    // A human override to read-only on Contract stores the singular "read"; the
-    // map normalizes it and shows the overridden target + a "you confirmed" mark.
-    renderMap({ envState: { toolResolutions: { issue_refund: "read" } } });
-    expect(screen.getByText("you confirmed")).toBeInTheDocument();
-    expect(screen.getAllByText("reads from fixture state").length).toBeGreaterThan(0);
+    expect(screen.queryByText("you confirmed")).toBeNull();
   });
 });

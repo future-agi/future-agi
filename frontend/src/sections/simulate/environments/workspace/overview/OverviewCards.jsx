@@ -6,6 +6,7 @@ import CustomTooltip from "src/components/tooltip";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import SectionCard from "../../components/SectionCard";
 import MockBadge from "../../components/MockBadge";
+import OriginChip from "../../components/OriginChip";
 import { ENV_SHAPE, OVERVIEW_COPY, ruleRowsFor } from "./overview.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
@@ -62,8 +63,7 @@ export function ToolsCard({ env, agentConnected }) {
 }
 ToolsCard.propTypes = { env: ENV_SHAPE.isRequired, agentConnected: PropTypes.bool };
 
-// The hard rules told to the agent and graded afterwards. ALK reports the rule
-// text only; where each rule was read from is not sent yet, so no origin is shown.
+// The hard rules told to the agent and graded afterwards.
 export function HardRulesCard({ env }) {
   const rules = ruleRowsFor(env);
   return (
@@ -83,6 +83,13 @@ export function HardRulesCard({ env }) {
           <Stack key={r.id} direction="row" spacing={1.25} alignItems="flex-start">
             <Iconify icon="solar:shield-check-linear" width={15} sx={{ color: "primary.main", flexShrink: 0, mt: "1px" }} />
             <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>{r.subject}</Typography>
+            {r.origin && (
+              <OriginChip
+                origin={r.origin.kind}
+                file={r.origin.path || r.origin.field}
+                line={r.origin.line}
+              />
+            )}
           </Stack>
         ))}
       </Stack>
@@ -92,21 +99,34 @@ export function HardRulesCard({ env }) {
 HardRulesCard.propTypes = { env: ENV_SHAPE.isRequired };
 
 // What the environment is actually for.
-export function UseCasesCard({ useCases }) {
+export function UseCasesCard({ useCases, details }) {
   return (
     <SectionCard title={OVERVIEW_COPY.useCasesTitle} subtitle={OVERVIEW_COPY.useCasesSubtitle}>
       <Stack sx={{ p: 2.5 }} spacing={1}>
-        {(useCases || []).map((u) => (
+        {(useCases || []).map((u) => {
+          const origin = (details || []).find((detail) => detail.text === u)?.origin;
+          return (
           <Stack key={u} direction="row" spacing={1.25} alignItems="flex-start">
             <Box sx={{ width: 4, height: 4, borderRadius: "50%", bgcolor: "text.subtitle", flexShrink: 0, mt: "7px" }} />
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>{u}</Typography>
+            <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1 }}>{u}</Typography>
+            {origin && (
+              <OriginChip
+                origin={origin.kind}
+                file={origin.path || origin.field}
+                line={origin.line}
+              />
+            )}
           </Stack>
-        ))}
+          );
+        })}
       </Stack>
     </SectionCard>
   );
 }
-UseCasesCard.propTypes = { useCases: PropTypes.arrayOf(PropTypes.string) };
+UseCasesCard.propTypes = {
+  useCases: PropTypes.arrayOf(PropTypes.string),
+  details: PropTypes.arrayOf(PropTypes.object),
+};
 
 // Facts changed after reading the source, each with its stated reason.
 export function AmendmentsCard({ amendments }) {
