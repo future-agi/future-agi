@@ -1266,6 +1266,13 @@ default_next_url = f"{APP_BASE_URL}/dashboard/develop"
 get_started_url = f"{APP_BASE_URL}/dashboard/get-started"
 default_error_next_url = f"{APP_BASE_URL}/auth/jwt/login?denied=true"
 get_entity_id = f"{_ssl}{APP_URL}"
+SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID", "")
+SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET", "")
+SLACK_OAUTH_AUTHORIZE_URL = os.getenv("SLACK_OAUTH_AUTHORIZE_URL", "")
+SLACK_API_URL = os.getenv("SLACK_API_URL", "")
+SLACK_REDIRECT_URI = os.getenv(
+    "SLACK_REDIRECT_URI", f"{BASE_URL.rstrip('/')}/integrations/slack/callback/"
+)
 
 get_name_id_format = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
 AUTH0_DOMAIN = "accounts.google.com/o/oauth2"

@@ -17317,6 +17317,48 @@
             },
             "parameters": []
         },
+        "/integrations/connections/{connection_id}/slack/channels/": {
+            "get": {
+                "operationId": "integrations_connections_slack_channels_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "cursor",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 512
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SlackChannelsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "integrations"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "connection_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/integrations/connections/{id}/": {
             "get": {
                 "operationId": "integrations_connections_read",
@@ -17694,6 +17736,42 @@
                     "type": "string"
                 }
             ]
+        },
+        "/integrations/slack/install/": {
+            "post": {
+                "operationId": "integrations_slack_install_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SlackInstall"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SlackInstallResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "integrations"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
         },
         "/integrations/sync-logs/": {
             "get": {
@@ -58219,6 +58297,253 @@
             },
             "parameters": []
         },
+        "/tracer/alerts/": {
+            "get": {
+                "operationId": "tracer_alerts_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "kind",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "metric",
+                            "error_feed"
+                        ]
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertListResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_alerts_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/AlertWriteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertItemResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/alerts/error_feed/{alert_id}/test/": {
+            "post": {
+                "operationId": "tracer_alerts_error_feed_test_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/AlertTestRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertTestResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "alert_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/alerts/options/": {
+            "get": {
+                "operationId": "tracer_alerts_options_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "kind",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "metric",
+                            "error_feed"
+                        ]
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertOptionsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/alerts/{kind}/{alert_id}/": {
+            "get": {
+                "operationId": "tracer_alerts_read",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertItemResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "patch": {
+                "operationId": "tracer_alerts_partial_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/AlertWriteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertItemResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "tracer_alerts_delete",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertDeletedResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "kind",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "alert_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/tracer/bulk-annotation/": {
             "post": {
                 "operationId": "tracer_bulk-annotation_create",
@@ -92751,7 +93076,8 @@
                         "mixpanel",
                         "cloud_storage",
                         "message_queue",
-                        "linear"
+                        "linear",
+                        "slack"
                     ]
                 },
                 "display_name": {
@@ -92957,7 +93283,8 @@
                         "mixpanel",
                         "cloud_storage",
                         "message_queue",
-                        "linear"
+                        "linear",
+                        "slack"
                     ]
                 },
                 "host_url": {
@@ -93077,7 +93404,8 @@
                         "mixpanel",
                         "cloud_storage",
                         "message_queue",
-                        "linear"
+                        "linear",
+                        "slack"
                     ]
                 },
                 "display_name": {
@@ -93243,7 +93571,8 @@
                         "mixpanel",
                         "cloud_storage",
                         "message_queue",
-                        "linear"
+                        "linear",
+                        "slack"
                     ]
                 },
                 "host_url": {
@@ -93363,6 +93692,72 @@
                 }
             }
         },
+        "SlackChannel": {
+            "required": [
+                "id",
+                "name",
+                "is_private",
+                "is_member"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "is_private": {
+                    "title": "Is private",
+                    "type": "boolean"
+                },
+                "is_member": {
+                    "title": "Is member",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SlackChannelsResult": {
+            "required": [
+                "channels",
+                "next_cursor"
+            ],
+            "type": "object",
+            "properties": {
+                "channels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SlackChannel"
+                    }
+                },
+                "next_cursor": {
+                    "title": "Next cursor",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "SlackChannelsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SlackChannelsResult"
+                }
+            }
+        },
         "IntegrationConnectionUpdate": {
             "type": "object",
             "properties": {
@@ -93434,6 +93829,46 @@
                 },
                 "result": {
                     "$ref": "#/definitions/IntegrationMessageResult"
+                }
+            }
+        },
+        "SlackInstall": {
+            "type": "object",
+            "properties": {
+                "connection_id": {
+                    "title": "Connection id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "SlackInstallResult": {
+            "required": [
+                "authorization_url"
+            ],
+            "type": "object",
+            "properties": {
+                "authorization_url": {
+                    "title": "Authorization url",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1
+                }
+            }
+        },
+        "SlackInstallResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SlackInstallResult"
                 }
             }
         },
@@ -138075,6 +138510,585 @@
                     "title": "Instance secret",
                     "type": "string",
                     "minLength": 1
+                }
+            }
+        },
+        "AlertItem": {
+            "required": [
+                "id",
+                "kind",
+                "name",
+                "enabled"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "metric",
+                        "error_feed"
+                    ]
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "enabled": {
+                    "title": "Enabled",
+                    "type": "boolean"
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "trigger_type": {
+                    "title": "Trigger type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "severity_threshold": {
+                    "title": "Severity threshold",
+                    "type": "string",
+                    "enum": [
+                        "low",
+                        "medium",
+                        "high",
+                        "critical"
+                    ]
+                },
+                "occurrence_threshold": {
+                    "title": "Occurrence threshold",
+                    "type": "integer"
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "object"
+                },
+                "slack_connection_id": {
+                    "title": "Slack connection id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "slack_channel_id": {
+                    "title": "Slack channel id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "slack_channel_name": {
+                    "title": "Slack channel name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "cooldown_seconds": {
+                    "title": "Cooldown seconds",
+                    "type": "integer"
+                },
+                "last_triggered_at": {
+                    "title": "Last triggered at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "health": {
+                    "title": "Health",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "failure_reason": {
+                    "title": "Failure reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "project": {
+                    "title": "Project",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "organization": {
+                    "title": "Organization",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "workspace": {
+                    "title": "Workspace",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "created_by": {
+                    "title": "Created by",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "metric_type": {
+                    "title": "Metric type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "metric": {
+                    "title": "Metric",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "metric_name": {
+                    "title": "Metric name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "threshold_type": {
+                    "title": "Threshold type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "threshold_operator": {
+                    "title": "Threshold operator",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "threshold_metric_value": {
+                    "title": "Threshold metric value",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "critical_threshold_value": {
+                    "title": "Critical threshold value",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "warning_threshold_value": {
+                    "title": "Warning threshold value",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "alert_frequency": {
+                    "title": "Alert frequency",
+                    "type": "integer"
+                },
+                "auto_threshold_time_window": {
+                    "title": "Auto threshold time window",
+                    "type": "integer"
+                },
+                "last_checked_at": {
+                    "title": "Last checked at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "slack_webhook_url": {
+                    "title": "Slack webhook url",
+                    "type": "string",
+                    "format": "uri",
+                    "x-nullable": true
+                },
+                "slack_notes": {
+                    "title": "Slack notes",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "is_mute": {
+                    "title": "Is mute",
+                    "type": "boolean"
+                },
+                "deleted": {
+                    "title": "Deleted",
+                    "type": "boolean"
+                },
+                "deleted_at": {
+                    "title": "Deleted at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "logs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "x-nullable": true
+                },
+                "notification_emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "email",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "AlertListResult": {
+            "required": [
+                "alerts"
+            ],
+            "type": "object",
+            "properties": {
+                "alerts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AlertItem"
+                    }
+                }
+            }
+        },
+        "AlertListResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AlertListResult"
+                }
+            }
+        },
+        "AlertWriteRequest": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "metric",
+                        "error_feed"
+                    ]
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "enabled": {
+                    "title": "Enabled",
+                    "type": "boolean"
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "trigger_type": {
+                    "title": "Trigger type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "severity_threshold": {
+                    "title": "Severity threshold",
+                    "type": "string",
+                    "enum": [
+                        "low",
+                        "medium",
+                        "high",
+                        "critical"
+                    ]
+                },
+                "occurrence_threshold": {
+                    "title": "Occurrence threshold",
+                    "type": "integer",
+                    "maximum": 1000000,
+                    "minimum": 1
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "object"
+                },
+                "slack_connection_id": {
+                    "title": "Slack connection id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "slack_channel_id": {
+                    "title": "Slack channel id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "cooldown_seconds": {
+                    "title": "Cooldown seconds",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "project": {
+                    "title": "Project",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "metric_type": {
+                    "title": "Metric type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "metric": {
+                    "title": "Metric",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "threshold_type": {
+                    "title": "Threshold type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "threshold_operator": {
+                    "title": "Threshold operator",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "threshold_metric_value": {
+                    "title": "Threshold metric value",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "critical_threshold_value": {
+                    "title": "Critical threshold value",
+                    "type": "number"
+                },
+                "warning_threshold_value": {
+                    "title": "Warning threshold value",
+                    "type": "number"
+                },
+                "alert_frequency": {
+                    "title": "Alert frequency",
+                    "type": "integer"
+                },
+                "auto_threshold_time_window": {
+                    "title": "Auto threshold time window",
+                    "type": "integer"
+                },
+                "slack_webhook_url": {
+                    "title": "Slack webhook url",
+                    "type": "string",
+                    "format": "uri",
+                    "x-nullable": true
+                },
+                "slack_notes": {
+                    "title": "Slack notes",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "is_mute": {
+                    "title": "Is mute",
+                    "type": "boolean"
+                },
+                "notification_emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "email",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "AlertItemResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AlertItem"
+                }
+            }
+        },
+        "AlertTestRequest": {
+            "type": "object",
+            "properties": {}
+        },
+        "AlertTestResult": {
+            "required": [
+                "sent",
+                "slack_ts"
+            ],
+            "type": "object",
+            "properties": {
+                "sent": {
+                    "title": "Sent",
+                    "type": "boolean"
+                },
+                "slack_ts": {
+                    "title": "Slack ts",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "AlertTestResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AlertTestResult"
+                }
+            }
+        },
+        "AlertOption": {
+            "required": [
+                "value",
+                "label"
+            ],
+            "type": "object",
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "AlertProjectOption": {
+            "required": [
+                "id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "AlertOptionsResult": {
+            "required": [
+                "triggers",
+                "severities",
+                "statuses",
+                "sources",
+                "projects"
+            ],
+            "type": "object",
+            "properties": {
+                "triggers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AlertOption"
+                    }
+                },
+                "severities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "statuses": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "sources": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "projects": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AlertProjectOption"
+                    }
+                }
+            }
+        },
+        "AlertOptionsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AlertOptionsResult"
+                }
+            }
+        },
+        "AlertDeletedResult": {
+            "required": [
+                "id",
+                "deleted"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "deleted": {
+                    "title": "Deleted",
+                    "type": "boolean"
+                }
+            }
+        },
+        "AlertDeletedResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AlertDeletedResult"
                 }
             }
         },

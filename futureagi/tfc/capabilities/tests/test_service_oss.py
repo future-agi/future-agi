@@ -66,6 +66,14 @@ class TestOSSBaseline:
         decision = service.check(feature_id)
         assert decision.allowed is True
 
+    def test_local_e2e_flag_cannot_unlock_error_feed(self, settings):
+        settings.ENV_TYPE = "local"
+        settings.E2E_ERROR_FEED_ENABLED = True
+
+        assert service.check("error_feed", org_id="org_1").allowed is False
+        assert service.check("error_feed").allowed is False
+        assert service.check("protect", org_id="org_1").allowed is False
+
 
 class TestUnknownFeature:
     def test_unknown_feature_always_denied(self):

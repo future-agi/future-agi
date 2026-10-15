@@ -5035,6 +5035,7 @@ export const IntegrationConnectionListApiPlatform = {
   cloud_storage: "cloud_storage",
   message_queue: "message_queue",
   linear: "linear",
+  slack: "slack",
 } as const;
 
 export type IntegrationConnectionListApiStatus =
@@ -5153,6 +5154,7 @@ export const IntegrationConnectionCreateApiPlatform = {
   cloud_storage: "cloud_storage",
   message_queue: "message_queue",
   linear: "linear",
+  slack: "slack",
 } as const;
 
 export type IntegrationConnectionCreateApiCredentials = {
@@ -5220,6 +5222,7 @@ export const IntegrationConnectionDetailApiPlatform = {
   cloud_storage: "cloud_storage",
   message_queue: "message_queue",
   linear: "linear",
+  slack: "slack",
 } as const;
 
 export type IntegrationConnectionDetailApiStatus =
@@ -5313,6 +5316,7 @@ export const ValidateCredentialsApiPlatform = {
   cloud_storage: "cloud_storage",
   message_queue: "message_queue",
   linear: "linear",
+  slack: "slack",
 } as const;
 
 export type ValidateCredentialsApiCredentials = { [key: string]: unknown };
@@ -5363,6 +5367,26 @@ export interface IntegrationValidationResponseApi {
   result: IntegrationValidationResultApi;
 }
 
+export interface SlackChannelApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  is_private: boolean;
+  is_member: boolean;
+}
+
+export interface SlackChannelsResultApi {
+  channels: SlackChannelApi[];
+  /** @minLength 1 */
+  next_cursor: string;
+}
+
+export interface SlackChannelsResponseApi {
+  status: boolean;
+  result: SlackChannelsResultApi;
+}
+
 export interface IntegrationConnectionUpdateApi {
   /**
    * @minLength 1
@@ -5404,6 +5428,20 @@ export interface IntegrationMessageResultApi {
 export interface IntegrationMessageResponseApi {
   status?: boolean;
   result: IntegrationMessageResultApi;
+}
+
+export interface SlackInstallApi {
+  connection_id?: string;
+}
+
+export interface SlackInstallResultApi {
+  /** @minLength 1 */
+  authorization_url: string;
+}
+
+export interface SlackInstallResponseApi {
+  status: boolean;
+  result: SlackInstallResultApi;
 }
 
 export type SyncLogApiStatus =
@@ -23327,6 +23365,205 @@ export interface DeploymentRegistrationResponseApi {
   instance_secret: string;
 }
 
+export type AlertItemApiKind =
+  (typeof AlertItemApiKind)[keyof typeof AlertItemApiKind];
+
+export const AlertItemApiKind = {
+  metric: "metric",
+  error_feed: "error_feed",
+} as const;
+
+export type AlertItemApiSeverityThreshold =
+  (typeof AlertItemApiSeverityThreshold)[keyof typeof AlertItemApiSeverityThreshold];
+
+export const AlertItemApiSeverityThreshold = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  critical: "critical",
+} as const;
+
+export type AlertItemApiFilters = { [key: string]: unknown };
+
+export type AlertItemApiLogsItem = { [key: string]: unknown };
+
+export interface AlertItemApi {
+  id: string;
+  kind: AlertItemApiKind;
+  /** @minLength 1 */
+  name: string;
+  enabled: boolean;
+  project_id?: string;
+  /** @minLength 1 */
+  trigger_type?: string;
+  severity_threshold?: AlertItemApiSeverityThreshold;
+  occurrence_threshold?: number;
+  filters?: AlertItemApiFilters;
+  slack_connection_id?: string;
+  /** @minLength 1 */
+  slack_channel_id?: string;
+  /** @minLength 1 */
+  slack_channel_name?: string;
+  cooldown_seconds?: number;
+  last_triggered_at?: string;
+  /** @minLength 1 */
+  health?: string;
+  /** @minLength 1 */
+  failure_reason?: string;
+  created_at?: string;
+  updated_at?: string;
+  project?: string;
+  organization?: string;
+  workspace?: string;
+  created_by?: string;
+  /** @minLength 1 */
+  metric_type?: string;
+  metric?: string;
+  /** @minLength 1 */
+  metric_name?: string;
+  /** @minLength 1 */
+  threshold_type?: string;
+  /** @minLength 1 */
+  threshold_operator?: string;
+  threshold_metric_value?: string;
+  critical_threshold_value?: number;
+  warning_threshold_value?: number;
+  alert_frequency?: number;
+  auto_threshold_time_window?: number;
+  last_checked_at?: string;
+  slack_webhook_url?: string;
+  slack_notes?: string;
+  is_mute?: boolean;
+  deleted?: boolean;
+  deleted_at?: string;
+  logs?: AlertItemApiLogsItem[];
+  notification_emails?: string[];
+}
+
+export interface AlertListResultApi {
+  alerts: AlertItemApi[];
+}
+
+export interface AlertListResponseApi {
+  status: boolean;
+  result: AlertListResultApi;
+}
+
+export type AlertWriteRequestApiKind =
+  (typeof AlertWriteRequestApiKind)[keyof typeof AlertWriteRequestApiKind];
+
+export const AlertWriteRequestApiKind = {
+  metric: "metric",
+  error_feed: "error_feed",
+} as const;
+
+export type AlertWriteRequestApiSeverityThreshold =
+  (typeof AlertWriteRequestApiSeverityThreshold)[keyof typeof AlertWriteRequestApiSeverityThreshold];
+
+export const AlertWriteRequestApiSeverityThreshold = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  critical: "critical",
+} as const;
+
+export type AlertWriteRequestApiFilters = { [key: string]: unknown };
+
+export interface AlertWriteRequestApi {
+  kind?: AlertWriteRequestApiKind;
+  /** @minLength 1 */
+  name?: string;
+  enabled?: boolean;
+  project_id?: string;
+  /** @minLength 1 */
+  trigger_type?: string;
+  severity_threshold?: AlertWriteRequestApiSeverityThreshold;
+  /**
+   * @minimum 1
+   * @maximum 1000000
+   */
+  occurrence_threshold?: number;
+  filters?: AlertWriteRequestApiFilters;
+  slack_connection_id?: string;
+  /** @minLength 1 */
+  slack_channel_id?: string;
+  /** @minimum 0 */
+  cooldown_seconds?: number;
+  project?: string;
+  /** @minLength 1 */
+  metric_type?: string;
+  metric?: string;
+  /** @minLength 1 */
+  threshold_type?: string;
+  /** @minLength 1 */
+  threshold_operator?: string;
+  threshold_metric_value?: string;
+  critical_threshold_value?: number;
+  warning_threshold_value?: number;
+  alert_frequency?: number;
+  auto_threshold_time_window?: number;
+  slack_webhook_url?: string;
+  slack_notes?: string;
+  is_mute?: boolean;
+  notification_emails?: string[];
+}
+
+export interface AlertItemResponseApi {
+  status: boolean;
+  result: AlertItemApi;
+}
+
+export interface AlertTestRequestApi {
+  [key: string]: unknown;
+}
+
+export interface AlertTestResultApi {
+  sent: boolean;
+  /** @minLength 1 */
+  slack_ts: string;
+}
+
+export interface AlertTestResponseApi {
+  status: boolean;
+  result: AlertTestResultApi;
+}
+
+export interface AlertOptionApi {
+  /** @minLength 1 */
+  value: string;
+  /** @minLength 1 */
+  label: string;
+}
+
+export interface AlertProjectOptionApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+export interface AlertOptionsResultApi {
+  triggers: AlertOptionApi[];
+  severities: string[];
+  statuses: string[];
+  sources: string[];
+  projects: AlertProjectOptionApi[];
+}
+
+export interface AlertOptionsResponseApi {
+  status: boolean;
+  result: AlertOptionsResultApi;
+}
+
+export interface AlertDeletedResultApi {
+  id: string;
+  deleted: boolean;
+}
+
+export interface AlertDeletedResponseApi {
+  status: boolean;
+  result: AlertDeletedResultApi;
+}
+
 export interface BulkAnnotationAnnotationRequestApi {
   annotation_label_id: string;
   value?: string;
@@ -33135,6 +33372,13 @@ export type IntegrationsConnectionsListParams = {
   page_size?: number;
 };
 
+export type IntegrationsConnectionsSlackChannelsListParams = {
+  /**
+   * @maxLength 512
+   */
+  cursor?: string;
+};
+
 export type IntegrationsSyncLogsListParams = {
   /**
    * A page number within the paginated result set.
@@ -35084,6 +35328,30 @@ export const SimulateV3TestExecutionCallsGroupBy = {
   attack: "attack",
   task: "task",
   status: "status",
+} as const;
+
+export type TracerAlertsListParams = {
+  kind?: TracerAlertsListKind;
+};
+
+export type TracerAlertsListKind =
+  (typeof TracerAlertsListKind)[keyof typeof TracerAlertsListKind];
+
+export const TracerAlertsListKind = {
+  metric: "metric",
+  error_feed: "error_feed",
+} as const;
+
+export type TracerAlertsOptionsListParams = {
+  kind?: TracerAlertsOptionsListKind;
+};
+
+export type TracerAlertsOptionsListKind =
+  (typeof TracerAlertsOptionsListKind)[keyof typeof TracerAlertsOptionsListKind];
+
+export const TracerAlertsOptionsListKind = {
+  metric: "metric",
+  error_feed: "error_feed",
 } as const;
 
 export type TracerChartsFetchGraphParams = {
