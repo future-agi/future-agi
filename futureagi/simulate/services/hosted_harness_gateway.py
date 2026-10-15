@@ -168,15 +168,27 @@ def _current_chat_workspace(job: HostedHarnessJob, checkpoint: bytes) -> bytes |
     that never finished; publishing it later would apply changes nobody confirmed. Only the
     chat's own state (its root dot files: sessions, journal, kept notes) carries over.
     """
+    from simulate.services.harness_releases import composition_of
+
     environment = job.environment or job
-    revision = str(
-        ((environment.payload or {}).get("metadata") or {}).get("authoring_revision") or ""
-    )
-    if not revision:
-        return checkpoint
-    current = _authoring_archive_for(environment)
-    if current is None:
-        return checkpoint
+    if composition_of(environment) is not None:
+        from simulate.services.harness_composition_edits import (
+            composition_revision,
+            composition_workspace_archive,
+        )
+
+        revision = composition_revision(environment)
+        current = composition_workspace_archive(environment)
+    else:
+        revision = str(
+            ((environment.payload or {}).get("metadata") or {}).get("authoring_revision")
+            or ""
+        )
+        if not revision:
+            return checkpoint
+        current = _authoring_archive_for(environment)
+        if current is None:
+            return checkpoint
     out = io.BytesIO()
     with (
         tarfile.open(fileobj=io.BytesIO(checkpoint), mode="r:gz") as chat,
@@ -3017,16 +3029,29 @@ class HostedHarnessGateway:
         if workspace_archive is not None:
             workspace_archive = _current_chat_workspace(job, workspace_archive)
         if workspace_archive is None:
-            workspace_archive = _authoring_archive_for(job.environment or job)
-            if workspace_archive is not None:
-                environment = job.environment or job
+            from simulate.services.harness_releases import composition_of
+
+            environment = job.environment or job
+            if composition_of(environment) is not None:
+                # A composition's chat edits its suite on the releases it was composed from.
+                from simulate.services.harness_composition_edits import (
+                    composition_revision,
+                    composition_workspace_archive,
+                )
+
+                workspace_archive = with_authoring_basis(
+                    composition_workspace_archive(environment),
+                    composition_revision(environment),
+                )
+            else:
+                workspace_archive = _authoring_archive_for(environment)
                 basis = str(
                     ((environment.payload or {}).get("metadata") or {}).get(
                         "authoring_revision"
                     )
                     or ""
                 )
-                if basis:
+                if workspace_archive is not None and basis:
                     workspace_archive = with_authoring_basis(workspace_archive, basis)
         control_only = workspace_archive is None
         if workspace_archive is None:

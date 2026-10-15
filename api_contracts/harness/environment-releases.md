@@ -1,7 +1,7 @@
-# Environment Releases, Suites, Agent Bindings and Run Manifests (v0.2)
+# Environment Releases, Suites, Agent Bindings and Run Manifests (v0.3)
 
-**Date:** 2026-10-12 · **Status:** DRAFT for agreement (milestone M0 of
-`prebuilt-agent-environments-implementation.md`)
+**Date:** 2026-10-15 (v0.3 adds §7.8) · **Status:** DRAFT for agreement
+(milestone M0 of `prebuilt-agent-environments-implementation.md`)
 **Producers:** environment and scenario authoring in ALK (`EnvironmentRelease`,
 `SuiteRelease`); the platform (`AgentBinding`, `RunManifest`, compositions).
 **Consumer:** the hosted guest, which assembles a run bundle from these objects.
@@ -624,11 +624,14 @@ A composition (the UI's "adapted environment") is a completed
 payload is an ordinary validated hosted job (`HarnessJobCreateSerializer`)
 whose `metadata.release_composition` holds the environment chain and suite
 (`digest`, `name`, `object_key`), the binding document and, when the binding
-came from adaptation, `alignment` and `binding_proof` (§7.5). Its `RunTest`
+came from adaptation, `alignment`, `binding_proof` and the agent's proved
+`trajectories` (§7.5, §7.8). Its `RunTest`
 and scenario rows are created from the suite's personas with the existing
 `provision_alk_sim_run_test` (modality `text` for `retell_chat`, `voice` for
-`retell` and `vapi`); the `RunTest` carries the bound agent version.
-`create_composition` (`services/harness_releases.py`) builds it for
+`retell` and `vapi`); the `RunTest` carries the bound agent version. The rows
+are indexed from the suite's `scenario.json` documents (number, name,
+instruction, persona, sub-goals), so chat and the Scenarios tab address them by
+number. `create_composition` (`services/harness_releases.py`) builds it for
 `retell_chat`, `retell` and `vapi` agents in `provider_import` mode, from a
 given binding document (adaptation) or a `canonical` one it produces.
 
@@ -713,6 +716,7 @@ answered by a `user_response` replying to it).
 | `result.json` | `{schema_version: "futureagi.adaptation-result.v1", status: "completed" or "failed", failure: {code, message} or null, environment: [{digest, name}], suite: {digest, name, derived: false}, binding: {digest, mode}, alignment}` |
 | `profile.json`, `inputs.json` | the inspected agent profile (secrets redacted) and its admission list; the release paths and scratch DSN the builder works with |
 | `binding.json`, `binding-proof.json` | the sealed binding; the proof for `tool_routed` |
+| `trajectories.json` | `tool_routed`: `{scenario_key: [{tool, arguments}]}`, the agent's own calls for every `proved` scenario, kept so a suite edit can re-prove the binding (§7.8) |
 | `state.json` | the builder's latest binding, proof and conflicts, so a reopened session carries on |
 
 `alignment` is `{mode, admission: [ToolAdmission], mapped: [{agent_tool,
@@ -728,7 +732,7 @@ is not the base suite (`adaptation_result_invalid`) and a `tool_routed` result
 (`binding_unproved`) unless `binding-proof.json` has `passed` and its binding,
 suite and environment digests equal the binding's, the base suite's and the
 binding's environment; then stores the binding (`HarnessAgentBinding`) and
-creates the composition on the base suite, records
+creates the composition on the base suite with `trajectories.json`, records
 `metadata.adaptation_result = {composition_id, suite_digest, binding_digest,
 mode}` and completes the job; for `failed`, fails the job with
 `result.failure` (or `adaptation_result_missing` when `result.json` is absent or
@@ -776,6 +780,76 @@ Under `/simulate/api/`, organization-scoped like the other harness routes.
   tools when the chain has one.
 - A trial without a receipt is `null`: outside `pass_1`, and its scenario does
   not pass all trials. Rates are unrounded, `null` when nothing is counted.
+
+### 7.8 Editing a composition's suite
+
+A composition's chat runs the environment's builder on the composition. The
+world, its tools, the policy and the binding are fixed. Only the suite changes,
+and every saved change is a child `SuiteRelease` of the composition's suite
+(§2.3), proved like any suite, with a `tool_routed` binding re-proved against
+it. The composition then runs the child; its earlier runs keep the manifests
+they froze (§7.4), and comparing across the change reports `suite` (§5).
+
+**Workspace.** With no saved chat workspace, and on every chat restart (keeping
+only the chat's own root dot files, as for authored environments), the gateway
+restores `composition_workspace_archive`
+(`services/harness_composition_edits.py`) into `/work/authoring`:
+
+| Path | Content |
+|---|---|
+| `releases/environment/<64 hex>/`, `releases/suite/` | the composition's environment chain and current suite (§6 layout) |
+| `binding.json`, `binding-proof.json` | the binding; its proof when `tool_routed` |
+| `trajectories.json` | the composition's `trajectories` (§7.5) |
+| `composition.json` | `{schema_version: "futureagi.composition-workspace.v1", composition_id, environment: [{digest, name}], suite: {digest, name}, binding: {digest, mode}}` |
+
+The chat's revision (`authoring_revision`) is the composition's suite digest.
+
+**Session.** ALK (`fi.alk.harness.composition_edit`) verifies the releases and,
+the first time, lays out a working copy at the workspace root: the world with
+the suite's policy profile applied, `contract.json` (the environment's tools in
+the agent's modality), and the suite's `scenarios/`, `sub_goals.json` and
+`simulator_prompt.md`. The builder opens on it with its scenario and suite
+tools, without `change_world`, `declare_tool`, `amend_contract`, `add_rule`,
+`drop_rule` and `fix_tool`. Scenarios are written in the environment's
+vocabulary. A `tool_routed` composition adds `write_trajectory(scenario, calls)`
+(agent tool names only): every reachable scenario added or rewritten needs the
+agent's own trajectory.
+
+**Saving.** `save_changes` (also run when a turn ends with unsaved changes):
+
+1. Compares the working copy with the composition's suite by scenario document.
+   Unchanged is `base` (the parent's folder copied byte for byte), rewritten is
+   `specialized`, new is `custom`; `derived_from` is the scenario's own key when
+   the parent has it. A missing scenario is dropped. When nothing changed
+   (including `sub_goals.json` and `simulator_prompt.md`), nothing is sealed.
+2. Seals the child (`parent` the composition's suite, same name and policy
+   profile) and proves it on a scratch PostgreSQL.
+3. For `tool_routed`, runs `prove_binding` (§2.4.3) against the child with the
+   stored trajectories of its scenarios. A scenario no mapped step reaches is
+   `unscorable` and needs none. Unless the proof passes with at least one
+   `proved` scenario, the save is refused with `binding_unproved` and each failed
+   scenario's reason (for example `no trajectory`).
+4. Writes `composition-change/`: `suite/`, `binding-proof.json` (`tool_routed`),
+   `trajectories.json` and `change.json` (`{schema_version:
+   "futureagi.composition-change.v1", parent, suite, added, changed, removed,
+   unscorable: {key: reason}}`), then checkpoints the workspace and publishes
+   it. A refused save leaves nothing behind; a published one becomes the
+   workspace's suite.
+
+**Publishing.** Checkpoint promotion for a composition
+(`promote_composition_checkpoint`) ignores an older checkpoint, refuses one
+built on another suite (`conversation_checkpoint_stale`), and records one
+without `composition-change/` as chat state only. Otherwise it checks the
+change (`composition_change_invalid` unless `change.json` and the suite name
+the current suite as parent; the §7.2 suite checks; the §7.3 binding check with
+the new proof), registers the suite for the organization (`HarnessSuiteRelease`
+with `parent` the current suite) and sets `metadata.release_composition`
+`suite`, `binding_proof`, `alignment.unscorable` and `trajectories`, and
+`authoring_revision` to the new suite digest. Scenario rows are re-indexed from
+the suite: numbers stay, dropped rows are soft-deleted, new rows take the next
+numbers and get dataset rows from the suite's `provision.json`. Publishing
+answers `{applied, revision, scenario_count, added, removed, changed}` as for
+authored environments.
 
 ## 8. Pinned later
 
