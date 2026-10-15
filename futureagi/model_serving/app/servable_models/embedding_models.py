@@ -9,6 +9,7 @@ import requests
 import structlog
 import torch
 from app.servable_models import ModelServing
+from app.servable_models.constants import trust_remote_code_enabled
 from app.utils.utils import download_audio_from_url
 from PIL import Image
 from sentence_transformers import SentenceTransformer
@@ -38,7 +39,10 @@ class TextEmbeddingModel(ModelServing):
             with TextEmbeddingModel._lock:
                 if TextEmbeddingModel._model_instance is None:
                     logger.info(f"Loading text embedding model: {model_name}")
-                    TextEmbeddingModel._model_instance = SentenceTransformer(model_name)
+                    TextEmbeddingModel._model_instance = SentenceTransformer(
+                        model_name,
+                        trust_remote_code=trust_remote_code_enabled(),
+                    )
         self.model = TextEmbeddingModel._model_instance
 
     def preprocess(self, data):
@@ -73,7 +77,8 @@ class ImageEmbeddingModel(ModelServing):
                 if ImageEmbeddingModel._model_instance is None:
                     logger.info("Loading image embedding model: clip-ViT-B-32")
                     ImageEmbeddingModel._model_instance = SentenceTransformer(
-                        "clip-ViT-B-32"
+                        "clip-ViT-B-32",
+                        trust_remote_code=trust_remote_code_enabled(),
                     )
         self.model = ImageEmbeddingModel._model_instance
 
@@ -136,10 +141,12 @@ class AudioEmbeddingModel(ModelServing):
 
                     AudioEmbeddingModel._model_instance = {
                         "model": Wav2Vec2Model.from_pretrained(
-                            "facebook/wav2vec2-base"
+                            "facebook/wav2vec2-base",
+                            trust_remote_code=trust_remote_code_enabled(),
                         ),
                         "processor": Wav2Vec2Processor.from_pretrained(
-                            "facebook/wav2vec2-base"
+                            "facebook/wav2vec2-base",
+                            trust_remote_code=trust_remote_code_enabled(),
                         ),
                     }
         self.model = AudioEmbeddingModel._model_instance["model"]
@@ -212,10 +219,14 @@ class ImageTextEmbeddingModel(ModelServing):
                         "Loading image-text embedding model: clip-vit-base-patch32"
                     )
                     ImageTextEmbeddingModel._model_instance = CLIPModel.from_pretrained(
-                        "openai/clip-vit-base-patch32"
+                        "openai/clip-vit-base-patch32",
+                        trust_remote_code=trust_remote_code_enabled(),
                     )
                     ImageTextEmbeddingModel._processor_instance = (
-                        AutoProcessor.from_pretrained("openai/clip-vit-base-patch32")
+                        AutoProcessor.from_pretrained(
+                            "openai/clip-vit-base-patch32",
+                            trust_remote_code=trust_remote_code_enabled(),
+                        )
                     )
         self.model = ImageTextEmbeddingModel._model_instance
         self.processor = ImageTextEmbeddingModel._processor_instance
@@ -288,7 +299,8 @@ class SynDataEmbeddingModel(ModelServing):
                         "Loading synthetic data embedding model: all-MiniLM-L6-v2"
                     )
                     SynDataEmbeddingModel._model_instance = SentenceTransformer(
-                        "all-MiniLM-L6-v2"
+                        "all-MiniLM-L6-v2",
+                        trust_remote_code=trust_remote_code_enabled(),
                     )
         self.model = SynDataEmbeddingModel._model_instance
 

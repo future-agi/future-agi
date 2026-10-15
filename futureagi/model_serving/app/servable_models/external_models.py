@@ -2,6 +2,7 @@ from typing import Any
 
 import openai
 import structlog
+from app.servable_models.constants import trust_remote_code_enabled
 from sentence_transformers import SentenceTransformer
 
 from .base import ModelServing
@@ -59,7 +60,10 @@ class HuggingFaceEmbeddingModel(ModelServing):
         super().__init__()  # type: ignore[safe-super]
         self.model_name = model
         try:
-            self.model = SentenceTransformer(self.model_name, trust_remote_code=True)
+            self.model = SentenceTransformer(
+                self.model_name,
+                trust_remote_code=trust_remote_code_enabled(),
+            )
             logger.info(f"Loaded HuggingFace model: {self.model_name}")
         except Exception as e:
             logger.error(f"Failed to load HuggingFace model {self.model_name}: {e}")

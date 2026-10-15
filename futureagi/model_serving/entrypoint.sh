@@ -2,6 +2,7 @@
 # entrypoint.sh
 
 GUNICORN_TIMEOUT="${GUNICORN_TIMEOUT:-300}"
+export ENABLE_DOCS="${ENABLE_DOCS:-false}"
 
 echo "Starting FastAPI application with Gunicorn (timeout=${GUNICORN_TIMEOUT}s)..."
 

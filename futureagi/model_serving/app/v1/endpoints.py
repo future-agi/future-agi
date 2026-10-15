@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import os
 import traceback
 from typing import Any
@@ -10,7 +11,7 @@ from app.utils.load_model import ModelLoader
 from app.v1.models import InferModelRequest
 
 try:
-    from fastapi import APIRouter, HTTPException
+    from fastapi import APIRouter, Depends, Header, HTTPException
 except ImportError:
     # Handle case where fastapi is not available
     raise ImportError("FastAPI is required but not installed")  # noqa: B904
@@ -24,7 +25,26 @@ _AUDIO_INFER_CONCURRENCY = int(os.getenv("AUDIO_INFER_CONCURRENCY", "10"))
 _audio_infer_sem = asyncio.Semaphore(_AUDIO_INFER_CONCURRENCY)
 
 
-@router.get("/models")
+async def require_internal_service_token(
+    authorization: str | None = Header(default=None),
+) -> None:
+    expected_token = os.environ.get("INTERNAL_SERVICE_TOKEN", "").strip()
+    scheme, separator, supplied_token = (authorization or "").partition(" ")
+    if (
+        not expected_token
+        or not separator
+        or scheme.lower() != "bearer"
+        or not supplied_token
+        or len(supplied_token) != len(expected_token)
+        or not hmac.compare_digest(supplied_token, expected_token)
+    ):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+_PROTECTED = [Depends(require_internal_service_token)]
+
+
+@router.get("/models", dependencies=_PROTECTED)
 async def list_models():
     """
     List all supported models and their loading status.
@@ -47,7 +67,7 @@ async def list_models():
         ) from e
 
 
-@router.get("/models/{model_name}/status")
+@router.get("/models/{model_name}/status", dependencies=_PROTECTED)
 async def get_model_status(model_name: str):
     """
     Get the status of a specific model.
@@ -76,7 +96,7 @@ async def get_model_status(model_name: str):
         raise HTTPException(status_code=500, detail="Failed to get model status") from e
 
 
-@router.post("/infer/{model_name}")
+@router.post("/infer/{model_name}", dependencies=_PROTECTED)
 async def infer(model_name: str, data: InferModelRequest) -> dict[str, Any]:
     """
     ✅ IMPROVED: Perform inference using the specified model with better validation and error handling.
@@ -187,7 +207,7 @@ async def infer(model_name: str, data: InferModelRequest) -> dict[str, Any]:
         ) from e
 
 
-@router.post("/embed")
+@router.post("/embed", dependencies=_PROTECTED)
 async def embed_text(data: InferModelRequest) -> dict[str, Any]:
     """
     ✅ IMPROVED: Convenience endpoint for text embedding using the default text model.
@@ -210,7 +230,7 @@ async def embed_text(data: InferModelRequest) -> dict[str, Any]:
         ) from e
 
 
-@router.post("/embed/image")
+@router.post("/embed/image", dependencies=_PROTECTED)
 async def embed_image(data: InferModelRequest) -> dict[str, Any]:
     """
     ✅ IMPROVED: Convenience endpoint for image embedding.
@@ -233,7 +253,7 @@ async def embed_image(data: InferModelRequest) -> dict[str, Any]:
         ) from e
 
 
-@router.post("/embed/audio")
+@router.post("/embed/audio", dependencies=_PROTECTED)
 async def embed_audio(data: InferModelRequest) -> dict[str, Any]:
     """
     ✅ IMPROVED: Convenience endpoint for audio embedding.
@@ -256,7 +276,7 @@ async def embed_audio(data: InferModelRequest) -> dict[str, Any]:
         ) from e
 
 
-@router.post("/embed/image-text")
+@router.post("/embed/image-text", dependencies=_PROTECTED)
 async def embed_image_text(data: InferModelRequest) -> dict[str, Any]:
     """
     ✅ IMPROVED: Convenience endpoint for image-text embedding.
@@ -282,7 +302,7 @@ async def embed_image_text(data: InferModelRequest) -> dict[str, Any]:
         ) from e
 
 
-@router.post("/embed/syn-data")
+@router.post("/embed/syn-data", dependencies=_PROTECTED)
 async def embed_syn_data(data: InferModelRequest) -> dict[str, Any]:
     """
     ✅ IMPROVED: Convenience endpoint for synthetic data embedding.
@@ -314,14 +334,7 @@ async def health_check():
     ✅ NEW: Health check endpoint for monitoring.
     """
     try:
-        model_status = ModelLoader.get_model_status()
-        return {
-            "status": "healthy",
-            "models": {
-                "supported": SUPPORTED_MODELS,
-                "loaded": [name for name, loaded in model_status.items() if loaded],
-            },
-        }
+        return {"status": "healthy"}
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail="Service unhealthy") from e

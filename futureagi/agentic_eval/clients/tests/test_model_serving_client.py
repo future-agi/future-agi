@@ -69,3 +69,25 @@ def test_post_passes_default_timeout():
         timeout=model_serving_client.MODEL_SERVING_TIMEOUT,
     )
     response.raise_for_status.assert_called_once()
+
+
+def test_post_sends_internal_service_token_when_configured(monkeypatch):
+    response = Mock()
+    response.json.return_value = {"ok": True}
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "test-service-token")
+
+    with patch(
+        "agentic_eval.clients.model_serving_client.requests.post",
+        return_value=response,
+    ) as mock_post:
+        client = model_serving_client.ModelServingClient(
+            "https://model-serving.example"
+        )
+        client.post("infer", json={"text": "hello"})
+
+    mock_post.assert_called_once_with(
+        "https://model-serving.example/infer",
+        json={"text": "hello"},
+        headers={"Authorization": "Bearer test-service-token"},
+        timeout=model_serving_client.MODEL_SERVING_TIMEOUT,
+    )

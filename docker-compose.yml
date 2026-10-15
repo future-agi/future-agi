@@ -101,6 +101,7 @@ services:
       # COMPOSE_PROFILES=sandbox in .env, bin/start points this default at
       # the nsjail executor (code-executor-nsjail) instead.
       CODE_EXECUTOR_URL: ${CODE_EXECUTOR_URL:-http://code-executor:8060}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
       # Never fall back to running eval code inside the API process when the
       # executor is down: that process holds every secret and /data.
       CODE_EXECUTOR_LOCAL_FALLBACK: "false"
@@ -431,17 +432,21 @@ services:
     environment:
       # No collector in this container to export traces to.
       OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
     restart: unless-stopped
 
   # --profile sandbox: nsjail-isolated code evals for installs whose users
   # must not trust one another. Needs privileged: true (Linux namespaces), so
   # not every platform allows it. Enable it with COMPOSE_PROFILES=sandbox in
   # .env: bin/start then routes code evals to code-executor-nsjail (the app's
-  # own `code-executor` name points at its built-in sandbox). nsjail allows
-  # network access, as in the distributed stack.
+  # own `code-executor` name points at its built-in sandbox). nsjail does not
+  # pass -N, so a run has no network. The service still requires
+  # INTERNAL_SERVICE_TOKEN; a localhost bind is not the auth check.
   code-executor:
     image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:-latest}
     profiles: ["sandbox"]
+    environment:
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
     privileged: true
     networks:
       default:

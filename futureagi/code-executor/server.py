@@ -29,6 +29,7 @@ Returns:
 """
 
 import ctypes
+import hmac
 import json
 import os
 import shutil
@@ -45,8 +46,6 @@ NSJAIL_PATH = shutil.which("nsjail")
 NSJAIL_AVAILABLE = NSJAIL_PATH is not None
 PYTHON_PATH = sys.executable
 NODE_PATH = shutil.which("node")
-
-CONFIG_DIR = os.path.join(os.path.dirname(__file__), "config")
 
 # Standalone's built-in sandbox (the standalone image) ships no Node.js; its
 # nsjail executor, the `sandbox` compose profile, does.
@@ -134,6 +133,54 @@ def _warn_if_egress_is_open() -> None:
 
 _warn_if_egress_is_open()
 
+
+def _node_permission_args(script_path: str) -> list[str]:
+    """Node 20+ permission model. Debian bookworm Node 18 exits on --permission."""
+    major = 0
+    if NODE_PATH:
+        probe = subprocess.run(
+            [NODE_PATH, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        raw = (probe.stdout or "").strip().lstrip("v")
+        major = int(raw.split(".", 1)[0] or 0) if raw[:1].isdigit() else 0
+    if major >= 20:
+        return ["--permission", f"--allow-fs-read={script_path}"]
+    return []
+
+
+def _nsjail_read_only_binds(interpreter_path: str, script_path: str) -> list[str]:
+    """Read-only mounts a dynamically linked interpreter can actually start with.
+
+    Network stays closed: callers must not pass -N. Debian/Ubuntu interpreters
+    need /lib and the dynamic linker, not only the interpreter prefix.
+    """
+    script_dir = os.path.dirname(script_path)
+    binds = [
+        interpreter_path,
+        os.path.dirname(os.path.dirname(interpreter_path)),
+        script_dir,
+        "/lib",
+        "/lib64",
+        "/usr",
+        "/etc/ssl",
+        "/etc/passwd",
+        "/dev/null",
+        "/dev/urandom",
+        "/dev/zero",
+    ]
+    flags = []
+    seen = set()
+    for path in binds:
+        if not path or path in seen or not os.path.exists(path):
+            continue
+        seen.add(path)
+        flags.extend(["-R", path])
+    flags.extend(["--proc_path", "/proc"])
+    return flags
+
 # Sets the limits (never above an inherited hard limit) and, unless its port
 # list is "-", allows TCP connections to those ports only and no TCP listening
 # (Landlock), then execs the run. A launcher process instead of preexec_fn,
@@ -203,9 +250,7 @@ def _execute_python_nsjail(code: str, input_data: dict, timeout: int) -> dict:
             "64",  # Max open files (needs more for network)
             "--time_limit",
             str(timeout),  # Wall clock limit
-            "-N",  # Allow network access — code can fetch URLs
-            "-R",
-            "/",  # Bind-mount root read-only (includes /sandbox/scripts)
+            *_nsjail_read_only_binds(PYTHON_PATH, script_path),
             "-T",
             "/tmp:size=16777216",  # Writable tmpfs at /tmp (16MB)
             "--",
@@ -291,6 +336,7 @@ def _run_contained(
             tempfile.TemporaryFile(dir=run_dir) as out,
             tempfile.TemporaryFile(dir=run_dir) as err,
         ):
+            run_argv = argv(script_path) if callable(argv) else argv + [script_path]
             proc = subprocess.Popen(
                 [PYTHON_PATH, "-I", "-c", _LIMITS_LAUNCHER]
                 + [str(limit) for limit in limits]
@@ -299,8 +345,7 @@ def _run_contained(
                     if LANDLOCK_TCP_RULES
                     else "-"
                 ]
-                + argv
-                + [script_path],
+                + run_argv,
                 stdin=subprocess.DEVNULL,
                 stdout=out,
                 stderr=err,
@@ -358,7 +403,11 @@ def _execute_javascript(code: str, input_data: dict, timeout: int) -> dict:
     script = _build_js_script(code, input_data)
     if not NSJAIL_AVAILABLE:
         return _run_contained(
-            [NODE_PATH, "--max-old-space-size=64"],
+            lambda script_path: [
+                NODE_PATH,
+                *_node_permission_args(script_path),
+                "--max-old-space-size=64",
+            ],
             script,
             ".js",
             timeout,
@@ -383,13 +432,12 @@ def _execute_javascript(code: str, input_data: dict, timeout: int) -> dict:
             "64",
             "--time_limit",
             str(timeout),
-            "-N",  # Allow network
-            "-R",
-            "/",
+            *_nsjail_read_only_binds(NODE_PATH, script_path),
             "-T",
             "/tmp:size=16777216",
             "--",
             NODE_PATH,
+            *_node_permission_args(script_path),
             "--max-old-space-size=64",
             script_path,
         ]
@@ -535,6 +583,21 @@ try {{
 
 class ExecuteResource:
     def on_post(self, req, resp):
+        expected_token = os.environ.get("INTERNAL_SERVICE_TOKEN", "").strip()
+        authorization = req.get_header("Authorization") or ""
+        scheme, separator, supplied_token = authorization.partition(" ")
+        if (
+            not expected_token
+            or not separator
+            or scheme.lower() != "bearer"
+            or not supplied_token
+            or len(supplied_token) != len(expected_token)
+            or not hmac.compare_digest(supplied_token, expected_token)
+        ):
+            resp.status = falcon.HTTP_401
+            resp.media = {"status": "error", "data": "Unauthorized"}
+            return
+
         try:
             body = req.bounded_stream.read()
             data = json.loads(body)
@@ -580,8 +643,8 @@ class HealthResource:
         resp.media = {
             "status": "ok",
             "nsjail": NSJAIL_AVAILABLE,
-            "python": PYTHON_PATH,
-            "node": NODE_PATH,
+            "python": bool(PYTHON_PATH),
+            "node": bool(NODE_PATH),
             # null: runs can connect to every port.
             "egress_ports": _egress_ports(),
         }

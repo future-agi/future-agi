@@ -36,6 +36,7 @@ never through postgres.pooler or a read replica.
       (dict "name" "SECRET_KEY" "secret" $appSecret "key" "SECRET_KEY")
       (dict "name" "INTEGRATION_ENCRYPTION_KEY" "secret" $appSecret "key" "INTEGRATION_ENCRYPTION_KEY")
       (dict "name" "AGENTCC_INTERNAL_API_KEY" "secret" $appSecret "key" "AGENTCC_INTERNAL_API_KEY")
+      (dict "name" "INTERNAL_SERVICE_TOKEN" "secret" $appSecret "key" "INTERNAL_SERVICE_TOKEN")
       (dict "name" "AGENTCC_ADMIN_TOKEN" "secret" $appSecret "key" "AGENTCC_ADMIN_TOKEN")
       (dict "name" "PROPERTY_CATALOG_CH_PASSWORD" "secret" $appSecret "key" "PROPERTY_CATALOG_API_PASSWORD") -}}
 {{- if .catalogWriter -}}

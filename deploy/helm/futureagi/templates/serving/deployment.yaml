@@ -72,6 +72,11 @@ spec:
               containerPort: 8080
               protocol: TCP
           env:
+            - name: INTERNAL_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "futureagi.appSecretName" . }}
+                  key: INTERNAL_SERVICE_TOKEN
             {{- range $name := keys $env | sortAlpha }}
             - name: {{ $name }}
               value: {{ get $env $name | toString | quote }}

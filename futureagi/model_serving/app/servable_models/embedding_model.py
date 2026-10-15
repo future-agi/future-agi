@@ -1,6 +1,7 @@
 from app.servable_models import ModelServing
 from app.servable_models.constants import (
     MODEL_NAME_TO_SENTENCE_TRANSFORMER_MODEL_MAPPING,
+    trust_remote_code_enabled,
 )
 from sentence_transformers import SentenceTransformer
 
@@ -20,7 +21,7 @@ class EmbeddingModel(ModelServing):
         # Ensure that only one instance of the model is created (singleton pattern)
         if EmbeddingModel._model_instance is None:
             EmbeddingModel._model_instance = SentenceTransformer(
-                model_name, trust_remote_code=True
+                model_name, trust_remote_code=trust_remote_code_enabled()
             )
         self.model = EmbeddingModel._model_instance
 

@@ -1,6 +1,10 @@
 import os
 from typing import Any
 
+
+def trust_remote_code_enabled() -> bool:
+    return os.getenv("TRUST_REMOTE_CODE", "false").lower() == "true"
+
 # ✅ IMPROVED: Model configurations with environment variable support
 MODEL_NAME_TO_SENTENCE_TRANSFORMER_MODEL_MAPPING = {
     "embedding": os.getenv("DEFAULT_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),

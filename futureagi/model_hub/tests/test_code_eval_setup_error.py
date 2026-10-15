@@ -41,6 +41,7 @@ PRIVATE_ERROR = "Sandbox error: /app/backend/secret-path"
 def executor_answers(monkeypatch, settings):
     settings.CLOUD_DEPLOYMENT = ""
     settings.CODE_EXECUTOR_LOCAL_FALLBACK = False
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "test-service-token")
     opener = mock.MagicMock()
     monkeypatch.setattr(urllib.request, "urlopen", opener)
 

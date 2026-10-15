@@ -86,6 +86,9 @@ class ModelServingClient:
             'Content-Type': 'application/json',
             'User-Agent': 'ModelServingClient/1.0'
         })
+        service_token = os.environ.get("INTERNAL_SERVICE_TOKEN", "").strip()
+        if service_token:
+            session.headers.update({"Authorization": f"Bearer {service_token}"})
 
         return session
 
@@ -95,11 +98,19 @@ class ModelServingClient:
         if not serving_available(self.base_url):
             raise ServingUnavailableError()
 
+    def _auth_headers(self) -> None:
+        service_token = os.environ.get("INTERNAL_SERVICE_TOKEN", "").strip()
+        if service_token:
+            self.session.headers["Authorization"] = f"Bearer {service_token}"
+        else:
+            self.session.headers.pop("Authorization", None)
+
     def _make_request(self, endpoint: str, data: dict[str, Any], timeout: int | None = None) -> dict[str, Any]:
         """Make a request to the serving service with built-in retry."""
         url = f"{self.base_url}/model/v1{endpoint}"
         request_timeout = timeout or self.default_timeout
         self._require_serving()
+        self._auth_headers()
 
         try:
             logger.debug(f"Making request to {url}")
@@ -186,6 +197,7 @@ class ModelServingClient:
         self._require_serving()
 
         data = {"text": texts, "input_type": "text"}
+        self._auth_headers()
         response = self.session.post(
             f"{self.base_url}/model/v1/embed", json=data, timeout=self.default_timeout
         )
@@ -288,6 +300,7 @@ class ModelServingClient:
         }
         try:
             # Session handles retries automatically via HTTPAdapter
+            self._auth_headers()
             response = self.session.post(f"{self.base_url}/model/v1/embed/syn-data", json=data, timeout=self.default_timeout)
             # Handle response status codes
             if response.status_code == 200:
@@ -429,7 +442,8 @@ class ModelServingClient:
 
         try:
             logger.info(f"Requesting embeddings from {endpoint} for model {model_name}")
-            response = self.session.post(endpoint, json=request_body,timeout=30000)
+            self._auth_headers()
+            response = self.session.post(endpoint, json=request_body, timeout=30000)
 
              # Handle response status codes
             if response.status_code == 200:

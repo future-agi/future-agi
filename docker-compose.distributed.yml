@@ -141,6 +141,7 @@ x-backend-env: &backend-env
   DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
   SERVER_EMAIL: ${SERVER_EMAIL:-}
   CODE_EXECUTOR_URL: http://code-executor:8060
+  INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
   # Code evals run only on code-executor. true lets them run in the worker when
   # code-executor cannot be reached; see INSTALLATION.md before enabling.
   CODE_EXECUTOR_LOCAL_FALLBACK: ${CODE_EXECUTOR_LOCAL_FALLBACK:-false}
@@ -581,8 +582,6 @@ services:
 
   serving:
     image: futureagi/serving:${SERVING_VERSION:-latest}
-    ports:
-      - "${SERVING_PORT:-8080}:8080"
     env_file:
       - path: .env
         required: false
@@ -594,12 +593,12 @@ services:
 
   # Requires privileged: true for nsjail namespaces — won't run on Fargate /
   # managed platforms that disallow privileged containers. It runs whatever
-  # code it is sent, without authentication, so only this host reaches it
-  # (the backend and workers use the compose network).
+  # code it is sent, so the backend and workers use the internal token on the
+  # compose network and no host port is published.
   code-executor:
     image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:-latest}
-    ports:
-      - "127.0.0.1:${CODE_EXECUTOR_PORT:-8060}:8060"
+    environment:
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-}
     privileged: true
     deploy:
       resources:

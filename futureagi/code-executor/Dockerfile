@@ -3,10 +3,10 @@
 #
 # Security layers (nsjail's defaults and the flags server.py passes per run):
 #   1. PID, mount, user, IPC, UTS and cgroup namespaces
-#   2. Read-only root (-R /) with a 16 MB tmpfs at /tmp
+#   2. Minimum read-only interpreter/script/device binds with a 16 MB tmpfs at /tmp
 #   3. rlimits: address space, CPU time, open files, and file size for Python
 #   4. A wall-clock time limit
-# There is no seccomp filter, and a run shares the container's network (-N).
+# There is no seccomp filter, and the command-line sandbox does not enable network access.
 #
 # System packages, the nsjail build and the sandbox Python libs live in
 # Dockerfile.base, published as futureagi/code-executor-base by
@@ -34,7 +34,7 @@ EXPOSE 8060
 # create the namespaces and cgroups of each jail. server.py runs nsjail with
 # command-line flags, not config/python.cfg, so evaluated code runs inside
 # the jail as uid 0 with every capability dropped, without a seccomp filter,
-# and on the container's network (-N).
+# with only the read-only binds and namespaces configured by server.py.
 # hadolint ignore=DL3002
 USER root
 STOPSIGNAL SIGTERM

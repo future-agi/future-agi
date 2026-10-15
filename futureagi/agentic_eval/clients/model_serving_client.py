@@ -8,6 +8,14 @@ from .constants import MODEL_SERVING_BASE_URL
 MODEL_SERVING_TIMEOUT = int(os.getenv("MODEL_SERVING_TIMEOUT", "120"))
 
 
+def _request_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
+    request_headers = dict(headers or {})
+    service_token = os.environ.get("INTERNAL_SERVICE_TOKEN", "").strip()
+    if service_token:
+        request_headers["Authorization"] = f"Bearer {service_token}"
+    return request_headers or None
+
+
 class ModelServingClient:
     _instance = None
 
@@ -57,7 +65,7 @@ class ModelServingClient:
             response = requests.get(
                 f"{self.base_url}/{endpoint}",
                 params=params,
-                headers=headers,
+                headers=_request_headers(headers),
                 timeout=MODEL_SERVING_TIMEOUT,
             )
             response.raise_for_status()  # Raise an exception for HTTP errors
@@ -92,7 +100,7 @@ class ModelServingClient:
             response = requests.post(
                 f"{self.base_url}/{endpoint}",
                 json=json,
-                headers=headers,
+                headers=_request_headers(headers),
                 timeout=MODEL_SERVING_TIMEOUT,
             )
             response.raise_for_status()  # Raise an exception for HTTP errors

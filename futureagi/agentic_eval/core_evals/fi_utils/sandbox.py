@@ -94,14 +94,12 @@ SAFE_MODULES = [
     # Data processing libraries (no network/filesystem/process risk)
     "PIL", "PIL.Image", "PIL.ImageStat",  # Image processing
     "numpy",    # Numerical computing
-    "pandas",   # Data analysis
     # NLP / similarity libraries (used by system code evals)
     "Levenshtein",  # Edit distance
     "nltk", "nltk.translate", "nltk.translate.bleu_score",  # BLEU score
     "rouge_score",  # ROUGE score
     "scipy", "scipy.spatial", "scipy.spatial.distance",  # Cosine/euclidean distance
     "sklearn", "sklearn.metrics",  # ML metrics
-    "jinja2",  # Template rendering
 ]
 
 # os module with dangerous functions removed
@@ -122,18 +120,6 @@ def _build_safe_os_module():
     return safe_os
 
 _SAFE_OS = _build_safe_os_module()
-
-# JS modules blocked (everything dangerous)
-JS_BLOCKED_MODULES = [
-    "fs", "child_process", "net", "http", "https", "dgram", "tls",
-    "cluster", "worker_threads", "os", "path", "vm", "v8",
-    "stream", "dns", "readline", "repl", "inspector", "perf_hooks",
-    "async_hooks", "crypto", "zlib", "url", "querystring", "module",
-    "fs/promises", "timers", "diagnostics_channel", "trace_events",
-    "wasi", "node:fs", "node:child_process", "node:net", "node:http",
-    "node:os", "node:path", "node:vm", "node:crypto",
-]
-
 
 # ---------------------------------------------------------------------------
 # Python sandbox wrapper script
@@ -499,10 +485,23 @@ def _call_executor_service(code: str, input_data: dict, language: str, timeout: 
     """Call the nsjail code-executor service via HTTP.
 
     Returns None only when the executor cannot be reached (DNS failure,
-    connection refused, no route) or none is configured (empty
-    CODE_EXECUTOR_URL). Any answer from it, including an HTTP error, a timeout
-    or an unusable body, is returned as a result.
+    connection refused, or no route). Missing service authentication is an
+    executor-unavailable result so local fallback cannot bypass the service
+    boundary.
     """
+    service_token = os.environ.get("INTERNAL_SERVICE_TOKEN", "").strip()
+    if not service_token:
+        logger.warning(
+            "code_executor_service_unavailable",
+            language=language,
+            error="INTERNAL_SERVICE_TOKEN is unset",
+        )
+        return {
+            "status": "error",
+            "data": EXECUTOR_UNAVAILABLE_MESSAGE,
+            "setup_error": True,
+        }
+
     if not CODE_EXECUTOR_URL.strip():
         # Not deployed (the Helm chart with codeExecutor.enabled=false): the
         # same as an executor that cannot be reached.
@@ -527,12 +526,21 @@ def _call_executor_service(code: str, input_data: dict, language: str, timeout: 
         req = urllib.request.Request(
             f"{CODE_EXECUTOR_URL}/execute",
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {service_token}",
+                "Content-Type": "application/json",
+            },
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=timeout + 10) as resp:
             body = resp.read(MAX_EXECUTOR_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return {
+                "status": "error",
+                "data": EXECUTOR_UNAVAILABLE_MESSAGE,
+                "setup_error": True,
+            }
         return _executor_error(language, f"HTTP {e.code}", str(e))
     except urllib.error.URLError as e:
         if _executor_unreachable(e.reason):
@@ -691,6 +699,8 @@ def execute_sandboxed_javascript(code: str, input_data: dict, timeout: int = DEF
         cmd = [
             node_path,
             "--no-warnings",
+            "--permission",
+            f"--allow-fs-read={script_path}",
             "--max-old-space-size=64",
             "--stack-size=1024",
             script_path,

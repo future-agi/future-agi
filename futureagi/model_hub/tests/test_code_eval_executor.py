@@ -64,9 +64,10 @@ def urlopen(monkeypatch):
 
 
 @pytest.fixture
-def self_hosted(settings):
+def self_hosted(settings, monkeypatch):
     settings.CLOUD_DEPLOYMENT = ""
     settings.CODE_EXECUTOR_LOCAL_FALLBACK = False
+    monkeypatch.setenv("INTERNAL_SERVICE_TOKEN", "test-service-token")
     return settings
 
 

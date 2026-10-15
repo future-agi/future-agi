@@ -182,8 +182,8 @@ app = FastAPI(
     title="Model Serving API",
     description="High-performance embedding model serving service",
     version="1.0.0",
-    docs_url="/docs" if os.getenv("ENABLE_DOCS", "true").lower() == "true" else None,
-    redoc_url="/redoc" if os.getenv("ENABLE_DOCS", "true").lower() == "true" else None,
+    docs_url="/docs" if os.getenv("ENABLE_DOCS", "false").lower() == "true" else None,
+    redoc_url="/redoc" if os.getenv("ENABLE_DOCS", "false").lower() == "true" else None,
     lifespan=lifespan,
 )
 
@@ -217,7 +217,7 @@ if _otel_initialized:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
+    allow_origins=[],
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],

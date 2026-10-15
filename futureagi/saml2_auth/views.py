@@ -14,6 +14,7 @@ from django.utils.http import urlsafe_base64_encode
 from drf_yasg import openapi
 from drf_yasg.utils import no_body, swagger_auto_schema
 from rest_framework import viewsets
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.views import APIView
@@ -27,8 +28,14 @@ from accounts.models.auth_token import (
     AuthToken,
     AuthTokenType,
 )
+from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
-from accounts.utils import first_signup, get_request_organization, is_work_email
+from accounts.utils import (
+    first_signup,
+    get_request_organization,
+    is_work_email,
+    resolve_org_role,
+)
 from analytics.utils import (
     MixpanelEvents,
     MixpanelModes,
@@ -48,6 +55,7 @@ from saml2_auth.serializers import (
     SAMLStringResponseSerializer,
     SAMLUrlResponseSerializer,
 )
+from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import get_current_organization
 
 # from user.permissions_manager import PermissionManager
@@ -481,6 +489,38 @@ class IDPUploadViews(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "head", "delete", "options", "put"]
     parser_classes = (FormParser, MultiPartParser)
 
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        organization = get_request_organization(request)
+        if organization is None:
+            raise PermissionDenied("Organization context is required.")
+
+        role = resolve_org_role(request.user, organization)
+        if role is None:
+            raise PermissionDenied("Organization membership is required.")
+
+        if request.method in {"GET", "HEAD"}:
+            has_active_membership = OrganizationMembership.no_workspace_objects.filter(
+                user=request.user,
+                organization=organization,
+                is_active=True,
+            ).exists()
+            if not has_active_membership:
+                raise PermissionDenied("Organization membership is required.")
+        elif role not in {OrganizationRoles.OWNER, OrganizationRoles.ADMIN}:
+            raise PermissionDenied(
+                "Only organization owners and admins can modify SAML settings."
+            )
+
+    def get_queryset(self):
+        organization = get_request_organization(self.request)
+        if organization is None:
+            return SAMLMetadataModel.objects.none()
+        return SAMLMetadataModel.objects.filter(
+            deleted=False,
+            organization=organization,
+        )
+
     def get_serializer_class(self):
         if self.request.method == "GET":
             return SAMLSerializer
@@ -530,9 +570,7 @@ class IDPUploadViews(viewsets.ModelViewSet):
         try:
             uuid = kwargs.get(self.lookup_url_kwarg)
             data = {}
-            existing_saml_metadata_model = SAMLMetadataModel.objects.get(
-                id=uuid, deleted=False
-            )
+            existing_saml_metadata_model = self.get_queryset().get(id=uuid)
             if existing_saml_metadata_model:
                 data["is_enabled"] = existing_saml_metadata_model.is_enabled
                 data["identity_type"] = existing_saml_metadata_model.identity_type
@@ -600,7 +638,7 @@ class IDPUploadViews(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         try:
             uuid = kwargs.get(self.lookup_url_kwarg)
-            obj = SAMLMetadataModel.objects.get(id=uuid)
+            obj = self.get_queryset().get(id=uuid)
             obj.deleted = True
             obj.deleted_at = datetime.datetime.now()
             obj.save()
@@ -625,22 +663,29 @@ class IDPUploadViews(viewsets.ModelViewSet):
         try:
             uuid = kwargs.get(self.lookup_url_kwarg)
             form = IDPUploadForm(request.POST, request.FILES)
-            saml_model = SAMLMetadataModel.objects.filter(id=uuid, deleted=False).get()
+            organization = get_request_organization(request)
+            saml_model = self.get_queryset().get(id=uuid)
             if not form.is_valid():
                 return self._gm.bad_request(_format_form_errors(form.errors))
             data = form.cleaned_data
-            data["organization"] = get_request_organization(request)
+            data.pop("relay_state", None)
+            data["organization"] = organization
+            uploaded = data.get("file")
             if int(saml_model.identity_type) != int(
                 data.get("identity_type")
-            ) and not data.get("file"):
+            ) and not uploaded:
                 return self._gm.bad_request("Please select a XML file.")
-            if "file" in data:
+            if uploaded:
                 try:
-                    meta = data.pop("file").read()
-                    data["meta"] = meta.decode()
+                    data["meta"] = uploaded.read().decode()
                 except Exception:
                     logger.info("No file in update SSO.")
-            SAMLMetadataModel.objects.filter(id=uuid).update(**data)
+            data.pop("file", None)
+            self.get_queryset().filter(
+                id=uuid,
+                deleted=False,
+                organization=organization,
+            ).update(**data)
             return self._gm.success_response("Success")
         except SAMLMetadataModel.DoesNotExist:
             return self._gm.bad_request("Invalid saml group.")
