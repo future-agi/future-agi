@@ -620,6 +620,7 @@ const FallbacksSection = () => {
             <LoadingButton
               loading={isSaving}
               variant="contained"
+              color="primary"
               size="small"
               onClick={handleSave}
               startIcon={<Iconify icon="mdi:content-save-outline" width={18} />}
@@ -1023,6 +1024,7 @@ const FallbacksSection = () => {
               <LoadingButton
                 loading={isSaving}
                 variant="contained"
+                color="primary"
                 size="small"
                 onClick={handleSave}
                 startIcon={
