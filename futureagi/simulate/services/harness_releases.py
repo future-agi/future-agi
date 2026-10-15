@@ -18,6 +18,7 @@ import io
 import json
 import os
 import tarfile
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -346,6 +347,31 @@ def _store_suite(
     )
 
 
+def archive_files(archive: bytes) -> dict[str, bytes]:
+    """Every regular file in a release archive, by its path in the release."""
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as source:
+        return {
+            member.name: source.extractfile(member).read()
+            for member in source.getmembers()
+            if member.isfile()
+        }
+
+
+def scenario_documents(
+    suite: dict[str, Any], read: Callable[[str], bytes]
+) -> list[dict[str, Any]]:
+    """A suite's scenarios as the scenario index reads them, in suite order; `read` returns a
+    file of the suite by its path in the release."""
+    return [
+        {
+            **json.loads(read(f"{entry['path']}/scenario.json")),
+            "scenario_key": entry["key"],
+            "folder": entry["path"],
+        }
+        for entry in suite["scenarios"]
+    ]
+
+
 def register_release(
     environment_dir: Path, suite_dir: Path, *, organization=None
 ) -> tuple[HarnessEnvironmentRelease, HarnessSuiteRelease]:
@@ -519,19 +545,22 @@ def create_composition(
     binding: dict[str, Any] | None = None,
     alignment: dict[str, Any] | None = None,
     binding_proof: dict[str, Any] | None = None,
+    trajectories: dict[str, Any] | None = None,
 ) -> HostedHarnessJob:
     """A completed environment that runs `agent` against `suite` and its environment.
 
     `agent` is the same connection a hosted job carries (connector, mode, config, secret refs).
     `agent_version` is the platform identity results are attributed to. `binding` is a sealed
-    document from adaptation (with its `alignment` and, when tool-routed, `binding_proof`);
-    without one the composition uses a canonical binding.
+    document from adaptation (with its `alignment` and, when tool-routed, `binding_proof` and the
+    agent's proved `trajectories`, which a suite edit re-proves the binding with: §7.8); without
+    one the composition uses a canonical binding.
     """
     from simulate.serializers.harness_job import HarnessJobCreateSerializer
     from simulate.services.alk_simulate_ingestion import (
         ALKSimulateIngestionError,
         provision_alk_sim_run_test,
     )
+    from simulate.services.harness_scenarios import index_scenarios
 
     if suite.organization_id not in (None, organization.id):
         raise _error("release_not_found", "suite release not found", 404)
@@ -595,6 +624,7 @@ def create_composition(
         "binding": binding,
         "alignment": alignment,
         "binding_proof": binding_proof,
+        "trajectories": trajectories or {},
     }
     job, created = create_hosted_job(
         organization,
@@ -639,6 +669,9 @@ def create_composition(
                 for persona, row in zip(personas, rows, strict=True)
             ]
         )
+        # The scenarios the chat and the Scenarios tab address by number (contract §7.8).
+        files = archive_files(_download(suite.object_key))
+        index_scenarios(job, scenario_documents(suite.manifest, files.__getitem__))
         now = timezone.now()
         job.run_test = run_test
         job.state = HostedHarnessJob.State.COMPLETED
@@ -1048,6 +1081,11 @@ def _adapt(job: HostedHarnessJob, output: Path) -> tuple[dict[str, Any], dict | 
         binding_proof=(
             _read(output, "binding-proof.json")
             if mode == "tool_routed" and (output / "binding-proof.json").is_file()
+            else None
+        ),
+        trajectories=(
+            _read(output, "trajectories.json")
+            if mode == "tool_routed" and (output / "trajectories.json").is_file()
             else None
         ),
     )

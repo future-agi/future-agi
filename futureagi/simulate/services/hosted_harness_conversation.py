@@ -97,6 +97,8 @@ def serialize_conversation(
             conversation.job.state not in _TERMINAL_JOB_STATES
             or conversation.latest_workspace_object_key
             or job_metadata.get("authoring_object_key")
+            # A composition's workspace is assembled from its releases (contract §7.8).
+            or job_metadata.get("release_composition")
         )
     )
     return {
@@ -404,6 +406,10 @@ def environment_authoring_revision(job: HostedHarnessJob) -> str:
     revision = str(metadata.get("authoring_revision") or "")
     if revision:
         return revision
+    composition = metadata.get("release_composition")
+    if isinstance(composition, dict):
+        # A composition's accepted files are its suite (contract §7.8).
+        return str(composition["suite"]["digest"])
     object_key = str(metadata.get("authoring_object_key") or "")
     if not object_key:
         return ""
@@ -1613,6 +1619,22 @@ def promote_conversation_checkpoint(
             "the chat checkpoint is no longer stored",
             status_code=409,
         )
+    from simulate.services.harness_releases import composition_of
+
+    if composition_of(environment) is not None:
+        from simulate.services.harness_composition_edits import (
+            promote_composition_checkpoint,
+        )
+
+        return promote_composition_checkpoint(
+            conversation,
+            environment,
+            checkpoint,
+            digest=digest,
+            sequence=sequence,
+            expected_revision=expected_revision,
+            retire_runtime=retire_runtime,
+        )
     archive = _authoring_archive(checkpoint)
     content_revision = authoring_content_digest(archive)
     checkpoint_basis = authoring_basis(checkpoint)
@@ -1818,8 +1840,13 @@ def _authoring_archive(checkpoint: bytes) -> bytes:
     return out.getvalue()
 
 
-def _bind_added_scenarios(environment: HostedHarnessJob) -> None:
-    """Give scenarios the chat added the platform identity a Run creates its calls from."""
+def _bind_added_scenarios(
+    environment: HostedHarnessJob, *, personas: dict[str, dict[str, Any]] | None = None
+) -> None:
+    """Give scenarios the chat added the platform identity a Run creates its calls from.
+
+    `personas` gives each new scenario's persona by key, exactly as its sealed suite presents it
+    (a composition's `provision.json`); otherwise it is derived from the indexed row."""
     from simulate.services.alk_simulate_ingestion import (
         ALKSimulateIngestionError,
         append_alk_sim_scenarios,
@@ -1834,7 +1861,11 @@ def _bind_added_scenarios(environment: HostedHarnessJob) -> None:
         return
     try:
         shared, created = append_alk_sim_scenarios(
-            environment.run_test, [_provision_persona(one) for one in added]
+            environment.run_test,
+            [
+                personas[one.scenario_key] if personas else _provision_persona(one)
+                for one in added
+            ],
         )
     except ALKSimulateIngestionError as exc:
         raise HostedHarnessError("scenario_provision_failed", str(exc)) from exc
