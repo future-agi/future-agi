@@ -13,6 +13,7 @@ import { AgGridReact } from "ag-grid-react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useGetNodeExecutionDetail } from "src/api/agent-playground/agent-playground";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
+import { formatMs } from "src/utils/utils";
 
 const tryParseJson = (str) => {
   if (typeof str !== "string") return null;
@@ -226,6 +227,12 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
 
   const nodeStatus = nodeDetail?.status?.toLowerCase();
   const isNodeRunning = nodeStatus === "running" || nodeStatus === "pending";
+  const elapsedSeconds = nodeDetail?.duration_seconds ?? nodeDetail?.durationSeconds;
+  const showElapsed = !isNodeRunning &&
+    nodeStatus !== "skipped" &&
+    elapsedSeconds != null &&
+    Number.isFinite(Number(elapsedSeconds)) &&
+    Number(elapsedSeconds) >= 0;
   const nodeExecutionIdentifier =
     nodeDetail?.nodeExecutionId ||
     nodeDetail?.node_execution_id ||
@@ -519,6 +526,11 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
           >
             Agent flow results
           </Typography>
+          {showElapsed && (
+            <Typography typography="s2" color="text.secondary">
+              Duration: {formatMs(Number(elapsedSeconds) * 1000)}
+            </Typography>
+          )}
         </Box>
 
         <FormControlLabel
