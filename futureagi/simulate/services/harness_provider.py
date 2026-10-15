@@ -1602,6 +1602,8 @@ class HostedHarnessProvider:
             metadata = (job.payload or {}).get("metadata") or {}
             has_archive = bool(
                 metadata.get("authoring_object_key")
+                # A composition's workspace is assembled from its releases (contract §7.8).
+                or metadata.get("release_composition")
                 or getattr(conversation, "latest_workspace_object_key", None)
             )
             files_gone = (
