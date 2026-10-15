@@ -390,16 +390,6 @@ def register_release(
         )
 
 
-def register_derived_suite(
-    suite_dir: Path, *, organization, environment: HarnessEnvironmentRelease
-) -> HarnessSuiteRelease:
-    """Store an organization-owned suite proved against an already registered environment."""
-    suite_dir = Path(suite_dir)
-    suite, personas = _checked_suite(suite_dir, environment.digest)
-    with _owned_by(organization), transaction.atomic():
-        return _store_suite(organization, suite_dir, suite, personas, environment)
-
-
 # --- bindings and compositions -------------------------------------------------------------------
 
 
@@ -1021,16 +1011,13 @@ def _adapt(job: HostedHarnessJob, output: Path) -> tuple[dict[str, Any], dict | 
             "adaptation_inputs_missing",
             "the base suite or agent version of this adaptation no longer exists",
         )
+    # Adaptation never changes the suite (§7.5): the composition runs the base suite as sealed.
     suite = base
     reported = result.get("suite") or {}
-    if reported.get("derived"):
-        suite = register_derived_suite(
-            output / "suite", organization=organization, environment=base.environment
-        )
-    if suite.digest != reported.get("digest"):
+    if reported.get("derived") or reported.get("digest") != suite.digest:
         raise _error(
             "adaptation_result_invalid",
-            "result.json names another suite than it sealed",
+            "result.json names another suite than the one adapted to",
         )
     binding = _read(output, "binding.json")
     mode = binding.get("mode")
@@ -1071,9 +1058,9 @@ def _adapt(job: HostedHarnessJob, output: Path) -> tuple[dict[str, Any], dict | 
 def complete_adaptation(job: HostedHarnessJob, output: Path | None) -> HostedHarnessJob:
     """Finish an adaptation job from its `/work/authoring/adaptation` output (contract §7.5).
 
-    `output` is None when the process left no output. A completed result registers the derived
-    suite, the binding and the composition and records `metadata.adaptation_result`; anything
-    the platform refuses, or a failed result, fails the job with the reason.
+    `output` is None when the process left no output. A completed result registers the binding
+    and the composition on the base suite and records `metadata.adaptation_result`; anything the
+    platform refuses, or a failed result, fails the job with the reason.
     """
     from simulate.models import HostedHarnessConversation
 
@@ -1118,7 +1105,7 @@ def complete_adaptation(job: HostedHarnessJob, output: Path | None) -> HostedHar
                 "updated_at",
             ]
         )
-        # The process emits no turn_completed; nothing is left to answer once it has exited.
+        # The builder has finished; nothing it asked is left to answer.
         HostedHarnessConversation.no_workspace_objects.filter(job=locked).update(
             blocking_input=None, updated_at=now
         )
