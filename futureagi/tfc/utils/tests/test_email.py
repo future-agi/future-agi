@@ -121,7 +121,7 @@ class TestLinks:
                 "member_invite.html",
                 "/auth/jwt/invitation/set-password/UID123/TOKEN456",
             ),
-            ("existing_user_invite.html", "/dashboard"),
+            ("existing_user_invite.html", "/auth/jwt/login"),
             ("user_onboard.html", "/dashboard"),
             ("send_credentials.html", "/auth/jwt/login"),
         ],

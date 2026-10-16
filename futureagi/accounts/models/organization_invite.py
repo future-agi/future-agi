@@ -134,13 +134,16 @@ class OrganizationInvite(BaseModel):
                 ws_id = ws_entry.get("workspace_id")
                 ws_level = ws_entry.get("level", Level.WORKSPACE_VIEWER)
                 try:
-                    workspace = Workspace.objects.get(
+                    workspace = Workspace._base_manager.get(
                         id=ws_id, organization=self.organization
                     )
                 except Workspace.DoesNotExist:
                     continue  # workspace deleted between invite and accept
 
-                WorkspaceMembership.all_objects.update_or_create(
+                # _base_manager skips the request-workspace filter. all_objects
+                # still hides a row in another workspace, then insert hits the
+                # unique constraint and the accept 500s.
+                WorkspaceMembership._base_manager.update_or_create(
                     workspace=workspace,
                     user=user,
                     defaults={
