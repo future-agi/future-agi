@@ -30,14 +30,65 @@ const rerunButtonSx = {
 const plural = (n, one, many = `${one}s`) =>
   `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
+// One action in the Re-run menu: an icon, what it does, and a line on how.
+function MenuOption({ icon, title, subtitle, blocked, onSelect }) {
+  return (
+    <Box
+      role="menuitem"
+      tabIndex={0}
+      aria-disabled={blocked}
+      onClick={blocked ? undefined : onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          if (!blocked) onSelect();
+        }
+      }}
+      sx={{
+        display: "flex",
+        gap: 1,
+        px: 1.5,
+        py: 0.75,
+        cursor: blocked ? "not-allowed" : "pointer",
+        opacity: blocked ? 0.6 : 1,
+        "&:hover": blocked ? undefined : { bgcolor: "action.hover" },
+        "&:focus-visible": {
+          outline: "2px solid",
+          outlineColor: "primary.main",
+        },
+      }}
+    >
+      <Iconify icon={icon} width={16} sx={{ mt: "2px", flexShrink: 0 }} />
+      <Box sx={{ minWidth: 0 }}>
+        <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+          {title}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {subtitle}
+        </Typography>
+      </Box>
+    </Box>
+  );
+}
+MenuOption.propTypes = {
+  icon: PropTypes.string.isRequired,
+  title: PropTypes.string.isRequired,
+  subtitle: PropTypes.string.isRequired,
+  blocked: PropTypes.bool.isRequired,
+  onSelect: PropTypes.func.isRequired,
+};
+
 /**
  * What the run table shows once calls are ticked: how many, Clear, and the
- * Re-run menu. A re-run works per scenario and repeats each one `trials`
- * times, so the menu counts scenarios and shows the calls that will make.
+ * Re-run menu. The menu offers either or both of:
+ * - a new simulation, which works per scenario and repeats each one `trials`
+ *   times, so it counts scenarios and shows the calls that will make;
+ * - re-running the evals, which grades the ticked calls again on this run.
  *
- * `resolveScenarioKeys` returns the scenarios behind the selection. It is read
- * when the menu opens: for "all matching calls" that means reading the calls
- * the table never loaded, so the menu waits for it before offering the run.
+ * `resolveSelection` returns `{ callIds, scenarioKeys }` behind the selection.
+ * It is read when the menu opens: for "all matching calls" that means reading
+ * the calls the table never loaded, so the menu waits for it before offering
+ * either action.
  */
 export default function RerunSelectionBar({
   selectedCalls,
@@ -45,15 +96,16 @@ export default function RerunSelectionBar({
   allMatching = false,
   runTrials = 1,
   disabledReason = null,
-  resolveScenarioKeys,
-  onRerun,
+  resolveSelection,
+  onRerun = null,
+  onRerunEvals = null,
   onClear,
 }) {
   const [anchor, setAnchor] = useState(null);
-  const [keys, setKeys] = useState(null);
+  const [resolved, setResolved] = useState(null);
   const [failed, setFailed] = useState(false);
   const [trials, setTrials] = useState(runTrials);
-  // Each open reads the scenarios afresh; only the latest read may land, so a
+  // Each open reads the selection afresh; only the latest read may land, so a
   // slow earlier one can't replace a newer count.
   const readRef = useRef(0);
 
@@ -64,14 +116,14 @@ export default function RerunSelectionBar({
         ? `${selectedCalls.toLocaleString()} selected`
         : `${plural(selectedCalls, "call")} selected · ${plural(scenarioCount, "scenario")}`;
 
-  const readKeys = async () => {
-    setKeys(null);
+  const readSelection = async () => {
+    setResolved(null);
     setFailed(false);
     readRef.current += 1;
     const read = readRef.current;
     try {
-      const resolved = await resolveScenarioKeys();
-      if (read === readRef.current) setKeys(resolved);
+      const result = await resolveSelection();
+      if (read === readRef.current) setResolved(result);
     } catch {
       if (read === readRef.current) setFailed(true);
     }
@@ -79,20 +131,24 @@ export default function RerunSelectionBar({
   const openMenu = (event) => {
     setAnchor(event.currentTarget);
     setTrials(runTrials);
-    readKeys();
+    readSelection();
   };
   const closeMenu = () => setAnchor(null);
 
+  const keys = resolved?.scenarioKeys ?? null;
+  const callIds = resolved?.callIds ?? [];
   const scenarios = keys?.length ?? 0;
   const calls = scenarios * trials;
   const overLimit = calls > MAX_CALLS_PER_RUN;
   const ready = keys != null && scenarios > 0;
-  const blocked = !ready || overLimit;
 
   const start = () => {
-    if (blocked) return;
     closeMenu();
     onRerun(keys, trials);
+  };
+  const regrade = () => {
+    closeMenu();
+    onRerunEvals(callIds);
   };
 
   return (
@@ -135,9 +191,7 @@ export default function RerunSelectionBar({
             endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
             sx={rerunButtonSx}
           >
-            {allMatching || scenarioCount == null
-              ? "Re-run"
-              : `Re-run ${scenarioCount.toLocaleString()}`}
+            Re-run
           </Button>
         </span>
       </CustomTooltip>
@@ -155,31 +209,19 @@ export default function RerunSelectionBar({
         }}
       >
         <Box role="menu" aria-label="Re-run options" sx={{ py: 0.75 }}>
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={1}
-            sx={{ px: 1.5, pt: 0.25, pb: 0.25 }}
-          >
-            <Typography
-              sx={{
-                typography: "s3",
-                fontWeight: 700,
-                color: "text.subtitle",
-                textTransform: "uppercase",
-                letterSpacing: 0.4,
-              }}
+          {failed && (
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{ px: 1.5, pb: 0.5 }}
             >
-              {failed
-                ? "Couldn't read the selected scenarios"
-                : keys == null
-                  ? "Counting scenarios…"
-                  : `Re-run ${plural(scenarios, "scenario")}`}
-            </Typography>
-            {failed && (
+              <Typography sx={{ typography: "s3", color: "error.main" }}>
+                Couldn&apos;t read the selected calls
+              </Typography>
               <Button
                 size="small"
-                onClick={readKeys}
+                onClick={readSelection}
                 sx={{
                   typography: "s3",
                   fontWeight: 600,
@@ -190,86 +232,80 @@ export default function RerunSelectionBar({
               >
                 Try again
               </Button>
-            )}
-          </Stack>
-
-          {/* Set first, then act: Repeats sits above the option, outside it,
-              so changing it never starts the run. */}
-          <Stack spacing={0.5} sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
-            <Stack direction="row" alignItems="center" spacing={1} useFlexGap>
-              {/* The same Repeats picker as the environment header. */}
-              <TrialsPicker
-                trials={trials}
-                onChange={setTrials}
-                scenarioCount={scenarios}
-                size="xs"
-              />
-              {ready && (
-                <Typography
-                  component="output"
-                  sx={{
-                    typography: "s3",
-                    fontWeight: 600,
-                    fontVariantNumeric: "tabular-nums",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {`${plural(scenarios, "scenario")} × ${plural(trials, "repeat")} = ${plural(calls, "call")}`}
-                </Typography>
-              )}
             </Stack>
-            {ready && overLimit && (
-              <Typography sx={{ typography: "s3", color: "warning.main" }}>
-                {`That is ${calls.toLocaleString()} calls; a run allows up to ${MAX_CALLS_PER_RUN}. Lower Repeats or select fewer scenarios.`}
-              </Typography>
-            )}
-            {keys != null && scenarios === 0 && (
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                None of the selected calls has a scenario to re-run.
-              </Typography>
-            )}
-          </Stack>
-          <Divider />
-          <Box
-            role="menuitem"
-            tabIndex={0}
-            aria-disabled={blocked}
-            onClick={start}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                start();
+          )}
+
+          {onRerun && (
+            <>
+              {/* Set first, then act: Repeats sits above the option, outside
+                  it, so changing it never starts the run. */}
+              <Stack spacing={0.5} sx={{ px: 1.5, pt: 0.25, pb: 0.5 }}>
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={1}
+                  useFlexGap
+                >
+                  {/* The same Repeats picker as the environment header. */}
+                  <TrialsPicker
+                    trials={trials}
+                    onChange={setTrials}
+                    scenarioCount={scenarios}
+                    size="xs"
+                  />
+                  <Typography
+                    component="output"
+                    sx={{
+                      typography: "s3",
+                      fontWeight: 600,
+                      fontVariantNumeric: "tabular-nums",
+                      whiteSpace: "nowrap",
+                      color: ready ? "text.primary" : "text.subtitle",
+                    }}
+                  >
+                    {ready
+                      ? `${plural(scenarios, "scenario")} × ${plural(trials, "repeat")} = ${plural(calls, "call")}`
+                      : resolved == null && !failed
+                        ? "Counting scenarios…"
+                        : ""}
+                  </Typography>
+                </Stack>
+                {ready && overLimit && (
+                  <Typography sx={{ typography: "s3", color: "warning.main" }}>
+                    {`That is ${calls.toLocaleString()} calls; a run allows up to ${MAX_CALLS_PER_RUN}. Lower Repeats or select fewer scenarios.`}
+                  </Typography>
+                )}
+                {keys != null && scenarios === 0 && (
+                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                    None of the selected calls has a scenario to re-run.
+                  </Typography>
+                )}
+              </Stack>
+              <MenuOption
+                icon="solar:refresh-bold"
+                title="Run as a new simulation"
+                subtitle="Makes the calls again with the current agent and env, and records a new run."
+                blocked={!ready || overLimit}
+                onSelect={start}
+              />
+            </>
+          )}
+
+          {onRerun && onRerunEvals && <Divider sx={{ my: 0.5 }} />}
+
+          {onRerunEvals && (
+            <MenuOption
+              icon="solar:checklist-minimalistic-bold"
+              title="Re-run evals"
+              subtitle={
+                callIds.length
+                  ? `Grades the ${plural(callIds.length, "selected call")} again in this run. No new calls.`
+                  : "Grades the selected calls again in this run. No new calls."
               }
-            }}
-            sx={{
-              display: "flex",
-              gap: 1,
-              px: 1.5,
-              py: 0.75,
-              cursor: blocked ? "not-allowed" : "pointer",
-              opacity: blocked ? 0.6 : 1,
-              "&:hover": blocked ? undefined : { bgcolor: "action.hover" },
-              "&:focus-visible": {
-                outline: "2px solid",
-                outlineColor: "primary.main",
-              },
-            }}
-          >
-            <Iconify
-              icon="solar:refresh-bold"
-              width={16}
-              sx={{ mt: "2px", flexShrink: 0 }}
+              blocked={callIds.length === 0}
+              onSelect={regrade}
             />
-            <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-                Run as a new simulation
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                Makes the calls again with the current agent and env, and
-                records a new run.
-              </Typography>
-            </Box>
-          </Box>
+          )}
         </Box>
       </Popover>
     </Stack>
@@ -281,7 +317,8 @@ RerunSelectionBar.propTypes = {
   allMatching: PropTypes.bool,
   runTrials: PropTypes.number,
   disabledReason: PropTypes.string,
-  resolveScenarioKeys: PropTypes.func.isRequired,
-  onRerun: PropTypes.func.isRequired,
+  resolveSelection: PropTypes.func.isRequired,
+  onRerun: PropTypes.func,
+  onRerunEvals: PropTypes.func,
   onClear: PropTypes.func.isRequired,
 };

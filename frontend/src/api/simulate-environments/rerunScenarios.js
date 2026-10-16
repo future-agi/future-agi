@@ -18,16 +18,18 @@ export const uniqueScenarioKeys = (rows) => [
 ];
 
 /**
- * Every scenario key behind the calls matching `filters`, less the calls in
- * `excludedIds`. "Select all matching" never loads those rows, so they are
- * read here, flat (no grouping) and a page at a time.
+ * Every call matching `filters`, less the ones in `excludedIds`, and the
+ * scenarios behind them. "Select all matching" never loads those rows, so they
+ * are read here, flat (no grouping) and a page at a time. Only calls with a
+ * scenario count, as only those can be ticked in the table.
  */
-export async function listMatchingScenarioKeys(
+export async function listMatchingCalls(
   executionId,
   filters = {},
   excludedIds = [],
 ) {
   const excluded = new Set(excludedIds);
+  const callIds = [];
   const keys = new Set();
   let page = 1;
   let totalPages = 1;
@@ -45,11 +47,29 @@ export async function listMatchingScenarioKeys(
       },
     );
     (data?.results ?? []).forEach((row) => {
-      if (!excluded.has(row.id) && row.source_scenario_key)
-        keys.add(row.source_scenario_key);
+      if (excluded.has(row.id) || !row.source_scenario_key) return;
+      callIds.push(row.id);
+      keys.add(row.source_scenario_key);
     });
     totalPages = data?.total_pages || 1;
     page += 1;
   } while (page <= totalPages);
-  return [...keys];
+  return { callIds, scenarioKeys: [...keys] };
+}
+
+/**
+ * Grades the given calls again, in place on their run: no new calls and no
+ * new run. The ids are always sent explicitly, as the endpoint's `select_all`
+ * covers the whole run and knows nothing of the table's filters.
+ */
+export async function rerunCallEvals(executionId, callIds) {
+  const { data } = await axios.post(
+    endpoints.testExecutions.rerunExecution(executionId),
+    {
+      select_all: false,
+      rerun_type: "eval_only",
+      call_execution_ids: callIds,
+    },
+  );
+  return data;
 }
