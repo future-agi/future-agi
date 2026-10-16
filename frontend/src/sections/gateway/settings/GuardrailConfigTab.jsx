@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Stack,
   Card,
@@ -855,6 +855,17 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
   const config = normalizeGuardrails(guardrails || {});
   const checks = config.checks || {};
 
+  // A check's top-level mode is its execution mode ("sync"), not a provider
+  // field. Keep it out of the dialog, which would otherwise seed Tool
+  // Permissions' own mode (allowlist/denylist/audit) with it.
+  const editingCheckData = editingCheck ? checks[editingCheck] : null;
+  const dialogInitialData = useMemo(() => {
+    if (!editingCheckData) return null;
+    const data = { ...editingCheckData };
+    delete data.mode;
+    return data;
+  }, [editingCheckData]);
+
   const handlePipelineChange = (field, value) => {
     onChange({ ...config, [field]: value });
   };
@@ -1062,7 +1073,7 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
         }}
         onSave={handleSaveCheck}
         checkName={editingCheck}
-        initialData={editingCheck ? checks[editingCheck] : null}
+        initialData={dialogInitialData}
         providerMeta={editingMeta}
       />
     </Stack>
