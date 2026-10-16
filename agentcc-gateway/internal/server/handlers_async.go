@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/async"
@@ -34,9 +35,16 @@ func (h *Handlers) AsyncMiddleware(w http.ResponseWriter, r *http.Request, rc *m
 		}
 	}
 
-	// Determine org ID for scoping.
+	// Owner comes from the same key lookup GET and DELETE use. The auth plugin
+	// writes auth_key_id only inside engine.Process, which runs after this
+	// middleware, so that field is not available here.
 	orgID := ""
-	if v, ok := rc.Metadata["org_id"]; ok {
+	if h.keyStore != nil {
+		scope, scoped := h.asyncCallerScope(r)
+		if scoped && scope != "" && scope[0] != '\x00' {
+			orgID = scope
+		}
+	} else if v, ok := rc.Metadata["org_id"]; ok {
 		orgID = v
 	}
 
@@ -85,20 +93,10 @@ func (h *Handlers) GetAsyncJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract org ID from auth for scoping.
-	orgID := ""
-	rc := models.AcquireRequestContext()
-	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
-		rc.Metadata["authorization"] = authHeader
-	}
-	if v, ok := rc.Metadata["org_id"]; ok {
-		orgID = v
-	}
-	rc.Release()
-
+	scope, scoped := h.asyncCallerScope(r)
 	var job *async.Job
-	if orgID != "" {
-		job = h.asyncStore.GetForOrg(jobID, orgID)
+	if scoped {
+		job = h.asyncStore.GetForOrg(jobID, scope)
 	} else {
 		job = h.asyncStore.Get(jobID)
 	}
@@ -131,25 +129,20 @@ func (h *Handlers) DeleteAsyncJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to cancel a running job.
-	job := h.asyncStore.Get(jobID)
-	if job == nil {
+	// Cancel the live job only after the caller scope matches. Get returns a
+	// snapshot with CancelFn stripped, so a snapshot cancel does not stop work.
+	// Auth disabled is single-tenant: cancel by the stored owner, including empty.
+	scope, scoped := h.asyncCallerScope(r)
+	var cancelled bool
+	if scoped {
+		cancelled = h.asyncStore.CancelForOrg(jobID, scope)
+	} else {
+		cancelled = h.asyncStore.CancelUnscoped(jobID)
+	}
+	if !cancelled {
 		models.WriteError(w, models.ErrNotFound("job_not_found", "Async job not found"))
 		return
 	}
-
-	// Cancel if still running.
-	if job.Status == async.StatusQueued || job.Status == async.StatusProcessing {
-		now := time.Now()
-		job.Status = async.StatusCancelled
-		job.CompletedAt = &now
-		if job.CancelFn != nil {
-			job.CancelFn()
-		}
-	}
-
-	// Delete from store.
-	h.asyncStore.Delete(jobID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -169,4 +162,33 @@ func copyMetadata(m map[string]string) map[string]string {
 		cp[k] = v
 	}
 	return cp
+}
+
+// asyncCallerScope resolves the authenticated caller for async job access.
+// A configured key store means auth is enabled: scope is the key's org_id,
+// or the key id when the key has no org. A missing key is scoped to a value
+// that matches nothing, so the caller cannot fall through to a global read.
+// A nil key store is auth-disabled and stays single-tenant.
+func (h *Handlers) asyncCallerScope(r *http.Request) (scope string, scoped bool) {
+	if h.keyStore == nil {
+		return "", false
+	}
+	rawKey := ""
+	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+		rawKey = strings.TrimPrefix(authHeader, "Bearer ")
+	}
+	if rawKey == "" {
+		rawKey = r.Header.Get("x-api-key")
+	}
+	apiKey := h.keyStore.Lookup(rawKey)
+	if apiKey == nil {
+		return "\x00unauthenticated", true
+	}
+	if orgID := apiKey.Metadata["org_id"]; orgID != "" {
+		return orgID, true
+	}
+	if apiKey.ID == "" {
+		return "\x00unscoped-key", true
+	}
+	return apiKey.ID, true
 }
