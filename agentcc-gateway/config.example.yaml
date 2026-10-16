@@ -176,6 +176,20 @@ providers:
   #   models:
   #     - gpt-4o
 
+  # Speech vendors, relayed over their own streaming WebSocket APIs at /deepgram/... and
+  # /cartesia/... (point the vendor SDK's base URL there and use a gateway key as its key).
+  # Only internal keys may use them, since they run on the platform's vendor credentials.
+  # deepgram:
+  #   base_url: "https://api.deepgram.com"
+  #   api_key: "${DEEPGRAM_API_KEY}"
+  #   api_format: "deepgram"
+  #   auto_discover: false
+  # cartesia:
+  #   base_url: "https://api.cartesia.ai"
+  #   api_key: "${CARTESIA_API_KEY}"
+  #   api_format: "cartesia"
+  #   auto_discover: false
+
   # groq:
   #   api_key: "${GROQ_API_KEY}"
   #   type: "groq"                   # auto-sets base_url + api_format

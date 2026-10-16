@@ -243,6 +243,8 @@ type PricingOverrideConfig struct {
 	CachedInputPerToken *float64 `yaml:"cached_input_per_token" json:"cached_input_per_token"`
 	BatchInputPerToken  *float64 `yaml:"batch_input_per_token" json:"batch_input_per_token"`
 	BatchOutputPerToken *float64 `yaml:"batch_output_per_token" json:"batch_output_per_token"`
+	InputPerSecond      *float64 `yaml:"input_per_second" json:"input_per_second"`
+	InputPerCharacter   *float64 `yaml:"input_per_character" json:"input_per_character"`
 }
 
 // CapOverrideConfig allows overriding individual capability flags.

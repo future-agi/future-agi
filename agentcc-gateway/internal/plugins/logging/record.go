@@ -117,6 +117,9 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 			if rc.ImageResponse != nil {
 				rec.StatusCode = 200
 			}
+		case "speech_relay", "transcription_relay":
+			// The session ran; a failed dial or upgrade records its error below.
+			rec.StatusCode = 200
 		case "speech", "speech_stream":
 			if rc.Metadata["response_content_type"] != "" {
 				rec.StatusCode = 200
