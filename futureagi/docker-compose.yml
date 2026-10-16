@@ -141,8 +141,10 @@ services:
     build:
       context: ./code-executor
       dockerfile: Dockerfile
+    # /execute has no auth. Publish on loopback only. In-network clients
+    # still use the compose DNS name (code-executor:8060).
     ports:
-      - "8060:8060"
+      - "127.0.0.1:${CODE_EXECUTOR_PORT:-8060}:8060"
     # Privileged needed for nsjail namespace creation
     privileged: true
     restart: unless-stopped
