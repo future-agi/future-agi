@@ -992,6 +992,65 @@ class CHSpanReader:
         rows = self._client.query(sql, parameters=params, settings=settings).result_rows
         return [_row_to_chspan(r) for r in rows]
 
+    def roots_by_session_ids(
+        self, session_ids: list[str], *, project_id: str
+    ) -> list[CHSpan]:
+        """Lean root spans of every trace in the given sessions, oldest first:
+        one read for N session transcripts (Analyse). Project-pinned, since
+        the spans table is multi-tenant."""
+        if not session_ids:
+            return []
+        sql = (
+            f"SELECT {_LEAN_SELECT_SQL} FROM spans FINAL "
+            "WHERE project_id = %(pid)s "
+            "AND trace_session_id IN %(sids)s "
+            "AND (parent_span_id IS NULL OR parent_span_id = '') "
+            "ORDER BY trace_session_id, start_time, id"
+        )
+        rows = self._client.query(
+            sql,
+            parameters={"pid": str(project_id), "sids": tuple(map(str, session_ids))},
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
+        ).result_rows
+        return [_row_to_chspan(r) for r in rows]
+
+    def roots_by_end_user_ids(
+        self,
+        end_user_ids: list[str],
+        *,
+        project_id: str,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[CHSpan]:
+        """Lean root spans of the given end users in one project, oldest
+        first, optionally bounded in time (Analyse at the user level)."""
+        if not end_user_ids:
+            return []
+        where = [
+            "project_id = %(pid)s",
+            "end_user_id IN %(uids)s",
+            "(parent_span_id IS NULL OR parent_span_id = '')",
+        ]
+        params: dict[str, Any] = {
+            "pid": str(project_id),
+            "uids": tuple(map(str, end_user_ids)),
+        }
+        if since is not None:
+            where.append("start_time >= %(since)s")
+            params["since"] = since.astimezone(UTC).replace(tzinfo=None)
+        if until is not None:
+            where.append("start_time <= %(until)s")
+            params["until"] = until.astimezone(UTC).replace(tzinfo=None)
+        sql = (
+            f"SELECT {_LEAN_SELECT_SQL} FROM spans FINAL "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY end_user_id, start_time, id"
+        )
+        rows = self._client.query(
+            sql, parameters=params, settings=_FINAL_SKIP_INDEX_SETTINGS
+        ).result_rows
+        return [_row_to_chspan(r) for r in rows]
+
     # ─── Per-trace rollups (latency / tokens) ─────────────────────────────────
     def totals_by_trace_ids(
         self, trace_ids: list[str], project_ids: list[str] | None = None
@@ -1029,6 +1088,29 @@ class CHSpanReader:
             )
             for tid, lat, pt, ct in rows
         }
+
+    def models_by_group(
+        self, column: str, ids: list[str], *, project_id: str
+    ) -> dict[str, str]:
+        """{trace_id or trace_session_id: the model its first LLM call used},
+        for the traces or sessions given. The root of an agent trace rarely
+        names a model; its LLM child spans do.
+
+        No FINAL: a model name is the same on every version of a span, so an
+        unmerged duplicate cannot change the answer."""
+        if column not in ("trace_id", "trace_session_id"):
+            raise ValueError(f"cannot group models by {column}")
+        if not ids:
+            return {}
+        rows = self._client.query(
+            f"SELECT {column} AS k, argMin(model, start_time) AS m "
+            "FROM spans "
+            f"WHERE project_id = %(pid)s AND {column} IN %(ids)s "
+            "AND model != '' AND is_deleted = 0 "
+            "GROUP BY k",
+            parameters={"pid": str(project_id), "ids": tuple(map(str, ids))},
+        ).result_rows
+        return {str(key): str(model) for key, model in rows if key and model}
 
     # ─── Children of a parent span ────────────────────────────────────────────
     def list_by_parent(

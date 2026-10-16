@@ -41,9 +41,13 @@ const PrimaryGraph = lazy(
   () => import("../LLMTracing/GraphSection/PrimaryGraph"),
 );
 
+// Instant eval / Insights
+import { scopeLabel } from "../LLMTracing/InstantEval/instantEvalUnits";
+import { askLink, insightsReportLink } from "../observeHandoff";
+
 // User-specific
 import useUsersStore from "./Store/usersStore";
-import { getUsersColumnConfig } from "./common";
+import { buildUsersRequestFilters, getUsersColumnConfig } from "./common";
 import UsersGrid from "./UsersGrid";
 import { sanitizeUserColumnState } from "./userSortContract";
 import UsersEmptyScreen from "./UsersEmptyScreen";
@@ -271,6 +275,35 @@ const UsersView = ({
     return [...validatedFilters, ...extraFilters];
   }, [validatedFilters, extraFilters]);
 
+  // --- Instant eval / Insights ---
+  // Both ask about exactly the users the grid lists (UsersGrid sends
+  // buildUsersRequestFilters(finalFilters), date window included).
+  const userViewScope = useMemo(
+    () => ({
+      filters: buildUsersRequestFilters(finalFilters),
+      label: getDateLabel(dateFilter),
+    }),
+    [finalFilters, dateFilter],
+  );
+  // Evaluate → Ask a question: the Ask page, about the users in view.
+  const openAsk = useCallback(() => {
+    navigate(
+      askLink(observeId, {
+        unit: "users",
+        filters: userViewScope.filters,
+        label: scopeLabel(userViewScope),
+      }),
+    );
+  }, [observeId, userViewScope, navigate]);
+  const openInsights = useCallback(() => {
+    navigate(
+      insightsReportLink(observeId, {
+        unit: "users",
+        filters: userViewScope.filters,
+        label: scopeLabel(userViewScope),
+      }),
+    );
+  }, [observeId, userViewScope, navigate]);
   // --- Row height ---
   const [cellHeight, setCellHeight] = useUrlState("userCellHeight", "Short");
 
@@ -875,6 +908,8 @@ const UsersView = ({
               }
             : undefined
         }
+        onInstantEval={observeId ? openAsk : undefined}
+        onInsights={observeId ? openInsights : undefined}
       />
 
       {/* Filter chips. Inject `display_name` so chips render the column's

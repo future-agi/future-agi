@@ -31,7 +31,8 @@ class FeatureDefinition:
     # Two-tier gating: requires_license=True features are cloud-plan products
     # by default and run FREE on self-hosted deployments (OSS or EE, any
     # license state). Setting oss_locked=True additionally requires a valid
-    # license off-cloud — reserved for managed compute and the error feed.
+    # license off-cloud — reserved for managed compute, the error feed and
+    # EE-only evaluator models (Jev).
     oss_locked: bool = False
     required_service: str | None = None
     metering_dimension: str | None = None
@@ -99,6 +100,18 @@ FEATURE_TURING_MODELS = FeatureDefinition(
     execution_location=ExecutionLocation.FUTUREAGI_SERVICE,
     required_service="turing",
     metering_dimension="managed_ai_credits_monthly",
+    air_gap_behavior=AirGapBehavior.UNAVAILABLE,
+)
+
+# Jev runs on the org's own TypeSafe key (Settings -> AI Providers), so no
+# FutureAGI service or managed credits are involved; it still needs TypeSafe.
+FEATURE_JEV_MODELS = FeatureDefinition(
+    id="jev_models",
+    oss_locked=True,
+    display_name="Jev Models",
+    oss_baseline=False,
+    requires_license=True,
+    execution_location=ExecutionLocation.LOCAL,
     air_gap_behavior=AirGapBehavior.UNAVAILABLE,
 )
 
@@ -281,6 +294,7 @@ _ALL_FEATURES: tuple[FeatureDefinition, ...] = (
     FEATURE_DEDICATED_SUPPORT,
     FEATURE_AGREEMENT_METRICS,
     FEATURE_REQUIRED_LABELS,
+    FEATURE_JEV_MODELS,
 )
 
 
@@ -295,8 +309,8 @@ PAID_FEATURES: frozenset[str] = frozenset(
     f.id for f in _ALL_FEATURES if f.requires_license
 )
 
-# Paid features that stay license-gated even off-cloud (managed compute +
-# the error feed). Everything else in PAID_FEATURES is free on self-hosted.
+# Paid features that stay license-gated even off-cloud (managed compute, the
+# error feed and Jev). Everything else in PAID_FEATURES is free on self-hosted.
 OSS_LOCKED_FEATURES: frozenset[str] = frozenset(
     f.id for f in _ALL_FEATURES if f.oss_locked
 )

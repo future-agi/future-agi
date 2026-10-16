@@ -1,6 +1,7 @@
 import json
 import time
 import traceback
+import uuid
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import asdict
@@ -23,8 +24,13 @@ from model_hub.models.choices import StatusType
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.utils.eval_input_validation import is_empty_value
 from model_hub.utils.eval_mapping import require_mapping_paths
-from sdk.utils.helpers import _get_api_call_type
+from sdk.utils.helpers import (
+    _emit_jev_usage,
+    _get_api_call_type,
+    _get_billing_event_type,
+)
 from tfc.constants.api_calls import APICallStatusChoices
+from tfc.ee_gates import jev_error_message
 from tfc.temporal import temporal_activity
 from tfc.utils.case import to_camel_case, to_snake_case
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
@@ -1016,6 +1022,14 @@ def _emit_eval_billing(
             return {}
 
     try:
+        if _emit_jev_usage(
+            getattr(result, "evaluator", None),
+            org_id=org_id,
+            run_id=(
+                str(api_call_log_row.log_id) if api_call_log_row else str(uuid.uuid4())
+            ),
+        ):
+            return
         billing_config = BillingConfig.get()
         _llm_cost = (result.cost or {}).get("total_cost", 0)
         _per_run_fee = billing_config.get_eval_per_run_fee()
@@ -1026,7 +1040,11 @@ def _emit_eval_billing(
         emit(
             UsageEvent(
                 org_id=org_id,
-                event_type=api_call_type,
+                event_type=_get_billing_event_type(
+                    api_call_type,
+                    getattr(result, "model_used", None),
+                    getattr(custom_eval_config, "model", None),
+                ),
                 amount=credits,
                 properties={
                     "source": "tracer" if not feedback_id else "feedback",
@@ -1194,7 +1212,11 @@ def _run_evaluation(
                 emit(
                     UsageEvent(
                         org_id=str(observation_span.project.organization_id),
-                        event_type=api_call_type,
+                        event_type=_get_billing_event_type(
+                            api_call_type,
+                            custom_eval_config.model,
+                            evaluator=eval_instance,
+                        ),
                         amount=credits,
                         properties={
                             "source": "tracer" if not feedback_id else "feedback",
@@ -1247,12 +1269,14 @@ def _run_evaluation(
 
     except Exception as e:
         traceback.print_exc()
-        error_message = str(e)
+        error_message = jev_error_message(e) or str(e)
         try:
             if api_call_log_row is not None:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
                 current_config = json.loads(api_call_log_row.config)
-                current_config.update({"output": {"output": None, "reason": str(e)}})
+                current_config.update(
+                    {"output": {"output": None, "reason": error_message}}
+                )
                 api_call_log_row.config = json.dumps(current_config)
                 api_call_log_row.save()
         except Exception:
@@ -1942,12 +1966,14 @@ def _execute_evaluation(
 
     except Exception as e:
         traceback.print_exc()
-        error_message = str(e)
+        error_message = jev_error_message(e) or str(e)
         try:
             if api_call_log_row is not None:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
                 current_config = json.loads(api_call_log_row.config)
-                current_config.update({"output": {"output": None, "reason": str(e)}})
+                current_config.update(
+                    {"output": {"output": None, "reason": error_message}}
+                )
                 api_call_log_row.config = json.dumps(current_config)
                 api_call_log_row.save()
         except Exception:
@@ -2827,6 +2853,167 @@ _TRACE_PUBLIC_FIELDS = frozenset(
     {"input", "output", "name", "error", "tags", "metadata", "external_id"}
 )
 _SESSION_PUBLIC_FIELDS = frozenset({"name", "bookmarked"})
+# ``transcript``: the whole conversation as ordered "User:/Assistant:" turns,
+# so one evaluator can read a session end to end. Clipped on turn boundaries
+# (first turns and the latest kept) to stay inside judge input limits.
+SESSION_TRANSCRIPT_FIELD = "transcript"
+_TRANSCRIPT_MAX_CHARS = 60000
+_TRANSCRIPT_TURN_CHARS = 4000
+
+
+def _transcript_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        candidate = value
+    else:
+        text = str(value)
+        stripped = text.strip()
+        if stripped[:1] not in "[{":
+            return text
+        try:
+            candidate = json.loads(stripped)
+        except ValueError:
+            return text
+    if isinstance(candidate, dict):
+        for key in ("content", "text", "message", "output", "input", "query"):
+            if isinstance(candidate.get(key), str):
+                return candidate[key]
+        candidate = candidate.get("messages", candidate)
+    if isinstance(candidate, list):
+        for message in reversed(candidate):
+            if isinstance(message, dict) and message.get("role") in ("user", "human"):
+                content = message.get("content")
+                return content if isinstance(content, str) else json.dumps(content)
+    return json.dumps(candidate) if not isinstance(candidate, str) else candidate
+
+
+# ``trace_tree``: every span of a trace in start order, indented under its
+# parent, with its kind, name, model, latency, error and clipped input/output,
+# so a judge can read tool calls, retrieval and intermediate LLM calls rather
+# than only the root's input and output. ``transcript_full`` on a session is
+# the same for each of its traces, turn by turn.
+TRACE_TREE_FIELD = "trace_tree"
+SESSION_FULL_TRANSCRIPT_FIELD = "transcript_full"
+_TREE_MAX_CHARS = 60000
+_TREE_FIELD_CHARS = 1500
+_TREE_KEEP_ENDS = 12
+
+
+def _span_text(value) -> str:
+    text = _transcript_text(value)
+    return " ".join(str(text or "").split())
+
+
+def _clip_text(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _span_block(span, depth: int, number: int, field_chars: int) -> str:
+    indent = "  " * depth
+    kind = str(getattr(span, "observation_type", "") or "span").lower()
+    head = f"{indent}[{number}] {kind} · {getattr(span, 'name', '') or 'unnamed'}"
+    model = getattr(span, "model", None)
+    if model:
+        head += f" · {model}"
+    latency = getattr(span, "latency_ms", None)
+    if latency:
+        head += f" · {int(latency)} ms"
+    status = str(getattr(span, "status", "") or "").upper()
+    if status == "ERROR":
+        message = _clip_text(_span_text(getattr(span, "status_message", "")), 300)
+        head += f" · ERROR{': ' + message if message else ''}"
+    lines = [head]
+    for label, attr in (("in", "input"), ("out", "output")):
+        text = _span_text(getattr(span, attr, None))
+        if text:
+            lines.append(f"{indent}  {label}: {_clip_text(text, field_chars)}")
+    return "\n".join(lines)
+
+
+def render_trace_tree(spans, *, max_chars: int = _TREE_MAX_CHARS) -> str:
+    """A trace's spans as an indented outline for a judge, within budget."""
+    if not spans:
+        return ""
+    by_id = {str(s.id): s for s in spans}
+    depths: dict[str, int] = {}
+
+    def depth(span) -> int:
+        seen, node, d = set(), span, 0
+        while True:
+            parent = str(getattr(node, "parent_span_id", "") or "")
+            if not parent or parent not in by_id or parent in seen:
+                return d
+            seen.add(parent)
+            node, d = by_id[parent], d + 1
+
+    field_chars = _TREE_FIELD_CHARS
+    blocks = []
+    for number, span in enumerate(spans, start=1):
+        sid = str(span.id)
+        depths[sid] = depth(span)
+        blocks.append((span, _span_block(span, depths[sid], number, field_chars)))
+    text = "\n".join(b for _, b in blocks)
+    if len(text) <= max_chars:
+        return text
+    # Over budget: keep the ends, every errored span, and shrink fields.
+    keep = set(range(min(_TREE_KEEP_ENDS, len(blocks)))) | set(
+        range(max(0, len(blocks) - _TREE_KEEP_ENDS), len(blocks))
+    )
+    keep |= {
+        i for i, (span, _) in enumerate(blocks)
+        if str(getattr(span, "status", "") or "").upper() == "ERROR"
+    }
+    field_chars = 600
+    out, skipped = [], 0
+    for i, (span, _) in enumerate(blocks):
+        if i in keep:
+            if skipped:
+                out.append(f"[… {skipped} spans omitted …]")
+                skipped = 0
+            out.append(_span_block(span, depths[str(span.id)], i + 1, field_chars))
+        else:
+            skipped += 1
+    if skipped:
+        out.append(f"[… {skipped} spans omitted …]")
+    return _clip_text("\n".join(out), max_chars)
+
+
+def render_session_full_transcript(traces, spans_of) -> str:
+    """Every turn of a session as its full span outline."""
+    if not traces:
+        return ""
+    per_turn = max(4000, _TREE_MAX_CHARS // max(1, len(traces)))
+    turns = [
+        f"[Turn {i}]\n{render_trace_tree(spans_of(t), max_chars=per_turn)}"
+        for i, t in enumerate(traces, start=1)
+    ]
+    return _clip_text("\n\n".join(turns), _TREE_MAX_CHARS)
+
+
+def render_session_transcript(traces) -> str:
+    """Ordered turns of a session's traces as plain text for a judge."""
+
+    def clip(text):
+        text = " ".join(str(text or "").split())
+        return text if len(text) <= _TRANSCRIPT_TURN_CHARS else text[: _TRANSCRIPT_TURN_CHARS - 1] + "…"
+
+    turns = [
+        f"[Turn {i}] User: {clip(_transcript_text(getattr(t, 'input', None)))}\n"
+        f"Assistant: {clip(_transcript_text(getattr(t, 'output', None)))}"
+        for i, t in enumerate(traces, start=1)
+    ]
+    text = "\n\n".join(turns)
+    if len(text) <= _TRANSCRIPT_MAX_CHARS:
+        return text
+    head, tail, used = turns[:2], [], sum(len(t) for t in turns[:2])
+    for turn in reversed(turns[2:]):
+        if used + len(turn) > _TRANSCRIPT_MAX_CHARS:
+            break
+        tail.insert(0, turn)
+        used += len(turn)
+    skipped = len(turns) - len(head) - len(tail)
+    return "\n\n".join(head + [f"[… {skipped} turns omitted …]"] + tail)
 
 # Span model fields that are stored as dedicated DB columns (not inside
 # ``span_attributes``).  The eval mapping picker can expose these via
@@ -3039,6 +3226,9 @@ def _resolve_trace_path(trace: Trace, path: str):
             _ordered_trace_spans(trace), rest, _resolve_span_path
         )
 
+    if head == TRACE_TREE_FIELD and not rest:
+        return render_trace_tree(_ordered_trace_spans(trace))
+
     return _MISSING
 
 
@@ -3125,6 +3315,12 @@ def _session_traces_ch(trace_session) -> list:
     return traces
 
 
+def _render_session(field: str, traces) -> str:
+    if field == SESSION_FULL_TRANSCRIPT_FIELD:
+        return render_session_full_transcript(traces, _ordered_trace_spans)
+    return render_session_transcript(traces)
+
+
 def _resolve_session_path(trace_session: TraceSession, path: str):
     """Walk a path against a session; supports ``traces.<n>.spans.<m>.<field>``."""
     if not path:
@@ -3140,6 +3336,17 @@ def _resolve_session_path(trace_session: TraceSession, path: str):
             return value
         walked = _walk_dotted_path(value, rest)
         return walked if walked is not None else _MISSING
+
+    # Transcripts read the session's ordered traces; outside ClickHouse mode
+    # they reuse the ``traces`` branch below to get the same ordering.
+    transcript_requested = None
+    if head in (SESSION_TRANSCRIPT_FIELD, SESSION_FULL_TRANSCRIPT_FIELD) and not rest:
+        from tracer.services.clickhouse.v2.eval_loader import _read_source
+
+        if _read_source() == "clickhouse":
+            return _render_session(head, _session_traces_ch(trace_session))
+        transcript_requested = head
+        head, rest = "traces", ""
 
     if head == "traces":
         # Match the trace-listing UI's ordering (``list_traces_of_session``
@@ -3195,6 +3402,8 @@ def _resolve_session_path(trace_session: TraceSession, path: str):
                 .annotate(_root_start=Coalesce(Subquery(root_start), "created_at"))
                 .order_by("_root_start", "id")
             )
+        if transcript_requested:
+            return _render_session(transcript_requested, traces)
         return _resolve_collection_path(traces, rest, _resolve_trace_path)
 
     return _MISSING
@@ -3813,12 +4022,14 @@ def _execute_evaluation_for_trace(
         }
     except Exception as e:
         traceback.print_exc()
-        error_message = str(e)
+        error_message = jev_error_message(e) or str(e)
         try:
             if api_call_log_row is not None:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
                 current_config = json.loads(api_call_log_row.config)
-                current_config.update({"output": {"output": None, "reason": str(e)}})
+                current_config.update(
+                    {"output": {"output": None, "reason": error_message}}
+                )
                 api_call_log_row.config = json.dumps(current_config)
                 api_call_log_row.save()
         except Exception:
@@ -4069,12 +4280,14 @@ def _execute_evaluation_for_session(
         }
     except Exception as e:
         traceback.print_exc()
-        error_message = str(e)
+        error_message = jev_error_message(e) or str(e)
         try:
             if api_call_log_row is not None:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
                 current_config = json.loads(api_call_log_row.config)
-                current_config.update({"output": {"output": None, "reason": str(e)}})
+                current_config.update(
+                    {"output": {"output": None, "reason": error_message}}
+                )
                 api_call_log_row.config = json.dumps(current_config)
                 api_call_log_row.save()
         except Exception:

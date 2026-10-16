@@ -3,6 +3,7 @@ package cost
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
@@ -90,6 +91,18 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		// Audio cost varies by provider; skip for now.
 	case "rerank":
 		// Rerank billing varies by provider; skip for now.
+	case "decision":
+		// Decision prices live under their own "decision:" keys: a decision
+		// model can share a chat model's name at another price.
+		if rc.Response == nil || rc.Response.Usage == nil {
+			return pipeline.ResultContinue()
+		}
+		usage := rc.Response.Usage
+		for _, m := range decisionModelNames(rc) {
+			if cost, ok = db.CalculateDecisionCost(m, usage.PromptTokens, usage.CompletionTokens); ok {
+				break
+			}
+		}
 	default: // "chat" or empty
 		if rc.Response == nil || rc.Response.Usage == nil {
 			return pipeline.ResultContinue()
@@ -124,6 +137,13 @@ func (p *Plugin) tryOrgPricing(rc *models.RequestContext, model string, ct *tena
 	if pricing == nil && model == rc.ResolvedModel && rc.Model != "" {
 		pricing = ct.CustomPricing[rc.Model]
 	}
+	if pricing == nil && rc.EndpointType == "decision" {
+		for _, m := range decisionModelNames(rc) {
+			if pricing = ct.CustomPricing[m]; pricing != nil {
+				break
+			}
+		}
+	}
 	if pricing == nil {
 		return 0, false // No org pricing for this model, fall through to global.
 	}
@@ -145,4 +165,22 @@ func (p *Plugin) tryOrgPricing(rc *models.RequestContext, model string, ct *tena
 	cost := float64(promptTokens)*pricing.InputPerMTok/1_000_000 +
 		float64(completionTokens)*pricing.OutputPerMTok/1_000_000
 	return cost, true
+}
+
+// decisionModelNames lists the names a decision call's model goes by: the
+// model the vendor reports, the one it was sent, and the one the caller named
+// with its provider prefix.
+func decisionModelNames(rc *models.RequestContext) []string {
+	names := make([]string, 0, 3)
+	add := func(name string) {
+		if name != "" && !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	add(rc.ResolvedModel)
+	if rc.DecisionRequest != nil {
+		add(rc.DecisionRequest.UpstreamModel)
+	}
+	add(rc.Model)
+	return names
 }

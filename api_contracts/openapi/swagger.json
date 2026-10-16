@@ -62337,6 +62337,1086 @@
             },
             "parameters": []
         },
+        "/tracer/insights/configs/": {
+            "get": {
+                "operationId": "tracer_insights_configs_list",
+                "description": "Saved Insights reports of a project, newest first, with their latest run.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InsightConfigListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/insights/configs/{config_id}/": {
+            "get": {
+                "operationId": "tracer_insights_configs_read",
+                "description": "One saved report with every run, for the trend chart and run pager.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InsightConfigResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "patch": {
+                "operationId": "tracer_insights_configs_partial_update",
+                "description": "Edit a report's setup, or forget its saved categories so the next\nrun discovers afresh. Changing the question or lens changes what the\ncategories mean, so it resets them too. Applies from the next run.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/InsightConfigPatch"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InsightConfigResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "tracer_insights_configs_delete",
+                "description": "Delete a saved report and hide its runs.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InsightConfigResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "config_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/insights/draft/": {
+            "post": {
+                "operationId": "tracer_insights_draft_create",
+                "description": "Read a few real units and draft a report setup for the team's goal.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/InsightDraft"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InsightDraftResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/insights/preview/": {
+            "post": {
+                "operationId": "tracer_insights_preview_create",
+                "description": "Show what the report will read from up to three units before running it.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/InsightPreview"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InsightPreviewResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/insights/runs/": {
+            "post": {
+                "operationId": "tracer_insights_runs_create",
+                "description": "Start a report run over a sampled population; creates the report when new.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/InsightRunCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InsightRunCreatedResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/insights/runs/{run_id}/": {
+            "get": {
+                "operationId": "tracer_insights_runs_read",
+                "description": "A run's progress while it works, and its full report once complete.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InsightRunResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "run_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/insights/runs/{run_id}/ask/": {
+            "post": {
+                "operationId": "tracer_insights_runs_ask_create",
+                "description": "Answer a follow-up question about a completed report, citing its examples.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/InsightAsk"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InsightAskResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "run_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/insights/runs/{run_id}/units/": {
+            "get": {
+                "operationId": "tracer_insights_runs_units_list",
+                "description": "Analysed units of a run, optionally one category's, oldest first.",
+                "parameters": [
+                    {
+                        "name": "category_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 64
+                    },
+                    {
+                        "name": "sub_category_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 64
+                    },
+                    {
+                        "name": "unit_ids",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 4000
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 50,
+                        "maximum": 200,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "include_content",
+                        "in": "query",
+                        "required": false,
+                        "type": "boolean",
+                        "default": false
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InsightUnitsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "run_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/instant-eval/answers/": {
+            "get": {
+                "operationId": "tracer_instant-eval_answers_list",
+                "description": "Answers of an Instant eval task, per trace, session or user.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "eval_task_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "unit",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "enum": [
+                            "traces",
+                            "spans",
+                            "sessions",
+                            "users"
+                        ]
+                    },
+                    {
+                        "name": "config_ids",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 2000
+                    },
+                    {
+                        "name": "counts_only",
+                        "in": "query",
+                        "required": false,
+                        "type": "boolean",
+                        "default": false
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InstantEvalAnswersResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/instant-eval/runs/": {
+            "get": {
+                "operationId": "tracer_instant-eval_runs_list",
+                "description": "Past Instant eval runs of a project, newest first, with their answer split.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "unit",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "traces",
+                            "spans",
+                            "sessions",
+                            "users"
+                        ]
+                    },
+                    {
+                        "name": "search",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 200
+                    },
+                    {
+                        "name": "task_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "page_number",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0
+                    },
+                    {
+                        "name": "page_size",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 20,
+                        "maximum": 50,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InstantEvalRunsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/instant-eval/user-sessions/": {
+            "post": {
+                "operationId": "tracer_instant-eval_user-sessions_create",
+                "description": "The latest sessions of each user, for asking a question per user.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/InstantEvalUserSessions"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InstantEvalUserSessionsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
         "/tracer/internal/error-feed-v2/attempts/{attempt_id}/": {
             "patch": {
                 "operationId": "tracer_internal_error-feed-v2_attempts_partial_update",
@@ -107056,6 +108136,21 @@
         "EvalTemplateCreateV2Request": {
             "type": "object",
             "properties": {
+                "jev_mapping": {
+                    "title": "Jev mapping",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "multi_choice": {
+                    "title": "Multi choice",
+                    "type": "boolean",
+                    "default": false
+                },
+                "input_data_types": {
+                    "title": "Input data types",
+                    "type": "object",
+                    "x-nullable": true
+                },
                 "name": {
                     "title": "Name",
                     "type": "string",
@@ -107555,6 +108650,16 @@
             ],
             "type": "object",
             "properties": {
+                "jev_mapping": {
+                    "title": "Jev mapping",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "model": {
+                    "title": "Model",
+                    "type": "string",
+                    "x-nullable": true
+                },
                 "id": {
                     "title": "Id",
                     "type": "string",
@@ -107920,6 +109025,11 @@
             ],
             "type": "object",
             "properties": {
+                "jev_mapping": {
+                    "title": "Jev mapping",
+                    "type": "object",
+                    "x-nullable": true
+                },
                 "id": {
                     "title": "Id",
                     "type": "string",
@@ -108471,6 +109581,16 @@
         "EvalTemplateUpdateV2Request": {
             "type": "object",
             "properties": {
+                "jev_mapping": {
+                    "title": "Jev mapping",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "input_data_types": {
+                    "title": "Input data types",
+                    "type": "object",
+                    "x-nullable": true
+                },
                 "name": {
                     "title": "Name",
                     "type": "string",
@@ -109085,6 +110205,11 @@
             ],
             "type": "object",
             "properties": {
+                "jev_mapping": {
+                    "title": "Jev mapping",
+                    "type": "object",
+                    "x-nullable": true
+                },
                 "id": {
                     "title": "Id",
                     "type": "string",
@@ -109164,6 +110289,11 @@
         "EvalTemplateVersionCreateRequest": {
             "type": "object",
             "properties": {
+                "jev_mapping": {
+                    "title": "Jev mapping",
+                    "type": "object",
+                    "x-nullable": true
+                },
                 "criteria": {
                     "title": "Criteria",
                     "type": "string",
@@ -143892,6 +145022,1484 @@
                     "items": {
                         "$ref": "#/definitions/WidgetAnalysis"
                     }
+                }
+            }
+        },
+        "InsightRunSummary": {
+            "required": [
+                "id",
+                "status",
+                "stage",
+                "created_at",
+                "finished_at",
+                "population_size",
+                "sample_size",
+                "analysed_count",
+                "taxonomy_mode",
+                "distribution",
+                "scope"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "finished_at": {
+                    "title": "Finished at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "population_size": {
+                    "title": "Population size",
+                    "type": "integer"
+                },
+                "sample_size": {
+                    "title": "Sample size",
+                    "type": "integer"
+                },
+                "analysed_count": {
+                    "title": "Analysed count",
+                    "type": "integer"
+                },
+                "taxonomy_mode": {
+                    "title": "Taxonomy mode",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "distribution": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "scope": {
+                    "title": "Scope",
+                    "type": "object"
+                }
+            },
+            "x-nullable": true
+        },
+        "InsightConfigItem": {
+            "required": [
+                "id",
+                "name",
+                "unit",
+                "lens",
+                "question",
+                "agent_description",
+                "instructions",
+                "attributes",
+                "sample_size",
+                "scope",
+                "has_taxonomy",
+                "taxonomy",
+                "created_at",
+                "latest_run"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "unit": {
+                    "title": "Unit",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "lens": {
+                    "title": "Lens",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "question": {
+                    "title": "Question",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "agent_description": {
+                    "title": "Agent description",
+                    "type": "string"
+                },
+                "instructions": {
+                    "title": "Instructions",
+                    "type": "string"
+                },
+                "attributes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "sample_size": {
+                    "title": "Sample size",
+                    "type": "integer"
+                },
+                "scope": {
+                    "title": "Scope",
+                    "type": "object"
+                },
+                "has_taxonomy": {
+                    "title": "Has taxonomy",
+                    "type": "boolean"
+                },
+                "taxonomy": {
+                    "title": "Taxonomy",
+                    "type": "object"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "latest_run": {
+                    "$ref": "#/definitions/InsightRunSummary"
+                },
+                "runs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InsightRunSummary"
+                    }
+                }
+            }
+        },
+        "InsightConfigListResult": {
+            "required": [
+                "configs"
+            ],
+            "type": "object",
+            "properties": {
+                "configs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InsightConfigItem"
+                    }
+                }
+            }
+        },
+        "InsightConfigListResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/InsightConfigListResult"
+                }
+            }
+        },
+        "InsightConfigResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/InsightConfigItem"
+                }
+            }
+        },
+        "InsightAttribute": {
+            "required": [
+                "key",
+                "type"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "maxLength": 60,
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "boolean",
+                        "number",
+                        "string"
+                    ]
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "maxLength": 300
+                },
+                "filter_by": {
+                    "title": "Filter by",
+                    "type": "boolean",
+                    "default": false
+                }
+            }
+        },
+        "InsightScope": {
+            "type": "object",
+            "properties": {
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "maxLength": 300
+                },
+                "preset": {
+                    "title": "Preset",
+                    "type": "string",
+                    "maxLength": 16
+                },
+                "window": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "minLength": 1
+                    },
+                    "maxItems": 2
+                }
+            }
+        },
+        "InsightConfigPatch": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "reset_taxonomy": {
+                    "title": "Reset taxonomy",
+                    "type": "boolean",
+                    "default": false
+                },
+                "question": {
+                    "title": "Question",
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 1
+                },
+                "lens": {
+                    "title": "Lens",
+                    "type": "string",
+                    "enum": [
+                        "usage",
+                        "failures",
+                        "experience",
+                        "personas",
+                        "custom"
+                    ]
+                },
+                "agent_description": {
+                    "title": "Agent description",
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "instructions": {
+                    "title": "Instructions",
+                    "type": "string",
+                    "maxLength": 1000
+                },
+                "attributes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InsightAttribute"
+                    }
+                },
+                "sample_size": {
+                    "title": "Sample size",
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 10
+                },
+                "scope": {
+                    "$ref": "#/definitions/InsightScope"
+                }
+            }
+        },
+        "InsightDraft": {
+            "required": [
+                "project_id",
+                "unit",
+                "lens",
+                "sample_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "unit": {
+                    "title": "Unit",
+                    "type": "string",
+                    "enum": [
+                        "traces",
+                        "sessions",
+                        "users"
+                    ]
+                },
+                "lens": {
+                    "title": "Lens",
+                    "type": "string",
+                    "enum": [
+                        "usage",
+                        "failures",
+                        "experience",
+                        "personas",
+                        "custom"
+                    ]
+                },
+                "goal": {
+                    "title": "Goal",
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "agent_description": {
+                    "title": "Agent description",
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "sample_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 5,
+                    "minItems": 1
+                }
+            }
+        },
+        "InsightDraftResult": {
+            "required": [
+                "name",
+                "question",
+                "agent_description",
+                "instructions",
+                "attributes",
+                "examples_read"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "question": {
+                    "title": "Question",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "agent_description": {
+                    "title": "Agent description",
+                    "type": "string"
+                },
+                "instructions": {
+                    "title": "Instructions",
+                    "type": "string"
+                },
+                "attributes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "examples_read": {
+                    "title": "Examples read",
+                    "type": "integer"
+                }
+            }
+        },
+        "InsightDraftResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/InsightDraftResult"
+                }
+            }
+        },
+        "InsightConfigInput": {
+            "required": [
+                "name",
+                "unit",
+                "lens",
+                "question"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "unit": {
+                    "title": "Unit",
+                    "type": "string",
+                    "enum": [
+                        "traces",
+                        "sessions",
+                        "users"
+                    ]
+                },
+                "lens": {
+                    "title": "Lens",
+                    "type": "string",
+                    "enum": [
+                        "usage",
+                        "failures",
+                        "experience",
+                        "personas",
+                        "custom"
+                    ]
+                },
+                "question": {
+                    "title": "Question",
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 1
+                },
+                "agent_description": {
+                    "title": "Agent description",
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "instructions": {
+                    "title": "Instructions",
+                    "type": "string",
+                    "maxLength": 1000
+                },
+                "attributes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InsightAttribute"
+                    }
+                },
+                "sample_size": {
+                    "title": "Sample size",
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 10
+                }
+            }
+        },
+        "InsightPreview": {
+            "required": [
+                "project_id",
+                "config",
+                "unit_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "config": {
+                    "$ref": "#/definitions/InsightConfigInput"
+                },
+                "unit_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 3,
+                    "minItems": 1
+                }
+            }
+        },
+        "InsightPreviewResult": {
+            "required": [
+                "units"
+            ],
+            "type": "object",
+            "properties": {
+                "units": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "InsightPreviewResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/InsightPreviewResult"
+                }
+            }
+        },
+        "InsightPopulationItem": {
+            "required": [
+                "id"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "time": {
+                    "title": "Time",
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "user_id": {
+                    "title": "User id",
+                    "type": "string",
+                    "maxLength": 255
+                }
+            }
+        },
+        "InsightRunCreate": {
+            "required": [
+                "project_id",
+                "population"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "config_id": {
+                    "title": "Config id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "config": {
+                    "$ref": "#/definitions/InsightConfigInput"
+                },
+                "scope": {
+                    "$ref": "#/definitions/InsightScope"
+                },
+                "population": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InsightPopulationItem"
+                    }
+                },
+                "sample_size": {
+                    "title": "Sample size",
+                    "type": "integer",
+                    "maximum": 1000,
+                    "minimum": 10
+                }
+            }
+        },
+        "InsightRunCreatedResult": {
+            "required": [
+                "run_id",
+                "config_id"
+            ],
+            "type": "object",
+            "properties": {
+                "run_id": {
+                    "title": "Run id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "config_id": {
+                    "title": "Config id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "InsightRunCreatedResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/InsightRunCreatedResult"
+                }
+            }
+        },
+        "InsightRunDetail": {
+            "required": [
+                "id",
+                "config_id",
+                "project_id",
+                "status",
+                "stage",
+                "progress",
+                "unit",
+                "scope",
+                "settings",
+                "population_size",
+                "sample_size",
+                "analysed_count",
+                "taxonomy_mode",
+                "result",
+                "models_used",
+                "cost_usd",
+                "error",
+                "created_at",
+                "started_at",
+                "finished_at",
+                "previous_run_id",
+                "next_run_id"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "config_id": {
+                    "title": "Config id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "progress": {
+                    "title": "Progress",
+                    "type": "object"
+                },
+                "unit": {
+                    "title": "Unit",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scope": {
+                    "title": "Scope",
+                    "type": "object"
+                },
+                "settings": {
+                    "title": "Settings",
+                    "type": "object"
+                },
+                "population_size": {
+                    "title": "Population size",
+                    "type": "integer"
+                },
+                "sample_size": {
+                    "title": "Sample size",
+                    "type": "integer"
+                },
+                "analysed_count": {
+                    "title": "Analysed count",
+                    "type": "integer"
+                },
+                "taxonomy_mode": {
+                    "title": "Taxonomy mode",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object"
+                },
+                "models_used": {
+                    "title": "Models used",
+                    "type": "object"
+                },
+                "cost_usd": {
+                    "title": "Cost usd",
+                    "type": "number"
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "started_at": {
+                    "title": "Started at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "finished_at": {
+                    "title": "Finished at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "previous_run_id": {
+                    "title": "Previous run id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "next_run_id": {
+                    "title": "Next run id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "InsightRunResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/InsightRunDetail"
+                }
+            }
+        },
+        "InsightAskMessage": {
+            "required": [
+                "role",
+                "content"
+            ],
+            "type": "object",
+            "properties": {
+                "role": {
+                    "title": "Role",
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "assistant"
+                    ]
+                },
+                "content": {
+                    "title": "Content",
+                    "type": "string",
+                    "maxLength": 4000
+                }
+            }
+        },
+        "InsightAsk": {
+            "required": [
+                "question"
+            ],
+            "type": "object",
+            "properties": {
+                "question": {
+                    "title": "Question",
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 1
+                },
+                "history": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InsightAskMessage"
+                    }
+                }
+            }
+        },
+        "InsightAskEvidence": {
+            "required": [
+                "unit_id",
+                "quote"
+            ],
+            "type": "object",
+            "properties": {
+                "unit_id": {
+                    "title": "Unit id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "quote": {
+                    "title": "Quote",
+                    "type": "string"
+                },
+                "evidence_id": {
+                    "title": "Evidence id",
+                    "type": "string"
+                }
+            }
+        },
+        "InsightAskParagraph": {
+            "required": [
+                "text",
+                "unit_ids",
+                "category_ids",
+                "evidence"
+            ],
+            "type": "object",
+            "properties": {
+                "text": {
+                    "title": "Text",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "unit_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "category_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "evidence": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InsightAskEvidence"
+                    }
+                }
+            }
+        },
+        "InsightAskResult": {
+            "required": [
+                "answer",
+                "follow_ups",
+                "dropped"
+            ],
+            "type": "object",
+            "properties": {
+                "answer": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InsightAskParagraph"
+                    }
+                },
+                "follow_ups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "dropped": {
+                    "title": "Dropped",
+                    "type": "integer"
+                }
+            }
+        },
+        "InsightAskResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/InsightAskResult"
+                }
+            }
+        },
+        "InsightUnitItem": {
+            "required": [
+                "unit_id",
+                "label",
+                "user_id",
+                "session_id",
+                "time",
+                "excerpt",
+                "summary",
+                "lens_answer",
+                "facets",
+                "metrics",
+                "category_id",
+                "sub_category_id"
+            ],
+            "type": "object",
+            "properties": {
+                "unit_id": {
+                    "title": "Unit id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string"
+                },
+                "user_id": {
+                    "title": "User id",
+                    "type": "string"
+                },
+                "session_id": {
+                    "title": "Session id",
+                    "type": "string"
+                },
+                "time": {
+                    "title": "Time",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "excerpt": {
+                    "title": "Excerpt",
+                    "type": "string"
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "lens_answer": {
+                    "title": "Lens answer",
+                    "type": "string"
+                },
+                "facets": {
+                    "title": "Facets",
+                    "type": "object"
+                },
+                "metrics": {
+                    "title": "Metrics",
+                    "type": "object"
+                },
+                "category_id": {
+                    "title": "Category id",
+                    "type": "string"
+                },
+                "sub_category_id": {
+                    "title": "Sub category id",
+                    "type": "string"
+                },
+                "content": {
+                    "title": "Content",
+                    "type": "string"
+                }
+            }
+        },
+        "InsightUnitsResult": {
+            "required": [
+                "units",
+                "total"
+            ],
+            "type": "object",
+            "properties": {
+                "units": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InsightUnitItem"
+                    }
+                },
+                "total": {
+                    "title": "Total",
+                    "type": "integer"
+                }
+            }
+        },
+        "InsightUnitsResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/InsightUnitsResult"
+                }
+            }
+        },
+        "InstantEvalRowFacets": {
+            "required": [
+                "model",
+                "turns",
+                "duration_ms",
+                "error"
+            ],
+            "type": "object",
+            "properties": {
+                "model": {
+                    "title": "Model",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "turns": {
+                    "title": "Turns",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "duration_ms": {
+                    "title": "Duration ms",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "boolean"
+                }
+            }
+        },
+        "InstantEvalAnswer": {
+            "required": [
+                "answer",
+                "explanation"
+            ],
+            "type": "object",
+            "properties": {
+                "answer": {
+                    "title": "Answer",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "explanation": {
+                    "title": "Explanation",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "confidence": {
+                    "title": "Confidence",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string"
+                },
+                "counts": {
+                    "title": "Counts",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "InstantEvalAnswerRow": {
+            "required": [
+                "id",
+                "label",
+                "excerpt",
+                "time",
+                "user_id",
+                "end_user_id",
+                "answers"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string"
+                },
+                "excerpt": {
+                    "title": "Excerpt",
+                    "type": "string"
+                },
+                "time": {
+                    "title": "Time",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "user_id": {
+                    "title": "User id",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "end_user_id": {
+                    "title": "End user id",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "sessions": {
+                    "title": "Sessions",
+                    "type": "integer"
+                },
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "facets": {
+                    "$ref": "#/definitions/InstantEvalRowFacets"
+                },
+                "answers": {
+                    "title": "Answers",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/InstantEvalAnswer"
+                    }
+                }
+            }
+        },
+        "InstantEvalAnswersResult": {
+            "required": [
+                "unit",
+                "rows",
+                "counts",
+                "answered"
+            ],
+            "type": "object",
+            "properties": {
+                "unit": {
+                    "title": "Unit",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InstantEvalAnswerRow"
+                    }
+                },
+                "counts": {
+                    "title": "Counts",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "answered": {
+                    "title": "Answered",
+                    "type": "integer"
+                },
+                "pending": {
+                    "title": "Pending",
+                    "type": "integer"
+                }
+            }
+        },
+        "InstantEvalAnswersResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/InstantEvalAnswersResult"
+                }
+            }
+        },
+        "InstantEvalRun": {
+            "required": [
+                "task_id",
+                "name",
+                "created_at",
+                "status",
+                "run_type",
+                "unit",
+                "reads",
+                "rows",
+                "config_ids",
+                "questions",
+                "counts",
+                "answered",
+                "pending"
+            ],
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "title": "Task id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "run_type": {
+                    "title": "Run type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "unit": {
+                    "title": "Unit",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "reads": {
+                    "title": "Reads",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "rows": {
+                    "title": "Rows",
+                    "type": "integer"
+                },
+                "config_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "questions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "counts": {
+                    "title": "Counts",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "answered": {
+                    "title": "Answered",
+                    "type": "integer"
+                },
+                "pending": {
+                    "title": "Pending",
+                    "type": "integer"
+                },
+                "finished_at": {
+                    "title": "Finished at",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "InstantEvalRunsResult": {
+            "required": [
+                "runs",
+                "has_more"
+            ],
+            "type": "object",
+            "properties": {
+                "runs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InstantEvalRun"
+                    }
+                },
+                "has_more": {
+                    "title": "Has more",
+                    "type": "boolean"
+                }
+            }
+        },
+        "InstantEvalRunsResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/InstantEvalRunsResult"
+                }
+            }
+        },
+        "InstantEvalUserSessions": {
+            "required": [
+                "project_id",
+                "end_user_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "end_user_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 500,
+                    "minItems": 1
+                },
+                "window": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "maxItems": 2
+                },
+                "per_user": {
+                    "title": "Per user",
+                    "type": "integer",
+                    "default": 5,
+                    "maximum": 20,
+                    "minimum": 1
+                }
+            }
+        },
+        "InstantEvalUserSession": {
+            "required": [
+                "session_id",
+                "end_user_id",
+                "start_time"
+            ],
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "title": "Session id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "end_user_id": {
+                    "title": "End user id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "start_time": {
+                    "title": "Start time",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "InstantEvalUserSessionsResult": {
+            "required": [
+                "sessions",
+                "users"
+            ],
+            "type": "object",
+            "properties": {
+                "sessions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/InstantEvalUserSession"
+                    }
+                },
+                "users": {
+                    "title": "Users",
+                    "type": "integer"
+                }
+            }
+        },
+        "InstantEvalUserSessionsResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/InstantEvalUserSessionsResult"
                 }
             }
         },

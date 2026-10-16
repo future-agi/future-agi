@@ -234,6 +234,12 @@ const VoiceFullPage = lazyWithRetry(
 const SessionsView = lazyWithRetry(
   () => import("src/sections/projects/SessionsView/Sessions-view"),
 );
+const InsightsView = lazyWithRetry(
+  () => import("src/sections/projects/Insights/InsightsView"),
+);
+const AskPage = lazyWithRetry(
+  () => import("src/sections/projects/LLMTracing/InstantEval/page/AskPage"),
+);
 const LLMTracingView = lazyWithRetry(
   () => import("src/sections/projects/LLMTracing/LLMTracingView"),
 );
@@ -325,13 +331,15 @@ const SimulateEnvironmentsHome = lazyWithRetry(
   () => import("src/pages/dashboard/simulate/environments/EnvironmentsHome"),
 );
 const SimulatePrebuiltEnvironments = lazyWithRetry(
-  () => import("src/pages/dashboard/simulate/environments/PrebuiltEnvironments"),
+  () =>
+    import("src/pages/dashboard/simulate/environments/PrebuiltEnvironments"),
 );
 const SimulateUseTemplate = lazyWithRetry(
   () => import("src/pages/dashboard/simulate/environments/UseTemplate"),
 );
 const SimulateEnvironmentWorkspace = lazyWithRetry(
-  () => import("src/pages/dashboard/simulate/environments/EnvironmentWorkspace"),
+  () =>
+    import("src/pages/dashboard/simulate/environments/EnvironmentWorkspace"),
 );
 const WorkspaceExecutionDetail = lazyWithRetry(
   () =>
@@ -481,7 +489,6 @@ const Overview = lazyWithRetry(
 const Executions = lazyWithRetry(
   () => import("src/sections/agent-playground/Executions/Executions"),
 );
-
 
 const DashboardRoutes = () => {
   const location = useLocation();
@@ -1138,6 +1145,20 @@ export const dashboardRoutes = (
           path: "users",
           element: <UsersView />,
         },
+        {
+          path: "insights",
+          element: <InsightsView />,
+        },
+        // Instant eval: a question answered for every row of a view.
+        {
+          path: "ask",
+          element: <AskPage />,
+        },
+        // Insights was called Analyse; keep old links working.
+        {
+          path: "analyse",
+          element: <Navigate to="../insights" relative="path" replace />,
+        },
       ],
     },
     {
@@ -1361,7 +1382,9 @@ export const dashboardRoutes = (
           // job and route straight to the workspace, which hosts the build. An
           // old /build link lands back on the Build entry tab.
           path: "environments/build",
-          element: <Navigate to="/dashboard/simulate/environments?tab=build" replace />,
+          element: (
+            <Navigate to="/dashboard/simulate/environments?tab=build" replace />
+          ),
         },
         {
           path: "environments/:envId",

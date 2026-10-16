@@ -319,6 +319,8 @@ func inferAPIFormat(providerID string) string {
 		return "gemini"
 	case "cohere":
 		return "cohere"
+	case apiFormatTypeSafe:
+		return APIFormatSystemOne
 	default:
 		return "openai"
 	}

@@ -301,6 +301,35 @@ def _ensure_workflows_registered() -> None:
 
         get_logger(__name__).warning("could_not_load_imagine_workflows", error=str(e))
 
+    # Register Insight report workflows for tasks_xl queue
+    try:
+        from tfc.temporal.insights.activities import (
+            insight_extract,
+            insight_fail,
+            insight_finish,
+            insight_organise,
+            insight_prepare,
+            insight_retry_failed,
+        )
+        from tfc.temporal.insights.workflows import InsightReportWorkflow
+
+        register_for_queues(
+            queues=["tasks_xl"],
+            workflows=[InsightReportWorkflow],
+            activities=[
+                insight_prepare,
+                insight_extract,
+                insight_retry_failed,
+                insight_organise,
+                insight_finish,
+                insight_fail,
+            ],
+        )
+    except ImportError as e:
+        from tfc.logging.temporal import get_logger
+
+        get_logger(__name__).warning("could_not_load_insight_workflows", error=str(e))
+
     # Register drop-in TaskRunnerWorkflow for all queues
     try:
         from simulate.temporal.constants import QUEUE_RUNNER

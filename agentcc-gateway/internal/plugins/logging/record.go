@@ -2,6 +2,7 @@ package logging
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"time"
 
@@ -141,6 +142,10 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 			if rc.OCRResponse != nil {
 				rec.StatusCode = 200
 			}
+		case "decision":
+			if rc.DecisionResponse != nil {
+				rec.StatusCode = 200
+			}
 		}
 	}
 	if rec.ResolvedModel == "" && rec.StatusCode > 0 {
@@ -154,6 +159,11 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 			rec.StatusCode = apiErr.Status
 			rec.ErrorMessage = apiErr.Message
 			rec.ErrorCode = apiErr.Code
+			if rc.EndpointType == "decision" {
+				// A vendor's error text can quote the decision's content back;
+				// the code and status say what happened.
+				rec.ErrorMessage = http.StatusText(apiErr.Status)
+			}
 		} else {
 			if rec.StatusCode == 0 {
 				rec.StatusCode = 500
@@ -204,7 +214,24 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 		}
 	}
 
+	// A decision always logs its summary — question IDs and types, the state's
+	// size, the answers and usage — and its full bodies only where bodies are
+	// recorded and privacy mode allows them.
+	if rc.EndpointType == "decision" {
+		rec.RequestBodyJSON, rec.ResponseBodyJSON = payloads.ForEndpoint(rc)
+		if cfg.IncludeBodies && decisionBodiesAllowed(rc) {
+			rec.RequestBodyJSON, rec.ResponseBodyJSON = payloads.DecisionBodies(rc)
+		}
+	}
+
 	return rec
+}
+
+// decisionBodiesAllowed reports whether privacy mode lets a decision's full
+// bodies into the log. Any privacy setting keeps them out: the redactor walks
+// chat messages, not a decision's state.
+func decisionBodiesAllowed(rc *models.RequestContext) bool {
+	return rc.Metadata["org_privacy_enabled"] != "true" && rc.Metadata["org_privacy_mode"] == "" && rc.Metadata["privacy_mode"] == ""
 }
 
 // redactRecord applies privacy redaction to message content in the trace record.
@@ -258,12 +285,13 @@ func redactChoices(choices []models.Choice, r *privacy.Redactor, mode string) []
 }
 
 var sensitiveHeaderKeys = map[string]bool{
-	"authorization":    true,
-	"x-api-key":        true,
-	"api-key":          true,
-	"x-auth-token":     true,
-	"cookie":           true,
-	"x-webhook-secret": true,
+	"authorization":          true,
+	"x-agentcc-provider-key": true,
+	"x-api-key":              true,
+	"api-key":                true,
+	"x-auth-token":           true,
+	"cookie":                 true,
+	"x-webhook-secret":       true,
 }
 
 func sanitizeHeaders(h map[string][]string) map[string][]string {

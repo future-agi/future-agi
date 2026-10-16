@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +21,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/providers/cohere"
 	"github.com/futureagi/agentcc-gateway/internal/providers/gemini"
 	"github.com/futureagi/agentcc-gateway/internal/providers/openai"
+	"github.com/futureagi/agentcc-gateway/internal/providers/systemone"
 	"github.com/futureagi/agentcc-gateway/internal/routing"
 )
 
@@ -126,9 +129,23 @@ func createProvider(name string, cfg config.ProviderConfig) (Provider, error) {
 		return cohere.New(name, cfg)
 	case "azure":
 		return azure.New(name, cfg)
+	case APIFormatSystemOne, apiFormatTypeSafe:
+		return systemone.New(name, cfg)
 	default:
-		return nil, fmt.Errorf("unsupported api_format %q (supported: openai, anthropic, gemini, bedrock, cohere, azure)", cfg.APIFormat)
+		return nil, fmt.Errorf("unsupported api_format %q (supported: openai, anthropic, gemini, bedrock, cohere, azure, systemone)", cfg.APIFormat)
 	}
+}
+
+// APIFormatSystemOne is the api_format of a structured-decision provider.
+// "typesafe" is accepted as its alias: TypeSafe defined the format.
+const (
+	APIFormatSystemOne = "systemone"
+	apiFormatTypeSafe  = "typesafe"
+)
+
+// IsSystemOneFormat reports whether an api_format names System One.
+func IsSystemOneFormat(apiFormat string) bool {
+	return apiFormat == APIFormatSystemOne || apiFormat == apiFormatTypeSafe
 }
 
 // RegisterProvider adds a provider at runtime (e.g., a2a provider for agent delegation).
@@ -240,6 +257,20 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 		fmt.Sprintf("model %q not found in any configured provider. Configure model_map or use 'provider/model' format.", model))
 }
 
+// ProvidersFor returns, in ID order, the providers that list model exactly or
+// that config.yaml's model_map maps it to. Nothing is inferred: no routing
+// targets, no "provider/model" guess, no only-provider default.
+func (r *Registry) ProvidersFor(model string) []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := append([]string(nil), r.modelProviders[model]...)
+	if id, ok := r.modelMap[model]; ok && !slices.Contains(ids, id) {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return slices.Compact(ids)
+}
+
 // ResolveModelName extracts the actual model name (strips provider prefix if present).
 func ResolveModelName(model string) string {
 	if idx := strings.Index(model, "/"); idx > 0 {
@@ -343,6 +374,11 @@ func applyLocalDefaults(cfg *config.ProviderConfig) {
 // autoDiscoverModels calls GET /v1/models to discover available models from a provider.
 // Returns discovered model IDs, or nil if discovery is disabled or fails.
 func autoDiscoverModels(name string, cfg *config.ProviderConfig) []string {
+	// Decision vendors serve no model listing; their models are configured.
+	if IsSystemOneFormat(cfg.APIFormat) {
+		return nil
+	}
+
 	// Determine if auto-discover is enabled.
 	if cfg.AutoDiscover != nil {
 		if !*cfg.AutoDiscover {

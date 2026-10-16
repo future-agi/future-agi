@@ -15,6 +15,7 @@ import { enqueueSnackbar } from "notistack";
 import { useRemoveProvider } from "./hooks/useGatewayConfig";
 import ConfirmDialog from "../components/ConfirmDialog";
 import AddProviderDialog from "./AddProviderDialog";
+import { apiFormatLabel } from "./utils";
 
 const ProviderConfigView = ({ config, orgConfig, gatewayId }) => {
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -88,9 +89,9 @@ const ProviderConfigView = ({ config, orgConfig, gatewayId }) => {
               <InfoLine
                 label="API Format"
                 value={
-                  providerConfig.api_format ??
-                  providerConfig.apiFormat ??
-                  "\u2014"
+                  apiFormatLabel(
+                    providerConfig.api_format ?? providerConfig.apiFormat,
+                  ) || "\u2014"
                 }
               />
               <InfoLine

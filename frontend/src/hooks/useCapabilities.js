@@ -13,6 +13,7 @@ export const CAPABILITY = Object.freeze({
   ERROR_FEED: "error_feed",
   FALCON_AI: "falcon_ai",
   TURING_MODELS: "turing_models",
+  JEV_MODELS: "jev_models",
   PROTECT: "protect",
   VOICE_SIM: "voice_sim",
   AGENTIC_EVAL: "agentic_eval",
@@ -60,7 +61,8 @@ export function useFeatureAllowed(featureId) {
  * upsell copy when the answer isn't a real denial.
  */
 export function useFeatureLocked(featureId) {
-  const { allowed, reasonCode, isLoading, isError } = useFeatureAllowed(featureId);
+  const { allowed, reasonCode, isLoading, isError } =
+    useFeatureAllowed(featureId);
   return {
     locked: isLoading || !allowed,
     reasonCode,

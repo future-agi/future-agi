@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1059,
+  endpointCount: 1070,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -34762,6 +34762,626 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/insights/configs/": {
+      get: {
+        operationId: "tracer_insights_configs_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightConfigListResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/configs/{config_id}/": {
+      get: {
+        operationId: "tracer_insights_configs_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightConfigResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      patch: {
+        operationId: "tracer_insights_configs_partial_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InsightConfigPatch",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightConfigResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      delete: {
+        operationId: "tracer_insights_configs_delete",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightConfigResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/draft/": {
+      post: {
+        operationId: "tracer_insights_draft_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InsightDraft",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightDraftResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/preview/": {
+      post: {
+        operationId: "tracer_insights_preview_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InsightPreview",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightPreviewResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/runs/": {
+      post: {
+        operationId: "tracer_insights_runs_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InsightRunCreate",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightRunCreatedResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/runs/{run_id}/": {
+      get: {
+        operationId: "tracer_insights_runs_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightRunResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/runs/{run_id}/ask/": {
+      post: {
+        operationId: "tracer_insights_runs_ask_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InsightAsk",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightAskResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/insights/runs/{run_id}/units/": {
+      get: {
+        operationId: "tracer_insights_runs_units_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          category_id: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 64,
+            },
+          },
+          sub_category_id: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 64,
+            },
+          },
+          unit_ids: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 4000,
+            },
+          },
+          offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              default: 0,
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 200,
+              default: 50,
+            },
+          },
+          include_content: {
+            required: false,
+            schema: {
+              type: "boolean",
+              default: false,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightUnitsResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/instant-eval/answers/": {
+      get: {
+        operationId: "tracer_instant-eval_answers_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          eval_task_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          unit: {
+            required: true,
+            schema: {
+              type: "string",
+              enum: ["traces", "spans", "sessions", "users"],
+            },
+          },
+          config_ids: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 2000,
+            },
+          },
+          counts_only: {
+            required: false,
+            schema: {
+              type: "boolean",
+              default: false,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/InstantEvalAnswersResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/instant-eval/runs/": {
+      get: {
+        operationId: "tracer_instant-eval_runs_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          unit: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["traces", "spans", "sessions", "users"],
+            },
+          },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 200,
+            },
+          },
+          task_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          page_number: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              default: 0,
+            },
+          },
+          page_size: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 50,
+              default: 20,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/InstantEvalRunsResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/instant-eval/user-sessions/": {
+      post: {
+        operationId: "tracer_instant-eval_user-sessions_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InstantEvalUserSessions",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InstantEvalUserSessionsResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/internal/error-feed-v2/attempts/{attempt_id}/": {
       patch: {
         operationId: "tracer_internal_error-feed-v2_attempts_partial_update",
@@ -59073,6 +59693,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
     EvalTemplateCreateV2Request: {
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
+        multi_choice: {
+          title: "Multi choice",
+          type: "boolean",
+          default: false,
+        },
+        input_data_types: {
+          title: "Input data types",
+          type: "object",
+          "x-nullable": true,
+        },
         name: {
           title: "Name",
           type: "string",
@@ -59297,6 +59932,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
     EvalTemplateUpdateV2Request: {
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
+        input_data_types: {
+          title: "Input data types",
+          type: "object",
+          "x-nullable": true,
+        },
         name: {
           title: "Name",
           type: "string",
@@ -59438,6 +60083,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
     EvalTemplateVersionCreateRequest: {
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
         criteria: {
           title: "Criteria",
           type: "string",
@@ -63992,6 +64642,364 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Annotator id",
           type: "string",
           format: "uuid",
+        },
+      },
+    },
+    InsightAsk: {
+      required: ["question"],
+      type: "object",
+      properties: {
+        question: {
+          title: "Question",
+          type: "string",
+          maxLength: 500,
+          minLength: 1,
+        },
+        history: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightAskMessage",
+          },
+        },
+      },
+    },
+    InsightAskResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightAskResult",
+        },
+      },
+    },
+    InsightConfigListResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightConfigListResult",
+        },
+      },
+    },
+    InsightConfigPatch: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        reset_taxonomy: {
+          title: "Reset taxonomy",
+          type: "boolean",
+          default: false,
+        },
+        question: {
+          title: "Question",
+          type: "string",
+          maxLength: 500,
+          minLength: 1,
+        },
+        lens: {
+          title: "Lens",
+          type: "string",
+          enum: ["usage", "failures", "experience", "personas", "custom"],
+        },
+        agent_description: {
+          title: "Agent description",
+          type: "string",
+          maxLength: 500,
+        },
+        instructions: {
+          title: "Instructions",
+          type: "string",
+          maxLength: 1000,
+        },
+        attributes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightAttribute",
+          },
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+          maximum: 1000,
+          minimum: 10,
+        },
+        scope: {
+          $ref: "#/definitions/InsightScope",
+        },
+      },
+    },
+    InsightConfigResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightConfigItem",
+        },
+      },
+    },
+    InsightDraft: {
+      required: ["project_id", "unit", "lens", "sample_ids"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["traces", "sessions", "users"],
+        },
+        lens: {
+          title: "Lens",
+          type: "string",
+          enum: ["usage", "failures", "experience", "personas", "custom"],
+        },
+        goal: {
+          title: "Goal",
+          type: "string",
+          maxLength: 500,
+        },
+        agent_description: {
+          title: "Agent description",
+          type: "string",
+          maxLength: 500,
+        },
+        sample_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 5,
+          minItems: 1,
+        },
+      },
+    },
+    InsightDraftResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightDraftResult",
+        },
+      },
+    },
+    InsightPreview: {
+      required: ["project_id", "config", "unit_ids"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        config: {
+          $ref: "#/definitions/InsightConfigInput",
+        },
+        unit_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 3,
+          minItems: 1,
+        },
+      },
+    },
+    InsightPreviewResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightPreviewResult",
+        },
+      },
+    },
+    InsightRunCreate: {
+      required: ["project_id", "population"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        config_id: {
+          title: "Config id",
+          type: "string",
+          format: "uuid",
+        },
+        config: {
+          $ref: "#/definitions/InsightConfigInput",
+        },
+        scope: {
+          $ref: "#/definitions/InsightScope",
+        },
+        population: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightPopulationItem",
+          },
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+          maximum: 1000,
+          minimum: 10,
+        },
+      },
+    },
+    InsightRunCreatedResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightRunCreatedResult",
+        },
+      },
+    },
+    InsightRunResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightRunDetail",
+        },
+      },
+    },
+    InsightUnitsResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightUnitsResult",
+        },
+      },
+    },
+    InstantEvalAnswersResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InstantEvalAnswersResult",
+        },
+      },
+    },
+    InstantEvalRunsResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InstantEvalRunsResult",
+        },
+      },
+    },
+    InstantEvalUserSessions: {
+      required: ["project_id", "end_user_ids"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        end_user_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 500,
+          minItems: 1,
+        },
+        window: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "date-time",
+          },
+          maxItems: 2,
+        },
+        per_user: {
+          title: "Per user",
+          type: "integer",
+          default: 5,
+          maximum: 20,
+          minimum: 1,
+        },
+      },
+    },
+    InstantEvalUserSessionsResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InstantEvalUserSessionsResult",
         },
       },
     },
@@ -89434,6 +90442,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
         id: {
           title: "Id",
           type: "string",
@@ -93734,6 +94747,561 @@ export const OPENAPI_CONTRACT = Object.freeze({
         score_source: {
           title: "Score source",
           type: "string",
+        },
+      },
+    },
+    InsightAskMessage: {
+      required: ["role", "content"],
+      type: "object",
+      properties: {
+        role: {
+          title: "Role",
+          type: "string",
+          enum: ["user", "assistant"],
+        },
+        content: {
+          title: "Content",
+          type: "string",
+          maxLength: 4000,
+        },
+      },
+    },
+    InsightAskResult: {
+      required: ["answer", "follow_ups", "dropped"],
+      type: "object",
+      properties: {
+        answer: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightAskParagraph",
+          },
+        },
+        follow_ups: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        dropped: {
+          title: "Dropped",
+          type: "integer",
+        },
+      },
+    },
+    InsightConfigListResult: {
+      required: ["configs"],
+      type: "object",
+      properties: {
+        configs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightConfigItem",
+          },
+        },
+      },
+    },
+    InsightAttribute: {
+      required: ["key", "type"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          maxLength: 60,
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["boolean", "number", "string"],
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          maxLength: 300,
+        },
+        filter_by: {
+          title: "Filter by",
+          type: "boolean",
+          default: false,
+        },
+      },
+    },
+    InsightScope: {
+      type: "object",
+      properties: {
+        filters: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          maxLength: 300,
+        },
+        preset: {
+          title: "Preset",
+          type: "string",
+          maxLength: 16,
+        },
+        window: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 64,
+            minLength: 1,
+          },
+          maxItems: 2,
+        },
+      },
+    },
+    InsightConfigItem: {
+      required: [
+        "id",
+        "name",
+        "unit",
+        "lens",
+        "question",
+        "agent_description",
+        "instructions",
+        "attributes",
+        "sample_size",
+        "scope",
+        "has_taxonomy",
+        "taxonomy",
+        "created_at",
+        "latest_run",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          minLength: 1,
+        },
+        lens: {
+          title: "Lens",
+          type: "string",
+          minLength: 1,
+        },
+        question: {
+          title: "Question",
+          type: "string",
+          minLength: 1,
+        },
+        agent_description: {
+          title: "Agent description",
+          type: "string",
+        },
+        instructions: {
+          title: "Instructions",
+          type: "string",
+        },
+        attributes: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+        },
+        scope: {
+          title: "Scope",
+          type: "object",
+        },
+        has_taxonomy: {
+          title: "Has taxonomy",
+          type: "boolean",
+        },
+        taxonomy: {
+          title: "Taxonomy",
+          type: "object",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        latest_run: {
+          $ref: "#/definitions/InsightRunSummary",
+        },
+        runs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightRunSummary",
+          },
+        },
+      },
+    },
+    InsightDraftResult: {
+      required: [
+        "name",
+        "question",
+        "agent_description",
+        "instructions",
+        "attributes",
+        "examples_read",
+      ],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        question: {
+          title: "Question",
+          type: "string",
+          minLength: 1,
+        },
+        agent_description: {
+          title: "Agent description",
+          type: "string",
+        },
+        instructions: {
+          title: "Instructions",
+          type: "string",
+        },
+        attributes: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        examples_read: {
+          title: "Examples read",
+          type: "integer",
+        },
+      },
+    },
+    InsightConfigInput: {
+      required: ["name", "unit", "lens", "question"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["traces", "sessions", "users"],
+        },
+        lens: {
+          title: "Lens",
+          type: "string",
+          enum: ["usage", "failures", "experience", "personas", "custom"],
+        },
+        question: {
+          title: "Question",
+          type: "string",
+          maxLength: 500,
+          minLength: 1,
+        },
+        agent_description: {
+          title: "Agent description",
+          type: "string",
+          maxLength: 500,
+        },
+        instructions: {
+          title: "Instructions",
+          type: "string",
+          maxLength: 1000,
+        },
+        attributes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightAttribute",
+          },
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+          maximum: 1000,
+          minimum: 10,
+        },
+      },
+    },
+    InsightPreviewResult: {
+      required: ["units"],
+      type: "object",
+      properties: {
+        units: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+      },
+    },
+    InsightPopulationItem: {
+      required: ["id"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        time: {
+          title: "Time",
+          type: "string",
+          maxLength: 64,
+        },
+        user_id: {
+          title: "User id",
+          type: "string",
+          maxLength: 255,
+        },
+      },
+    },
+    InsightRunCreatedResult: {
+      required: ["run_id", "config_id"],
+      type: "object",
+      properties: {
+        run_id: {
+          title: "Run id",
+          type: "string",
+          format: "uuid",
+        },
+        config_id: {
+          title: "Config id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    InsightRunDetail: {
+      required: [
+        "id",
+        "config_id",
+        "project_id",
+        "status",
+        "stage",
+        "progress",
+        "unit",
+        "scope",
+        "settings",
+        "population_size",
+        "sample_size",
+        "analysed_count",
+        "taxonomy_mode",
+        "result",
+        "models_used",
+        "cost_usd",
+        "error",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "previous_run_id",
+        "next_run_id",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        config_id: {
+          title: "Config id",
+          type: "string",
+          format: "uuid",
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+          minLength: 1,
+        },
+        progress: {
+          title: "Progress",
+          type: "object",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          minLength: 1,
+        },
+        scope: {
+          title: "Scope",
+          type: "object",
+        },
+        settings: {
+          title: "Settings",
+          type: "object",
+        },
+        population_size: {
+          title: "Population size",
+          type: "integer",
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+        },
+        analysed_count: {
+          title: "Analysed count",
+          type: "integer",
+        },
+        taxonomy_mode: {
+          title: "Taxonomy mode",
+          type: "string",
+          minLength: 1,
+        },
+        result: {
+          title: "Result",
+          type: "object",
+        },
+        models_used: {
+          title: "Models used",
+          type: "object",
+        },
+        cost_usd: {
+          title: "Cost usd",
+          type: "number",
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        previous_run_id: {
+          title: "Previous run id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        next_run_id: {
+          title: "Next run id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    InsightUnitsResult: {
+      required: ["units", "total"],
+      type: "object",
+      properties: {
+        units: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightUnitItem",
+          },
+        },
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+      },
+    },
+    InstantEvalAnswersResult: {
+      required: ["unit", "rows", "counts", "answered"],
+      type: "object",
+      properties: {
+        unit: {
+          title: "Unit",
+          type: "string",
+          minLength: 1,
+        },
+        rows: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InstantEvalAnswerRow",
+          },
+        },
+        counts: {
+          title: "Counts",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            additionalProperties: {
+              type: "integer",
+            },
+          },
+        },
+        answered: {
+          title: "Answered",
+          type: "integer",
+        },
+        pending: {
+          title: "Pending",
+          type: "integer",
+        },
+      },
+    },
+    InstantEvalRunsResult: {
+      required: ["runs", "has_more"],
+      type: "object",
+      properties: {
+        runs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InstantEvalRun",
+          },
+        },
+        has_more: {
+          title: "Has more",
+          type: "boolean",
+        },
+      },
+    },
+    InstantEvalUserSessionsResult: {
+      required: ["sessions", "users"],
+      type: "object",
+      properties: {
+        sessions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InstantEvalUserSession",
+          },
+        },
+        users: {
+          title: "Users",
+          type: "integer",
         },
       },
     },
@@ -107660,6 +109228,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          "x-nullable": true,
+        },
         id: {
           title: "Id",
           type: "string",
@@ -107738,6 +109316,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["id", "version_number", "is_default"],
       type: "object",
       properties: {
+        jev_mapping: {
+          title: "Jev mapping",
+          type: "object",
+          "x-nullable": true,
+        },
         id: {
           title: "Id",
           type: "string",
@@ -109961,6 +111544,364 @@ export const OPENAPI_CONTRACT = Object.freeze({
         error: {
           title: "Error",
           type: "string",
+          "x-nullable": true,
+        },
+      },
+    },
+    InsightAskParagraph: {
+      required: ["text", "unit_ids", "category_ids", "evidence"],
+      type: "object",
+      properties: {
+        text: {
+          title: "Text",
+          type: "string",
+          minLength: 1,
+        },
+        unit_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        category_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        evidence: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/InsightAskEvidence",
+          },
+        },
+      },
+    },
+    InsightRunSummary: {
+      required: [
+        "id",
+        "status",
+        "stage",
+        "created_at",
+        "finished_at",
+        "population_size",
+        "sample_size",
+        "analysed_count",
+        "taxonomy_mode",
+        "distribution",
+        "scope",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+          minLength: 1,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        population_size: {
+          title: "Population size",
+          type: "integer",
+        },
+        sample_size: {
+          title: "Sample size",
+          type: "integer",
+        },
+        analysed_count: {
+          title: "Analysed count",
+          type: "integer",
+        },
+        taxonomy_mode: {
+          title: "Taxonomy mode",
+          type: "string",
+          minLength: 1,
+        },
+        distribution: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        scope: {
+          title: "Scope",
+          type: "object",
+        },
+      },
+      "x-nullable": true,
+    },
+    InsightUnitItem: {
+      required: [
+        "unit_id",
+        "label",
+        "user_id",
+        "session_id",
+        "time",
+        "excerpt",
+        "summary",
+        "lens_answer",
+        "facets",
+        "metrics",
+        "category_id",
+        "sub_category_id",
+      ],
+      type: "object",
+      properties: {
+        unit_id: {
+          title: "Unit id",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+        },
+        user_id: {
+          title: "User id",
+          type: "string",
+        },
+        session_id: {
+          title: "Session id",
+          type: "string",
+        },
+        time: {
+          title: "Time",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        excerpt: {
+          title: "Excerpt",
+          type: "string",
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+        },
+        lens_answer: {
+          title: "Lens answer",
+          type: "string",
+        },
+        facets: {
+          title: "Facets",
+          type: "object",
+        },
+        metrics: {
+          title: "Metrics",
+          type: "object",
+        },
+        category_id: {
+          title: "Category id",
+          type: "string",
+        },
+        sub_category_id: {
+          title: "Sub category id",
+          type: "string",
+        },
+        content: {
+          title: "Content",
+          type: "string",
+        },
+      },
+    },
+    InstantEvalAnswerRow: {
+      required: [
+        "id",
+        "label",
+        "excerpt",
+        "time",
+        "user_id",
+        "end_user_id",
+        "answers",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+        },
+        excerpt: {
+          title: "Excerpt",
+          type: "string",
+        },
+        time: {
+          title: "Time",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        user_id: {
+          title: "User id",
+          type: "string",
+          "x-nullable": true,
+        },
+        end_user_id: {
+          title: "End user id",
+          type: "string",
+          "x-nullable": true,
+        },
+        sessions: {
+          title: "Sessions",
+          type: "integer",
+        },
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          "x-nullable": true,
+        },
+        facets: {
+          $ref: "#/definitions/InstantEvalRowFacets",
+        },
+        answers: {
+          title: "Answers",
+          type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/InstantEvalAnswer",
+          },
+        },
+      },
+    },
+    InstantEvalRun: {
+      required: [
+        "task_id",
+        "name",
+        "created_at",
+        "status",
+        "run_type",
+        "unit",
+        "reads",
+        "rows",
+        "config_ids",
+        "questions",
+        "counts",
+        "answered",
+        "pending",
+      ],
+      type: "object",
+      properties: {
+        task_id: {
+          title: "Task id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        run_type: {
+          title: "Run type",
+          type: "string",
+          minLength: 1,
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          minLength: 1,
+        },
+        reads: {
+          title: "Reads",
+          type: "string",
+          "x-nullable": true,
+        },
+        rows: {
+          title: "Rows",
+          type: "integer",
+        },
+        config_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        questions: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        counts: {
+          title: "Counts",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            additionalProperties: {
+              type: "integer",
+            },
+          },
+        },
+        answered: {
+          title: "Answered",
+          type: "integer",
+        },
+        pending: {
+          title: "Pending",
+          type: "integer",
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    InstantEvalUserSession: {
+      required: ["session_id", "end_user_id", "start_time"],
+      type: "object",
+      properties: {
+        session_id: {
+          title: "Session id",
+          type: "string",
+          minLength: 1,
+        },
+        end_user_id: {
+          title: "End user id",
+          type: "string",
+          minLength: 1,
+        },
+        start_time: {
+          title: "Start time",
+          type: "string",
+          minLength: 1,
           "x-nullable": true,
         },
       },
@@ -117053,6 +118994,83 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Total tokens",
           type: "integer",
           minimum: 0,
+        },
+      },
+    },
+    InsightAskEvidence: {
+      required: ["unit_id", "quote"],
+      type: "object",
+      properties: {
+        unit_id: {
+          title: "Unit id",
+          type: "string",
+          minLength: 1,
+        },
+        quote: {
+          title: "Quote",
+          type: "string",
+        },
+        evidence_id: {
+          title: "Evidence id",
+          type: "string",
+        },
+      },
+    },
+    InstantEvalAnswer: {
+      required: ["answer", "explanation"],
+      type: "object",
+      properties: {
+        answer: {
+          title: "Answer",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        explanation: {
+          title: "Explanation",
+          type: "string",
+          "x-nullable": true,
+        },
+        confidence: {
+          title: "Confidence",
+          type: "number",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+        },
+        counts: {
+          title: "Counts",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+          },
+        },
+      },
+    },
+    InstantEvalRowFacets: {
+      required: ["model", "turns", "duration_ms", "error"],
+      type: "object",
+      properties: {
+        model: {
+          title: "Model",
+          type: "string",
+          "x-nullable": true,
+        },
+        turns: {
+          title: "Turns",
+          type: "integer",
+          "x-nullable": true,
+        },
+        duration_ms: {
+          title: "Duration ms",
+          type: "integer",
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "boolean",
         },
       },
     },

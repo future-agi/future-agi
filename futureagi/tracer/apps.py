@@ -15,6 +15,7 @@ class SdkConfig(AppConfig):
             eval_task,  # noqa: F401
             external_eval_config,  # noqa: F401
             imagine_analysis,  # noqa: F401
+            insights,  # noqa: F401
             monitor,  # noqa: F401
             observability_provider,  # noqa: F401
             observation_span,  # noqa: F401

@@ -12,6 +12,7 @@ import Iconify from "src/components/iconify";
 import DisplayPanel from "./DisplayPanel";
 import TraceFilterPanel from "./TraceFilterPanel";
 import BulkActionsBar from "./BulkActionsBar";
+import EvaluateMenu from "./InstantEval/EvaluateMenu";
 import { pillSx } from "./toolbarStyles";
 import { useTabStoreShallow } from "./tabStore";
 import { ID_ONLY_FIELDS } from "./idFields";
@@ -33,6 +34,10 @@ const DATE_OPTIONS = [
   { key: "12M", label: "Past 12M" },
   { key: "Custom", label: "Custom range" },
 ];
+
+// Views whose rows Instant eval can ask about (traces mode covers the Spans
+// tab too). Insights runs on all of them but spans.
+const ASK_MODES = new Set(["traces", "sessions", "users"]);
 
 const ObserveToolbar = ({
   // Mode: "traces" (default) | "sessions" | "users"
@@ -120,11 +125,19 @@ const ObserveToolbar = ({
   // Compare mode: which graph's filter is being edited
   filterTarget,
   onApplyCompareExtraFilters,
-  // Add Evals — opens prefilled task-create draft
+  // Evaluate menu: Add evaluators opens a prefilled task-create draft;
+  // Ask a question opens the Instant eval drawer; Find patterns hands the
+  // rows in view to a new Insights report.
   onAddEvals,
+  onInstantEval,
+  onInsights,
   // Spans view — swaps "Trace Name" filter label to "Span Name"
   isSpansView = false,
 }) => {
+  // Asking needs a project (the views only pass handlers when they have one)
+  // and isn't offered in compare mode.
+  const canAsk = ASK_MODES.has(mode) && !isCompareActive;
+  const askUnit = mode === "traces" && isSpansView ? "spans" : mode;
   const [displayAnchor, setDisplayAnchor] = useState(null);
   const filterButtonRef = useRef(null);
   const [filterButtonEl, setFilterButtonEl] = useState(null);
@@ -542,20 +555,14 @@ const ObserveToolbar = ({
             onToggleSimulationCalls={onToggleSimulationCalls}
           />
 
-          {/* Add Evals — opens task create with project + filters pre-filled */}
-          {onAddEvals && (
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<Iconify icon="mdi:plus" width={16} />}
-              onClick={onAddEvals}
-              sx={{
-                ...pillSx,
-              }}
-            >
-              Add Evals
-            </Button>
-          )}
+          {/* Evaluate: ask Jev a question about every row in view, find
+              patterns with Insights, or run saved evaluators. */}
+          <EvaluateMenu
+            unit={askUnit}
+            onAsk={canAsk ? onInstantEval : undefined}
+            onFindPatterns={canAsk && !isSpansView ? onInsights : undefined}
+            onAddEvaluators={onAddEvals}
+          />
         </>
       )}
     </Stack>
@@ -615,6 +622,8 @@ ObserveToolbar.propTypes = {
   onBulkAction: PropTypes.func,
   bulkActions: PropTypes.array,
   onAddEvals: PropTypes.func,
+  onInstantEval: PropTypes.func,
+  onInsights: PropTypes.func,
   isSimulator: PropTypes.bool,
   excludeSimulationCalls: PropTypes.bool,
   onToggleSimulationCalls: PropTypes.func,

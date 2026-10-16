@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 )
 
 // Error types matching OpenAI's error format.
@@ -41,6 +42,15 @@ type APIError struct {
 	Code    string
 	Message string
 	Param   *string
+
+	// RetryAfter, when set, is sent as the Retry-After header: an upstream's
+	// own value, passed on so the caller waits as long as the vendor asked.
+	RetryAfter string
+
+	// UpstreamStatus, when set, is the status the upstream answered with,
+	// sent as x-agentcc-upstream-status so a caller can tell the gateway's
+	// refusal from the vendor's.
+	UpstreamStatus int
 }
 
 func (e *APIError) Error() string {
@@ -104,6 +114,12 @@ func WriteError(w http.ResponseWriter, err *APIError) {
 		},
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if err.RetryAfter != "" {
+		w.Header().Set("Retry-After", err.RetryAfter)
+	}
+	if err.UpstreamStatus > 0 {
+		w.Header().Set("x-agentcc-upstream-status", strconv.Itoa(err.UpstreamStatus))
+	}
 	w.WriteHeader(err.Status)
 	json.NewEncoder(w).Encode(resp)
 }

@@ -43,7 +43,33 @@ def _select(task, task_queue, *, workflow_confirmed_stopped: bool = False):
         task_id=str(task.id),
         task_queue=task_queue,
         workflow_confirmed_stopped=workflow_confirmed_stopped,
+        **_instant_sizing(task),
     )
+
+
+# Instant eval: a person is waiting on a small, bounded run, so it drains in
+# one batch with high concurrency instead of waves of 10 behind a 50-row
+# barrier. Larger or regular historical tasks keep the conservative defaults.
+INSTANT_MAX_ROWS = 500
+INSTANT_MAX_CONCURRENT = 32
+
+
+def _instant_sizing(task) -> dict:
+    limit = getattr(task, "spans_limit", None) or 0
+    if not 0 < limit <= INSTANT_MAX_ROWS:
+        return {}
+    try:
+        configs = list(task.evals.values_list("config", flat=True))
+    except Exception:
+        return {}
+    if not configs or not all(
+        isinstance(c, dict) and c.get("instant_eval") for c in configs
+    ):
+        return {}
+    return {
+        "batch_size": min(limit, 200),
+        "max_concurrent": min(limit, INSTANT_MAX_CONCURRENT),
+    }
 
 
 def start_eval_task_workflow_sync(

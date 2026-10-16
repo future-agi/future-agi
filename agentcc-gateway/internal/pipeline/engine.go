@@ -2,7 +2,9 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -121,7 +123,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 			"request_id", rc.RequestID,
 			"provider", rc.Provider,
 			"model", rc.Model,
-			"error", err,
+			"error", loggedError(rc, err),
 			"elapsed", providerElapsed,
 		)
 		e.RunPostPlugins(ctx, rc)
@@ -135,6 +137,17 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 		e.RunPostPlugins(ctx, rc)
 	}
 	return nil
+}
+
+// loggedError is what the failure log records. A decision vendor's error
+// text can quote the content being judged, so decision calls log only the
+// error code and status, as the request log and span do.
+func loggedError(rc *models.RequestContext, err error) any {
+	var apiErr *models.APIError
+	if rc.EndpointType == "decision" && errors.As(err, &apiErr) {
+		return apiErr.Code + ": " + http.StatusText(apiErr.Status)
+	}
+	return err
 }
 
 // RunPostPlugins runs post-processing plugins with optimized execution:

@@ -28,6 +28,13 @@ def _build_registry():
             if cls is not None:
                 _REGISTRY[name] = cls
 
+        try:
+            from ee.evals.llm.jev_evaluator.evaluator import JevEvaluator
+        except ImportError:
+            pass  # CE images omit ee/; the capability gate denies execution.
+        else:
+            _REGISTRY["JevEvaluator"] = JevEvaluator
+
         _BUILT = True
         logger.debug("eval_registry_built", count=len(_REGISTRY))
     except ImportError:

@@ -16,6 +16,44 @@ import APIKeyReadOnlyView from "src/components/custom-model-dropdown/APIKeyReadO
 import Actions from "./Actions";
 import { LOGO_WITH_BLACK_BACKGROUND } from "src/components/custom-model-dropdown/common";
 
+// Providers without a hosted logo (e.g. TypeSafe) show their initial
+// instead of a broken image.
+const ProviderLogo = ({ data }) =>
+  data?.logoUrl ? (
+    <Image
+      src={data.logoUrl}
+      alt={data?.display_name}
+      width={25}
+      height={25}
+      disableThemeFilter={
+        !LOGO_WITH_BLACK_BACKGROUND.includes(data?.provider?.toLowerCase())
+      }
+      style={{ objectFit: "contain" }}
+    />
+  ) : (
+    <Box
+      aria-hidden
+      sx={{
+        width: 25,
+        height: 25,
+        borderRadius: "6px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        bgcolor: "action.hover",
+        color: "text.secondary",
+        fontSize: 13,
+        fontWeight: 600,
+      }}
+    >
+      {(data?.display_name || data?.provider || "?").charAt(0).toUpperCase()}
+    </Box>
+  );
+
+ProviderLogo.propTypes = {
+  data: PropTypes.object,
+};
+
 const KeyCardComponent = ({ data, onDeleteClick }) => {
   const theme = useTheme();
   const hasClearedOnceRef = useRef(false);
@@ -272,18 +310,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
                 gap: theme.spacing(1),
               }}
             >
-              <Image
-                src={data?.logoUrl}
-                alt={data?.display_name}
-                width={25}
-                height={25}
-                disableThemeFilter={
-                  !LOGO_WITH_BLACK_BACKGROUND.includes(
-                    data?.provider?.toLowerCase(),
-                  )
-                }
-                style={{ objectFit: "contain" }}
-              />
+              <ProviderLogo data={data} />
               <Typography
                 component="div"
                 typography="s1"
@@ -339,18 +366,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
                   gap: theme.spacing(1),
                 }}
               >
-                <Image
-                  src={data?.logoUrl}
-                  alt={data?.display_name}
-                  width={25}
-                  height={25}
-                  disableThemeFilter={
-                    !LOGO_WITH_BLACK_BACKGROUND.includes(
-                      data?.provider?.toLowerCase(),
-                    )
-                  }
-                  style={{ objectFit: "contain" }}
-                />
+                <ProviderLogo data={data} />
                 <Typography
                   component="div"
                   typography="s1"

@@ -19,9 +19,9 @@ from tracer.views.feed import (
     CreateLinearIssueView,
     FeedDeepAnalysisView,
     FeedDetailView,
-    FeedRedirectView,
     FeedListView,
     FeedOverviewView,
+    FeedRedirectView,
     FeedRootCauseView,
     FeedSidebarView,
     FeedStatsView,
@@ -30,6 +30,21 @@ from tracer.views.feed import (
     LinearTeamsView,
 )
 from tracer.views.imagine_analysis import ImagineAnalysisView
+from tracer.views.insights import (
+    InsightConfigDetailView,
+    InsightConfigListView,
+    InsightDraftView,
+    InsightPreviewView,
+    InsightRunAskView,
+    InsightRunCreateView,
+    InsightRunDetailView,
+    InsightRunUnitsView,
+)
+from tracer.views.instant_eval import (
+    InstantEvalAnswersView,
+    InstantEvalRunsView,
+    InstantEvalUserSessionsView,
+)
 from tracer.views.monitor import UserAlertMonitorLogView, UserAlertMonitorView
 from tracer.views.observability_provider import ObservabilityProviderViewSet
 from tracer.views.observation_span import ObservationSpanView
@@ -209,6 +224,49 @@ urlpatterns = [
     ),
     # Imagine analysis — trigger + poll for dynamic analysis results
     path("imagine-analysis/", ImagineAnalysisView.as_view(), name="imagine-analysis"),
+    path(
+        "insights/configs/",
+        InsightConfigListView.as_view(),
+        name="insight-configs",
+    ),
+    path(
+        "insights/configs/<uuid:config_id>/",
+        InsightConfigDetailView.as_view(),
+        name="insight-config-detail",
+    ),
+    path("insights/draft/", InsightDraftView.as_view(), name="insight-draft"),
+    path("insights/preview/", InsightPreviewView.as_view(), name="insight-preview"),
+    path("insights/runs/", InsightRunCreateView.as_view(), name="insight-runs"),
+    path(
+        "insights/runs/<uuid:run_id>/",
+        InsightRunDetailView.as_view(),
+        name="insight-run-detail",
+    ),
+    path(
+        "insights/runs/<uuid:run_id>/units/",
+        InsightRunUnitsView.as_view(),
+        name="insight-run-units",
+    ),
+    path(
+        "insights/runs/<uuid:run_id>/ask/",
+        InsightRunAskView.as_view(),
+        name="insight-run-ask",
+    ),
+    path(
+        "instant-eval/user-sessions/",
+        InstantEvalUserSessionsView.as_view(),
+        name="instant-eval-user-sessions",
+    ),
+    path(
+        "instant-eval/answers/",
+        InstantEvalAnswersView.as_view(),
+        name="instant-eval-answers",
+    ),
+    path(
+        "instant-eval/runs/",
+        InstantEvalRunsView.as_view(),
+        name="instant-eval-runs",
+    ),
     # Agent graph — explicit path because @action doesn't register reliably with Granian reload
     path(
         "trace/agent_graph/",

@@ -11,6 +11,24 @@ from model_hub.models.custom_models import CustomAIModel
 logger = structlog.get_logger(__name__)
 
 
+class MissingProviderKeyError(ValueError):
+    """No key saved under Settings -> AI Providers for a provider."""
+
+    def __init__(self, provider):
+        self.provider = provider
+        super().__init__(missing_provider_key_message(provider))
+
+
+def missing_provider_key_message(provider):
+    """User-facing text naming the key to add; only a known provider id is
+    echoed (a custom model's provider is free text)."""
+    from model_hub.models.choices import LiteLlmModelProvider
+
+    known = {choice.value for choice in LiteLlmModelProvider}
+    name = provider if provider in known else "this model's provider"
+    return f"API key not configured for {name}. Please add your API key in settings."
+
+
 class LiteLLMModelManager:
     def __init__(self, model_name, organization_id=None, exclude_providers=None):
         if exclude_providers is None:
@@ -159,6 +177,15 @@ class LiteLLMModelManager:
         if not provider:
             provider = self.get_provider(self.model_name)
 
+        return self.get_provider_api_key(organization_id, provider, workspace_id)
+
+    def get_provider_api_key(self, organization_id, provider, workspace_id=None):
+        """The key saved under Settings -> AI Providers for ``provider``.
+
+        Unlike get_api_key this never consults custom models, so a model with
+        its own transport (Jev's System One API) can't pick up a custom model's
+        credentials by name.
+        """
         if not workspace_id:
             workspace_id = self._resolve_default_workspace_id(organization_id)
 
@@ -166,9 +193,7 @@ class LiteLLMModelManager:
             organization_id, workspace_id, provider
         )
         if api_key_entry is None:
-            raise ValueError(
-                f"API key not configured for {provider}. Please add your API key in settings."
-            )
+            raise MissingProviderKeyError(provider)
 
         if api_key_entry.key:
             return api_key_entry.actual_key
@@ -176,9 +201,7 @@ class LiteLLMModelManager:
         if api_key_entry.actual_json:
             return api_key_entry.actual_json
 
-        raise ValueError(
-            f"API key not configured for {provider}. Please add your API key in settings."
-        )
+        raise MissingProviderKeyError(provider)
 
     def _resolve_default_workspace_id(self, organization_id):
         try:

@@ -822,6 +822,13 @@ CODE_EXECUTOR_LOCAL_FALLBACK = os.getenv(
     "CODE_EXECUTOR_LOCAL_FALLBACK", "false"
 ).lower() in ("true", "1", "yes")
 
+# How Jev evaluators reach TypeSafe, always on the org's own key. "gateway"
+# (default) sends them to the AgentCC gateway's /v1/systemone on
+# AGENTCC_INTERNAL_API_KEY, carrying the org's key for that call. "direct"
+# calls TypeSafe from the backend, for local dev without a gateway. Any other
+# value means "gateway".
+JEV_TRANSPORT = os.getenv("JEV_TRANSPORT", "gateway").strip().lower()
+
 # Hosted simulation runner (plan §9): when enabled, eligible runs are dispatched
 # to the simulation-runner worker which executes the released SDK, instead of the
 # native in-backend simulation path. Default off — no regression.
@@ -1553,3 +1560,7 @@ CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger
 # Default is "postgres" so cutover is opt-in. Flip to "clickhouse" only after
 # the backfill + validator pass and a soak period.
 EVAL_SPAN_READ_SOURCE = os.getenv("EVAL_SPAN_READ_SOURCE", "postgres").lower()
+
+# Concurrent Jev calls per worker process (ee/jev/client.py). Instant eval
+# drains up to 32 rows at once, so a worker that serves it wants at least that.
+JEV_MAX_CONCURRENT = int(os.getenv("JEV_MAX_CONCURRENT", "8"))

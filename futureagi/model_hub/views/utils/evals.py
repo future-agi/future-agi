@@ -20,7 +20,11 @@ from model_hub.views.eval_runner import (
     _extract_column_id_and_path,
     process_mapping,
 )
-from sdk.utils.helpers import _get_api_call_type
+from sdk.utils.helpers import (
+    _emit_jev_usage,
+    _get_api_call_type,
+    _get_billing_event_type,
+)
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal import temporal_activity
@@ -523,12 +527,19 @@ def run_eval_func(
                 emit is not None
                 and UsageEvent is not None
                 and BillingEventType is not None
+                and not _emit_jev_usage(
+                    eval_instance,
+                    org_id=str(org.id),
+                    run_id=str(api_call_log_row.log_id),
+                )
             ):
 
                 emit(
                     UsageEvent(
                         org_id=str(org.id),
-                        event_type=api_call_type,
+                        event_type=_get_billing_event_type(
+                            api_call_type, model, evaluator=eval_instance
+                        ),
                         amount=credits,
                         properties={
                             "source": source,
@@ -572,11 +583,16 @@ def run_eval_func(
     except Exception as e:
         try:
             if api_call_log_row:
+                from tfc.ee_gates import jev_error_message
+
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
                 current_config = json.loads(api_call_log_row.config)
                 current_config.update(
                     {
-                        "output": {"output": None, "reason": str(e)},
+                        "output": {
+                            "output": None,
+                            "reason": jev_error_message(e) or str(e),
+                        },
                         "mappings": mappings,
                         "required_keys": list(mappings.keys()),
                     }

@@ -1,0 +1,129 @@
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("src/utils/axios", () => ({
+  default: { get: vi.fn(), post: vi.fn() },
+  readQuery: vi.fn(),
+  endpoints: { project: {} },
+}));
+
+import { insightsErrorMessage } from "../insightsApi";
+import {
+  estimateMinutes,
+  formatCount,
+  formatLatency,
+  formatPercent,
+  formatSpan,
+  humanizeKey,
+  relativeTime,
+} from "../insightsFormat";
+import { attributeError, facetChips } from "../insightsLenses";
+import { sessionTracesLink, unitLink } from "../insightsLinks";
+
+describe("formatting", () => {
+  it("formats counts, shares and latency", () => {
+    expect(formatCount(12345)).toBe("12,345");
+    expect(formatPercent(0.3888)).toBe("39%");
+    expect(formatPercent(0.002)).toBe("<1%");
+    expect(formatPercent(0)).toBe("0%");
+    expect(formatLatency(1873)).toBe("1.9 s");
+    expect(formatLatency(640)).toBe("640 ms");
+  });
+
+  it("formats elapsed time and estimates", () => {
+    const now = new Date("2026-10-15T12:00:00Z");
+    expect(relativeTime("2026-10-15T10:00:00Z", now)).toBe("2h ago");
+    expect(relativeTime("2026-10-15T11:59:40Z", now)).toBe("just now");
+    expect(formatSpan(165)).toBe("2m 45s");
+    expect(estimateMinutes(108)).toBe("about 3 minutes");
+    expect(estimateMinutes(10)).toBe("about 2 minutes");
+    expect(humanizeKey("attr:asked_for_human")).toBe("Asked for human");
+  });
+});
+
+describe("insightsErrorMessage", () => {
+  it("names the plan for a capability denial", () => {
+    expect(
+      insightsErrorMessage({ statusCode: 402, code: "CAPABILITY_DENIED" }),
+    ).toBe("Insights isn't available on this plan.");
+  });
+
+  it("shows rate-limit and model messages as written", () => {
+    expect(
+      insightsErrorMessage({
+        statusCode: 429,
+        code: "rate_limited",
+        message: "Too many reports this hour. Try again later.",
+      }),
+    ).toBe("Too many reports this hour. Try again later.");
+    expect(
+      insightsErrorMessage({
+        statusCode: 503,
+        message: "The analysis model is unavailable right now.",
+      }),
+    ).toBe("The analysis model is unavailable right now.");
+  });
+
+  it("hides server errors behind the fallback", () => {
+    expect(
+      insightsErrorMessage(
+        { statusCode: 500, message: "Traceback: boom" },
+        "Could not start.",
+      ),
+    ).toBe("Could not start.");
+  });
+});
+
+describe("unit facets and links", () => {
+  it("tones facets by what they mean", () => {
+    expect(
+      facetChips({
+        outcome: "unresolved",
+        sentiment: 2,
+        failure_mode: "re-asked for order number",
+        broke_at_turn: 1,
+        language: "Spanish",
+      }).map((c) => [c.key, c.tone]),
+    ).toEqual([
+      ["outcome", "bad"],
+      ["sentiment", "bad"],
+      ["failure_mode", "bad"],
+      ["broke_at_turn", "bad"],
+      ["language", "neutral"],
+    ]);
+  });
+
+  it("checks attribute keys", () => {
+    expect(attributeError({ key: "asked_for_human" }, [])).toBe("");
+    expect(attributeError({ key: "Asked" }, [])).toMatch(/Lowercase/);
+    const dup = [{ key: "a" }, { key: "a" }];
+    expect(attributeError(dup[0], dup)).toMatch(/own key/);
+  });
+
+  it("opens each unit where the app shows it", () => {
+    expect(unitLink("p1", "traces", { unit_id: "t1" }).href).toBe(
+      "/dashboard/observe/p1/trace/t1",
+    );
+    expect(
+      unitLink("p1", "users", { unit_id: "uuid", user_id: "cust 1" }).href,
+    ).toBe("/dashboard/users/cust%201");
+    const session = new URL(
+      sessionTracesLink("p1", "s1", "2026-10-09T10:31:29Z"),
+      "https://app.test",
+    );
+    expect(session.pathname).toBe("/dashboard/observe/p1/llm-tracing");
+    expect(JSON.parse(session.searchParams.get("observeLinkFilter"))).toEqual([
+      {
+        column_id: "session_id",
+        filter_config: {
+          filter_type: "text",
+          filter_op: "equals",
+          filter_value: "s1",
+        },
+      },
+    ]);
+    expect(session.searchParams.get("primaryTraceDateFilter")).toContain(
+      "Custom",
+    );
+    expect(unitLink("p1", "users", { unit_id: "uuid" })).toBeNull();
+  });
+});

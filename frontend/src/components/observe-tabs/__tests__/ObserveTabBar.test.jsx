@@ -23,6 +23,7 @@ const renderWithCtx = ({
   getViewConfig = () => ({}),
   activeTab = "traces",
   selectedTab,
+  canSaveView,
 } = {}) => {
   // resolveTabType reads selectedTab from the URL (not getTabType).
   window.history.pushState(
@@ -45,6 +46,7 @@ const renderWithCtx = ({
         projectId="p1"
         activeTab={activeTab}
         onTabChange={() => {}}
+        canSaveView={canSaveView}
       />
     </ObserveHeaderContext.Provider>,
   );
@@ -154,5 +156,10 @@ describe("ObserveTabBar — resolveTabType", () => {
     await typeAndSubmit("copy");
     await waitFor(() => expect(mockCreateSavedView).toHaveBeenCalled());
     expect(mockCreateSavedView.mock.calls[0][0].tab_type).toBe("spans");
+  });
+
+  it("offers no Create view on a page without a list, like Ask", () => {
+    renderWithCtx({ activeTab: "sessions", canSaveView: false });
+    expect(document.querySelector("[data-create-view-btn]")).toBeNull();
   });
 });

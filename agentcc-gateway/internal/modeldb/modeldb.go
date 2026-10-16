@@ -16,6 +16,7 @@ const (
 	ModeAudioSpeech        ModelMode = "audio_speech"
 	ModeRerank             ModelMode = "rerank"
 	ModeModeration         ModelMode = "moderation"
+	ModeDecision           ModelMode = "decision"
 )
 
 // ModelInfo contains all metadata for a single model.

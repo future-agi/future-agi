@@ -32,6 +32,9 @@ import { buildAddEvalsDraft } from "../LLMTracing/buildAddEvalsDraft";
 import SelectAllBanner from "../LLMTracing/SelectAllBanner";
 import { getSelectionCountState } from "../LLMTracing/listTotalMetadata";
 import { singleProjectIdFromFilters } from "../LLMTracing/GraphSection/graphFilterUtils";
+import { toBackendFilters } from "../LLMTracing/common";
+import { scopeLabel } from "../LLMTracing/InstantEval/instantEvalUnits";
+import { askLink, insightsReportLink } from "../observeHandoff";
 
 // Lazy-load graph
 const PrimaryGraph = lazy(
@@ -298,6 +301,36 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     if (!extraFilters.length) return base;
     return [...base, ...extraFilters];
   }, [userScopeFilter, validatedFilters, extraFilters]);
+
+  // --- Instant eval / Insights ---
+  // Both ask about exactly the sessions the grid shows (Session-grid sends
+  // toBackendFilters(finalFilters), date window included).
+  const sessionViewScope = useMemo(
+    () => ({
+      filters: toBackendFilters(finalFilters),
+      label: getDateLabel(dateFilter),
+    }),
+    [finalFilters, dateFilter],
+  );
+  // Evaluate → Ask a question: the Ask page, about the sessions in view.
+  const openAsk = useCallback(() => {
+    navigate(
+      askLink(observeId, {
+        unit: "sessions",
+        filters: sessionViewScope.filters,
+        label: scopeLabel(sessionViewScope),
+      }),
+    );
+  }, [observeId, sessionViewScope, navigate]);
+  const openInsights = useCallback(() => {
+    navigate(
+      insightsReportLink(observeId, {
+        unit: "sessions",
+        filters: sessionViewScope.filters,
+        label: scopeLabel(sessionViewScope),
+      }),
+    );
+  }, [observeId, sessionViewScope, navigate]);
 
   // --- Column visibility ---
   const [updateObj, setUpdateObj] = useState(initialVisibility);
@@ -1102,6 +1135,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         bulkActions={SESSION_BULK_ACTIONS}
         onAddEvals={handleAddEvals}
         onAddCustomColumn={() => setOpenCustomColumn(true)}
+        onInstantEval={observeId ? openAsk : undefined}
+        onInsights={observeId ? openInsights : undefined}
       />
 
       <Suspense fallback={null}>

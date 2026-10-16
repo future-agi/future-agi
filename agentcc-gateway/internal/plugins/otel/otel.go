@@ -2,8 +2,10 @@ package otel
 
 import (
 	"context"
+	"errors"
 	"hash/fnv"
 	"log/slog"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -283,7 +285,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 
 	// Errors.
 	if len(rc.Errors) > 0 {
-		span.SetError(rc.Errors[0].Error())
+		span.SetError(spanError(rc))
 		p.metrics.ErrorCount.Add(1)
 	}
 
@@ -306,9 +308,22 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	return pipeline.ResultContinue()
 }
 
+// spanError is the error text a span carries. A decision's is its code and
+// status, as in the request log: a vendor's error text can quote the
+// decision's content back.
+func spanError(rc *models.RequestContext) string {
+	err := rc.Errors[0]
+	var apiErr *models.APIError
+	if rc.EndpointType == "decision" && errors.As(err, &apiErr) {
+		return apiErr.Code + ": " + http.StatusText(apiErr.Status)
+	}
+	return err.Error()
+}
+
 // endpointKinds maps the gateway's endpoint types onto the platform's span
 // kinds. Anything unlisted is a model call, which is what the gateway mostly
-// proxies; only retrieval-shaped and embedding endpoints differ.
+// proxies; only retrieval-shaped, embedding and decision endpoints differ. A
+// decision model judges its input, so its span is an evaluator's.
 var endpointKinds = map[string]struct{ kind, operation string }{
 	"embedding":     {"embedding", "embeddings"},
 	"genai_embed":   {"embedding", "embeddings"},
@@ -316,6 +331,7 @@ var endpointKinds = map[string]struct{ kind, operation string }{
 	"search":        {"retriever", "search"},
 	"vector_stores": {"retriever", "search"},
 	"completion":    {"llm", "text_completion"},
+	"decision":      {"evaluator", "decision"},
 }
 
 // classifyEndpoint returns the span kind and operation name for an endpoint
