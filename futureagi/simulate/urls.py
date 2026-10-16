@@ -125,6 +125,7 @@ from .views.run_results_v3 import (
     RunAnalyticsV3View,
     RunCallsV3View,
     RunExportV3View,
+    RunTracesV3View,
 )
 from .views.scenarios import EditScenarioPromptsView
 
@@ -170,6 +171,11 @@ urlpatterns = [
         "v3/test-executions/<uuid:test_execution_id>/calls/",
         RunCallsV3View.as_view(),
         name="v3-test-execution-calls",
+    ),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/traces/",
+        RunTracesV3View.as_view(),
+        name="v3-test-execution-traces",
     ),
     path(
         "v3/call-executions/<uuid:call_execution_id>/",

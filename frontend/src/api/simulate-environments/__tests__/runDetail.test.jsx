@@ -26,6 +26,7 @@ const {
   callTranscript,
   useCallDetail,
   useCallExecutionV3Detail,
+  useCallTraces,
 } = await import("../runDetail");
 const { RUN_COLORS } = await import(
   "src/sections/simulate/environments/workspace/runs/runs.constants"
@@ -926,5 +927,68 @@ describe("useRunDetail", () => {
     });
     expect(query.options.refetchInterval(query)).toBe(false);
     unmount();
+  });
+});
+
+describe("useCallTraces", () => {
+  beforeEach(() => {
+    axios.get.mockReset();
+  });
+
+  it("reads one call's traces of the run and maps the rows", async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        project_id: "hidden-project",
+        traces: [
+          {
+            trace_id: "trace-1",
+            name: "book_ride",
+            start_time: "2026-10-14T11:08:13Z",
+            status: "OK",
+            latency_ms: 1830,
+            call_execution_id: "call-1",
+          },
+        ],
+      },
+    });
+
+    const { result } = renderHook(() => useCallTraces("exec-1", "call-1"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.projectId).toBe("hidden-project"));
+    expect(axios.get).toHaveBeenCalledWith(
+      endpoints.runResultsV3.traces("exec-1"),
+      { params: { call_execution_id: "call-1" } },
+    );
+    expect(result.current.traces).toEqual([
+      {
+        traceId: "trace-1",
+        name: "book_ride",
+        startTime: "2026-10-14T11:08:13Z",
+        status: "OK",
+        latencyMs: 1830,
+      },
+    ]);
+    expect(result.current.isError).toBe(false);
+  });
+
+  it("answers no project and no rows when the run has nothing to read", async () => {
+    axios.get.mockResolvedValue({ data: { project_id: null, traces: [] } });
+
+    const { result } = renderHook(() => useCallTraces("exec-1", "call-1"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+    expect(result.current.projectId).toBeNull();
+    expect(result.current.traces).toEqual([]);
+  });
+
+  it("stays idle without a run or a call", () => {
+    renderHook(() => useCallTraces(null, "call-1"), { wrapper: makeWrapper() });
+    renderHook(() => useCallTraces("exec-1", null), { wrapper: makeWrapper() });
+
+    expect(axios.get).not.toHaveBeenCalled();
   });
 });

@@ -1,19 +1,26 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useLLMTracingStore } from "src/sections/projects/LLMTracing/states";
 
 // The chat drawer's data hook is mocked so the render asserts the drawer wiring
 // against a fixed CallDetail rather than the network. `isVoiceCall` (the routing
 // decision under test) stays real — it lives in its own `callRouting` module.
 const useCallDetail = vi.fn();
 const useCallExecutionV3Detail = vi.fn();
+const useCallTraces = vi.fn(() => ({
+  projectId: null,
+  traces: [],
+  isError: false,
+}));
 vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
     useCallDetail: (...a) => useCallDetail(...a),
     useCallExecutionV3Detail: (...a) => useCallExecutionV3Detail(...a),
+    useCallTraces: (...a) => useCallTraces(...a),
   };
 });
 
@@ -30,9 +37,11 @@ vi.mock("src/components/VoiceDetailDrawerV2", () => ({
     hidePathTabs,
     showFixWithFalcon,
     hideAnnotationTab,
+    leftPanelTabs,
   }) => (
     <div
       data-testid="voice-drawer"
+      data-left-tabs={(leftPanelTabs ?? []).map((tab) => tab.label).join(",")}
       data-hide-path-tabs={String(!!hidePathTabs)}
       data-show-fix-with-falcon={String(showFixWithFalcon)}
       data-hide-annotation-tab={String(!!hideAnnotationTab)}
@@ -45,6 +54,17 @@ vi.mock("src/components/VoiceDetailDrawerV2", () => ({
         next
       </button>
     </div>
+  ),
+}));
+
+vi.mock("../CallTracesPanel", () => ({
+  default: ({ projectId, traces, isError }) => (
+    <div
+      data-testid="call-traces"
+      data-project-id={projectId ?? ""}
+      data-count={traces.length}
+      data-error={String(isError)}
+    />
   ),
 }));
 
@@ -585,5 +605,188 @@ describe("CallDrawer — voice branch", () => {
 
     expect(screen.getByRole("button", { name: "prev" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "next" })).toBeDisabled();
+  });
+});
+
+describe("CallDrawer — the call's traces", () => {
+  const ROWS = [{ traceId: "trace-1", name: "book_ride" }];
+
+  afterEach(() => {
+    useCallTraces.mockReturnValue({
+      projectId: null,
+      traces: [],
+      isError: false,
+    });
+  });
+
+  it("gives a voice call a Traces tab beside the transcript, read for that call", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-1", transcript: [] },
+      isPending: false,
+    });
+    useCallTraces.mockReturnValue({
+      projectId: "hidden-project",
+      traces: ROWS,
+      isError: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(useCallTraces).toHaveBeenLastCalledWith("exec-1", "voice-1");
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "Traces",
+    );
+  });
+
+  it("keeps the tab when the read fails, so the panel can say so", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-1", transcript: [] },
+      isPending: false,
+    });
+    useCallTraces.mockReturnValue({ projectId: null, traces: [], isError: true });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "Traces",
+    );
+  });
+
+  it("gives a voice call no Traces tab when the run has nothing to read", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-1", transcript: [] },
+      isPending: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(useCallTraces).toHaveBeenLastCalledWith(null, "voice-1");
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-left-tabs",
+      "",
+    );
+  });
+
+  it("gives a chat a Traces tab beside the transcript that opens the call's traces", async () => {
+    const user = userEvent.setup();
+    useCallDetail.mockReturnValue({ callDetail: CHAT_DETAIL, isLoading: false });
+    useCallTraces.mockReturnValue({
+      projectId: "hidden-project",
+      traces: ROWS,
+      isError: false,
+    });
+
+    render(
+      <CallDrawer
+        task={chatTask}
+        executionId="exec-1"
+        agentType="text"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(useCallTraces).toHaveBeenLastCalledWith("exec-1", "chat-1");
+    expect(screen.queryByTestId("call-traces")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Traces" }));
+
+    const panel = screen.getByTestId("call-traces");
+    expect(panel).toHaveAttribute("data-project-id", "hidden-project");
+    expect(panel).toHaveAttribute("data-count", "1");
+  });
+
+  it("gives a chat no Traces tab when the run has nothing to read", () => {
+    useCallDetail.mockReturnValue({ callDetail: CHAT_DETAIL, isLoading: false });
+
+    render(<CallDrawer task={chatTask} agentType="text" onClose={() => {}} />);
+
+    expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Traces" })).not.toBeInTheDocument();
+  });
+});
+
+
+describe("CallDrawer — a trace drawer open on top", () => {
+  afterEach(() => {
+    useLLMTracingStore.setState({ traceDetailDrawerOpen: null });
+  });
+
+  const openTrace = () =>
+    useLLMTracingStore.setState({
+      traceDetailDrawerOpen: { traceId: "trace-1", projectId: "hidden-project" },
+    });
+
+  it("keeps the arrow keys from stepping a chat call under the open trace", async () => {
+    const user = userEvent.setup();
+    const onPrev = vi.fn();
+    const onNext = vi.fn();
+    useCallDetail.mockReturnValue({ callDetail: CHAT_DETAIL, isLoading: false });
+    render(
+      <CallDrawer
+        task={chatTask}
+        agentType="text"
+        hasPrev
+        hasNext
+        onPrev={onPrev}
+        onNext={onNext}
+        onClose={() => {}}
+      />,
+    );
+
+    openTrace();
+    await user.keyboard("{ArrowDown}{ArrowUp}");
+    expect(onNext).not.toHaveBeenCalled();
+    expect(onPrev).not.toHaveBeenCalled();
+
+    useLLMTracingStore.setState({ traceDetailDrawerOpen: null });
+    await user.keyboard("{ArrowDown}");
+    expect(onNext).toHaveBeenCalledTimes(1);
+  });
+
+  it("turns the voice drawer's prev and next off while a trace is open", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-9", transcript: [] },
+      isPending: false,
+    });
+    const view = (
+      <CallDrawer
+        task={{ id: "voice-9", simulationCallType: "voice" }}
+        agentType="voice"
+        hasPrev
+        hasNext
+        onPrev={() => {}}
+        onNext={() => {}}
+        onClose={() => {}}
+      />
+    );
+    const { rerender } = render(view);
+    expect(screen.getByRole("button", { name: "next" })).toBeEnabled();
+
+    openTrace();
+    rerender(view);
+    expect(screen.getByRole("button", { name: "next" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "prev" })).toBeDisabled();
   });
 });

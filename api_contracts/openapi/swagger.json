@@ -58157,6 +58157,53 @@
                 }
             ]
         },
+        "/simulate/v3/test-executions/{test_execution_id}/traces/": {
+            "get": {
+                "operationId": "simulate_v3_test_execution_traces",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "call_execution_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/RunTracesV3Response"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiDetailErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "test_execution_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/telemetry/heartbeat/": {
             "post": {
                 "operationId": "telemetry_heartbeat_create",
@@ -138125,6 +138172,72 @@
                         "-outcome"
                     ],
                     "default": "-started_at"
+                }
+            }
+        },
+        "RunTrace": {
+            "required": [
+                "trace_id",
+                "name",
+                "start_time",
+                "status",
+                "latency_ms",
+                "call_execution_id"
+            ],
+            "type": "object",
+            "properties": {
+                "trace_id": {
+                    "title": "Trace id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "start_time": {
+                    "title": "Start time",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "latency_ms": {
+                    "title": "Latency ms",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "call_execution_id": {
+                    "title": "Call execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "RunTracesV3Response": {
+            "required": [
+                "project_id",
+                "traces"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "traces": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/RunTrace"
+                    }
                 }
             }
         },

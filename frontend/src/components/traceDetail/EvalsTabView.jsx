@@ -119,6 +119,7 @@ const EvalTableRow = ({
   showSpanColumn,
   onFixWithFalcon,
   showFixWithFalcon,
+  showErrorLocalization = true,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const isSkipped = ev?.skipped === true;
@@ -182,6 +183,7 @@ const EvalTableRow = ({
   const initialStatus =
     ev.error_localizer_status || ev.errorLocalizerStatus || null;
   const hasErrorLocalization =
+    showErrorLocalization &&
     !isComposite &&
     (ev?.error_localizer === true ||
       !!initialAnalysis ||
@@ -463,6 +465,7 @@ EvalTableRow.propTypes = {
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
   showFixWithFalcon: PropTypes.bool,
+  showErrorLocalization: PropTypes.bool,
 };
 
 /**
@@ -479,6 +482,7 @@ const EvalsTabView = ({
   onFixWithFalcon,
   showFixWithFalcon = true,
   showAddEvals = true,
+  showErrorLocalization = true,
 }) => {
   const [search, setSearch] = useState("");
   const list = useMemo(() => (Array.isArray(evals) ? evals : []), [evals]);
@@ -785,6 +789,7 @@ const EvalsTabView = ({
             showSpanColumn={showSpanColumn}
             onFixWithFalcon={onFixWithFalcon}
             showFixWithFalcon={showFixWithFalcon}
+            showErrorLocalization={showErrorLocalization}
           />
         ))}
       </Box>
@@ -800,6 +805,7 @@ EvalsTabView.propTypes = {
   onFixWithFalcon: PropTypes.func,
   showFixWithFalcon: PropTypes.bool,
   showAddEvals: PropTypes.bool,
+  showErrorLocalization: PropTypes.bool,
 };
 
 export default EvalsTabView;

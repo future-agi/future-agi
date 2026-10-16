@@ -48236,6 +48236,28 @@ export const SimulateV3TestExecutionExportBody = zod.object({
     .default(simulateV3TestExecutionExportBodyOrderingDefault),
 });
 
+export const SimulateV3TestExecutionTracesParams = zod.object({
+  test_execution_id: zod.string(),
+});
+
+export const SimulateV3TestExecutionTracesQueryParams = zod.object({
+  call_execution_id: zod.string().optional(),
+});
+
+export const SimulateV3TestExecutionTracesResponse = zod.object({
+  project_id: zod.string().uuid(),
+  traces: zod.array(
+    zod.object({
+      trace_id: zod.string().min(1),
+      name: zod.string(),
+      start_time: zod.string().datetime({ offset: true }),
+      status: zod.string(),
+      latency_ms: zod.number(),
+      call_execution_id: zod.string().uuid(),
+    }),
+  ),
+});
+
 export const telemetryHeartbeatCreateBodySchemaVersionDefault = 1;
 export const telemetryHeartbeatCreateBodyVersionMax = 100;
 

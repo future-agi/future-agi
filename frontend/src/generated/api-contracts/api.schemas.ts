@@ -23292,6 +23292,21 @@ export interface RunExportV3RequestApi {
   ordering?: RunExportV3RequestApiOrdering;
 }
 
+export interface RunTraceApi {
+  /** @minLength 1 */
+  trace_id: string;
+  name: string;
+  start_time: string;
+  status: string;
+  latency_ms: number;
+  call_execution_id: string;
+}
+
+export interface RunTracesV3ResponseApi {
+  project_id: string;
+  traces: RunTraceApi[];
+}
+
 export interface DeploymentHeartbeatApi {
   schema_version?: number;
   instance_id: string;
@@ -35007,6 +35022,10 @@ export const SimulateV3TestExecutionCallsGroupBy = {
   task: "task",
   status: "status",
 } as const;
+
+export type SimulateV3TestExecutionTracesParams = {
+  call_execution_id?: string;
+};
 
 export type TracerChartsFetchGraphParams = {
   /**

@@ -1042,6 +1042,7 @@ import type {
   RunTestNameResponseApi,
   RunTestResponseApi,
   RunTestScenarioItemResponseApi,
+  RunTracesV3ResponseApi,
   SAMLErrorResponseApi,
   SAMLIDPUploadDetailResponseApi,
   SAMLIDPUploadListResponseApi,
@@ -1157,6 +1158,7 @@ import type {
   SimulateTestExecutionsPreviewCallsListParams,
   SimulateTestExecutionsReadParams,
   SimulateV3TestExecutionCallsParams,
+  SimulateV3TestExecutionTracesParams,
   SimulationEvidenceRequestApi,
   SimulationPreviewErrorApi,
   SimulationPreviewPageApi,
@@ -67345,6 +67347,73 @@ export const simulateV3TestExecutionExport = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(runExportV3RequestApi),
+    },
+  );
+};
+
+export type simulateV3TestExecutionTracesResponse200 = {
+  data: RunTracesV3ResponseApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionTracesResponse503 = {
+  data: ApiDetailErrorResponseApi;
+  status: 503;
+};
+
+export type simulateV3TestExecutionTracesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 503>;
+};
+
+export type simulateV3TestExecutionTracesResponseSuccess =
+  simulateV3TestExecutionTracesResponse200 & {
+    headers: Headers;
+  };
+export type simulateV3TestExecutionTracesResponseError = (
+  | simulateV3TestExecutionTracesResponse503
+  | simulateV3TestExecutionTracesResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateV3TestExecutionTracesResponse =
+  | simulateV3TestExecutionTracesResponseSuccess
+  | simulateV3TestExecutionTracesResponseError;
+
+export const getSimulateV3TestExecutionTracesUrl = (
+  testExecutionId: string,
+  params?: SimulateV3TestExecutionTracesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/v3/test-executions/${testExecutionId}/traces/?${stringifiedParams}`
+    : `/simulate/v3/test-executions/${testExecutionId}/traces/`;
+};
+
+export const simulateV3TestExecutionTraces = async (
+  testExecutionId: string,
+  params?: SimulateV3TestExecutionTracesParams,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionTracesResponse> => {
+  return apiMutator<simulateV3TestExecutionTracesResponse>(
+    getSimulateV3TestExecutionTracesUrl(testExecutionId, params),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };

@@ -135,6 +135,7 @@ const TraceDetailDrawerV2 = ({
   initialFullscreen = false,
   initialSpanId = null,
   refreshParentGrid,
+  readOnly = false,
 }) => {
   const navigate = useNavigate();
 
@@ -236,7 +237,9 @@ const TraceDetailDrawerV2 = ({
   // ---------------------------------------------------------------------------
   // Saved Views — auto-save per tab
   // ---------------------------------------------------------------------------
-  const { data: savedViewsData } = useGetSavedViews(projectId);
+  const { data: savedViewsData } = useGetSavedViews(
+    readOnly ? null : projectId,
+  );
   const { mutate: createSavedView } = useCreateSavedView(projectId);
   const { mutate: updateSavedView } = useUpdateSavedView(projectId);
   const { mutate: deleteSavedView } = useDeleteSavedView(projectId);
@@ -373,6 +376,7 @@ const TraceDetailDrawerV2 = ({
 
   // "Set default for everyone" — make current view project-visible
   const handleSetDefaultView = useCallback(() => {
+    if (readOnly) return;
     const onDone = {
       onSuccess: () =>
         enqueueSnackbar("View set as default for everyone", {
@@ -435,6 +439,7 @@ const TraceDetailDrawerV2 = ({
     user,
     updateSavedView,
     createSavedView,
+    readOnly,
   ]);
 
   // Create new view from current config (called from "+" button or filter save)
@@ -896,7 +901,7 @@ const TraceDetailDrawerV2 = ({
         }
         isFullscreen={isFullscreen}
         onOpenNewTab={
-          initialFullscreen
+          readOnly || initialFullscreen
             ? undefined
             : () => {
                 if (traceId && projectId) {
@@ -922,13 +927,14 @@ const TraceDetailDrawerV2 = ({
             enqueueSnackbar("Trace downloaded", { variant: "success" });
           }
         }}
-        onShare={() => setShareDialogOpen(true)}
+        onShare={readOnly ? undefined : () => setShareDialogOpen(true)}
       />
 
       {/* Toolbar — tab bar + filter/display/save buttons */}
       <DrawerToolbar
         tabs={drawerTabs}
         activeTabId={activeDrawerTab}
+        readOnly={readOnly}
         onTabChange={handleTabChange}
         onCloseTab={handleCloseTab}
         onCreateTab={handleCreateView}
@@ -954,6 +960,7 @@ const TraceDetailDrawerV2 = ({
         onFilterOpen={(e) => setFilterAnchorEl(e?.currentTarget || e)}
         onDisplayOpen={(el) => setDisplayAnchorEl(el)}
         hasActiveFilter={spanFilters.length > 0}
+        hideFilter={readOnly}
       />
 
       {/* Display options popover — hidden on Imagine tab */}
@@ -974,6 +981,7 @@ const TraceDetailDrawerV2 = ({
           onToggleAgentGraph={() => setShowAgentGraph((prev) => !prev)}
           onResetView={handleResetView}
           onSetDefaultView={handleSetDefaultView}
+          hideSetDefault={readOnly}
         />
       )}
 
@@ -1214,7 +1222,8 @@ const TraceDetailDrawerV2 = ({
                   traceTags={data?.trace?.tags || []}
                   projectId={projectId}
                   onClose={() => setSelectedSpanId(null)}
-                  onAction={handleAction}
+                  onAction={readOnly ? undefined : handleAction}
+                  readOnly={readOnly}
                   onSelectSpan={handleSelectSpan}
                   drawerOpen={open}
                 />
@@ -1297,7 +1306,8 @@ const TraceDetailDrawerV2 = ({
                   traceTags={data?.trace?.tags || []}
                   projectId={projectId}
                   onClose={() => setSelectedSpanId(null)}
-                  onAction={handleAction}
+                  onAction={readOnly ? undefined : handleAction}
+                  readOnly={readOnly}
                   onSelectSpan={handleSelectSpan}
                   drawerOpen={open}
                 />
@@ -1485,18 +1495,20 @@ const TraceDetailDrawerV2 = ({
       />
 
       {/* Add Tags Popover */}
-      <AddTagsPopover
-        anchorEl={tagsAnchorEl}
-        open={Boolean(tagsAnchorEl)}
-        onClose={() => setTagsAnchorEl(null)}
-        traceId={traceId}
-        spanId={selectedSpanId}
-        currentTags={
-          selectedSpanData
-            ? getSpan(selectedSpanData)?.tags || []
-            : data?.trace?.tags || []
-        }
-      />
+      {!readOnly && (
+        <AddTagsPopover
+          anchorEl={tagsAnchorEl}
+          open={Boolean(tagsAnchorEl)}
+          onClose={() => setTagsAnchorEl(null)}
+          traceId={traceId}
+          spanId={selectedSpanId}
+          currentTags={
+            selectedSpanData
+              ? getSpan(selectedSpanData)?.tags || []
+              : data?.trace?.tags || []
+          }
+        />
+      )}
 
       {/* Save View Popover */}
       <SaveViewPopover
@@ -1555,6 +1567,7 @@ TraceDetailDrawerV2.propTypes = {
   initialFullscreen: PropTypes.bool,
   initialSpanId: PropTypes.string,
   refreshParentGrid: PropTypes.func,
+  readOnly: PropTypes.bool,
 };
 
 export default React.memo(TraceDetailDrawerV2);

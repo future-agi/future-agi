@@ -14,6 +14,7 @@ import { isVoiceCall } from "./callRouting";
  */
 export default function CallDrawer({
   task,
+  executionId = null,
   agentType,
   onClose,
   onPrev,
@@ -47,6 +48,7 @@ export default function CallDrawer({
         (voice ? (
           <VoiceCallDrawer
             task={task}
+            executionId={executionId}
             onClose={onClose}
             onPrev={onPrev}
             onNext={onNext}
@@ -56,6 +58,7 @@ export default function CallDrawer({
         ) : (
           <ChatCallDrawer
             task={task}
+            executionId={executionId}
             onClose={onClose}
             onPrev={onPrev}
             onNext={onNext}
@@ -71,6 +74,7 @@ CallDrawer.propTypes = {
     id: PropTypes.string,
     simulationCallType: PropTypes.string,
   }),
+  executionId: PropTypes.string,
   agentType: PropTypes.string,
   onClose: PropTypes.func,
   onPrev: PropTypes.func,

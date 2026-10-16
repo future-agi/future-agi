@@ -4,7 +4,7 @@ import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2"
 import { useLLMTracingStoreShallow } from "./states";
 import { useParams } from "react-router";
 
-const LLMTracingTraceDetailDrawer = ({ refreshGrid }) => {
+const LLMTracingTraceDetailDrawer = ({ refreshGrid, readOnly = false }) => {
   const { observeId } = useParams();
   const { traceDetailDrawerOpen, setTraceDetailDrawerOpen, visibleTraces } =
     useLLMTracingStoreShallow((state) => ({
@@ -64,12 +64,14 @@ const LLMTracingTraceDetailDrawer = ({ refreshGrid }) => {
       hasPrev={hasPrev}
       hasNext={hasNext}
       refreshParentGrid={refreshGrid}
+      readOnly={readOnly}
     />
   );
 };
 
 LLMTracingTraceDetailDrawer.propTypes = {
   refreshGrid: PropTypes.func,
+  readOnly: PropTypes.bool,
 };
 
 export default LLMTracingTraceDetailDrawer;
