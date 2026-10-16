@@ -57,8 +57,21 @@ const SAMPLED_SETTINGS = Object.freeze({...SETTINGS,
 export const SAMPLED_F6_MINILM_POLICY = Object.freeze({
   ...SAMPLED_SETTINGS, digest: digest(SAMPLED_SETTINGS),
 });
+// Separate identity: accepted simulation behaviors need run-wide candidate
+// discovery, including singletons and failures outside authored goal checks.
+const SIMULATION_SETTINGS = Object.freeze({...SAMPLED_SETTINGS,
+  version: 'f6-minilm-simulation/v3', behavior_catalog: true,
+  behavior_merge_catalog: true,
+  shared_correction_retrieval: true,
+  source_operation_retrieval: true, atomic_behavior_boundaries: true,
+  behavior_rules_revision: 'atomic-actions/v2',
+  track_exposed_targets: true, targeted_singletons: true, max_targeted_reviews: 100,
+});
+export const SIMULATION_F6_MINILM_POLICY = Object.freeze({
+  ...SIMULATION_SETTINGS, digest: digest(SIMULATION_SETTINGS),
+});
 export function groupingPolicy(version) {
-  const policy = [F6_MINILM_POLICY, SAMPLED_F6_MINILM_POLICY].find(item => item.version === version);
+  const policy = [F6_MINILM_POLICY, SAMPLED_F6_MINILM_POLICY, SIMULATION_F6_MINILM_POLICY].find(item => item.version === version);
   assert.ok(policy, 'Unsupported grouping policy');
   return policy;
 }

@@ -25,13 +25,24 @@ function syntheticGroup(finding) {
     missing_evidence:[]};
 }
 
-function fixtureResult(prompt) {
+function fixtureResult(prompt, deferDiscovery) {
+  if (prompt.instructions?.startsWith('Prepare cluster merge comparisons')) return {pairs: []};
+  if (prompt.instructions?.startsWith('Prepare candidate comparisons')) {
+    return {groups: prompt.findings.map(finding => ({finding_ids: [finding.id],
+      behavior: 'Accepted finding reports a distinct failure',
+      fix_hypothesis: 'Correct the action described by the accepted report'}))};
+  }
   if (prompt.candidate) return {action:'hold',groups:[],removed_ids:[],
     reason:'Synthetic fixture does not support a topology change'};
   if (prompt.instructions?.startsWith('CITATION-ONLY REPAIR.')) {
     throw new Error('Unexpected citation repair in fully cited fixture');
   }
   const findings=prompt.findings ?? [];
+  if (deferDiscovery) {
+    return prompt.instructions?.includes('TARGETED LATE REVISIT:')
+      ? {groups:findings.map(syntheticGroup),deferred:[]}
+      : {groups:[],deferred:findings.map(item=>({finding_id:item.id,reason:'No matching cluster yet'}))};
+  }
   if (prompt.instructions?.includes('TARGETED LATE REVISIT:')
       || prompt.instructions?.includes('FOCUSED ATTACHMENT:')) {
     return {groups:[],deferred:findings.map(item=>({finding_id:item.id,
@@ -40,8 +51,9 @@ function fixtureResult(prompt) {
   return {groups:findings.map(syntheticGroup),deferred:[]};
 }
 
-export async function runCrossServiceFixture({claim, receipt_ids_override: overrides = null}) {
+export async function runCrossServiceFixture({claim, receipt_ids_override: overrides = null, defer_discovery: deferDiscovery = false}) {
   assert.ok(claim && typeof claim === 'object' && !Array.isArray(claim), 'Grouping claim required');
+  assert.equal(typeof deferDiscovery, 'boolean');
   assert.ok(overrides === null || Array.isArray(overrides)
     && overrides.length <= 100 && overrides.every(id=>typeof id==='string'&&UUID.test(id))
     && new Set(overrides).size === overrides.length, 'Invalid fixture receipt override');
@@ -66,7 +78,7 @@ export async function runCrossServiceFixture({claim, receipt_ids_override: overr
     const receiptId=overrides?.[index]
       ?? `00000000-0000-4000-8000-${String(index+1).padStart(12,'0')}`;
     assert.ok(UUID.test(receiptId), 'Fixture receipt identity invalid');
-    const result=fixtureResult(prompt);
+    const result=fixtureResult(prompt,deferDiscovery);
     const record={receipt_id:receiptId,request_digest:requestDigest,
       repair_intent:repairIntent,result};
     seen.set(requestDigest,record);

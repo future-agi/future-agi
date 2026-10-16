@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildFeatures, featureDigest, splitFeatureText, FEATURE_LIMITS} from './features.mjs';
+import {buildFeatures, featureDigest, splitFeatureText, FEATURE_LIMITS, SIMULATION_FEATURE_VERSION} from './features.mjs';
 import {adaptGroupingSnapshot} from './snapshot.mjs';
 import {makeGroupingSnapshotFixture} from './snapshot-fixture.mjs';
 
@@ -28,6 +28,19 @@ test('snapshot adapter feeds feature builder without changing source identities'
   const result=await buildFeatures(rows,{model,embedBatch:embed});
   assert.equal(result.rows[rows[0].id].source_digest,rows[0].source_digest);
   assert.equal(result.rows[rows[0].id].evidence_revision,rows[0].evidence_revision);
+});
+
+test('simulation population upgrade keeps a distinct feature cache identity', async () => {
+  const cache = new Map(); let calls = 0;
+  const embedBatch = async texts => { calls++; return embed(texts); };
+  const legacy = await buildFeatures([row()], {model, embedBatch, cache});
+  const simulation = await buildFeatures([row()], {model, embedBatch, cache, version: SIMULATION_FEATURE_VERSION});
+  assert.equal(simulation.version, SIMULATION_FEATURE_VERSION);
+  assert.notEqual(simulation.model_config_digest, legacy.model_config_digest);
+  assert.deepEqual(simulation.rows.one.views.semantics.vector, legacy.rows.one.views.semantics.vector);
+  assert.equal(calls, 2);
+  await assert.rejects(() => buildFeatures([row()], {model, embedBatch, version: 'unknown'}), /Unsupported feature policy/);
+  assert.equal(calls, 2);
 });
 
 test('Unicode chunks preserve every code point and obey byte limits', () => {

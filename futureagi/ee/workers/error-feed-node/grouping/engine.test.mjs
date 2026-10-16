@@ -6,7 +6,7 @@ import {adaptGroupingSnapshot} from './snapshot.mjs';
 import {makeGroupingSnapshotFixture} from './snapshot-fixture.mjs';
 import {digest} from './f6/common.mjs';
 import {runGrouping} from './engine.mjs';
-import {F6_MINILM_POLICY, SAMPLED_F6_MINILM_POLICY} from './policy.mjs';
+import {F6_MINILM_POLICY, SAMPLED_F6_MINILM_POLICY, SIMULATION_F6_MINILM_POLICY} from './policy.mjs';
 import {Paused} from './f6/provider.mjs';
 import {issueWording} from './f6/admission.mjs';
 
@@ -114,6 +114,107 @@ function offeredIssue(rows, protectedIssue = false) {
       report_id: row.investigation_report_ref.report_id, trace_id: row.trace_id,
       source_digest: row.source_digest, evidence_revision: row.evidence_revision}))};
 }
+
+test('simulation catalog compares distant peers before evidence-based admission', async () => {
+  const setup = fixture(), second = addSecondFinding(setup);
+  const rows = [setup.row, second];
+  for (const row of rows) {
+    row.trace_id = null;
+    row.workload_type = 'simulation_test_execution';
+    row.test_execution_id = 'simulation-execution';
+  }
+  const seen = [];
+  const investigate = withReceipts(async prompt => {
+    seen.push(prompt);
+    if (prompt.instructions.startsWith('Prepare candidate comparisons')) {
+      assert.deepEqual(new Set(prompt.findings.map(item => item.id)), new Set(rows.map(row => row.id)));
+      return {groups: [{finding_ids: rows.map(row => row.id),
+        behavior: 'Refund amount differs from the requested amount',
+        fix_hypothesis: 'Use the checked requested amount'}]};
+    }
+    if (prompt.candidate) return {action: 'hold', groups: [], removed_ids: [], reason: 'One coherent behavior'};
+    assert.ok(prompt.instructions.includes('Not matching an existing issue'));
+    assert.ok(prompt.retrieval_suggestion);
+    return {groups: [groupFor(prompt, rows.map(row => row.id))], deferred: []};
+  });
+  const input = {rows, pendingIds: rows.map(row => row.id), features: setup.features,
+    candidateWindow: setup.candidateWindow, store: setup.store, investigate,
+    policy: SIMULATION_F6_MINILM_POLICY};
+  const result = await runGrouping(input);
+  assert.equal(result.status, 'complete');
+  assert.equal(result.registry.issues.filter(issue => issue.active).length, 1);
+  assert.ok(result.dispositions.every(disposition => disposition.state === 'assigned'));
+  assert.ok(result.decision_receipts.some(receipt => receipt.phase === 'behavior_catalog'));
+  const calls = seen.length;
+  await runGrouping(input);
+  assert.equal(seen.length, calls, 'completed replay must not repeat model calls');
+});
+
+test('simulation behavior policy rejects trace workloads before inference', async () => {
+  const setup = fixture(); let called = false;
+  await assert.rejects(() => runGrouping({rows: [setup.row], pendingIds: [setup.row.id],
+    features: setup.features, candidateWindow: setup.candidateWindow, store: setup.store,
+    policy: SIMULATION_F6_MINILM_POLICY,
+    investigate: async () => { called = true; }}), /limited to simulation/);
+  assert.equal(called, false);
+});
+
+test('rejected behavior plans still admit independently supported findings and resume without replanning', async () => {
+  for (const invalid of ['omitted', 'duplicate', 'foreign', 'forbidden']) {
+    const setup = fixture(), second = addSecondFinding(setup), rows = [setup.row, second];
+    for (const row of rows) Object.assign(row, {trace_id: null,
+      workload_type: 'simulation_test_execution', test_execution_id: 'simulation-execution'});
+    let planning = 0, reviews = 0;
+    const investigate = withReceipts(async prompt => {
+      if (prompt.instructions.startsWith('Prepare candidate comparisons')) {
+        planning++;
+        const ids = rows.map(row => row.id);
+        const group = finding_ids => ({finding_ids, behavior: 'Unverified plan', fix_hypothesis: 'Unverified correction'});
+        return {groups: invalid === 'omitted' ? [] : invalid === 'duplicate' ? [group(ids), group([ids[0]])]
+          : invalid === 'foreign' ? [group(['foreign'])] : [group(ids)]};
+      }
+      if (prompt.instructions.startsWith('Prepare cluster merge')) return {pairs: []};
+      if (prompt.candidate) return {action: 'hold', groups: [], removed_ids: [], reason: 'Keep independent issues'};
+      reviews++;
+      assert.equal(prompt.findings.length, 1);
+      assert.equal(prompt.retrieval_suggestion.behavior, 'Independently review the reported behavior');
+      return validSingleton(prompt);
+    });
+    const input = {rows, pendingIds: rows.map(row => row.id), features: setup.features,
+      candidateWindow: setup.candidateWindow, store: setup.store, investigate,
+      cannotLinks: invalid === 'forbidden' ? [rows.map(row => row.id)] : [], policy: SIMULATION_F6_MINILM_POLICY};
+    const result = await runGrouping(input);
+    assert.equal(result.status, 'complete', invalid);
+    assert.ok(result.dispositions.every(item => item.state === 'assigned'), invalid);
+    assert.equal(result.registry.issues.filter(issue => issue.active).length, 2);
+    assert.equal(reviews, 2); assert.equal(planning, 1);
+    await runGrouping(input);
+    assert.equal(reviews, 2); assert.equal(planning, 1);
+  }
+});
+
+test('simulation merge catalog routes separate discoveries through validated merge commands', async () => {
+  const setup = fixture(), second = addSecondFinding(setup), rows = [setup.row, second];
+  for (const row of rows) Object.assign(row, {trace_id: null,
+    workload_type: 'simulation_test_execution', test_execution_id: 'simulation-execution'});
+  const investigate = withReceipts(async prompt => {
+    if (prompt.instructions.startsWith('Prepare candidate comparisons')) return {
+      groups: rows.map(row => ({finding_ids: [row.id], behavior: 'Wrong refund amount', fix_hypothesis: 'Use checked amount'}))};
+    if (prompt.instructions.startsWith('Prepare cluster merge comparisons')) return {
+      pairs: [{issue_ids: prompt.issues.map(issue => issue.id), reason: 'Both report using the wrong refund amount'}]};
+    if (prompt.candidate) return {action: 'merge', groups: [groupFor(prompt, rows.map(row => row.id))],
+      removed_ids: [], reason: 'Both own reports support the same action and correction'};
+    return {groups: [groupFor(prompt, prompt.findings.map(row => row.id))], deferred: []};
+  });
+  const result = await runGrouping({rows, pendingIds: rows.map(row => row.id),
+    features: setup.features, candidateWindow: setup.candidateWindow, store: setup.store,
+    investigate, policy: SIMULATION_F6_MINILM_POLICY});
+  assert.equal(result.status, 'complete');
+  assert.equal(result.registry.issues.filter(issue => issue.active).length, 1);
+  assert.ok(result.commands.some(command => command.type === 'merge'));
+  assert.ok(result.decision_receipts.some(receipt => receipt.phase === 'merge_catalog'));
+  assert.ok(result.dispositions.every(disposition => disposition.state === 'assigned'));
+});
 
 test('bounded F6 engine admits supported singleton and emits typed create command', async () => {
   const {row, features, candidateWindow, store} = fixture();
@@ -241,6 +342,80 @@ test('targeted revisit does not duplicate a review when the target was already v
   assert.deepEqual(result.commands.map(command => command.type), ['create']);
   assert.equal(result.dispositions.filter(item => item.state === 'assigned').length, 1);
   assert.equal(result.dispositions.filter(item => item.state === 'deferred').length, 1);
+});
+
+test('targeted singleton admission retains evidence, contradiction and selected-member checks', async () => {
+  for (const scenario of ['supported', 'missing citation', 'contradicted', 'foreign member']) {
+    const setup = fixture();
+    Object.assign(setup.row, {trace_id: null, workload_type: 'simulation_test_execution', test_execution_id: 'execution'});
+    let targeted = 0;
+    const investigate = withReceipts(async prompt => {
+      if (prompt.instructions.startsWith('Prepare candidate comparisons')) return {groups: [{finding_ids: [setup.row.id],
+        behavior: 'Incorrect refund amount', fix_hypothesis: 'Use requested amount'}]};
+      if (prompt.instructions.includes('TARGETED LATE REVISIT:')) {
+        targeted++;
+        assert.equal(prompt.existing_issues.length, 0);
+        const proposal = validSingleton(prompt), group = proposal.groups[0];
+        if (scenario === 'missing citation') group.citations = [];
+        if (scenario === 'contradicted') group.contradictions = [...group.citations];
+        if (scenario === 'foreign member') group.member_ids.push('unselected-finding');
+        return proposal;
+      }
+      return {groups: [], deferred: [{finding_id: setup.row.id, reason: 'No matching cluster yet'}]};
+    });
+    const input = {rows: [setup.row], pendingIds: [setup.row.id], features: setup.features,
+      candidateWindow: setup.candidateWindow, store: setup.store, investigate, policy: SIMULATION_F6_MINILM_POLICY};
+    const result = await runGrouping(input);
+    assert.equal(result.status, 'complete', scenario);
+    assert.equal(targeted, 1, scenario);
+    assert.deepEqual(result.commands.map(command => command.type), scenario === 'supported' ? ['create'] : [], scenario);
+    assert.equal(result.dispositions[0].state, scenario === 'supported' ? 'assigned' : 'deferred', scenario);
+    if (scenario === 'supported') {
+      const receipt = result.decision_receipts.find(item => item.phase === 'targeted_revisit');
+      assert.equal(result.commands[0].admission.primary_receipt_id, receipt.primary_receipt_id);
+      assert.deepEqual(result.commands[0].occurrence_ids, [setup.row.id]);
+    }
+    await runGrouping(input);
+    assert.equal(targeted, 1, 'Completed checkpoint must not repeat singleton creation');
+  }
+});
+
+test('a singleton created on revisit accepts a matching finding in a later batch of the same execution', async () => {
+  const setup = fixture();
+  Object.assign(setup.row, {trace_id: null, workload_type: 'simulation_test_execution', test_execution_id: 'execution'});
+  const first = await runGrouping({rows: [setup.row], pendingIds: [setup.row.id], features: setup.features,
+    candidateWindow: setup.candidateWindow, store: setup.store, policy: SIMULATION_F6_MINILM_POLICY,
+    investigate: withReceipts(async prompt => {
+      if (prompt.instructions.startsWith('Prepare candidate comparisons')) return {groups: [{finding_ids: [setup.row.id],
+        behavior: 'Incorrect refund amount', fix_hypothesis: 'Use requested amount'}]};
+      if (prompt.instructions.includes('TARGETED LATE REVISIT:')) return validSingleton(prompt);
+      return {groups: [], deferred: [{finding_id: setup.row.id, reason: 'No matching cluster yet'}]};
+    })});
+  assert.deepEqual(first.commands.map(command => command.type), ['create']);
+  const singleton = first.registry.issues[0];
+  const offered = {...offeredIssue([setup.row]), issue_id: singleton.id, revision: singleton.mechanism_revision,
+    mechanism: {title: singleton.title, mechanism: singleton.mechanism, fix_hypothesis: singleton.fix_hypothesis,
+      falsifier: singleton.falsifier}, evidence_mode: 'sampled', member_count: 1,
+    membership_revision: 1, membership_digest: 'sha256:' + 'a'.repeat(64)};
+  offered.members[0].test_execution_id = setup.row.test_execution_id;
+  const later = addSecondFinding(setup);
+  setup.files.clear();
+  const next = await runGrouping({rows: [setup.row, later], pendingIds: [later.id], features: setup.features,
+    candidateWindow: {...setup.candidateWindow, registry_revision: 8, issues: [offered]},
+    store: setup.store, policy: SIMULATION_F6_MINILM_POLICY,
+    investigate: withReceipts(async prompt => {
+      if (prompt.instructions.startsWith('Prepare candidate comparisons')) return {groups: [{finding_ids: [later.id],
+        behavior: 'Incorrect refund amount', fix_hypothesis: 'Use requested amount'}]};
+      if (prompt.candidate) return {action: 'hold', groups: [], removed_ids: [], reason: 'Same faulty operation'};
+      const target = prompt.existing_issues.find(issue => issue.id === singleton.id);
+      assert.ok(target, 'Previously created singleton must be offered for attachment');
+      return {groups: [groupFor(prompt, [later.id], {target: target.id,
+        prototypeIds: target.prototypes.map(row => row.id)})], deferred: []};
+    })});
+  assert.equal(next.commands.filter(command => command.type === 'create').length, 0);
+  assert.equal(next.commands.filter(command => command.type === 'attach').length, 1);
+  assert.equal(next.dispositions[0].issue_id, singleton.id);
+  assert.deepEqual(new Set(next.registry.issues[0].members), new Set([setup.row.id, later.id]));
 });
 
 test('a paused investigation emits no publishable commands and resumes from its checkpoint', async () => {

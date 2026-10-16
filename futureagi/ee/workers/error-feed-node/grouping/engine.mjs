@@ -208,6 +208,8 @@ export async function runGrouping({rows, pendingIds, features, candidateWindow,
   assert.ok(typeof investigate === 'function' && typeof store?.read === 'function'
     && typeof store.save === 'function', 'F6 model/store interfaces required');
   const {byId, constraints} = validateInput(rows, cannotLinks);
+  if (policy.behavior_catalog) assert.ok(rows.every(row => row.workload_type === 'simulation_test_execution'),
+    'Behavior grouping is limited to simulation findings');
   const scope = scopeKey(byId.get(pendingIds[0]));
   assert.ok(rows.every(row => scopeKey(row) === scope), 'Cross-scope F6 row window');
   assert.ok(pendingIds.every(id => byId.has(id) && !byId.get(id).control),

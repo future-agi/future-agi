@@ -72,7 +72,8 @@ test('transient token-count failures remain retryable before any reservation or 
         candidate_digest:'sha256:'+'a'.repeat(64),policy_version:'f6-minilm/v1'},
       config,reserveUsd:0.1,fetchImpl,onDiagnostic:()=>{},
       control:async()=>{reservations++;assert.fail('must not reserve');},
-      createProvider:()=>({provider:{generate:async()=>{providerCalls++;assert.fail('must not infer');}}}),
+      createProvider:()=>({accounting:()=>({calls:[]}),
+        provider:{generate:async()=>{providerCalls++;assert.fail('must not infer');}}}),
     });
     await assert.rejects(gateway.investigate({},{}),error=>{
       assert.equal(groupingFailureCode(error),'gateway_error');

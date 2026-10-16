@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {digest, exactKeys, requireText, unique, validateMembers} from './common.mjs';
 import {companionInstructions} from './companion-context.mjs';
+import {behavioralInstructions} from './behavior-catalog.mjs';
 
 const text = {type: 'string'};
 const strings = {type: 'array', items: text};
@@ -43,11 +44,13 @@ Multiple memberships require distinct mechanisms with distinct supporting eviden
 
 export function discoveryPrompt(selection, issues, byId, cannotLinks, policy = {}) {
   const simulation = selection.selected.some(id => byId.get(id)?.workload_type === 'simulation_test_execution');
-  const promptInstructions = simulation
+  let promptInstructions = simulation
     ? instructions.replace('Do not infer a clean trace from missing evidence or recovered issues.',
       'Do not infer a clean simulation execution from missing evidence or recovered issues.')
       + '\nSimulation findings are scoped to one TestExecution. Match test_execution_id exactly; call_execution_id identifies CallExecution evidence, and null trace_id must never be replaced with an invented trace.'
     : instructions;
+  if (policy.atomic_behavior_boundaries) promptInstructions = promptInstructions.replace('the technical cause follows.',
+    'include a technical cause only when the evidence establishes it; otherwise state that it is unknown.');
   const extraInstructions = policy.companion_context
     ? '\n' + (simulation
       ? companionInstructions.replace(
@@ -55,7 +58,7 @@ export function discoveryPrompt(selection, issues, byId, cannotLinks, policy = {
         'Shared CallExecution evidence IDs are retrieval cues only within the same test execution, not proof of a shared issue or causal relationship.')
       : companionInstructions)
     : '';
-  return {instructions: promptInstructions+extraInstructions, findings: selection.selected.map(id => visible(byId.get(id))),
+  return {instructions: promptInstructions+extraInstructions+(policy.behavior_catalog ? '\n'+behavioralInstructions : ''), findings: selection.selected.map(id => visible(byId.get(id))),
     selected_roles: selection.roles, controls: selection.controls.map(id => visible(byId.get(id))), missing_views: selection.missing,
     existing_issues: issues.map(i => ({id: i.id, mechanism_revision: i.mechanism_revision,
       title: i.title || null, mechanism: i.mechanism, fix_hypothesis: i.fix_hypothesis, prototypes: i.prototypes.map(id => visible(byId.get(id)))})),

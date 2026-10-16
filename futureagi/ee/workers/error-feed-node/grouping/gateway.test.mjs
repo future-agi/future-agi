@@ -7,6 +7,20 @@ const claim={attempt_id:'11111111-1111-4111-8111-111111111111',lease_token:'leas
   snapshot:{snapshot_digest:'sha256:source'},policy_version:'f6-minilm/v1',registry_revision:0,
   candidate_digest:'sha256:'+'a'.repeat(64)};
 const config={model:'google/gemini-3.8-flash',baseUrl:'http://gateway/v1',apiKey:'fixture'};
+test('local and durable total-call exhaustion stop the whole pipeline even during a merge', async () => {
+  for (const local of [true, false]) {
+    const f = fixture();
+    const gateway = await createGroupingInvestigator({claim: {...claim, policy_version: 'f6-minilm-simulation/v3'},
+      config, reserveUsd: 0.1, maxCalls: 1, ...f,
+      control: local ? f.control : async () => ({status: 'budget_exhausted', limit: 'work_calls', created: false})});
+    if (local) await gateway.investigate({}, {});
+    const reservations = f.events.length;
+    await assert.rejects(gateway.investigate({candidate: {type: 'merge_review'}}, {}),
+      {name: 'GroupingBudgetExceeded', limit: 'work_calls'});
+    assert.equal(f.events.length, reservations);
+    assert.equal(f.calls.length, local ? 1 : 0);
+  }
+});
 test('failed sampled merge stays accounted but is not publication evidence',async()=>{
   const f=fixture({invalid:true});
   const gateway=await createGroupingInvestigator({claim:{...claim,policy_version:'f6-minilm-sampled/v2'},

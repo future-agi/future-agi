@@ -1,7 +1,7 @@
 import {observe, claimAttributes, claimInput, spanAttributes} from '../observability.mjs';
 import {setTimeout as delay} from 'node:timers/promises';
 import {adaptGroupingSnapshot} from './snapshot.mjs';
-import {buildFeatures, featureDigest, FEATURE_VERSION} from './features.mjs';
+import {buildFeatures, featureDigest, FEATURE_VERSION, SIMULATION_FEATURE_VERSION} from './features.mjs';
 import {createF6Planes, bucketRowsForFeature} from './lsh.mjs';
 import {runGrouping} from './engine.mjs';
 import {groupingPolicy} from './policy.mjs';
@@ -9,12 +9,10 @@ import {createGroupingInvestigator} from './gateway.mjs';
 import {validateEmbeddingModel} from './embedding-client.mjs';
 import {assessSeverity} from './severity.mjs';
 import {controlFailureDetails} from '../control-client.mjs';
+import {encodeCheckpoint, decodeCheckpoint} from './checkpoint.mjs';
+export {MAX_CHECKPOINT_BYTES} from './checkpoint.mjs';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
-// The control client permits 8 MiB grouping payloads. Leave 1 MiB for the
-// envelope while allowing long, lossless cohort runs to retain their durable
-// receipts and Registry history.
-export const MAX_CHECKPOINT_BYTES = 7 * 1024 * 1024;
 
 async function withLease(claim, path, {control, signal, heartbeatMs = 15000}, run) {
   if (typeof claim.lease_token !== 'string' || !claim.lease_token) throw new Error('Missing lease');
@@ -45,14 +43,17 @@ export async function processFeatureClaim(claim, options) {
 
 async function runFeatureClaim(claim, options) {
   const {control, embedBatch, model} = options;
-  if (!UUID.test(claim.feature_attempt_id ?? '') || claim.policy_version !== FEATURE_VERSION) {
+  if (!UUID.test(claim.feature_attempt_id ?? '') || ![FEATURE_VERSION, SIMULATION_FEATURE_VERSION].includes(claim.policy_version)) {
     throw new Error('Unsupported feature claim');
   }
   const path = `/grouping/feature-attempts/${claim.feature_attempt_id}/`;
   return withLease(claim, path, options, async signal => {
     try {
       const rows = adaptGroupingSnapshot(claim.snapshot);
-      const prepared = await buildFeatures(rows, {embedBatch,model,signal});
+      if (claim.policy_version === SIMULATION_FEATURE_VERSION && rows.some(row=>row.workload_type !== 'simulation_test_execution')) {
+        throw new Error('Simulation features require simulation reports');
+      }
+      const prepared = await buildFeatures(rows, {embedBatch,model,signal,version:claim.policy_version});
       const planes = createF6Planes(prepared.dimension);
       const features = rows.flatMap(row => Object.entries(prepared.rows[row.id].views).map(([view, feature]) => {
         const record = {occurrence_id:row.id,view,source_digest:row.source_digest,
@@ -78,10 +79,11 @@ async function runFeatureClaim(claim, options) {
 
 export function engineInput(claim, configuredModel) {
   const pendingSnapshots = claim.pending_snapshots ?? [claim.snapshot];
-  if (!Array.isArray(pendingSnapshots) || pendingSnapshots.length > 20) throw new Error('Invalid pending snapshot count');
+  const policy = groupingPolicy(claim.policy_version);
+  if (!Array.isArray(pendingSnapshots) || pendingSnapshots.length > (policy.behavior_catalog ? 100 : 20)) throw new Error('Invalid pending snapshot count');
   const snapshotRows = pendingSnapshots.flatMap(adaptGroupingSnapshot);
   const selected = new Set(claim.pending_ids);
-  const pendingRows = claim.policy_version === 'f6-minilm-sampled/v2'
+  const pendingRows = policy.sampled_merge_reviews
     ? snapshotRows.filter(row=>selected.has(row.id)) : snapshotRows;
   const pendingIds = pendingRows.map(row=>row.id);
   if (!pendingIds.length || new Set(pendingIds).size !== pendingIds.length || !Array.isArray(claim.pending_ids)
@@ -125,7 +127,7 @@ export function engineInput(claim, configuredModel) {
 
 function checkpointStore(claim, control, signal) {
   let revision = claim.checkpoint_revision ?? 0;
-  const files = structuredClone(claim.checkpoint?.files ?? {});
+  const files = structuredClone(decodeCheckpoint(claim.checkpoint ?? {}).files ?? {});
   return {
     read: async name => structuredClone(files[name] ?? null),
     save: async (name,value) => {
@@ -133,9 +135,9 @@ function checkpointStore(claim, control, signal) {
         throw new Error('Unsupported grouping checkpoint file');
       }
       const next = {...files,[name]:structuredClone(value)};
-      if (Buffer.byteLength(JSON.stringify(next)) > MAX_CHECKPOINT_BYTES) throw new Error('Grouping checkpoint exceeds bound');
+      const checkpoint = encodeCheckpoint(next, {compress: groupingPolicy(claim.policy_version).behavior_catalog});
       const reply = await control(`/grouping/attempts/${claim.attempt_id}/checkpoint/`, {
-        lease_token:claim.lease_token,expected_revision:revision,checkpoint:{files:next},
+        lease_token:claim.lease_token,expected_revision:revision,checkpoint,
       }, {method:'PUT',signal});
       if (reply.checkpoint_revision !== revision+1) throw new Error('Checkpoint was not acknowledged');
       revision = reply.checkpoint_revision;

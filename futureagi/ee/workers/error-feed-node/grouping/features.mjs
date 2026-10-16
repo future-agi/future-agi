@@ -7,6 +7,7 @@ import {validateEmbeddingModel} from './embedding-client.mjs';
 // those as unknown, never reinterpret a deployment cache namespace as proof.
 export const FEATURE_VIEWS = Object.freeze(['task', 'semantics']);
 export const FEATURE_VERSION = 'f6-minilm-features/v2';
+export const SIMULATION_FEATURE_VERSION = 'f6-minilm-simulation-features/v3';
 export const FEATURE_LIMITS = Object.freeze({
   rows: 100, textBytesPerView: 256 * 1024, totalTextBytes: 2 * 1024 * 1024,
   chunks: 512, chunkBytes: 128,
@@ -46,14 +47,15 @@ export function splitFeatureText(text) {
 }
 
 export async function buildFeatures(rows, {embedBatch, cache = new Map(), model: rawModel,
-  batchSize = 16, signal} = {}) {
+  batchSize = 16, signal, version = FEATURE_VERSION} = {}) {
   if (!Array.isArray(rows) || rows.length > FEATURE_LIMITS.rows
       || typeof embedBatch !== 'function' || !Number.isSafeInteger(batchSize)
       || batchSize < 1 || batchSize > 16 || typeof cache.get !== 'function' || typeof cache.set !== 'function') {
     throw new Error('Invalid feature configuration');
   }
+  if (![FEATURE_VERSION, SIMULATION_FEATURE_VERSION].includes(version)) throw new Error('Unsupported feature policy');
   const model = validateEmbeddingModel(rawModel);
-  const modelConfigDigest = featureDigest({model, version: FEATURE_VERSION, chunk_bytes: FEATURE_LIMITS.chunkBytes});
+  const modelConfigDigest = featureDigest({model, version, chunk_bytes: FEATURE_LIMITS.chunkBytes});
   const output = {}, pending = [], ids = new Set();
   let totalBytes = 0, totalChunks = 0;
   for (const row of rows) {
@@ -120,7 +122,7 @@ export async function buildFeatures(rows, {embedBatch, cache = new Map(), model:
     await cache.set(item.key, {binding_digest: item.key, value_digest: featureDigest(feature), feature: structuredClone(feature)});
     item.views[item.view] = feature;
   }
-  return {version: FEATURE_VERSION, model: model.name, model_revision: null,
+  return {version, model: model.name, model_revision: null,
     serving_release: model.servingRelease, model_config_digest: modelConfigDigest,
     dimension: model.dimension, rows: output};
 }

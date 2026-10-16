@@ -4,8 +4,9 @@ import {MAX_CHECKPOINT_BYTES, processFeatureClaim, processGroupingClaim, engineI
 import {createControlClient} from '../control-client.mjs';
 import {makeGroupingSnapshotFixture} from './snapshot-fixture.mjs';
 import {adaptGroupingSnapshot, canonicalSnapshotDigest} from './snapshot.mjs';
-import {FEATURE_VERSION, featureDigest} from './features.mjs';
+import {FEATURE_VERSION, SIMULATION_FEATURE_VERSION, featureDigest} from './features.mjs';
 import {createGroupingInvestigator} from './gateway.mjs';
+import {SIMULATION_F6_MINILM_POLICY} from './policy.mjs';
 
 const id='11111111-1111-4111-8111-111111111111';
 const model={name:'all-MiniLM-L6-v2',dimension:384,servingRelease:'test'};
@@ -31,6 +32,16 @@ test('feature claim uses existing serving response and persists LSH buckets',asy
 
 test('pending membership mismatch is rejected before algorithm work',()=>{
   assert.throws(()=>engineInput({...claim(),pending_ids:[]}),/membership mismatch/);
+});
+
+test('simulation feature policy cannot consume trace reports', async () => {
+  let embeddings = 0;
+  await assert.rejects(() => processFeatureClaim({...claim(), feature_attempt_id: id,
+    policy_version: SIMULATION_FEATURE_VERSION}, {model,
+    embedBatch: async () => { embeddings++; throw new Error('Unexpected embedding request'); },
+    control: async () => ({state: 'failed'}),
+  }), /Simulation features require simulation reports/);
+  assert.equal(embeddings, 0);
 });
 
 test('grouping claim binds candidate revision and exact embedding representation',()=>{
@@ -355,4 +366,94 @@ test('sampled recovery retains full source snapshots but processes only selected
   assert.throws(()=>engineInput({...work,pending_ids:[]},model),/membership mismatch/);
   assert.throws(()=>engineInput({...work,pending_ids:['not-in-snapshot']},model),/membership mismatch/);
   assert.throws(()=>engineInput({...work,policy_version:'f6-minilm/v1'},model),/membership mismatch/);
+});
+
+test('100 singleton suggestions publish admitted results at the call cap without an unsent reservation', async () => {
+  const work = claim(), snapshot = makeGroupingSnapshotFixture(), report = snapshot.report;
+  report.workload_type = 'simulation_test_execution'; report.test_execution_id = id; report.trace_id = null;
+  report.coverage = {scope: 'simulation_test_execution', observed_call_count: 1, read_complete: true};
+  report.evidence_receipts[0] = {...report.evidence_receipts[0], span_id: null, parent_span_id: null, call_execution_id: id};
+  const original = report.findings[0];
+  report.findings = Array.from({length: 100}, (_, number) => ({...structuredClone(original),
+    finding_id: `finding-${number}`, statement: `Operation ${number} used an incorrect amount.`,
+    attribution: {origin: null, decisive: {status: 'supported', span_id: null, call_execution_id: id, evidence_ids: ['evidence-1']},
+      symptom: {status: 'unknown', span_id: null, evidence_ids: []}}}));
+  snapshot.occurrences = report.findings.map((finding, number) => ({finding_id: finding.finding_id,
+    occurrence_id: `00000000-0000-4000-8000-${String(number).padStart(12, '0')}`}));
+  const snapshots = snapshot.occurrences.map((occurrence, number) => {
+    const body = {contract_version: snapshot.contract_version,
+      report: {...report, id: `22222222-2222-4222-8222-${String(number).padStart(12, '0')}`,
+        findings: [report.findings[number]]}, occurrences: [occurrence]};
+    return {...body, snapshot_digest: canonicalSnapshotDigest(body)};
+  });
+  const rows = snapshots.flatMap(adaptGroupingSnapshot);
+  Object.assign(work, {snapshot: snapshots[0], pending_snapshots: snapshots, pending_ids: rows.map(row => row.id),
+    policy_version: SIMULATION_F6_MINILM_POLICY.version, receipt_ids: [],
+    features: rows.map((row, number) => {
+      const entry = {occurrence_id: row.id, view: 'semantics', source_digest: row.source_digest,
+        evidence_revision: row.evidence_revision, text_digest: featureDigest(row.views.semantics),
+        model: model.name, model_revision: null, serving_release: model.servingRelease, dimension: 384,
+        vector: Array.from({length: 384}, (_, index) => index === number ? 1 : 0), index_buckets: []};
+      return {...entry, feature_digest: featureDigest(entry)};
+    })});
+  const reservations = [], settlements = [], diagnostics = [];
+  let publication, sent = 0, checkpoint;
+  const control = async (path, payload) => {
+    if (path.endsWith('reserve/')) {
+      reservations.push(payload);
+      return {created: true, status: 'reserved', request_digest: payload.request_digest,
+        receipt_id: `11111111-1111-4111-8111-${String(reservations.length).padStart(12, '0')}`};
+    }
+    if (path.endsWith('settle/')) { settlements.push(payload); return {status: 'settled'}; }
+    if (path.endsWith('checkpoint/')) { checkpoint = payload; return {checkpoint_revision: payload.expected_revision + 1}; }
+    if (path.endsWith('publish/')) { publication = payload; return {status: 'completed', registry_revision: 4}; }
+    assert.fail(`Unexpected control request ${path}`);
+  };
+  const createProvider = ({maxCalls, fetchImpl}) => {
+    const calls = [];
+    return {accounting: () => ({calls}), provider: {generate: async () => {
+      if (calls.length >= maxCalls) throw new Error('Model-call budget exhausted');
+      const response = await fetchImpl('http://gateway/v1/chat/completions', {});
+      calls.push({cost_microusd: 100, routed_model: 'google/gemini-3.8-flash'});
+      return {content: await response.text(), raw: {choices: [{finish_reason: 'stop'}]}};
+    }}};
+  };
+  const result = await processGroupingClaim(work, {control, model, reserveUsd: 0.1,
+    gatewayConfig: {model: 'google/gemini-3.8-flash'},
+    createInvestigator: args => createGroupingInvestigator({...args, createProvider,
+      countRequest: async () => ({input_tokens: 100, request_bytes: 1000}),
+      onDiagnostic: event => diagnostics.push(event), fetchImpl: async (_url, init) => {
+        sent++;
+        const prompt = JSON.parse(JSON.parse(init.body).messages[1].content);
+        if (prompt.instructions.startsWith('Prepare candidate comparisons')) {
+          return Response.json({groups: prompt.findings.map(finding => ({finding_ids: [finding.id],
+            behavior: `Incorrect amount for ${finding.id}`, fix_hypothesis: `Correct ${finding.id}`}))});
+        }
+        assert.equal(prompt.findings.length, 1);
+        const finding = prompt.findings[0], source = finding.evidence.find(item => item.id === 'report');
+        return Response.json({groups: [{target_issue_id: null, member_ids: [finding.id],
+          title: 'Operation uses an incorrect amount', mechanism: `Incorrect amount for ${finding.id}`,
+          fix_hypothesis: `Validate the amount for ${finding.id}`, falsifier: 'The operation used the correct amount',
+          predicted_observations: ['The amount differs from the requested amount'],
+          citations: [{finding_id: finding.id, evidence_id: 'report', evidence_digest: source.digest, quote: source.text}],
+          contradictions: [], alternatives: ['A display issue alone does not explain the executed amount'], missing_evidence: []}], deferred: []});
+      }}),
+  });
+  assert.equal(result.status, 'completed');
+  assert.equal(sent, 100); assert.equal(reservations.length, 100); assert.equal(settlements.length, 100);
+  assert.ok(settlements.every(settlement => settlement.status === 'settled'));
+  assert.equal(publication.receipt_ids.length, 100);
+  const admitted = publication.commands.filter(command => command.type === 'create');
+  const deferred = publication.commands.filter(command => command.type === 'defer');
+  assert.equal(admitted.length, 99); assert.equal(deferred.length, 1);
+  assert.equal(deferred[0].reason, 'budget_exhausted:work_calls');
+  assert.deepEqual(new Set([...admitted, ...deferred].flatMap(command => command.occurrence_ids)), new Set(work.pending_ids));
+  assert.ok(checkpoint);
+  assert.ok(diagnostics.some(event => event.event === 'grouping_budget_paused' && event.limit === 'work_calls'));
+  assert.equal(checkpoint.checkpoint.encoding, 'grouping-checkpoint-gzip/v1');
+  const originalPublication = structuredClone(publication);
+  await processGroupingClaim({...work, checkpoint: checkpoint.checkpoint}, {control, model,
+    createInvestigator: async () => assert.fail('Frozen publication must resume without inference')});
+  assert.deepEqual(publication, originalPublication);
+  assert.equal(sent, 100);
 });

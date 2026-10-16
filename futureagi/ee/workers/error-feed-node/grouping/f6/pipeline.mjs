@@ -9,6 +9,7 @@ import {Paused} from './provider.mjs';
 import {companionsFor, companionInstructions} from './companion-context.mjs';
 import {repairSameProposal} from './citation-repair.mjs';
 import {snapshotTargets, runTargetedReviews} from './targeted-revisit.mjs';
+import {prepareCatalog, prepareMergeCatalog, catalogCohort, prioritizeCatalogIssues, behavioralInstructions} from './behavior-catalog.mjs';
 
 const assigned = registry => new Set(registry.issues.filter(i => i.active).flatMap(i => i.members));
 
@@ -58,7 +59,7 @@ export function packInvestigation(selection, candidates, byId, constraints, poli
   }
 }
 
-export function reconciliationCandidates(registry, index, scorePair, policy) {
+export function reconciliationCandidates(registry, index, scorePair, policy, plannedMerges = []) {
   const issues = registry.issues.filter(i => i.active), candidates = [];
   for (const issue of issues) {
     if ((issue.member_count ?? issue.members.length) > 1) candidates.push({type: 'split_review', issue_ids: [issue.id],
@@ -70,6 +71,35 @@ export function reconciliationCandidates(registry, index, scorePair, policy) {
   }
   const sort = list => list.sort((a,b) => b.priority-a.priority || digest(a).localeCompare(digest(b)));
   const splits=sort(candidates.filter(c=>c.type==='split_review')), merges=sort(candidates.filter(c=>c.type==='merge_review'));
+  if (plannedMerges.length || policy.shared_correction_retrieval) {
+    const rank = new Map(plannedMerges.map((pair, index) => [digest(unique(pair.issue_ids)), index]));
+    // Explicit operation names in proposed corrections are another retrieval
+    // cue. They do not prove identity: every pair still needs full model review.
+    // This recovers low-cosine pairs the summary planner may also overlook.
+    const operations = issue => {
+      const names = new Set((issue.fix_hypothesis || '').match(/\b[a-z][a-z0-9]*(?:_[a-z][a-z0-9]*)+\b/g) || []);
+      if (policy.source_operation_retrieval) for (const id of issue.prototypes) {
+        const row = index.rows.get(id);
+        // Use explicit omission assertions in supporting evidence, not every
+        // available tool name or generated correction wording. A receipt can
+        // support several findings, so this remains retrieval only.
+        for (const evidence of row.evidence.filter(item => row.supporting_refs.includes(item.id))) {
+          for (const match of evidence.text.matchAll(/\b([a-z][a-z0-9]*(?:_[a-z][a-z0-9]*)+)(?:\(\))?[`'"]?\s+(?:was|is|has been)\s+(?:not|never)\s+(?:called|invoked|executed)\b/g)) names.add(match[1]);
+        }
+      }
+      return names;
+    };
+    const operationNames = new Map(issues.map(issue => [issue.id, operations(issue)]));
+    const shared = candidate => {
+      if (!policy.shared_correction_retrieval) return 0;
+      const [a, b] = candidate.issue_ids.map(id => operationNames.get(id));
+      return [...a].filter(operation => b.has(operation)).length;
+    };
+    // Stable sort retains embedding order within equal-priority comparisons.
+    merges.sort((a, b) => shared(b) - shared(a)
+      || (rank.get(digest(unique(a.issue_ids))) ?? Number.MAX_SAFE_INTEGER)
+        - (rank.get(digest(unique(b.issue_ids))) ?? Number.MAX_SAFE_INTEGER));
+  }
   const balanced=[];
   while(splits.length || merges.length) {if(splits.length)balanced.push(splits.shift());if(merges.length)balanced.push(merges.shift());}
   return balanced.slice(0, policy.max_reconcile_candidates);
@@ -139,6 +169,7 @@ export async function runPipeline({rows, features, cannotLinks = [], policy, pai
   try {
     if (state.status === 'complete') return finish();
     state.status = 'running';
+    if (policy.behavior_catalog) await prepareCatalog({findings, state, context, investigate, save});
     while (state.phase === 'discovery' && state.pass <= policy.max_revisits) {
       let work = false;
       // Cheap recurrence proceeds independently of novel-work model budgets.
@@ -159,7 +190,9 @@ export async function runPipeline({rows, features, cannotLinks = [], policy, pai
         work = true;
         const seen = new Set(state.receipts.filter(r=>r.cohort && (r.shown || r.selection.selected).includes(seed))
           .flatMap(r=>r.shown || r.selection.selected));
-        const cohort = buildCohort(seed, index, constraints, policy); let selection = selectExamples(cohort, index, constraints, policy, scorePair, seen);
+        const cohort = policy.behavior_catalog ? catalogCohort(seed, state.behavior_catalog, constraints)
+          : buildCohort(seed, index, constraints, policy);
+        let selection = selectExamples(cohort, index, constraints, policy, scorePair, seen);
         // Previously assigned neighbours stay visible as issue prototypes rather than being re-created.
         const membership = assigned(state.registry);
         const eligible = id => !membership.has(id)
@@ -167,15 +200,22 @@ export async function runPipeline({rows, features, cannotLinks = [], policy, pai
         selection.selected = selection.selected.filter(eligible);
         selection.roles = Object.fromEntries(selection.selected.map(id => [id, selection.roles[id]]));
         selection = refillSelection(selection, cohort, index, policy, eligible, seen);
-        const packed = packInvestigation(selection, retrieveIssues(cohort, state.registry, index, policy), byId, constraints, {...policy,max_input_bytes:policy.max_input_bytes-4000});
+        let candidates = retrieveIssues(cohort, state.registry, index, policy);
+        if (policy.behavior_catalog) candidates = prioritizeCatalogIssues(cohort, state.registry, candidates, policy);
+        const packed = packInvestigation(selection, candidates, byId, constraints, {...policy,max_input_bytes:policy.max_input_bytes-4000});
         selection = packed.selection;
         const candidateIssues = packed.issues, shown = packed.shown;
         const validation = {...context, allowedMembers: new Set(selection.selected), shown, targets: candidateIssues};
         const prompt = packed.prompt;
+        if (cohort.suggested_behavior) prompt.retrieval_suggestion = {
+          ...cohort.suggested_behavior,
+          instruction: 'Unverified retrieval suggestion only. Independently validate each member against its own evidence; reject or refine unsupported suggestions.',
+        };
         const repairIds = selection.selected.filter(id => state.attempts[id]?.repair_pending);
         if(repairIds.length) prompt.validation_feedback = {finding_ids:repairIds, errors:[...new Set(repairIds.flatMap(id=>state.attempts[id].errors.map(e=>e.reason)))].slice(0,5).map(e=>e.slice(0,300)), instruction:'Repair the unsupported output. Keep all citation, scope and mechanism requirements; defer if unsupported.'};
         const investigationId = digest([prompt, policy.digest]);
-        const targetSnapshots = policy.targeted_revisit ? Object.fromEntries(selection.selected.map(id=>[id,snapshotTargets(id,state.registry,context)])) : null;
+        const targetSnapshots = policy.targeted_revisit ? Object.fromEntries(selection.selected.map(id=>[id,snapshotTargets(id,state.registry,context,
+          policy.track_exposed_targets ? candidateIssues : undefined)])) : null;
         const result = await investigate(prompt, discoverySchema, [...shown].map(id => byId.get(id)));
         const primaryReceiptId = investigate.receiptFor?.(result) ?? null;
         const repaired = await repairSameProposal({proposal:result,prompt,validation,investigationId,policy,state,save,investigate,evidenceRows:[...shown].map(id=>byId.get(id))});
@@ -208,7 +248,8 @@ export async function runPipeline({rows, features, cannotLinks = [], policy, pai
         state.receipts.push(receipt);
         if(targetSnapshots){
           state.targeted_seen ||= {};
-          for(const [id,targets] of Object.entries(targetSnapshots))state.targeted_seen[id]={receipt:investigationId,targets};
+          for(const [id,targets] of Object.entries(targetSnapshots))state.targeted_seen[id]={receipt:investigationId,
+            targets:policy.track_exposed_targets ? {...state.targeted_seen[id]?.targets,...targets} : targets};
         }
         // Budget/revisit accounting belongs to EVERY reviewed finding, not only the seed.
         // Otherwise a popular boundary example can be judged hundreds of times.
@@ -270,11 +311,13 @@ export async function runPipeline({rows, features, cannotLinks = [], policy, pai
       state.phase='reconciliation';await save();
     }
     if (state.phase === 'reconciliation') {
+      if (policy.behavior_merge_catalog) await prepareMergeCatalog({state, context, investigate, save});
       state.merge_reviews ||= 0;
       state.merge_review_keys ||= [];
       while (state.reconciled.length < policy.max_reconcile_candidates) {
         if(policy.refresh_before_reconciliation){refresh();await save();}
-        const candidates = reconciliationCandidates(state.registry, index, scorePair, {...policy, max_reconcile_candidates: Number.MAX_SAFE_INTEGER});
+        const candidates = reconciliationCandidates(state.registry, index, scorePair,
+          {...policy, max_reconcile_candidates: Number.MAX_SAFE_INTEGER}, state.merge_catalog?.pairs);
         const candidate = candidates.find(c => {
           const sources = c.issue_ids.map(id => state.registry.issues.find(i => i.id === id && i.active));
           const key = digest([c, sources.map(i => [i.id, i.mechanism_revision, i.membership_sequence]), policy.digest]);
@@ -306,6 +349,8 @@ export async function runPipeline({rows, features, cannotLinks = [], policy, pai
             cannot_links: [...constraints].map(s => JSON.parse(s)).filter(([a, b]) => ids.includes(a) && ids.includes(b)), output_schema: reconciliationSchema};
           if (isSampledMerge) prompt.instructions += '\nThis is a sampled merge review. Only the supplied sampled members may appear in groups and citations. Each source must be represented. Unseen members are not individually certified; the host moves complete membership only after current source and hard-constraint checks. Hold if sampled evidence suggests distinct mechanisms or leaves uncertainty. Never split or remove from a sample. Every proposed group title must be a concise headline of 4-12 words and at most 120 characters; put the detailed explanation in mechanism.';
           if(policy.companion_context)prompt.instructions+='\n'+companionInstructions;
+          if(policy.atomic_behavior_boundaries) prompt.instructions = prompt.instructions.replace('the technical cause follows.', 'include a technical cause only when the evidence establishes it; otherwise state that it is unknown.');
+          if(policy.behavior_catalog)prompt.instructions+='\n'+behavioralInstructions;
           if (isSampledMerge) ids = packSampledMerge(prompt,sources,index,byId,constraints,policy);
           // Preserve each selected evidence packet in full. Oversized samples
           // are held without inference; split/removal still needs every member.
