@@ -26,7 +26,8 @@ logger = structlog.get_logger(__name__)
 # 19: dev's voice-agent evals (18) plus this branch's MODEL_SERVING_URL-aware
 # embedding evals (17), so a database seeded at either one re-seeds.
 # 21: conversation-evidence criteria for task, field intake, queries, and hallucination.
-SYSTEM_EVALS_VERSION = 21
+# 23: word_info_preserved counts hits from the alignment, so insertions lower the score.
+SYSTEM_EVALS_VERSION = 23
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any
