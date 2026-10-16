@@ -1,6 +1,11 @@
+import structlog
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from simulate.models import AgentVersion
+from simulate.services.agent_setup import agent_summary
+
+logger = structlog.get_logger(__name__)
 
 
 class AgentVersionResponseSerializer(serializers.ModelSerializer):
@@ -14,6 +19,7 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
     is_latest = serializers.ReadOnlyField()
     version_name_display = serializers.SerializerMethodField()
     status_display = serializers.CharField(source="get_status_display", read_only=True)
+    agent_kind = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentVersion
@@ -35,6 +41,7 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
             "configuration_snapshot",
             "is_active",
             "is_latest",
+            "agent_kind",
             "created_at",
             "updated_at",
         ]
@@ -72,6 +79,20 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
         if obj.version_name:
             return obj.version_name
         return f"v{obj.version_number}"
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.CharField(allow_null=True)
+    )
+    def get_agent_kind(self, obj) -> str | None:
+        try:
+            return agent_summary(obj.agent_definition_id).kind
+        except Exception:
+            logger.warning(
+                "agent_kind_unavailable",
+                agent_version_id=str(obj.id),
+                exc_info=True,
+            )
+            return None
 
 
 class AgentVersionListResponseSerializer(serializers.ModelSerializer):

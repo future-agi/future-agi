@@ -15893,6 +15893,8 @@ export interface AgentVersionResponseApi {
   readonly configuration_snapshot?: AgentVersionResponseApiConfigurationSnapshot;
   readonly is_active?: string;
   readonly is_latest?: string;
+  /** @minLength 1 */
+  readonly agent_kind?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
 }
@@ -15907,6 +15909,104 @@ export interface AgentVersionActivateResponseApi {
   /** @minLength 1 */
   readonly message?: string;
   version?: AgentVersionResponseApi;
+}
+
+export interface StoredProviderRefApi {
+  /** @minLength 1 */
+  provider: string;
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  version: string;
+}
+
+export interface StoredBehaviourUnitApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  shape: string;
+  /** @minLength 1 */
+  instructions: string;
+  tools: string[];
+  transitions: string[];
+}
+
+export interface StoredToolEndpointApi {
+  /** @minLength 1 */
+  url: string;
+}
+
+export type StoredToolApiParameters = { [key: string]: unknown };
+
+export interface StoredToolApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  kind: string;
+  parameters: StoredToolApiParameters;
+  endpoint: StoredToolEndpointApi;
+}
+
+export interface StoredModelApi {
+  /** @minLength 1 */
+  provider: string;
+  /** @minLength 1 */
+  name: string;
+  temperature: number;
+  max_tokens: number;
+}
+
+export interface StoredVoiceApi {
+  /** @minLength 1 */
+  provider: string;
+  /** @minLength 1 */
+  voice_id: string;
+  /** @minLength 1 */
+  language: string;
+  speed: number;
+}
+
+export interface StoredTelephonyApi {
+  /** @minLength 1 */
+  number: string;
+  /** @minLength 1 */
+  provider: string;
+  direction_supported: string[];
+}
+
+export interface StoredAgentApi {
+  /** @minLength 1 */
+  schema_version: string;
+  /** @minLength 1 */
+  type: string;
+  /** @minLength 1 */
+  kind: string;
+  /** @minLength 1 */
+  name: string;
+  provider_ref: StoredProviderRefApi;
+  behaviour: StoredBehaviourUnitApi[];
+  tools: StoredToolApi[];
+  model: StoredModelApi;
+  voice: StoredVoiceApi;
+  telephony: StoredTelephonyApi[];
+  supports: string[];
+  /** @minLength 1 */
+  direction_answer: string;
+  gaps: string[];
+  /** @minLength 1 */
+  instrumentation: string;
+  /** @minLength 1 */
+  setup_hash: string;
+}
+
+export interface StoredAgentResponseApi {
+  agent: StoredAgentApi;
+  /** @minLength 1 */
+  sdk_version: string;
+  stored_at: string;
+  setup_stale: boolean;
 }
 
 /**
@@ -18804,6 +18904,8 @@ export const HarnessScenarioOperationApiModality = {
   voice: "voice",
 } as const;
 
+export type HarnessScenarioOperationApiAgent = { [key: string]: string };
+
 export type HarnessProvisionPersonaApiPersona = { [key: string]: unknown };
 
 export interface HarnessProvisionPersonaApi {
@@ -18836,6 +18938,7 @@ export interface HarnessScenarioOperationApi {
   agent_name?: string;
   agent_prompt?: string;
   chosen_evals?: string[];
+  agent?: HarnessScenarioOperationApiAgent;
   run_test_id?: string;
   scenario_keys?: string[];
 }
