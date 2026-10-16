@@ -1732,6 +1732,7 @@ export const AccountsUserInfoListResponse = zod.object({
     .optional(),
   org_2fa_required: zod.boolean().optional(),
   org_2fa_grace_ends_at: zod.string().datetime({ offset: true }).optional(),
+  restrict_simulate_to_environments: zod.boolean(),
 });
 
 /**

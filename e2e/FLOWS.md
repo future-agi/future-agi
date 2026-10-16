@@ -1750,3 +1750,33 @@
 - PG mcp_server_mcptoolgroupconfig.enabled_groups equals that exact set for the actor connection
 - GET /mcp/internal/tools/ equals the initial tool set minus all dataset tools
 - POST /mcp/internal/tool-call/ list_datasets returns 403 while whoami and list_projects still succeed
+
+## simulate
+
+### SIM-E2E-001 — Simulate opens on Environments and an org from before the cutoff keeps every page
+
+**Goal:** A developer opening Simulate lands on Environments, old Harness, Simulator Agent and template links go somewhere sensible, and an org from before the cutoff still reaches every Simulate page (the restricted side for new orgs is not claimed: the harness cannot create an org dated after a cutoff)  
+**Spec:** `flows/simulate/environments-only-routing.spec.ts:43`  
+**Tags:** —
+
+**User steps:**
+
+1. open /dashboard/simulate
+2. open the old Harness list, new and job links
+3. open the old Simulator Agent link
+4. open the Prebuilt template links
+5. read the Simulate menu
+6. open Agent Definition, Scenarios, Personas and Run Simulation from the menu
+
+**Backend state verified:**
+
+- user-info for the actor's org does not report restrict_simulate_to_environments: true (false, or absent on a backend from before the flag)
+
+**Browser observations:**
+
+- /dashboard/simulate lands on Environments
+- harness lands on Environments, harness/new on the Build tab, harness/<id> on environments/<id>
+- simulator-agent lands on Environments
+- both template URLs stay on their URL and open their page by title
+- the Simulate menu is exactly Environment, Agent Definition, Scenarios, Personas, Run Simulation
+- each of those four items opens its page by URL and title, never /404

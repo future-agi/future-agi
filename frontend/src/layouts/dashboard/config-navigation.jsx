@@ -13,6 +13,7 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAuthContext } from "src/auth/hooks";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import {
   ROLES,
   showRoleSpecific,
@@ -69,6 +70,8 @@ export function useNavData() {
   const effectiveWsRole = currentWorkspaceRole || userDefaultWsRole;
   const isAdmin =
     userOrgRole === "Admin" || effectiveWsRole === "workspace_admin";
+  // Orgs created after the cutoff see only Environments in Simulate.
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
   const data = useMemo(() => {
     const buildItems = [
       {
@@ -213,56 +216,60 @@ export function useNavData() {
             path: paths.dashboard.simulate.environments.root,
             icon: <Iconify icon="solar:server-square-cloud-linear" />,
           },
-          {
-            title: "Agent Definition",
-            path: paths.dashboard.simulate.agentDefinition,
-            icon: ICONS.agentDefinition,
-            eventTrigger: () => {
-              trackEvent(Events.navigationAlertDefinitionClicked, {
-                [PropertyName.click]: true,
-              });
-            },
-          },
-          {
-            title: "Scenarios",
-            path: paths.dashboard.simulate.scenarios,
-            icon: ICONS.scenarios,
-            eventTrigger: () => {
-              trackEvent(Events.navigationScenariosClicked, {
-                [PropertyName.click]: true,
-              });
-            },
-          },
-          {
-            title: "Personas",
-            path: paths.dashboard.simulate.personas,
-            icon: ICONS.persona,
-            eventTrigger: () => {
-              trackEvent(Events.navigationPersonasClicked, {
-                [PropertyName.click]: true,
-              });
-            },
-          },
-          // {
-          //   title: "Simulation Agent",
-          //   path: paths.dashboard.simulate.simulatorAgent,
-          //   icon: ICONS.simulatorAgent,
-          //   eventTrigger: () => {
-          //     trackEvent(Events.navigationSimulationAgentClicked, {
-          //       [PropertyName.click]: true,
-          //     });
-          //   },
-          // },
-          {
-            title: "Run Simulation",
-            path: paths.dashboard.simulate.test,
-            icon: ICONS.test,
-            eventTrigger: () => {
-              trackEvent(Events.navigationRunTestsClicked, {
-                [PropertyName.click]: true,
-              });
-            },
-          },
+          ...(restrictSimulateToEnvironments
+            ? []
+            : [
+                {
+                  title: "Agent Definition",
+                  path: paths.dashboard.simulate.agentDefinition,
+                  icon: ICONS.agentDefinition,
+                  eventTrigger: () => {
+                    trackEvent(Events.navigationAlertDefinitionClicked, {
+                      [PropertyName.click]: true,
+                    });
+                  },
+                },
+                {
+                  title: "Scenarios",
+                  path: paths.dashboard.simulate.scenarios,
+                  icon: ICONS.scenarios,
+                  eventTrigger: () => {
+                    trackEvent(Events.navigationScenariosClicked, {
+                      [PropertyName.click]: true,
+                    });
+                  },
+                },
+                {
+                  title: "Personas",
+                  path: paths.dashboard.simulate.personas,
+                  icon: ICONS.persona,
+                  eventTrigger: () => {
+                    trackEvent(Events.navigationPersonasClicked, {
+                      [PropertyName.click]: true,
+                    });
+                  },
+                },
+                // {
+                //   title: "Simulation Agent",
+                //   path: paths.dashboard.simulate.simulatorAgent,
+                //   icon: ICONS.simulatorAgent,
+                //   eventTrigger: () => {
+                //     trackEvent(Events.navigationSimulationAgentClicked, {
+                //       [PropertyName.click]: true,
+                //     });
+                //   },
+                // },
+                {
+                  title: "Run Simulation",
+                  path: paths.dashboard.simulate.test,
+                  icon: ICONS.test,
+                  eventTrigger: () => {
+                    trackEvent(Events.navigationRunTestsClicked, {
+                      [PropertyName.click]: true,
+                    });
+                  },
+                },
+              ]),
         ],
       },
       // {
@@ -282,7 +289,7 @@ export function useNavData() {
     });
 
     return sections;
-  }, [isOwner, isAdmin]);
+  }, [isOwner, isAdmin, restrictSimulateToEnvironments]);
   return data;
 }
 
