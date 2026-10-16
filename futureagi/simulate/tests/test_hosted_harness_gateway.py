@@ -153,6 +153,7 @@ def test_platform_simulator_material_uses_deployment_credentials_only(monkeypatc
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-key")
     monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-key")
     monkeypatch.setenv("DEEPGRAM_API_KEY", "platform-deepgram-secret")
+    monkeypatch.setenv("CARTESIA_API_KEY", "platform-cartesia-secret")
     monkeypatch.setenv("LIVEKIT_URL", "wss://platform-livekit.example")
     monkeypatch.setenv("LIVEKIT_API_KEY", "platform-livekit-key")
     monkeypatch.setenv("LIVEKIT_API_SECRET", "platform-livekit-secret")
@@ -163,10 +164,11 @@ def test_platform_simulator_material_uses_deployment_credentials_only(monkeypatc
 
     values = _platform_simulator_material()
 
-    # Behind the gateway the models need no Vertex credential in the sandbox.
+    # Behind the gateway neither the models nor speech need a vendor credential in the sandbox.
     assert "GOOGLE_CLOUD_PROJECT" not in values
     assert "GOOGLE_APPLICATION_CREDENTIALS" not in values
-    assert values["DEEPGRAM_API_KEY"] == "platform-deepgram-secret"
+    assert "DEEPGRAM_API_KEY" not in values
+    assert "CARTESIA_API_KEY" not in values
     assert values["LIVEKIT_URL"] == "wss://platform-livekit.example"
     assert values["LIVEKIT_API_KEY"] == "platform-livekit-key"
     assert values["LIVEKIT_API_SECRET"] == "platform-livekit-secret"
@@ -1743,7 +1745,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "ALK_HARNESS_MODEL": "gemini-3.7-flash",
         "AGENTCC_BASE_URL": "https://gateway.example.test",
         "AGENTCC_API_KEY": "harness-virtual-key",
-        "DEEPGRAM_API_KEY": "platform-simulator-deepgram",
+        "SIMULATOR_STT_PROVIDER": "deepgram",
     }
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
@@ -1785,7 +1787,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     assert json.loads(client.sandbox.fs.uploads[_SIMULATOR_SECRETS_PATH]) == (
         simulator_values
     )
-    assert b"platform-simulator-deepgram" not in (
+    assert b"harness-virtual-key" not in (
         client.sandbox.process.session_request.command.encode()
     )
     assert "--adjustments /run/futureagi/adjustments.jsonl" in (
@@ -1804,7 +1806,6 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     assert client.params.unrestricted_egress is False
     assert set(client.params.allowed_domains) == {
         "agent.example.com",
-        "api.deepgram.com",
         "*.vapi.ai",
         "gateway.example.test",
         "ingest.example.com",

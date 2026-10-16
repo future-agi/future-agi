@@ -224,9 +224,9 @@ def _platform_simulator_material() -> dict[str, str]:
     added to ``secrets.json`` and therefore cannot acquire the ``target_provider`` purpose or be
     injected into an untrusted agent process.
 
-    Every model call in a hosted run (harness, simulated caller, judge) goes through AgentCC on
-    its key, so no model vendor's credential is placed in a sandbox. Speech still calls its vendor
-    directly, which is why only Deepgram and Cartesia are accepted until it moves to AgentCC too.
+    Every model and speech call in a hosted run (harness, simulated caller, judge) goes through
+    AgentCC on its key, so no vendor's credential is placed in a sandbox. AgentCC relays speech
+    for Deepgram and Cartesia only, which is why no other speech provider is accepted.
     """
     provider = str(os.environ.get("SIMULATOR_LLM_PROVIDER") or "vertex").strip()
     # Gateway model names carry the serving provider: a bare Gemini name is the Gemini API.
@@ -303,8 +303,6 @@ def _platform_simulator_material() -> dict[str, str]:
         {name: value for name, value in platform_phone_telephony().items() if value}
     )
     for name in (
-        "CARTESIA_API_KEY",
-        "DEEPGRAM_API_KEY",
         # Models the simulated caller tries in turn when the chosen one fails.
         "SIMULATOR_LLM_FALLBACK_MODELS",
         "SIMULATOR_STT_MODEL",
@@ -1379,10 +1377,6 @@ def _resolved_egress_domains(
     return _normalize_egress_domains(values)
 
 
-_KNOWN_SIMULATOR_SECRET_ALIASES = (
-    "DEEPGRAM_API_KEY",
-    "CARTESIA_API_KEY",
-)
 _KNOWN_SIMULATOR_CONFIG_NAMES = (
     "SIMULATOR_LLM_PROVIDER",
     "SIMULATOR_STT_PROVIDER",
@@ -1401,9 +1395,6 @@ def _known_simulator_egress_inputs() -> dict[str, str]:
             values[str(alias)] = (
                 raw if "LOCATION" in upper_alias or "REGION" in upper_alias else ""
             )
-    for alias in _KNOWN_SIMULATOR_SECRET_ALIASES:
-        if os.getenv(alias):
-            values.setdefault(alias, "")
     for name in _KNOWN_SIMULATOR_CONFIG_NAMES:
         value = str(os.getenv(name) or "").strip()
         if value:

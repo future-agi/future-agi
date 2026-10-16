@@ -1003,13 +1003,11 @@ ALK_HOSTED_BASE_EGRESS_DOMAINS = [
 ]
 # Hosted simulator credentials are platform configuration, not customer job input. Values are
 # resolved only while launching the sandbox and are never persisted on HostedHarnessJob. Model
-# calls go through AgentCC, so no model vendor's credential is listed here.
+# and speech calls go through AgentCC, so no model or speech vendor's credential is listed here.
 ALK_HOSTED_SIMULATOR_SECRET_ENV = {
     "SIMULATOR_LIVEKIT_URL": "LIVEKIT_URL",
     "SIMULATOR_LIVEKIT_API_KEY": "LIVEKIT_API_KEY",
     "SIMULATOR_LIVEKIT_API_SECRET": "LIVEKIT_API_SECRET",
-    "SIMULATOR_DEEPGRAM_API_KEY": "DEEPGRAM_API_KEY",
-    "SIMULATOR_CARTESIA_API_KEY": "CARTESIA_API_KEY",
     "SIMULATOR_LLM_PROVIDER": "SIMULATOR_LLM_PROVIDER",
     "SIMULATOR_LLM_MODEL": "SIMULATOR_LLM_MODEL",
     "SIMULATOR_STT_PROVIDER": "SIMULATOR_STT_PROVIDER",
