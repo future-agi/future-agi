@@ -1484,6 +1484,8 @@ const TraceDetailDrawerV2 = ({
         open={addLabelDrawerOpen}
         onClose={() => setAddLabelDrawerOpen(false)}
         projectId={projectId}
+        sourceType="trace"
+        sourceId={traceId}
         onLabelsChanged={() => {
           queryClient.invalidateQueries({
             queryKey: ["trace-detail", traceId],
