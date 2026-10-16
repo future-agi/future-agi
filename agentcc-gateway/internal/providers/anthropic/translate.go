@@ -276,9 +276,9 @@ func translateMessage(msg models.Message) (anthropicMessage, error) {
 		return am, nil
 	}
 
-	// Standard message: check for vision content first (handles both text + images),
-	// then fall back to text-only, then pass-through.
-	if blocks := translateVisionContent(msg.Content); blocks != nil {
+	if blocks, err := translateVisionContent(msg.Content); err != nil {
+		return am, err
+	} else if blocks != nil {
 		content, _ := json.Marshal(blocks)
 		am.Content = content
 	} else if text := extractTextContent(msg.Content); text != "" {
@@ -286,21 +286,15 @@ func translateMessage(msg models.Message) (anthropicMessage, error) {
 		content, _ := json.Marshal(blocks)
 		am.Content = content
 	} else {
-		// Content might already be structured — pass through as-is.
 		am.Content = msg.Content
 	}
 
 	return am, nil
 }
 
-// translateVisionContent converts OpenAI vision content parts to Anthropic format.
-// OpenAI: [{"type":"text","text":"..."}, {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}]
-// OpenAI: [{"type":"input_audio","input_audio":{"data":"<base64>","format":"wav"}}]
-// OpenAI: [{"type":"file","file":{"file_id":"https://example.com/video.mp4","format":"video/mp4"}}]
-// Anthropic: [{"type":"text","text":"..."}, {"type":"image","source":{"type":"base64","media_type":"image/png","data":"..."}}]
-func translateVisionContent(content json.RawMessage) []anthropicContentBlock {
+func translateVisionContent(content json.RawMessage) ([]anthropicContentBlock, error) {
 	if len(content) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var parts []struct {
@@ -315,26 +309,27 @@ func translateVisionContent(content json.RawMessage) []anthropicContentBlock {
 			Format string `json:"format"`
 		} `json:"input_audio"`
 		File *struct {
-			FileID string `json:"file_id"`
-			Format string `json:"format"`
+			FileID   string `json:"file_id"`
+			FileData string `json:"file_data"`
+			Filename string `json:"filename"`
+			Format   string `json:"format"`
 		} `json:"file"`
 	}
 	if err := json.Unmarshal(content, &parts); err != nil {
-		return nil
+		return nil, nil
 	}
 
-	// Only process if we find multimodal content parts (image_url, input_audio, or file).
 	hasMultimodal := false
 	for _, p := range parts {
 		if (p.Type == "image_url" && p.ImageURL != nil) ||
 			(p.Type == "input_audio" && p.InputAudio != nil) ||
-			(p.Type == "file" && p.File != nil) {
+			(p.Type == "file" && p.File != nil && (p.File.FileID != "" || p.File.FileData != "")) {
 			hasMultimodal = true
 			break
 		}
 	}
 	if !hasMultimodal {
-		return nil
+		return nil, nil
 	}
 
 	var blocks []anthropicContentBlock
@@ -351,41 +346,70 @@ func translateVisionContent(content json.RawMessage) []anthropicContentBlock {
 				blocks = append(blocks, *block)
 			}
 		case "input_audio":
-			// Anthropic does not support audio input — skip and warn rather
-			// than sending audio as type:"image" which will always be rejected.
-			if p.InputAudio != nil {
-				slog.Warn("anthropic: input_audio content type not supported, skipping part",
-					"format", p.InputAudio.Format)
-			}
-			continue
+			return nil, fmt.Errorf("anthropic: input_audio content type not supported by provider")
 		case "file":
-			if p.File == nil || p.File.FileID == "" {
+			if p.File == nil {
 				continue
 			}
-			// file_id holds the URL; format holds the MIME type (e.g. "video/mp4").
-			// Pass through as a URL-based source block.
-			blocks = append(blocks, anthropicContentBlock{
-				Type: "image", // Anthropic uses "image" type with source block for all binary data
-				Source: &imageSource{
-					Type: "url",
-					URL:  p.File.FileID,
-				},
-			})
+			if p.File.FileData != "" {
+				mediaType, data := parseDataURI(p.File.FileData)
+				if data == "" {
+					return nil, fmt.Errorf("anthropic: invalid data URI in file_data")
+				}
+				if mediaType == "" {
+					mediaType = p.File.Format
+				}
+				if mediaType == "" {
+					mediaType = "application/pdf"
+				}
+				blockType := "document"
+				if strings.HasPrefix(mediaType, "image/") {
+					blockType = "image"
+				}
+				blocks = append(blocks, anthropicContentBlock{
+					Type: blockType,
+					Source: &imageSource{
+						Type:      "base64",
+						MediaType: mediaType,
+						Data:      data,
+					},
+				})
+				continue
+			}
+			if p.File.FileID != "" {
+				if strings.HasPrefix(p.File.FileID, "http://") || strings.HasPrefix(p.File.FileID, "https://") {
+					blockType := "image"
+					if p.File.Format == "application/pdf" || strings.HasSuffix(strings.ToLower(p.File.FileID), ".pdf") {
+						blockType = "document"
+					}
+					blocks = append(blocks, anthropicContentBlock{
+						Type: blockType,
+						Source: &imageSource{
+							Type: "url",
+							URL:  p.File.FileID,
+						},
+					})
+				} else {
+					return nil, fmt.Errorf("anthropic: managed file reference %q cannot be forwarded without resolution", p.File.FileID)
+				}
+			}
 		}
 	}
-	return blocks
+	return blocks, nil
 }
 
-// convertImageToAnthropic converts an image URL (data URI or HTTP URL) to Anthropic image block.
 func convertImageToAnthropic(imageURL string) *anthropicContentBlock {
-	// Handle data URIs: data:image/png;base64,iVBOR...
 	if strings.HasPrefix(imageURL, "data:") {
 		mediaType, data := parseDataURI(imageURL)
 		if data == "" {
 			return nil
 		}
+		blockType := "image"
+		if mediaType == "application/pdf" {
+			blockType = "document"
+		}
 		return &anthropicContentBlock{
-			Type: "image",
+			Type: blockType,
 			Source: &imageSource{
 				Type:      "base64",
 				MediaType: mediaType,
@@ -394,9 +418,12 @@ func convertImageToAnthropic(imageURL string) *anthropicContentBlock {
 		}
 	}
 
-	// HTTP URLs: pass as URL type.
+	blockType := "image"
+	if strings.HasSuffix(strings.ToLower(imageURL), ".pdf") {
+		blockType = "document"
+	}
 	return &anthropicContentBlock{
-		Type: "image",
+		Type: blockType,
 		Source: &imageSource{
 			Type: "url",
 			URL:  imageURL,

@@ -531,10 +531,24 @@ func translateVisionContent(content json.RawMessage) []geminiPart {
 			if p.File.FileData != "" {
 				if part := parseImageURLToPart(p.File.FileData); part != nil {
 					geminiParts = append(geminiParts, *part)
+				} else {
+					mimeType := p.File.Format
+					if mimeType == "" {
+						mimeType = "application/pdf"
+					}
+					geminiParts = append(geminiParts, geminiPart{
+						InlineData: &geminiInlineData{
+							MimeType: mimeType,
+							Data:     p.File.FileData,
+						},
+					})
 				}
 				continue
 			}
 			if p.File.FileID == "" {
+				continue
+			}
+			if !strings.HasPrefix(p.File.FileID, "http://") && !strings.HasPrefix(p.File.FileID, "https://") && !strings.HasPrefix(p.File.FileID, "gs://") {
 				continue
 			}
 			// ``format`` carries the MIME type (e.g. "video/mp4"); fall
