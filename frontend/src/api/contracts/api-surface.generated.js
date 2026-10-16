@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1064,
+  endpointCount: 1068,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -844,6 +844,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "post",
       ],
       "/simulate/api/call-executions/": ["get"],
+      "/simulate/api/harness-adaptations/": ["post"],
+      "/simulate/api/harness-compositions/": ["post"],
       "/simulate/api/harness-environments/": ["get"],
       "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
       "/simulate/api/harness-environments/{id}/evaluations/": ["post"],
@@ -858,6 +860,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         ["post"],
       "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
         ["post"],
+      "/simulate/api/harness-environments/{id}/runs/{run_id}/report/": ["get"],
       "/simulate/api/harness-jobs/": ["get", "post"],
       "/simulate/api/harness-jobs/health/": ["get"],
       "/simulate/api/harness-jobs/preflight/": ["post"],
@@ -873,6 +876,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/harness-jobs/{id}/scenarios/": ["get"],
       "/simulate/api/harness-jobs/{id}/scenarios/amend/": ["post"],
       "/simulate/api/harness-jobs/{id}/scenarios/coverage/": ["get"],
+      "/simulate/api/harness-releases/": ["get"],
       "/simulate/api/harness/attempts/{id}/artifacts/manifest/": ["post"],
       "/simulate/api/harness/attempts/{id}/artifacts/{artifact_digest}/": [
         "put",
@@ -2129,6 +2133,8 @@ export const API_SURFACE_PATHS = Object.freeze({
     "post",
   ],
   "/simulate/api/call-executions/": ["get"],
+  "/simulate/api/harness-adaptations/": ["post"],
+  "/simulate/api/harness-compositions/": ["post"],
   "/simulate/api/harness-environments/": ["get"],
   "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
   "/simulate/api/harness-environments/{id}/evaluations/": ["post"],
@@ -2144,6 +2150,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
     ["post"],
+  "/simulate/api/harness-environments/{id}/runs/{run_id}/report/": ["get"],
   "/simulate/api/harness-jobs/": ["get", "post"],
   "/simulate/api/harness-jobs/health/": ["get"],
   "/simulate/api/harness-jobs/preflight/": ["post"],
@@ -2159,6 +2166,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/harness-jobs/{id}/scenarios/": ["get"],
   "/simulate/api/harness-jobs/{id}/scenarios/amend/": ["post"],
   "/simulate/api/harness-jobs/{id}/scenarios/coverage/": ["get"],
+  "/simulate/api/harness-releases/": ["get"],
   "/simulate/api/harness/attempts/{id}/artifacts/manifest/": ["post"],
   "/simulate/api/harness/attempts/{id}/artifacts/{artifact_digest}/": ["put"],
   "/simulate/api/harness/attempts/{id}/events/": ["post"],
