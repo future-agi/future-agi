@@ -1,9 +1,13 @@
 import structlog
+from django.db import DatabaseError
 from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
+from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentVersion
-from simulate.services.agent_setup import agent_summary
+from simulate.serializers.response.agent_setup import StoredAgentResponseSerializer
+from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.agent_setup import agent_summary, stored_agent_answer
 
 logger = structlog.get_logger(__name__)
 
@@ -20,6 +24,8 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
     version_name_display = serializers.SerializerMethodField()
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     agent_kind = serializers.SerializerMethodField()
+    agent_details = serializers.SerializerMethodField()
+    api_key = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentVersion
@@ -42,6 +48,8 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
             "is_active",
             "is_latest",
             "agent_kind",
+            "agent_details",
+            "api_key",
             "created_at",
             "updated_at",
         ]
@@ -58,7 +66,6 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
         data["configuration_snapshot"] = snapshot
         try:
             creds = instance.credentials
-            data["api_key"] = creds.get_masked_api_key()
             # The persisted snapshot omits secrets, so the edit form's LiveKit
             # key/secret fields render blank. Surface display-only masked
             # values here (never persisted) so the form shows a credential is
@@ -93,6 +100,30 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
                 exc_info=True,
             )
             return None
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.CharField(allow_null=True)
+    )
+    def get_api_key(self, obj) -> str | None:
+        api_key = resolve_api_key_for_version(obj)
+        return mask_key(api_key) if api_key else None
+
+    @swagger_serializer_method(
+        serializer_or_field=StoredAgentResponseSerializer(allow_null=True)
+    )
+    def get_agent_details(self, obj) -> dict | None:
+        try:
+            answer = stored_agent_answer(obj)
+        except (DatabaseError, KeyError, TypeError, ValueError):
+            logger.warning(
+                "agent_details_unavailable",
+                agent_version_id=str(obj.id),
+                exc_info=True,
+            )
+            return None
+        if answer is None:
+            return None
+        return StoredAgentResponseSerializer(answer).data
 
 
 class AgentVersionListResponseSerializer(serializers.ModelSerializer):

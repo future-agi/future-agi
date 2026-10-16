@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1059,
+  endpointCount: 1060,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27016,7 +27016,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         queryParameters: {},
         responses: {
           200: {
-            $ref: "#/definitions/AgentDefinitionResponse",
+            $ref: "#/definitions/AgentDefinitionDetailResponse",
           },
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
@@ -27073,6 +27073,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/runs/": {
+      get: {
+        operationId: "simulate_agent-definitions_runs_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 20,
+              default: 5,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentRunsResponse",
+          },
+          404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           default: {
@@ -28076,6 +28106,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               type: "integer",
               minimum: 1,
               maximum: 100,
+            },
+          },
+          agent_definition_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
             },
           },
         },
@@ -47051,9 +47088,318 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentDefinitionDetailResponse: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        agent_name: {
+          title: "Agent name",
+          description: "Name of the AI agent",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        agent_type: {
+          title: "Agent type",
+          type: "string",
+          enum: ["voice", "text"],
+          readOnly: true,
+        },
+        contact_number: {
+          title: "Contact number",
+          description: "Phone number associated with the AI agent",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        inbound: {
+          title: "Inbound",
+          description: "Whether the agent handles inbound calls",
+          type: "boolean",
+          readOnly: true,
+        },
+        target_speaks_first: {
+          title: "Target speaks first",
+          description:
+            "Whether the target agent speaks first (greets) in a hosted voice simulation. True: the simulator waits for the target's greeting; False: the simulator opens the conversation; null: derive from inbound/outbound. Retell targets always let the simulator open (SDK limitation).",
+          type: "boolean",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        description: {
+          title: "Description",
+          description:
+            "Detailed description of the AI agent's purpose and capabilities",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        assistant_id: {
+          title: "Assistant id",
+          description: "External identifier for the assistant",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        provider: {
+          title: "Provider",
+          description: "Provider of the AI agent",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        language: {
+          title: "Language",
+          description: "Language of the agent",
+          type: "string",
+          enum: [
+            "ar",
+            "bg",
+            "zh",
+            "cs",
+            "da",
+            "nl",
+            "en",
+            "fi",
+            "fr",
+            "de",
+            "el",
+            "hi",
+            "hu",
+            "id",
+            "it",
+            "ja",
+            "ko",
+            "ms",
+            "no",
+            "pl",
+            "pt",
+            "ro",
+            "ru",
+            "sk",
+            "es",
+            "sv",
+            "tr",
+            "uk",
+            "vi",
+          ],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        languages: {
+          type: "array",
+          items: {
+            title: "Languages",
+            description: "Language of the agent",
+            type: "string",
+            enum: [
+              "ar",
+              "bg",
+              "zh",
+              "cs",
+              "da",
+              "nl",
+              "en",
+              "fi",
+              "fr",
+              "de",
+              "el",
+              "hi",
+              "hu",
+              "id",
+              "it",
+              "ja",
+              "ko",
+              "ms",
+              "no",
+              "pl",
+              "pt",
+              "ro",
+              "ru",
+              "sk",
+              "es",
+              "sv",
+              "tr",
+              "uk",
+              "vi",
+            ],
+          },
+          readOnly: true,
+          "x-nullable": true,
+        },
+        authentication_method: {
+          title: "Authentication method",
+          type: "string",
+          enum: ["api_key"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        websocket_url: {
+          title: "Websocket url",
+          description:
+            "WebSocket URL for real-time communication with the agent",
+          type: "string",
+          format: "uri",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        websocket_headers: {
+          title: "Websocket headers",
+          description: "Headers to be sent to the websocket server",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        workspace: {
+          title: "Workspace",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        knowledge_base: {
+          title: "Knowledge base",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        organization: {
+          title: "Organization",
+          description: "Organization this agent definition belongs to",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        api_key: {
+          title: "Api key",
+          type: "string",
+          readOnly: true,
+        },
+        observability_provider: {
+          title: "Observability provider",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        model: {
+          title: "Model",
+          description: "Model of the agent",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        model_details: {
+          title: "Model details",
+          description: "Details of the model",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        livekit_url: {
+          title: "Livekit url",
+          type: "string",
+          readOnly: true,
+        },
+        livekit_api_key: {
+          title: "Livekit api key",
+          type: "string",
+          readOnly: true,
+        },
+        livekit_agent_name: {
+          title: "Livekit agent name",
+          type: "string",
+          readOnly: true,
+        },
+        livekit_config_json: {
+          title: "Livekit config json",
+          type: "string",
+          readOnly: true,
+        },
+        livekit_max_concurrency: {
+          title: "Livekit max concurrency",
+          type: "string",
+          readOnly: true,
+        },
+        versions: {
+          type: "array",
+          items: {
+            type: "string",
+            "x-nullable": true,
+          },
+          readOnly: true,
+        },
+        active_version: {
+          title: "Active version",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+          readOnly: true,
+          "x-nullable": true,
+        },
+        version_count: {
+          title: "Version count",
+          type: "integer",
+          readOnly: true,
+        },
+        agent_kind: {
+          title: "Agent kind",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        environment_count: {
+          title: "Environment count",
+          type: "integer",
+          readOnly: true,
+        },
+        observability_enabled: {
+          title: "Observability enabled",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
     AgentDefinitionEditRequest: {
       type: "object",
       properties: {
+        observability_enabled: {
+          title: "Observability enabled",
+          type: "boolean",
+        },
         agent_name: {
           title: "Agent name",
           type: "string",
@@ -47415,6 +47761,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
           minLength: 1,
           "x-nullable": true,
+        },
+        agent_kind: {
+          title: "Agent kind",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        version_count: {
+          title: "Version count",
+          type: "integer",
+          readOnly: true,
+        },
+        environment_count: {
+          title: "Environment count",
+          type: "integer",
+          readOnly: true,
+        },
+        environments: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunEnvironmentRef",
+          },
+          readOnly: true,
         },
       },
     },
@@ -48040,6 +48417,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentRunsResponse: {
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessRunSummary",
+          },
+          readOnly: true,
+        },
+      },
+    },
     AgentVersionActivateResponse: {
       type: "object",
       properties: {
@@ -48418,6 +48807,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         agent_kind: {
           title: "Agent kind",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agent_details: {
+          $ref: "#/definitions/StoredAgentResponse",
+        },
+        api_key: {
+          title: "Api key",
           type: "string",
           readOnly: true,
           minLength: 1,
@@ -63017,8 +63416,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           additionalProperties: {
             type: "object",
             "x-nullable": true,
-            description: "Any valid JSON value.",
             "x-json-value": true,
+            description: "Any valid JSON value.",
           },
           default: {},
         },
@@ -63223,8 +63622,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           additionalProperties: {
             type: "object",
             "x-nullable": true,
-            description: "Any valid JSON value.",
             "x-json-value": true,
+            description: "Any valid JSON value.",
           },
           default: {},
         },
@@ -76786,6 +77185,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
         },
       },
+      "x-nullable": true,
     },
     StreamStatusResponse: {
       required: ["status", "result"],
@@ -84172,6 +84572,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RunEnvironmentRef: {
+      required: ["id", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     AgentPromptOptimiserGraphSeries: {
       type: "object",
       properties: {
@@ -84552,6 +84968,88 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/AgentPromptOptimiserColumnConfig",
           },
           readOnly: true,
+        },
+      },
+    },
+    HarnessRunSummary: {
+      required: [
+        "kind",
+        "test_execution_id",
+        "run_test_id",
+        "run_test_name",
+        "run_number",
+        "status",
+        "environment",
+        "agent_version",
+        "outcome_passed",
+        "outcome_failed",
+        "outcome_skipped",
+        "started_at",
+        "completed_at",
+      ],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["environment", "simulate"],
+        },
+        test_execution_id: {
+          title: "Test execution id",
+          type: "string",
+          format: "uuid",
+        },
+        run_test_id: {
+          title: "Run test id",
+          type: "string",
+          format: "uuid",
+        },
+        run_test_name: {
+          title: "Run test name",
+          type: "string",
+        },
+        run_number: {
+          title: "Run number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        environment: {
+          $ref: "#/definitions/RunEnvironmentRef",
+        },
+        agent_version: {
+          $ref: "#/definitions/AgentVersionRef",
+        },
+        outcome_passed: {
+          title: "Outcome passed",
+          type: "integer",
+          "x-nullable": true,
+        },
+        outcome_failed: {
+          title: "Outcome failed",
+          type: "integer",
+          "x-nullable": true,
+        },
+        outcome_skipped: {
+          title: "Outcome skipped",
+          type: "integer",
+          "x-nullable": true,
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        completed_at: {
+          title: "Completed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
         },
       },
     },
@@ -92405,6 +92903,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runs_count",
         "last_updated",
         "created_at",
+        "last_run",
       ],
       type: "object",
       properties: {
@@ -92478,6 +92977,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Created at",
           type: "string",
           format: "date-time",
+        },
+        last_run: {
+          $ref: "#/definitions/HarnessRunSummary",
         },
       },
     },
@@ -92960,8 +93462,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           additionalProperties: {
             type: "object",
             "x-nullable": true,
-            description: "Any valid JSON value.",
             "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         runtime: {
@@ -105042,6 +105544,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
         },
       },
+    },
+    AgentVersionRef: {
+      required: ["id", "version_number"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
     },
     AnnotationSummaryHeader: {
       type: "object",

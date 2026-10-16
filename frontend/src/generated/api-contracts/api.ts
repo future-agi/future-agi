@@ -79,6 +79,7 @@ import type {
   AgentDefinitionCreateRequestApi,
   AgentDefinitionCreateResponseApi,
   AgentDefinitionDeleteResponseApi,
+  AgentDefinitionDetailResponseApi,
   AgentDefinitionEditRequestApi,
   AgentDefinitionEditResponseApi,
   AgentDefinitionListResponseApi,
@@ -102,6 +103,7 @@ import type {
   AgentPromptOptimiserTrialEvaluationsResponseApi,
   AgentPromptOptimiserTrialPromptResponseApi,
   AgentPromptOptimiserTrialScenariosResponseApi,
+  AgentRunsResponseApi,
   AgentVersionActivateResponseApi,
   AgentVersionCreateRequestApi,
   AgentVersionCreateResponseApi,
@@ -1123,6 +1125,7 @@ import type {
   SignupRequestApi,
   SignupResponseApi,
   SimulateAgentDefinitionsListParams,
+  SimulateAgentDefinitionsRunsListParams,
   SimulateApiAgentDefinitionOperationsList200,
   SimulateApiAgentDefinitionOperationsListParams,
   SimulateApiAgentPromptOptimiserList200,
@@ -56058,7 +56061,7 @@ export const simulateAgentDefinitionsCreateCreate = async (
 };
 
 export type simulateAgentDefinitionsReadResponse200 = {
-  data: AgentDefinitionResponseApi;
+  data: AgentDefinitionDetailResponseApi;
   status: 200;
 };
 
@@ -56230,6 +56233,73 @@ export const simulateAgentDefinitionsEditUpdate = async (
       method: "PUT",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(agentDefinitionEditRequestApi),
+    },
+  );
+};
+
+export type simulateAgentDefinitionsRunsListResponse200 = {
+  data: AgentRunsResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsRunsListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsRunsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404>;
+};
+
+export type simulateAgentDefinitionsRunsListResponseSuccess =
+  simulateAgentDefinitionsRunsListResponse200 & {
+    headers: Headers;
+  };
+export type simulateAgentDefinitionsRunsListResponseError = (
+  | simulateAgentDefinitionsRunsListResponse404
+  | simulateAgentDefinitionsRunsListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsRunsListResponse =
+  | simulateAgentDefinitionsRunsListResponseSuccess
+  | simulateAgentDefinitionsRunsListResponseError;
+
+export const getSimulateAgentDefinitionsRunsListUrl = (
+  agentId: string,
+  params?: SimulateAgentDefinitionsRunsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/runs/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/runs/`;
+};
+
+export const simulateAgentDefinitionsRunsList = async (
+  agentId: string,
+  params?: SimulateAgentDefinitionsRunsListParams,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsRunsListResponse> => {
+  return apiMutator<simulateAgentDefinitionsRunsListResponse>(
+    getSimulateAgentDefinitionsRunsListUrl(agentId, params),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };

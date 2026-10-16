@@ -33,6 +33,7 @@ from simulate.services.alk_simulate_ingestion import (
     create_alk_sim_test_execution,
     precreate_alk_sim_call_executions,
     provision_alk_sim_run_test,
+    resolved_agent_version,
 )
 from tracer.services.observability_switch import (
     ObservabilityRefused,
@@ -410,7 +411,7 @@ def create_selected_harness_run(
             picked_up_by_executor=True,
             simulator_agent=environment.run_test.simulator_agent,
             agent_definition=environment.run_test.agent_definition,
-            agent_version=environment.run_test.agent_version,
+            agent_version=resolved_agent_version(environment.run_test),
             execution_metadata={
                 "environment_job_id": str(environment.id),
                 "harness_job_id": str(child.id),

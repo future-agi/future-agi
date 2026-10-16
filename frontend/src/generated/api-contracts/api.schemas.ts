@@ -15295,6 +15295,12 @@ export type AgentDefinitionListResponseApiModelDetails = {
   [key: string]: unknown;
 };
 
+export interface RunEnvironmentRefApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
 export interface AgentDefinitionListResponseApi {
   readonly id?: string;
   /**
@@ -15352,6 +15358,13 @@ export interface AgentDefinitionListResponseApi {
    * @minLength 1
    */
   readonly model?: string;
+  /** @minLength 1 */
+  readonly agent_kind?: string;
+  /** @minLength 1 */
+  readonly source?: string;
+  readonly version_count?: number;
+  readonly environment_count?: number;
+  readonly environments?: readonly RunEnvironmentRefApi[];
 }
 
 export type ApiErrorWithDetailsResponseApiType =
@@ -15648,6 +15661,189 @@ export interface AgentDefinitionCreateResponseApi {
   agent?: AgentDefinitionResponseApi;
 }
 
+export type AgentDefinitionDetailResponseApiAgentType =
+  (typeof AgentDefinitionDetailResponseApiAgentType)[keyof typeof AgentDefinitionDetailResponseApiAgentType];
+
+export const AgentDefinitionDetailResponseApiAgentType = {
+  voice: "voice",
+  text: "text",
+} as const;
+
+/**
+ * Language of the agent
+ */
+export type AgentDefinitionDetailResponseApiLanguage =
+  (typeof AgentDefinitionDetailResponseApiLanguage)[keyof typeof AgentDefinitionDetailResponseApiLanguage];
+
+export const AgentDefinitionDetailResponseApiLanguage = {
+  ar: "ar",
+  bg: "bg",
+  zh: "zh",
+  cs: "cs",
+  da: "da",
+  nl: "nl",
+  en: "en",
+  fi: "fi",
+  fr: "fr",
+  de: "de",
+  el: "el",
+  hi: "hi",
+  hu: "hu",
+  id: "id",
+  it: "it",
+  ja: "ja",
+  ko: "ko",
+  ms: "ms",
+  no: "no",
+  pl: "pl",
+  pt: "pt",
+  ro: "ro",
+  ru: "ru",
+  sk: "sk",
+  es: "es",
+  sv: "sv",
+  tr: "tr",
+  uk: "uk",
+  vi: "vi",
+} as const;
+
+/**
+ * Language of the agent
+ */
+export type AgentDefinitionDetailResponseApiLanguagesItem =
+  (typeof AgentDefinitionDetailResponseApiLanguagesItem)[keyof typeof AgentDefinitionDetailResponseApiLanguagesItem];
+
+export const AgentDefinitionDetailResponseApiLanguagesItem = {
+  ar: "ar",
+  bg: "bg",
+  zh: "zh",
+  cs: "cs",
+  da: "da",
+  nl: "nl",
+  en: "en",
+  fi: "fi",
+  fr: "fr",
+  de: "de",
+  el: "el",
+  hi: "hi",
+  hu: "hu",
+  id: "id",
+  it: "it",
+  ja: "ja",
+  ko: "ko",
+  ms: "ms",
+  no: "no",
+  pl: "pl",
+  pt: "pt",
+  ro: "ro",
+  ru: "ru",
+  sk: "sk",
+  es: "es",
+  sv: "sv",
+  tr: "tr",
+  uk: "uk",
+  vi: "vi",
+} as const;
+
+export type AgentDefinitionDetailResponseApiAuthenticationMethod =
+  (typeof AgentDefinitionDetailResponseApiAuthenticationMethod)[keyof typeof AgentDefinitionDetailResponseApiAuthenticationMethod];
+
+export const AgentDefinitionDetailResponseApiAuthenticationMethod = {
+  api_key: "api_key",
+} as const;
+
+/**
+ * Headers to be sent to the websocket server
+ */
+export type AgentDefinitionDetailResponseApiWebsocketHeaders = {
+  [key: string]: unknown;
+};
+
+/**
+ * Details of the model
+ */
+export type AgentDefinitionDetailResponseApiModelDetails = {
+  [key: string]: unknown;
+};
+
+export type AgentDefinitionDetailResponseApiActiveVersion = {
+  [key: string]: string;
+};
+
+export interface AgentDefinitionDetailResponseApi {
+  readonly id?: string;
+  /**
+   * Name of the AI agent
+   * @minLength 1
+   */
+  readonly agent_name?: string;
+  readonly agent_type?: AgentDefinitionDetailResponseApiAgentType;
+  /**
+   * Phone number associated with the AI agent
+   * @minLength 1
+   */
+  readonly contact_number?: string;
+  /** Whether the agent handles inbound calls */
+  readonly inbound?: boolean;
+  /** Whether the target agent speaks first (greets) in a hosted voice simulation. True: the simulator waits for the target's greeting; False: the simulator opens the conversation; null: derive from inbound/outbound. Retell targets always let the simulator open (SDK limitation). */
+  readonly target_speaks_first?: boolean;
+  /**
+   * Detailed description of the AI agent's purpose and capabilities
+   * @minLength 1
+   */
+  readonly description?: string;
+  /**
+   * External identifier for the assistant
+   * @minLength 1
+   */
+  readonly assistant_id?: string;
+  /**
+   * Provider of the AI agent
+   * @minLength 1
+   */
+  readonly provider?: string;
+  /** Language of the agent */
+  readonly language?: AgentDefinitionDetailResponseApiLanguage;
+  readonly languages?: readonly AgentDefinitionDetailResponseApiLanguagesItem[];
+  readonly authentication_method?: AgentDefinitionDetailResponseApiAuthenticationMethod;
+  /**
+   * WebSocket URL for real-time communication with the agent
+   * @minLength 1
+   */
+  readonly websocket_url?: string;
+  /** Headers to be sent to the websocket server */
+  readonly websocket_headers?: AgentDefinitionDetailResponseApiWebsocketHeaders;
+  readonly workspace?: string;
+  readonly knowledge_base?: string;
+  /** Organization this agent definition belongs to */
+  readonly organization?: string;
+  readonly api_key?: string;
+  readonly observability_provider?: string;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+  /**
+   * Model of the agent
+   * @minLength 1
+   */
+  readonly model?: string;
+  /** Details of the model */
+  readonly model_details?: AgentDefinitionDetailResponseApiModelDetails;
+  readonly livekit_url?: string;
+  readonly livekit_api_key?: string;
+  readonly livekit_agent_name?: string;
+  readonly livekit_config_json?: string;
+  readonly livekit_max_concurrency?: string;
+  readonly versions?: readonly string[];
+  readonly active_version?: AgentDefinitionDetailResponseApiActiveVersion;
+  readonly version_count?: number;
+  /** @minLength 1 */
+  readonly agent_kind?: string;
+  /** @minLength 1 */
+  readonly source?: string;
+  readonly environment_count?: number;
+  readonly observability_enabled?: boolean;
+}
+
 export interface AgentDefinitionDeleteResponseApi {
   /** @minLength 1 */
   readonly message?: string;
@@ -15681,6 +15877,7 @@ export type AgentDefinitionEditRequestApiLivekitConfigJson = {
 };
 
 export interface AgentDefinitionEditRequestApi {
+  observability_enabled?: boolean;
   /**
    * @minLength 1
    * @maxLength 255
@@ -15719,6 +15916,40 @@ export interface AgentDefinitionEditResponseApi {
   /** @minLength 1 */
   readonly message?: string;
   agent?: AgentDefinitionResponseApi;
+}
+
+export type HarnessRunSummaryApiKind =
+  (typeof HarnessRunSummaryApiKind)[keyof typeof HarnessRunSummaryApiKind];
+
+export const HarnessRunSummaryApiKind = {
+  environment: "environment",
+  simulate: "simulate",
+} as const;
+
+export interface AgentVersionRefApi {
+  id: string;
+  version_number: number;
+}
+
+export interface HarnessRunSummaryApi {
+  kind: HarnessRunSummaryApiKind;
+  test_execution_id: string;
+  run_test_id: string;
+  run_test_name: string;
+  run_number: number;
+  /** @minLength 1 */
+  status: string;
+  environment: RunEnvironmentRefApi;
+  agent_version: AgentVersionRefApi;
+  outcome_passed: number;
+  outcome_failed: number;
+  outcome_skipped: number;
+  started_at: string;
+  completed_at: string;
+}
+
+export interface AgentRunsResponseApi {
+  readonly results?: readonly HarnessRunSummaryApi[];
 }
 
 /**
@@ -15843,74 +16074,6 @@ export const AgentVersionResponseApiStatus = {
   deprecated: "deprecated",
 } as const;
 
-/**
- * Snapshot of agent configuration at this version
- */
-export type AgentVersionResponseApiConfigurationSnapshot = {
-  [key: string]: unknown;
-};
-
-export interface AgentVersionResponseApi {
-  readonly id?: string;
-  /** Version number of the agent */
-  readonly version_number?: number;
-  /**
-   * Human-readable version name (e.g., 'v1.2.3')
-   * @minLength 1
-   */
-  readonly version_name?: string;
-  readonly version_name_display?: string;
-  /** Current status of this version */
-  readonly status?: AgentVersionResponseApiStatus;
-  /** @minLength 1 */
-  readonly status_display?: string;
-  /** Performance score (0.0 to 10.0) */
-  readonly score?: string;
-  /** Number of tests run for this version */
-  readonly test_count?: number;
-  /** Test pass rate percentage */
-  readonly pass_rate?: string;
-  /**
-   * Description of changes in this version
-   * @minLength 1
-   */
-  readonly description?: string;
-  /**
-   * Commit message for the agent version
-   * @minLength 1
-   */
-  readonly commit_message?: string;
-  /**
-   * Detailed release notes for this version
-   * @minLength 1
-   */
-  readonly release_notes?: string;
-  /** Parent agent definition */
-  readonly agent_definition?: string;
-  /** Organization this version belongs to */
-  readonly organization?: string;
-  /** Snapshot of agent configuration at this version */
-  readonly configuration_snapshot?: AgentVersionResponseApiConfigurationSnapshot;
-  readonly is_active?: string;
-  readonly is_latest?: string;
-  /** @minLength 1 */
-  readonly agent_kind?: string;
-  readonly created_at?: string;
-  readonly updated_at?: string;
-}
-
-export interface AgentVersionCreateResponseApi {
-  /** @minLength 1 */
-  readonly message?: string;
-  version?: AgentVersionResponseApi;
-}
-
-export interface AgentVersionActivateResponseApi {
-  /** @minLength 1 */
-  readonly message?: string;
-  version?: AgentVersionResponseApi;
-}
-
 export interface StoredProviderRefApi {
   /** @minLength 1 */
   provider: string;
@@ -16007,6 +16170,77 @@ export interface StoredAgentResponseApi {
   sdk_version: string;
   stored_at: string;
   setup_stale: boolean;
+}
+
+/**
+ * Snapshot of agent configuration at this version
+ */
+export type AgentVersionResponseApiConfigurationSnapshot = {
+  [key: string]: unknown;
+};
+
+export interface AgentVersionResponseApi {
+  readonly id?: string;
+  /** Version number of the agent */
+  readonly version_number?: number;
+  /**
+   * Human-readable version name (e.g., 'v1.2.3')
+   * @minLength 1
+   */
+  readonly version_name?: string;
+  readonly version_name_display?: string;
+  /** Current status of this version */
+  readonly status?: AgentVersionResponseApiStatus;
+  /** @minLength 1 */
+  readonly status_display?: string;
+  /** Performance score (0.0 to 10.0) */
+  readonly score?: string;
+  /** Number of tests run for this version */
+  readonly test_count?: number;
+  /** Test pass rate percentage */
+  readonly pass_rate?: string;
+  /**
+   * Description of changes in this version
+   * @minLength 1
+   */
+  readonly description?: string;
+  /**
+   * Commit message for the agent version
+   * @minLength 1
+   */
+  readonly commit_message?: string;
+  /**
+   * Detailed release notes for this version
+   * @minLength 1
+   */
+  readonly release_notes?: string;
+  /** Parent agent definition */
+  readonly agent_definition?: string;
+  /** Organization this version belongs to */
+  readonly organization?: string;
+  /** Snapshot of agent configuration at this version */
+  readonly configuration_snapshot?: AgentVersionResponseApiConfigurationSnapshot;
+  readonly is_active?: string;
+  readonly is_latest?: string;
+  /** @minLength 1 */
+  readonly agent_kind?: string;
+  agent_details?: StoredAgentResponseApi;
+  /** @minLength 1 */
+  readonly api_key?: string;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+export interface AgentVersionCreateResponseApi {
+  /** @minLength 1 */
+  readonly message?: string;
+  version?: AgentVersionResponseApi;
+}
+
+export interface AgentVersionActivateResponseApi {
+  /** @minLength 1 */
+  readonly message?: string;
+  version?: AgentVersionResponseApi;
 }
 
 /**
@@ -17228,6 +17462,7 @@ export interface HarnessEnvironmentApi {
   runs_count: number;
   last_updated: string;
   created_at: string;
+  last_run: HarnessRunSummaryApi;
 }
 
 export interface HarnessEnvironmentListResponseApi {
@@ -34566,6 +34801,14 @@ export const SimulateAgentDefinitionsListAgentType = {
   text: "text",
 } as const;
 
+export type SimulateAgentDefinitionsRunsListParams = {
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  limit?: number;
+};
+
 export type SimulateApiAgentDefinitionOperationsListParams = {
   /**
    * A page number within the paginated result set.
@@ -34633,6 +34876,7 @@ export type SimulateApiHarnessEnvironmentsListParams = {
    * @maximum 100
    */
   limit?: number;
+  agent_definition_id?: string;
 };
 
 export type SimulateApiHarnessJobsSecretFileUploadBody = {

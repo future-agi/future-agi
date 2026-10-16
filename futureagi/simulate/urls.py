@@ -73,6 +73,7 @@ from .views import (
     AgentDefinitionDetailView,
     AgentDefinitionOperationsViewSet,
     AgentDefinitionView,
+    AgentRunsView,
     CreateAgentDefinitionView,
     CreateRunTestView,
     CreateScenarioView,
@@ -256,6 +257,11 @@ urlpatterns = [
         "agent-definitions/<uuid:agent_id>/",
         AgentDefinitionDetailView.as_view(),
         name="agent-definitions-detail",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/runs/",
+        AgentRunsView.as_view(),
+        name="agent-definitions-runs",
     ),
     path(
         "agent-definitions/<uuid:agent_id>/edit/",
