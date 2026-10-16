@@ -208,7 +208,9 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
       data?.call_type ||
       ""
     ).toLowerCase() === "inbound";
-  const provider = data?.provider || data?.call_metadata?.provider || null;
+  // Channel layout follows the transport that recorded the call, not the agent.
+  const provider =
+    data?.transport || data?.provider || data?.call_metadata?.provider || null;
   if (isCallInProgress) {
     return (
       <Box sx={{ height: 200 }}>
@@ -336,6 +338,8 @@ const areRecordingPropsEqual = (prev, next) => {
     p?.recording_available === n?.recording_available &&
     p?.ended_reason === n?.ended_reason &&
     p?.call_metadata?.provider === n?.call_metadata?.provider &&
+    p?.provider === n?.provider &&
+    p?.transport === n?.transport &&
     p?.recording_url === n?.recording_url &&
     p?.recording === n?.recording &&
     p?.recordings === n?.recordings &&

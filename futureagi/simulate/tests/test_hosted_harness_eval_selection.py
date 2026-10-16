@@ -1387,6 +1387,32 @@ def test_a_changed_agent_prompt_reaches_a_new_version(organization, workspace):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("set_before_this_change", [False, True])
+def test_a_provider_recorded_on_a_versioned_agent_reaches_a_new_version(
+    organization, workspace, set_before_this_change
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="provider-key", workspace=workspace
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    assert _provision(APIClient(), capability, agent_prompt="Same.").status_code == 200
+    job.refresh_from_db()
+    agent = job.run_test.agent_definition
+    # An SDK-provisioned agent: versioned before any provider was known.
+    agent.provider = ""
+    agent.save(update_fields=["provider"])
+    agent.create_version(description="Same.", commit_message="sdk", status="active")
+    if set_before_this_change:
+        # Earlier provisions set the provider without a new version.
+        agent.provider = "vapi"
+        agent.save(update_fields=["provider"])
+
+    _record_target_agent_facts(job, agent, {"agent_prompt": "Same."})
+
+    assert agent.latest_version.configuration_snapshot["provider"] == "vapi"
+
+
+@pytest.mark.django_db
 def test_provision_records_explicit_rl_call_behavior_over_authored_direction(
     organization, workspace
 ):

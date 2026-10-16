@@ -408,10 +408,12 @@ def page_calls(page: dict[str, Any], execution: TestExecution) -> list[CallExecu
     # per joined row), so a page reads only what build_call_rows uses.
     queryset = (
         CallExecution.objects.filter(id__in=page["page_ids"])
-        .select_related("scenario")
+        # The pinned version names the call's provider (call_provider).
+        .select_related("scenario", "agent_version")
         .only(
             *CALL_ROW_FIELDS,
             *(f"scenario__{field}" for field in CALL_ROW_SCENARIO_FIELDS),
+            "agent_version__configuration_snapshot",
         )
         # call_metadata itself stays deferred; build_call_rows reads this subset.
         .annotate(row_metadata=JsonbKeySubset("call_metadata", CALL_ROW_METADATA_KEYS))

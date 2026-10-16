@@ -8,7 +8,11 @@ from rest_framework import serializers
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import AgentTypeChoices
-from simulate.services.agent_definition import is_masked, sync_provider_credentials
+from simulate.services.agent_definition import (
+    is_masked,
+    sync_edited_agent_credentials,
+    sync_provider_credentials,
+)
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 from tracer.models.observability_provider import ProviderChoices
@@ -444,9 +448,7 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         instance = super().update(instance, validated_data)
 
         creds_input.provider = instance.provider or creds_input.provider
-        version = instance.active_version or instance.latest_version
-        if version:
-            sync_provider_credentials(version, creds_input)
+        sync_edited_agent_credentials(instance, creds_input)
         return instance
 
 

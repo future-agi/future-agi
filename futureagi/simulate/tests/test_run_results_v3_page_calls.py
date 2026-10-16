@@ -442,7 +442,8 @@ def test_slim_page_renders_the_same_rows_and_columns(run, goals):
     assert len(old_rows) == len(calls)
     by_id = {row["id"]: row for row in new_rows}
     assert by_id[str(calls[0].id)]["provider"] == "vapi"
-    assert by_id[str(calls[4].id)]["provider"] == "retell"
+    # The tested agent names the provider; a payload for another one does not.
+    assert by_id[str(calls[4].id)]["provider"] == "vapi"
     assert by_id[str(calls[2].id)]["provider"] == "vapi"
     assert by_id[str(calls[1].id)]["goal"] == goals.get(1, "Row-data goal")
     # Dataset cells fill what call metadata leaves out.

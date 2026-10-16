@@ -20265,6 +20265,7 @@ export interface CallExecutionDetailApi {
   /** Type of simulation call */
   simulation_call_type?: CallExecutionDetailApiSimulationCallType;
   readonly provider?: string;
+  readonly transport?: string;
   /**
    * Phone number called (null for TEXT/chat simulations)
    * @maxLength 20
@@ -22511,6 +22512,7 @@ export interface CallExecutionV3DetailResponseApi {
   /** Type of simulation call */
   simulation_call_type?: CallExecutionV3DetailResponseApiSimulationCallType;
   readonly provider?: string;
+  readonly transport?: string;
   /**
    * Phone number called (null for TEXT/chat simulations)
    * @maxLength 20

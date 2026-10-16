@@ -94,6 +94,28 @@ def _adopt_legacy_credentials(version):
     return False
 
 
+# Everything a version's credentials hold besides which version owns them.
+CREDENTIAL_FIELDS = (
+    "provider_type",
+    "api_key",
+    "api_secret",
+    "assistant_id",
+    "server_url",
+    "agent_name",
+    "config_json",
+    "max_concurrency",
+)
+
+
+def credential_type(provider: str | None) -> str:
+    provider = (provider or "").strip()
+    if provider in ("livekit", "livekit_bridge"):
+        return ProviderCredentials.ProviderType.LIVEKIT
+    if provider == "retell":
+        return ProviderCredentials.ProviderType.RETELL
+    return ProviderCredentials.ProviderType.VAPI
+
+
 def sync_provider_credentials(version, data: ProviderCredentialsInput):
     """Create or update version-scoped ProviderCredentials."""
     if not _has_credential_fields(data):
@@ -103,10 +125,9 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
             _adopt_legacy_credentials(version)
         return
 
-    provider = (data.provider or "").strip()
+    provider_type = credential_type(data.provider)
 
-    if provider in ("livekit", "livekit_bridge"):
-        provider_type = ProviderCredentials.ProviderType.LIVEKIT
+    if provider_type == ProviderCredentials.ProviderType.LIVEKIT:
         api_key = (data.livekit_api_key or "").strip()
         api_secret = (data.livekit_api_secret or "").strip()
         assistant_id = ""
@@ -114,8 +135,7 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         agent_name = (data.livekit_agent_name or "").strip()
         config_json = data.livekit_config_json
         max_concurrency = data.livekit_max_concurrency
-    elif provider == "retell":
-        provider_type = ProviderCredentials.ProviderType.RETELL
+    elif provider_type == ProviderCredentials.ProviderType.RETELL:
         api_key = (data.api_key or "").strip()
         api_secret = ""
         assistant_id = (data.assistant_id or "").strip()
@@ -124,7 +144,6 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         config_json = None
         max_concurrency = data.livekit_max_concurrency
     else:
-        provider_type = ProviderCredentials.ProviderType.VAPI
         api_key = (data.api_key or "").strip()
         api_secret = ""
         assistant_id = (data.assistant_id or "").strip()
@@ -159,6 +178,70 @@ def sync_provider_credentials(version, data: ProviderCredentialsInput):
         provider_changed=provider_changed,
     )
     creds.save()
+
+
+def create_active_version(
+    agent: AgentDefinition,
+    credentials: ProviderCredentialsInput,
+    commit_message: str,
+    inherited: ProviderCredentials | None = None,
+) -> AgentVersion:
+    """Snapshot ``agent`` into a new active version that owns ``credentials``,
+    starting from a copy of ``inherited`` when given."""
+    version = agent.create_version(
+        description=agent.description,
+        commit_message=commit_message,
+        status=AgentVersion.StatusChoices.ACTIVE,
+    )
+    version.activate()
+    if inherited is not None:
+        ProviderCredentials.objects.create(
+            agent_version=version,
+            **{field: getattr(inherited, field) for field in CREDENTIAL_FIELDS},
+        )
+    sync_provider_credentials(version, credentials)
+    # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
+    version.configuration_snapshot = version.create_snapshot(
+        commit_message=version.commit_message or ""
+    )
+    version.save(update_fields=["configuration_snapshot"])
+    return version
+
+
+def provider_is_stale(agent: AgentDefinition) -> bool:
+    """Whether the latest version, which new calls pin, records another provider."""
+    version = agent.latest_version
+    if version is None:
+        return False
+    recorded = (version.configuration_snapshot or {}).get("provider")
+    return (recorded or "") != (agent.provider or "")
+
+
+def sync_edited_agent_credentials(
+    agent: AgentDefinition, credentials: ProviderCredentialsInput
+) -> None:
+    """Store an in-place edit's credentials on the version they belong to.
+
+    When the latest version records another provider, the edit gets its own
+    version, so calls pinned to earlier ones keep the provider they ran with.
+    """
+    current = agent.active_version or agent.latest_version
+    if current is None:
+        return
+    if not provider_is_stale(agent):
+        sync_provider_credentials(current, credentials)
+        return
+    previous = getattr(current, "credentials", None)
+    create_active_version(
+        agent,
+        credentials,
+        f"Provider changed to {agent.provider or 'none'}",
+        # Keys stay valid across providers that share a credential type.
+        inherited=previous
+        if previous is not None
+        and previous.provider_type == credential_type(agent.provider)
+        else None,
+    )
 
 
 def resolve_api_key_for_version(version):

@@ -27,10 +27,10 @@ from simulate.serializers.response.run_test_evals import (
 )
 from simulate.serializers.test_execution import CallExecutionSerializer
 from simulate.services.agent_definition import (
+    create_active_version,
     is_masked,
     resolve_api_key_for_version,
     resolve_api_secret_for_version,
-    sync_provider_credentials,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.utils.eval_summary import (
@@ -254,13 +254,6 @@ class CreateAgentVersionView(APIView):
                             active_version
                         )
 
-            version = agent.create_version(
-                description=agent.description,
-                commit_message=commit_message,
-                status=AgentVersion.StatusChoices.ACTIVE,
-            )
-            version.activate()
-
             creds_input = ProviderCredentialsInput(
                 provider=validated.get("provider") or agent.provider or "",
                 api_key=existing_api_key
@@ -283,13 +276,7 @@ class CreateAgentVersionView(APIView):
                 livekit_max_concurrency=validated.get("livekit_max_concurrency"),
                 provider_was_provided="provider" in request.data,
             )
-            sync_provider_credentials(version, creds_input)
-
-            # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
-            version.configuration_snapshot = version.create_snapshot(
-                commit_message=version.commit_message or ""
-            )
-            version.save(update_fields=["configuration_snapshot"])
+            version = create_active_version(agent, creds_input, commit_message)
 
             response_data = {
                 "message": "Agent version created successfully",

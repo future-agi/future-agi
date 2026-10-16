@@ -41171,6 +41171,7 @@ export const SimulateCallExecutionsReadResponse = zod.object({
     .optional()
     .describe("Type of simulation call"),
   provider: zod.string().optional(),
+  transport: zod.string().optional(),
   phone_number: zod
     .string()
     .max(simulateCallExecutionsReadResponsePhoneNumberMax)
@@ -47039,6 +47040,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     .optional()
     .describe("Type of simulation call"),
   provider: zod.string().optional(),
+  transport: zod.string().optional(),
   phone_number: zod
     .string()
     .max(simulateV3CallExecutionDetailResponsePhoneNumberMax)

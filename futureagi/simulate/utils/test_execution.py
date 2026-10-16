@@ -168,6 +168,8 @@ def get_test_execution_results(test_execution_id):
                 "test_execution",
                 "test_execution__simulator_agent",
                 "test_execution__agent_definition",
+                "test_execution__agent_version",
+                "agent_version",
             )
             .prefetch_related("transcripts", "snapshots")
         )
