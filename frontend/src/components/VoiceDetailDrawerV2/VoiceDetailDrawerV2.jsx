@@ -21,6 +21,8 @@ import {
   useReorderSavedViews,
 } from "src/api/project/saved-views";
 
+import BaseLineVsReplay from "src/sections/test-detail/TestDetailDrawer/BasLineCompare/BaseLineVsReplay";
+
 import VoiceDrawerHeader from "./VoiceDrawerHeader";
 import VoiceLeftPanel from "./VoiceLeftPanel";
 import VoiceRightPanel from "./VoiceRightPanel";
@@ -63,6 +65,8 @@ const VoiceDetailDrawerV2 = ({
   isFetching,
   onAnnotate,
   onCompareBaseline,
+  onExitCompare,
+  compareReplay = false,
   scenarioId,
   isLoading = false,
   initialFullscreen = false,
@@ -390,7 +394,7 @@ const VoiceDetailDrawerV2 = ({
         sx={{
           flex: 1,
           display: "flex",
-          flexDirection: isImagineActive ? "column" : "row",
+          flexDirection: isImagineActive || compareReplay ? "column" : "row",
           overflow: "hidden",
           minHeight: 0,
         }}
@@ -406,6 +410,8 @@ const VoiceDetailDrawerV2 = ({
           >
             <CircularProgress size={28} />
           </Box>
+        ) : compareReplay ? (
+          <BaseLineVsReplay rowData={data} onBack={onExitCompare} />
         ) : isImagineActive ? (
           <ImagineTab
             traceId={data?.trace_id || data?.id}
@@ -629,6 +635,8 @@ VoiceDetailDrawerV2.propTypes = {
   isFetching: PropTypes.string,
   onAnnotate: PropTypes.func,
   onCompareBaseline: PropTypes.func,
+  onExitCompare: PropTypes.func,
+  compareReplay: PropTypes.bool,
   scenarioId: PropTypes.string,
   isLoading: PropTypes.bool,
   initialFullscreen: PropTypes.bool,
