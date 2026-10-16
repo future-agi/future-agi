@@ -33,6 +33,7 @@ from .hosted_harness import (
 )
 from .persona import Persona
 from .prompt_trial import PromptTrial
+from .provider_list import ProviderList
 from .run_test import RunTest
 from .scenario_graph import NodeType, ScenarioGraph
 from .scenarios import Scenarios
@@ -59,6 +60,7 @@ __all__ = [
     "HarnessCredentialFile",
     "HarnessEnvironmentCredentials",
     "PromptTrial",
+    "ProviderList",
     "SimulatorAgent",
     "RunTest",
     "SimulateEvalConfig",

@@ -34,6 +34,7 @@ QUEUE_XL = "tasks_xl"
 # - Polled by the dedicated simulation-runner worker, which spawns the
 #   released Agent Learning Kit as a child process (plan §9.1)
 QUEUE_RUNNER = "simulation_runner"
+QUEUE_RUNNER_BACKGROUND = "simulation_runner_background"
 
 
 # =============================================================================
