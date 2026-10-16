@@ -6,6 +6,7 @@ import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { enqueueSnackbar } from "notistack";
 import { normalizeTags } from "./tagUtils";
+import { serializeTraceTags } from "./traceTagPayload";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
 
@@ -32,7 +33,10 @@ const AddTagsPopover = ({
   }, [open, currentTags, isBulk]);
 
   const patchTrace = (id, newTags) =>
-    axios.patch(apiPath("/tracer/trace/{id}/tags/", { id }), { tags: newTags });
+    axios.patch(apiPath("/tracer/trace/{id}/tags/", { id }), {
+      tags: serializeTraceTags(newTags),
+    });
+
   const patchSpan = (id, newTags) =>
     axios.post(apiPath("/tracer/observation-span/update-tags/"), {
       span_id: id,
