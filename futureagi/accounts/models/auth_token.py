@@ -53,3 +53,10 @@ class AuthToken(BaseModel):
 
 AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES = 2 * 24 * 60  # 2 days
 REFRESH_TOKEN_EXPIRATION_TIME_IN_SECONDS = 7 * 24 * 60 * 60  # 7 days
+
+# Password-reset links are stored as ACCESS rows, the same type a live session
+# uses. This cache key is the only marker that separates them: a reset row is
+# written here and is never written to ``access_token_<id>``. A new reset, or a
+# later login, deactivates every id listed here for that user. Deactivating
+# every ACCESS row would sign the account out of a session it still holds.
+PASSWORD_RESET_TOKEN_CACHE_KEY = "password_reset_token_ids_{user_id}"

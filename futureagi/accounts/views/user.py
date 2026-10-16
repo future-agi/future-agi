@@ -30,6 +30,7 @@ from accounts.models.auth_token import (
 )
 from accounts.models.workspace import OrganizationRoles, Workspace, WorkspaceMembership
 from accounts.serializers import UserSerializer
+from accounts.services.token_service import invalidate_password_reset_tokens
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
     AccountsAccessTokenResponseSerializer,
@@ -334,6 +335,11 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 .order_by("created_at")
                 .first()
             )
+
+            # A password-reset link is an ACCESS row, same as the session minted
+            # below. Signing in must retire it, or the mailed link still sets
+            # the password after this login.
+            invalidate_password_reset_tokens(user)
 
             # Deactivate all previous refresh tokens for this user
             AuthToken.objects.filter(
