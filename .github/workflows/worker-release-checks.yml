@@ -4,8 +4,6 @@ on:
     paths:
       - ".github/workflows/release-images.yml"
       - ".github/workflows/worker-release-checks.yml"
-      - "scripts/release-error-feed-worker.py"
-      - "scripts/test_release_error_feed_worker.py"
       - "scripts/verify-platform-image-tags.py"
       - "scripts/test_verify_platform_image_tags.py"
 permissions:
