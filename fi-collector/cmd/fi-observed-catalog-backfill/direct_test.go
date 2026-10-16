@@ -74,6 +74,7 @@ func TestDirectApplyScanWritesBothIndexTables(t *testing.T) {
 	scope := exampleScope()
 	row := exampleSpan(scope).Row
 	row["is_deleted"], row["_version"] = 0, "1"
+	row[simulatedResourceColumn] = 0
 	row["observation_type"], row["service_name"], row["trace_id"], row["id"] = "span", "s", "t", "a"
 	payload, _ := json.Marshal(row)
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

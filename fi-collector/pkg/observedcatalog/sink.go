@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type ClickHouseConfig struct {
@@ -147,6 +149,71 @@ func (s *ClickHouseSink) insert(ctx context.Context, table string, rows any) err
 	// response whose status was already sent as 200, or log server payloads.
 	if response.StatusCode != http.StatusOK || len(strings.TrimSpace(string(result))) != 0 || response.Header.Get("X-ClickHouse-Exception-Code") != "" {
 		return fmt.Errorf("observedcatalog: %s insert not confirmed (HTTP %d)", table, response.StatusCode)
+	}
+	return nil
+}
+
+// DeleteProject removes every catalog row of one project, keys table first. A
+// lightweight DELETE masks the rows at once instead of rewriting every part the
+// project touches. Repeating it after a failure is safe.
+func (s *ClickHouseSink) DeleteProject(ctx context.Context, scope Scope) error {
+	for _, id := range []string{scope.OrganizationID, scope.WorkspaceID, scope.ProjectID} {
+		parsed, err := uuid.Parse(id)
+		if err != nil || parsed == uuid.Nil || parsed.String() != id {
+			return errors.New("observedcatalog: delete requires a canonical organization, workspace and project")
+		}
+	}
+	for _, table := range []string{KeyTable, ValueTable} {
+		if err := s.deleteScope(ctx, table, scope); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteTimeout bounds each delete on its own, apart from the insert timeout: a
+// delete that waits for every replica outlasts a write, and ClickHouse itself
+// waits up to 120 s for an inactive replica. Five minutes covers that wait plus
+// applying the mask on a large project, and still ends a stuck call.
+const deleteTimeout = 5 * time.Minute
+
+func (s *ClickHouseSink) deleteScope(ctx context.Context, table string, scope Scope) error {
+	ctx, cancel := context.WithTimeout(ctx, deleteTimeout)
+	defer cancel()
+	// The insert client's timeout is shorter; this copy shares its transport.
+	client := *s.client
+	client.Timeout = deleteTimeout
+	u := *s.origin
+	q := u.Query()
+	q.Set("database", s.cfg.Database)
+	q.Set("param_organization", scope.OrganizationID)
+	q.Set("param_workspace", scope.WorkspaceID)
+	q.Set("param_project", scope.ProjectID)
+	q.Set("lightweight_deletes_sync", "2") // wait until every replica has applied it
+	q.Set("wait_end_of_query", "1")
+	u.RawQuery = q.Encode()
+	statement := "DELETE FROM " + table + ` WHERE organization_id = {organization:String}
+ AND workspace_id = {workspace:String} AND project_id = {project:String}`
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), strings.NewReader(statement))
+	if err != nil {
+		return err
+	}
+	if s.cfg.Username != "" {
+		req.SetBasicAuth(s.cfg.Username, s.cfg.Password)
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("observedcatalog: ClickHouse request failed; %s delete not confirmed", table)
+	}
+	defer response.Body.Close()
+	result, err := io.ReadAll(io.LimitReader(response.Body, 4097))
+	if err != nil || len(result) > 4096 {
+		return errors.New("observedcatalog: incomplete or oversized ClickHouse response")
+	}
+	// A DELETE has no result body. Server text is not echoed: it can carry
+	// catalog values.
+	if response.StatusCode != http.StatusOK || len(strings.TrimSpace(string(result))) != 0 || response.Header.Get("X-ClickHouse-Exception-Code") != "" {
+		return fmt.Errorf("observedcatalog: %s delete not confirmed (HTTP %d; check the ALTER DELETE grant and ClickHouse version)", table, response.StatusCode)
 	}
 	return nil
 }

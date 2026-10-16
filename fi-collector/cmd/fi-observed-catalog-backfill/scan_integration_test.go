@@ -50,7 +50,7 @@ func TestClickHouseMigratedStringOverflowBackfill(t *testing.T) {
 	localSQL(t, origin, `CREATE TABLE `+database+`.spans (
  project_id UUID, org_id Nullable(UUID), observation_type String, service_name String, trace_id String, id String,
  start_time DateTime64(6, 'UTC'), attrs_string Map(String,String), attrs_number Map(String,Float64),
- attrs_bool Map(String,UInt8), attributes_extra String, model String, _version UInt64, is_deleted UInt8)
+ attrs_bool Map(String,UInt8), attributes_extra String, model String, _version UInt64, is_deleted UInt8, resource_attrs JSON)
  ENGINE=MergeTree ORDER BY (project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id)`)
 	localSQL(t, origin, `INSERT INTO `+database+`.spans FORMAT JSONEachRow
 {"project_id":"`+scope.ProjectID+`","org_id":"`+scope.OrganizationID+`","observation_type":"span","service_name":"s","trace_id":"t","id":"a","start_time":"2026-01-01 12:01:00","attrs_string":{},"attrs_number":{},"attrs_bool":{},"attributes_extra":"{\"items\":[1,true,\"001\"],\"empty\":[]}","model":"","_version":1,"is_deleted":0}`)
@@ -94,7 +94,7 @@ func TestClickHouseSourceKeysetAndPhysicalVersions(t *testing.T) {
 	localSQL(t, origin, `CREATE TABLE `+database+`.spans (
  project_id UUID, org_id Nullable(UUID), observation_type String, service_name String, trace_id String, id String,
  start_time DateTime64(6, 'UTC'), attrs_string Map(String, String), attrs_number Map(String, Float64),
- attrs_bool Map(String, UInt8), attributes_extra JSON, model String, _version UInt64, is_deleted UInt8)
+ attrs_bool Map(String, UInt8), attributes_extra JSON, model String, _version UInt64, is_deleted UInt8, resource_attrs JSON)
  ENGINE=MergeTree ORDER BY (project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id)`)
 	project := "00000000-0000-4000-8000-000000000001"
 	localSQL(t, origin, `INSERT INTO `+database+`.spans FORMAT JSONEachRow

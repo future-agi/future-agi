@@ -38,6 +38,22 @@ type options struct {
 	legacyRevision                uint64
 	legacyBuild                   string
 	verifiedLegacy                bool
+	replace, allowEmpty           bool
+	catalog                       observedcatalog.ClickHouseConfig // --replace: the index to purge
+	purger                        projectPurger
+	now                           func() time.Time
+}
+
+// projectPurger deletes every catalog row of one project.
+type projectPurger interface {
+	DeleteProject(context.Context, observedcatalog.Scope) error
+}
+
+func (c options) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
 }
 
 func parseOptions(args []string, getenv func(string) string) (options, error) {
@@ -54,6 +70,8 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 	flags.StringVar(&since, "since", "", "inclusive RFC3339 observation time")
 	flags.StringVar(&until, "until", "", "exclusive RFC3339 observation time")
 	flags.BoolVar(&cfg.apply, "apply", false, "publish observations to Kafka, or the index in direct mode (default: read-only preview)")
+	flags.BoolVar(&cfg.replace, "replace", false, "spans only: delete the project's catalog rows, then rebuild them from stored spans (requires --apply)")
+	flags.BoolVar(&cfg.allowEmpty, "allow-empty-rebuild", false, "with --replace: proceed when the project has no stored span in the range (its spans have all expired)")
 	flags.StringVar(&cfg.checkpointPath, "checkpoint", "", "local resumable progress file, required with --apply")
 	flags.IntVar(&cfg.pageSize, "page-size", 64, "source identities per bounded page, 1..256")
 	flags.IntVar(&cfg.maxPages, "max-pages", 100, "maximum pages per invocation; resume with the same checkpoint")
@@ -67,6 +85,12 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 	id, err := uuid.Parse(cfg.project)
 	if err != nil || id == uuid.Nil || id.String() != cfg.project {
 		return cfg, errors.New("--project must be a canonical nonzero UUID")
+	}
+	if cfg.replace && !cfg.apply {
+		return cfg, errors.New("--replace deletes catalog rows and requires --apply")
+	}
+	if cfg.allowEmpty && !cfg.replace {
+		return cfg, errors.New("--allow-empty-rebuild only applies with --replace")
 	}
 	switch cfg.mode {
 	case "spans":
@@ -83,6 +107,9 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 			return cfg, errors.New("legacy flags require --source legacy")
 		}
 	case "legacy":
+		if cfg.replace {
+			return cfg, errors.New("--replace rebuilds from spans and cannot be used with --source legacy")
+		}
 		build, err := uuid.Parse(cfg.legacyBuild)
 		if cfg.legacyEpoch == 0 || cfg.legacyEpoch > 65535 || cfg.legacyRevision == 0 || err != nil || build == uuid.Nil || build.String() != cfg.legacyBuild {
 			return cfg, errors.New("legacy import requires the exact nonzero input epoch, revision and build UUID")
@@ -129,6 +156,20 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 			return cfg, err
 		}
 	}
+	if cfg.replace {
+		// Kafka mode holds no ClickHouse connection to the index, and the delete
+		// has to reach it directly.
+		cfg.catalog, err = observedcatalog.ClickHouseConfigFromEnv(getenv)
+		if err != nil {
+			return cfg, err
+		}
+		if cfg.catalog.URL == "" || cfg.catalog.Database == "" {
+			return cfg, errors.New("--replace requires FI_OBSERVED_CATALOG_CH_URL and FI_OBSERVED_CATALOG_CH_DATABASE to reach the index")
+		}
+		if _, err := observedcatalog.NewClickHouseSink(cfg.catalog); err != nil {
+			return cfg, err
+		}
+	}
 	cfg.limits, err = observedcatalog.LimitsFromEnv(getenv)
 	if err != nil {
 		return cfg, err
@@ -138,6 +179,8 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 
 type scopeReader interface {
 	Scope(context.Context, string) (observedcatalog.Scope, error)
+	// Holding reports whether the project is marked as holding simulated traces.
+	Holding(context.Context, string) (bool, error)
 }
 type postgresScope struct{ conn *pgx.Conn }
 
@@ -172,6 +215,19 @@ func (p *postgresScope) Scope(ctx context.Context, project string) (observedcata
 	return scope, nil
 }
 
+// The mark follows the project, so it is read with no soft-delete or workspace filter.
+func (p *postgresScope) Holding(ctx context.Context, project string) (bool, error) {
+	call, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var holding bool
+	err := p.conn.QueryRow(call, `SELECT EXISTS (SELECT 1 FROM tracer_observability_provider
+ WHERE project_id = $1::uuid AND metadata @> '{"holds_simulated": true}'::jsonb)`, project).Scan(&holding)
+	if err != nil {
+		return false, errors.New("simulated-trace marker unavailable")
+	}
+	return holding, nil
+}
+
 func scanBinding(cfg options, scope observedcatalog.Scope) string {
 	// Never persist credentials. Include the destination to prevent resuming a
 	// different Kafka cluster/topic with already-published progress.
@@ -182,6 +238,11 @@ func scanBinding(cfg options, scope observedcatalog.Scope) string {
 	if cfg.index.URL != "" {
 		// Direct writes bind the index instead; Kafka bindings are unchanged.
 		binding = append(binding, "direct", cfg.index.URL, cfg.index.Database)
+	}
+	if cfg.replace {
+		// A purge-and-rebuild checkpoint means a different thing than a plain
+		// one: it records that rows were deleted from this index.
+		binding = append(binding, "replace", cfg.catalog.URL, cfg.catalog.Database)
 	}
 	data, _ := json.Marshal(binding)
 	digest := sha256.Sum256(data)
@@ -231,9 +292,20 @@ func buildPage(rows []map[string]any, scope observedcatalog.Scope, since, until 
 			})
 			continue
 		}
+		// Every row that reaches the extractor must carry the flag: a missing one
+		// is a changed query, and reading it as unmarked would put simulated keys back.
+		simulated := fmt.Sprint(row[simulatedResourceColumn])
+		if simulated != "0" && simulated != "1" {
+			return observedcatalog.Batch{}, pageReport{}, errors.New("invalid source simulation flag")
+		}
 		canonical, err := canonicalRow(row)
 		if err != nil {
 			return observedcatalog.Batch{}, pageReport{}, err
+		}
+		if simulated == "1" {
+			// The stored resource column is not read back whole; hand the
+			// extractor the mark so one code path validates and skips the row.
+			canonical["resource_attrs"] = map[string]any{observedcatalog.SimulationOriginKey: true}
 		}
 		batch, report, err := observedcatalog.Extract(observedcatalog.ScopedSpan{
 			OrganizationID: scope.OrganizationID, WorkspaceID: scope.WorkspaceID, Row: canonical,
@@ -312,7 +384,81 @@ func lastHour(until time.Time) time.Time {
 	return bucket
 }
 
+const (
+	// Spans still arriving, and client clocks that run ahead, can start after
+	// now; the rebuild reads nothing at or after --until.
+	replaceMinUntilLead = time.Hour
+	// A far-future --until only scans empty hours while the catalog sits emptied.
+	replaceMaxUntilLead = 24 * time.Hour
+)
+
+// The delete removes all of a project's history and the rebuild covers only
+// [since, until), so the range must hold every stored span. Three bounded
+// existence reads decide it; the answer says whether any span is in range.
+func checkReplaceRange(ctx context.Context, cfg options) (bool, error) {
+	now := cfg.clock()
+	if cfg.until.Before(now.Add(replaceMinUntilLead)) {
+		return false, fmt.Errorf("--replace needs --until at least %s after the current time; spans that start after --until would lose their catalog rows", replaceMinUntilLead)
+	}
+	if cfg.until.After(now.Add(replaceMaxUntilLead)) {
+		return false, fmt.Errorf("--replace needs --until at most %s after the current time; the catalog stays empty while the scan reads empty hours", replaceMaxUntilLead)
+	}
+	before, err := cfg.source.spanBefore(ctx, cfg.project, cfg.since)
+	if err != nil {
+		return false, err
+	}
+	if before {
+		return false, errors.New("--replace needs --since at or before the project's oldest stored span; spans before --since would lose their catalog rows")
+	}
+	after, err := cfg.source.spanNotBefore(ctx, cfg.project, cfg.until)
+	if err != nil {
+		return false, err
+	}
+	if after {
+		return false, errors.New("--replace needs --until after the project's newest stored span; spans at or after --until would lose their catalog rows")
+	}
+	within, err := cfg.source.spanBetween(ctx, cfg.project, cfg.since, cfg.until)
+	if err != nil {
+		return false, err
+	}
+	if !within && !cfg.allowEmpty {
+		return false, errors.New("--replace found no stored span of the project between --since and --until; check the source database, or pass --allow-empty-rebuild if its spans have all expired")
+	}
+	return within, nil
+}
+
+// purgeProject runs once per checkpoint, before the first page is published. The
+// purge is recorded right after the deletes; a crash in between repeats the
+// deletes on retry, which is harmless because nothing has been published yet.
+func purgeProject(ctx context.Context, cfg options, scopes scopeReader, scope observedcatalog.Scope, progress *checkpoint, output io.Writer) error {
+	if progress.Pages != 0 || progress.Complete {
+		return errors.New("checkpoint has scan progress but no recorded purge; start a new checkpoint")
+	}
+	if cfg.purger == nil {
+		return errors.New("--replace has no index connection to purge")
+	}
+	hasSpans, err := checkReplaceRange(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	current, err := scopes.Scope(ctx, cfg.project)
+	if err != nil || current != scope {
+		return errors.New("project ownership changed before the purge; nothing deleted")
+	}
+	if err := cfg.purger.DeleteProject(ctx, scope); err != nil {
+		return fmt.Errorf("purging the project's catalog rows failed, nothing published; repeat the same command: %w", err)
+	}
+	progress.Purged = true
+	if err := saveCheckpoint(cfg.checkpointPath, *progress); err != nil {
+		return err
+	}
+	return json.NewEncoder(output).Encode(map[string]any{"catalog_purged": true, "project_has_spans": hasSpans})
+}
+
 func runSpans(ctx context.Context, cfg options, scopes scopeReader, publisher observedcatalog.Publisher, output io.Writer) error {
+	if cfg.replace && !cfg.apply {
+		return errors.New("--replace deletes catalog rows and requires --apply")
+	}
 	scope, err := scopes.Scope(ctx, cfg.project)
 	if err != nil {
 		return err
@@ -333,6 +479,11 @@ func runSpans(ctx context.Context, cfg options, scopes scopeReader, publisher ob
 		}
 		if progress.Hour.Before(cfg.since.Truncate(time.Hour).Add(-time.Hour)) || progress.Hour.After(lastHour(cfg.until)) {
 			return errors.New("checkpoint hour is outside requested scan")
+		}
+		if cfg.replace && !progress.Purged {
+			if err := purgeProject(ctx, cfg, scopes, scope, &progress, output); err != nil {
+				return err
+			}
 		}
 	}
 	encoder := json.NewEncoder(output)
@@ -430,9 +581,29 @@ Bounds: --page-size 64 --max-pages 100 --page-delay 100ms
 Every hour of the range takes at least one page. A preview keeps no checkpoint:
 raise --max-pages to at least the range's hours or narrow it.
 
+Replace a project's catalog instead of adding to it (spans only):
+  fi-observed-catalog-backfill --project UUID --since RFC3339 --until RFC3339 \
+    --apply --replace --checkpoint /writable/progress.json
+Deletes every catalog row of the project once, then rebuilds from stored spans,
+which leaves out spans marked as simulated. The project's catalog is incomplete
+until the scan finishes: resume the same checkpoint, which never deletes again.
+Keys that only expired spans or a legacy import supplied are not rebuilt. Rows
+stored under the project's previous workspace are left in place.
+The delete needs the index connection (FI_OBSERVED_CATALOG_CH_URL and CH_DATABASE),
+also in Kafka mode, as a ClickHouse user with ALTER DELETE on the two catalog
+tables. Use a user separate from the live writer, which keeps SELECT and INSERT only.
+Before deleting, the run is refused unless no stored span of the project is before
+--since or at/after --until, at least one is in between, and --until is 1h to 24h
+after now. For a project whose spans have all expired, add --allow-empty-rebuild.
+Run it once the collector that skips simulated spans is deployed and the consumer
+has no backlog, so no older message re-adds rows. A delete that times out may have
+applied: repeat the same command.
+
 Preview a verified historical batch instead:
   --source legacy --project UUID --legacy-epoch N --legacy-revision N --legacy-build UUID
 Apply additionally requires --verified-legacy; omit --since and --until.
+The import is refused for a project marked as holding simulated traces, because
+legacy rows carry no simulation marks; rebuild that project with --replace.
 
 Source credentials (read-only): FI_PG_DSN and FI_OBSERVED_BACKFILL_CH_URL,
 FI_OBSERVED_BACKFILL_CH_DATABASE, FI_OBSERVED_BACKFILL_CH_USERNAME,
@@ -461,10 +632,21 @@ repair late-arriving spans.
 	}
 }
 
+var errHoldingProject = errors.New("project holds simulated traces; the legacy catalog carries no simulation marks, so nothing was published; rebuild this project's catalog from spans with --replace")
+
 func runLegacy(ctx context.Context, cfg options, scopes scopeReader, publisher observedcatalog.Publisher, output io.Writer) error {
 	scope, err := scopes.Scope(ctx, cfg.project)
 	if err != nil {
 		return err
+	}
+	// Asked in preview too, so a preview never promises an import that apply
+	// would refuse. A failed read is a refusal, never "not holding".
+	holding, err := scopes.Holding(ctx, cfg.project)
+	if err != nil {
+		return fmt.Errorf("could not check whether the project holds simulated traces; nothing published: %w", err)
+	}
+	if holding {
+		return errHoldingProject
 	}
 	selection := legacySelection{Scope: scope, Epoch: uint16(cfg.legacyEpoch), Revision: cfg.legacyRevision, BuildToken: cfg.legacyBuild}
 	progress := checkpoint{Binding: scanBinding(cfg, scope), Hour: cfg.since}
@@ -488,6 +670,13 @@ func runLegacy(ctx context.Context, cfg options, scopes scopeReader, publisher o
 		current, err := scopes.Scope(ctx, cfg.project)
 		if err != nil || current != scope {
 			return errors.New("project ownership changed during legacy import; page not published")
+		}
+		holding, err := scopes.Holding(ctx, cfg.project)
+		if err != nil {
+			return fmt.Errorf("could not check whether the project holds simulated traces; page not published: %w", err)
+		}
+		if holding {
+			return fmt.Errorf("%w (it started holding during this import; page not published)", errHoldingProject)
 		}
 		if cfg.apply && !batch.Empty() {
 			if err := publisher.Publish(ctx, batch); err != nil {
@@ -523,6 +712,15 @@ func runLegacy(ctx context.Context, cfg options, scopes scopeReader, publisher o
 	return nil
 }
 
+// newPurger deletes from the catalog index, never from the span source.
+func newPurger(cfg options) (projectPurger, error) {
+	sink, err := observedcatalog.NewClickHouseSink(cfg.catalog)
+	if err != nil {
+		return nil, err
+	}
+	return sink, nil
+}
+
 func run(ctx context.Context, args []string, getenv func(string) string, output io.Writer) error {
 	cfg, err := parseOptions(args, getenv)
 	if err != nil {
@@ -533,6 +731,12 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 		return err
 	}
 	defer owner.conn.Close(context.Background())
+	if cfg.replace {
+		cfg.purger, err = newPurger(cfg)
+		if err != nil {
+			return err
+		}
+	}
 	var publisher observedcatalog.Publisher
 	if cfg.apply && cfg.index.URL != "" {
 		publisher, err = observedcatalog.NewClickHouseSink(cfg.index)

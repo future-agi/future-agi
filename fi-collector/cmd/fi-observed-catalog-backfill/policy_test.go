@@ -56,6 +56,7 @@ func TestExtractionPolicyAllowsOnlyKnownExclusions(t *testing.T) {
 func policyRow() map[string]any {
 	row := exampleSpan(exampleScope()).Row
 	row["is_deleted"], row["_version"] = 0, "1"
+	row[simulatedResourceColumn] = 0
 	row["observation_type"], row["service_name"], row["trace_id"], row["id"] = "span", "s", "t", "a"
 	return row
 }

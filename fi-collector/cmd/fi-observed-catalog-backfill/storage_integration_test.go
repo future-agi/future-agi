@@ -101,6 +101,7 @@ func TestPersistedRowsUseTheLiveExtractor(t *testing.T) {
 		row[key] = value
 	}
 	row["is_deleted"] = 0
+	row[simulatedResourceColumn] = 0
 	direct, _, err := observedcatalog.Extract(span, observedcatalog.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)

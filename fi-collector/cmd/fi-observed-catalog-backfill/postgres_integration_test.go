@@ -103,7 +103,7 @@ func TestBackfillCLIThroughKafkaWithResume(t *testing.T) {
 	localSQL(t, origin, `CREATE TABLE `+sourceDB+`.spans (
 project_id UUID, org_id Nullable(UUID), observation_type String, service_name String, trace_id String, id String,
 start_time DateTime64(6, 'UTC'), attrs_string Map(String,String), attrs_number Map(String,Float64), attrs_bool Map(String,UInt8),
-attributes_extra JSON, model String, _version UInt64, is_deleted UInt8)
+attributes_extra JSON, model String, _version UInt64, is_deleted UInt8, resource_attrs JSON)
 ENGINE=MergeTree ORDER BY (project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id)`)
 	localSQL(t, origin, `INSERT INTO `+sourceDB+`.spans FORMAT JSONEachRow
 {"project_id":"`+scope.ProjectID+`","org_id":"`+scope.OrganizationID+`","observation_type":"span","service_name":"s","trace_id":"t","id":"a","start_time":"2026-01-01 12:01:00","attrs_string":{"company_id":"001"},"attrs_number":{},"attrs_bool":{},"attributes_extra":{},"model":"m","_version":1,"is_deleted":0}

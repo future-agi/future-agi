@@ -29,6 +29,9 @@ type checkpoint struct {
 	// checkpoint; an older binary can ignore and drop the field when rewriting.
 	PolicyExclusionSpans uint64 `json:"recorded_policy_exclusion_spans,omitempty"`
 	QuarantinedSpans     uint64 `json:"recorded_quarantined_spans,omitempty"`
+	// Set once a --replace run has deleted the project's catalog rows, before
+	// any page is published. A resume must not delete rows it has rebuilt.
+	Purged bool `json:"catalog_purged,omitempty"`
 }
 
 func lockCheckpoint(path string) (*os.File, error) {

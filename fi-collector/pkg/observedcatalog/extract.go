@@ -51,9 +51,36 @@ func (r Report) PolicyExclusion() bool {
 	return true
 }
 
+const (
+	// simulatorCallExecutionKey is the span attribute that marks a simulated call.
+	simulatorCallExecutionKey = "fi.simulator.call_execution_id"
+	// SimulationOriginKey is the resource attribute that marks a simulated trace.
+	SimulationOriginKey = "fi.simulation.origin"
+)
+
+// isSimulated reports whether a canonical row belongs to a simulated call. The
+// span mark is read from the string attribute map, the same map the project
+// readers test; the resource mark is read from the flat resource attribute map.
+// Only presence decides, never the value.
+func isSimulated(row map[string]any) bool {
+	if attrs, ok := row["attrs_string"].(map[string]string); ok {
+		if _, marked := attrs[simulatorCallExecutionKey]; marked {
+			return true
+		}
+	}
+	if resource, ok := row["resource_attrs"].(map[string]any); ok {
+		if _, marked := resource[SimulationOriginKey]; marked {
+			return true
+		}
+	}
+	return false
+}
+
 // Extract emits custom keys and selectable scalar values plus the code-owned
 // model observation. It never mutates canonical rows. Its value eligibility
 // limits are per row; the resulting batch is chunked, never byte-truncated.
+// A simulated row yields an empty, complete batch: suggestions describe real
+// traffic only, while the span itself is stored untouched elsewhere.
 func Extract(span ScopedSpan, limits Limits) (Batch, Report, error) {
 	if limits == (Limits{}) {
 		limits = DefaultLimits()
@@ -80,6 +107,11 @@ func Extract(span ScopedSpan, limits Limits) (Batch, Report, error) {
 		return Batch{}, Report{}, err
 	}
 	batch := Batch{Keys: []KeyRow{}, Values: []ValueRow{}}
+	// Skip only after the row has passed every check above, so an invalid row
+	// fails the same way whether or not it is marked.
+	if isSimulated(span.Row) {
+		return batch, Report{Complete: true}, nil
+	}
 	gaps := map[string]bool{}
 	// Reject empty/oversized keys before they consume the selection budget.
 	// Nonempty whitespace/control keys are exact identities, never normalized.
