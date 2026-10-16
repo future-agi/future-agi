@@ -664,6 +664,37 @@ DEAD_AIR_DETECTION = '''def evaluate(input, output, expected, context, **kwargs)
 '''
 
 
+AUDIO_SIGNAL_METRICS = '''def evaluate(input, output, expected, context, **kwargs):
+    """Check backend-preprocessed voiced pitch and estimated SNR bounds."""
+    error = kwargs.get("_audio_metrics_error")
+    if error:
+        return {"score": 0.0, "reason": f"Audio metrics unavailable: {error}"}
+
+    pitch = kwargs.get("_audio_average_pitch_hz")
+    snr = kwargs.get("_audio_estimated_snr_db")
+    if pitch is None or snr is None:
+        return {"score": 0.0, "reason": "Audio metrics unavailable: pitch or SNR was not measurable"}
+
+    try:
+        min_pitch = float(kwargs.get("min_pitch_hz", 80.0))
+        max_pitch = float(kwargs.get("max_pitch_hz", 400.0))
+        min_snr = float(kwargs.get("min_snr_db", 6.0))
+    except (TypeError, ValueError):
+        return {"score": 0.0, "reason": "Invalid audio-metrics thresholds"}
+
+    pitch_passed = min_pitch <= float(pitch) <= max_pitch
+    snr_passed = float(snr) >= min_snr
+    passed = pitch_passed and snr_passed
+    reason = (
+        f"Pitch: {float(pitch):.1f} Hz "
+        f"({'pass' if pitch_passed else 'fail'}, range {min_pitch:.1f}-{max_pitch:.1f}). "
+        f"Estimated SNR: {float(snr):.1f} dB "
+        f"({'pass' if snr_passed else 'fail'}, minimum {min_snr:.1f} dB)."
+    )
+    return {"score": 1.0 if passed else 0.0, "reason": reason}
+'''
+
+
 # =============================================================================
 # Registry: eval_name → code string
 # =============================================================================
@@ -704,4 +735,5 @@ CODE_REGISTRY = {
     "clip_score": CLIP_SCORE,
     "fid_score": FID_SCORE,
     "dead_air_detection": DEAD_AIR_DETECTION,
+    "audio_signal_metrics": AUDIO_SIGNAL_METRICS,
 }

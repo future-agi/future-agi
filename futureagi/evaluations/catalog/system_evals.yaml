@@ -2999,3 +2999,20 @@ conversational_naturalness:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # (Defined in system_eval_code.py — each eval has a Python function)
+
+audio_signal_metrics:
+  eval_type: code
+  output: Pass/Fail
+  required_keys: [input_audio]
+  description: Checks deterministic voiced pitch and estimated SNR bounds for audio
+  tags: [Audio, Quality]
+  function_params_schema:
+    min_pitch_hz:
+      type: number
+      default: 80.0
+    max_pitch_hz:
+      type: number
+      default: 400.0
+    min_snr_db:
+      type: number
+      default: 6.0
