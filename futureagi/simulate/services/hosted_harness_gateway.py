@@ -201,17 +201,14 @@ def _ask_harness_to_build(
     job: HostedHarnessJob, attempt: HostedHarnessAttempt, endpoint_base_url: str
 ) -> None:
     """Put the build request into the environment's conversation; its harness does the build."""
-    from simulate.services.hosted_harness_conversation import enqueue_message
-    from simulate.tasks.hosted_harness_conversation import schedule_conversation_runtime
+    from simulate.services.hosted_harness_conversation import send_to_harness
 
-    conversation, _message, _created = enqueue_message(
+    send_to_harness(
         job,
-        content=(
-            f"Build the test environment for this agent, with {job.scenario_count} scenarios."
-        ),
+        content=f"Build the test environment for this agent, with {job.scenario_count} scenarios.",
         client_request_id=f"build-{attempt.id}",
+        endpoint_base_url=endpoint_base_url,
     )
-    schedule_conversation_runtime(str(conversation.id), endpoint_base_url)
 
 
 def _alk_source_overlay() -> bytes | None:
