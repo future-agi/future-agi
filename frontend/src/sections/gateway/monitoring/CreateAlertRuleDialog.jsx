@@ -19,7 +19,6 @@ import {
 } from "../constants/alerting";
 
 const CONDITIONS = [">", ">=", "<", "<=", "=="];
-const SEVERITIES = ["critical", "warning", "info"];
 
 const CreateAlertRuleDialog = ({
   open,
@@ -33,7 +32,6 @@ const CreateAlertRuleDialog = ({
   const [condition, setCondition] = useState(">");
   const [threshold, setThreshold] = useState("");
   const [window, setWindow] = useState("5m");
-  const [severity, setSeverity] = useState("warning");
   const [ruleChannels, setRuleChannels] = useState([]);
 
   const updateConfig = useUpdateConfig();
@@ -44,7 +42,6 @@ const CreateAlertRuleDialog = ({
     setCondition(">");
     setThreshold("");
     setWindow("5m");
-    setSeverity("warning");
     setRuleChannels([]);
   };
 
@@ -55,6 +52,8 @@ const CreateAlertRuleDialog = ({
 
   const handleCreate = () => {
     const ruleName = name.trim();
+    // Only the fields the gateway's rule schema accepts: it rejects unknown
+    // keys, so anything extra here fails the whole save.
     const rule = {
       name: ruleName,
       metric,
@@ -62,8 +61,6 @@ const CreateAlertRuleDialog = ({
       threshold: Number(threshold),
       window,
       channels: ruleChannels,
-      severity,
-      enabled: true,
     };
 
     // Send the whole array rather than a single name-keyed entry: the patch
@@ -147,19 +144,6 @@ const CreateAlertRuleDialog = ({
             onChange={(e) => setWindow(e.target.value)}
             placeholder="e.g., 5m, 1h"
           />
-          <TextField
-            label="Severity"
-            select
-            fullWidth
-            value={severity}
-            onChange={(e) => setSeverity(e.target.value)}
-          >
-            {SEVERITIES.map((s) => (
-              <MenuItem key={s} value={s}>
-                {s}
-              </MenuItem>
-            ))}
-          </TextField>
           <TextField
             label="Notify Channels"
             select

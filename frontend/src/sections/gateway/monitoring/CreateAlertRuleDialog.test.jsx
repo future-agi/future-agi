@@ -75,6 +75,25 @@ describe("CreateAlertRuleDialog", () => {
     ]);
   });
 
+  it("sends only the fields the gateway's rule schema accepts", async () => {
+    const user = userEvent.setup();
+    render(<CreateAlertRuleDialog open onClose={vi.fn()} gatewayId="gw-1" />);
+
+    await fillAndSubmit(user);
+
+    // The rule schema forbids unknown keys, so a per-rule `severity` or
+    // `enabled` makes every save fail with a 400.
+    const [payload] = mockUpdateMutate.mock.calls[0];
+    expect(Object.keys(payload.config.alerting.rules[0]).sort()).toEqual([
+      "channels",
+      "condition",
+      "metric",
+      "name",
+      "threshold",
+      "window",
+    ]);
+  });
+
   it("turns per-org alerting on so the new rule is actually evaluated", async () => {
     const user = userEvent.setup();
     render(<CreateAlertRuleDialog open onClose={vi.fn()} gatewayId="gw-1" />);

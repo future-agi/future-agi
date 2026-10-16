@@ -76,12 +76,6 @@ function tabSlugToIndex(slug) {
   return idx >= 0 ? idx : 0;
 }
 
-function getSeverityColor(severity) {
-  if (severity === "critical") return "error";
-  if (severity === "warning") return "warning";
-  return "info";
-}
-
 // ---------------------------------------------------------------------------
 // Alert Rules Tab
 // ---------------------------------------------------------------------------
@@ -97,7 +91,6 @@ const AlertRulesTab = ({ rules, onDelete, isDeleting }) => (
             <TableCell>Condition</TableCell>
             <TableCell>Threshold</TableCell>
             <TableCell>Window</TableCell>
-            <TableCell>Severity</TableCell>
             <TableCell>Status</TableCell>
             <TableCell align="right">Actions</TableCell>
           </TableRow>
@@ -132,13 +125,6 @@ const AlertRulesTab = ({ rules, onDelete, isDeleting }) => (
               </TableCell>
               <TableCell>
                 <Chip
-                  label={rule.severity || "info"}
-                  color={getSeverityColor(rule.severity)}
-                  size="small"
-                />
-              </TableCell>
-              <TableCell>
-                <Chip
                   label={rule.enabled !== false ? "Active" : "Disabled"}
                   color={rule.enabled !== false ? "success" : "default"}
                   size="small"
@@ -164,7 +150,7 @@ const AlertRulesTab = ({ rules, onDelete, isDeleting }) => (
           ))}
           {rules.length === 0 && (
             <TableRow>
-              <TableCell colSpan={8} align="center">
+              <TableCell colSpan={7} align="center">
                 <Typography variant="body2" color="text.secondary" py={4}>
                   No alert rules configured. Click &quot;Create Rule&quot; to
                   add your first alert rule.
