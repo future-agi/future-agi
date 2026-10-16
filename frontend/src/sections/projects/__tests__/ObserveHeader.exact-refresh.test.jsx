@@ -167,6 +167,18 @@ describe("ObserveHeader exact aggregation refresh state", () => {
     expect(screen.queryByText(/Last updated on/i)).not.toBeInTheDocument();
   });
 
+  it("does not dispatch a duplicate refresh when the owner handled it", () => {
+    const refreshData = renderHeader(vi.fn(() => true));
+    const refresh = vi.fn();
+    window.addEventListener("observe-refresh", refresh);
+
+    fireEvent.click(screen.getByTestId("mdi:refresh").closest("button"));
+
+    expect(refreshData).toHaveBeenCalledWith({ includeAggregations: false });
+    expect(refresh).not.toHaveBeenCalled();
+    window.removeEventListener("observe-refresh", refresh);
+  });
+
   const setAggregationRefreshing = (sourceId, refreshing) => {
     window.dispatchEvent(
       new CustomEvent("observe-aggregation-refresh-state", {
@@ -195,7 +207,10 @@ describe("ObserveHeader exact aggregation refresh state", () => {
     });
     expect(rowsOnly).toBeEnabled();
     fireEvent.click(rowsOnly);
-    expect(refreshData).toHaveBeenCalledWith({ includeAggregations: false });
+    expect(refreshData).toHaveBeenCalledWith({
+      includeAggregations: false,
+      listOnly: true,
+    });
     expect(listRefresh).toHaveBeenCalledOnce();
     expect(aggregationRefresh).not.toHaveBeenCalled();
 
