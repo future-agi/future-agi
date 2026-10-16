@@ -3320,6 +3320,8 @@ export type OrgConfigBulkResponseApiResult = {
 export interface OrgConfigBulkResponseApi {
   status: boolean;
   result: OrgConfigBulkResponseApiResult;
+  /** Orgs with an active config that could not be built. The gateway keeps their last good config instead of dropping them. */
+  unbuilt_org_ids: string[];
 }
 
 export type AgentccProviderCredentialApiModelsList = { [key: string]: unknown };

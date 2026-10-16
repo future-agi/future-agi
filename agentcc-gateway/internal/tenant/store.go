@@ -110,7 +110,8 @@ func (s *Store) LoadBulk(configs map[string]*OrgConfig) {
 // MergeBulk merges successfully parsed org configs into the store.
 //   - Orgs in parsedConfigs are added or updated.
 //   - Orgs present in the control plane response (allOrgIDs) but NOT in
-//     parsedConfigs failed to parse — their existing store entries are preserved.
+//     parsedConfigs failed to parse here or could not be built by the control
+//     plane — their existing store entries are preserved.
 //   - Orgs in the store that are NOT in allOrgIDs were removed from the control
 //     plane — they are deleted from the store.
 //

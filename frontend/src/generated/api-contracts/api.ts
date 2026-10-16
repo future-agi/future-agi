@@ -15741,7 +15741,8 @@ export const getAgentccOrgConfigsBulkListUrl = () => {
 
 /**
  * Bulk endpoint for gateway startup sync.
-Returns all active org configs keyed by org ID.
+Returns all active org configs keyed by org ID, plus the ids of orgs whose
+payload could not be built, so the gateway keeps their last good config.
 Authenticated by admin token (not user JWT).
  */
 export const agentccOrgConfigsBulkList = async (
