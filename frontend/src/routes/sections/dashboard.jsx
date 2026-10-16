@@ -170,6 +170,9 @@ const ObserveList = lazyWithRetry(
 const ProjectWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/projects/ProjectWrapper"),
 );
+const DatasetExperimentsMock = lazyWithRetry(
+  () => import("src/pages/dashboard/dataset-experiments/DatasetExperimentsMock"),
+);
 const HuggingFacePage = lazyWithRetry(
   () => import("src/pages/dashboard/huggingface/HuggingFace"),
 );
@@ -1139,6 +1142,10 @@ export const dashboardRoutes = (
           element: <UsersView />,
         },
       ],
+    },
+    {
+      path: "prototype",
+      element: <DatasetExperimentsMock />,
     },
     {
       path: "develop",
