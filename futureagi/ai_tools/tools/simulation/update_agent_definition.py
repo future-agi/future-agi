@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from django.db import transaction
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import ConfigDict, Field, field_validator
 
@@ -124,6 +125,18 @@ class UpdateAgentDefinitionTool(BaseTool):
 
         from simulate.models.agent_definition import AgentDefinition
         from simulate.models.agent_version import AgentVersion
+        from simulate.services.agent_definition import (
+            is_masked,
+            sync_provider_credentials,
+        )
+        from simulate.services.types.agent_definition import (
+            ProviderCredentialsInput,
+        )
+        from tracer.services.observability_switch import (
+            ObservabilityRefused,
+            refusal_body,
+            set_agent_observability,
+        )
 
         try:
             agent = AgentDefinition.objects.get(
@@ -267,43 +280,40 @@ class UpdateAgentDefinitionTool(BaseTool):
                     "Provide assistant_id in this update or ensure it is already set on the agent."
                 )
 
-        agent.save(update_fields=updated_fields + ["updated_at"])
+        try:
+            with transaction.atomic():
+                agent.save(update_fields=updated_fields + ["updated_at"])
 
-        # Handle observability provider (matches CreateAgentVersionView logic)
-        provider = agent.observability_provider
-        if provider:
-            is_project_deleted = provider.project.deleted
-            if is_project_deleted:
-                agent.observability_provider = None
-                agent.save()
-            else:
-                provider.enabled = observability_enabled
-                provider.save()
-        else:
-            if observability_enabled:
-                from tracer.utils.observability_provider import (
-                    create_observability_provider,
+                # Create a new active version (matches CreateAgentVersionView flow)
+                version = agent.create_version(
+                    description=agent.description,
+                    commit_message=params.commit_message
+                    or f"Updated fields: {', '.join(updated_fields)}",
+                    status=AgentVersion.StatusChoices.ACTIVE,
                 )
-
-                new_provider = create_observability_provider(
-                    enabled=True,
+                if params.api_key and not is_masked(params.api_key):
+                    sync_provider_credentials(
+                        version,
+                        ProviderCredentialsInput(
+                            provider=agent.provider or "",
+                            api_key=params.api_key,
+                            assistant_id=agent.assistant_id or None,
+                            provider_was_provided=params.provider is not None,
+                        ),
+                    )
+                set_agent_observability(
+                    agent_definition=agent,
+                    enabled=observability_enabled,
                     user_id=str(context.user.id),
                     organization=context.organization,
                     workspace=context.workspace,
-                    project_name=agent.agent_name,
-                    provider=agent.provider,
                 )
-                if new_provider and not isinstance(new_provider, dict):
-                    agent.observability_provider = new_provider
-                    agent.save()
-
-        # Create a new active version (matches CreateAgentVersionView flow)
-        version = agent.create_version(
-            description=agent.description,
-            commit_message=params.commit_message
-            or f"Updated fields: {', '.join(updated_fields)}",
-            status=AgentVersion.StatusChoices.ACTIVE,
-        )
+                version.configuration_snapshot = version.create_snapshot(
+                    commit_message=version.commit_message or ""
+                )
+                version.save(update_fields=["configuration_snapshot"])
+        except ObservabilityRefused as error:
+            return ToolResult.validation_error(refusal_body(error)["detail"])
 
         info = key_value_block(
             [

@@ -90,6 +90,7 @@ from .views import (
     SimulatorAgentDetailView,
     SimulatorAgentListView,
 )
+from .views.agent_setup import StoredAgentView
 from .views.agent_version import (
     ActivateAgentVersionView,
     AgentVersionCallExecutionView,
@@ -306,6 +307,11 @@ urlpatterns = [
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/call-executions/",
         AgentVersionCallExecutionView.as_view(),
         name="agent-versions-call-executions",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/agent/",
+        StoredAgentView.as_view(),
+        name="agent-versions-stored-agent",
     ),
     # Simulator Agent API endpoints
     path(

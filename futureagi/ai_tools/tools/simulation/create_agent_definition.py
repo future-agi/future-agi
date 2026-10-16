@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from django.db import transaction
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
@@ -227,12 +228,24 @@ class CreateAgentDefinitionTool(BaseTool):
 
         from simulate.models.agent_definition import AgentDefinition
         from simulate.models.agent_version import AgentVersion
+        from simulate.services.agent_definition import (
+            is_masked,
+            sync_provider_credentials,
+        )
+        from simulate.services.types.agent_definition import (
+            ProviderCredentialsInput,
+        )
         from tracer.models.replay_session import ReplaySession
+        from tracer.services.observability_switch import (
+            ObservabilityRefused,
+            refusal_body,
+            set_agent_observability,
+        )
         from tracer.utils.otel import ResourceLimitError
         from tracer.utils.replay_session import link_agent_to_replay_session
 
-        # Create observability provider if enabled
-        observability_provider = None
+        # Only a complete, supported provider turns observability on at creation.
+        turn_on_observability = False
         if (
             params.observability_enabled
             and params.assistant_id
@@ -240,9 +253,6 @@ class CreateAgentDefinitionTool(BaseTool):
             and params.provider
         ):
             from tracer.models.observability_provider import ProviderChoices
-            from tracer.utils.observability_provider import (
-                create_observability_provider,
-            )
 
             supported_providers = [
                 ProviderChoices.VAPI,
@@ -250,19 +260,7 @@ class CreateAgentDefinitionTool(BaseTool):
                 ProviderChoices.BLAND,
                 ProviderChoices.OTHERS,
             ]
-            # Align with backend view: only create when provider is supported.
-            if params.provider and params.provider in supported_providers:
-                try:
-                    observability_provider = create_observability_provider(
-                        enabled=True,
-                        user_id=str(context.user.id),
-                        organization=context.organization,
-                        workspace=context.workspace,
-                        project_name=params.agent_name,
-                        provider=params.provider,
-                    )
-                except ResourceLimitError:
-                    return ToolResult.validation_error("PROJECT CREATION LIMIT REACHED")
+            turn_on_observability = params.provider in supported_providers
 
         # Resolve knowledge base if provided
         knowledge_base = None
@@ -338,35 +336,64 @@ class CreateAgentDefinitionTool(BaseTool):
                         "Please recheck your API key and assistant ID."
                     )
 
-        agent = AgentDefinition(
-            agent_name=params.agent_name,
-            agent_type=params.agent_type,
-            provider=params.provider,
-            model=params.model,
-            model_details=params.model_details or {},
-            description=fetched_description,
-            language=params.language,
-            languages=params.languages,
-            contact_number=params.contact_number,
-            inbound=params.inbound,
-            organization=context.organization,
-            workspace=context.workspace,
-            observability_provider=observability_provider,
-            assistant_id=params.assistant_id,
-            api_key=params.api_key,
-            authentication_method=params.authentication_method,
-            websocket_url=params.websocket_url,
-            websocket_headers=params.websocket_headers or {},
-            knowledge_base=knowledge_base,
-        )
-        agent.save()
+        try:
+            with transaction.atomic():
+                agent = AgentDefinition(
+                    agent_name=params.agent_name,
+                    agent_type=params.agent_type,
+                    provider=params.provider,
+                    model=params.model,
+                    model_details=params.model_details or {},
+                    description=fetched_description,
+                    language=params.language,
+                    languages=params.languages,
+                    contact_number=params.contact_number,
+                    inbound=params.inbound,
+                    organization=context.organization,
+                    workspace=context.workspace,
+                    observability_provider=None,
+                    assistant_id=params.assistant_id,
+                    api_key=params.api_key,
+                    authentication_method=params.authentication_method,
+                    websocket_url=params.websocket_url,
+                    websocket_headers=params.websocket_headers or {},
+                    knowledge_base=knowledge_base,
+                )
+                agent.save()
 
-        # Create the first version (matches CreateAgentDefinitionView.post behavior)
-        agent.create_version(
-            description=fetched_description,
-            commit_message=params.commit_message,
-            status=AgentVersion.StatusChoices.ACTIVE,
-        )
+                # Create the first version (matches CreateAgentDefinitionView.post behavior)
+                version = agent.create_version(
+                    description=fetched_description,
+                    commit_message=params.commit_message,
+                    status=AgentVersion.StatusChoices.ACTIVE,
+                )
+                if params.api_key and not is_masked(params.api_key):
+                    sync_provider_credentials(
+                        version,
+                        ProviderCredentialsInput(
+                            provider=agent.provider or "",
+                            api_key=params.api_key,
+                            assistant_id=agent.assistant_id or None,
+                            provider_was_provided=params.provider is not None,
+                        ),
+                    )
+                observability_provider = None
+                if turn_on_observability:
+                    observability_provider = set_agent_observability(
+                        agent_definition=agent,
+                        enabled=True,
+                        user_id=str(context.user.id),
+                        organization=context.organization,
+                        workspace=context.workspace,
+                    )
+                version.configuration_snapshot = version.create_snapshot(
+                    commit_message=version.commit_message or ""
+                )
+                version.save(update_fields=["configuration_snapshot"])
+        except ResourceLimitError:
+            return ToolResult.validation_error("PROJECT CREATION LIMIT REACHED")
+        except ObservabilityRefused as error:
+            return ToolResult.validation_error(refusal_body(error)["detail"])
 
         # Optional: link agent definition to a replay session (matches CreateAgentDefinitionView.post).
         if params.replay_session_id:

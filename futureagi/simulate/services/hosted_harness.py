@@ -14,6 +14,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from simulate.models import (
+    AgentVersion,
     CallExecution,
     HostedHarnessAttempt,
     HostedHarnessCleanupReceipt,
@@ -24,6 +25,7 @@ from simulate.models import (
     HostedHarnessScenario,
     TestExecution,
 )
+from simulate.services.agent_setup import AgentStoreError, store_agent
 from simulate.services.alk_simulate_ingestion import (
     ALKSimulateIngestionError,
     append_alk_sim_scenarios,
@@ -1084,6 +1086,7 @@ def provision_scenarios(
                 for persona, row in zip(payload["personas"], dataset_rows, strict=True)
             ]
         _record_target_agent_facts(locked, agent_definition, payload)
+        _store_authored_agent(locked, agent_definition, payload)
         _select_platform_evals(locked, run_test, payload, modality)
     return _provision_response(locked, registrations)
 
@@ -1207,6 +1210,54 @@ def _record_target_agent_facts(
             description=prompt,
             commit_message="hosted harness target agent prompt",
             status="active",
+        )
+
+
+def _store_authored_agent(
+    job: HostedHarnessJob, agent_definition, payload: dict[str, Any]
+) -> None:
+    sent = payload.get("agent")
+    source_kind = str((job.payload.get("source") or {}).get("kind") or "")
+    if (
+        sent is None
+        or payload.get("agent_definition_id")
+        or source_kind not in ("github", "archive")
+    ):
+        return
+    agent_version_id = None
+    try:
+        with transaction.atomic():
+            version = agent_definition.latest_version
+            if version is None:
+                version = agent_definition.create_version(
+                    description="",
+                    commit_message="hosted harness authored agent",
+                    status="active",
+                )
+                AgentVersion.no_workspace_objects.filter(id=version.id).update(
+                    configuration_snapshot={
+                        **version.configuration_snapshot,
+                        "description": "",
+                    }
+                )
+            agent_version_id = version.id
+            if not (
+                isinstance(sent, dict)
+                and isinstance(sent.get("agent"), dict)
+                and isinstance(sent.get("sdk_version"), str)
+            ):
+                raise AgentStoreError("agent_invalid")
+            store_agent(
+                agent_version_id=version.id,
+                agent=sent["agent"],
+                sdk_version=sent["sdk_version"],
+            )
+    except Exception as exc:
+        logger.warning(
+            "harness_agent_not_stored",
+            job_id=str(job.id),
+            agent_version_id=str(agent_version_id) if agent_version_id else None,
+            code=exc.code if isinstance(exc, AgentStoreError) else type(exc).__name__,
         )
 
 
