@@ -22,7 +22,7 @@ import { ShowComponent } from "src/components/show";
 import useVoiceAudioStore from "./voiceAudioStore";
 import { computeTotals, enrichTurns, formatClock } from "./transcriptUtils";
 import { DEFAULT_ROLE_LABELS } from "./constants";
-import FunctionCallContent from "./FunctionCallContent";
+import { ToolCallList } from "src/components/tool-call/ToolCallCard";
 
 // Highlight query matches in a string — returns React nodes.
 const highlightMatches = (text, query) => {
@@ -463,10 +463,7 @@ const TurnRow = React.forwardRef(
           }}
         >
           {isFunctionCall ? (
-            <FunctionCallContent
-              calls={turn.toolCalls}
-              renderText={(text) => highlightMatches(text, query)}
-            />
+            <ToolCallList calls={turn.toolCalls} />
           ) : query ? (
             <Typography
               sx={{ fontSize: 12.5, lineHeight: 1.45, whiteSpace: "pre-wrap" }}
