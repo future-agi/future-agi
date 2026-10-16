@@ -10,7 +10,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Q, Sum
 
-from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSION
+from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSIONS
 from tracer.models.trace_grouping import (
     TraceGroupingAttempt,
     TraceGroupingCall,
@@ -214,7 +214,11 @@ def reserve_call(
             getattr(settings, "ERROR_FEED_GROUPING_TENANT_BUDGET_USD", "0")
         )
         prior_work_calls = list(work_calls[:101])
-        if len(prior_work_calls) > 100:
+        if len(prior_work_calls) >= 100:
+            if scope.policy_version in SAMPLED_GROUPING_POLICY_VERSIONS:
+                return _budget_refusal(
+                    scope, attempt, request_digest, "work_calls", amount
+                )
             raise GroupingConflict("work call count exceeds bound")
         work_committed = sum(
             (item.cost_usd if item.cost_usd is not None else item.max_cost_usd)
@@ -256,7 +260,7 @@ def reserve_call(
             refusal = _budget_refusal(scope, attempt, request_digest, limit, amount)
             if (
                 severity_job_id is None
-                and scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+                and scope.policy_version in SAMPLED_GROUPING_POLICY_VERSIONS
             ):
                 return refusal
             raise GroupingConflict("grouping project budget exhausted or disabled")
