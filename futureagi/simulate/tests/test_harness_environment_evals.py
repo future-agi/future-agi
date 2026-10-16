@@ -985,9 +985,9 @@ def test_a_broker_failure_stops_further_dispatch_and_clears_the_remaining_stamps
 # Same `django_capture_on_commit_callbacks(execute=True)` rule as above
 # applies to every test below that posts and expects a dispatch outcome.
 
-# The nine names the two cap tests bind. They are real catalog names, not
-# invented ones: `add_selected_eval` refuses any name that is not a key of
-# `evaluations/catalog/system_evals.yaml`, so a made-up placeholder name
+# The nine names the two cap tests bind. They are real offered names, not
+# invented ones: `add_selected_eval` refuses any name whose YAML does not set
+# `offered_in_environments`, so a made-up placeholder name
 # would come back 400 instead of filling the cap. All nine are offered for
 # voice, and `_template`'s default `("Conversation",)` is a voice-relevant
 # tag, so each one binds. `no_misselling` is deliberately not among them --

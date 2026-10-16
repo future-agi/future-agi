@@ -11,7 +11,6 @@ import uuid
 from typing import Any
 
 import structlog
-import yaml
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
@@ -43,53 +42,39 @@ _offerable_eval_names_cache: frozenset[str] | None = None
 
 
 def offerable_eval_names() -> frozenset[str]:
-    """The built-in eval names the catalog lists.
+    """The built-in eval names whose YAML sets ``offered_in_environments``.
 
-    Being a key in ``evaluations/catalog/system_evals.yaml`` is the only thing
-    that makes a built-in eval offerable. Nothing stored marks a template as
-    listed and no model field is added for it, so the key list is read from
-    the file once per process and cached here. The path comes from the seeder
-    rather than a second copy of it, so the two can never point at different
+    That flag is the only thing that makes a built-in eval offerable. The
+    names are read from the seeder's own loader once per process and cached
+    here, so the offer and the seeded templates always come from the same
     files.
 
-    Every dict entry counts, tagged or not: the seeder's own
-    ``_load_catalog_tags`` keeps only tagged entries because it is copying
-    tags, but a key with no tags is still listed here and fails the tag gate
-    instead.
-
-    Only a successful read is cached: a read failure returns an uncached
-    `frozenset()` so the very next call retries the file instead of replaying
-    one transient failure for the life of the worker.
+    Only a non-empty read is cached: an empty one returns an uncached
+    `frozenset()` so the very next call retries instead of replaying one
+    transient failure for the life of the worker.
     """
     global _offerable_eval_names_cache
     if _offerable_eval_names_cache is not None:
         return _offerable_eval_names_cache
 
-    from model_hub.management.commands.seed_system_evals import CATALOG_YAML
+    from model_hub.management.commands.seed_system_evals import load_yaml_evals
 
     try:
-        catalog = yaml.safe_load(CATALOG_YAML.read_text(encoding="utf-8")) or {}
-    except (OSError, ValueError, yaml.YAMLError):
-        # An unreadable catalog offers nothing rather than taking a launch
-        # down. Not cached: caching a transient failure would 400 every later
-        # provision forever. `ValueError` catches `UnicodeDecodeError` from a
-        # mis-encoded file, which is not an `OSError`.
-        logger.exception("harness_eval_catalog_unreadable", path=str(CATALOG_YAML))
-        return frozenset()
-    if not isinstance(catalog, dict) or not catalog:
-        # A zero-byte or all-comments file parses to `{}` — a successful read
-        # of nothing — and a list or scalar catalog would raise
-        # `AttributeError` from `.items()` below. Neither is cached, so the
-        # next call retries instead of being stuck with this one.
-        logger.warning(
-            "harness_eval_catalog_empty_or_invalid",
-            path=str(CATALOG_YAML),
-            catalog_type=type(catalog).__name__,
+        names = frozenset(
+            str(data["name"])
+            for data in load_yaml_evals()
+            if isinstance(data, dict)
+            and data.get("name")
+            and data.get("offered_in_environments") is True
         )
+    except Exception:
+        # Unreadable definitions offer nothing rather than taking a launch down.
+        logger.exception("harness_eval_offer_unreadable")
         return frozenset()
-    _offerable_eval_names_cache = frozenset(
-        str(name) for name, entry in catalog.items() if isinstance(entry, dict)
-    )
+    if not names:
+        logger.warning("harness_eval_offer_empty")
+        return frozenset()
+    _offerable_eval_names_cache = names
     return _offerable_eval_names_cache
 
 
@@ -305,10 +290,10 @@ def _has_relevant_tag(template: EvalTemplate, modality: str) -> bool:
 def _is_listed_or_owned(
     template: EvalTemplate, organization: Any, offerable: frozenset[str]
 ) -> bool:
-    """A built-in is offerable when the catalog lists it; a custom one when it is ours.
+    """A built-in is offerable when its YAML offers it; a custom one when it is ours.
 
-    Built-in means ``owner == "system"``; for those the catalog's key list is
-    the only switch, whatever the template's tags. For a custom eval the gate
+    Built-in means ``owner == "system"``; for those ``offered_in_environments``
+    is the only switch, whatever the template's tags. For a custom eval the gate
     is tenancy: this organisation's own row, never another tenant's and never
     an ownerless one.
 
@@ -542,9 +527,7 @@ def _briefing_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return {field: entry[field] for field in _BRIEFING_FIELDS}
 
 
-def briefing_evals(
-    organization, workspace, modality: str = ""
-) -> list[dict[str, Any]]:
+def briefing_evals(organization, workspace, modality: str = "") -> list[dict[str, Any]]:
     """What goes into the job's briefing under ``metadata.available_evals``.
 
     Before a contract exists the agent kind is unknown, so the union of both
