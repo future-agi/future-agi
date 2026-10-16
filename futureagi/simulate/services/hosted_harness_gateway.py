@@ -3265,19 +3265,26 @@ class HostedHarnessGateway:
                 statuses[str(value["adjustment_id"])] = value
         if not statuses:
             return
-        payload = dict(job.payload)
-        metadata = dict(payload.get("metadata") or {})
-        adjustments = list(metadata.get("adjustments") or [])
-        merged = [
-            {**item, **statuses.get(str(item.get("adjustment_id")), {})}
-            for item in adjustments
-        ]
-        if merged == adjustments:
-            return
-        metadata["adjustments"] = merged
-        payload["metadata"] = metadata
-        job.payload = payload
-        job.save(update_fields=["payload", "updated_at"])
+        # Merge into the locked row's list: an adjustment appended meanwhile must survive.
+        with transaction.atomic():
+            locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=job.id
+            )
+            payload = dict(locked.payload)
+            metadata = dict(payload.get("metadata") or {})
+            adjustments = list(metadata.get("adjustments") or [])
+            merged = [
+                {**item, **statuses.get(str(item.get("adjustment_id")), {})}
+                for item in adjustments
+            ]
+            if merged == adjustments:
+                return
+            metadata["adjustments"] = merged
+            payload["metadata"] = metadata
+            locked.payload = payload
+            locked.save(update_fields=["payload", "updated_at"])
+        job.payload = locked.payload
+        job.updated_at = locked.updated_at
 
     def _recover_offline_delivery(self, attempt: HostedHarnessAttempt) -> bool:
         """Replay the guest's durable outbound mirror through normal ingestion.
@@ -4477,39 +4484,47 @@ def _record_harness_spend(
         total = float(spend.get("total_usd") or 0.0)
     except (TypeError, ValueError):
         return
-    payload = dict(job.payload or {})
-    metadata = dict(payload.get("metadata") or {})
-    recorded = metadata.get("harness_spend")
-    attempts = (
-        dict((recorded or {}).get("attempts") or {})
-        if isinstance(recorded, dict)
-        else {}
-    )
     key = str(int(attempt_number or 1))
-    mine = attempts.get(key)
-    if isinstance(mine, dict):
-        try:
-            if float(mine.get("total_usd") or 0.0) > total:
-                return
-        except (TypeError, ValueError):
-            pass
-    attempts[key] = {
-        "total_usd": round(total, 6),
-        "unpriced_turns": int(spend.get("unpriced_turns") or 0),
-        "stages": spend.get("stages") or [],
-    }
-    metadata["harness_spend"] = {
-        "total_usd": round(
-            sum(float(one.get("total_usd") or 0.0) for one in attempts.values()), 6
-        ),
-        "unpriced_turns": sum(
-            int(one.get("unpriced_turns") or 0) for one in attempts.values()
-        ),
-        "attempts": attempts,
-    }
-    payload["metadata"] = metadata
-    job.payload = payload
-    job.save(update_fields=["payload", "updated_at"])
+    # Re-read under the lock so a refusal or another attempt's entry written meanwhile is kept.
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
+        )
+        payload = dict(locked.payload or {})
+        metadata = dict(payload.get("metadata") or {})
+        recorded = metadata.get("harness_spend")
+        attempts = (
+            dict((recorded or {}).get("attempts") or {})
+            if isinstance(recorded, dict)
+            else {}
+        )
+        mine = attempts.get(key)
+        if isinstance(mine, dict):
+            try:
+                if float(mine.get("total_usd") or 0.0) > total:
+                    return
+            except (TypeError, ValueError):
+                pass
+        attempts[key] = {
+            "total_usd": round(total, 6),
+            "unpriced_turns": int(spend.get("unpriced_turns") or 0),
+            "stages": spend.get("stages") or [],
+        }
+        metadata["harness_spend"] = {
+            "total_usd": round(
+                sum(float(one.get("total_usd") or 0.0) for one in attempts.values()),
+                6,
+            ),
+            "unpriced_turns": sum(
+                int(one.get("unpriced_turns") or 0) for one in attempts.values()
+            ),
+            "attempts": attempts,
+        }
+        payload["metadata"] = metadata
+        locked.payload = payload
+        locked.save(update_fields=["payload", "updated_at"])
+    job.payload = locked.payload
+    job.updated_at = locked.updated_at
 
 
 def authoring_stage_outputs(
@@ -5179,26 +5194,36 @@ def store_authoring_archive(
         length=len(body),
         content_type="application/gzip",
     )
-    payload = resolve_authored_connector(dict(job.payload or {}), body)
-    metadata = dict(payload.get("metadata") or {})
-    metadata["authoring_object_key"] = object_key
-    metadata["authoring_revision"] = authoring_content_digest(body)
-    metadata["authoring_mode"] = "fresh"
-    # A chat "add scenarios" run consumes its one-shot extend marker here, once the extended
-    # authoring is durably stored, so a later plain rerun replays this set without re-extending.
-    metadata.pop("scenario_extend", None)
-    payload["metadata"] = metadata
-    job.payload = payload
-    job.content_updated_at = timezone.now()
-    update_fields = ["payload", "content_updated_at", "updated_at"]
-    if advance_lifecycle:
-        job.stage_outputs = authoring_stage_outputs_from_archive(
-            body, scenario_limit=job.scenario_count
+    stage_outputs = (
+        authoring_stage_outputs_from_archive(body, scenario_limit=job.scenario_count)
+        if advance_lifecycle
+        else None
+    )
+    # Re-read under the lock so keys written since the caller read the job are kept.
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
         )
-        job.current_stage = "validating_scenarios"
-        job.state = HostedHarnessJob.State.ADMITTED
-        update_fields.extend(["stage_outputs", "current_stage", "state"])
-    job.save(update_fields=update_fields)
+        payload = resolve_authored_connector(dict(locked.payload or {}), body)
+        metadata = dict(payload.get("metadata") or {})
+        metadata["authoring_object_key"] = object_key
+        metadata["authoring_revision"] = authoring_content_digest(body)
+        metadata["authoring_mode"] = "fresh"
+        # A chat "add scenarios" run consumes its one-shot extend marker here, once the extended
+        # authoring is durably stored, so a later plain rerun replays this set without re-extending.
+        metadata.pop("scenario_extend", None)
+        payload["metadata"] = metadata
+        locked.payload = payload
+        locked.content_updated_at = timezone.now()
+        update_fields = ["payload", "content_updated_at", "updated_at"]
+        if advance_lifecycle:
+            locked.stage_outputs = stage_outputs
+            locked.current_stage = "validating_scenarios"
+            locked.state = HostedHarnessJob.State.ADMITTED
+            update_fields.extend(["stage_outputs", "current_stage", "state"])
+        locked.save(update_fields=update_fields)
+    for field in update_fields:
+        setattr(job, field, getattr(locked, field))
     return object_key
 
 

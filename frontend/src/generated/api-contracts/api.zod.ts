@@ -36274,7 +36274,10 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
     job_id: zod.string().uuid(),
     run_id: zod.string().uuid(),
     source: zod.record(zod.string(), zod.string()),
-    metadata: zod.record(zod.string(), zod.string()),
+    metadata: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
     runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
@@ -36756,7 +36759,10 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
     .max(simulateApiHarnessJobsCreateBodyPlatformRunIdMax)
     .optional(),
   metadata: zod
-    .record(zod.string(), zod.string())
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
     .default(simulateApiHarnessJobsCreateBodyMetadataDefault),
 });
 
@@ -37101,7 +37107,10 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
     .max(simulateApiHarnessJobsPreflightBodyPlatformRunIdMax)
     .optional(),
   metadata: zod
-    .record(zod.string(), zod.string())
+    .record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    )
     .default(simulateApiHarnessJobsPreflightBodyMetadataDefault),
   credential_values: zod
     .record(
@@ -37211,7 +37220,10 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
     job_id: zod.string().uuid(),
     run_id: zod.string().uuid(),
     source: zod.record(zod.string(), zod.string()),
-    metadata: zod.record(zod.string(), zod.string()),
+    metadata: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
     runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
@@ -37423,7 +37435,10 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
     job_id: zod.string().uuid(),
     run_id: zod.string().uuid(),
     source: zod.record(zod.string(), zod.string()),
-    metadata: zod.record(zod.string(), zod.string()),
+    metadata: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
     runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),

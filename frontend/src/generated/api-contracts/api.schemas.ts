@@ -17861,7 +17861,9 @@ export type HarnessJobReadApiUsageLimit = { [key: string]: unknown };
 
 export type HarnessJobInfoApiSource = { [key: string]: string };
 
-export type HarnessJobInfoApiMetadata = { [key: string]: string };
+export type HarnessJobInfoApiMetadata = {
+  [key: string]: { [key: string]: unknown };
+};
 
 export type HarnessJobInfoApiRuntime = { [key: string]: string };
 
@@ -18097,7 +18099,9 @@ export const HarnessJobCreateApiSchemaVersion = {
   "futureagiharness-jobv1": "futureagi.harness-job.v1",
 } as const;
 
-export type HarnessJobCreateApiMetadata = { [key: string]: string };
+export type HarnessJobCreateApiMetadata = {
+  [key: string]: { [key: string]: unknown };
+};
 
 export type HarnessSourceApiKind =
   (typeof HarnessSourceApiKind)[keyof typeof HarnessSourceApiKind];
@@ -18351,7 +18355,9 @@ export const HarnessPreflightApiSchemaVersion = {
   "futureagiharness-jobv1": "futureagi.harness-job.v1",
 } as const;
 
-export type HarnessPreflightApiMetadata = { [key: string]: string };
+export type HarnessPreflightApiMetadata = {
+  [key: string]: { [key: string]: unknown };
+};
 
 /**
  * Target-provider values to verify live; used for this check only.

@@ -34,6 +34,11 @@ from simulate.services.alk_simulate_ingestion import (
     precreate_alk_sim_call_executions,
     provision_alk_sim_run_test,
 )
+from tracer.services.observability_switch import (
+    ObservabilityRefused,
+    refusal_body,
+    set_agent_observability,
+)
 
 _CAPABILITY_SCHEMA_VERSION = "futureagi.harness-capabilities.v1"
 _JOB_SCHEMA_VERSION = "futureagi.harness-job.v1"
@@ -368,6 +373,7 @@ def create_selected_harness_run(
             "authoring_usage_reports",
             "usage_reports",
             "sandbox_runtime",
+            "observability_refusal",
         ):
             child_metadata.pop(key, None)
         child_metadata.update(
@@ -1086,7 +1092,8 @@ def provision_scenarios(
                 for persona, row in zip(payload["personas"], dataset_rows, strict=True)
             ]
         _record_target_agent_facts(locked, agent_definition, payload)
-        _store_authored_agent(locked, agent_definition, payload)
+        stored = _store_authored_agent(locked, agent_definition, payload)
+        _turn_on_observability(locked, agent_definition, payload, stored)
         _select_platform_evals(locked, run_test, payload, modality)
     return _provision_response(locked, registrations)
 
@@ -1215,7 +1222,7 @@ def _record_target_agent_facts(
 
 def _store_authored_agent(
     job: HostedHarnessJob, agent_definition, payload: dict[str, Any]
-) -> None:
+) -> tuple[str | None, uuid.UUID | None]:
     sent = payload.get("agent")
     source_kind = str((job.payload.get("source") or {}).get("kind") or "")
     if (
@@ -1223,7 +1230,7 @@ def _store_authored_agent(
         or payload.get("agent_definition_id")
         or source_kind not in ("github", "archive")
     ):
-        return
+        return None, None
     agent_version_id = None
     try:
         with transaction.atomic():
@@ -1247,17 +1254,93 @@ def _store_authored_agent(
                 and isinstance(sent.get("sdk_version"), str)
             ):
                 raise AgentStoreError("agent_invalid")
-            store_agent(
+            outcome = store_agent(
                 agent_version_id=version.id,
                 agent=sent["agent"],
                 sdk_version=sent["sdk_version"],
             )
+        return outcome, agent_version_id
     except Exception as exc:
         logger.warning(
             "harness_agent_not_stored",
             job_id=str(job.id),
             agent_version_id=str(agent_version_id) if agent_version_id else None,
             code=exc.code if isinstance(exc, AgentStoreError) else type(exc).__name__,
+        )
+        return None, None
+
+
+def _turn_on_observability(
+    job: HostedHarnessJob,
+    agent_definition,
+    payload: dict[str, Any],
+    stored: tuple[str | None, uuid.UUID | None],
+) -> None:
+    """Turn observability on for the agent just stored, when the Environment asked for it.
+
+    A refusal never fails the provision: the reason is logged and kept on the job.
+    """
+    if (job.payload.get("metadata") or {}).get("observability_enabled") is not True:
+        return
+    details: dict[str, Any] = {}
+    failure: Exception | None = None
+    if payload.get("agent_definition_id"):
+        code = "bound"
+    elif stored[0] != "stored":
+        code = "agent_not_stored"
+    else:
+        # The try sits outside the savepoint so its rollback runs before the handler.
+        try:
+            with transaction.atomic():
+                row = set_agent_observability(
+                    agent_definition=agent_definition,
+                    enabled=True,
+                    user_id=None,
+                    organization=job.organization,
+                    workspace=job.workspace,
+                )
+                if row is not None:
+                    versions = AgentVersion.no_workspace_objects.filter(id=stored[1])
+                    snapshot = dict(
+                        versions.values_list("configuration_snapshot", flat=True).get()
+                        or {}
+                    )
+                    snapshot["observability_enabled"] = True
+                    versions.update(configuration_snapshot=snapshot)
+            return
+        except ObservabilityRefused as exc:
+            code = ",".join(entry.code for entry in exc.missing)
+            details = refusal_body(exc)["details"]
+        except Exception as exc:  # noqa: BLE001 - the provision must go on
+            code = type(exc).__name__
+            failure = exc
+    logger.warning(
+        "harness_observability_not_enabled",
+        job_id=str(job.id),
+        agent_definition_id=str(agent_definition.id),
+        code=code,
+        **({"exc_info": failure} if failure is not None else {}),
+    )
+    _save_observability_refusal(job, code, details)
+
+
+def _save_observability_refusal(
+    job: HostedHarnessJob, code: str, details: dict[str, Any]
+) -> None:
+    try:
+        with transaction.atomic():
+            payload = dict(job.payload)
+            metadata = dict(payload.get("metadata") or {})
+            metadata["observability_refusal"] = {"code": code, "details": details}
+            payload["metadata"] = metadata
+            job.payload = payload
+            job.save(update_fields=["payload", "updated_at"])
+    except Exception as exc:  # noqa: BLE001 - the provision must go on
+        logger.error(
+            "harness_observability_refusal_not_saved",
+            job_id=str(job.id),
+            code=type(exc).__name__,
+            exc_info=True,
         )
 
 

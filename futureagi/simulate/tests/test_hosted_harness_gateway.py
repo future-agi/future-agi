@@ -2876,3 +2876,137 @@ def test_platform_simulator_prefers_public_callback_for_hosted_observability(
     values, _credentials = _platform_simulator_material()
 
     assert values["FI_BASE_URL"] == "https://platform.example.test"
+
+
+class _StoredObject(io.BytesIO):
+    def release_conn(self):
+        pass
+
+
+class _MemoryStorage:
+    """Object storage kept in memory; the suite has no reachable bucket."""
+
+    def __init__(self):
+        self.objects = {}
+
+    def bucket_exists(self, _bucket):
+        return False
+
+    def make_bucket(self, _bucket):
+        pass
+
+    def set_bucket_policy(self, _bucket, _policy):
+        pass
+
+    def put_object(self, bucket_name, object_name, data, length, content_type=None):
+        self.objects[object_name] = data.read(length)
+
+    def get_object(self, _bucket, object_name):
+        return _StoredObject(self.objects[object_name])
+
+
+@pytest.fixture
+def memory_storage(monkeypatch):
+    from tfc.utils import storage_client
+
+    fake = _MemoryStorage()
+    monkeypatch.setattr(storage_client, "_client", fake)
+    return fake
+
+
+def _write_metadata(job_id, **keys):
+    """Write metadata keys the way a path other than the caller's job object would."""
+    row = HostedHarnessJob.no_workspace_objects.get(id=job_id)
+    payload = dict(row.payload)
+    payload["metadata"] = {**(payload.get("metadata") or {}), **keys}
+    row.payload = payload
+    row.save(update_fields=["payload", "updated_at"])
+
+
+def _stored_metadata(job_id):
+    return HostedHarnessJob.no_workspace_objects.get(id=job_id).payload["metadata"]
+
+
+def _authoring_archive():
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w:gz") as archive:
+        body = b"{}"
+        member = tarfile.TarInfo("contract.json")
+        member.size = len(body)
+        archive.addfile(member, io.BytesIO(body))
+    return out.getvalue()
+
+
+@pytest.mark.django_db
+def test_a_stale_progress_save_keeps_the_observability_refusal(
+    organization, memory_storage
+):
+    from simulate.services.hosted_harness_gateway import (
+        _record_harness_spend,
+        store_authoring_archive,
+    )
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="stale-progress-save"
+    )
+    refusal = {"code": "agent_not_stored", "details": {}}
+
+    # The poll read the job before the provision wrote the reason.
+    stale = HostedHarnessJob.no_workspace_objects.get(id=job.id)
+    _write_metadata(job.id, observability_refusal=refusal)
+    key = store_authoring_archive(stale, _authoring_archive(), advance_lifecycle=False)
+
+    metadata = _stored_metadata(job.id)
+    assert metadata["observability_refusal"] == refusal
+    assert metadata["authoring_object_key"] == key
+    assert stale.payload["metadata"]["authoring_object_key"] == key
+
+    stale = HostedHarnessJob.no_workspace_objects.get(id=job.id)
+    newer = {"code": "bound", "details": {}}
+    # A second attempt's spend lands after the poll read the job.
+    other = {"total_usd": 0.5, "unpriced_turns": 0, "stages": []}
+    _write_metadata(
+        job.id,
+        observability_refusal=newer,
+        harness_spend={"total_usd": 0.5, "unpriced_turns": 0, "attempts": {"2": other}},
+    )
+    _record_harness_spend(stale, {"total_usd": 0.1, "stages": []}, 1)
+
+    metadata = _stored_metadata(job.id)
+    assert metadata["observability_refusal"] == newer
+    assert sorted(metadata["harness_spend"]["attempts"]) == ["1", "2"]
+    assert metadata["harness_spend"]["attempts"]["2"] == other
+    assert metadata["harness_spend"]["total_usd"] == 0.6
+    assert metadata["authoring_object_key"] == key
+
+
+@pytest.mark.django_db
+def test_a_stale_adjustment_save_keeps_the_observability_refusal(organization):
+    first = {"adjustment_id": "adj-1", "status": "pending", "instruction": "one"}
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="stale-adjustment-save"
+    )
+    _write_metadata(job.id, adjustments=[first])
+    stale = HostedHarnessJob.no_workspace_objects.get(id=job.id)
+
+    # A refusal and a second adjustment land after the poll read the job.
+    refusal = {"code": "bound", "details": {}}
+    second = {"adjustment_id": "adj-2", "status": "pending", "instruction": "two"}
+    _write_metadata(job.id, observability_refusal=refusal, adjustments=[first, second])
+    status_line = json.dumps({"adjustment_id": "adj-1", "status": "applied"})
+    sandbox = SimpleNamespace(
+        fs=SimpleNamespace(
+            download_file=lambda path, timeout=None: status_line.encode()
+        )
+    )
+
+    HostedHarnessGateway._sync_adjustment_progress(stale, sandbox)
+
+    metadata = _stored_metadata(job.id)
+    assert metadata["observability_refusal"] == refusal
+    assert [
+        (item["adjustment_id"], item["status"]) for item in metadata["adjustments"]
+    ] == [
+        ("adj-1", "applied"),
+        ("adj-2", "pending"),
+    ]
