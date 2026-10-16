@@ -15,6 +15,7 @@ from django.db import close_old_connections
 from temporalio import activity
 
 from simulate.models.test_execution import CallExecution
+from simulate.services.harness_evals import platform_graded_evals
 from simulate.temporal.types.activities import (
     CheckBalanceInput,
     CheckBalanceOutput,
@@ -112,10 +113,10 @@ async def update_call_status(input: UpdateCallStatusInput) -> None:
                     f"(all calls are analyzing or complete)"
                 )
 
-    except CallExecution.DoesNotExist:
+    except CallExecution.DoesNotExist as exc:
         activity.logger.error(f"Call not found: {input.call_id}")
         activity.logger.exception(f"Call not found: {input.call_id}")
-        raise Exception(f"Call not found: {input.call_id}")
+        raise Exception(f"Call not found: {input.call_id}") from exc
 
     except Exception as e:
         activity.logger.error(f"Failed to update call status: {str(e)}")
@@ -128,11 +129,14 @@ async def persist_processing_skip_state(input: PersistProcessingSkipStateInput) 
     """Persist post-call processing skip state.
 
     Stores a general processing skip marker + reason in call_metadata and
-    optionally marks all evaluation cells as skipped for clear UI rendering.
+    optionally marks as skipped the evaluation cells the platform grades on
+    the call, for clear UI rendering.
     """
     close_old_connections()
 
     try:
+        from asgiref.sync import sync_to_async
+
         from simulate.models import SimulateEvalConfig
 
         call = await CallExecution.objects.select_related(
@@ -160,8 +164,13 @@ async def persist_processing_skip_state(input: PersistProcessingSkipStateInput) 
             and call.test_execution.run_test
         ):
             eval_outputs = call.eval_outputs or {}
+            # Only the evals the platform grades on this call: a column the
+            # harness filled keeps the verdict the harness gave it.
+            graded_evals = await sync_to_async(platform_graded_evals)(
+                call.test_execution.run_test_id
+            )
             eval_configs = SimulateEvalConfig.objects.filter(
-                run_test=call.test_execution.run_test,
+                id__in=graded_evals.for_call(call.call_metadata),
                 deleted=False,
             ).values("id", "name")
 
@@ -184,9 +193,9 @@ async def persist_processing_skip_state(input: PersistProcessingSkipStateInput) 
             call.call_metadata = call_metadata
             await call.asave(update_fields=list(set(update_fields)))
 
-    except CallExecution.DoesNotExist:
+    except CallExecution.DoesNotExist as exc:
         activity.logger.error(f"Call not found while setting outcomes: {input.call_id}")
-        raise Exception(f"Call not found: {input.call_id}")
+        raise Exception(f"Call not found: {input.call_id}") from exc
     except Exception as e:
         activity.logger.error(f"Failed to set call processing outcomes: {str(e)}")
         activity.logger.exception(f"Failed to set call processing outcomes: {str(e)}")

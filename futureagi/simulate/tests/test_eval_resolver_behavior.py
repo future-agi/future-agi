@@ -903,66 +903,89 @@ class TestGenericDottedPathResolution:
             eval_template,
         )
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError, match="Column mapping mismatch"):
             _run(ec, call_execution, transcript_data)
+
+        mock_run.assert_not_called()
 
 
 @pytest.mark.django_db
 @patch("simulate.services.test_executor.close_old_connections", lambda: None)
 class TestWalkerAttributeSafety:
-    """Dunder / private / callable attrs must not resolve; user paths cannot pivot into module globals."""
+    """Dunder / private / callable attrs must not resolve; user paths cannot pivot into module globals.
+
+    Such a path is read as empty: the eval still runs and gets "" for it.
+    """
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_dunder_class_globals_settings_secret_key_does_not_resolve(
         self, mock_run, run_test, call_execution, transcript_data, eval_template
     ):
+        mock_run.return_value = _SUCCESS_STUB
         ec = _make_eval(
             {"x": "call.__class__.__init__.__globals__.settings.SECRET_KEY"},
             run_test,
             eval_template,
         )
-        with pytest.raises(Exception):
-            _run(ec, call_execution, transcript_data)
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["x"] == ""
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_dunder_dict_does_not_resolve(
         self, mock_run, run_test, call_execution, transcript_data, eval_template
     ):
+        mock_run.return_value = _SUCCESS_STUB
         ec = _make_eval({"x": "call.__dict__"}, run_test, eval_template)
-        with pytest.raises(Exception):
-            _run(ec, call_execution, transcript_data)
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["x"] == ""
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_django_private_meta_does_not_resolve(
         self, mock_run, run_test, call_execution, transcript_data, eval_template
     ):
+        mock_run.return_value = _SUCCESS_STUB
         ec = _make_eval({"x": "call._meta.app_label"}, run_test, eval_template)
-        with pytest.raises(Exception):
-            _run(ec, call_execution, transcript_data)
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["x"] == ""
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_django_private_state_does_not_resolve(
         self, mock_run, run_test, call_execution, transcript_data, eval_template
     ):
+        mock_run.return_value = _SUCCESS_STUB
         ec = _make_eval({"x": "call._state.db"}, run_test, eval_template)
-        with pytest.raises(Exception):
-            _run(ec, call_execution, transcript_data)
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["x"] == ""
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_objects_manager_callable_does_not_resolve(
         self, mock_run, run_test, call_execution, transcript_data, eval_template
     ):
+        mock_run.return_value = _SUCCESS_STUB
         ec = _make_eval({"x": "call.objects.all"}, run_test, eval_template)
-        with pytest.raises(Exception):
-            _run(ec, call_execution, transcript_data)
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["x"] == ""
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_save_method_does_not_resolve(
         self, mock_run, run_test, call_execution, transcript_data, eval_template
     ):
+        mock_run.return_value = _SUCCESS_STUB
         ec = _make_eval({"x": "call.save"}, run_test, eval_template)
-        with pytest.raises(Exception):
-            _run(ec, call_execution, transcript_data)
+
+        _run(ec, call_execution, transcript_data)
+
+        assert mock_run.call_args.kwargs["mappings"]["x"] == ""
 
 
 @pytest.mark.django_db
@@ -2387,8 +2410,8 @@ def test_xl_standalone_legacy_status_less_errored_row_seals(
     grading with no ``status`` key at all -- is indistinguishable from any
     other status-less completed row, so it still seals. It is treated as a
     verdict and is not re-graded even with ``skip_existing`` on; the
-    eval-only re-run (which wipes ``eval_outputs`` wholesale) is the only
-    way to clear it. This is the intended, documented consequence of the
+    eval-only re-run (which marks the eval pending and grades it again) is
+    the only way to clear it. This is the intended, documented consequence of the
     conservative predicate form, not a bug."""
     from simulate.temporal.activities.xl import _run_evaluations_standalone
 
@@ -2413,6 +2436,336 @@ def test_xl_standalone_legacy_status_less_errored_row_seals(
     assert legacy_errored_config.id not in _xl_graded_config_ids(mock_single)
     call_execution.refresh_from_db()
     assert call_execution.eval_outputs[str(legacy_errored_config.id)] == legacy_row
+
+
+# ---------------------------------------------------------------------------
+# On a call the harness scored, the standalone orchestrator grades only the
+# evals with a mapping of their own. A column the harness filled is not its
+# to grade, to mark skipped, or to wait for.
+# ---------------------------------------------------------------------------
+
+_HARNESS_VERDICT = {
+    "name": "Task completion",
+    "output": "Passed",
+    "output_type": "Pass/Fail",
+    "reason": "the caller's task was done",
+    "status": "completed",
+    "source": "harness",
+}
+
+
+def _scored_by_the_harness(scored_by, run_test, call_execution):
+    """Make the call one the harness scored: through the job that owns its
+    run test, or through the receipt an SDK run leaves on the call."""
+    if scored_by == "job":
+        _owned_by_a_harness_environment(run_test)
+        return
+    assert scored_by == "sdk", scored_by
+    call_execution.call_metadata = {
+        **(call_execution.call_metadata or {}),
+        "harness_evaluations": [
+            {"name": "ends_call_on_goodbye", "kind": "checkpoint", "passed": True}
+        ],
+    }
+    call_execution.save(update_fields=["call_metadata"])
+
+
+def _filled_by_the_harness(call_execution, eval_config):
+    """Store on the call the verdict the harness gave this column."""
+    call_execution.eval_outputs = dict(call_execution.eval_outputs or {})
+    call_execution.eval_outputs[str(eval_config.id)] = dict(_HARNESS_VERDICT)
+    call_execution.save(update_fields=["eval_outputs"])
+
+
+def _stored_outputs(call_execution):
+    """A deep copy of the call's results as the database holds them."""
+    call_execution.refresh_from_db()
+    return copy.deepcopy(call_execution.eval_outputs)
+
+
+def _writes_a_verdict(eval_config, call_execution, transcript_data):
+    """Stand in for the judge: store a fresh verdict for this eval on the call."""
+    call_execution.eval_outputs = dict(call_execution.eval_outputs or {})
+    call_execution.eval_outputs[str(eval_config.id)] = {
+        "output": "Passed",
+        "reason": "ok",
+        "output_type": "Pass/Fail",
+        "name": eval_config.name,
+    }
+    call_execution.save(update_fields=["eval_outputs"])
+
+
+@pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+@patch("simulate.temporal.activities.xl._build_transcript_data")
+@patch("simulate.temporal.activities.xl._run_single_evaluation")
+@pytest.mark.parametrize("scored_by", ["job", "sdk"])
+def test_xl_standalone_on_a_harness_scored_call_grades_only_evals_with_their_own_mapping(
+    mock_single,
+    mock_transcript,
+    scored_by,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """Only the eval with a mapping of its own reaches the judge. The column
+    the harness filled is not graded with its empty mapping, and its row is
+    left as the harness wrote it."""
+    from simulate.temporal.activities.xl import _run_evaluations_standalone
+
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    _scored_by_the_harness(scored_by, run_test, call_execution)
+    own = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    filled = _make_eval({}, run_test, eval_template)
+    _filled_by_the_harness(call_execution, filled)
+    outputs_before = _stored_outputs(call_execution)
+
+    _run_evaluations_standalone(call_execution, skip_existing=False)
+
+    assert _xl_graded_config_ids(mock_single) == {own.id}
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs[str(filled.id)] == outputs_before[str(filled.id)]
+    assert call_execution.eval_outputs == outputs_before
+
+
+@pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+@patch("simulate.temporal.activities.xl._build_transcript_data")
+@patch("simulate.temporal.activities.xl._run_single_evaluation")
+def test_xl_standalone_reads_the_receipt_from_the_stored_call(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """The harness's receipt can reach the call after the caller loaded it.
+    The grader goes by what the stored call holds, so the column the harness
+    filled is still left alone."""
+    from simulate.temporal.activities.xl import _run_evaluations_standalone
+
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    own = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    filled = _make_eval({}, run_test, eval_template)
+    _filled_by_the_harness(call_execution, filled)
+    stored = CallExecution.objects.get(id=call_execution.id)
+    _scored_by_the_harness("sdk", run_test, stored)
+    assert "harness_evaluations" not in (call_execution.call_metadata or {})
+    filled_before = copy.deepcopy(stored.eval_outputs[str(filled.id)])
+
+    _run_evaluations_standalone(call_execution, skip_existing=False)
+
+    assert _xl_graded_config_ids(mock_single) == {own.id}
+    assert _stored_outputs(call_execution)[str(filled.id)] == filled_before
+
+
+@pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+@patch("simulate.temporal.activities.xl._build_transcript_data")
+@patch("simulate.temporal.activities.xl._run_single_evaluation")
+@pytest.mark.parametrize("scored_by", ["job", "sdk"])
+def test_xl_standalone_no_transcript_branch_leaves_harness_columns_alone(
+    mock_single,
+    mock_transcript,
+    scored_by,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """With no transcript the eval the platform grades reads skipped, and the
+    column the harness filled still holds the harness verdict."""
+    from simulate.temporal.activities.xl import _run_evaluations_standalone
+
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = {**transcript_data, "transcript": ""}
+    _scored_by_the_harness(scored_by, run_test, call_execution)
+    own = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    filled = _make_eval({}, run_test, eval_template)
+    _filled_by_the_harness(call_execution, filled)
+    outputs_before = _stored_outputs(call_execution)
+
+    _run_evaluations_standalone(call_execution, skip_existing=False)
+
+    call_execution.refresh_from_db()
+    expected_own = _skipped_payload(own, "No transcript data available")
+    expected_own["output_type"] = derive_kpi_output_type(eval_template)
+    assert call_execution.eval_outputs[str(own.id)] == expected_own
+    assert call_execution.eval_outputs[str(filled.id)] == outputs_before[str(filled.id)]
+    assert call_execution.eval_outputs == {**outputs_before, str(own.id): expected_own}
+    assert call_execution.call_metadata["eval_completed"] is True
+    mock_single.assert_not_called()
+
+
+@pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+@patch("simulate.temporal.activities.xl._build_transcript_data")
+@patch("simulate.temporal.activities.xl._run_single_evaluation")
+@pytest.mark.parametrize("has_own", [True, False], ids=["with_own", "without_own"])
+@pytest.mark.parametrize("scored_by", ["job", "sdk"])
+def test_xl_standalone_on_a_harness_scored_call_completes_over_the_graded_set_only(
+    mock_single,
+    mock_transcript,
+    scored_by,
+    has_own,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """The call's evals are complete once every eval the platform grades on
+    it holds a result. A column the harness has not filled does not hold the
+    call back, and with nothing to grade nothing is written."""
+    from simulate.temporal.activities.xl import _run_evaluations_standalone
+
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    mock_single.side_effect = _writes_a_verdict
+    _scored_by_the_harness(scored_by, run_test, call_execution)
+    _make_eval({}, run_test, eval_template)
+    graded = (
+        [_make_eval({"conversation": "call.transcript"}, run_test, eval_template)]
+        if has_own
+        else []
+    )
+    # A row no eval config owns, so "nothing is written" compares real rows.
+    call_execution.eval_outputs = {
+        str(uuid.uuid4()): {**_HARNESS_VERDICT, "name": "ends_call_on_goodbye"}
+    }
+    call_execution.save(update_fields=["eval_outputs"])
+    outputs_before = _stored_outputs(call_execution)
+
+    _run_evaluations_standalone(call_execution, skip_existing=False)
+
+    call_execution.refresh_from_db()
+    assert call_execution.call_metadata.get("eval_completed") is True
+    assert _xl_graded_config_ids(mock_single) == {config.id for config in graded}
+    if not has_own:
+        assert call_execution.eval_outputs == outputs_before
+
+
+@pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+@patch("simulate.temporal.activities.xl._build_transcript_data")
+@patch("simulate.temporal.activities.xl._run_single_evaluation")
+def test_xl_standalone_on_a_call_the_harness_did_not_score_still_grades_an_empty_mapping_config(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """With no harness job on the run test and no receipt on the call, every
+    live eval is graded, one with an empty mapping included."""
+    from simulate.temporal.activities.xl import _run_evaluations_standalone
+
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    own = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    no_mapping = _make_eval({}, run_test, eval_template)
+
+    _run_evaluations_standalone(call_execution, skip_existing=False)
+
+    assert _xl_graded_config_ids(mock_single) == {own.id, no_mapping.id}
+
+
+@pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+@patch("simulate.temporal.activities.xl._build_transcript_data")
+@patch("simulate.temporal.activities.xl._run_single_evaluation")
+def test_xl_standalone_given_ids_grades_those_ids_as_before(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """Asked for by id, an eval is graded whoever scored the call: the
+    per-call rule only decides what is graded when no ids are given."""
+    from simulate.temporal.activities.xl import _run_evaluations_standalone
+
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    _owned_by_a_harness_environment(run_test)
+    _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    filled = _make_eval({}, run_test, eval_template)
+
+    _run_evaluations_standalone(
+        call_execution, eval_config_ids=[str(filled.id)], skip_existing=False
+    )
+
+    assert _xl_graded_config_ids(mock_single) == {filled.id}
+
+
+@pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+@patch("simulate.temporal.activities.xl._build_transcript_data")
+@patch("simulate.temporal.activities.xl._run_single_evaluation")
+def test_xl_standalone_failure_after_the_set_is_known_completes_over_that_set(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    eval_template,
+):
+    """A failure after the graded set is read still judges completion over
+    that set: a column the harness has not filled does not hold the call
+    back."""
+    from simulate.temporal.activities.xl import _run_evaluations_standalone
+
+    _no_tool_eval(run_test)
+    mock_transcript.side_effect = RuntimeError("transcript store down")
+    _owned_by_a_harness_environment(run_test)
+    own = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    _make_eval({}, run_test, eval_template)
+    _seal(call_execution, own)
+    call_execution.call_metadata["eval_completed"] = False
+    call_execution.save(update_fields=["call_metadata"])
+
+    _run_evaluations_standalone(call_execution, skip_existing=False)
+
+    mock_single.assert_not_called()
+    call_execution.refresh_from_db()
+    assert call_execution.call_metadata["eval_completed"] is True
+
+
+@pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+@patch("simulate.temporal.activities.xl._build_transcript_data")
+@patch("simulate.temporal.activities.xl._run_single_evaluation")
+def test_xl_standalone_failure_before_the_set_is_known_checks_every_config_as_before(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    eval_template,
+):
+    """A failure while the graded set is being read still checks completion,
+    over what the caller asked for: with no ids given, every live eval."""
+    from simulate.temporal.activities.xl import _run_evaluations_standalone
+
+    _no_tool_eval(run_test)
+    config = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    _seal(call_execution, config)
+    call_execution.call_metadata["eval_completed"] = False
+    call_execution.save(update_fields=["call_metadata"])
+
+    with patch(
+        "simulate.temporal.activities.xl.platform_graded_evals",
+        side_effect=RuntimeError("db"),
+    ) as read_graded_evals:
+        _run_evaluations_standalone(call_execution, skip_existing=False)
+
+    read_graded_evals.assert_called_once()
+    mock_single.assert_not_called()
+    call_execution.refresh_from_db()
+    assert call_execution.call_metadata["eval_completed"] is True
 
 
 def test_task_signature_supports_the_run_level_add_kwargs():

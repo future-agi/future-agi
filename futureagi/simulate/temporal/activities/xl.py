@@ -33,6 +33,7 @@ from temporalio import activity
 
 from simulate.models.test_execution import CallExecution
 from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.harness_evals import platform_graded_evals
 from simulate.temporal.types.activities import (
     RunSimulateEvaluationsInput,
     RunSimulateEvaluationsOutput,
@@ -43,7 +44,6 @@ from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
 from simulate.utils.verdicts import has_stored_verdict
 from tfc.utils.case import to_camel_case, to_snake_case
-
 from tfc.utils.storage_client import server_reachable_url
 
 logger = structlog.get_logger(__name__)
@@ -74,8 +74,8 @@ async def run_simulate_evaluations(
     input: RunSimulateEvaluationsInput,
 ) -> RunSimulateEvaluationsOutput:
     """
-    Standalone evaluation activity — runs all configured SimulateEvalConfig
-    evaluations for a call execution without using TestExecutor.
+    Standalone evaluation activity — runs the SimulateEvalConfig evaluations
+    the platform grades on a call execution without using TestExecutor.
 
     Replaces the previous TestExecutor wrapper. Tool evaluation is now handled
     by the separate run_tool_call_evaluation activity.
@@ -1205,7 +1205,9 @@ def _run_evaluations_standalone(
     """
     Standalone evaluation orchestrator — replaces TestExecutor._run_simulate_evaluations().
 
-    Runs all configured SimulateEvalConfig evaluations for a call execution.
+    Runs the SimulateEvalConfig evaluations the platform grades on a call
+    execution: the ones asked for by id, or else every one of the run test,
+    less the columns the harness filled on a call the harness scored.
     Does NOT run tool evaluation (handled by separate activity).
     Does NOT update test_execution status (workflow/rerun handles that).
     With ``skip_existing`` on, a config that already holds a sealed verdict
@@ -1213,6 +1215,10 @@ def _run_evaluations_standalone(
     ``TestExecutor._run_simulate_evaluations``'s guard.
     """
     from simulate.models import SimulateEvalConfig, TestExecution
+
+    # A failure before the graded set is read still checks completion, over
+    # what the caller asked for.
+    expected_ids = eval_config_ids
 
     try:
         close_old_connections()
@@ -1228,18 +1234,21 @@ def _run_evaluations_standalone(
         call_execution.save(update_fields=["call_metadata"])
         logger.info(f"Starting evaluations for call {call_execution.id}")
 
-        # Get eval configs
-        if eval_config_ids:
-            eval_configs = SimulateEvalConfig.objects.filter(
-                id__in=eval_config_ids, deleted=False
-            ).select_related("eval_template")
-        else:
-            eval_configs = SimulateEvalConfig.objects.filter(
-                run_test=run_test, deleted=False
-            ).select_related("eval_template")
+        # Not asked for by id: only the evals the platform grades on this
+        # call, so a column the harness filled is left as the harness wrote
+        # it.
+        if not eval_config_ids:
+            expected_ids = platform_graded_evals(run_test.id).for_call(
+                call_execution.call_metadata
+            )
+        eval_configs = SimulateEvalConfig.objects.filter(
+            id__in=expected_ids, deleted=False
+        ).select_related("eval_template")
 
         if not eval_configs.exists():
-            logger.info(f"No evaluation configs found for run test {run_test.id}")
+            logger.info(
+                f"No evaluations for the platform to grade on call {call_execution.id}"
+            )
             if not call_execution.call_metadata:
                 call_execution.call_metadata = {}
             call_execution.call_metadata["eval_completed"] = True
@@ -1323,7 +1332,7 @@ def _run_evaluations_standalone(
         # Check completion — sets call_metadata.eval_completed = True
         _check_eval_completion(
             call_execution,
-            eval_config_ids=eval_config_ids,
+            eval_config_ids=expected_ids,
             run_test=run_test,
         )
 
@@ -1332,7 +1341,7 @@ def _run_evaluations_standalone(
         try:
             _check_eval_completion(
                 call_execution,
-                eval_config_ids=eval_config_ids,
+                eval_config_ids=expected_ids,
             )
         except Exception:
             pass

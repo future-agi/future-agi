@@ -13,6 +13,7 @@ Environment variables:
 - VAPI_API_KEY: VAPI API key for test fixtures (default: test-api-key-for-testing)
 """
 
+import copy
 import os
 import uuid
 from datetime import timedelta
@@ -21,10 +22,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from asgiref.sync import async_to_sync, sync_to_async
 from django.utils import timezone
-
-# Environment variables for sensitive test data
-VAPI_PHONE_NUMBER_ID = os.environ.get("VAPI_PHONE_NUMBER_ID", "phone-test-id-12345")
-VAPI_API_KEY = os.environ.get("VAPI_API_KEY", "test-api-key-for-testing")
 
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
@@ -35,6 +32,10 @@ from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
 from simulate.semantics import CallType
 from tracer.models.observability_provider import ProviderChoices
+
+# Environment variables for sensitive test data
+VAPI_PHONE_NUMBER_ID = os.environ.get("VAPI_PHONE_NUMBER_ID", "phone-test-id-12345")
+VAPI_API_KEY = os.environ.get("VAPI_API_KEY", "test-api-key-for-testing")
 
 # ============================================================================
 # Fixtures
@@ -422,9 +423,7 @@ class TestTemporalClientAPIIntegration:
         mock_client.get_workflow_handle.return_value = mock_handle
         mock_get_client.return_value = mock_client
 
-        result = await _cancel_simulation_runner_workflow_async(
-            str(test_execution.id)
-        )
+        result = await _cancel_simulation_runner_workflow_async(str(test_execution.id))
 
         assert result is True
         mock_client.get_workflow_handle.assert_called_once_with(
@@ -1700,7 +1699,6 @@ class TestCallExecutionWorkflowIntegration:
     @pytest.mark.requires_ee
     async def test_workflow_activity_sequence_inbound(self, call_execution):
         """Test that CallExecutionWorkflow calls activities in correct order for inbound calls."""
-        from unittest.mock import call
 
         # Track activity calls in order
         activity_calls = []
@@ -2174,6 +2172,110 @@ class TestPersistProcessingSkipStateActivity:
             == "No valid conversation"
         )
 
+    @pytest.mark.parametrize("scored_by", ["job", "sdk", "plain"])
+    def test_marking_evals_skipped_leaves_harness_columns_alone(
+        self, scored_by, organization, run_test, call_execution
+    ):
+        """When grading fails as a whole, only the evals the platform grades
+        on the call read skipped. A column the harness filled keeps its
+        verdict; on a call the harness did not score, every eval reads
+        skipped."""
+        from model_hub.models.evals_metric import EvalTemplate
+        from simulate.models import HostedHarnessJob, SimulateEvalConfig
+        from simulate.temporal.activities.small import persist_processing_skip_state
+        from simulate.temporal.types.activities import PersistProcessingSkipStateInput
+        from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
+
+        template = EvalTemplate.objects.create(
+            name="Skip state eval",
+            config={"prompt": "Grade it"},
+            organization=organization,
+        )
+
+        def eval_config(name, mapping):
+            return SimulateEvalConfig.objects.create(
+                name=name,
+                eval_template=template,
+                run_test=run_test,
+                mapping=mapping,
+                config={},
+            )
+
+        own = eval_config("Mapped", {"conversation": "call.transcript"})
+        filled = eval_config("Task completion", {})
+        if scored_by == "job":
+            HostedHarnessJob.no_workspace_objects.create(
+                organization=run_test.organization,
+                workspace=run_test.workspace,
+                run_id=uuid.uuid4(),
+                idempotency_key=f"skip-state-{uuid.uuid4()}",
+                request_digest=f"sha256:{'0' * 64}",
+                schema_version="1.4",
+                payload={},
+                state=HostedHarnessJob.State.COMPLETED,
+                seed=1,
+                scenario_count=1,
+                artifact_level="standard",
+                max_artifact_bytes=1,
+                deadline_at=timezone.now() + timedelta(hours=1),
+                run_test=run_test,
+            )
+        elif scored_by == "sdk":
+            call_execution.call_metadata = {
+                "harness_evaluations": [
+                    {
+                        "name": "ends_call_on_goodbye",
+                        "kind": "checkpoint",
+                        "passed": True,
+                    }
+                ]
+            }
+        call_execution.eval_outputs = {
+            str(own.id): {
+                "output": "Passed",
+                "reason": "ok",
+                "output_type": "Pass/Fail",
+                "name": own.name,
+            },
+            str(filled.id): {
+                "name": filled.name,
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+                "reason": "the caller's task was done",
+                "status": "completed",
+                "source": "harness",
+            },
+        }
+        call_execution.save(update_fields=["call_metadata", "eval_outputs"])
+        call_execution.refresh_from_db()
+        outputs_before = copy.deepcopy(call_execution.eval_outputs)
+        reason = "Call failed during evaluation processing, so processing was skipped."
+
+        async_to_sync(persist_processing_skip_state)(
+            PersistProcessingSkipStateInput(
+                call_id=str(call_execution.id),
+                processing_skipped=True,
+                processing_skip_reason=reason,
+                mark_eval_outputs_skipped=True,
+            )
+        )
+
+        def skipped(config):
+            return build_skipped_eval_output_payload(
+                eval_name=config.name, reason=reason
+            )
+
+        refreshed_call = CallExecution.objects.get(id=call_execution.id)
+        outputs = refreshed_call.eval_outputs
+        assert outputs[str(own.id)] == skipped(own)
+        if scored_by == "plain":
+            assert outputs[str(filled.id)] == skipped(filled)
+        else:
+            assert outputs[str(filled.id)] == outputs_before[str(filled.id)]
+        assert set(outputs) == {str(own.id), str(filled.id)}
+        assert refreshed_call.call_metadata["eval_completed"] is True
+        assert refreshed_call.call_metadata["processing_skipped"] is True
+
 
 # ============================================================================
 # Heartbeat Configuration Tests
@@ -2186,7 +2288,6 @@ class TestHeartbeatConfiguration:
 
     def test_workflow_has_heartbeat_timeout_for_fetch_and_persist(self):
         """Verify CallExecutionWorkflow sets heartbeat_timeout for fetch_and_persist_call_result."""
-        import ast
         import inspect
 
         CallExecutionWorkflow = _ee_call_execution_workflow().CallExecutionWorkflow

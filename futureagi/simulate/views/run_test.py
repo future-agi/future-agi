@@ -147,6 +147,8 @@ from simulate.services.eval_config_edit import (
 from simulate.services.harness_evals import (
     is_harness_run_test,
     is_regrading_a_finished_harness_run,
+    outputs_for_eval_rerun,
+    platform_graded_evals,
 )
 from simulate.services.run_regrade import (
     RegradeAlreadyRunning,
@@ -2608,9 +2610,7 @@ class TestExecutionDetailView(APIView):
             # The live-only view. The list builds a fresh column order; the map
             # is only what grouping is handed, an argument it accepts and never
             # reads. Filters deliberately resolve against every config instead.
-            eval_configs = [
-                config for config in all_eval_configs if not config.deleted
-            ]
+            eval_configs = [config for config in all_eval_configs if not config.deleted]
             eval_configs_map = {str(config.id): config for config in eval_configs}
 
             # Get scenarios for dynamic columns
@@ -7186,15 +7186,25 @@ class CallExecutionRerunView(APIView):
             has_pending_calls = False
             has_pending_evals = False
             pre_rerun_status = test_execution.status
+            graded_evals = (
+                platform_graded_evals(test_execution.run_test_id)
+                if rerun_type == "eval_only"
+                else None
+            )
 
             for call_execution in call_executions:
                 try:
                     if rerun_type == "eval_only":
-                        # Save eval-only snapshot before clearing
+                        # Save eval-only snapshot before the evals read pending
                         self._save_eval_snapshot(call_execution)
 
-                        # Rerun evaluations only - clear eval data and reset status
-                        call_execution.eval_outputs = {}
+                        # Only the evals the platform grades on this call read
+                        # pending; a column the harness filled keeps the
+                        # harness's verdict.
+                        call_execution.eval_outputs = outputs_for_eval_rerun(
+                            call_execution.eval_outputs,
+                            graded_evals.for_call(call_execution.call_metadata),
+                        )
 
                         call_execution.call_metadata = (
                             call_execution.call_metadata or {}
@@ -7530,7 +7540,7 @@ class TestExecutionRerunView(APIView):
         self._gm = GeneralMethods()
 
     def _prepare_call_executions_for_rerun_bulk(
-        self, call_executions, rerun_type: str
+        self, call_executions, rerun_type: str, *, graded_evals
     ) -> tuple[list[str], list[dict]]:
         """
         Prepare call executions for rerun using bulk operations.
@@ -7542,6 +7552,7 @@ class TestExecutionRerunView(APIView):
         Args:
             call_executions: QuerySet of CallExecution objects to prepare
             rerun_type: Either "eval_only" or "call_and_eval"
+            graded_evals: the run test's PlatformGradedEvals; read only for "eval_only".
 
         Returns:
             tuple: (successful_rerun_ids: list[str], failed_reruns: list[dict])
@@ -7571,7 +7582,10 @@ class TestExecutionRerunView(APIView):
                         )
                     )
                     # Prepare call execution updates
-                    call_execution.eval_outputs = {}
+                    call_execution.eval_outputs = outputs_for_eval_rerun(
+                        call_execution.eval_outputs,
+                        graded_evals.for_call(call_execution.call_metadata),
+                    )
                     call_execution.call_metadata = call_execution.call_metadata or {}
                     call_execution.call_metadata["eval_started"] = False
                     call_execution.call_metadata["eval_completed"] = False
@@ -7841,6 +7855,11 @@ class TestExecutionRerunView(APIView):
             overall_success_count = 0
             overall_failure_count = 0
             dispatch_error_count = 0
+            graded_evals = (
+                platform_graded_evals(run_test.id)
+                if rerun_type == "eval_only"
+                else None
+            )
 
             for test_execution in test_executions:
                 pre_rerun_status = test_execution.status
@@ -7895,7 +7914,7 @@ class TestExecutionRerunView(APIView):
                     # Prepare call executions (DB snapshot + reset) using bulk operations
                     successful_reruns, failed_reruns = (
                         self._prepare_call_executions_for_rerun_bulk(
-                            call_executions, rerun_type
+                            call_executions, rerun_type, graded_evals=graded_evals
                         )
                     )
                 dispatch_error_message = None

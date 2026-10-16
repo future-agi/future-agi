@@ -8,6 +8,7 @@ deterministic checkpoints do not come through here.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 import structlog
@@ -542,9 +543,7 @@ def _briefing_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return {field: entry[field] for field in _BRIEFING_FIELDS}
 
 
-def briefing_evals(
-    organization, workspace, modality: str = ""
-) -> list[dict[str, Any]]:
+def briefing_evals(organization, workspace, modality: str = "") -> list[dict[str, Any]]:
     """What goes into the job's briefing under ``metadata.available_evals``.
 
     Before a contract exists the agent kind is unknown, so the union of both
@@ -932,6 +931,65 @@ def runnable_eval_config_ids(run_test_id) -> list[str]:
         ).values_list("id", "mapping")
         if mapping
     ]
+
+
+@dataclass(frozen=True)
+class PlatformGradedEvals:
+    """Which evals of one run test the platform grades, decided per call."""
+
+    every_live: tuple[str, ...]
+    with_own_mapping: tuple[str, ...]
+    harness_owns_run_test: bool
+
+    def for_call(self, call_metadata) -> tuple[str, ...]:
+        """The evals the platform grades on a call with this metadata.
+
+        A call the harness scored keeps the columns the harness filled: only
+        an eval with a mapping of its own is graded on it. The receipt says
+        so by leaving ``harness_evaluations`` on the call; a run test a
+        harness environment owns says so for every call of it, one that
+        never got a receipt included. On any other call every live eval is
+        graded.
+        """
+        harness_scored = self.harness_owns_run_test or (
+            isinstance(call_metadata, dict) and "harness_evaluations" in call_metadata
+        )
+        return self.with_own_mapping if harness_scored else self.every_live
+
+
+def platform_graded_evals(run_test_id) -> PlatformGradedEvals:
+    """What ``PlatformGradedEvals.for_call`` needs, read from the run test.
+
+    A value rather than an answer per call, so a caller holding many calls
+    of one run test reads it once.
+    """
+    if not run_test_id:
+        return PlatformGradedEvals((), (), False)
+    configs = list(
+        SimulateEvalConfig.objects.filter(
+            run_test_id=run_test_id, deleted=False
+        ).values_list("id", "mapping")
+    )
+    return PlatformGradedEvals(
+        every_live=tuple(str(config_id) for config_id, _ in configs),
+        with_own_mapping=tuple(
+            str(config_id) for config_id, mapping in configs if mapping
+        ),
+        harness_owns_run_test=is_harness_run_test(run_test_id),
+    )
+
+
+def outputs_for_eval_rerun(eval_outputs, regraded_ids) -> dict:
+    """A call's results while its evals are graded again.
+
+    Each eval about to be graded reads pending; every other row stays as it
+    is, a column the harness filled included. The input is not changed. A
+    stored value that is not a dict holds no row to keep and reads as empty.
+    """
+    outputs = dict(eval_outputs) if isinstance(eval_outputs, dict) else {}
+    for config_id in regraded_ids:
+        outputs[str(config_id)] = {"status": "pending"}
+    return outputs
 
 
 def _tool_evaluation_on(run_test_id) -> bool:
