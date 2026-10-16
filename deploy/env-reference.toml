@@ -643,6 +643,12 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "Extra domains a sandbox may reach, comma-separated."
 
     [[part.section.row]]
+    keys = ["ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "Sandbox snapshot names, comma-separated, that carry the SDK able to apply a run's observability export. Empty means no run exports. List a snapshot only once it carries agent-learning-kit #162, #172 and #173 together: without #173 the exporter never sends the agent's key."
+
+    [[part.section.row]]
     keys = ["ALK_HOSTED_WEBRTC_EGRESS_CIDRS"]
     default = "empty"
     setups = ["S", "D", "H"]
