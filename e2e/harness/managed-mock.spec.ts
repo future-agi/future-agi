@@ -96,7 +96,7 @@ const backgroundEnvironment = {
   AGENTCC_GATEWAY_INTERNAL_URL: 'http://agentcc-gateway:8080', MODEL_SERVING_URL: 'http://mock-llm:8080',
   ENV_TYPE: 'local', EE_LICENSE_KEY: '', NO_STARTUP_DB_MUTATIONS: 'true', OTEL_ENABLED: 'false',
   FUTURE_AGI_TELEMETRY_DISABLED: 'true', TEMPORAL_HOST: 'temporal:7233', TEMPORAL_NAMESPACE: 'default',
-  DJANGO_SETTINGS_MODULE: 'tfc.settings.settings', MAILGUN_API_KEY: '',
+  DJANGO_SETTINGS_MODULE: 'tfc.settings.e2e', MAILGUN_API_KEY: '',
   TEMPORAL_ALL_QUEUES: 'true', TEMPORAL_EXCLUDED_QUEUES: 'simulation_runner',
 };
 

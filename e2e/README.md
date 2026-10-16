@@ -49,6 +49,7 @@ yarn install
 npx playwright install chromium
 
 # from the repo root
+bin/e2e build backend        # include E2E-only settings and issue seeder in a local image
 bin/e2e up                   # boot the isolated futureagi-e2e stack
 bin/e2e test                 # run the whole suite against it
 bin/e2e test flows/observe/  # or one area

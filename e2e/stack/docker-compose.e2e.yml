@@ -23,6 +23,7 @@ services:
       BASE_URL: http://localhost:8100
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       # Request logs reach Django over this shared secret; without it the
       # webhook rejects every batch the gateway sends.
       AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-e2e-agentcc-webhook-secret}
@@ -33,6 +34,7 @@ services:
     environment:
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      DJANGO_SETTINGS_MODULE: tfc.settings.e2e
   fi-collector:
     # Collector and consumer must run the same checked-out transport protocol.
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
