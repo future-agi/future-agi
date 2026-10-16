@@ -47,6 +47,15 @@ class CreateProjectTool(BaseTool):
 
         from model_hub.models.ai_model import AIModel
         from tracer.models.project import Project
+        from tracer.services.simulation_project import (
+            RESERVED_PROJECT_NAME_MESSAGE,
+            agent_id_in_simulation_project_name,
+        )
+
+        if agent_id_in_simulation_project_name(params.name) is not None:
+            return ToolResult.error(
+                RESERVED_PROJECT_NAME_MESSAGE, error_code="VALIDATION_ERROR"
+            )
 
         # Validate model_type
         valid_model_types = [choice.value for choice in AIModel.ModelTypes]

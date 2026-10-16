@@ -35749,6 +35749,14 @@ export type TracerObservationSpanRootSpansParams = {
 };
 
 export type TracerObservationSpanReadParams = {
+  /**
+   * A run the caller can read; opens the hidden simulation project of that run's agent.
+   */
+  test_execution_id?: string;
+  /**
+   * A run the caller can read; opens the hidden simulation project of that run's agent.
+   */
+  call_execution_id?: string;
   project_id?: string;
   /**
    * @minLength 1
@@ -36420,6 +36428,14 @@ export type TracerTraceListVoiceCallsParams = {
 
 export type TracerTraceVoiceCallDetailParams = {
   /**
+   * A run the caller can read; opens the hidden simulation project of that run's agent.
+   */
+  test_execution_id?: string;
+  /**
+   * A run the caller can read; opens the hidden simulation project of that run's agent.
+   */
+  call_execution_id?: string;
+  /**
    * Voice-call trace UUID. Supply this or the legacy traceId alias.
    */
   trace_id?: string;
@@ -36434,6 +36450,14 @@ export type TracerTraceVoiceCallDetailParams = {
 };
 
 export type TracerTraceReadParams = {
+  /**
+   * A run the caller can read; opens the hidden simulation project of that run's agent.
+   */
+  test_execution_id?: string;
+  /**
+   * A run the caller can read; opens the hidden simulation project of that run's agent.
+   */
+  call_execution_id?: string;
   /**
    * Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.
    */

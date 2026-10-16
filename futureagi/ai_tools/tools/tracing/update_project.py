@@ -30,6 +30,18 @@ class UpdateProjectTool(BaseTool):
     def execute(self, params: UpdateProjectInput, context: ToolContext) -> ToolResult:
 
         from tracer.models.project import Project
+        from tracer.services.simulation_project import (
+            RESERVED_PROJECT_NAME_MESSAGE,
+            agent_id_in_simulation_project_name,
+        )
+
+        if (
+            params.name is not None
+            and agent_id_in_simulation_project_name(params.name) is not None
+        ):
+            return ToolResult.error(
+                RESERVED_PROJECT_NAME_MESSAGE, error_code="VALIDATION_ERROR"
+            )
 
         try:
             project = Project.objects.get(

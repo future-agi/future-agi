@@ -65263,6 +65263,22 @@
                 "description": "",
                 "parameters": [
                     {
+                        "name": "test_execution_id",
+                        "in": "query",
+                        "description": "A run the caller can read; opens the hidden simulation project of that run's agent.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "call_execution_id",
+                        "in": "query",
+                        "description": "A run the caller can read; opens the hidden simulation project of that run's agent.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
                         "name": "project_id",
                         "in": "query",
                         "required": false,
@@ -70196,8 +70212,24 @@
             "get": {
                 "operationId": "tracer_trace_voice_call_detail",
                 "summary": "Return the heavy / detail-only fields for a single voice call.",
-                "description": "Query params:\n- trace_id or legacy traceId (required) — UUID of the voice call trace.\n- project_id (optional) — the project the call was opened from.",
+                "description": "Query params:\n- trace_id or legacy traceId (required) — UUID of the voice call trace.\n- project_id (optional) — the project the call was opened from.\n- test_execution_id or call_execution_id (optional) — a run the caller\n  can read; the hidden simulation project of that run's agent is read\n  in place of the caller's projects.",
                 "parameters": [
+                    {
+                        "name": "test_execution_id",
+                        "in": "query",
+                        "description": "A run the caller can read; opens the hidden simulation project of that run's agent.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "call_execution_id",
+                        "in": "query",
+                        "description": "A run the caller can read; opens the hidden simulation project of that run's agent.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
                     {
                         "name": "trace_id",
                         "in": "query",
@@ -70273,8 +70305,24 @@
             "get": {
                 "operationId": "tracer_trace_read",
                 "summary": "Retrieve a trace by its ID.",
-                "description": "Query params:\n- project_id (optional) — the project the trace was opened from.",
+                "description": "Query params:\n- project_id (optional) — the project the trace was opened from.\n- test_execution_id or call_execution_id (optional) — a run the caller\n  can read; the hidden simulation project of that run's agent is read\n  in place of the caller's projects.",
                 "parameters": [
+                    {
+                        "name": "test_execution_id",
+                        "in": "query",
+                        "description": "A run the caller can read; opens the hidden simulation project of that run's agent.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "call_execution_id",
+                        "in": "query",
+                        "description": "A run the caller can read; opens the hidden simulation project of that run's agent.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
                     {
                         "name": "project_id",
                         "in": "query",
