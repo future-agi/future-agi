@@ -65,7 +65,11 @@ from agentcc.services.gateway_client import (
     GatewayClientError,
     get_gateway_client,
 )
-from agentcc.services.url_safety import ensure_provider_base_url_allowed
+from agentcc.services.url_safety import (
+    WEBHOOK_PRIVATE_URL_ERROR,
+    ensure_provider_base_url_allowed,
+    ensure_public_http_url,
+)
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
@@ -855,6 +859,16 @@ class AgentccGatewayViewSet(ViewSet):
             guardrail_config = request.validated_data.get("config")
             if not guardrail_name or not guardrail_config:
                 return self._gm.bad_request("name and config are required")
+            webhook_url = guardrail_config.get("url")
+            if isinstance(webhook_url, str) and webhook_url:
+                try:
+                    ensure_public_http_url(
+                        webhook_url,
+                        WEBHOOK_PRIVATE_URL_ERROR,
+                        allow_unresolvable=True,
+                    )
+                except ValueError as exc:
+                    return self._gm.bad_request(str(exc))
 
             def updater(cfg):
                 guardrails = cfg.guardrails or {}
