@@ -20,14 +20,14 @@ from model_hub.models.experiments import (
     ExperimentsTable,
     PendingRowTask,
 )
-from model_hub.models.openai_tools import Tools
+from model_hub.models.openai_tools import Tools, ensure_openai_tool_envelope
 from model_hub.models.run_prompt import UserResponseSchema
 from model_hub.models.tts_voices import TTSVoice
 from model_hub.services.column_service import create_experiment_column
 from model_hub.services.experiment_utils import is_experiment_cancelled
 from model_hub.utils.utils import remove_empty_text_from_messages
 from model_hub.views.eval_runner import EvaluationRunner, bulk_update_or_create_cells
-from model_hub.views.run_prompt import populate_placeholders
+from model_hub.views.run_prompt import _extract_tool_ids, populate_placeholders
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_error_message
 
@@ -1276,9 +1276,24 @@ class ExperimentRunner:
             unsupported_exception = False
             tools_config = []
             if model_config.get("tools"):
-                tools = Tools.objects.filter(id__in=model_config.get("tools")).all()
-                for tool in tools:
-                    tools_config.append(tool.as_openai_tool())
+                tool_ids = _extract_tool_ids(model_config.get("tools"))
+                tools_by_id = {}
+                if tool_ids:
+                    try:
+                        for tool in Tools.objects.filter(id__in=tool_ids).all():
+                            tools_by_id[str(tool.id)] = tool.as_openai_tool()
+                    except Exception:
+                        logger.exception("Failed to query tools by id in experiment_runner")
+                for tool_item in model_config.get("tools"):
+                    tid = str(
+                        tool_item.get("id")
+                        if isinstance(tool_item, dict)
+                        else tool_item
+                    )
+                    if tid in tools_by_id:
+                        tools_config.append(tools_by_id[tid])
+                    elif isinstance(tool_item, dict):
+                        tools_config.append(ensure_openai_tool_envelope(tool_item))
 
             rf = model_config.get("response_format")
             if rf and not isinstance(rf, dict):
@@ -1555,9 +1570,24 @@ def _process_row_impl(
         tools_config = []
 
         if model_config.get("tools"):
-            tools = Tools.objects.filter(id__in=model_config.get("tools")).all()
-            for tool in tools:
-                tools_config.append(tool.as_openai_tool())
+            tool_ids = _extract_tool_ids(model_config.get("tools"))
+            tools_by_id = {}
+            if tool_ids:
+                try:
+                    for tool in Tools.objects.filter(id__in=tool_ids).all():
+                        tools_by_id[str(tool.id)] = tool.as_openai_tool()
+                except Exception:
+                    logger.exception("Failed to query tools by id in experiment_runner")
+            for tool_item in model_config.get("tools"):
+                tid = str(
+                    tool_item.get("id")
+                    if isinstance(tool_item, dict)
+                    else tool_item
+                )
+                if tid in tools_by_id:
+                    tools_config.append(tools_by_id[tid])
+                elif isinstance(tool_item, dict):
+                    tools_config.append(ensure_openai_tool_envelope(tool_item))
 
         rf = model_config.get("response_format")
         if rf and not isinstance(rf, dict):

@@ -141,8 +141,9 @@ class LitellmSerializer(serializers.Serializer):
         help_text="Tool selection mode: 'auto' or 'required'.",
     )
     tools = serializers.ListField(
-        child=serializers.DictField(),
+        child=StringOrObjectField(),
         required=False,
+        allow_null=True,
         help_text="List of tools with tool properties if available.",
     )
 
@@ -230,7 +231,7 @@ class PromptConfigSerializer(serializers.Serializer):
         help_text="Tool selection mode: 'auto' or 'required'.",
     )
     tools = serializers.ListField(
-        child=serializers.DictField(child=JsonValueField()),
+        child=StringOrObjectField(),
         required=False,
         allow_null=True,
         help_text="List of tools with tool properties if available.",

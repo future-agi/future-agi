@@ -88,7 +88,10 @@ from model_hub.models.develop_dataset import (
     Row,
 )
 from model_hub.models.evals_metric import EvalTemplate
-from model_hub.models.openai_tools import openai_tool_envelope
+from model_hub.models.openai_tools import (
+    ensure_openai_tool_envelope,
+    openai_tool_envelope,
+)
 from model_hub.models.prompt_base_template import PromptBaseTemplate
 from model_hub.models.prompt_folders import PromptFolder
 from model_hub.models.run_prompt import (
@@ -1951,17 +1954,11 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         messages_with_replacement
                     )
                     tools = config.get("configuration", {}).get("tools", [])
-                    tools_to_send = []
-                    for tool in tools:
-                        tool_config = tool.get("config")
-                        if tool_config:
-                            tools_to_send.append(
-                                openai_tool_envelope(
-                                    tool.get("name"),
-                                    tool.get("description"),
-                                    tool_config,
-                                )
-                            )
+                    tools_to_send = [
+                        ensure_openai_tool_envelope(tool)
+                        for tool in tools
+                        if tool
+                    ]
 
                     run_prompt = RunPrompt(
                         model=config.get("configuration", {}).get("model"),
