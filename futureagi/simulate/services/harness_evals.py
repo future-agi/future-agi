@@ -542,9 +542,7 @@ def _briefing_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return {field: entry[field] for field in _BRIEFING_FIELDS}
 
 
-def briefing_evals(
-    organization, workspace, modality: str = ""
-) -> list[dict[str, Any]]:
+def briefing_evals(organization, workspace, modality: str = "") -> list[dict[str, Any]]:
     """What goes into the job's briefing under ``metadata.available_evals``.
 
     Before a contract exists the agent kind is unknown, so the union of both
@@ -931,6 +929,21 @@ def runnable_eval_config_ids(run_test_id) -> list[str]:
             run_test_id=run_test_id, deleted=False
         ).values_list("id", "mapping")
         if mapping
+    ]
+
+
+def live_eval_config_ids(run_test_id) -> list[str]:
+    """Every config still on the run test, with a mapping of its own or not.
+
+    The scoring clock counts a placeholder or a dispatch stamp for any of
+    them: a config with no mapping can still be graded again on a finished
+    run, and its lost job must time out like any other.
+    """
+    return [
+        str(config_id)
+        for config_id in SimulateEvalConfig.objects.filter(
+            run_test_id=run_test_id, deleted=False
+        ).values_list("id", flat=True)
     ]
 
 

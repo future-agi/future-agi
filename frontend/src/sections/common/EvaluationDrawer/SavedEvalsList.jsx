@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Box,
   Button,
@@ -744,6 +744,8 @@ const SavedEvalsList = ({
   onClose,
   disableDelete = false,
   disableDeleteReason,
+  autoSelectRequests,
+  onAutoSelectApplied,
 }) => {
   const { setVisibleSection, setCurrentTab } = useEvaluationContext();
   const handleAddClick = () => {
@@ -755,6 +757,24 @@ const SavedEvalsList = ({
     setVisibleSection("config");
   };
   const [sel, setSel] = useState(new Set());
+  useEffect(() => {
+    if (!autoSelectRequests?.length) return;
+    // Rows can arrive out of order. Acknowledge only the saves whose rows are
+    // present, leaving every other save pending until a later refresh.
+    const rowsByName = new Map(
+      evals.map((evalItem) => [evalItem.name, evalItem]),
+    );
+    const applied = autoSelectRequests.filter(({ name }) =>
+      rowsByName.has(name),
+    );
+    if (!applied.length) return;
+    setSel((prev) => {
+      const next = new Set(prev);
+      applied.forEach(({ name }) => next.add(rowsByName.get(name).id));
+      return next;
+    });
+    onAutoSelectApplied(applied.map(({ token }) => token));
+  }, [evals, autoSelectRequests, onAutoSelectApplied]);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const toggle = (item) =>
     setSel((p) => {
@@ -965,6 +985,13 @@ SavedEvalsList.propTypes = {
   onClose: PropTypes.func,
   disableDelete: PropTypes.bool,
   disableDeleteReason: PropTypes.string,
+  autoSelectRequests: PropTypes.arrayOf(
+    PropTypes.shape({
+      name: PropTypes.string.isRequired,
+      token: PropTypes.number.isRequired,
+    }),
+  ),
+  onAutoSelectApplied: PropTypes.func,
 };
 
 export default SavedEvalsList;

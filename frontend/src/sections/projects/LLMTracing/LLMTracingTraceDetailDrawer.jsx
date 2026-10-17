@@ -3,9 +3,11 @@ import PropTypes from "prop-types";
 import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
 import { useLLMTracingStoreShallow } from "./states";
 import { useParams } from "react-router";
+import { useUrlState } from "src/routes/hooks/use-url-state";
 
 const LLMTracingTraceDetailDrawer = ({ refreshGrid }) => {
   const { observeId } = useParams();
+  const [evalFocus, , removeEvalFocus] = useUrlState("evalFocus", false);
   const { traceDetailDrawerOpen, setTraceDetailDrawerOpen, visibleTraces } =
     useLLMTracingStoreShallow((state) => ({
       traceDetailDrawerOpen: state.traceDetailDrawerOpen,
@@ -57,12 +59,16 @@ const LLMTracingTraceDetailDrawer = ({ refreshGrid }) => {
     <TraceDetailDrawerV2
       traceId={traceId}
       open={Boolean(traceDetailDrawerOpen)}
-      onClose={() => setTraceDetailDrawerOpen(null)}
+      onClose={() => {
+        removeEvalFocus();
+        setTraceDetailDrawerOpen(null);
+      }}
       projectId={observeId || pinnedProjectId}
       onPrev={onPrev}
       onNext={onNext}
       hasPrev={hasPrev}
       hasNext={hasNext}
+      initialEvalFocus={evalFocus === true}
       refreshParentGrid={refreshGrid}
     />
   );

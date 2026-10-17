@@ -18,6 +18,10 @@ services:
     # install and may hold real provider keys. The harness env file is the
     # only source of interpolated values (bin/e2e passes --env-file).
     env_file: !reset []
+    # The public API URL, as docker-compose.e2e.yml sets it for Distributed:
+    # SAML checks the response Destination against BASE_URL/saml2_auth/acs/.
+    environment:
+      BASE_URL: http://localhost:${BACKEND_PORT:-8100}
     extra_hosts:
       - "agentcc-gateway:127.0.0.1"
     # A crash should fail the run loudly instead of restarting quietly.

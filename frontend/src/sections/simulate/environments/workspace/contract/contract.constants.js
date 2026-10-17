@@ -16,7 +16,6 @@ export const VERIFIER_KINDS = [
 
 // Every copy string on the contract tab, so nothing is inlined in the JSX.
 export const CONTRACT_COPY = {
-  heading: "Environment contract",
   headingBlurb:
     "What makes this an environment rather than a test script. Everything read from your agent compiles into these five parts, and everything downstream reads them back.",
   compiled: (done, total) => `${done}/${total} compiled`,

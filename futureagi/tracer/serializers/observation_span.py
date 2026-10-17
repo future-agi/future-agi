@@ -455,6 +455,9 @@ class SpanListColumnConfigSerializer(serializers.Serializer):
     settings = JsonValueField(required=False, allow_null=True)
     choices_map = JsonValueField(required=False, allow_null=True)
     eval_template_id = serializers.CharField(required=False, allow_null=True)
+    target_type = serializers.ChoiceField(
+        choices=("span", "trace"), required=False, allow_null=True
+    )
     annotators = JsonValueField(required=False, allow_null=True)
     source_field = serializers.CharField(required=False, allow_null=True)
     parent_eval_id = serializers.CharField(required=False, allow_null=True)

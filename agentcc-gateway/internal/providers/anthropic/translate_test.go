@@ -450,7 +450,7 @@ func TestTranslateRequest_ToolChoiceNone(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ar.ToolChoice == nil || ar.ToolChoice.Type != "none" {
-		t.Errorf("tool_choice = %+v, want Type=none", ar.ToolChoice)
+		t.Errorf("tool_choice = %+v, want {type: none}", ar.ToolChoice)
 	}
 }
 

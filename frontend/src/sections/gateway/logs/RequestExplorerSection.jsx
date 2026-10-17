@@ -23,6 +23,9 @@ import RequestTable from "./RequestTable";
 import RequestDetailDrawer from "./RequestDetailDrawer";
 import FilterPanel from "./FilterPanel";
 import SessionExplorer from "./SessionExplorer";
+import useRequestColumns from "./columns/useRequestColumns";
+import ColumnsPickerPopover from "./columns/ColumnsPickerPopover";
+import { COLUMNS_POPOVER_ID } from "./columns/columnModel";
 
 // ---------------------------------------------------------------------------
 // Quick filter definitions
@@ -67,6 +70,7 @@ const RequestExplorerSection = () => {
   const [searchValue, setSearchValue] = useState(filters.search || "");
   const [exportAnchor, setExportAnchor] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [columnsAnchor, setColumnsAnchor] = useState(null);
 
   // --- Debounced search -----------------------------------------------------
   useEffect(() => {
@@ -87,6 +91,11 @@ const RequestExplorerSection = () => {
 
   // --- View tab -------------------------------------------------------------
   const currentView = filters.view || "requests";
+
+  // --- Configurable columns --------------------------------------
+  const requestColumns = useRequestColumns({
+    enabled: currentView === "requests",
+  });
 
   const handleViewChange = useCallback(
     (_event, newValue) => {
@@ -261,7 +270,45 @@ const RequestExplorerSection = () => {
             Filters
           </Button>
         </Badge>
+        {currentView === "requests" && (
+          <Button
+            variant="outlined"
+            startIcon={<Iconify icon="mdi:view-column-outline" width={20} />}
+            onClick={(event) => setColumnsAnchor(event.currentTarget)}
+            // Edits need the user/org storage key to be saved.
+            disabled={!requestColumns.storageKey}
+            aria-haspopup="dialog"
+            aria-expanded={Boolean(columnsAnchor)}
+            aria-controls={columnsAnchor ? COLUMNS_POPOVER_ID : undefined}
+            sx={{ whiteSpace: "nowrap" }}
+          >
+            Columns
+          </Button>
+        )}
       </Stack>
+
+      {currentView === "requests" && (
+        <ColumnsPickerPopover
+          anchorEl={columnsAnchor}
+          open={Boolean(columnsAnchor)}
+          onClose={() => setColumnsAnchor(null)}
+          entries={requestColumns.pickerEntries}
+          stale={requestColumns.stale}
+          visibleCount={requestColumns.visibleCount}
+          totalCount={requestColumns.totalCount}
+          atCap={requestColumns.atCap}
+          declarationStatus={requestColumns.declarationStatus}
+          declarationsAvailable={requestColumns.declarationsAvailable}
+          declarationsFetching={requestColumns.declarationsFetching}
+          reservedDeclared={requestColumns.reservedDeclared}
+          unavailableCustomCount={requestColumns.unavailableCustomCount}
+          onToggle={requestColumns.toggle}
+          onMove={requestColumns.move}
+          onRemove={requestColumns.remove}
+          onReset={requestColumns.reset}
+          onRetryDeclarations={requestColumns.retryDeclarations}
+        />
+      )}
 
       {/* ---- Quick filter chips ---- */}
       <Stack
@@ -299,7 +346,8 @@ const RequestExplorerSection = () => {
           filters={filters}
           setFilter={setFilter}
           setFilters={setFilters}
-          onSelectLog={(logId) => setSelectedLogId(logId)}
+          onSelectLog={setSelectedLogId}
+          columns={requestColumns.columns}
         />
       ) : (
         <SessionExplorer

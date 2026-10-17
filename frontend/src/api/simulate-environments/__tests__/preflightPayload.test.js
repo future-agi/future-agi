@@ -164,14 +164,38 @@ describe("draftToPreflightPayload — platform", () => {
     expect(payload.agent.call_direction).toBeUndefined();
   });
 
-  it("maps retell and livekit to agent_id", () => {
+  it("maps retell to agent_id", () => {
     const retell = draftToPreflightPayload(platformDraft({ provider: "retell" })).payload;
     expect(retell.agent.connector).toBe("retell");
     expect(retell.agent.config).toStrictEqual({ agent_id: "asst_1" });
+  });
 
-    const livekit = draftToPreflightPayload(platformDraft({ provider: "livekit" })).payload;
-    expect(livekit.agent.connector).toBe("livekit");
-    expect(livekit.agent.config).toStrictEqual({ agent_id: "asst_1" });
+  it("maps livekit to agent_name, livekit_url and the pasted prompt, without a phone number", () => {
+    const { payload } = draftToPreflightPayload(
+      platformDraft({
+        provider: "livekit",
+        agentId: "returns-agent",
+        livekitUrl: " wss://demo.livekit.cloud ",
+        prompt: " You handle returns. ",
+        contact: { mode: "web", agentSpeaksFirst: true, countryCode: "+1", number: "4155550100" },
+      }),
+    );
+    expect(payload.agent.connector).toBe("livekit");
+    expect(payload.agent.mode).toBe("connect_only");
+    expect(payload.agent.config).toStrictEqual({
+      agent_name: "returns-agent",
+      livekit_url: "wss://demo.livekit.cloud",
+      target_system_prompt: "You handle returns.",
+      inbound: true,
+      target_speaks_first: true,
+    });
+  });
+
+  it("skips a livekit draft that has no system prompt", () => {
+    const result = draftToPreflightPayload(
+      platformDraft({ provider: "livekit", agentId: "returns-agent", prompt: "  " }),
+    );
+    expect(result).toStrictEqual({ skipped: "LiveKit needs the agent's system prompt" });
   });
 
   const phoneDraft = (contact) =>

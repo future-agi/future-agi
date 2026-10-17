@@ -531,11 +531,17 @@ func (p *Provider) CreateTranscription(ctx context.Context, req *models.Transcri
 	if req.Language != "" {
 		writer.WriteField("language", req.Language)
 	}
+	if req.Prompt != "" {
+		writer.WriteField("prompt", req.Prompt)
+	}
 	if req.ResponseFormat != "" {
 		writer.WriteField("response_format", req.ResponseFormat)
 	}
 	if req.Temperature != nil {
 		writer.WriteField("temperature", fmt.Sprintf("%g", *req.Temperature))
+	}
+	for _, granularity := range req.TimestampGranularities {
+		writer.WriteField("timestamp_granularities[]", granularity)
 	}
 
 	if err := writer.Close(); err != nil {
@@ -569,12 +575,11 @@ func (p *Provider) CreateTranscription(ctx context.Context, req *models.Transcri
 		return nil, parseProviderError(resp.StatusCode, respBody)
 	}
 
-	var result models.TranscriptionResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
+	result, err := models.NewTranscriptionResponse(respBody, resp.Header.Get("Content-Type"))
+	if err != nil {
 		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing transcription response: %v", err))
 	}
-
-	return &result, nil
+	return result, nil
 }
 
 // Close releases resources.

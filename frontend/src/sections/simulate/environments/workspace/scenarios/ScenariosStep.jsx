@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Box, Stack, Typography, Button } from "@mui/material";
+import { Alert, Box, Typography, Button } from "@mui/material";
 import { useSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
@@ -7,7 +7,6 @@ import CustomTooltip from "src/components/tooltip";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { resolveScenarioSelection } from "src/api/simulate-environments/scenarioSelection";
 import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
-import SectionCard from "../../components/SectionCard";
 import EmptyState from "../../components/EmptyState";
 import ScenarioToolbar from "./ScenarioToolbar";
 import SelectionBar from "./SelectionBar";
@@ -33,13 +32,15 @@ import PagedScenarioViews from "./PagedScenarioViews";
 // carries this on its tooltip while locked.
 const LOCK_TOOLTIP = "Fork this environment to edit.";
 
-// The add CTA. Rendered in two places (header when the list is populated, and
+// The add CTA. Rendered in two places (the toolbar when the list is populated, and
 // the empty placeholder), so it lives here as one node. Disabled with a
 // coming-soon tooltip for now — the drawer it opens is built and wired, just
 // not surfaced yet. On a locked template the same disabled button reads the
 // fork tooltip instead. Wrapped in a span so the tooltip still fires over the
 // disabled button.
-function AddButton({ onClick, contained = false, locked = false }) {
+// `short` is the toolbar form: the list it sits on says what gets added, so the
+// visible label drops the noun and the accessible name keeps it.
+function AddButton({ onClick, contained = false, locked = false, short = false }) {
   return (
     <CustomTooltip show arrow size="small" title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.addComingSoon}>
       <Box component="span" sx={{ display: "inline-flex", flexShrink: 0 }}>
@@ -51,15 +52,21 @@ function AddButton({ onClick, contained = false, locked = false }) {
           onClick={onClick}
           aria-label={SCENARIOS_COPY.addLabel}
           startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-          sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
+          // In the toolbar it matches the 32px row and Coverage's padding beside it.
+          sx={{ typography: "s2", fontWeight: "fontWeightBold", ...(short && { height: 32, px: 1.75 }) }}
         >
-          {SCENARIOS_COPY.addLabel}
+          {short ? SCENARIOS_COPY.addShortLabel : SCENARIOS_COPY.addLabel}
         </Button>
       </Box>
     </CustomTooltip>
   );
 }
-AddButton.propTypes = { onClick: PropTypes.func, contained: PropTypes.bool, locked: PropTypes.bool };
+AddButton.propTypes = {
+  onClick: PropTypes.func,
+  contained: PropTypes.bool,
+  locked: PropTypes.bool,
+  short: PropTypes.bool,
+};
 
 // Shown when the environment has no scenarios at all — rare, since they are
 // normally derived when the environment is built.
@@ -76,10 +83,10 @@ function RoutePlaceholder({ onAdd, locked = false }) {
 RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
 
 // Scenarios tab body. The scenarios are already here — derived when the
-// environment is built — so the page leads with them, with the ways to add more
-// beside the heading and per-row editing behind the pencil. Two views of the
-// same rows share one toolbar so filters survive a view switch, and the coverage
-// matrix below reads the live rows.
+// environment is built — so the page leads with them: one toolbar (search,
+// filter, display, coverage, add) over the list, per-row editing behind the
+// pencil. Two views of the same rows share the toolbar so filters survive a
+// view switch, and coverage reads the same search and filters as the list.
 export default function ScenariosStep({ env, envState, patch, locked = false, onStartRun, canRun = false }) {
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
@@ -215,6 +222,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // Hiding groups is a page-local visual toggle.
   const hiddenCount = pageData.pageGroups.filter((g) => hiddenGroupIds.includes(g.id)).length;
 
+  const filtered = query.length > 0 || filterCount > 0 || hiddenCount > 0;
   const clearFilters = () => { setQuery(""); setFilters({}); setHiddenGroupIds([]); resetView(); };
 
   // Surface an amend's receipts: a refusal (a field that is proved, not
@@ -342,33 +350,10 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   };
 
   return (
-    // The tab's height: the header and coverage keep their size and the
-    // scenario card fills the rest, its table scrolling on its own. The card
-    // never drops below a few rows; on a short panel the panel scrolls instead.
+    // The tab's height: the toolbar keeps its size and the table's box fills the
+    // rest, scrolling on its own. It never drops below a few rows; on a short
+    // panel the panel scrolls instead.
     <Box sx={{ p: 2, height: "100%", display: "flex", flexDirection: "column" }}>
-      <Stack
-        direction={{ xs: "column", sm: "row" }}
-        alignItems={{ sm: "center" }}
-        spacing={1.5}
-        sx={{ mb: 2, flexShrink: 0 }}
-      >
-        <Box flex={1} minWidth={0}>
-          <Stack direction="row" alignItems="baseline" spacing={0.75}>
-            <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
-              {SCENARIOS_COPY.heading}
-            </Typography>
-            {hasScenarios && (
-              <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
-                {`(${suiteTotal.toLocaleString()})`}
-              </Typography>
-            )}
-          </Stack>
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            {SCENARIOS_COPY.subtitle}
-          </Typography>
-        </Box>
-        {hasScenarios && <AddButton onClick={() => setAdding(true)} contained locked={locked} />}
-      </Stack>
 
       {loadFailed && !pageData.rows.length ? (
         <EmptyState
@@ -380,9 +365,6 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         <RoutePlaceholder onAdd={() => setAdding(true)} locked={locked} />
       ) : (
         <>
-          {/* Coverage leads the tab, collapsed — the summary numbers (Axes /
-              Pairs / Forced) are visible on landing without scrolling past the
-              list; the chevron unfurls the full breakdown. */}
           {loadFailed && (
             <Alert
               severity="error"
@@ -396,19 +378,13 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
               Couldn&apos;t refresh the scenarios. Showing the last loaded list.
             </Alert>
           )}
-          <Box sx={{ mb: 2, flexShrink: 0 }}>
-            <CoverageMatrix jobId={env?.id} search={debouncedQuery} filters={filters} />
-          </Box>
-
-          <SectionCard
-            sx={{ flex: 1, minHeight: 320, display: "flex", flexDirection: "column" }}
-          >
-            {/* The bulk-action bar OVERLAYS the toolbar's own row while a
-                selection is active — the toolbar stays mounted underneath and
-                keeps defining the row height, so it's exactly the same height
-                with or without a selection: zero layout shift, the header never
-                moves. Clearing the selection reveals the toolbar again. */}
-            <Box sx={{ position: "relative", flexShrink: 0 }}>
+          <Box sx={{ flex: 1, minHeight: 320, minWidth: 0, display: "flex", flexDirection: "column" }}>
+            {/* The bulk-action bar covers the toolbar's row while a selection is
+                active. Both sit in one grid cell, the toolbar staying mounted
+                underneath, so the row keeps the toolbar's height (no shift when
+                selecting) and only grows when the bar needs more, never
+                clipping its buttons. Clearing the selection reveals the toolbar. */}
+            <Box sx={{ display: "grid", flexShrink: 0, "& > *": { gridArea: "1 / 1", minWidth: 0 } }}>
               <Box aria-hidden={!locked && sel.count > 0 ? true : undefined}>
                 <ScenarioToolbar
                   query={query}
@@ -424,22 +400,22 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
                   filters={filters}
                   onApplyFilters={applyFilters}
                   filterCount={filterCount}
-                  shownCount={pageData.total}
-                  totalCount={suiteTotal}
-                  hiddenCount={hiddenCount}
-                  onClear={clearFilters}
+                  actions={(
+                    <>
+                      <CoverageMatrix jobId={env?.id} search={debouncedQuery} filters={filters} />
+                      <AddButton onClick={() => setAdding(true)} contained locked={locked} short />
+                    </>
+                  )}
                 />
               </Box>
               {!locked && sel.count > 0 && (
                 <Box
                   sx={{
-                    // No horizontal padding here — SelectionBar owns its own
-                    // inset so the chip's left edge lines up with the table's
-                    // checkbox column below (an extra px here double-padded it).
-                    position: "absolute", inset: 0, zIndex: 2,
-                    display: "flex", alignItems: "center",
+                    // No padding here: SelectionBar carries the toolbar's own
+                    // insets, so its controls land on the toolbar's edges.
+                    zIndex: 2,
+                    display: "flex", alignItems: "flex-start",
                     bgcolor: "background.paper",
-                    borderBottom: "1px solid", borderColor: "divider",
                   }}
                 >
                   <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -462,24 +438,39 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
               )}
             </Box>
 
-            <PagedScenarioViews
-              pageData={pageData}
-              selection={sel}
-              env={env}
-              view={view}
-              hiddenGroupIds={hiddenGroupIds}
-              onHideGroup={toggleGroupHidden}
-              onEdit={setEditing}
-              onRemove={removeScenario}
-              page={page}
-              onPageChange={setPage}
-              query={query}
-              filters={filters}
-              groupBy={activeGroupBy}
-              locked={locked}
-              rowHeight={rowHeight}
-            />
-          </SectionCard>
+            {/* The table's own bordered box, its edges on the toolbar's. */}
+            <Box
+              sx={{
+                flex: 1, minHeight: 0, display: "flex", flexDirection: "column",
+                border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden",
+              }}
+            >
+              <PagedScenarioViews
+                pageData={pageData}
+                selection={sel}
+                env={env}
+                view={view}
+                hiddenGroupIds={hiddenGroupIds}
+                onHideGroup={toggleGroupHidden}
+                onEdit={setEditing}
+                onRemove={removeScenario}
+                page={page}
+                onPageChange={setPage}
+                query={query}
+                filters={filters}
+                groupBy={activeGroupBy}
+                locked={locked}
+                rowHeight={rowHeight}
+                readout={filtered ? {
+                  shown: pageData.total,
+                  total: suiteTotal,
+                  hiddenCount,
+                  onlyGroupsHidden: hiddenCount > 0 && query.length === 0 && filterCount === 0,
+                  onClear: clearFilters,
+                } : undefined}
+              />
+            </Box>
+          </Box>
         </>
       )}
 

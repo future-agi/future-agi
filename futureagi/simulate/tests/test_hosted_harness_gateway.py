@@ -32,7 +32,6 @@ from simulate.services.hosted_harness import (
 from simulate.services.hosted_harness_gateway import (
     _ADJUSTMENTS_PATH,
     _SIMULATOR_SECRETS_PATH,
-    _SIMULATOR_VERTEX_CREDENTIALS_PATH,
     HostedHarnessGateway,
     HostedSourceAcquirer,
     _authoring_archive_for,
@@ -66,8 +65,23 @@ from simulate.services.hosted_sandbox import (
 
 
 @pytest.fixture(autouse=True)
+def _no_conversation_runtime(monkeypatch):
+    """A launch asks for the conversation's harness; tests never start one."""
+    started: list[str] = []
+    monkeypatch.setattr(
+        "simulate.tasks.hosted_harness_conversation.schedule_conversation_runtime",
+        lambda conversation_id, _base_url: started.append(conversation_id),
+    )
+    return started
+
+
+@pytest.fixture(autouse=True)
 def _isolate_platform_simulator_environment(settings, monkeypatch):
-    """Tests opt in explicitly instead of reading the developer machine's provider keys."""
+    """Tests opt in explicitly instead of reading the developer machine's provider keys.
+
+    Hosted runs require AgentCC, so every test starts with one configured; a test about its
+    absence removes it.
+    """
     settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
     for name in (
         "AGENTCC_BASE_URL",
@@ -79,8 +93,12 @@ def _isolate_platform_simulator_environment(settings, monkeypatch):
         "ALK_HARNESS_MODEL",
         "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
         "ALK_CAB_GUEST_POC_PIN",
+        "SIMULATOR_STT_PROVIDER",
+        "SIMULATOR_TTS_PROVIDER",
     ):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
+    monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-virtual-key")
 
 
 def test_private_pin_policy_is_phone_scoped_and_fails_closed(monkeypatch) -> None:
@@ -137,15 +155,7 @@ def test_guest_failure_cause_preserves_legacy_runnable_entrypoint_blocker() -> N
     )
 
 
-def test_platform_simulator_material_uses_deployment_credentials_only(
-    tmp_path, monkeypatch
-):
-    credentials = tmp_path / "vertex.json"
-    credentials.write_text(
-        json.dumps({"project_id": "platform-simulator-project"}), encoding="utf-8"
-    )
-    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
-    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+def test_platform_simulator_material_uses_deployment_credentials_only(monkeypatch):
     monkeypatch.setenv("SIMULATOR_LLM_PROVIDER", "vertex")
     monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-3.7-flash")
     monkeypatch.delenv("ALK_HARNESS", raising=False)
@@ -162,12 +172,11 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     monkeypatch.setenv("ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER", "+15551234567")
     monkeypatch.setenv("ALK_CAB_GUEST_POC_PIN", "7682")
 
-    values, credential_bytes = _platform_simulator_material()
+    values = _platform_simulator_material()
 
-    assert values["GOOGLE_CLOUD_PROJECT"] == "platform-simulator-project"
-    assert values["GOOGLE_APPLICATION_CREDENTIALS"] == (
-        _SIMULATOR_VERTEX_CREDENTIALS_PATH
-    )
+    # Behind the gateway the models need no Vertex credential in the sandbox.
+    assert "GOOGLE_CLOUD_PROJECT" not in values
+    assert "GOOGLE_APPLICATION_CREDENTIALS" not in values
     assert values["DEEPGRAM_API_KEY"] == "platform-deepgram-secret"
     assert values["LIVEKIT_URL"] == "wss://platform-livekit.example"
     assert values["LIVEKIT_API_KEY"] == "platform-livekit-key"
@@ -180,46 +189,32 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     assert values["ALK_HARNESS_MODEL"] == "vertex_ai/gemini-3.7-flash"
     assert values["ALK_CLAUDE_GATEWAY_URL"] == "https://gateway.futureagi.test"
     assert values["ALK_CLAUDE_GATEWAY_API_KEY"] == "harness-key"
-    assert values["ANTHROPIC_VERTEX_PROJECT_ID"] == "platform-simulator-project"
-    assert credential_bytes == credentials.read_bytes()
+    assert "ANTHROPIC_VERTEX_PROJECT_ID" not in values
 
 
-def test_platform_simulator_defaults_to_claude_authoring_and_gemini_caller(
+def test_platform_simulator_defaults_to_gateway_authoring_and_gemini_caller(
     monkeypatch,
 ):
     monkeypatch.delenv("SIMULATOR_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("SIMULATOR_LLM_MODEL", raising=False)
-    monkeypatch.delenv("ALK_HOSTED_AGENTCC_BASE_URL", raising=False)
-    monkeypatch.delenv("AGENTCC_INTERNAL_API_KEY", raising=False)
-    monkeypatch.delenv("AGENTCC_HARNESS_API_KEY", raising=False)
-    monkeypatch.delenv("AGENTCC_BASE_URL", raising=False)
-    monkeypatch.delenv("ALK_HARNESS", raising=False)
-    monkeypatch.delenv("ALK_HARNESS_MODEL", raising=False)
-    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
 
-    values, credential_bytes = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["SIMULATOR_LLM_PROVIDER"] == "vertex"
-    assert values["SIMULATOR_LLM_MODEL"] == "gemini-3.8-flash"
+    assert values["SIMULATOR_LLM_MODEL"] == "vertex_ai/gemini-3.8-flash"
     assert values["ALK_HARNESS"] == "claude"
-    assert values["ALK_HARNESS_MODEL"] == "claude-sonnet-4-6"
-    assert credential_bytes is None
+    assert values["ALK_HARNESS_MODEL"] == "vertex_ai/gemini-3.7-flash"
 
 
-def test_platform_authoring_backend_is_independent_from_simulated_caller(
-    tmp_path, monkeypatch
-):
+def test_platform_authoring_backend_is_independent_from_simulated_caller(monkeypatch):
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "platform-internal-key")
     monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "platform-harness-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
-    credentials = tmp_path / "vertex.json"
-    credentials.write_text('{"project_id":"platform-project"}', encoding="utf-8")
-    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
     monkeypatch.setenv("SIMULATOR_LLM_PROVIDER", "vertex")
     monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-3.1-flash-lite")
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.setenv("ALK_HARNESS_MODEL", "claude-sonnet-4-6")
-    values, _credential_bytes = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["ALK_HARNESS"] == "claude"
     assert values["ALK_HARNESS_MODEL"] == "claude-sonnet-4-6"
@@ -235,7 +230,7 @@ def test_claude_authoring_prefers_platform_owned_harness_key(monkeypatch):
     monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-virtual-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
 
-    values, _ = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["AGENTCC_API_KEY"] == "harness-virtual-key"
     assert values["AGENTCC_BASE_URL"] == "https://gateway.example.test"
@@ -248,16 +243,12 @@ def test_claude_authoring_prefers_platform_owned_harness_key(monkeypatch):
 
 
 def test_platform_ambience_clips_reach_the_harness_and_its_egress(monkeypatch):
-    monkeypatch.delenv(
-        "ALK_HOSTED_SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS", raising=False
-    )
-    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-service-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
     monkeypatch.delenv("ALK_BACKGROUND_NOISE_CATALOG", raising=False)
 
-    values, _ = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     clips = json.loads(values["ALK_BACKGROUND_NOISE_CATALOG"])
     assert clips and all(
@@ -275,22 +266,18 @@ def test_platform_ambience_clips_reach_the_harness_and_its_egress(monkeypatch):
 def test_caller_barge_in_rate_comes_from_platform_configuration(monkeypatch):
     monkeypatch.setenv("ALK_HARNESS", "gemini")
     monkeypatch.setenv("HARNESS_CALLER_BARGE_IN_RATE", "0.2")
-    values, _ = _platform_simulator_material()
+    values = _platform_simulator_material()
     assert values["HARNESS_CALLER_BARGE_IN_RATE"] == "0.2"
 
 
 def test_a_deployment_catalogue_overrides_the_platform_clips(monkeypatch, tmp_path):
-    monkeypatch.delenv(
-        "ALK_HOSTED_SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS", raising=False
-    )
-    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-service-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
     inline = '[{"environment":"street","url":"https://clips.example.test/street.mp3"}]'
     monkeypatch.setenv("ALK_BACKGROUND_NOISE_CATALOG", inline)
 
-    values, _ = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["ALK_BACKGROUND_NOISE_CATALOG"] == inline
 
@@ -298,16 +285,12 @@ def test_a_deployment_catalogue_overrides_the_platform_clips(monkeypatch, tmp_pa
     path.write_text(inline, encoding="utf-8")
     monkeypatch.setenv("ALK_BACKGROUND_NOISE_CATALOG", str(path))
 
-    values, _ = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["ALK_BACKGROUND_NOISE_CATALOG"] == inline
 
 
 def test_admission_counts_the_ambience_hosts_that_launch_adds(monkeypatch):
-    monkeypatch.delenv(
-        "ALK_HOSTED_SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS", raising=False
-    )
-    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-service-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
@@ -317,7 +300,7 @@ def test_admission_counts_the_ambience_hosts_that_launch_adds(monkeypatch):
         "security": {"allowed_egress_domains": []},
     }
 
-    launched, _ = _platform_simulator_material()
+    launched = _platform_simulator_material()
     clip_hosts = {
         urlparse(clip["url"]).hostname
         for clip in json.loads(launched["ALK_BACKGROUND_NOISE_CATALOG"])
@@ -335,13 +318,13 @@ def test_claude_authoring_uses_separate_remote_gateway_key(monkeypatch):
     monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "remote-virtual-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.futureagi.com")
 
-    values, _ = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["AGENTCC_API_KEY"] == "remote-virtual-key"
     assert values["AGENTCC_BASE_URL"] == "https://gateway.futureagi.com"
 
 
-def test_claude_authoring_requires_sandbox_reachable_gateway(monkeypatch):
+def test_hosted_runs_require_sandbox_reachable_gateway(monkeypatch):
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-virtual-key")
     monkeypatch.delenv("AGENTCC_BASE_URL", raising=False)
@@ -349,7 +332,7 @@ def test_claude_authoring_requires_sandbox_reachable_gateway(monkeypatch):
     with pytest.raises(HostedHarnessError) as exc:
         _platform_simulator_material()
 
-    assert exc.value.code == "authoring_gateway_not_configured"
+    assert exc.value.code == "agentcc_not_configured"
 
 
 def test_claude_authoring_falls_back_to_internal_key(monkeypatch):
@@ -358,7 +341,7 @@ def test_claude_authoring_falls_back_to_internal_key(monkeypatch):
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-evaluator-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
 
-    values, _ = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["AGENTCC_API_KEY"] == "internal-evaluator-key"
     assert values["ALK_CLAUDE_GATEWAY_API_KEY"] == "internal-evaluator-key"
@@ -1264,7 +1247,7 @@ def test_authoring_launch_uses_requested_resources(monkeypatch):
     )
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: ({}, None),
+        lambda: {},
     )
 
     def capture_launch(spec, **_kwargs):
@@ -1769,14 +1752,13 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     simulator_values = {
         "ALK_HARNESS": "vertex-gemini",
         "ALK_HARNESS_MODEL": "gemini-3.7-flash",
+        "AGENTCC_BASE_URL": "https://gateway.example.test",
+        "AGENTCC_API_KEY": "harness-virtual-key",
         "DEEPGRAM_API_KEY": "platform-simulator-deepgram",
-        "GOOGLE_APPLICATION_CREDENTIALS": _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-        "GOOGLE_CLOUD_PROJECT": "platform-simulator-project",
-        "GOOGLE_CLOUD_LOCATION": "global",
     }
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: (simulator_values, b'{"project_id":"platform-simulator-project"}'),
+        lambda: simulator_values,
     )
 
     selected_capacity = SandboxCapacity("selected", 6, 12_288, 20, 1)
@@ -1805,10 +1787,10 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "/work/job.json",
         "/run/futureagi/secrets.json",
         _SIMULATOR_SECRETS_PATH,
-        _SIMULATOR_VERTEX_CREDENTIALS_PATH,
         "/run/futureagi/capabilities.json",
         "/run/futureagi/entrypoint-command-id",
     }
+    assert "/run/futureagi/simulator-vertex-sa.json" not in client.sandbox.fs.uploads
     assert client.sandbox.process.sessions == ["alk-harness"]
     assert json.loads(client.sandbox.fs.uploads["/run/futureagi/secrets.json"]) == {}
     assert json.loads(client.sandbox.fs.uploads[_SIMULATOR_SECRETS_PATH]) == (
@@ -1817,9 +1799,8 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     assert b"platform-simulator-deepgram" not in (
         client.sandbox.process.session_request.command.encode()
     )
-    assert "--adjustments /run/futureagi/adjustments.jsonl" in (
-        client.sandbox.process.session_request.command
-    )
+    assert "--await-harness" in client.sandbox.process.session_request.command
+    assert job.conversation.messages.get().content.startswith("Build the test environment")
     assert "; fi &&" in client.sandbox.process.session_request.command
     # Authoring and call execution are distinct bounded phases. The sandbox must survive the
     # former rather than using only the 10-minute call-runtime budget plus two minutes.
@@ -1832,16 +1813,59 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     )
     assert client.params.unrestricted_egress is False
     assert set(client.params.allowed_domains) == {
-        "aiplatform.googleapis.com",
         "agent.example.com",
         "api.deepgram.com",
         "*.vapi.ai",
-        "global-aiplatform.googleapis.com",
+        "gateway.example.test",
         "ingest.example.com",
-        "oauth2.googleapis.com",
         "platform.example.com",
-        "us-east5-aiplatform.googleapis.com",
     }
+
+
+@pytest.mark.django_db
+def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
+    organization, settings, monkeypatch
+):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="launch-gateway-staged")
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = "sha256:" + "b" * 64
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
+    settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
+    settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+    settings.ALK_HOSTED_BUILDER_SESSION = False
+    simulator_values = {
+        "ALK_HARNESS": "vertex-gemini",
+        "ALK_HARNESS_MODEL": "gemini-3.7-flash",
+        "AGENTCC_BASE_URL": "https://gateway.example.test",
+        "AGENTCC_API_KEY": "harness-virtual-key",
+        "DEEPGRAM_API_KEY": "platform-simulator-deepgram",
+    }
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._platform_simulator_material",
+        lambda: simulator_values,
+    )
+
+    selected_capacity = SandboxCapacity("selected", 6, 12_288, 20, 1)
+    with patch(
+        "simulate.services.harness_capacity.configured_capacity",
+        return_value=selected_capacity,
+    ):
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+
+    assert attempt.state == HostedHarnessAttempt.State.RUNNING
+    command = client.sandbox.process.session_request.command
+    assert "--await-harness" not in command and "--adjustments" in command
+    assert not job.conversation.messages.filter(content__startswith="Build the test environment").exists()
+
 
 
 def _launch_and_read_job_json(
@@ -1878,21 +1902,15 @@ def _launch_and_read_job_json(
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
     settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
     settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
-    # The platform simulator credential is deployment material; these tests are
-    # about the admitted parallelism the guest receives, not credential loading.
+    # Platform simulator config is deployment material; these tests are about the
+    # admitted parallelism the guest receives, not what the sandbox is given.
     simulator_values = {
         "ALK_HARNESS": "vertex-gemini",
         "ALK_HARNESS_MODEL": "gemini-2.5-flash",
-        "GOOGLE_APPLICATION_CREDENTIALS": _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-        "GOOGLE_CLOUD_PROJECT": "platform-simulator-project",
-        "GOOGLE_CLOUD_LOCATION": "global",
     }
     with patch(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        return_value=(
-            simulator_values,
-            b'{"project_id":"platform-simulator-project"}',
-        ),
+        return_value=simulator_values,
     ):
         gateway.launch(job, endpoint_base_url="https://platform.example.com")
 
@@ -1990,7 +2008,7 @@ def test_unified_provider_import_authoring_receives_one_shot_target_key(
     )
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: ({}, None),
+        lambda: {},
     )
 
     gateway.launch(job, endpoint_base_url="https://platform.example.com")
@@ -2047,6 +2065,7 @@ def test_daytona_adjustment_is_persisted_and_delivered_to_active_authoring(
         {
             "instruction": "Create 1 more scenario covering discounts",
             "client_request_id": "browser-1",
+            "scenario_delta": 1,
         },
     )
 
@@ -2062,6 +2081,43 @@ def test_daytona_adjustment_is_persisted_and_delivered_to_active_authoring(
     assert records[0]["status"] == "pending"
     assert adjusted.payload["metadata"]["adjustments"] == records
     assert adjusted.payload["scenario_count"] == 3
+
+
+@pytest.mark.django_db
+def test_adjustment_goes_to_the_stage_the_chat_names(organization, settings, tmp_path):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="adjust-named-stage")
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    dockerfile = tmp_path / "Dockerfile.hosted"
+    dockerfile.write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    gateway.dockerfile = str(dockerfile)
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
+    with patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    ):
+        gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    job.refresh_from_db()
+
+    adjusted = gateway.adjust(
+        job,
+        {
+            "instruction": "Identity needs a date of birth; update the scenario callers too",
+            "client_request_id": "chat-1",
+            "target_stage": "environment",
+        },
+    )
+
+    assert adjusted.payload["metadata"]["adjustments"][-1]["target_stage"] == "environment"
 
 
 @pytest.mark.django_db
@@ -2111,7 +2167,7 @@ def test_daytona_retry_replays_persisted_adjustments_before_authoring(
 
 
 @pytest.mark.django_db
-def test_daytona_adjustment_accepts_natural_language_number(
+def test_daytona_adjustment_takes_the_scenario_count_it_is_given(
     organization, settings, tmp_path
 ):
     payload = _payload()
@@ -2143,8 +2199,9 @@ def test_daytona_adjustment_accepts_natural_language_number(
     adjusted = gateway.adjust(
         job,
         {
-            "instruction": "Add one more scenario covering discounts",
+            "instruction": "Cover discounts",
             "client_request_id": "browser-word-1",
+            "scenario_delta": 1,
         },
     )
 
@@ -2178,7 +2235,7 @@ def test_daytona_livekit_launch_uses_coturn_domain_allowlist(
     ]
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: ({}, None),
+        lambda: {},
     )
 
     gateway.launch(job, endpoint_base_url="https://platform.example.com")
@@ -2793,7 +2850,7 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     gateway.client = client
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: ({}, None),
+        lambda: {},
     )
     barrier = Barrier(2)
 
@@ -2858,7 +2915,7 @@ def test_platform_simulator_material_carries_observe_credentials(monkeypatch):
     }.items():
         monkeypatch.setenv(name, value)
 
-    values, _credentials = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["FI_API_KEY"] == "observe-key"
     assert values["FI_SECRET_KEY"] == "observe-secret"
@@ -2873,6 +2930,6 @@ def test_platform_simulator_prefers_public_callback_for_hosted_observability(
     monkeypatch.setenv("HARNESS_PUBLIC_BASE_URL", "https://platform.example.test")
     monkeypatch.setenv("FI_BASE_URL", "http://backend:80")
 
-    values, _credentials = _platform_simulator_material()
+    values = _platform_simulator_material()
 
     assert values["FI_BASE_URL"] == "https://platform.example.test"

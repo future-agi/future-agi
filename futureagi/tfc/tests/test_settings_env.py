@@ -113,3 +113,55 @@ def test_only_a_cloud_region_turns_on_cloud_defaults(
     )
     assert loaded.returncode == 0, loaded.stderr
     assert loaded.stdout.splitlines()[-1] == f"{recaptcha} {channel_layer}"
+
+
+# SAML_LOGIN_ENABLED is the SAML kill switch. Production settings (not the test
+# settings, which force it on) must keep tenant-scoped SAML on when the
+# variable is unset or blank, honour an explicit off, and refuse a value that
+# is neither, so a typo cannot silently leave the switch in either state.
+
+
+def _load_production_saml_switch(**env):
+    environ = {k: v for k, v in os.environ.items() if k != "SAML_LOGIN_ENABLED"}
+    environ.update(env, DJANGO_SETTINGS_MODULE="tfc.settings.settings")
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import importlib; "
+            "s = importlib.import_module('tfc.settings.settings'); "
+            "print(s.SAML_LOGIN_ENABLED)",
+        ],
+        env=environ,
+        cwd=BACKEND,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def test_saml_login_is_on_when_the_switch_is_unset():
+    loaded = _load_production_saml_switch()
+    assert loaded.returncode == 0, loaded.stderr
+    assert loaded.stdout.splitlines()[-1] == "True"
+
+
+@pytest.mark.parametrize("value", ["", " ", "true", "1", "Yes", "on"])
+def test_saml_login_is_on_for_blank_or_true(value):
+    loaded = _load_production_saml_switch(SAML_LOGIN_ENABLED=value)
+    assert loaded.returncode == 0, loaded.stderr
+    assert loaded.stdout.splitlines()[-1] == "True"
+
+
+@pytest.mark.parametrize("value", ["false", "0", "No", "off"])
+def test_saml_login_is_off_when_switched_off(value):
+    loaded = _load_production_saml_switch(SAML_LOGIN_ENABLED=value)
+    assert loaded.returncode == 0, loaded.stderr
+    assert loaded.stdout.splitlines()[-1] == "False"
+
+
+@pytest.mark.parametrize("value", ["flase", "disabled"])
+def test_an_unreadable_saml_switch_refuses_to_load(value):
+    loaded = _load_production_saml_switch(SAML_LOGIN_ENABLED=value)
+    assert loaded.returncode != 0
+    assert "SAML_LOGIN_ENABLED" in loaded.stderr

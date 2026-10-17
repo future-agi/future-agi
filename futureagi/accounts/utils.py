@@ -1,3 +1,4 @@
+import inspect
 import os
 import re
 import secrets
@@ -43,7 +44,22 @@ from tfc.utils.parse_errors import parse_serialized_errors
 logger = structlog.get_logger(__name__)
 
 
-def _fire_deployment_telemetry_registration():
+def _record_signup_api_key_event(key_id, organization_id):
+    try:
+        from tfc.deployment_telemetry.events import record_event
+
+        record_event(
+            "api_key_created",
+            actor_type="api_key",
+            actor_id=key_id,
+            source="system",
+            organization_id=organization_id,
+        )
+    except Exception:
+        logger.debug("deployment_telemetry_signup_api_key_event_failed", exc_info=True)
+
+
+def _fire_deployment_telemetry_registration(user_id=None, source="system"):
     import threading
 
     try:
@@ -58,6 +74,15 @@ def _fire_deployment_telemetry_registration():
                 from tfc.deployment_telemetry.sender import attempt_registration
 
                 attempt_registration()
+                from tfc.deployment_telemetry.events import record_event
+
+                if user_id is not None:
+                    record_event(
+                        "user_created",
+                        actor_type="human_user",
+                        actor_id=user_id,
+                        source=source,
+                    )
             finally:
                 close_old_connections()
 
@@ -266,7 +291,7 @@ def is_work_email(email):
     return not is_disposable_email_domain(domain)
 
 
-def first_signup(data, mode=None):
+def first_signup(data, mode=None, telemetry_source="web"):
     if not data.get("email"):
         raise Exception("Email not provided")
 
@@ -356,13 +381,22 @@ def first_signup(data, mode=None):
         track_mixpanel_event(event_name, properties)
 
         if len(apiKeys) == 0:
-            OrgApiKey.no_workspace_objects.create(
+            system_key = OrgApiKey.no_workspace_objects.create(
                 organization=organization, type="system"
+            )
+            transaction.on_commit(
+                lambda key_id=system_key.id, org_id=organization.id: _record_signup_api_key_event(
+                    key_id, org_id
+                )
             )
         if generated_password:
             process_post_registration(user.id, generated_password)
 
-        transaction.on_commit(_fire_deployment_telemetry_registration)
+        transaction.on_commit(
+            lambda user_id=user.id, source=telemetry_source: _fire_deployment_telemetry_registration(
+                user_id, source
+            )
+        )
         return user
 
     else:
@@ -370,7 +404,7 @@ def first_signup(data, mode=None):
         raise Exception(str(error_messages))
 
 
-def create_owner_account(email, full_name, password):
+def create_owner_account(email, full_name, password, telemetry_source=None):
     """An account that owns a new organization, as a first signup creates it:
     ``manage.py create_user`` and the Helm chart's first admin
     (``bootstrap_install``). Raises ValidationError, with messages for the
@@ -384,14 +418,20 @@ def create_owner_account(email, full_name, password):
         raise ValidationError(f"A user with the email {email} already exists.")
     # UserSignupSerializer trims the password before it validates and stores it.
     validate_password(password.strip())
-    return first_signup(
-        {
-            "email": email,
-            "full_name": full_name,
-            "password": password,
-            "allow_email": True,
-        }
-    )
+    signup_data = {
+        "email": email,
+        "full_name": full_name,
+        "password": password,
+        "allow_email": True,
+    }
+    if telemetry_source is None:
+        return first_signup(signup_data)
+    # Keep compatibility with callers that replace first_signup with a simple
+    # one-argument callback (management-command tests and downstream hooks),
+    # while passing the source to the real implementation.
+    if "telemetry_source" not in inspect.signature(first_signup).parameters:
+        return first_signup(signup_data)
+    return first_signup(signup_data, telemetry_source=telemetry_source)
 
 
 def persist_pending_org_invite(

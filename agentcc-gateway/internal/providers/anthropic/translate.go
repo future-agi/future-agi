@@ -225,7 +225,6 @@ func translateRequest(req *models.ChatCompletionRequest) (*anthropicRequest, err
 		}
 	}
 
-	// Translate tool_choice.
 	if len(req.ToolChoice) > 0 {
 		tc, err := translateToolChoice(req.ToolChoice)
 		if err == nil && tc != nil {
@@ -476,7 +475,6 @@ func parseDataURI(uri string) (mediaType, data string) {
 }
 
 func translateToolChoice(raw json.RawMessage) (*anthropicToolChoice, error) {
-	// Try as string first: "auto", "none", "required".
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
 		switch s {
@@ -490,7 +488,6 @@ func translateToolChoice(raw json.RawMessage) (*anthropicToolChoice, error) {
 		return nil, nil
 	}
 
-	// Try as object: {"type":"function","function":{"name":"X"}}.
 	var obj struct {
 		Type     string `json:"type"`
 		Function struct {

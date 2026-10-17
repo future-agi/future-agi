@@ -13,6 +13,7 @@ from contextvars import ContextVar
 
 import structlog
 from asgiref.sync import ThreadSensitiveContext, sync_to_async
+from django.conf import settings
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.server.transport_security import TransportSecuritySettings
@@ -375,6 +376,11 @@ def get_mcp_streamable_app():
             json_response=True,
             stateless=True,
             security_settings=_transport_security,
+            # MCP 1.30 defaults this to 4 MiB, which 413s tool calls carrying
+            # inline base64 media (e.g. add_dataset_rows cells) that the rest
+            # of the ingress path already accepts; match the same ceiling
+            # Django and nginx enforce everywhere else (DATA_UPLOAD_MAX_MEMORY_SIZE).
+            max_request_body_size=settings.DATA_UPLOAD_MAX_MEMORY_SIZE,
         )
 
         class StreamableHTTPASGIApp:

@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 from django.core.cache import cache
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework import status
 
@@ -783,9 +785,7 @@ class TestRunResultsV3Views:
         assert response.status_code == 200
         body = response.json()
         assert len(body["scenario_risk"]) == 2
-        assert {item["scenario"] for item in body["scenario_risk"]} == {
-            scenario.name
-        }
+        assert {item["scenario"] for item in body["scenario_risk"]} == {scenario.name}
         assert len({item["scenario_key"] for item in body["scenario_risk"]}) == 2
         assert len({item["scenario_key"] for item in body["reliability"]["rows"]}) == 2
 
@@ -1272,6 +1272,132 @@ class TestRunResultsV3Views:
         assert row["outcome"] == "error"
         assert row["harness_outcome_status"] == "error"
         assert row["execution_status"] == "completed"
+
+    def test_calls_rows_expose_scoring_states(
+        self, auth_client, test_execution, scenario
+    ):
+        """Each documented example row comes out of the stored state behind it:
+        still scoring, timed out, and nothing to score."""
+        from simulate.services.harness_run_evals import EVAL_QUEUED_KEY
+        from simulate.services.scoring_status import (
+            CSAT_STAMP_KEY,
+            REASON_CSAT_NO_EVIDENCE,
+            REASON_CSAT_TIMED_OUT_NOT_STARTED,
+            REASON_EVAL_TIMED_OUT_RUNNING,
+        )
+
+        template = EvalTemplate.objects.create(
+            name="Scoring states",
+            config={"output": "Pass/Fail"},
+            organization=test_execution.run_test.organization,
+        )
+        tone, resolution = (
+            SimulateEvalConfig.objects.create(
+                name=name,
+                eval_template=template,
+                run_test=test_execution.run_test,
+                mapping={"conversation": "transcript"},
+            )
+            for name in ("Tone", "Resolution")
+        )
+        now = timezone.now()
+        closed = {"eval_started": True, "eval_completed": True}
+
+        def _call(call_metadata, eval_outputs):
+            return CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario,
+                status="completed",
+                completed_at=now,
+                call_metadata=call_metadata,
+                eval_outputs=eval_outputs,
+            )
+
+        scoring = _call(
+            {
+                "eval_started": True,
+                EVAL_QUEUED_KEY: {str(tone.id): now.isoformat()},
+                "csat_status": "pending",
+                CSAT_STAMP_KEY: now.isoformat(),
+            },
+            {},
+        )
+        timed_out = _call(
+            {
+                **closed,
+                "csat_status": "timed_out",
+                "csat_error": REASON_CSAT_TIMED_OUT_NOT_STARTED,
+            },
+            {
+                str(resolution.id): {
+                    "output": None,
+                    "reason": REASON_EVAL_TIMED_OUT_RUNNING,
+                    "output_type": None,
+                    "name": "Resolution",
+                    "status": "timed_out",
+                    "timestamp": now.isoformat(),
+                }
+            },
+        )
+        nothing = _call(
+            {**closed, "csat_status": "skipped", "csat_error": REASON_CSAT_NO_EVIDENCE},
+            {},
+        )
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = {row["id"]: row for row in response.json()["results"]}
+
+        def _scoring(call):
+            row = rows[str(call.id)]
+            return {
+                key: row[key]
+                for key in (
+                    "scoring_status",
+                    "csat_status",
+                    "csat_reason",
+                    "evaluations",
+                )
+            }
+
+        empty = {"type": "", "value": None, "score": None, "passed": None}
+        assert _scoring(scoring) == {
+            "scoring_status": "pending",
+            "csat_status": "pending",
+            "csat_reason": None,
+            "evaluations": [
+                {
+                    "id": str(tone.id),
+                    "name": "Tone",
+                    **empty,
+                    "reason": "",
+                    "status": "pending",
+                }
+            ],
+        }
+        assert _scoring(timed_out) == {
+            "scoring_status": "timed_out",
+            "csat_status": "timed_out",
+            "csat_reason": REASON_CSAT_TIMED_OUT_NOT_STARTED,
+            "evaluations": [
+                {
+                    "id": str(resolution.id),
+                    "name": "Resolution",
+                    **empty,
+                    "reason": REASON_EVAL_TIMED_OUT_RUNNING,
+                    "status": "timed_out",
+                }
+            ],
+        }
+        assert _scoring(nothing) == {
+            "scoring_status": "not_applicable",
+            "csat_status": "skipped",
+            "csat_reason": REASON_CSAT_NO_EVIDENCE,
+            "evaluations": [],
+        }
 
     def test_persona_is_not_a_grouping_option(
         self, auth_client, test_execution, analytics_call_executions
@@ -1919,7 +2045,12 @@ class TestRunResultsV3Views:
         return template, config
 
     def test_an_eval_binding_edit_without_updated_at_refreshes_the_cached_page(
-        self, auth_client, organization, run_test, test_execution, analytics_call_executions
+        self,
+        auth_client,
+        organization,
+        run_test,
+        test_execution,
+        analytics_call_executions,
     ):
         _, config = self._threshold_eval(
             organization, run_test, analytics_call_executions
@@ -1935,7 +2066,12 @@ class TestRunResultsV3Views:
         assert (after["passed"], after["failed"]) == (0, 1)
 
     def test_an_eval_template_edit_refreshes_the_cached_page(
-        self, auth_client, organization, run_test, test_execution, analytics_call_executions
+        self,
+        auth_client,
+        organization,
+        run_test,
+        test_execution,
+        analytics_call_executions,
     ):
         template, _ = self._threshold_eval(
             organization, run_test, analytics_call_executions
@@ -2030,6 +2166,171 @@ class TestRunResultsV3Views:
         )
 
         assert (by_status["count"], by_goal["count"]) == (1, 0)
+
+    @staticmethod
+    def _set_harness_outcome(call, outcome):
+        CallExecution.objects.filter(pk=call.pk).update(
+            call_metadata={"harness_outcome_status": outcome}
+        )
+
+    def test_hand_off_facets_read_calls_newer_than_the_page_cache(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        first, second = analytics_call_executions[:2]
+        for call in (first, second):
+            self._set_harness_outcome(call, "passed")
+        self._calls(auth_client, test_execution)
+        # A filtered page caches the whole run's rows as well.
+        self._calls(
+            auth_client, test_execution, filters=json.dumps({"status": ["passed"]})
+        )
+        self._set_harness_outcome(second, "failed")
+
+        body = self._calls(
+            auth_client,
+            test_execution,
+            filters=json.dumps(
+                {"call_execution_id": [str(first.id).upper(), str(second.id)]}
+            ),
+        )
+
+        assert body["facets"]["status"] == [
+            {"value": "failed", "count": 1},
+            {"value": "passed", "count": 1},
+        ]
+
+    def test_facets_cache_miss_reads_calls_newer_than_the_page_cache(
+        self, auth_client, test_execution, analytics_call_executions, monkeypatch
+    ):
+        class NoFacetsCache:
+            def get(self, key):
+                return None
+
+            def set(self, key, value, timeout=None):
+                pass
+
+        monkeypatch.setattr(
+            "simulate.services.run_results_v3_queries.cache", NoFacetsCache()
+        )
+        first = analytics_call_executions[0]
+        self._set_harness_outcome(first, "passed")
+        self._calls(auth_client, test_execution)
+        self._set_harness_outcome(first, "failed")
+
+        body = self._calls(auth_client, test_execution)
+
+        statuses = {item["value"]: item["count"] for item in body["facets"]["status"]}
+        assert statuses.get("failed") == 1
+        assert "passed" not in statuses
+
+    def test_hand_off_facets_on_a_running_run_scope_mixed_case_ids(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        TestExecution.objects.filter(pk=test_execution.pk).update(
+            status=TestExecution.ExecutionStatus.RUNNING
+        )
+        failed = analytics_call_executions[3]
+
+        body = self._calls(
+            auth_client,
+            test_execution,
+            filters=json.dumps({"call_execution_id": [str(failed.id).upper()]}),
+        )
+
+        assert body["facets"]["status"] == [{"value": "error", "count": 1}]
+        assert sum(item["count"] for item in body["facets"]["goal"]) == 1
+
+    def test_warm_hand_off_facets_scan_the_calls_without_the_sql_read_model(
+        self,
+        auth_client,
+        test_execution,
+        test_execution_2,
+        analytics_call_executions,
+        scenario,
+        monkeypatch,
+    ):
+        first, second, deleted = analytics_call_executions[:3]
+        for call in (first, second):
+            self._set_harness_outcome(call, "passed")
+        CallExecution.objects.filter(pk=deleted.pk).update(deleted=True)
+        other_run = CallExecution.objects.create(
+            test_execution=test_execution_2, scenario=scenario, status="failed"
+        )
+        hand_off = json.dumps(
+            {
+                "call_execution_id": [
+                    str(first.id).upper(),
+                    str(second.id),
+                    str(other_run.id),
+                    str(deleted.id),
+                ]
+            }
+        )
+        # Caches the hand-off's rows and the whole run's rows.
+        cold = self._calls(auth_client, test_execution, filters=hand_off)
+        assert cold["facets"]["status"] == [{"value": "passed", "count": 2}]
+        self._set_harness_outcome(second, "failed")
+
+        def no_sql(*args, **kwargs):
+            raise AssertionError("facets compiled the SQL read model")
+
+        monkeypatch.setattr("simulate.views.run_results_v3.run_calls_queryset", no_sql)
+        warm = self._calls(auth_client, test_execution, filters=hand_off)
+
+        assert [row["id"] for row in warm["results"]] == [
+            row["id"] for row in cold["results"]
+        ]
+        assert warm["count"] == 2
+        assert warm["facets"]["status"] == [
+            {"value": "failed", "count": 1},
+            {"value": "passed", "count": 1},
+        ]
+        assert warm["facets"]["goal"] == cold["facets"]["goal"]
+        assert sum(item["count"] for item in warm["facets"]["goal"]) == 2
+
+    def test_scoring_configs_load_once_and_warn_only_when_a_read_scores(
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        run_test,
+        score_template,
+        caplog,
+    ):
+        SimulateEvalConfig.objects.create(
+            name="Bad threshold",
+            eval_template=score_template,
+            run_test=run_test,
+            config={"pass_threshold": 70},
+        )
+        logger = "simulate.services.run_results_v3_scoring"
+
+        def warnings():
+            return [
+                record
+                for record in caplog.records
+                if record.name == logger and "Invalid pass_threshold" in record.message
+            ]
+
+        with (
+            caplog.at_level("WARNING", logger=logger),
+            CaptureQueriesContext(connection) as queries,
+        ):
+            # Cold and filtered: both the SQL read model and the scan score.
+            self._calls(auth_client, test_execution, search="Scenario")
+        assert len(warnings()) == 1
+        config_reads = [
+            query["sql"]
+            for query in queries.captured_queries
+            if 'FROM "simulate_eval_config"' in query["sql"]
+        ]
+        # The catalog, two page-cache keys and the one scoring load.
+        assert len(config_reads) == 4, config_reads
+
+        caplog.clear()
+        with caplog.at_level("WARNING", logger=logger):
+            self._calls(auth_client, test_execution, search="Scenario")
+        assert warnings() == []
 
     def test_groups_score_an_eval_the_catalog_has_not_listed(
         self, auth_client, test_execution, analytics_call_executions

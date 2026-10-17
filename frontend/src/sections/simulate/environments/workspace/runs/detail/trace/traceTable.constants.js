@@ -199,6 +199,15 @@ export const GROUP_ROW_PX = 57;
 // The band naming each column group, pinned above the head row.
 export const GROUP_BAND_PX = 28;
 
+// The checkbox column stays on the left edge while the table scrolls sideways.
+// Opaque, so the cells scrolling under it don't show through; each row sets
+// its own z-index (head and band above group rows, group rows above calls).
+export const pinnedLeftSx = {
+  position: "sticky",
+  left: 0,
+  bgcolor: "background.paper",
+};
+
 export const bandCellSx = {
   typography: "s3",
   fontWeight: "fontWeightBold",

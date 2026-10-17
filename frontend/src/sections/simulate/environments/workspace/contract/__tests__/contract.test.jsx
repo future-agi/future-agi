@@ -28,10 +28,10 @@ const renderPanel = (props = {}) =>
   );
 
 describe("RlContractPanel", () => {
-  it("leads with the environment-contract heading and blurb", () => {
+  it("opens on its content, with no heading repeating the tab", () => {
     renderPanel();
-    expect(screen.getByText("Environment contract")).toBeInTheDocument();
-    expect(screen.getByText(/What this environment is made of/)).toBeInTheDocument();
+    expect(screen.queryByText("Environment contract")).toBeNull();
+    expect(screen.queryByText(/What this environment is made of/)).toBeNull();
   });
 
   it("renders the world-internals cards over real data only: tables and tools", () => {

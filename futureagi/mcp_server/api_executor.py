@@ -19,7 +19,11 @@ from accounts.authentication import APIKeyAuthentication
 from mcp_server.generated_registry import GeneratedTool
 from mcp_server.response_limits import ResponseTooLargeError, bounded_response
 from tfc.middleware.workspace_context import (
+    clear_workspace_context,
+    get_current_organization,
+    get_current_user,
     get_current_workspace,
+    set_workspace_context,
     workspace_context,
 )
 
@@ -37,6 +41,23 @@ def ensure_urlconf_loaded() -> None:
         raise RuntimeError("URLconf must be loaded before a workspace is bound")
     # Accessing the patterns imports the root URLconf and every included module.
     _ = get_resolver().url_patterns
+
+
+def load_urlconf_outside_workspace() -> None:
+    """Load the URLconf with any bound workspace temporarily cleared.
+
+    In-process callers such as Falcon bind the caller's workspace before each
+    tool call, so they cannot use ``ensure_urlconf_loaded`` directly.
+    """
+    saved = (get_current_workspace(), get_current_organization(), get_current_user())
+    if saved[0] is None:
+        ensure_urlconf_loaded()
+        return
+    clear_workspace_context()
+    try:
+        ensure_urlconf_loaded()
+    finally:
+        set_workspace_context(workspace=saved[0], organization=saved[1], user=saved[2])
 
 
 class APIExecutionError(RuntimeError):

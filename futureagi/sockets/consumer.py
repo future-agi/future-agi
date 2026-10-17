@@ -1,6 +1,8 @@
 import structlog
-from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+
+from sockets.org_scope import resolve_socket_organization
+from sockets.saml_guard import SamlSocketGuard
 
 logger = structlog.get_logger(__name__)
 
@@ -10,9 +12,13 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         super().__init__(*args, **kwargs)
         self.current_subscription = None
         self.user = None
+        self._guard = SamlSocketGuard(self)
 
     async def connect(self):
         self.user = self.scope["user"]
+
+        if not await self._guard.ensure_live(inbound=True):
+            return
 
         try:
             # Get room group name asynchronously
@@ -38,6 +44,13 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
                 user_id=str(self.user.id) if self.user else None,
             )
             await self.close(code=4000)
+
+    async def receive(self, text_data=None, bytes_data=None):
+        """Guard raw frames so subclasses cannot bypass SAML revalidation."""
+
+        if not await self._guard.ensure_live(inbound=True):
+            return
+        await super().receive(text_data=text_data, bytes_data=bytes_data)
 
     async def receive_json(self, content):
         """
@@ -79,7 +92,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             )
 
         # Subscribe to new channel
-        channel_name = f"uuid_{uuid}"
+        channel_name = self._uuid_group_name(uuid)
 
         await self.channel_layer.group_add(channel_name, self.channel_name)
         self.current_subscription = channel_name
@@ -104,7 +117,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             )
             return
 
-        channel_name = f"uuid_{uuid}"
+        channel_name = self._uuid_group_name(uuid)
         if channel_name == self.current_subscription:
             await self.channel_layer.group_discard(channel_name, self.channel_name)
             self.current_subscription = None
@@ -131,7 +144,7 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({"type": "pong"})
 
         if target_uuid:
-            channel_name = f"uuid_{target_uuid}"
+            channel_name = self._uuid_group_name(target_uuid)
             if channel_name == self.current_subscription:
                 await self.channel_layer.group_send(
                     channel_name,
@@ -176,7 +189,9 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         data = event.get("data", {})
         uuid = data.get("uuid")
 
-        if not uuid or f"uuid_{uuid}" == self.current_subscription:
+        if not await self._guard.ensure_live(inbound=False):
+            return
+        if not uuid or self._uuid_group_name(uuid) == self.current_subscription:
             try:
                 await self.send_json(data)
             except Exception:
@@ -184,27 +199,14 @@ class DataConsumer(AsyncJsonWebsocketConsumer):
         else:
             pass
 
-    @database_sync_to_async
-    def get_organization_id(self):
-        try:
-            from accounts.models.organization_membership import OrganizationMembership
-
-            membership = (
-                OrganizationMembership.objects.filter(user=self.user, is_active=True)
-                .select_related("organization")
-                .first()
-            )
-            if membership:
-                return membership.organization.id
-            # Fallback to legacy FK
-            if getattr(self.user, "organization", None):
-                return self.user.organization.id
-            return None
-        except Exception:
-            return None
+    def _uuid_group_name(self, uuid):
+        auth_scope = self.scope.get("auth_scope")
+        if auth_scope is not None:
+            return f"uuid_org_{auth_scope.org_id}_{uuid}"
+        return f"uuid_{uuid}"
 
     async def get_room_group_name(self):
-        org_id = await self.get_organization_id()
+        org_id = await resolve_socket_organization(self.scope, self.user)
         if org_id is None:
             return None
         return f"org_{org_id}"

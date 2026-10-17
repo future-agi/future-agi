@@ -1,8 +1,9 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, Tooltip, Popover, TextField } from "@mui/material";
+import { Box, Stack, Typography, Button, Popover, TextField } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
 // Trial presets — 1 is the single-shot; 3/5/8 are the common repeat counts;
@@ -71,15 +72,16 @@ export default function SelectionBar({
     <Stack
       direction="row"
       alignItems="center"
-      spacing={1.25}
+      columnGap={1.25}
+      rowGap={1}
+      flexWrap="wrap"
       sx={{
         width: "100%",
-        // Left inset matches the table's checkbox column (TableCell pl: 1.5), so
-        // the count chip sits directly over the row checkboxes below. Right keeps
-        // the toolbar's inset for the Run button.
-        pl: 1.5, pr: 2.5, py: 1.25,
-        minHeight: 52,
-        bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.08 : 0.05),
+        // It replaces the toolbar row, so it looks like it: the toolbar's edges
+        // (the count starts on the search's, Run ends on Add's), its 32px
+        // controls, and no band of its own. Narrow, the actions wrap under the
+        // count, right-aligned, as the toolbar's controls wrap under the search.
+        pb: 1.5,
       }}
     >
       {/* CONTEXT — count + clear-all in one pill. The × is the primary
@@ -122,7 +124,7 @@ export default function SelectionBar({
             </Typography>
           </>
         )}
-        <Tooltip arrow title="Clear selection">
+        <CustomTooltip show arrow size="small" title="Clear selection">
           <Box
             component="button"
             type="button"
@@ -142,7 +144,7 @@ export default function SelectionBar({
           >
             <Iconify icon="eva:close-fill" width={14} />
           </Box>
-        </Tooltip>
+        </CustomTooltip>
       </Stack>
 
       {/* ESCALATION — bridge to the whole match while the page is fully checked
@@ -162,84 +164,88 @@ export default function SelectionBar({
         </Button>
       )}
 
-      <Box sx={{ flex: 1 }} />
-
-      {/* DESTRUCTIVE — Delete */}
-      <Tooltip arrow title="Delete selected scenarios">
-        <Button
-          size="small"
-          onClick={onDelete}
-          variant="outlined"
-          startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={13} />}
-          sx={{
-            typography: "s2", fontWeight: 600, fontSize: 12.5,
-            color: RED,
-            borderColor: alpha(RED, 0.4),
-            px: 1.5, py: 0.5, minWidth: 0,
-            whiteSpace: "nowrap",
-            "&:hover": {
-              borderColor: RED,
-              bgcolor: (t) => alpha(RED, t.palette.mode === "dark" ? 0.1 : 0.05),
-            },
-          }}
-        >
-          Delete
-        </Button>
-      </Tooltip>
-
-      {/* TRIALS — reliability dial */}
-      {onTrialsChange && (
-        <Tooltip arrow title="How many times to run each scenario (reliability across trials)">
+      {/* The actions move as one: on a narrow bar they wrap together, right-aligned. */}
+      <Stack direction="row" alignItems="center" spacing={1.25} sx={{ ml: "auto", flexShrink: 0 }}>
+        {/* DESTRUCTIVE — Delete */}
+        <CustomTooltip show arrow size="small" title="Delete selected scenarios">
           <Button
             size="small"
+            onClick={onDelete}
             variant="outlined"
-            onClick={(e) => setTrialsAnchor(e.currentTarget)}
-            endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={11} />}
-            startIcon={<Iconify icon="solar:repeat-linear" width={13} />}
+            startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={13} />}
             sx={{
               typography: "s2", fontWeight: 600, fontSize: 12.5,
-              color: "text.primary",
-              borderColor: "divider",
-              px: 1.25, py: 0.5, minWidth: 0,
+              color: RED,
+              borderColor: alpha(RED, 0.4),
+              px: 1.5, height: 32, minWidth: 0, flexShrink: 0,
               whiteSpace: "nowrap",
               "&:hover": {
-                borderColor: (t) => alpha(t.palette.text.primary, 0.4),
-                bgcolor: "action.hover",
+                borderColor: RED,
+                bgcolor: (t) => alpha(RED, t.palette.mode === "dark" ? 0.1 : 0.05),
               },
             }}
           >
-            Repeats: {k}
+            Delete
           </Button>
-        </Tooltip>
-      )}
+        </CustomTooltip>
 
-      {/* PRIMARY — Run N selected (× k) */}
-      {onRun && (
-        <Tooltip
-          arrow
-          title={k > 1
-            ? `${count} ${count === 1 ? "scenario" : "scenarios"} × ${k} repeats = ${totalRuns} runs · ${timeHint}`
-            : `${count} ${count === 1 ? "scenario" : "scenarios"} × 1 repeat · ${timeHint}`}
-        >
-          <Button
+        {/* TRIALS — reliability dial */}
+        {onTrialsChange && (
+          <CustomTooltip show arrow size="small" title="How many times to run each scenario (reliability across trials)">
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={(e) => setTrialsAnchor(e.currentTarget)}
+              endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={11} />}
+              startIcon={<Iconify icon="solar:repeat-linear" width={13} />}
+              sx={{
+                typography: "s2", fontWeight: 600, fontSize: 12.5,
+                color: "text.primary",
+                borderColor: "divider",
+                px: 1.25, height: 32, minWidth: 0, flexShrink: 0,
+                whiteSpace: "nowrap",
+                "&:hover": {
+                  borderColor: (t) => alpha(t.palette.text.primary, 0.4),
+                  bgcolor: "action.hover",
+                },
+              }}
+            >
+              Repeats: {k}
+            </Button>
+          </CustomTooltip>
+        )}
+
+        {/* PRIMARY — Run N selected (× k) */}
+        {onRun && (
+          <CustomTooltip
+            show
+            arrow
             size="small"
-            variant="contained"
-            onClick={() => onRun(k)}
-            startIcon={<Iconify icon="solar:play-bold" width={13} />}
-            sx={{
-              typography: "s2", fontWeight: 700, fontSize: 12.5,
-              px: 1.75, py: 0.5, minWidth: 0,
-              bgcolor: "text.primary",
-              color: (t) => (t.palette.mode === "dark" ? "background.default" : "background.paper"),
-              boxShadow: "none",
-              whiteSpace: "nowrap",
-              "&:hover": { bgcolor: "text.primary", opacity: 0.92, boxShadow: "none" },
-            }}
+            title={k > 1
+              ? `${count} ${count === 1 ? "scenario" : "scenarios"} × ${k} repeats = ${totalRuns} runs · ${timeHint}`
+              : `${count} ${count === 1 ? "scenario" : "scenarios"} × 1 repeat · ${timeHint}`}
           >
-            {runLabel}
-          </Button>
-        </Tooltip>
-      )}
+            <Button
+              size="small"
+              variant="contained"
+              onClick={() => onRun(k)}
+              startIcon={<Iconify icon="solar:play-bold" width={13} />}
+              sx={{
+                typography: "s2", fontWeight: 700, fontSize: 12.5,
+                px: 1.75, height: 32, minWidth: 0, flexShrink: 0,
+                bgcolor: "text.primary",
+                color: (t) => (t.palette.mode === "dark" ? "background.default" : "background.paper"),
+                boxShadow: "none",
+                whiteSpace: "nowrap",
+                "&:hover": { bgcolor: "text.primary", opacity: 0.92, boxShadow: "none" },
+              }}
+            >
+              {runLabel}
+            </Button>
+          </CustomTooltip>
+        )}
+
+      </Stack>
 
       {/* Repeats popover — presets + custom */}
       <Popover

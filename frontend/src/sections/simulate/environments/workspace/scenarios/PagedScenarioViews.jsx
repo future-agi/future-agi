@@ -20,6 +20,7 @@ import { SCENARIOS_COPY } from "./scenarios.constants";
 export default function PagedScenarioViews({
   pageData, selection, env, view, hiddenGroupIds, onHideGroup, onEdit, onRemove,
   page, onPageChange, query, filters, groupBy, showInspector, locked, rowHeight,
+  readout,
 }) {
   const [inspect, setInspect] = useState(false);
   const { rows, total, pageCount, limit, pageGroups, pageIds, loading } = pageData;
@@ -103,17 +104,24 @@ export default function PagedScenarioViews({
         )}
       </Box>
 
-      {/* Pager + range. Numbered buttons: one deterministic request per page.
-          A single page needs neither the pager nor the range line. */}
-      {pageCount > 1 && (
+      {/* Footer: what a search/filter/hidden group narrowed the suite to, with
+          its reset, then the page range and pager. Numbered buttons: one
+          deterministic request per page. An unfiltered single page needs none
+          of it. */}
+      {(pageCount > 1 || readout) && (
         <Stack
-          direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}
-          sx={{ px: 2, py: 1.5, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          direction="row" alignItems="center" flexWrap="wrap" gap={1}
+          sx={{ px: 2, py: 1, minHeight: 44, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
         >
-          <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
-            Showing {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()} of {total.toLocaleString()}
-          </Typography>
+          {readout && <FilterReadout {...readout} />}
+          {pageCount > 1 && (
+            <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
+              Showing {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()} of {total.toLocaleString()}
+            </Typography>
+          )}
+          {pageCount > 1 && (
           <Pagination
+            sx={{ ml: "auto" }}
             size="small"
             shape="rounded"
             count={pageCount}
@@ -122,6 +130,7 @@ export default function PagedScenarioViews({
             siblingCount={1}
             boundaryCount={1}
           />
+          )}
         </Stack>
       )}
 
@@ -174,4 +183,41 @@ PagedScenarioViews.propTypes = {
   showInspector: PropTypes.bool,
   locked: PropTypes.bool,
   rowHeight: PropTypes.string,
+  // Set while a search, filter or hidden group narrows the list.
+  readout: PropTypes.shape({
+    shown: PropTypes.number,
+    total: PropTypes.number,
+    hiddenCount: PropTypes.number,
+    onlyGroupsHidden: PropTypes.bool,
+    onClear: PropTypes.func,
+  }),
+};
+
+// "N of M · N groups hidden" with its reset. "Show all" reads truer than
+// "Clear" when the only thing set is a hidden group.
+function FilterReadout({ shown, total, hiddenCount = 0, onlyGroupsHidden, onClear }) {
+  const hiddenSuffix = hiddenCount > 0
+    ? ` · ${hiddenCount} group${hiddenCount === 1 ? "" : "s"} hidden`
+    : "";
+  return (
+    <Stack direction="row" alignItems="center" spacing={0.5}>
+      <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+        {`${shown} of ${total}${hiddenSuffix}`}
+      </Typography>
+      <Button
+        size="small"
+        onClick={onClear}
+        sx={{ typography: "s3", fontWeight: "fontWeightMedium", color: "text.secondary", minWidth: 0 }}
+      >
+        {onlyGroupsHidden ? SCENARIOS_COPY.showAll : SCENARIOS_COPY.clearLabel}
+      </Button>
+    </Stack>
+  );
+}
+FilterReadout.propTypes = {
+  shown: PropTypes.number,
+  total: PropTypes.number,
+  hiddenCount: PropTypes.number,
+  onlyGroupsHidden: PropTypes.bool,
+  onClear: PropTypes.func,
 };

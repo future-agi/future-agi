@@ -24,6 +24,10 @@ const (
 	defaultTokenURL    = "https://oauth2.googleapis.com/token"
 )
 
+// tokenClient bounds the exchange: Token holds the provider's lock while it
+// runs, so a hung exchange would stall every request that needs a token.
+var tokenClient = &http.Client{Timeout: 10 * time.Second}
+
 type serviceAccountKey struct {
 	ClientEmail string `json:"client_email"`
 	PrivateKey  string `json:"private_key"`
@@ -122,12 +126,16 @@ func (t *TokenProvider) Token() string {
 	jwt := sigInput + "." + base64.RawURLEncoding.EncodeToString(sig)
 
 	form := "grant_type=" + url.QueryEscape("urn:ietf:params:oauth:grant-type:jwt-bearer") + "&assertion=" + jwt
-	resp, err := http.Post(t.tokenURL, "application/x-www-form-urlencoded", strings.NewReader(form)) //nolint:noctx
+	resp, err := tokenClient.Post(t.tokenURL, "application/x-www-form-urlencoded", strings.NewReader(form)) //nolint:noctx
 	if err != nil {
 		slog.Warn("gauth: token exchange error", "error", err)
 		return ""
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		slog.Warn("gauth: token exchange rejected", "status", resp.StatusCode)
+		return ""
+	}
 
 	var tokenResp struct {
 		AccessToken string `json:"access_token"`

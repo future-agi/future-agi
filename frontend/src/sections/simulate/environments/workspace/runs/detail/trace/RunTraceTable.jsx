@@ -13,6 +13,7 @@ import {
   Button,
   Chip,
   FormControlLabel,
+  IconButton,
   Pagination,
   Switch,
   Typography,
@@ -22,11 +23,18 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { FilterPanel } from "src/components/filter-panel";
 import { useRunCalls } from "src/api/simulate-environments/runDetail";
+import {
+  listMatchingScenarioKeys,
+  uniqueScenarioKeys,
+} from "src/api/simulate-environments/rerunScenarios";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 
 import SectionCard from "../../../../components/SectionCard";
 import EmptyState from "../../../../components/EmptyState";
+import EvalColumnActions from "../EvalColumnActions";
+import useSelection from "../../../scenarios/useSelection";
 import TraceTable from "./TraceTable";
+import RerunSelectionBar from "./RerunSelectionBar";
 import { TraceGroupByPicker, TraceColumnsPicker } from "./TracePickers";
 import StatusFilterChips from "./StatusFilterChips";
 import {
@@ -40,10 +48,23 @@ import {
 } from "./traceTable.constants";
 
 const PAGE_SIZE = 50;
+const bannerButtonSx = {
+  typography: "s3",
+  fontWeight: 600,
+  minWidth: 0,
+  // Room around the label so the hover box doesn't sit tight on the text.
+  px: 1,
+  py: 0.25,
+  color: "primary.main",
+};
 // Room left under the table box for the pager row and the page's bottom gutter.
 const BELOW_TABLE_PX = 88;
 const PAGER_ROW_PX = 57;
 const MIN_TABLE_PX = 360;
+
+// The calls a re-run can take: only those that carry their scenario.
+const tickableIds = (rows) =>
+  rows.filter((t) => t.sourceScenarioKey).map((t) => t.id);
 
 // The per-call table owns server-backed grouping, filtering, columns and paging
 // for read-only execution results.
@@ -54,9 +75,15 @@ export default function RunTraceTable({
   initialFilters = {},
   activeCallId = null,
   activePage = null,
+  evalActions = null,
+  onRerunScenarios = null,
+  runTrials = 1,
+  rerunDisabledReason = null,
+  onTickableChange,
 }) {
   const [groupBy, setGroupBy] = useState("goal");
-  const [statusChip, setStatusChip] = useState("all");
+  // The eval column whose ⋮ menu is open: { evalId, name, anchorEl } or null.
+  const [evalMenuFor, setEvalMenuFor] = useState(null);
   const [page, setPage] = useState(1);
   const [visibleColumns, setVisibleColumns] = useState(() =>
     defaultTraceColumns(),
@@ -113,12 +140,14 @@ export default function RunTraceTable({
     if (filters.callExecutionId?.length)
       next.call_execution_id = filters.callExecutionId;
     if (filters.goal?.length) next.goal = filters.goal;
+    if (filters.goal_not?.length) next.goal_not = filters.goal_not;
     if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
+    if (filters.subGoal_not?.length) next.sub_goal_not = filters.subGoal_not;
     if (filters.status?.length) next.status = filters.status;
+    if (filters.status_not?.length) next.status_not = filters.status_not;
     if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
-    if (statusChip !== "all") next.status = [statusChip];
     return next;
-  }, [filters, statusChip]);
+  }, [filters]);
 
   // A pager click opens the new page at its first row. Not on a drawer step:
   // there the open call's row scrolls itself into view. The table scrolls in
@@ -129,18 +158,18 @@ export default function RunTraceTable({
   // the card never hugs a few rows. Measured, because the header above it
   // varies in height; re-measured on resize.
   const [boxHeight, setBoxHeight] = useState(null);
-  useLayoutEffect(() => {
-    const measure = () => {
-      const top = scrollRef.current?.getBoundingClientRect().top;
-      if (top == null) return;
-      setBoxHeight(
-        Math.max(MIN_TABLE_PX, window.innerHeight - top - BELOW_TABLE_PX),
-      );
-    };
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+  const measureBox = useCallback(() => {
+    const top = scrollRef.current?.getBoundingClientRect().top;
+    if (top == null) return;
+    setBoxHeight(
+      Math.max(MIN_TABLE_PX, window.innerHeight - top - BELOW_TABLE_PX),
+    );
   }, []);
+  useLayoutEffect(() => {
+    measureBox();
+    window.addEventListener("resize", measureBox);
+    return () => window.removeEventListener("resize", measureBox);
+  }, [measureBox]);
 
   // Follow the drawer: when prev/next lands on a call on another page, show
   // that page. Keyed on the call too, so a manual page change doesn't stick.
@@ -172,12 +201,135 @@ export default function RunTraceTable({
     count = 0,
     groups = [],
     facets = {},
+    statusCounts: serverStatusCounts = {},
     totalPages = 1,
     agentType = null,
     runActive = false,
     isLoading,
     error,
   } = useRunCalls(executionId, listQuery);
+
+  // Calls ticked for a re-run. The selection survives paging: "all matching"
+  // is a mode with the unticked calls as exceptions, never a list of ids.
+  const selection = useSelection(count);
+  const canRerun = !!onRerunScenarios;
+  // Each ticked call's scenario, kept as pages load: a call ticked on another
+  // page is no longer in `tasks`, but still counts toward the re-run.
+  const keyByIdRef = useRef(new Map());
+  useEffect(() => {
+    tasks.forEach((t) => {
+      if (t.sourceScenarioKey)
+        keyByIdRef.current.set(t.id, t.sourceScenarioKey);
+    });
+  }, [tasks]);
+  // A new filter is a new set of matching calls, so the old selection no
+  // longer describes it. Regrouping shows the same calls and keeps it.
+  useEffect(() => {
+    selection.clearRef.current();
+  }, [serverFilters, selection.clearRef]);
+  const pageIds = useMemo(() => tickableIds(tasks), [tasks]);
+  // Whether this run has a call that can be ticked. Only the unfiltered, loaded
+  // list can say: a filter matching nothing proves nothing. A run's calls are
+  // all tagged or all untagged, so one page answers for the run, and the
+  // answer holds while a filter is on.
+  const tickable =
+    isLoading || error || Object.keys(serverFilters).length
+      ? null
+      : pageIds.length > 0;
+  const [runTickable, setRunTickable] = useState(null);
+  useEffect(() => {
+    if (tickable === null) return;
+    setRunTickable(tickable);
+    onTickableChange?.(tickable);
+  }, [tickable, onTickableChange]);
+  const { allChecked: pageChecked, someChecked: pageIndeterminate } =
+    selection.pageState(pageIds);
+  const allMatching = selection.mode === "all";
+  const hasSelection = canRerun && selection.count > 0;
+  const tickedKeys = allMatching
+    ? null
+    : uniqueScenarioKeys(
+        selection.idList.map((id) => ({
+          sourceScenarioKey: keyByIdRef.current.get(id),
+        })),
+      );
+  // In "all matching" the set holds exceptions, so ticking calls flips each
+  // one that differs instead of adding them to the set.
+  const setCalls = (ids, checked) => {
+    if (!allMatching) {
+      selection.setPage(ids, checked);
+      return;
+    }
+    ids.forEach((id) => {
+      if (selection.isSelected(id) !== checked) selection.toggle(id);
+    });
+  };
+  const tableSelection =
+    canRerun && runTickable !== false
+      ? {
+          isSelected: selection.isSelected,
+          canSelect: (t) => !!t.sourceScenarioKey,
+          onToggle: (t) => selection.toggle(t.id),
+          onTogglePage: (checked) => setCalls(pageIds, checked),
+          // A group's box covers its calls on this page, like the header's.
+          groupState: (g) => {
+            const ids = tickableIds(g.rows);
+            const { allChecked, someChecked } = selection.pageState(ids);
+            return {
+              selectable: ids.length > 0,
+              checked: allChecked,
+              indeterminate: someChecked,
+            };
+          },
+          // Ticks the group's calls on this page, or clears them once they are
+          // all ticked.
+          onToggleGroup: (g) => {
+            const ids = tickableIds(g.rows);
+            setCalls(ids, !ids.every((id) => selection.isSelected(id)));
+          },
+          pageChecked,
+          pageIndeterminate,
+          pageSelectable: pageIds.length > 0,
+        }
+      : null;
+  const resolveScenarioKeys = () =>
+    allMatching
+      ? listMatchingScenarioKeys(executionId, serverFilters, selection.idList)
+      : Promise.resolve(tickedKeys);
+  const banner = !hasSelection ? null : allMatching ? (
+    <>
+      <span>
+        {`All ${count.toLocaleString()} matching calls are selected${
+          selection.idList.length
+            ? ` except ${selection.idList.length} you unticked`
+            : ""
+        }.`}
+      </span>
+      <Button size="small" onClick={selection.clear} sx={bannerButtonSx}>
+        Clear selection
+      </Button>
+    </>
+  ) : pageChecked && totalPages > 1 ? (
+    <>
+      <span>
+        {pageIds.length === 1
+          ? "The 1 call on this page is selected."
+          : `All ${pageIds.length} calls on this page are selected.`}
+      </span>
+      <Button
+        size="small"
+        onClick={selection.selectAllMatching}
+        sx={bannerButtonSx}
+      >
+        {`Select all ${count.toLocaleString()} matching calls`}
+      </Button>
+    </>
+  ) : null;
+  // The banner sits above the table box, so it moves the box's top.
+  const bannerShown = !!banner;
+  useLayoutEffect(() => {
+    measureBox();
+  }, [bannerShown, measureBox]);
 
   // A chat run has no voice metrics. Without the run's agent type, the calls
   // decide.
@@ -233,13 +385,13 @@ export default function RunTraceTable({
     () => [
       {
         value: "goal",
-        label: "Goal",
+        label: "Use case",
         type: "enum",
         choices: goalOptions,
       },
       {
         value: "subGoal",
-        label: "Sub goal",
+        label: "Sub-goal",
         type: "enum",
         choices: subGoalOptions,
       },
@@ -261,15 +413,26 @@ export default function RunTraceTable({
     0,
   );
 
-  const statusCounts = useMemo(() => {
-    const byStatus = Object.fromEntries(
-      (facets.status ?? []).map((item) => [item.value, item.count]),
-    );
-    return {
-      all: Object.values(byStatus).reduce((sum, count) => sum + count, 0),
-      ...byStatus,
-    };
-  }, [facets.status]);
+  // Counted under every filter but status, so the chips don't empty each other.
+  const statusCounts = useMemo(
+    () => ({
+      all: Object.values(serverStatusCounts).reduce(
+        (sum, count) => sum + count,
+        0,
+      ),
+      ...serverStatusCounts,
+    }),
+    [serverStatusCounts],
+  );
+  // The chips and the panel's Status field edit the same filter; a chip lights
+  // up only when it alone describes it.
+  const statusChip = filters.status_not?.length
+    ? ""
+    : filters.status?.length === 1
+      ? filters.status[0]
+      : filters.status?.length
+        ? ""
+        : "all";
 
   // The panel edits its own fields; the affected-calls scope stays until its chip
   // is dismissed.
@@ -296,7 +459,6 @@ export default function RunTraceTable({
     } else {
       setFilters(keepScope(result));
     }
-    setStatusChip("all");
   };
 
   // Like a "select all" box: on only while every group on screen is open,
@@ -441,11 +603,13 @@ export default function RunTraceTable({
         value={statusChip}
         counts={statusCounts}
         onChange={(value) => {
-          setStatusChip(value);
           setFilters((current) => {
-            if (!current.status) return current;
-            const { status: _status, ...rest } = current;
-            return rest;
+            const {
+              status: _status,
+              status_not: _statusNot,
+              ...rest
+            } = current;
+            return value === "all" ? rest : { ...rest, status: [value] };
           });
           setPage(1);
         }}
@@ -458,6 +622,21 @@ export default function RunTraceTable({
         hiddenEvals={hiddenEvals}
         onHiddenEvalsChange={setHiddenEvals}
       />
+      {hasSelection && (
+        <RerunSelectionBar
+          selectedCalls={selection.count}
+          scenarioCount={tickedKeys ? tickedKeys.length : null}
+          allMatching={allMatching}
+          runTrials={runTrials}
+          disabledReason={rerunDisabledReason}
+          resolveScenarioKeys={resolveScenarioKeys}
+          // The selection stays until the new run opens (the run page starts
+          // fresh there), so a refused start leaves the ticks in place to try
+          // again.
+          onRerun={onRerunScenarios}
+          onClear={selection.clear}
+        />
+      )}
     </Stack>
   );
   const showPager = !isLoading && count > 0 && totalPages > 1;
@@ -472,6 +651,27 @@ export default function RunTraceTable({
         wrap
         sx={{ containerType: "inline-size" }}
       >
+        {banner && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            justifyContent="center"
+            flexWrap="wrap"
+            gap={1}
+            sx={{
+              px: 2,
+              py: 0.75,
+              typography: "s3",
+              color: "text.subtitle",
+              bgcolor: "background.neutral",
+              borderTop: "1px solid",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            {banner}
+          </Stack>
+        )}
         {/* A fixed-height box, like the Scenarios tab: the card keeps its size
             whatever the row count, and the pager below never moves. The table
             scrolls inside it, in its own box. */}
@@ -519,6 +719,30 @@ export default function RunTraceTable({
               activeCallId={activeCallId}
               scrollRef={tableScrollRef}
               runActive={runActive}
+              renderEvalHeaderAction={
+                evalActions
+                  ? (e) => (
+                      <IconButton
+                        size="small"
+                        aria-label={`Actions for ${e.name}`}
+                        onClick={(event) =>
+                          setEvalMenuFor({
+                            evalId: e.id,
+                            name: e.name,
+                            anchorEl: event.currentTarget,
+                          })
+                        }
+                      >
+                        <Iconify
+                          icon="mdi:dots-vertical"
+                          width={16}
+                          sx={{ color: "text.subtitle" }}
+                        />
+                      </IconButton>
+                    )
+                  : null
+              }
+              selection={tableSelection}
             />
           )}
         </Box>
@@ -576,6 +800,14 @@ export default function RunTraceTable({
         showAiFilter={false}
         placement="bottom-start"
       />
+
+      {evalActions && (
+        <EvalColumnActions
+          {...evalActions}
+          menuFor={evalMenuFor}
+          onClose={() => setEvalMenuFor(null)}
+        />
+      )}
     </>
   );
 }
@@ -586,4 +818,22 @@ RunTraceTable.propTypes = {
   initialFilters: PropTypes.object,
   activeCallId: PropTypes.string,
   activePage: PropTypes.number,
+  // Given, each eval column header gets a ⋮ menu to re-run or edit that eval.
+  // The run page answers `onRerun(configs)` and `onEdit(config)` with its one
+  // edit form and confirm dialog; `rerunPending` is that page's re-run.
+  evalActions: PropTypes.shape({
+    runTestId: PropTypes.string,
+    canRun: PropTypes.bool,
+    grading: PropTypes.bool,
+    rerunPending: PropTypes.bool,
+    onRerun: PropTypes.func,
+    onEdit: PropTypes.func,
+  }),
+  // Given, calls can be ticked and re-run as a new simulation: called with the
+  // scenario keys and the trials picked.
+  onRerunScenarios: PropTypes.func,
+  runTrials: PropTypes.number,
+  rerunDisabledReason: PropTypes.string,
+  // Told whether the run has any call that can be ticked for a re-run.
+  onTickableChange: PropTypes.func,
 };

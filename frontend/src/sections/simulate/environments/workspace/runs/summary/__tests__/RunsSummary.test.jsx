@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // jsdom can't lay the chart out; capture what it's handed instead.
@@ -57,30 +57,51 @@ function renderSummary(props = {}, runs = RUNS, isLoading = false, totals = {}) 
   );
 }
 
+// The nearest element holding both nodes — where a control actually sits.
+function closestCommon(a, b) {
+  let node = a.parentElement;
+  while (node && !node.contains(b)) node = node.parentElement;
+  return node;
+}
+
 describe("RunsSummary", () => {
   beforeEach(() => useEnvironmentRuns.mockReset());
 
   it("shows a spinner, not an empty summary, while the runs load", () => {
     renderSummary({}, [], true);
     expect(screen.getByRole("progressbar")).toBeInTheDocument();
-    expect(screen.queryByText("Simulations summary")).toBeNull();
+    expect(screen.queryByText(/^Runs \(/)).toBeNull();
   });
 
-  it("heads the summary with the run and scenario counts", () => {
+  it("titles the runs table with the run and scenario counts, with no heading repeating the tab", () => {
     renderSummary();
-    expect(screen.getByText("Simulations summary")).toBeInTheDocument();
-    expect(screen.getByText("2 runs · 20 scenarios")).toBeInTheDocument();
+    expect(screen.queryByText("Simulations summary")).toBeNull();
+    expect(screen.getByText("Runs (2)")).toBeInTheDocument();
+    expect(screen.getByText("across 20 scenarios")).toBeInTheDocument();
   });
 
-  it("heads the summary with the server's run-test totals, not the page's rows", () => {
+  it("titles the runs table with the server's run-test totals, not the page's rows", () => {
     // A 2-row page of a 12-run history that covered 7 scenarios in all.
     renderSummary({}, RUNS, false, { count: 12, coveredScenarioCount: 7 });
-    expect(screen.getByText("12 runs · 7 scenarios")).toBeInTheDocument();
+    expect(screen.getByText("Runs (12)")).toBeInTheDocument();
+    expect(screen.getByText("across 7 scenarios")).toBeInTheDocument();
+  });
+
+  it("puts the run actions on the runs table, leaving the graph row to its legend", () => {
+    renderSummary();
+    const graphControls = screen.getByLabelText("Runs in graph");
+    const tableTitle = screen.getByText("Runs (2)");
+    for (const name of ["Add Evals", /Choose winner/]) {
+      const area = closestCommon(tableTitle, screen.getByRole("button", { name }));
+      expect(area.contains(graphControls)).toBe(false);
+    }
+    const runsBar = closestCommon(tableTitle, screen.getByRole("button", { name: "Add Evals" }));
+    expect(within(runsBar).getByRole("button", { name: "Add Evals" })).toBeEnabled();
   });
 
   it("says scenario, not scenarios, for one", () => {
     renderSummary({}, RUNS, false, { count: 12, coveredScenarioCount: 1 });
-    expect(screen.getByText("12 runs · 1 scenario")).toBeInTheDocument();
+    expect(screen.getByText("across 1 scenario")).toBeInTheDocument();
   });
 
   it("shows a real pass rate per run", () => {

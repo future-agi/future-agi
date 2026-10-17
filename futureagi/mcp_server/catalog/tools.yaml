@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 92
+expected_tool_count: 105
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -98,6 +98,16 @@ tools:
     description: Return dataset prompt IDs and token, cost and timing statistics. This is not execution status; use get_dataset for cell outputs and status.
     operation: {method: GET, path: "/model-hub/dataset/{dataset_id}/run-prompt-stats/"}
     access: read
+  - name: update_dataset_cell
+    group: datasets
+    description: Set the value of a single dataset cell. Use this to correct one value; add_dataset_rows only appends and cannot edit an existing row.
+    operation: {method: POST, path: "/model-hub/develops/{dataset_id}/update_cell_value/"}
+    access: write
+  - name: delete_datasets
+    group: datasets
+    description: Soft-delete one or more datasets by passing dataset_ids. This is the only way to remove a dataset created earlier; deletion cascades to the dataset's rows, columns and attached evaluations.
+    operation: {method: DELETE, path: "/model-hub/develops/delete_dataset/"}
+    access: destructive
   # prompts
   - name: list_prompt_templates
     group: prompts
@@ -261,6 +271,39 @@ tools:
     access: destructive
     idempotent: false
     open_world: true
+  - name: list_eval_configs
+    group: observability
+    description: List the custom evaluation configurations available for online evaluation tasks. The ids returned here are what create_eval_task takes in its `evals` argument - eval templates are a different object and their ids are not accepted there.
+    operation: {method: GET, path: "/tracer/custom-eval-config/"}
+    access: read
+    pagination:
+      limit: {maximum: 100}
+  - name: create_eval_config
+    group: observability
+    description: Create a custom evaluation configuration from an eval template so it can be attached to an online evaluation task. Use when list_eval_configs has no entry for the template you want to run over spans.
+    operation: {method: POST, path: "/tracer/custom-eval-config/"}
+    access: write
+  - name: list_trace_properties
+    group: observability
+    description: Discover filter properties from the shared metrics catalog. Pass cursor_mode=true, page_size (at most 50), source=traces (search_traces) or source=spans (list_spans), per_eval_config=true and project_ids when known. Use role=dimension to narrow to dimensions. Use name as column_id; set filter_config.col_type by mapping category system_metric to SYSTEM_METRIC, custom_attribute to SPAN_ATTRIBUTE, eval_metric to EVAL_METRIC, and annotation_metric to ANNOTATION. Preserve property_id and source for typed attribute bindings. Follow has_more/next_cursor by passing cursor; omit page and exclude_custom_attributes in cursor mode.
+    operation: {method: GET, path: "/tracer/dashboard/metrics/"}
+    access: read
+    pagination:
+      page_size: {maximum: 50}
+  - name: list_fired_alerts
+    group: observability
+    description: List alerts that have fired in numbered pages. Use this to find out what the platform has already flagged before digging into traces or error clusters.
+    operation: {method: GET, path: "/tracer/user-alert-logs/"}
+    access: read
+    pagination:
+      limit: {maximum: 100}
+  - name: list_alert_rules
+    group: observability
+    description: List the configured alert monitors - what each one watches, its threshold and its project. Pair with list_fired_alerts to explain why an alert fired, or to see that no monitor covers a condition the user expected to be caught.
+    operation: {method: GET, path: "/tracer/user-alerts/list_monitors/"}
+    access: read
+    pagination:
+      page_size: {maximum: 100}
   - name: pause_eval_task
     group: observability
     description: Pause a running online evaluation task by eval_task_id. Already-launched evaluations may finish before the worker stops.
@@ -306,10 +349,21 @@ tools:
     access: read
     pagination:
       limit: {maximum: 100}
+  - name: get_annotation_item_detail
+    group: annotations
+    description: Return everything needed to annotate one queue item; reserve=true acquires an editing reservation for the caller. Includes its source content, the queue instructions, every label with its settings (the allowed values a submitted value must match), any annotations already recorded, and the next/previous item ids. Call this before submit_annotation; the label settings are not available anywhere else.
+    operation: {method: GET, path: "/model-hub/annotation-queues/{queue_id}/items/{id}/annotate-detail/"}
+    access: write
+    idempotent: false
   - name: submit_annotation
     group: annotations
-    description: Submit annotation values for an item in an annotation queue.
+    description: Submit annotation values for an item in an annotation queue. The value shape must match the label's settings from get_annotation_item_detail. Submitting moves the item to in_progress only; call complete_annotation_item to finish it.
     operation: {method: POST, path: "/model-hub/annotation-queues/{queue_id}/items/{id}/annotations/submit/"}
+    access: write
+  - name: complete_annotation_item
+    group: annotations
+    description: Mark an annotated queue item complete and return the next item to work on. Required to finish an item - submit_annotation alone leaves it in_progress and the queue never closes.
+    operation: {method: POST, path: "/model-hub/annotation-queues/{queue_id}/items/{id}/complete/"}
     access: write
   # experiments
   - name: list_experiments
@@ -326,7 +380,7 @@ tools:
     access: read
   - name: create_experiment
     group: experiments
-    description: Create and start an experiment.
+    description: Create and start an experiment. The new experiment's id is returned inside the `result` message as `experiment_id=<uuid>`; pass it to get_experiment to follow the run.
     operation: {method: POST, path: "/model-hub/experiments/v2/"}
     access: write
     open_world: true
@@ -462,6 +516,25 @@ tools:
     access: read
     pagination:
       limit: {maximum: 100}
+  - name: list_guardrail_rules
+    group: gateway
+    description: Per-rule guardrail trigger breakdown - which guardrail rules exist and how often each has fired. Request logs report guardrail_triggered but not which rule caused it; this is what turns "the request was blocked" into "the PII rule blocked it".
+    operation: {method: GET, path: "/agentcc/analytics/guardrail-rules/"}
+    access: read
+    pagination:
+      limit: {maximum: 100}
+  - name: list_gateway_sessions
+    group: gateway
+    description: List AI gateway sessions with their stats. These are gateway sessions, distinct from the tracing sessions returned by list_sessions. Use this to obtain a session id for list_gateway_session_requests.
+    operation: {method: GET, path: "/agentcc/sessions/"}
+    access: read
+    pagination:
+      limit: {maximum: 100}
+  - name: list_gateway_session_requests
+    group: gateway
+    description: List every request log belonging to one gateway session. Request logs carry no trace id, so grouping by session is the way to see what else happened around a failed request.
+    operation: {method: GET, path: "/agentcc/sessions/{id}/requests/"}
+    access: read
   - name: get_gateway_analytics
     group: gateway
     description: Return overview usage, latency, error, and cost analytics for the AI gateway.
@@ -528,6 +601,11 @@ tools:
     description: Execute a saved widget's query and return its chart data.
     operation: {method: POST, path: "/tracer/dashboard/{dashboard_pk}/widgets/{id}/query/"}
     access: read
+  - name: delete_dashboard
+    group: dashboards
+    description: Delete a dashboard and the widgets on it. This is the only way to remove a dashboard created earlier.
+    operation: {method: DELETE, path: "/tracer/dashboard/{id}/"}
+    access: destructive
   - name: query_dashboard_metrics
     group: dashboards
     description: Run an ad-hoc dashboard query (time_range and metrics, with optional filters and breakdowns) and return chart data without saving a widget.

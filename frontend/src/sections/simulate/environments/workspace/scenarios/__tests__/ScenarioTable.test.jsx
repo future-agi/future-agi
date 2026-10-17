@@ -52,6 +52,17 @@ describe("ScenarioTable — bulk-action selection", () => {
   });
 });
 
+describe("ScenarioTable — pinned checkbox column", () => {
+  it("keeps the header and row checkboxes pinned to the left edge while the table scrolls sideways", () => {
+    const { boxes } = renderTable();
+    boxes.forEach((b) => {
+      const cell = b.closest("th, td");
+      expect(getComputedStyle(cell).position).toBe("sticky");
+      expect(getComputedStyle(cell).left).toBe("0px");
+    });
+  });
+});
+
 describe("ScenarioTable — hide group", () => {
   it("calls onHideGroup with the section id when the group's eye is clicked", () => {
     const onHideGroup = vi.fn();

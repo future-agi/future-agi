@@ -28343,10 +28343,52 @@
             "delete": {
                 "operationId": "model-hub_develops_delete_dataset_delete",
                 "description": "",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DatasetDelete"
+                        }
+                    }
+                ],
                 "responses": {
-                    "204": {
-                        "description": ""
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DevelopDatasetMessageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
                     },
                     "default": {
                         "description": "Default error response",
@@ -28357,7 +28399,9 @@
                 },
                 "tags": [
                     "model-hub"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -47116,6 +47160,42 @@
                 }
             ]
         },
+        "/saml2_auth/complete/": {
+            "get": {
+                "operationId": "saml2_auth_complete_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "c",
+                        "in": "query",
+                        "description": "One-time SAML response candidate key.",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirects to the configured frontend URL."
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SAMLErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "saml2_auth"
+                ]
+            },
+            "parameters": []
+        },
         "/saml2_auth/github/callback/": {
             "get": {
                 "operationId": "saml2_auth_github_callback_list",
@@ -52024,6 +52104,91 @@
                 }
             ]
         },
+        "/simulate/api/harness/conversations/{id}/overview/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_overview",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationOverviewQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationOverview"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/publish/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_publish",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationPublish"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationPublish"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness/conversations/{id}/rerun/": {
             "post": {
                 "operationId": "simulate_api_harness_conversations_rerun",
@@ -52089,6 +52254,132 @@
                 "tags": [
                     "simulate"
                 ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/runs/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_runs",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRunsQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRunsQuery"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/runs/start/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_runs_start_run",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRunStart"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRunStart"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/scenarios/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_scenarios",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationScenarioQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationScenarioQuery"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
             },
             "parameters": [
                 {
@@ -71037,50 +71328,91 @@
                 "description": "",
                 "parameters": [
                     {
-                        "name": "page",
+                        "name": "page_number",
                         "in": "query",
-                        "description": "A page number within the paginated result set.",
+                        "description": "Zero-based page number.",
                         "required": false,
-                        "type": "integer"
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0
                     },
                     {
-                        "name": "limit",
+                        "name": "page_size",
                         "in": "query",
-                        "description": "Number of results to return per page.",
                         "required": false,
-                        "type": "integer"
+                        "type": "integer",
+                        "default": 30,
+                        "maximum": 100,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "search_text",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    },
+                    {
+                        "name": "status",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "triggered",
+                                "healthy"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "metric_type",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    },
+                    {
+                        "name": "sort_by",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    {
+                        "name": "sort_direction",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "asc",
+                            "desc"
+                        ]
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "",
                         "schema": {
-                            "required": [
-                                "count",
-                                "results"
-                            ],
-                            "type": "object",
-                            "properties": {
-                                "count": {
-                                    "type": "integer"
-                                },
-                                "next": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "previous": {
-                                    "type": "string",
-                                    "format": "uri",
-                                    "x-nullable": true
-                                },
-                                "results": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/definitions/UserAlertMonitor"
-                                    }
-                                }
-                            }
+                            "$ref": "#/definitions/UserAlertMonitorListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
                     "default": {
@@ -71092,7 +71424,9 @@
                 },
                 "tags": [
                     "tracer"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -103426,6 +103760,22 @@
                 }
             }
         },
+        "DatasetDelete": {
+            "required": [
+                "dataset_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "dataset_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 50
+                }
+            }
+        },
         "EditRunPromptColumn": {
             "required": [
                 "dataset_id",
@@ -125706,6 +126056,20 @@
                     "type": "string",
                     "maxLength": 128,
                     "minLength": 1
+                },
+                "target_stage": {
+                    "title": "Target stage",
+                    "type": "string",
+                    "enum": [
+                        "understand",
+                        "environment",
+                        "scenarios"
+                    ]
+                },
+                "scenario_delta": {
+                    "title": "Scenario delta",
+                    "type": "integer",
+                    "minimum": 1
                 }
             }
         },
@@ -126837,6 +127201,20 @@
                     "type": "string",
                     "maxLength": 128,
                     "minLength": 1
+                },
+                "target_stage": {
+                    "title": "Target stage",
+                    "type": "string",
+                    "enum": [
+                        "understand",
+                        "environment",
+                        "scenarios"
+                    ]
+                },
+                "scenario_delta": {
+                    "title": "Scenario delta",
+                    "type": "integer",
+                    "minimum": 1
                 }
             }
         },
@@ -127026,6 +127404,98 @@
                 }
             }
         },
+        "HarnessConversationOverviewQuery": {
+            "type": "object",
+            "properties": {}
+        },
+        "HarnessConversationOverview": {
+            "required": [
+                "environment",
+                "scenario_count",
+                "use_cases",
+                "coverage",
+                "recent_runs",
+                "build_changes",
+                "earlier_messages"
+            ],
+            "type": "object",
+            "properties": {
+                "environment": {
+                    "title": "Environment",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer"
+                },
+                "use_cases": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "coverage": {
+                    "title": "Coverage",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "recent_runs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "build_changes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "earlier_messages": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                }
+            }
+        },
+        "HarnessConversationPublish": {
+            "required": [
+                "digest"
+            ],
+            "type": "object",
+            "properties": {
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                }
+            }
+        },
         "HarnessConversationRerun": {
             "type": "object",
             "properties": {}
@@ -127075,6 +127545,129 @@
                 "receipts": {
                     "title": "Receipts",
                     "type": "object"
+                }
+            }
+        },
+        "HarnessConversationRunsQuery": {
+            "type": "object",
+            "properties": {
+                "run_id": {
+                    "title": "Run id",
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "limit": {
+                    "title": "Limit",
+                    "type": "integer",
+                    "maximum": 50,
+                    "minimum": 1
+                }
+            }
+        },
+        "HarnessConversationRunStart": {
+            "type": "object",
+            "properties": {
+                "numbers": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "maxItems": 5000
+                },
+                "ranges": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "integer",
+                            "minimum": 1
+                        }
+                    },
+                    "maxItems": 100
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "default": 1,
+                    "maximum": 20,
+                    "minimum": 1
+                },
+                "operation_id": {
+                    "title": "Operation id",
+                    "type": "string",
+                    "maxLength": 64
+                }
+            }
+        },
+        "HarnessConversationScenarioQuery": {
+            "type": "object",
+            "properties": {
+                "numbers": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "maxItems": 5000
+                },
+                "ranges": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "integer",
+                            "minimum": 1
+                        }
+                    },
+                    "maxItems": 100
+                },
+                "names": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 500
+                },
+                "ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "minLength": 1
+                    },
+                    "maxItems": 1000
+                },
+                "search": {
+                    "title": "Search",
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "page": {
+                    "title": "Page",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 1
+                },
+                "full": {
+                    "title": "Full",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },
@@ -134731,8 +135324,7 @@
                 },
                 "type": {
                     "title": "Type",
-                    "type": "string",
-                    "minLength": 1
+                    "type": "string"
                 },
                 "value": {
                     "title": "Value",
@@ -134756,7 +135348,13 @@
                 "status": {
                     "title": "Status",
                     "type": "string",
-                    "minLength": 1
+                    "enum": [
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out",
+                        "skipped"
+                    ]
                 }
             }
         },
@@ -134808,7 +135406,10 @@
                 "outcome",
                 "cost_breakdown_cents",
                 "evaluations",
-                "function_calls"
+                "function_calls",
+                "scoring_status",
+                "csat_status",
+                "csat_reason"
             ],
             "type": "object",
             "properties": {
@@ -135278,6 +135879,35 @@
                     "items": {
                         "$ref": "#/definitions/SimulateRunV3FunctionCall"
                     }
+                },
+                "scoring_status": {
+                    "title": "Scoring status",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out"
+                    ]
+                },
+                "csat_status": {
+                    "title": "Csat status",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out",
+                        "skipped"
+                    ]
+                },
+                "csat_reason": {
+                    "title": "Csat reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             }
         },
@@ -137219,6 +137849,90 @@
                 }
             }
         },
+        "SimulateRunV3ScoringCounts": {
+            "required": [
+                "not_applicable",
+                "pending",
+                "succeeded",
+                "failed",
+                "timed_out"
+            ],
+            "type": "object",
+            "properties": {
+                "not_applicable": {
+                    "title": "Not applicable",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "pending": {
+                    "title": "Pending",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "succeeded": {
+                    "title": "Succeeded",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "failed": {
+                    "title": "Failed",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "timed_out": {
+                    "title": "Timed out",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "SimulateRunV3CallsSummary": {
+            "required": [
+                "total",
+                "outcomes",
+                "measured",
+                "pass_rate",
+                "duration",
+                "latency",
+                "tokens",
+                "cost_cents",
+                "scoring"
+            ],
+            "type": "object",
+            "properties": {
+                "total": {
+                    "title": "Total",
+                    "type": "integer"
+                },
+                "outcomes": {
+                    "$ref": "#/definitions/OutcomeCounts"
+                },
+                "measured": {
+                    "title": "Measured",
+                    "type": "integer"
+                },
+                "pass_rate": {
+                    "title": "Pass rate",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "duration": {
+                    "$ref": "#/definitions/MetricStats"
+                },
+                "latency": {
+                    "$ref": "#/definitions/MetricStats"
+                },
+                "tokens": {
+                    "$ref": "#/definitions/TotalMetricStats"
+                },
+                "cost_cents": {
+                    "$ref": "#/definitions/TotalMetricStats"
+                },
+                "scoring": {
+                    "$ref": "#/definitions/SimulateRunV3ScoringCounts"
+                }
+            }
+        },
         "RunCall": {
             "required": [
                 "id",
@@ -137251,7 +137965,10 @@
                 "csat",
                 "ended_reason",
                 "error_message",
-                "evaluations"
+                "evaluations",
+                "scoring_status",
+                "csat_status",
+                "csat_reason"
             ],
             "type": "object",
             "properties": {
@@ -137428,6 +138145,35 @@
                     "items": {
                         "$ref": "#/definitions/SimulateRunV3EvaluationResult"
                     }
+                },
+                "scoring_status": {
+                    "title": "Scoring status",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out"
+                    ]
+                },
+                "csat_status": {
+                    "title": "Csat status",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out",
+                        "skipped"
+                    ]
+                },
+                "csat_reason": {
+                    "title": "Csat reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             }
         },
@@ -137633,6 +138379,7 @@
                 "results",
                 "groups",
                 "facets",
+                "status_counts",
                 "evaluation_columns"
             ],
             "type": "object",
@@ -137641,7 +138388,7 @@
                     "$ref": "#/definitions/RunExecution"
                 },
                 "summary": {
-                    "$ref": "#/definitions/RunSummary"
+                    "$ref": "#/definitions/SimulateRunV3CallsSummary"
                 },
                 "count": {
                     "title": "Count",
@@ -137673,6 +138420,9 @@
                 },
                 "facets": {
                     "$ref": "#/definitions/RunFacets"
+                },
+                "status_counts": {
+                    "$ref": "#/definitions/OutcomeCounts"
                 },
                 "evaluation_columns": {
                     "type": "array",
@@ -147070,6 +147820,15 @@
                     "minLength": 1,
                     "x-nullable": true
                 },
+                "target_type": {
+                    "title": "Target type",
+                    "type": "string",
+                    "enum": [
+                        "span",
+                        "trace"
+                    ],
+                    "x-nullable": true
+                },
                 "annotators": {
                     "title": "Annotators",
                     "type": "object",
@@ -150885,6 +151644,15 @@
                     "minLength": 1,
                     "x-nullable": true
                 },
+                "target_type": {
+                    "title": "Target type",
+                    "type": "string",
+                    "enum": [
+                        "span",
+                        "trace"
+                    ],
+                    "x-nullable": true
+                },
                 "annotators": {
                     "title": "Annotators",
                     "type": "object",
@@ -151948,6 +152716,7 @@
                     "$ref": "#/definitions/TraceObserveListMetadata"
                 },
                 "table": {
+                    "description": "Observe eval bool and choice cells are counts of completed attempts; a detail eval_rollup separately selects the latest completed row per span.",
                     "type": "array",
                     "items": {
                         "type": "object",
@@ -152255,6 +153024,115 @@
                 }
             }
         },
+        "EvalRollupSpan": {
+            "required": [
+                "span_id"
+            ],
+            "type": "object",
+            "properties": {
+                "span_id": {
+                    "title": "Span id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "span_name": {
+                    "title": "Span name",
+                    "type": "string"
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "explanation": {
+                    "title": "Explanation",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "boolean"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "eval_config_id": {
+                    "title": "Eval config id",
+                    "type": "string"
+                }
+            }
+        },
+        "EvalRollupEval": {
+            "required": [
+                "eval_config_id",
+                "eval_name",
+                "aggregate",
+                "spans"
+            ],
+            "type": "object",
+            "properties": {
+                "eval_config_id": {
+                    "title": "Eval config id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "eval_name": {
+                    "title": "Eval name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "output_type": {
+                    "title": "Output type",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "template_type": {
+                    "title": "Template type",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "target_type": {
+                    "title": "Target type",
+                    "type": "string",
+                    "enum": [
+                        "span",
+                        "trace"
+                    ],
+                    "x-nullable": true
+                },
+                "choices_map": {
+                    "title": "Choices map",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "aggregate": {
+                    "title": "Aggregate",
+                    "type": "object",
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "spans": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvalRollupSpan"
+                    }
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "boolean"
+                }
+            }
+        },
         "TraceVoiceCallDetailResult": {
             "required": [
                 "id",
@@ -152498,6 +153376,34 @@
                     "type": "object",
                     "additionalProperties": true
                 },
+                "eval_rollup": {
+                    "required": [
+                        "scope",
+                        "evals"
+                    ],
+                    "type": "object",
+                    "properties": {
+                        "scope": {
+                            "title": "Scope",
+                            "type": "string",
+                            "enum": [
+                                "trace",
+                                "span"
+                            ]
+                        },
+                        "evals": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/EvalRollupEval"
+                            }
+                        },
+                        "error": {
+                            "title": "Error",
+                            "type": "boolean"
+                        }
+                    },
+                    "x-nullable": true
+                },
                 "call_execution_id": {
                     "title": "Call execution id",
                     "type": "string",
@@ -152601,6 +153507,67 @@
                 }
             }
         },
+        "EvalRollup": {
+            "required": [
+                "scope",
+                "evals"
+            ],
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "title": "Scope",
+                    "type": "string",
+                    "enum": [
+                        "trace",
+                        "span"
+                    ]
+                },
+                "evals": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvalRollupEval"
+                    }
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "boolean"
+                }
+            }
+        },
+        "TraceDetailSpan": {
+            "required": [
+                "observation_span"
+            ],
+            "type": "object",
+            "properties": {
+                "observation_span": {
+                    "title": "Observation span",
+                    "type": "object"
+                },
+                "children": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "eval_scores": {
+                    "description": "Raw eval rows retained for backwards-compatible array consumers.",
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "eval_rollup": {
+                    "$ref": "#/definitions/EvalRollup"
+                },
+                "annotations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
         "TraceDetailResult": {
             "required": [
                 "trace",
@@ -152617,7 +153584,7 @@
                 "observation_spans": {
                     "type": "array",
                     "items": {
-                        "type": "object"
+                        "$ref": "#/definitions/TraceDetailSpan"
                     }
                 },
                 "summary": {
@@ -153179,6 +154146,186 @@
                 },
                 "result": {
                     "$ref": "#/definitions/UserAlertMonitorDuplicateResult"
+                }
+            }
+        },
+        "UserAlertMonitorListColumn": {
+            "required": [
+                "id",
+                "name",
+                "is_visible"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "is_visible": {
+                    "title": "Is visible",
+                    "type": "boolean"
+                }
+            }
+        },
+        "UserAlertMonitorTrend": {
+            "required": [
+                "timestamp",
+                "count"
+            ],
+            "type": "object",
+            "properties": {
+                "timestamp": {
+                    "title": "Timestamp",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "count": {
+                    "title": "Count",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "UserAlertMonitorListItem": {
+            "required": [
+                "id",
+                "name",
+                "created_at",
+                "updated_at",
+                "metric_type",
+                "filters",
+                "status",
+                "no_of_alerts",
+                "last_triggered",
+                "is_mute",
+                "trends"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "metric_type": {
+                    "title": "Metric type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "triggered",
+                        "healthy"
+                    ]
+                },
+                "no_of_alerts": {
+                    "title": "No of alerts",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "last_triggered": {
+                    "title": "Last triggered",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "is_mute": {
+                    "title": "Is mute",
+                    "type": "boolean"
+                },
+                "trends": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/UserAlertMonitorTrend"
+                    }
+                }
+            }
+        },
+        "UserAlertMonitorListMetadata": {
+            "required": [
+                "total_rows",
+                "total_pages"
+            ],
+            "type": "object",
+            "properties": {
+                "total_rows": {
+                    "title": "Total rows",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "UserAlertMonitorListResult": {
+            "required": [
+                "column_config",
+                "table",
+                "metadata"
+            ],
+            "type": "object",
+            "properties": {
+                "column_config": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/UserAlertMonitorListColumn"
+                    }
+                },
+                "table": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/UserAlertMonitorListItem"
+                    }
+                },
+                "metadata": {
+                    "$ref": "#/definitions/UserAlertMonitorListMetadata"
+                }
+            }
+        },
+        "UserAlertMonitorListResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/UserAlertMonitorListResult"
                 }
             }
         },

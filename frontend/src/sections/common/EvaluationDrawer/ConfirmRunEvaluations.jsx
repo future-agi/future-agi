@@ -23,6 +23,10 @@ const ConfirmRunEvaluations = ({
   selectedUserEvalList,
   loading,
   getNote,
+  title,
+  description = "This will overwrite previous evaluation results.",
+  cancelLabel = "Cancel",
+  confirmLabel = "Run Evaluations",
 }) => {
   const theme = useTheme();
   const [evalsToRun, setEvalsToRun] = useState([]);
@@ -70,15 +74,19 @@ const ConfirmRunEvaluations = ({
       >
         <Box display="flex" justifyContent="space-between" alignItems="center">
           <Typography fontSize={16} fontWeight={700} color="text.primary">
-            Are you sure you want to run the following evaluation
-            {evalsToRun.length !== 1 && "s"}?
+            {title ?? (
+              <>
+                Are you sure you want to run the following evaluation
+                {evalsToRun.length !== 1 && "s"}?
+              </>
+            )}
           </Typography>
           <IconButton onClick={onClose} sx={{ p: 0 }}>
             <Iconify icon="line-md:close" color="text.primary" />
           </IconButton>
         </Box>
         <Typography variant="body2" color="text.secondary">
-          This will overwrite previous evaluation results.
+          {description}
         </Typography>
         {note && (
           <Typography variant="body2" color="text.secondary">
@@ -165,7 +173,7 @@ const ConfirmRunEvaluations = ({
             paddingY: "6px",
           }}
         >
-          Cancel
+          {cancelLabel}
         </Button>
         <LoadingButton
           loading={loading}
@@ -182,7 +190,7 @@ const ConfirmRunEvaluations = ({
             paddingY: "6px",
           }}
         >
-          Run Evaluations
+          {confirmLabel}
         </LoadingButton>
       </DialogActions>
     </Dialog>
@@ -196,6 +204,10 @@ ConfirmRunEvaluations.propTypes = {
   selectedUserEvalList: PropTypes.array,
   loading: PropTypes.bool,
   getNote: PropTypes.func,
+  title: PropTypes.node,
+  description: PropTypes.node,
+  cancelLabel: PropTypes.node,
+  confirmLabel: PropTypes.node,
 };
 
 export default ConfirmRunEvaluations;

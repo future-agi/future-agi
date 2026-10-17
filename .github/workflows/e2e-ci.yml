@@ -314,6 +314,18 @@ jobs:
         working-directory: e2e
         run: yarn catalog:check
 
+      # The @saml flows start e2e/lib/saml_idp_server.py on the runner. It
+      # signs with the backend's own pysaml2 fixtures, which need pysaml2,
+      # cryptography and the xmlsec1 binary; the runner's python3 lacks pysaml2
+      # and xmlsec1. Versions match futureagi/uv.lock.
+      - name: Install the local SAML IdP's dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xmlsec1
+          python3 -m venv "$RUNNER_TEMP/saml-idp"
+          "$RUNNER_TEMP/saml-idp/bin/pip" install --quiet pysaml2==7.5.0 cryptography==46.0.5
+          echo "E2E_SAML_PYTHON=$RUNNER_TEMP/saml-idp/bin/python" >> "$GITHUB_ENV"
+
       - name: Boot the e2e stack
         run: bin/e2e up
 

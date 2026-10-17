@@ -14,6 +14,7 @@ import {
   makeServerRows,
   envStateFor,
   renderWithClient,
+  pickView,
 } from "./scenariosTestUtils";
 
 const { mockSnack } = vi.hoisted(() => ({ mockSnack: { calls: [], close: () => {} } }));
@@ -279,7 +280,7 @@ describe("ScenariosStep — list view has checkboxes", () => {
   it("renders per-row and per-group checkboxes in the list view", async () => {
     renderStep();
     await screen.findByText(/Showing 1–25 of 60/);
-    fireEvent.click(screen.getByRole("tab", { name: "List" }));
+    pickView("List");
     await waitFor(() =>
       expect(screen.getAllByLabelText(/^Select group/).length).toBeGreaterThan(0),
     );
