@@ -894,9 +894,20 @@ function Get-AppliedMigrationCount {
 }
 $deadline = (Get-Date).AddSeconds($readyTimeout)
 $hardDeadline = (Get-Date).AddSeconds($readyMax)
+$waitStartedAt = Get-Date
 $readySince = $null
 $lastMigrationsApplied = Get-AppliedMigrationCount
 $pendingGate = $GateContainers
+
+# Readiness heartbeat — the wait used to print only when the migration
+# count ticked, leaving ~90s of silence before the first migration and
+# ~100s after the last. Report the current phase on an interval instead.
+$heartbeatSeconds = 15
+$lastHeartbeat = $null
+$migrationTotal = 0
+$migrationTotalTries = 0
+$migrationStartedAt = $null
+$migrationsApplied = 0
 $lastReadySignature = ''
 $firstAppRestarts = $null
 $catalogJobs = @(
@@ -987,9 +998,18 @@ while ($true) {
     $migrationsApplied = Get-AppliedMigrationCount
     if ($migrationsApplied -gt $lastMigrationsApplied) {
       $lastMigrationsApplied = $migrationsApplied
-      Say "  migrations in progress ($migrationsApplied applied), extending the readiness window"
+      if ($null -eq $migrationStartedAt) { $migrationStartedAt = $now }
       $deadline = $now.AddSeconds($readyTimeout)
       if ($deadline -gt $hardDeadline) { $deadline = $hardDeadline }
+    }
+    # Learn the migration total once — showmigrations --plan lists every
+    # planned node. exec is retried while the container's Django is still
+    # coming up; if it never answers, progress falls back to a bare count.
+    if ($migrationTotal -eq 0 -and $migrationsApplied -gt 0 -and $migrationTotalTries -lt 40) {
+      $migrationTotalTries++
+      $planOut = (Invoke-Compose exec -T $AppService python manage.py showmigrations --plan 2>$null | Out-String)
+      $count = @($planOut -split "`n" | Where-Object { $_ -match '^\s*[A-Za-z_][A-Za-z0-9_]*\.[0-9]+' }).Count
+      if ($count -gt 0) { $migrationTotal = $count }
     }
   }
 
@@ -1016,6 +1036,31 @@ while ($true) {
   } else {
     $readySince = $null
     $lastReadySignature = ''
+  }
+
+  if (-not $allReady -and ($null -eq $lastHeartbeat -or ($now - $lastHeartbeat).TotalSeconds -ge $heartbeatSeconds)) {
+    $lastHeartbeat = $now
+    if (-not $backendHealthy -and $migrationsApplied -gt 0) {
+      if ($migrationTotal -gt 0 -and $migrationsApplied -lt $migrationTotal) {
+        if ($null -ne $migrationStartedAt -and ($now - $migrationStartedAt).TotalSeconds -gt 0) {
+          $eta = [int](($migrationTotal - $migrationsApplied) * ($now - $migrationStartedAt).TotalSeconds / $migrationsApplied)
+          $progress = "applying migrations ${migrationsApplied}/${migrationTotal} (~$([math]::Floor($eta / 60))m $($eta % 60)s remaining)"
+        } else {
+          $progress = "applying migrations ${migrationsApplied}/${migrationTotal}"
+        }
+      } elseif ($migrationTotal -gt 0) {
+        $progress = "migrations applied (${migrationTotal}/${migrationTotal}), backend booting"
+      } else {
+        $progress = "applying migrations ($migrationsApplied applied)"
+      }
+    } elseif (-not $backendHealthy) {
+      $progress = "backend starting (loading, no migrations yet)"
+    } else {
+      $gate = if ($pendingGate) { $pendingGate } else { 'the stack' }
+      $progress = "waiting on $gate"
+    }
+    $elapsed = [int]($now - $waitStartedAt).TotalSeconds
+    Say "  $progress (${elapsed}s elapsed)"
   }
 
   if ($now -ge $deadline) {
