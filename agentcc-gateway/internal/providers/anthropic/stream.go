@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"time"
 
@@ -67,7 +68,8 @@ type contentBlockStartData struct {
 }
 
 // parseSSELine parses a single SSE data line and returns a StreamChunk if one should be emitted.
-// Returns (chunk, done, error).
+// Returns (chunk, done, error). A non-nil error is a failure Anthropic reported
+// in the stream itself, and ends the stream.
 func (s *streamState) parseSSELine(eventType, data string) (*models.StreamChunk, bool, error) {
 	if data == "" {
 		return nil, false, nil
@@ -94,7 +96,9 @@ func (s *streamState) parseSSELine(eventType, data string) (*models.StreamChunk,
 	case "ping":
 		return nil, false, nil
 	case "error":
-		return nil, false, nil
+		// Failures after the 200 response has started (overloaded_error, for
+		// example) arrive as an error event rather than an HTTP status.
+		return nil, true, parseAnthropicError(http.StatusOK, []byte(data))
 	}
 
 	return nil, false, nil
