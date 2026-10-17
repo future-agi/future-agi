@@ -18407,6 +18407,18 @@
                             "$ref": "#/definitions/MCPOAuthTokenErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "Too many requests",
+                        "schema": {
+                            "$ref": "#/definitions/MCPOAuthTokenErrorResponse"
+                        },
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds before retrying the token request.",
+                                "type": "integer"
+                            }
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {

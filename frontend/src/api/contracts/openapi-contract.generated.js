@@ -10446,6 +10446,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           401: {
             $ref: "#/definitions/MCPOAuthTokenErrorResponse",
           },
+          429: {
+            $ref: "#/definitions/MCPOAuthTokenErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },

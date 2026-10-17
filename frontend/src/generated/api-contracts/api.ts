@@ -22703,9 +22703,14 @@ export type mcpOauthTokenCreateResponse401 = {
   status: 401;
 };
 
+export type mcpOauthTokenCreateResponse429 = {
+  data: MCPOAuthTokenErrorResponseApi;
+  status: 429;
+};
+
 export type mcpOauthTokenCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 429>;
 };
 
 export type mcpOauthTokenCreateResponseSuccess =
@@ -22715,6 +22720,7 @@ export type mcpOauthTokenCreateResponseSuccess =
 export type mcpOauthTokenCreateResponseError = (
   | mcpOauthTokenCreateResponse400
   | mcpOauthTokenCreateResponse401
+  | mcpOauthTokenCreateResponse429
   | mcpOauthTokenCreateResponseDefault
 ) & {
   headers: Headers;
