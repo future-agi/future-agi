@@ -84,6 +84,7 @@ export const CONTRACT_COPY = {
     create: "Create actor",
     castTitle: (n) => `In this environment (${n})`,
     castSubtitle: "Injected into every run, at the version pinned here",
+    builtCastSubtitle: "Brought into the scenarios that bind them",
     emptyIcon: "solar:users-group-two-rounded-linear",
     emptyTitle: "No actors yet",
     emptyBody:

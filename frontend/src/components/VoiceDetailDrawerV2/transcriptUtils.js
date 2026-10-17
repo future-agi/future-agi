@@ -114,6 +114,7 @@ export const enrichTurns = (
       id: item.id ?? `turn-${i}`,
       role,
       rawRole: item.speaker_role || item.role,
+      speakerName: item.speaker_name || item.name || "",
       content: getContent(item),
       toolCalls: Array.isArray(item.tool_calls) ? item.tool_calls : [],
       start,
@@ -325,3 +326,5 @@ export const computeCallMetrics = (turns) => {
     timeToFirstWord: ttfw,
   };
 };
+
+export const subActorLabel = (name) => `${name || "Someone else"} (not the customer)`;

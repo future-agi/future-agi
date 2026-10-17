@@ -499,19 +499,26 @@ def _harness_columns(execution: TestExecution) -> list[dict[str, str]]:
             f"WITH calls AS ({calls_sql}){_FIRST_HARNESS_OUTPUTS_SQL}", params
         )
         found = cursor.fetchall()
+    from simulate.services.harness_environment import PRIMARY_ACTOR, sub_goal_catalogue
+
+    actors = {
+        name: entry["actor"]
+        for name, entry in sub_goal_catalogue(execution.run_test_id).items()
+    }
     columns = []
     for eval_id, data, receipt in found:
         name = str(json.loads(data).get("name") or eval_id)
         sub_goal_names = receipt_sub_goal_names(
             {"hosted_harness_receipt": json.loads(receipt) if receipt else None}
         )
-        columns.append(
-            {
-                "id": eval_id,
-                "name": name,
-                "kind": "sub_goal" if name in sub_goal_names else "evaluation",
-            }
-        )
+        column = {
+            "id": eval_id,
+            "name": name,
+            "kind": "sub_goal" if name in sub_goal_names else "evaluation",
+        }
+        if column["kind"] == "sub_goal":
+            column["actor"] = actors.get(name, PRIMARY_ACTOR)
+        columns.append(column)
     return columns
 
 
@@ -537,7 +544,7 @@ def build_evaluation_catalog(
     if execution.status == TestExecution.ExecutionStatus.COMPLETED:
         version = execution.completed_at or execution.updated_at
         harness_cache_key = (
-            f"simulate:v3:harness-eval-columns:v2:{execution.id}:{version.timestamp()}"
+            f"simulate:v3:harness-eval-columns:v3:{execution.id}:{version.timestamp()}"
         )
         harness_columns = cache.get(harness_cache_key)
         # Treat any non-list value as a miss so a key collision can never

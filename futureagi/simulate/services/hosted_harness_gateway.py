@@ -402,6 +402,8 @@ def _platform_simulator_material() -> dict[str, str]:
     catalogue = _noise_catalogue_setting()
     if catalogue:
         values["ALK_BACKGROUND_NOISE_CATALOG"] = catalogue
+    if getattr(settings, "ALK_SUB_ACTORS", False):
+        values["HARNESS_SUB_ACTORS"] = "1"
     # The sandbox resolves nothing on our network, so the guest's collector is configured
     # separately and only falls back to ours when they are the same host.
     collector = str(
@@ -1578,6 +1580,18 @@ def _persist_bundle_stage_outputs(
                     data=catalogue,
                 )
             )
+    if "cast" not in existing:
+        cast = _load_bundle_file(manifest, "cast.json", job)
+        if isinstance(cast, dict) and cast.get("sub_actors"):
+            outputs.append(
+                HostedHarnessStageOutput(
+                    job=job,
+                    title="Cast",
+                    summary=cast_summary(cast),
+                    kind="cast",
+                    data=cast,
+                )
+            )
     if outputs:
         HostedHarnessStageOutput.no_workspace_objects.bulk_create(outputs)
 
@@ -2386,6 +2400,7 @@ class HostedHarnessGateway:
                 "ALK_CLAUDE_GATEWAY_URL",
                 "ALK_CLAUDE_GATEWAY_API_KEY",
                 "CLAUDE_CODE_USE_VERTEX",
+                "HARNESS_SUB_ACTORS",
                 "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
                 "ALK_CAB_GUEST_POC_PIN",
             }
@@ -2714,6 +2729,7 @@ class HostedHarnessGateway:
                     "ALK_CLAUDE_GATEWAY_URL",
                     "ALK_CLAUDE_GATEWAY_API_KEY",
                     "CLAUDE_CODE_USE_VERTEX",
+                    "HARNESS_SUB_ACTORS",
                     "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
                     "ALK_CAB_GUEST_POC_PIN",
                 }
@@ -3145,6 +3161,7 @@ class HostedHarnessGateway:
         authored_bundle = _json("/work/authoring/environment-bundle/manifest.json")
         scenarios = _json("/work/authoring/scenarios.json")
         sub_goals = _json("/work/authoring/sub_goals.json")
+        cast = _json("/work/authoring/cast.json")
         bundle = _json("/work/bundle/manifest.json")
         # Written when the world is sealed, so it appears later than the authoring
         # documents above and only once a store has actually been built.
@@ -3202,6 +3219,7 @@ class HostedHarnessGateway:
             sub_goals=sub_goals,
             build_output=build_output,
             coverage=coverage,
+            cast=cast,
         )
         activities = _activity_events()
         if activities:
@@ -4538,6 +4556,11 @@ def _record_harness_spend(
     job.save(update_fields=["payload", "updated_at"])
 
 
+def cast_summary(cast: dict[str, Any]) -> str:
+    count = len(cast.get("sub_actors") or [])
+    return f"{count} sub-actor" + ("" if count == 1 else "s")
+
+
 def authoring_stage_outputs(
     contract: Any,
     environment: Any,
@@ -4549,6 +4572,7 @@ def authoring_stage_outputs(
     repair_history: Any = None,
     action_certification: Any = None,
     coverage: Any = None,
+    cast: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
     outputs: list[dict[str, Any]] = []
@@ -4599,6 +4623,16 @@ def authoring_stage_outputs(
                 "title": "Sub-goal catalogue",
                 "summary": f"{len(goals)} sub-goals · {len(suite)} suite evals",
                 "data": _secret_safe(sub_goals),
+            }
+        )
+    if isinstance(cast, dict) and cast.get("sub_actors"):
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000007",
+                "kind": "cast",
+                "title": "Cast",
+                "summary": cast_summary(cast),
+                "data": _secret_safe(cast),
             }
         )
     stores = _seeded_stores(build_output)
@@ -4702,6 +4736,7 @@ def authoring_stage_outputs_from_archive(
         "environment.json",
         "scenarios.json",
         "sub_goals.json",
+        "cast.json",
         "certification.json",
         "repair-history.json",
         "action-certification.json",
@@ -4752,6 +4787,7 @@ def authoring_stage_outputs_from_archive(
         repair_history=documents.get("repair-history.json"),
         action_certification=documents.get("action-certification.json"),
         coverage=documents.get("coverage.json"),
+        cast=documents.get("cast.json"),
     )
 
 

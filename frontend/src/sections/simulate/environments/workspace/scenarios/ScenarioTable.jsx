@@ -71,8 +71,9 @@ const selectableCheckboxSx = {
 // The per-row edit pencil opens the scenario editor through onEdit. Stripped
 // from the source: the twin-seed override icon (twinSeedPrompt) — twin-only, not
 // on either entry path.
-export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGroup, selectedIds, onSelectionChange, selection, pageIds, onTogglePage, locked = false, rowHeight = "Short" }) {
+export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onHideGroup, selectedIds, onSelectionChange, selection, pageIds, onTogglePage, locked = false, rowHeight = "Short" }) {
   const limits = ROW_HEIGHTS[rowHeight] || ROW_HEIGHTS.Short;
+  const castNames = Object.fromEntries((env?.cast?.subActors || []).map((one) => [one.id, one.name || one.id]));
   const [widths, setWidths] = useState(readWidths);
   const widthsRef = useRef(widths);
   widthsRef.current = widths;
@@ -335,6 +336,11 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
                       <TruncTooltip title={row.summary || row.title}>
                         <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{row.summary || row.title}</Typography>
                       </TruncTooltip>
+                      {row.subActors?.length > 0 && (
+                        <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>
+                          With {row.subActors.map((id) => castNames[id] || id).join(", ")}
+                        </Typography>
+                      )}
                     </TableCell>
 
                     <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
@@ -395,6 +401,7 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
 
 ScenarioTable.propTypes = {
   rows: PropTypes.arrayOf(SCENARIO_SHAPE).isRequired,
+  env: PropTypes.object,
   groups: PropTypes.arrayOf(GROUP_SHAPE),
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,

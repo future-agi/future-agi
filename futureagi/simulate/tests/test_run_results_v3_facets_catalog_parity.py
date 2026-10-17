@@ -87,13 +87,14 @@ def _reference_harness_columns(execution: TestExecution) -> list[dict[str, str]]
             ):
                 continue
             name = str(data.get("name") or eval_id)
-            columns.append(
-                {
-                    "id": eval_id,
-                    "name": name,
-                    "kind": "sub_goal" if name in sub_goal_names else "evaluation",
-                }
-            )
+            column = {
+                "id": eval_id,
+                "name": name,
+                "kind": "sub_goal" if name in sub_goal_names else "evaluation",
+            }
+            if column["kind"] == "sub_goal":
+                column["actor"] = "primary"
+            columns.append(column)
             seen.add(eval_id)
     return columns
 

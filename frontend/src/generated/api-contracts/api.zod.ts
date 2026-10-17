@@ -34611,6 +34611,8 @@ export const simulateApiAlkSimulateCallExecutionsResultBodyResultDigestRegExp =
 
 export const simulateApiAlkSimulateCallExecutionsResultBodyArtifactManifestDigestRegExp =
   new RegExp("^sha256:[0-9a-f]{64}$");
+export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemSpeakerNameMax = 255;
+
 export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsDefault = 0;
 export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsMin = 0;
 
@@ -34663,8 +34665,15 @@ export const SimulateApiAlkSimulateCallExecutionsResultBody = zod.object({
           "system",
           "tool_calls",
           "tool_call_result",
+          "sub_actor",
           "unknown",
         ]),
+        speaker_name: zod
+          .string()
+          .max(
+            simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemSpeakerNameMax,
+          )
+          .optional(),
         content: zod.string(),
         start_time_ms: zod
           .number()
@@ -35260,6 +35269,7 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
       created_at: zod.string().datetime({ offset: true }),
     }),
   ),
+  sub_actors: zod.boolean(),
 });
 
 /**
@@ -41859,6 +41869,8 @@ export const SimulateCallExecutionsTranscriptsListParams = zod.object({
   call_execution_id: zod.string(),
 });
 
+export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemSpeakerNameMax = 255;
+
 export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemStartTimeMsMin =
   -9223372036854776000;
 export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemStartTimeMsMax = 9223372036854776000;
@@ -41882,10 +41894,17 @@ export const SimulateCallExecutionsTranscriptsListResponse = zod.object({
             "system",
             "tool_calls",
             "tool_call_result",
+            "sub_actor",
             "unknown",
           ])
           .optional()
           .describe("Role of the speaker (user or assistant)"),
+        speaker_name: zod
+          .string()
+          .max(
+            simulateCallExecutionsTranscriptsListResponseTranscriptsItemSpeakerNameMax,
+          )
+          .optional(),
         content: zod.string().min(1).describe("Transcript content"),
         start_time_ms: zod
           .number()
@@ -46891,6 +46910,8 @@ export const SimulateTestExecutionsTranscriptsListParams = zod.object({
   test_execution_id: zod.string(),
 });
 
+export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemSpeakerNameMax = 255;
+
 export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemStartTimeMsMin =
   -9223372036854776000;
 export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemStartTimeMsMax = 9223372036854776000;
@@ -46918,10 +46939,17 @@ export const SimulateTestExecutionsTranscriptsListResponse = zod.object({
                   "system",
                   "tool_calls",
                   "tool_call_result",
+                  "sub_actor",
                   "unknown",
                 ])
                 .optional()
                 .describe("Role of the speaker (user or assistant)"),
+              speaker_name: zod
+                .string()
+                .max(
+                  simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemSpeakerNameMax,
+                )
+                .optional(),
               content: zod.string().min(1).describe("Transcript content"),
               start_time_ms: zod
                 .number()

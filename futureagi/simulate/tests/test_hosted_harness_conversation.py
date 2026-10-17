@@ -533,7 +533,7 @@ def test_conversation_runtime_lease_starts_once_and_reuses_warm_sandbox(
     assert gateway.client.deleted == [sandbox.id]
 
 
-def _chat_checkpoint(names, *, one_liner):
+def _chat_checkpoint(names, *, one_liner, extra=None):
     """A chat workspace as the runtime packs it: the suite plus the chat's own private state."""
     from simulate.tests.test_harness_amend_archive import _key
 
@@ -553,6 +553,7 @@ def _chat_checkpoint(names, *, one_liner):
         "cost.json": b"{}",
         ".futureagi-conversation.json": b"{}",
         ".claude/sessions/1.key": b"private",
+        **(extra or {}),
     }
     for document in documents:
         folder = f"scenarios/{document['name']}"
@@ -1040,6 +1041,46 @@ def test_each_conversation_has_its_own_checkpoint_sequence_clock(
     assert HostedHarnessScenario.no_workspace_objects.filter(
         job=environment, scenario_key=_key(late_name)
     ).exists()
+
+
+@pytest.mark.django_db
+def test_a_cast_added_in_the_builder_chat_reaches_the_environment(
+    user, workspace, storage
+):
+    from simulate.services.hosted_harness_conversation import (
+        promote_conversation_checkpoint,
+    )
+    from simulate.services.hosted_harness_gateway import with_authoring_basis
+    from simulate.tests.test_harness_amend_archive import NAMES, _run_environment
+
+    environment = _run_environment(user, workspace, "chat-adds-a-cast")
+    _prime_environment_archive(
+        environment, storage, _chat_checkpoint(NAMES[:2], one_liner="original")
+    )
+    conversation, command, _ = enqueue_message(
+        environment, content="Add a friend in the chat", client_request_id="adds-cast"
+    )
+    friend = {"id": "friend", "name": "Friend", "channel": "thread_message"}
+    edited = with_authoring_basis(
+        _chat_checkpoint(
+            NAMES[:2],
+            one_liner="original",
+            extra={"cast.json": json.dumps({"sub_actors": [friend]}).encode()},
+        ),
+        command.payload["_environment_revision"],
+    )
+    key, digest = _put_conversation_checkpoint(conversation, storage, edited)
+    promote_conversation_checkpoint(
+        conversation,
+        object_key=key,
+        digest=digest,
+        sequence=7,
+        expected_revision=command.payload["_environment_revision"],
+    )
+
+    environment.refresh_from_db()
+    cast = next(item for item in environment.stage_outputs if item["kind"] == "cast")
+    assert [one["id"] for one in cast["data"]["sub_actors"]] == ["friend"]
 
 
 @pytest.mark.django_db

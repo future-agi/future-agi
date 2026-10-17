@@ -872,6 +872,34 @@ def test_authoring_stage_outputs_exposes_generic_certification_evidence():
     assert certification["data"]["certificate"]["fingerprint"] == "sha256:test"
 
 
+def _archive_of(files: dict) -> bytes:
+    body = io.BytesIO()
+    with tarfile.open(fileobj=body, mode="w:gz") as archive:
+        for name, value in files.items():
+            payload = json.dumps(value).encode()
+            member = tarfile.TarInfo(name)
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+    return body.getvalue()
+
+
+def test_an_environment_with_a_cast_shows_it_and_one_without_shows_none():
+    from simulate.services.hosted_harness_gateway import (
+        authoring_stage_outputs_from_archive,
+    )
+
+    cast = {
+        "primary": {"role": "the person served"},
+        "sub_actors": [{"id": "subactor_passenger", "name": "Passenger", "channel": "audio_mix"}],
+    }
+    outputs = authoring_stage_outputs_from_archive(_archive_of({"cast.json": cast}))
+    shown = next(item for item in outputs if item["kind"] == "cast")
+    assert shown["summary"] == "1 sub-actor" and shown["data"]["sub_actors"][0]["id"] == "subactor_passenger"
+
+    outputs = authoring_stage_outputs_from_archive(_archive_of({"sub_goals.json": {"sub_goals": []}}))
+    assert not any(item["kind"] == "cast" for item in outputs)
+
+
 def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
     (tmp_path / "contract.json").write_text("{}", encoding="utf-8")
 

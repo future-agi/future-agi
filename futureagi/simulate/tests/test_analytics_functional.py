@@ -3545,7 +3545,7 @@ class TestRunResultsV3Views:
         test_execution.completed_at = timezone.now()
         test_execution.save(update_fields=["status", "completed_at"])
         cache.set(
-            "simulate:v3:harness-eval-columns:v2:"
+            "simulate:v3:harness-eval-columns:v3:"
             f"{test_execution.id}:{test_execution.completed_at.timestamp()}",
             ([], []),
         )
@@ -3553,6 +3553,51 @@ class TestRunResultsV3Views:
         columns, _ = build_evaluation_catalog(test_execution)
 
         assert "attempt-a" in {column["id"] for column in columns}
+
+    def test_a_sub_goal_column_names_the_actor_it_is_about(
+        self, test_execution, analytics_call_executions, monkeypatch
+    ):
+        """A sub-goal about a sub-actor is that sub-actor's; any other is the person's."""
+        from simulate.services import harness_environment
+        from simulate.services.run_results_v3 import _harness_columns
+
+        call = analytics_call_executions[0]
+        call.call_metadata = {
+            "hosted_harness_receipt": {
+                "sub_goals": [
+                    {"name": "ignored_bystander", "held": True},
+                    {"name": "identity_verified", "held": True},
+                ]
+            }
+        }
+        call.eval_outputs = {
+            key: {
+                "source": "harness",
+                "name": key,
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            }
+            for key in ("ignored_bystander", "identity_verified")
+        }
+        call.save(update_fields=["call_metadata", "eval_outputs"])
+        monkeypatch.setattr(
+            harness_environment,
+            "sub_goal_catalogue",
+            lambda _run_test_id: {
+                "ignored_bystander": {"actor": "subactor_bystander"},
+                "identity_verified": {"actor": "primary"},
+            },
+        )
+
+        actors = {
+            column["name"]: column.get("actor")
+            for column in _harness_columns(test_execution)
+        }
+
+        assert actors == {
+            "ignored_bystander": "subactor_bystander",
+            "identity_verified": "primary",
+        }
 
     def test_a_sub_goal_check_keeps_its_kind_on_a_cached_load(
         self, test_execution, analytics_call_executions
@@ -3584,7 +3629,12 @@ class TestRunResultsV3Views:
         call.save(update_fields=["call_metadata", "eval_outputs"])
         expected = [
             {"id": "policy-check", "name": "Policy check", "kind": "evaluation"},
-            {"id": "sub-goal-check", "name": "identity_verified", "kind": "sub_goal"},
+            {
+                "id": "sub-goal-check",
+                "name": "identity_verified",
+                "kind": "sub_goal",
+                "actor": "primary",
+            },
         ]
 
         first, _ = build_evaluation_catalog(test_execution)

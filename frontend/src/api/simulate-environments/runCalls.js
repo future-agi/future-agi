@@ -199,8 +199,22 @@ export function buildTraceColumns(columnOrder = []) {
     defaultOn: true,
     width: 150,
     group: c.kind === "sub_goal" ? "Sub-goal Results" : "Evaluations",
+    ...(c.actor ? { actor: c.actor } : {}),
   }));
   return [...staticCols, ...evalCols];
+}
+
+/**
+ * The sub-goal result columns for the actors a filter keeps: the person served (`primary`) or a
+ * sub-actor's id. With no actor filter every sub-goal column is kept. Pure.
+ * @param {Array} columns  from buildTraceColumns
+ * @param {{actor?: string[], actor_not?: string[]}} filters
+ */
+export function subGoalColumnsFor(columns = [], filters = {}) {
+  return columns
+    .filter((c) => c.group === "Sub-goal Results")
+    .filter((c) => !filters.actor?.length || filters.actor.includes(c.actor))
+    .filter((c) => !filters.actor_not?.length || !filters.actor_not.includes(c.actor));
 }
 
 /**

@@ -3,7 +3,9 @@
 // twin service generates (t.agentType !== "twin_backed").
 // TODO: drop this fixture once the templates endpoint lands and the
 // query hook reads from axios instead.
-export const PREBUILT_ENVIRONMENTS_FIXTURE = [
+import { castForTemplate } from "./actors";
+
+const TEMPLATES = [
   {
     id: "env-voice-support",
     agentType: "voice_platform",
@@ -502,3 +504,8 @@ export const PREBUILT_ENVIRONMENTS_FIXTURE = [
     evalPreset: ["task_success", "test_pass_rate", "diff_quality", "constraint_violation"],
   },
 ];
+
+export const PREBUILT_ENVIRONMENTS_FIXTURE = TEMPLATES.map((template) => ({
+  ...template,
+  cast: castForTemplate(template),
+}));

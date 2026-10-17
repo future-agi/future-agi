@@ -83,3 +83,21 @@ describe("ScenarioTable — hide group", () => {
     expect(onHideGroup).toHaveBeenCalledWith("g1");
   });
 });
+
+describe("ScenarioTable: sub-actors", () => {
+  it("names the sub-actors a scenario brings in, not their ids", () => {
+    const withCast = { ...env, cast: { subActors: [{ id: "subactor_passenger", name: "Back-seat passenger" }] } };
+    render(
+      <ScenarioTable
+        rows={[{ ...rows[0], subActors: ["subactor_passenger"] }]}
+        env={withCast}
+        onEdit={() => {}}
+        onRemove={() => {}}
+        selectedIds={[]}
+        onSelectionChange={() => {}}
+      />,
+    );
+    expect(screen.getByText("With Back-seat passenger")).toBeInTheDocument();
+    expect(screen.queryByText(/subactor_passenger/)).not.toBeInTheDocument();
+  });
+});

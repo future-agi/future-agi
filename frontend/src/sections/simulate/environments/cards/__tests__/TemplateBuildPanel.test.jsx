@@ -8,6 +8,7 @@ import { packStats } from "../../helpers/packStats";
 
 const navigate = vi.fn();
 const adoptMutate = vi.fn((id, opts) => opts?.onSuccess?.({ envId: "env-x" }));
+let subActorsOn = false;
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
@@ -18,7 +19,11 @@ vi.mock("src/api/simulate-environments/environments", async () => {
   const actual = await vi.importActual(
     "src/api/simulate-environments/environments",
   );
-  return { ...actual, useAdoptTemplate: () => ({ mutate: adoptMutate }) };
+  return {
+    ...actual,
+    useAdoptTemplate: () => ({ mutate: adoptMutate }),
+    useSubActorsEnabled: () => subActorsOn,
+  };
 });
 
 const { default: TemplateBuildPanel } = await import("../TemplateBuildPanel");
@@ -136,6 +141,27 @@ describe("TemplateBuildPanel", () => {
     expect(navigate).toHaveBeenCalledWith(
       "/dashboard/simulate/environments/env-x",
     );
+  });
+
+  it.each([
+    [false, undefined],
+    [true, { subActors: [{ id: "household_member", name: "Household member", role: "", channel: "audio_mix" }] }],
+  ])("brings the template's cast only when sub-actors are on (%s)", async (enabled, cast) => {
+    subActorsOn = enabled;
+    const user = userEvent.setup();
+    renderPanel({ template: { ...TEMPLATE, cast: { subActors: [{ id: "household_member", name: "Household member", role: "", channel: "audio_mix" }] } } });
+
+    await user.click(screen.getByRole("button", { name: /Build environment/ }));
+
+    expect(useEnvironmentsStore.getState().workspaceEnvs["env-x"].cast).toEqual(cast);
+    subActorsOn = false;
+  });
+
+  it("waits for the sub-actor setting before it builds", () => {
+    subActorsOn = undefined;
+    renderPanel();
+    expect(screen.getByRole("button", { name: /Build environment/ })).toBeDisabled();
+    subActorsOn = false;
   });
 
   it("shows the three CLI steps on the Build-locally tab", async () => {

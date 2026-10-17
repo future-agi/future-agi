@@ -16872,6 +16872,7 @@ export const ALKSimulateTranscriptSegmentApiSpeakerRole = {
   system: "system",
   tool_calls: "tool_calls",
   tool_call_result: "tool_call_result",
+  sub_actor: "sub_actor",
   unknown: "unknown",
 } as const;
 
@@ -16881,6 +16882,8 @@ export type ALKSimulateTranscriptSegmentApiToolCalls = {
 
 export interface ALKSimulateTranscriptSegmentApi {
   speaker_role: ALKSimulateTranscriptSegmentApiSpeakerRole;
+  /** @maxLength 255 */
+  speaker_name?: string;
   content: string;
   /** @minimum 0 */
   start_time_ms?: number;
@@ -17144,6 +17147,7 @@ export interface HarnessEnvironmentListResponseApi {
   total_pages: number;
   current_page: number;
   results: HarnessEnvironmentApi[];
+  sub_actors: boolean;
 }
 
 export type HarnessEnvironmentOverviewApiAgentType =
@@ -20644,6 +20648,7 @@ export const CallTranscriptApiSpeakerRole = {
   system: "system",
   tool_calls: "tool_calls",
   tool_call_result: "tool_call_result",
+  sub_actor: "sub_actor",
   unknown: "unknown",
 } as const;
 
@@ -20651,6 +20656,8 @@ export interface CallTranscriptApi {
   readonly id?: string;
   /** Role of the speaker (user or assistant) */
   speaker_role?: CallTranscriptApiSpeakerRole;
+  /** @maxLength 255 */
+  speaker_name?: string;
   /**
    * Transcript content
    * @minLength 1

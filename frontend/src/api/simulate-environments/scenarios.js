@@ -110,6 +110,7 @@ export const scenarioFromApi = (row = {}) => {
     conversationBranch: row.branch,
     branchCategory: row.branch,
     subTasks: Array.isArray(row.sub_goals) ? row.sub_goals : [],
+    subActors: Array.isArray(row.sub_actors) ? row.sub_actors.map((one) => one?.id).filter(Boolean) : [],
     persona: persona
       ? {
           name: persona.name,

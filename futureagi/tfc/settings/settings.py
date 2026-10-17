@@ -1055,6 +1055,8 @@ ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
 # workspace checkpoint survive deletion; this is the idle window after the user's latest
 # message before a post-run chat sandbox is reclaimed, and only trades cost against latency.
 ALK_HOSTED_CHAT_TTL_SECONDS = int(os.getenv("ALK_HOSTED_CHAT_TTL_SECONDS", "1800"))
+# On lets an environment carry sub-actors: the cast, scenario bindings and the voices around the person.
+ALK_SUB_ACTORS = os.getenv("ALK_SUB_ACTORS", "").strip().lower() in ("1", "true", "yes", "on")
 # Off sends a fresh build through the staged authoring pipeline instead of the builder session.
 ALK_HOSTED_BUILDER_SESSION = os.getenv("ALK_HOSTED_BUILDER_SESSION", "true").strip().lower() not in (
     "0",

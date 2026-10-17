@@ -122225,8 +122225,14 @@
                         "system",
                         "tool_calls",
                         "tool_call_result",
+                        "sub_actor",
                         "unknown"
                     ]
+                },
+                "speaker_name": {
+                    "title": "Speaker name",
+                    "type": "string",
+                    "maxLength": 255
                 },
                 "content": {
                     "title": "Content",
@@ -122925,7 +122931,8 @@
                 "previous",
                 "total_pages",
                 "current_page",
-                "results"
+                "results",
+                "sub_actors"
             ],
             "type": "object",
             "properties": {
@@ -122958,6 +122965,10 @@
                     "items": {
                         "$ref": "#/definitions/HarnessEnvironment"
                     }
+                },
+                "sub_actors": {
+                    "title": "Sub actors",
+                    "type": "boolean"
                 }
             }
         },
@@ -130566,8 +130577,14 @@
                         "system",
                         "tool_calls",
                         "tool_call_result",
+                        "sub_actor",
                         "unknown"
                     ]
+                },
+                "speaker_name": {
+                    "title": "Speaker name",
+                    "type": "string",
+                    "maxLength": 255
                 },
                 "content": {
                     "title": "Content",
