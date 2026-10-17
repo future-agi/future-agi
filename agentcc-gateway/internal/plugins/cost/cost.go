@@ -3,12 +3,26 @@ package cost
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
+)
+
+const (
+	// CostSourceUnpriced is written to Metadata["cost_source"] when the provider
+	// reported token usage but no price is known for the model. The request is
+	// recorded without a cost, so spend counters cannot meter it.
+	CostSourceUnpriced = "unpriced"
+
+	// maxUnpricedWarnings bounds the warn-once set so a caller cycling through
+	// model names cannot grow it without limit.
+	maxUnpricedWarnings = 1024
 )
 
 // Plugin is a post-response pipeline plugin that calculates per-request cost.
@@ -17,6 +31,9 @@ type Plugin struct {
 	enabled          bool
 	tenantStore      *tenant.Store
 	aliasCostFactors map[string]float64 // alias prefix → cost multiplier
+
+	unpricedWarned      sync.Map     // model → struct{}: models already warned about
+	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
 }
 
 // New creates a new cost tracking plugin.
@@ -78,10 +95,12 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 
 	var cost float64
 	var ok bool
+	var billedTokens int // tokens the provider reported for the priced endpoints
 
 	switch rc.EndpointType {
 	case "embedding":
 		if rc.EmbeddingResponse != nil && rc.EmbeddingResponse.Usage != nil {
+			billedTokens = rc.EmbeddingResponse.Usage.PromptTokens
 			cost, ok = db.CalculateCost(model, rc.EmbeddingResponse.Usage.PromptTokens, 0, opts)
 		}
 	case "image":
@@ -95,6 +114,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 			return pipeline.ResultContinue()
 		}
 		usage := rc.Response.Usage
+		billedTokens = usage.PromptTokens + usage.CompletionTokens
 		cost, ok = db.CalculateCost(model, usage.PromptTokens, usage.CompletionTokens, opts)
 		if !ok && model == rc.ResolvedModel && rc.Model != "" {
 			cost, ok = db.CalculateCost(rc.Model, usage.PromptTokens, usage.CompletionTokens, opts)
@@ -112,9 +132,33 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 			}
 		}
 		rc.Metadata["cost"] = fmt.Sprintf("%.6f", cost)
+	} else if billedTokens > 0 {
+		// Tokens were consumed but there is no price for this model. Leaving
+		// this silent made the request look free: spend counters stayed at
+		// zero and budgets never tripped. Mark the request so the log row and
+		// analytics can surface it, and tell the operator once per model.
+		rc.Metadata["cost_source"] = CostSourceUnpriced
+		p.warnUnpriced(rc, model)
 	}
 
 	return pipeline.ResultContinue()
+}
+
+// warnUnpriced logs, once per model, that traffic is being recorded without a cost.
+func (p *Plugin) warnUnpriced(rc *models.RequestContext, model string) {
+	if p.unpricedWarnedCount.Load() >= maxUnpricedWarnings {
+		return
+	}
+	if _, seen := p.unpricedWarned.LoadOrStore(model, struct{}{}); seen {
+		return
+	}
+	p.unpricedWarnedCount.Add(1)
+	slog.Warn("cost: no pricing for model; its requests are recorded without a cost and are not counted against budgets",
+		"model", model,
+		"provider", rc.Provider,
+		"request_id", rc.RequestID,
+		"hint", "set model_database.overrides.<model>.pricing (input_per_token / output_per_token, USD per token)",
+	)
 }
 
 // tryOrgPricing checks per-org custom pricing for the model.
