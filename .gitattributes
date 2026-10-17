@@ -1,0 +1,35 @@
+# Line-ending policy.
+#
+# Git for Windows ships with core.autocrlf=true, which rewrites text files to
+# CRLF on checkout. Every script below either runs inside a Linux container or
+# is executed by a POSIX shell, and CRLF breaks them: the shebang line parses
+# but the next line carries a trailing \r, so `set -eu` is read as `set -eu\r`
+# and the shell aborts with "illegal option". Pinning eol=lf makes the checkout
+# match the blob regardless of the contributor's autocrlf setting.
+#
+# Two ways this bites today:
+#   • Scripts bind-mounted into containers (scripts/property_catalog_oss/*.sh
+#     into property-catalog-*-bootstrap) fail at run time.
+#   • entrypoint.sh is COPYed into the backend image and invoked as
+#     ENTRYPOINT ["bash", "./entrypoint.sh"], so an image built on Windows
+#     fails to start at all.
+
+*.sh            text eol=lf
+
+# Shell scripts without a .sh extension — bin/install is the documented
+# self-host entry point and futureagi/bin/temporal-worker is exec'd inside the
+# container on the production path.
+bin/e2e                             text eol=lf
+bin/install                         text eol=lf
+bin/property-catalog-backfill       text eol=lf
+bin/uninstall                       text eol=lf
+futureagi/bin/temporal-worker       text eol=lf
+futureagi/bin/test                  text eol=lf
+
+# Container and SQL inputs read by Linux tooling.
+Dockerfile*     text eol=lf
+*.sql           text eol=lf
+
+# PowerShell is the Windows-native path and keeps CRLF. Listed after bin/*
+# entries so it wins for bin/install.ps1 and bin/property-catalog-backfill.ps1.
+*.ps1           text eol=crlf
