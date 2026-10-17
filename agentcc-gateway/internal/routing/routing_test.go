@@ -2065,6 +2065,88 @@ func TestCircuitBreaker_StateChangeCallback(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_TrippedProviderRecoversThroughRouter — wired as in
+// server.go, an open breaker marks its provider unhealthy in the router, and
+// the router never selects unhealthy targets. Allow() is the only Open →
+// HalfOpen step, so unless the cooldown puts the provider back into rotation
+// it is never probed and stays out until a restart — also after a failed probe
+// re-opens it.
+func TestCircuitBreaker_TrippedProviderRecoversThroughRouter(t *testing.T) {
+	router := makeFailoverRouter(t, "gpt-4", "openai")
+	cbCfg := newTestCBConfig() // FailureThreshold 3, SuccessThreshold 2, Cooldown 10ms
+	cbReg := NewCircuitBreakerRegistry(cbCfg, router.SetHealthy)
+	f := NewFailover(config.FailoverConfig{Enabled: true, MaxAttempts: 1}, router, nil, cbReg)
+	breaker := cbReg.Get("openai")
+	down := failoverCallHelper(map[string]error{"openai": serverErr()})
+
+	for i := 0; i < cbCfg.FailureThreshold; i++ {
+		_, _ = f.Execute(context.Background(), "gpt-4", down)
+	}
+	if breaker.State() != StateOpen {
+		t.Fatalf("setup: breaker = %v, want open", breaker.State())
+	}
+
+	// Still down when the cooldown passes: the half-open probe must reach the
+	// provider, fail, and re-open the breaker.
+	probe := newCallRecorder(down)
+	deadline := time.Now().Add(time.Second)
+	for len(probe.calls) == 0 && time.Now().Before(deadline) {
+		_, _ = f.Execute(context.Background(), "gpt-4", probe.Func())
+		time.Sleep(2 * time.Millisecond)
+	}
+	if len(probe.calls) == 0 {
+		t.Fatal("open provider was never probed after the cooldown")
+	}
+	if breaker.State() != StateOpen {
+		t.Fatalf("after a failed probe: breaker = %v, want open", breaker.State())
+	}
+
+	// Back up: once the next cooldown passes, requests succeed again and the
+	// breaker closes.
+	up := failoverCallHelper(map[string]error{})
+	deadline = time.Now().Add(time.Second)
+	for breaker.State() != StateClosed && time.Now().Before(deadline) {
+		_, _ = f.Execute(context.Background(), "gpt-4", up)
+		time.Sleep(2 * time.Millisecond)
+	}
+	if breaker.State() != StateClosed {
+		t.Fatalf("provider never recovered after a failed probe: breaker = %v, want closed", breaker.State())
+	}
+}
+
+// TestCircuitBreaker_ReadmitWaitsForLateFailures — a request already in flight
+// when the breaker opened can fail afterwards and push out the cooldown that
+// Allow() checks. Handing the provider back to the router before Allow() admits
+// a probe would make failover spend an attempt on it for nothing.
+func TestCircuitBreaker_ReadmitWaitsForLateFailures(t *testing.T) {
+	cfg := newTestCBConfig()
+	cfg.Cooldown = 100 * time.Millisecond
+	readmitted := make(chan struct{}, 1)
+	cb := NewCircuitBreaker("provider-1", cfg, func(_ string, healthy bool) {
+		if healthy {
+			select {
+			case readmitted <- struct{}{}:
+			default:
+			}
+		}
+	})
+
+	for i := 0; i < cfg.FailureThreshold; i++ {
+		cb.RecordFailure(serverErr())
+	}
+	time.Sleep(60 * time.Millisecond)
+	cb.RecordFailure(serverErr()) // late failure from an in-flight request
+
+	select {
+	case <-readmitted:
+		if !cb.Allow() {
+			t.Fatal("readmitted before the cooldown from the late failure ended: Allow() = false")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("provider was never readmitted")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // CircuitBreakerRegistry Tests
 // ---------------------------------------------------------------------------
