@@ -1,7 +1,11 @@
 package cost
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -363,5 +367,119 @@ func TestProcessResponse_RerankNoCost(t *testing.T) {
 
 	if _, ok := rc.Metadata["cost"]; ok {
 		t.Fatal("Metadata[cost] should not be set for rerank endpoint")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Unpriced models (#3445): usage with no known price must not look free
+// ---------------------------------------------------------------------------
+
+func TestProcessResponse_UnknownModel_MarkedUnpriced(t *testing.T) {
+	t.Parallel()
+	p := testPlugin()
+	rc := newRC("glm-5.3-flash", 1000, 500)
+
+	p.ProcessResponse(context.Background(), rc)
+
+	if got := rc.Metadata["cost_source"]; got != CostSourceUnpriced {
+		t.Fatalf("Metadata[cost_source] = %q, want %q", got, CostSourceUnpriced)
+	}
+	if _, ok := rc.Metadata["cost"]; ok {
+		t.Fatal("Metadata[cost] must stay unset for an unpriced model, not be recorded as 0")
+	}
+}
+
+func TestProcessResponse_UnknownModel_EmbeddingMarkedUnpriced(t *testing.T) {
+	t.Parallel()
+	p := testPlugin()
+	rc := &models.RequestContext{
+		Model:        "some-custom-embedder",
+		EndpointType: "embedding",
+		EmbeddingResponse: &models.EmbeddingResponse{
+			Usage: &models.EmbeddingUsage{PromptTokens: 800, TotalTokens: 800},
+		},
+		Metadata: make(map[string]string),
+		Timings:  make(map[string]time.Duration),
+	}
+
+	p.ProcessResponse(context.Background(), rc)
+
+	if got := rc.Metadata["cost_source"]; got != CostSourceUnpriced {
+		t.Fatalf("Metadata[cost_source] = %q, want %q", got, CostSourceUnpriced)
+	}
+}
+
+func TestProcessResponse_UnknownModel_ZeroTokensNotMarked(t *testing.T) {
+	t.Parallel()
+	p := testPlugin()
+	rc := newRC("glm-5.3-flash", 0, 0)
+
+	p.ProcessResponse(context.Background(), rc)
+
+	if _, ok := rc.Metadata["cost_source"]; ok {
+		t.Fatal("a request that consumed no tokens has nothing to price and must not be flagged")
+	}
+}
+
+func TestProcessResponse_KnownModel_NotMarkedUnpriced(t *testing.T) {
+	t.Parallel()
+	p := testPlugin()
+	rc := newRC("gpt-4o", 1000, 500)
+
+	p.ProcessResponse(context.Background(), rc)
+
+	if got, ok := rc.Metadata["cost_source"]; ok {
+		t.Fatalf("priced model got cost_source=%q", got)
+	}
+}
+
+// Not parallel: it swaps the process-wide slog default to capture output.
+func TestProcessResponse_UnknownModel_WarnsOncePerModel(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	p := testPlugin()
+	for i := 0; i < 5; i++ {
+		p.ProcessResponse(context.Background(), newRC("glm-5.3-flash", 1000, 500))
+	}
+	p.ProcessResponse(context.Background(), newRC("another-unpriced-model", 10, 10))
+	p.ProcessResponse(context.Background(), newRC("gpt-4o", 1000, 500)) // priced: no warning
+
+	out := buf.String()
+	if n := strings.Count(out, "model=glm-5.3-flash"); n != 1 {
+		t.Errorf("warned %d times for glm-5.3-flash, want exactly 1\n%s", n, out)
+	}
+	if n := strings.Count(out, "model=another-unpriced-model"); n != 1 {
+		t.Errorf("warned %d times for another-unpriced-model, want exactly 1\n%s", n, out)
+	}
+	if strings.Contains(out, "model=gpt-4o") {
+		t.Errorf("priced model must not warn\n%s", out)
+	}
+	if !strings.Contains(out, "model_database.overrides") {
+		t.Errorf("warning should tell the operator how to fix it\n%s", out)
+	}
+}
+
+// Not parallel: it swaps the process-wide slog default to capture output.
+func TestProcessResponse_UnknownModel_WarningSetIsBounded(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	p := testPlugin()
+	for i := 0; i < maxUnpricedWarnings+50; i++ {
+		rc := newRC(fmt.Sprintf("unpriced-%d", i), 10, 10)
+		p.ProcessResponse(context.Background(), rc)
+		// Every request is still flagged; only the log lines are capped.
+		if rc.Metadata["cost_source"] != CostSourceUnpriced {
+			t.Fatalf("request %d not flagged unpriced", i)
+		}
+	}
+
+	if got := strings.Count(buf.String(), "no pricing for model"); got != maxUnpricedWarnings {
+		t.Fatalf("logged %d warnings, want the cap of %d", got, maxUnpricedWarnings)
 	}
 }

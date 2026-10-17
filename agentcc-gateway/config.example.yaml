@@ -623,9 +623,9 @@ logging:
 #       provider: "openai"
 #       max_input_tokens: 128000
 #       max_output_tokens: 16384
-#       pricing:
-#         input_per_mtok: 2.50
-#         output_per_mtok: 10.00
+#       pricing:                             # USD per TOKEN (not per million)
+#         input_per_token: 0.0000025         # = $2.50 / 1M tokens
+#         output_per_token: 0.00001          # = $10.00 / 1M tokens
 #       deprecation_date: "2026-12-31"
 #       regions: ["us-east-1", "us-west-2"]
 
