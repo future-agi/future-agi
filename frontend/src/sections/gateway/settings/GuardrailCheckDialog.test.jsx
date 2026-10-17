@@ -75,3 +75,38 @@ describe("GuardrailConfigTab -> dialog (TH-3989 repro)", () => {
     expect(screen.queryByText("Configure: Presidio Pii")).toBeNull();
   });
 });
+
+describe("GuardrailCheckDialog aliases", () => {
+  it("keeps saved values named like Object.prototype members as they are", () => {
+    const onSave = vi.fn();
+    renderDialog({
+      checkName: "lakera-guard",
+      providerMeta: {
+        label: "Lakera Guard",
+        fields: [
+          {
+            key: "categories",
+            label: "Categories",
+            type: "multiselect",
+            options: ["prompt_attack", "constructor", "toString"],
+            aliases: { jailbreak: "prompt_attack" },
+          },
+        ],
+      },
+      initialData: {
+        enabled: true,
+        action: "block",
+        config: { categories: ["jailbreak", "constructor", "toString"] },
+      },
+      onSave,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSave.mock.calls[0][1].config.categories).toEqual([
+      "prompt_attack",
+      "constructor",
+      "toString",
+    ]);
+  });
+});
