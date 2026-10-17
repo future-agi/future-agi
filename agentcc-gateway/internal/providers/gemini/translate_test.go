@@ -910,6 +910,80 @@ func TestTranslateVisionContent_Gemini_FileIDWithDefaultMime(t *testing.T) {
 	}
 }
 
+func TestTranslateRequest_ToolChoiceAllowedTools(t *testing.T) {
+	req := &models.ChatCompletionRequest{
+		Model: "gemini-1.5-pro",
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"hi"`)},
+		},
+		Tools: []models.Tool{
+			{
+				Type: "function",
+				Function: models.ToolFunction{
+					Name:       "tool_a",
+					Parameters: json.RawMessage(`{"type":"object"}`),
+				},
+			},
+			{
+				Type: "function",
+				Function: models.ToolFunction{
+					Name:       "tool_b",
+					Parameters: json.RawMessage(`{"type":"object"}`),
+				},
+			},
+		},
+		ToolChoice: json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[{"type":"function","function":{"name":"tool_b"}}]}}`),
+	}
+	gr, _ := translateRequest(req)
+	if gr.ToolConfig == nil || gr.ToolConfig.FunctionCallingConfig == nil {
+		t.Fatal("expected ToolConfig.FunctionCallingConfig to be set")
+	}
+	fcc := gr.ToolConfig.FunctionCallingConfig
+	if fcc.Mode != "AUTO" {
+		t.Errorf("Mode = %q, want AUTO", fcc.Mode)
+	}
+	if len(fcc.AllowedFunctionNames) != 1 || fcc.AllowedFunctionNames[0] != "tool_b" {
+		t.Errorf("AllowedFunctionNames = %v, want [tool_b]", fcc.AllowedFunctionNames)
+	}
+}
+
+func TestTranslateRequest_ToolChoiceAllowedToolsRequired(t *testing.T) {
+	req := &models.ChatCompletionRequest{
+		Model: "gemini-1.5-pro",
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"hi"`)},
+		},
+		Tools: []models.Tool{
+			{
+				Type: "function",
+				Function: models.ToolFunction{
+					Name:       "tool_a",
+					Parameters: json.RawMessage(`{"type":"object"}`),
+				},
+			},
+			{
+				Type: "function",
+				Function: models.ToolFunction{
+					Name:       "tool_b",
+					Parameters: json.RawMessage(`{"type":"object"}`),
+				},
+			},
+		},
+		ToolChoice: json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"required","tools":[{"type":"function","function":{"name":"tool_a"}},{"type":"function","function":{"name":"tool_b"}}]}}`),
+	}
+	gr, _ := translateRequest(req)
+	if gr.ToolConfig == nil || gr.ToolConfig.FunctionCallingConfig == nil {
+		t.Fatal("expected ToolConfig.FunctionCallingConfig to be set")
+	}
+	fcc := gr.ToolConfig.FunctionCallingConfig
+	if fcc.Mode != "ANY" {
+		t.Errorf("Mode = %q, want ANY", fcc.Mode)
+	}
+	if len(fcc.AllowedFunctionNames) != 2 {
+		t.Errorf("AllowedFunctionNames len = %d, want 2", len(fcc.AllowedFunctionNames))
+	}
+}
+
 func TestTranslateVisionContent_Gemini_NoImages(t *testing.T) {
 	content := json.RawMessage(`[{"type":"text","text":"Just text"}]`)
 

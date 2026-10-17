@@ -23,6 +23,7 @@ type ChatCompletionRequest struct {
 	Seed                *int            `json:"seed,omitempty"`
 	Tools               []Tool          `json:"tools,omitempty"`
 	ToolChoice          json.RawMessage `json:"tool_choice,omitempty"`
+	ParallelToolCalls   *bool           `json:"parallel_tool_calls,omitempty"`
 	ResponseFormat      *ResponseFormat `json:"response_format,omitempty"`
 	ServiceTier         string          `json:"service_tier,omitempty"`
 	Modalities          []string        `json:"modalities,omitempty"`
@@ -178,10 +179,11 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 }
 
 type ToolFunction struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Parameters  json.RawMessage `json:"parameters,omitempty"`
-	Strict      *bool           `json:"strict,omitempty"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description,omitempty"`
+	Parameters     json.RawMessage `json:"parameters,omitempty"`
+	Strict         *bool           `json:"strict,omitempty"`
+	AllowedCallers []string        `json:"allowed_callers,omitempty"`
 }
 
 type ResponseFormat struct {
