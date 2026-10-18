@@ -357,3 +357,39 @@ def test_meteor_one_empty_reports_missing():
     r = _meteor_full_path("the cat sat", "")
     assert r["score"] == 0.0
     assert "missing" in r["reason"].lower()
+
+
+# ---------------------------------------------------------------------------
+# numeric_similarity
+# ---------------------------------------------------------------------------
+
+
+def test_numeric_similarity_reads_grouped_and_exponent_numbers():
+    ev = _load_eval("numeric_similarity")
+    for a, b in [
+        ("1,234", "1234"),
+        ("$1,234.56", "1234.56"),
+        ("1,234,567.89", "1234567.89"),
+        ("1e5", "100000"),
+        ("1.5E3", "1500"),
+        ("2e-3", "0.002"),
+        (".5", "0.5"),
+        ("The total is 1,234 units", "1234"),
+    ]:
+        assert ev(None, a, b, None)["score"] == 1.0, (a, b)
+        assert ev(None, b, a, None)["score"] == 1.0, (b, a)
+
+
+def test_numeric_similarity_comma_without_thousands_group():
+    ev = _load_eval("numeric_similarity")
+    for a, b in [("1,2345", "1"), ("12,34", "12"), ("1,5", "1")]:
+        assert ev(None, a, b, None)["score"] == 1.0, (a, b)
+
+
+def test_numeric_similarity_relative_difference():
+    ev = _load_eval("numeric_similarity")
+    assert ev(None, "-10", "-20", None)["score"] == pytest.approx(0.5)
+    assert ev(None, "1,500", "1000", None)["score"] == pytest.approx(1 - 500 / 1500)
+    assert ev(None, 42, "42", None)["score"] == 1.0
+    r = ev(None, "no digits here", "5", None)
+    assert r["score"] == 0.0 and "No numeric value found" in r["reason"]
