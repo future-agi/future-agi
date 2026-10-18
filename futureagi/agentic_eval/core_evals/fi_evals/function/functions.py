@@ -42,10 +42,13 @@ def _standardize_url(url):
 
 def _is_valid_link(url):
     """Check a URL with bounded, redirect-aware HTTP requests."""
-    response = requests.head(url, timeout=5, allow_redirects=True)
-    if response.status_code in (403, 405):
-        response = requests.get(url, timeout=5, allow_redirects=True, stream=True)
-    return response.status_code < 400
+    with requests.Session() as session:
+        session.max_redirects = 5
+        with session.head(url, timeout=5, allow_redirects=True) as response:
+            if response.status_code not in (403, 405):
+                return response.status_code < 400
+        with session.get(url, timeout=5, allow_redirects=True, stream=True) as response:
+            return response.status_code < 400
 
 
 def _preprocess_strings(keywords, text, case_sensitive):
