@@ -17,8 +17,11 @@ import (
 // All monetary values are stored as integer microdollars (1 USD = 1,000,000)
 // to avoid floating-point drift from HINCRBYFLOAT.
 type BudgetStore struct {
-	client *Client
-	prefix string
+	client               *Client
+	prefix               string
+	operation            string
+	at                   time.Time
+	guardKey, guardToken string
 }
 
 const microUnit = 1_000_000 // 1 USD = 1,000,000 microdollars
@@ -35,6 +38,9 @@ func NewBudgetStore(client *Client, prefix string) *BudgetStore {
 // naturally when the date changes. Old keys auto-expire via TTL.
 func (s *BudgetStore) budgetKey(org, level, key, period string) string {
 	now := time.Now().UTC()
+	if !s.at.IsZero() {
+		now = s.at.UTC()
+	}
 	start := budgetpkg.PeriodStart(period, now)
 	startStr := start.Format("2006-01-02")
 	if key == "" {
@@ -80,6 +86,10 @@ local key = KEYS[1]
 local cost = tonumber(ARGV[1])
 local model_field = ARGV[2]
 local ttl = tonumber(ARGV[3])
+local operation = ARGV[4] or ''
+if operation ~= '' and redis.call('HEXISTS',key,'op:' .. operation) == 1 then
+ return tonumber(redis.call('HGET',key,'total') or '0')
+end
 
 local new_total = redis.call('HINCRBY', key, 'total', cost)
 if model_field ~= '' then
@@ -87,9 +97,15 @@ if model_field ~= '' then
 end
 if ttl > 0 then
     local current_ttl = redis.call('TTL', key)
-    if current_ttl < 0 then
+    if current_ttl < 0 and redis.call('HEXISTS',key,'durable_video_receipts') == 0 then
         redis.call('EXPIRE', key, ttl)
     end
+end
+if operation ~= '' then
+ redis.call('HSET',key,'op:' .. operation,ARGV[1])
+ -- Unresolved accounting can outlive metadata TTL; never expire its proof.
+ redis.call('HSET',key,'durable_video_receipts','1')
+ redis.call('PERSIST',key)
 end
 return new_total
 `)
@@ -110,6 +126,13 @@ local limit = tonumber(ARGV[2])
 local model_field = ARGV[3]
 local model_limit = tonumber(ARGV[4])
 local ttl = tonumber(ARGV[5])
+local operation = ARGV[6] or ''
+if #KEYS > 1 and redis.call('GET',KEYS[2]) ~= ARGV[7] then
+ return redis.error_reply('reservation fence lost')
+end
+if operation ~= '' and redis.call('HEXISTS',key,'op:' .. operation) == 1 then
+ return tonumber(redis.call('HGET',key,'total') or '0')
+end
 
 local spent = tonumber(redis.call('HGET', key, 'total') or "0")
 if limit > 0 and spent + cost > limit then
@@ -129,9 +152,14 @@ if model_field ~= '' then
 end
 if ttl > 0 then
     local current_ttl = redis.call('TTL', key)
-    if current_ttl < 0 then
+    if current_ttl < 0 and redis.call('HEXISTS',key,'durable_video_receipts') == 0 then
         redis.call('EXPIRE', key, ttl)
     end
+end
+if operation ~= '' then
+ redis.call('HSET',key,'op:' .. operation,ARGV[1])
+ redis.call('HSET',key,'durable_video_receipts','1')
+ redis.call('PERSIST',key)
 end
 return new_total
 `)
@@ -159,7 +187,7 @@ func (s *BudgetStore) RecordSpend(org, level, key, period, model string, cost fl
 	err := s.client.Do(func(rdb redis.UniversalClient) error {
 		res, err := recordSpendScript.Run(ctx, rdb,
 			[]string{redisKey},
-			costMicros, modelField, ttlSec,
+			costMicros, modelField, ttlSec, s.operation,
 		).Int64()
 		if err != nil {
 			return err
@@ -265,4 +293,66 @@ func (s *BudgetStore) SeedSpend(org, level, key, period string, totalSpend float
 // Available returns true if Redis is reachable.
 func (s *BudgetStore) Available() bool {
 	return s.client != nil && s.client.Available()
+}
+
+// CheckAndRecordSpend reserves spend atomically with the existing limit-checking
+// script. allowed=false, ok=true means a budget rejection; ok=false means Redis
+// could not confirm the operation. Callers must fail closed on the latter.
+func (s *BudgetStore) CheckAndRecordSpend(org, level, key, period, model string, cost, limit, modelLimit float64) (total float64, allowed, ok bool) {
+	if s.client == nil || !s.client.Available() || cost < 0 || limit < 0 || modelLimit < 0 || math.IsNaN(cost) || math.IsNaN(limit) || math.IsNaN(modelLimit) || math.IsInf(cost, 0) || math.IsInf(limit, 0) || math.IsInf(modelLimit, 0) || cost >= float64(math.MaxInt64)/microUnit || limit >= float64(math.MaxInt64)/microUnit || modelLimit >= float64(math.MaxInt64)/microUnit {
+		return -1, false, false
+	}
+	modelField := ""
+	if model != "" {
+		modelField = "model:" + model
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var result int64
+	keys := []string{s.budgetKey(org, level, key, period)}
+	if s.guardKey != "" {
+		keys = append(keys, s.guardKey)
+	}
+	err := s.client.Do(func(rdb redis.UniversalClient) error {
+		var err error
+		result, err = checkAndRecordScript.Run(ctx, rdb, keys, usdToMicros(cost), usdToMicros(limit), modelField, usdToMicros(modelLimit), int64(budgetTTL(period).Seconds()), s.operation, s.guardToken).Int64()
+		return err
+	})
+	if err != nil {
+		return -1, false, false
+	}
+	if result < 0 {
+		return -1, false, true
+	}
+	return microsToUSD(result), true, true
+}
+
+// WithOperation pins a signed RecordSpend delta to its reservation period and
+// atomically deduplicates it in the existing budget hash. Copies are immutable
+// and safe across concurrent jobs; the ordinary plugin path is unchanged.
+func (s *BudgetStore) WithOperation(id string, at time.Time) *BudgetStore {
+	copy := *s
+	copy.operation = id
+	copy.at = at
+	return &copy
+}
+
+// WithReservation fences acceptance against orphan recovery. The existing
+// CheckAndRecordSpend script checks this guard atomically with the budget debit.
+func (s *BudgetStore) WithReservation(id string, at time.Time, guardKey, token string) *BudgetStore {
+	copy := s.WithOperation(id, at)
+	copy.guardKey, copy.guardToken = guardKey, token
+	return copy
+}
+
+// OperationApplied distinguishes a lost reservation reply from an uncharged
+// scope. Receipts live in the same hash as the authoritative spend counter.
+func (s *BudgetStore) OperationApplied(ctx context.Context, org, level, key, period string) (bool, error) {
+	var applied bool
+	err := s.client.Do(func(rdb redis.UniversalClient) error {
+		var err error
+		applied, err = rdb.HExists(ctx, s.budgetKey(org, level, key, period), "op:"+s.operation).Result()
+		return err
+	})
+	return applied, err
 }

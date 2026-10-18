@@ -28,12 +28,12 @@ type RedisBudgetBackend interface {
 // Plugin enforces hierarchical spend budgets as a pipeline plugin.
 // Priority 90: runs after auth (100) and RBAC (95).
 type Plugin struct {
-	tracker      *budgetpkg.Tracker
-	pricing      *PricingLookup
-	enabled      bool
-	tenantStore  *tenant.Store
-	redisBudget  RedisBudgetBackend // nil = local-only
-	orgCounters  sync.Map           // orgID -> *orgHierarchyCounters
+	tracker     *budgetpkg.Tracker
+	pricing     *PricingLookup
+	enabled     bool
+	tenantStore *tenant.Store
+	redisBudget RedisBudgetBackend // nil = local-only
+	orgCounters sync.Map           // orgID -> *orgHierarchyCounters
 }
 
 // SetRedisBudget attaches a Redis-backed budget store for multi-replica support.
@@ -377,6 +377,9 @@ func (p *Plugin) getCounterSpend(bc *orgBudgetCounter, period string, now time.T
 
 // ProcessResponse records actual spend against all applicable budgets.
 func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	if rc.Metadata["video_settlement"] == "direct" {
+		return pipeline.ResultContinue()
+	}
 	cost := p.calculateCost(rc)
 
 	// Global budget tracking.
@@ -414,78 +417,21 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 // recordOrgHierarchicalSpend records cost against all applicable per-org hierarchy levels.
 func (p *Plugin) recordOrgHierarchicalSpend(budgets *tenant.BudgetsConfig, orgID string, rc *models.RequestContext, cost float64) {
 	hc := p.getOrgHierarchy(orgID)
-	team, user, keyName, model := extractIdentity(rc)
-	tags := extractTags(rc)
 	now := time.Now().UTC()
-
-	defaultPeriod := budgets.DefaultPeriod
-	if defaultPeriod == "" {
-		defaultPeriod = "monthly"
-	}
-
-	// Record against org level.
-	if budgets.OrgLimit > 0 {
-		orgPeriod := budgets.OrgPeriod
-		if orgPeriod == "" {
-			orgPeriod = defaultPeriod
-		}
-		p.recordToCounterWithRedis(hc.getOrCreateCounter("org", ""), orgID, "org", "", model, cost, orgPeriod, now)
-		bc := hc.getOrCreateCounter("org", "")
-		bc.mu.Lock()
-		remaining := budgets.OrgLimit - bc.totalSpend
-		bc.mu.Unlock()
-		if remaining < 0 {
-			remaining = 0
-		}
-		rc.Metadata["org_budget_remaining"] = fmt.Sprintf("%.2f", remaining)
-	}
-
-	// Record against team level.
-	if team != "" && budgets.Teams != nil {
-		if lc, ok := budgets.Teams[team]; ok && lc != nil {
-			period := lc.Period
-			if period == "" {
-				period = defaultPeriod
+	for _, scope := range HierarchyScopes(budgets, rc) {
+		p.recordToCounterWithRedis(hc.getOrCreateCounter(scope.Level, scope.Key), orgID, scope.Level, scope.Key, rc.Model, cost, scope.Period, now)
+		if scope.Level == "org" {
+			bc := hc.getOrCreateCounter("org", "")
+			bc.mu.Lock()
+			remaining := budgets.OrgLimit - bc.totalSpend
+			bc.mu.Unlock()
+			if remaining < 0 {
+				remaining = 0
 			}
-			p.recordToCounterWithRedis(hc.getOrCreateCounter("team", team), orgID, "team", team, model, cost, period, now)
+			rc.Metadata["org_budget_remaining"] = fmt.Sprintf("%.2f", remaining)
 		}
 	}
 
-	// Record against user level.
-	if user != "" && budgets.Users != nil {
-		if lc, ok := budgets.Users[user]; ok && lc != nil {
-			period := lc.Period
-			if period == "" {
-				period = defaultPeriod
-			}
-			p.recordToCounterWithRedis(hc.getOrCreateCounter("user", user), orgID, "user", user, model, cost, period, now)
-		}
-	}
-
-	// Record against key level.
-	if keyName != "" && budgets.Keys != nil {
-		if lc, ok := budgets.Keys[keyName]; ok && lc != nil {
-			period := lc.Period
-			if period == "" {
-				period = defaultPeriod
-			}
-			p.recordToCounterWithRedis(hc.getOrCreateCounter("key", keyName), orgID, "key", keyName, model, cost, period, now)
-		}
-	}
-
-	// Record against tag levels.
-	if budgets.Tags != nil {
-		for k, v := range tags {
-			tagKey := k + ":" + v
-			if lc, ok := budgets.Tags[tagKey]; ok && lc != nil {
-				period := lc.Period
-				if period == "" {
-					period = defaultPeriod
-				}
-				p.recordToCounterWithRedis(hc.getOrCreateCounter("tag", tagKey), orgID, "tag", tagKey, model, cost, period, now)
-			}
-		}
-	}
 }
 
 // recordToCounter adds cost to a counter, resetting if period expired.
@@ -607,22 +553,22 @@ func extractTags(rc *models.RequestContext) map[string]string {
 
 func defaultPricing() map[string]modelPricing {
 	return map[string]modelPricing{
-		"gpt-4o":                 {inputPerMTok: 2.50, outputPerMTok: 10.00},
-		"gpt-4o-mini":            {inputPerMTok: 0.15, outputPerMTok: 0.60},
-		"gpt-4-turbo":            {inputPerMTok: 10.00, outputPerMTok: 30.00},
-		"gpt-4":                  {inputPerMTok: 30.00, outputPerMTok: 60.00},
-		"gpt-3.5-turbo":          {inputPerMTok: 0.50, outputPerMTok: 1.50},
-		"o1":                     {inputPerMTok: 15.00, outputPerMTok: 60.00},
-		"o1-mini":                {inputPerMTok: 3.00, outputPerMTok: 12.00},
-		"o3-mini":                {inputPerMTok: 1.10, outputPerMTok: 4.40},
-		"claude-3-opus":          {inputPerMTok: 15.00, outputPerMTok: 75.00},
-		"claude-3-sonnet":        {inputPerMTok: 3.00, outputPerMTok: 15.00},
-		"claude-3-haiku":         {inputPerMTok: 0.25, outputPerMTok: 1.25},
-		"claude-3.5-sonnet":      {inputPerMTok: 3.00, outputPerMTok: 15.00},
-		"gemini-1.5-pro":         {inputPerMTok: 1.25, outputPerMTok: 5.00},
-		"gemini-1.5-flash":       {inputPerMTok: 0.075, outputPerMTok: 0.30},
-		"gemini-2.0-flash":       {inputPerMTok: 0.10, outputPerMTok: 0.40},
-		"command-r-plus":         {inputPerMTok: 2.50, outputPerMTok: 10.00},
-		"command-r":              {inputPerMTok: 0.15, outputPerMTok: 0.60},
+		"gpt-4o":            {inputPerMTok: 2.50, outputPerMTok: 10.00},
+		"gpt-4o-mini":       {inputPerMTok: 0.15, outputPerMTok: 0.60},
+		"gpt-4-turbo":       {inputPerMTok: 10.00, outputPerMTok: 30.00},
+		"gpt-4":             {inputPerMTok: 30.00, outputPerMTok: 60.00},
+		"gpt-3.5-turbo":     {inputPerMTok: 0.50, outputPerMTok: 1.50},
+		"o1":                {inputPerMTok: 15.00, outputPerMTok: 60.00},
+		"o1-mini":           {inputPerMTok: 3.00, outputPerMTok: 12.00},
+		"o3-mini":           {inputPerMTok: 1.10, outputPerMTok: 4.40},
+		"claude-3-opus":     {inputPerMTok: 15.00, outputPerMTok: 75.00},
+		"claude-3-sonnet":   {inputPerMTok: 3.00, outputPerMTok: 15.00},
+		"claude-3-haiku":    {inputPerMTok: 0.25, outputPerMTok: 1.25},
+		"claude-3.5-sonnet": {inputPerMTok: 3.00, outputPerMTok: 15.00},
+		"gemini-1.5-pro":    {inputPerMTok: 1.25, outputPerMTok: 5.00},
+		"gemini-1.5-flash":  {inputPerMTok: 0.075, outputPerMTok: 0.30},
+		"gemini-2.0-flash":  {inputPerMTok: 0.10, outputPerMTok: 0.40},
+		"command-r-plus":    {inputPerMTok: 2.50, outputPerMTok: 10.00},
+		"command-r":         {inputPerMTok: 0.15, outputPerMTok: 0.60},
 	}
 }
