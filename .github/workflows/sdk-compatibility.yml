@@ -100,9 +100,9 @@ jobs:
                 fetch --depth=1 origin "${candidate}"
               git checkout --detach FETCH_HEAD
               cd "${GITHUB_WORKSPACE}"
-              mkdir -p futureagi
-              rm -rf futureagi/ee
-              mv "${EE_TMP_DIR}" futureagi/ee
+              mkdir -p futureagi/ee
+              rm -rf futureagi/ee/cloud
+              mv "${EE_TMP_DIR}" futureagi/ee/cloud
               echo "Using EE branch ${candidate}"
               echo "mode=ee" >> "$GITHUB_OUTPUT"
               exit 0

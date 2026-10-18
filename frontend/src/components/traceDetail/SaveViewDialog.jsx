@@ -11,14 +11,26 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 
-const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
+const SaveViewPopover = ({
+  anchorEl,
+  open,
+  onClose,
+  onSave,
+  isLoading,
+  existingNames = [],
+}) => {
   const [name, setName] = useState("");
 
+  // Exact match — mirrors the backend's case-sensitive uniqueness check.
+  const trimmed = name.trim();
+  const isDuplicate =
+    trimmed.length > 0 && existingNames.some((n) => n === trimmed);
+
   const handleSave = useCallback(() => {
-    if (!name.trim()) return;
-    onSave(name.trim());
+    if (!trimmed || isDuplicate) return;
+    onSave(trimmed);
     setName("");
-  }, [name, onSave]);
+  }, [trimmed, isDuplicate, onSave]);
 
   const handleClose = useCallback(() => {
     setName("");
@@ -105,6 +117,8 @@ const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSave();
           }}
+          error={isDuplicate}
+          helperText={isDuplicate ? "A view with this name already exists." : ""}
           autoFocus
           InputLabelProps={{
             sx: {
@@ -158,7 +172,7 @@ const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
           size="small"
           variant="contained"
           onClick={handleSave}
-          disabled={!name.trim() || isLoading}
+          disabled={!trimmed || isDuplicate || isLoading}
           sx={{
             textTransform: "none",
             fontSize: 12,
@@ -167,13 +181,6 @@ const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
             borderRadius: "2px",
             px: 2,
             py: 0.25,
-            ...(name.trim()
-              ? {}
-              : {
-                  bgcolor: "text.disabled",
-                  color: "background.paper",
-                  "&:hover": { bgcolor: "text.disabled" },
-                }),
             "&.Mui-disabled": {
               bgcolor: "text.disabled",
               color: "background.paper",
@@ -193,6 +200,7 @@ SaveViewPopover.propTypes = {
   onClose: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
   isLoading: PropTypes.bool,
+  existingNames: PropTypes.arrayOf(PropTypes.string),
 };
 
 export default React.memo(SaveViewPopover);

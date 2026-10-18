@@ -135,7 +135,7 @@ def test_sync_final_fallback_vertex_then_openai_by_modality(
     def _fake_completion(**kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
-            assert kwargs.get("model") == ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name
+            assert kwargs.get("model") == ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
             content = kwargs.get("messages", [{}])[0].get("content", [])
             assert any(block.get("type") == "text" for block in content)
             if modality == "image":
@@ -194,7 +194,7 @@ def test_async_final_fallback_vertex_then_openai_by_modality(
     async def _fake_acompletion(**kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
-            assert kwargs.get("model") == ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name
+            assert kwargs.get("model") == ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
             raise RuntimeError("vertex failed")
 
         assert kwargs.get("model") == ModelConfigs.OPENAI_GPT_5_1.model_name

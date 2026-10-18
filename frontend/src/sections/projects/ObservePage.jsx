@@ -1,13 +1,7 @@
 import React, { useMemo, useCallback, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import { LoadingScreen } from "src/components/loading-screen";
-import {
-  Box,
-  Paper,
-  useTheme,
-  Alert,
-  Button,
-} from "@mui/material";
+import { Box, Paper, useTheme, Alert, Button } from "@mui/material";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
 import { ErrorBoundary } from "react-error-boundary";
 import { logger } from "src/utils/logger";
@@ -33,6 +27,7 @@ import {
 } from "./SessionsView/ReplaySessions/store";
 import { resetTraceGridStore } from "./LLMTracing/states";
 import { resetTabStore } from "./LLMTracing/tabStore";
+import { withLiveGridApi } from "src/utils/gridApi";
 
 // Loading component for tab content
 const TabContentLoader = () => (
@@ -83,7 +78,9 @@ const TabErrorBoundary = ({ children, resetKey }) => {
       resetKeys={[resetKey]}
       onError={(error) => logger.error("Observe tab render failed", error)}
     >
-      <React.Suspense fallback={<TabContentLoader />}>{children}</React.Suspense>
+      <React.Suspense fallback={<TabContentLoader />}>
+        {children}
+      </React.Suspense>
     </ErrorBoundary>
   );
 };
@@ -351,7 +348,7 @@ const ObservePage = React.memo(() => {
       resetSessionsGridStore();
       resetTraceGridStore();
       resetTabStore();
-      headerConfig?.gridApi?.deselectAll();
+      withLiveGridApi(headerConfig?.gridApi, (api) => api.deselectAll?.());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [observeId]);

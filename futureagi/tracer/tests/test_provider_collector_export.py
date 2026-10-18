@@ -8,6 +8,7 @@ from unittest.mock import Mock
 import pytest
 
 from tracer.utils import observability_provider as op
+from tracer.utils.otel import CallAttributes
 
 
 @pytest.mark.unit
@@ -98,7 +99,7 @@ def test_provider_poll_emits_one_stable_billing_key_per_rehosted_artifact(
 
     monkeypatch.setattr(op, "normalize_vapi_data", lambda *_args, **_kwargs: normalized)
     monkeypatch.setattr(op, "_create_observation_span", lambda *_args: Mock())
-    monkeypatch.setattr(op, "_export_provider_call_to_collector", lambda *_args: None)
+    monkeypatch.setattr(op, "_export_provider_call_to_collector", lambda *_args: 1)
     monkeypatch.setattr(
         op, "emit_span_ingestion_usage", lambda **kwargs: emitted.append(kwargs)
     )
@@ -110,6 +111,34 @@ def test_provider_poll_emits_one_stable_billing_key_per_rehosted_artifact(
     assert emitted[0]["event_id"] == emitted[2]["event_id"]
     assert emitted[1]["event_id"] == emitted[3]["event_id"]
     assert emitted[0]["event_id"] != emitted[1]["event_id"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("customer", ["+15550000001", ["+15550000001"], 7])
+def test_vapi_poll_stores_a_call_whose_customer_is_not_an_object(monkeypatch, customer):
+    project = SimpleNamespace(id="project-1", organization_id="org-1")
+    provider = SimpleNamespace(
+        provider=op.ProviderChoices.VAPI,
+        project=project,
+        id="provider-1",
+    )
+    normalized = []
+
+    def _span(_project, _provider, normalized_data, *_args):
+        normalized.append(normalized_data)
+        return Mock()
+
+    monkeypatch.setattr("tracer.utils.vapi._extract_call_logs", lambda *_a, **_k: None)
+    monkeypatch.setattr(op, "_create_observation_span", _span)
+    monkeypatch.setattr(op, "_export_provider_call_to_collector", lambda *_args: 1)
+
+    outcome = op.process_and_store_logs(
+        [{"id": "call-123", "customer": customer}], provider, api_key="test-key"
+    )
+
+    assert outcome == op.StoreOutcome(stored=1, malformed=0, export_failed=0)
+    [call] = normalized
+    assert call["span_attributes"][CallAttributes.PARTICIPANT_PHONE_NUMBER] is None
 
 
 @pytest.mark.unit
@@ -132,7 +161,7 @@ def test_retell_rehost_uploads_are_billed_with_project_aware_normalization(
 
     monkeypatch.setattr(op, "normalize_retell_data", _normalize_retell)
     monkeypatch.setattr(op, "_create_observation_span", lambda *_args: Mock())
-    monkeypatch.setattr(op, "_export_provider_call_to_collector", lambda *_args: None)
+    monkeypatch.setattr(op, "_export_provider_call_to_collector", lambda *_args: 1)
     monkeypatch.setattr(
         op, "emit_span_ingestion_usage", lambda **kwargs: emitted.append(kwargs)
     )

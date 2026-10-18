@@ -54,3 +54,10 @@ export const DATE_CHIP_SX = {
 // the editor preview and the saved widget cannot answer that case differently.
 export const NO_DATA_FOR_RANGE_MESSAGE =
   "No data available for this time period. Try a broader range.";
+
+export const DESCRIPTION_TOOLTIP_SX = {
+  maxHeight: 260,
+  overflowY: "auto",
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+};

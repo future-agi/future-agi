@@ -14,6 +14,8 @@ import {
   Button,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { enqueueSnackbar } from "notistack";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 import {
   useUpdateSavedView,
   useDeleteSavedView,
@@ -53,6 +55,10 @@ const TabContextMenu = ({
             onTabChange(`view-${newView.id}`);
           }
         },
+        onError: (err) =>
+          enqueueSnackbar(getRequestErrorMessage(err, "Failed to duplicate view"), {
+            variant: "error",
+          }),
       },
     );
     onClose();

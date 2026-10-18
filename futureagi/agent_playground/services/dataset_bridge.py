@@ -11,6 +11,7 @@ from uuid import UUID
 
 import structlog
 from django.db import transaction
+from django.utils import timezone
 
 from agent_playground.models.choices import GraphVersionStatus, PortDirection
 from agent_playground.models.graph_dataset import GraphDataset
@@ -19,6 +20,7 @@ from agent_playground.utils.graph import get_exposed_ports_for_versions
 from agent_playground.utils.graph_validation import validate_version_for_activation
 from model_hub.models.choices import DataTypeChoices, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column, Row
+from model_hub.services.lifecycle import bulk_restore
 from tfc.temporal.agent_playground.client import start_graph_execution
 
 logger = structlog.get_logger(__name__)
@@ -118,11 +120,14 @@ def sync_dataset_columns(
     # Restore soft-deleted columns and their cells
     if to_restore:
         restore_ids = [c.id for c in to_restore]
-        Column.all_objects.filter(id__in=restore_ids).update(
-            deleted=False, deleted_at=None
+        now = timezone.now()
+        bulk_restore(
+            Column.all_objects.filter(id__in=restore_ids),
+            now=now,
         )
-        Cell.all_objects.filter(column_id__in=restore_ids).update(
-            deleted=False, deleted_at=None
+        bulk_restore(
+            Cell.all_objects.filter(column_id__in=restore_ids),
+            now=now,
         )
         # Re-add restored column IDs to column_order
         current_order = set(dataset.column_order or [])

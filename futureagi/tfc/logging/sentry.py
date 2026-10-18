@@ -48,6 +48,8 @@ SENTRY_DSN = os.getenv("SENTRY_DSN")
 # check are the only reliable levers.
 NOISY_LOGGER_PREFIXES = (
     "opentelemetry",  # OTLP exporter/instrumentation export failures
+    "saml2",
+    "xmlschema",
 )
 
 # Exact logger names handed to sentry_sdk.integrations.logging.ignore_logger.
@@ -60,6 +62,10 @@ IGNORED_LOGGERS = (
     "opentelemetry.exporter.otlp.proto.http.metric_exporter",
     "opentelemetry.exporter.otlp.proto.http.trace_exporter",
     "opentelemetry.exporter.otlp.proto.http._log_exporter",
+    "saml2",
+    "saml2.*",
+    "xmlschema",
+    "xmlschema.*",
 )
 
 # Exception class names that are expected/handled and not actionable as issues.
@@ -99,6 +105,13 @@ SENSITIVE_KEY_SUBSTRINGS = (
     "access_key",
     "private_key",
     "csrf",
+    # Form fields (SAMLResponse, RelayState) and the ACS view's locals for them.
+    "samlresponse",
+    "saml_response",
+    "relaystate",
+    "relay_state",
+    "fai_saml_b",
+    "candidate",
 )
 _REDACTED = "[Filtered]"
 
@@ -122,10 +135,17 @@ def _is_sensitive_key(key: Any) -> bool:
     return any(s in lowered for s in SENSITIVE_KEY_SUBSTRINGS)
 
 
+_SAML_VALUE_MARKERS = ("<saml:", "<samlp:", "SAMLResponse=", "fai_saml_b_")
+
+
 def _scrub(value: Any, depth: int = 0) -> Any:
     """Recursively redact values under sensitive keys (defensive, bounded)."""
     if depth > 6:
         return value
+    if isinstance(value, str) and any(
+        marker in value for marker in _SAML_VALUE_MARKERS
+    ):
+        return _REDACTED
     if isinstance(value, dict):
         return {
             k: (_REDACTED if _is_sensitive_key(k) else _scrub(v, depth + 1))
@@ -163,6 +183,22 @@ def _scrub_event(event: dict) -> None:
     if isinstance(contexts, dict):
         event["contexts"] = _scrub(contexts)
 
+    # Sentry captures local variables (include_local_variables=True). An
+    # uncaught error in the ACS candidate-store path leaves the raw assertion
+    # in the view's stack frame; redact those vars the same way as request data
+    # so the assertion body never leaves the process (review finding 1, B7).
+    exception = event.get("exception")
+    if isinstance(exception, dict):
+        for value in exception.get("values") or []:
+            if not isinstance(value, dict):
+                continue
+            stacktrace = value.get("stacktrace")
+            if not isinstance(stacktrace, dict):
+                continue
+            for frame in stacktrace.get("frames") or []:
+                if isinstance(frame, dict) and isinstance(frame.get("vars"), dict):
+                    frame["vars"] = _scrub(frame["vars"])
+
 
 def _event_message(event: dict) -> str:
     """Best-effort extraction of an event's human-readable message."""
@@ -198,8 +234,23 @@ def _scrub_deployment_telemetry_event(event: dict) -> dict:
     # though the inbound branch scrubbed the request body. Walk breadcrumbs
     # unconditionally and strip body fields whose ``url`` points at a telemetry
     # path before running the inbound scrub.
-    for breadcrumb in event.get("breadcrumbs", {}).get("values", []) or []:
+    breadcrumbs = event.get("breadcrumbs") or []
+    # Sentry SDK versions do not agree on the normalized breadcrumb shape:
+    # error events commonly expose {"values": [...]}, while transaction
+    # events can already expose the values list.  The scrubber runs inside
+    # ``before_send_transaction`` and must never turn a successful request
+    # into a 500 merely because the SDK chose the latter representation.
+    if isinstance(breadcrumbs, dict):
+        breadcrumbs = breadcrumbs.get("values") or []
+    if not isinstance(breadcrumbs, (list, tuple)):
+        breadcrumbs = []
+
+    for breadcrumb in breadcrumbs:
+        if not isinstance(breadcrumb, dict):
+            continue
         data = breadcrumb.get("data") or {}
+        if not isinstance(data, dict):
+            continue
         if _is_telemetry_url(data.get("url")):
             for key in ("body", "data", "http.request.body", "request_body"):
                 data.pop(key, None)
@@ -232,8 +283,10 @@ def _get_before_send() -> Callable:
 
         # 1. Infrastructure logger noise - never actionable as an issue.
         logger_name = event.get("logger") or ""
+        # Match on a dot boundary: "saml2" must not swallow "saml2_auth".
         if isinstance(logger_name, str) and any(
-            logger_name.startswith(p) for p in NOISY_LOGGER_PREFIXES
+            logger_name == p or logger_name.startswith(f"{p}.")
+            for p in NOISY_LOGGER_PREFIXES
         ):
             return None
 

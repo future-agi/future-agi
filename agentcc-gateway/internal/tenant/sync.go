@@ -15,9 +15,9 @@ import (
 var syncHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 // SyncFromControlPlane fetches all org configs from the Django control plane
-// bulk endpoint and loads them into the tenant store. If the control plane is
-// unreachable, it logs a warning and returns an error so background retry loops
-// can keep trying while the gateway continues serving with its current store.
+// bulk endpoint and loads them into the tenant store. A failure leaves the
+// store as it was and is returned for the caller to log: during startup the
+// control plane is often not up yet, which is not worth a warning.
 func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store *Store) error {
 	if baseURL == "" {
 		slog.Info("control plane sync skipped: no URL configured")
@@ -36,22 +36,13 @@ func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store
 
 	resp, err := syncHTTPClient.Do(req)
 	if err != nil {
-		slog.Warn("control plane sync failed (gateway will start with empty org store)",
-			"url", endpoint,
-			"error", err,
-		)
 		return fmt.Errorf("control plane unreachable: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		slog.Warn("control plane sync returned non-200",
-			"url", endpoint,
-			"status", resp.StatusCode,
-			"body", string(body),
-		)
-		return fmt.Errorf("control plane returned status %d: %s", resp.StatusCode, body)
+		return fmt.Errorf("control plane returned status %d from %s: %s", resp.StatusCode, endpoint, body)
 	}
 
 	// Django response format: {"status": true, "result": {"org_id": {...}, ...}}
@@ -60,14 +51,10 @@ func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store
 		Result map[string]json.RawMessage `json:"result"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 10<<20)).Decode(&envelope); err != nil {
-		slog.Warn("control plane sync: failed to parse response",
-			"error", err,
-		)
 		return fmt.Errorf("parsing sync response: %w", err)
 	}
 
 	if !envelope.Status {
-		slog.Warn("control plane sync: response status=false")
 		return fmt.Errorf("control plane sync: status=false")
 	}
 

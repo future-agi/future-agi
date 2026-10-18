@@ -175,6 +175,19 @@ class AnnotationsLabelsSerializer(serializers.ModelSerializer):
         enforce uniqueness across global labels (projectless).
         """
 
+        # Label type determines the stored Score contract.  Both supported
+        # editors already treat it as immutable after creation; reject a
+        # crafted API update here as well so existing annotations cannot be
+        # reinterpreted under a different schema.
+        if (
+            self.instance is not None
+            and "type" in attrs
+            and attrs["type"] != self.instance.type
+        ):
+            raise serializers.ValidationError(
+                {"type": "Annotation label type cannot be changed."}
+            )
+
         # Fetch the incoming / existing values.
         name = attrs.get("name", getattr(self.instance, "name", None))
         label_type = attrs.get("type", getattr(self.instance, "type", None))

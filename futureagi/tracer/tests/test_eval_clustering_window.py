@@ -6,22 +6,30 @@ _CLUSTER_WINDOW_DAYS — old failures aren't actionable and an unbounded
 history is what let the clustering work unit balloon.
 """
 
+import uuid
 from datetime import timedelta
 
 import pytest
 from django.utils import timezone
 
 from tracer.models.observation_span import EvalLogger
+from tracer.models.trace_error_analysis import (
+    ClusterSource,
+    ErrorClusterTraces,
+    TraceErrorGroup,
+)
 from tracer.queries.eval_clustering import (
     _CLUSTER_WINDOW_DAYS,
     get_unclustered_eval_results,
 )
 
 
-def _make_failing_eval(trace, span, cfg, explanation, age_days):
+def _make_failing_eval(trace, span, cfg, explanation, age_days, eval_task_id="et-1"):
     """Create a failing span eval and backdate created_at by age_days.
 
-    created_at is auto_now_add, so it must be set via a direct UPDATE.
+    created_at is auto_now_add, so it must be set via a direct UPDATE. Defaults
+    to an eval-task eval (``eval_task_id`` set) — clustering is eval-task-only;
+    pass ``eval_task_id=None`` for an inline/continuous/external failure.
     """
     ev = EvalLogger.objects.create(
         trace=trace,
@@ -30,6 +38,7 @@ def _make_failing_eval(trace, span, cfg, explanation, age_days):
         target_type="span",
         output_bool=False,
         eval_explanation=explanation,
+        eval_task_id=eval_task_id,
     )
     EvalLogger.objects.filter(pk=ev.pk).update(
         created_at=timezone.now() - timedelta(days=age_days)
@@ -44,13 +53,15 @@ def test_window_excludes_old_includes_recent(
     old_exp = "old failing eval - outside the window"
     new_exp = "recent failing eval - inside the window"
 
+    # Distinct eval_task_ids: two live evals on the same (task, span, config)
+    # would collide on the eval_logger_live_span_uniq work-item constraint.
     _make_failing_eval(
         trace, observation_span, custom_eval_config,
-        old_exp, age_days=_CLUSTER_WINDOW_DAYS + 30,
+        old_exp, age_days=_CLUSTER_WINDOW_DAYS + 30, eval_task_id="et-old",
     )
     _make_failing_eval(
         trace, observation_span, custom_eval_config,
-        new_exp, age_days=1,
+        new_exp, age_days=1, eval_task_id="et-new",
     )
 
     explanations = {
@@ -69,6 +80,220 @@ def test_boundary_just_inside_window_is_included(
     _make_failing_eval(
         trace, observation_span, custom_eval_config,
         exp, age_days=_CLUSTER_WINDOW_DAYS - 1,
+    )
+
+    explanations = {
+        r.explanation for r in get_unclustered_eval_results(str(project.id))
+    }
+    assert exp in explanations
+
+
+@pytest.mark.django_db
+def test_clustering_includes_eval_task_failures(
+    project, trace, observation_span, custom_eval_config
+):
+    """An eval-task failure (``eval_task_id`` set) is clusterable."""
+    exp = "eval-task failure"
+    _make_failing_eval(trace, observation_span, custom_eval_config, exp, age_days=1)
+
+    explanations = {
+        r.explanation for r in get_unclustered_eval_results(str(project.id))
+    }
+    assert exp in explanations
+
+
+@pytest.mark.django_db
+def test_clustering_includes_choice_score_failures(
+    project, trace, observation_span, custom_eval_config
+):
+    """A choice result is clusterable when its template maps it below 1.0."""
+    custom_eval_config.eval_template.choice_scores = {"Good": 1.0, "Bad": 0.0}
+    custom_eval_config.eval_template.pass_threshold = 0.5
+    custom_eval_config.eval_template.save(
+        update_fields=["choice_scores", "pass_threshold"]
+    )
+    ev = EvalLogger.objects.create(
+        trace=trace,
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        target_type="span",
+        output_str='{"choice": "Bad"}',
+        output_str_list=["Bad"],
+        eval_explanation="the response missed the requirement",
+        eval_task_id="et-choice-score",
+    )
+
+    results = get_unclustered_eval_results(str(project.id))
+
+    assert [result.eval_logger_id for result in results] == [str(ev.id)]
+    assert results[0].score == 0.0
+
+
+@pytest.mark.django_db
+def test_clustering_excludes_mapped_passing_choice(
+    project, trace, observation_span, custom_eval_config
+):
+    """Mapped passing choices must not be swept into the failure cluster."""
+    custom_eval_config.eval_template.choice_scores = {"Good": 1.0, "Bad": 0.0}
+    custom_eval_config.eval_template.pass_threshold = 0.5
+    custom_eval_config.eval_template.save(
+        update_fields=["choice_scores", "pass_threshold"]
+    )
+    EvalLogger.objects.create(
+        trace=trace,
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        target_type="span",
+        output_str='{"choice": "Good"}',
+        output_str_list=["Good"],
+        eval_explanation="the response met the requirement",
+        eval_task_id="et-choice-pass",
+    )
+
+    assert get_unclustered_eval_results(str(project.id)) == []
+
+
+@pytest.mark.django_db
+def test_soft_deleted_membership_does_not_suppress_eval(
+    project, trace, observation_span, custom_eval_config
+):
+    ev = _make_failing_eval(
+        trace,
+        observation_span,
+        custom_eval_config,
+        "failure with a soft-deleted membership",
+        age_days=1,
+        eval_task_id="et-soft-deleted-membership",
+    )
+    cluster = TraceErrorGroup.objects.create(
+        project=project,
+        source=ClusterSource.EVAL,
+        cluster_id="E-soft-delete",
+    )
+    membership = ErrorClusterTraces.objects.create(cluster=cluster, eval_logger=ev)
+    ErrorClusterTraces.objects.filter(pk=membership.pk).update(deleted=True)
+
+    results = get_unclustered_eval_results(str(project.id))
+
+    assert [result.eval_logger_id for result in results] == [str(ev.id)]
+
+
+@pytest.mark.django_db
+def test_clustering_maps_numeric_choice_labels_before_numeric_parse(
+    project, trace, observation_span, custom_eval_config
+):
+    """A label such as ``"2"`` must use its configured choice score."""
+    custom_eval_config.eval_template.choice_scores = {"2": 0.0, "10": 1.0}
+    custom_eval_config.eval_template.pass_threshold = 0.5
+    custom_eval_config.eval_template.save(
+        update_fields=["choice_scores", "pass_threshold"]
+    )
+    ev = EvalLogger.objects.create(
+        trace=trace,
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        target_type="span",
+        output_str="2",
+        output_str_list=["2"],
+        eval_explanation="the selected choice failed",
+        eval_task_id="et-numeric-label",
+    )
+
+    results = get_unclustered_eval_results(str(project.id))
+
+    assert [result.eval_logger_id for result in results] == [str(ev.id)]
+    assert results[0].score == 0.0
+
+
+@pytest.mark.django_db
+def test_structured_score_uses_template_pass_threshold(
+    project, trace, observation_span, custom_eval_config
+):
+    """Structured scores below the configured threshold are clusterable."""
+    custom_eval_config.eval_template.pass_threshold = 0.75
+    custom_eval_config.eval_template.save(update_fields=["pass_threshold"])
+    ev = EvalLogger.objects.create(
+        trace=trace,
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        target_type="span",
+        output_str='{"score": 0.6, "choice": "Fair"}',
+        eval_explanation="the response was only partially correct",
+        eval_task_id="et-structured-threshold",
+    )
+
+    results = get_unclustered_eval_results(str(project.id))
+
+    assert [result.eval_logger_id for result in results] == [str(ev.id)]
+    assert results[0].score == 0.6
+
+
+@pytest.mark.django_db
+def test_structured_score_takes_precedence_over_choice_mapping(
+    project, trace, observation_span, custom_eval_config
+):
+    """An explicit structured score wins over the accompanying choice label."""
+    custom_eval_config.eval_template.choice_scores = {"2": 0.9}
+    custom_eval_config.eval_template.pass_threshold = 0.5
+    custom_eval_config.eval_template.save(
+        update_fields=["choice_scores", "pass_threshold"]
+    )
+    ev = EvalLogger.objects.create(
+        trace=trace,
+        observation_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        target_type="span",
+        output_str='{"score": 0.25, "choice": "2"}',
+        eval_explanation="the explicit score indicates failure",
+        eval_task_id="et-explicit-score",
+    )
+
+    results = get_unclustered_eval_results(str(project.id))
+
+    assert [result.eval_logger_id for result in results] == [str(ev.id)]
+    assert results[0].score == 0.25
+
+
+@pytest.mark.django_db
+def test_clustering_excludes_non_eval_task_failures(
+    project, trace, observation_span, custom_eval_config
+):
+    """Clustering is eval-task-only. Inline / continuous-span / external failures
+    carry no ``eval_task_id`` and must never enter clustering. Pins the
+    ``eval_task_id`` scoping so a refactor can't silently re-admit the far larger
+    non-eval-task backlog (the regression's blast radius).
+    """
+    exp = "inline (non-eval-task) failure"
+    _make_failing_eval(
+        trace, observation_span, custom_eval_config, exp, age_days=1, eval_task_id=None
+    )
+
+    explanations = {
+        r.explanation for r in get_unclustered_eval_results(str(project.id))
+    }
+    assert exp not in explanations
+
+
+@pytest.mark.django_db
+def test_clustering_includes_ch_only_session_failure(project, custom_eval_config):
+    """A session-target failure clusters via its config's project even when the
+    session lives only in ClickHouse (no PG ``TraceSession`` row) and the eval
+    row carries no ``trace``. This is the exact case the removed CH session
+    pre-pass existed for; scoping by ``custom_eval_config__project_id`` covers it
+    with zero reads of the (dropped) PG ``tracer_trace`` / ``tracer_observation_span``
+    tables. Guards against a regression that re-introduces a trace/session join.
+    """
+    exp = "ch-only session-target failure"
+    ev = EvalLogger.objects.create(
+        trace_session_id=uuid.uuid4(),  # CH-only session: no PG TraceSession row
+        custom_eval_config=custom_eval_config,
+        target_type="session",
+        output_bool=False,
+        eval_explanation=exp,
+        eval_task_id="et-1",
+    )
+    EvalLogger.objects.filter(pk=ev.pk).update(
+        created_at=timezone.now() - timedelta(days=1)
     )
 
     explanations = {

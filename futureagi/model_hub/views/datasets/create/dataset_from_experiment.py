@@ -9,7 +9,6 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.choices import ModelTypes, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import UserEvalMetric
@@ -24,10 +23,12 @@ from model_hub.serializers.develop_dataset_contracts import (
 )
 from model_hub.serializers.develop_dataset import DatasetSerializer
 from model_hub.views.eval_runner import EvaluationRunner
+from model_hub.views.utils.dataset_limit import dataset_add_refusal
 from model_hub.views.utils.utils import get_recommendations, update_column_id
 from model_hub.validators.dataset_validators import validate_dataset_name_unique
 from tfc.middleware.workspace_context import get_current_workspace
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
@@ -37,6 +38,8 @@ try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
     log_and_deduct_cost_for_resource_request = None
+
+logger = structlog.get_logger(__name__)
 
 
 def _request_organization(request):
@@ -104,6 +107,7 @@ class CreateDatasetFromExpView(APIView):
         responses={
             200: DevelopDatasetMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
+            503: DatasetLimitCheckFailedErrorSerializer,
         },
         reject_unknown_fields=True,
     )
@@ -155,14 +159,9 @@ class CreateDatasetFromExpView(APIView):
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
                     workspace=getattr(request, "workspace", None),
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+                refusal = dataset_add_refusal(call_log_row_entry)
+                if refusal is not None:
+                    return refusal
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 

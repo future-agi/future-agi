@@ -26,10 +26,7 @@ const maxBodyAttrBytes = 1 << 20
 // pattern exists to remove.
 func (p *Plugin) attachBodies(span *otelpkg.Span, rc *models.RequestContext) {
 	redactor := p.redactorFor(rc)
-	mode := rc.Metadata["privacy_mode"]
-	if orgMode := rc.Metadata["org_privacy_mode"]; orgMode != "" {
-		mode = orgMode
-	}
+	mode := privacyMode(rc)
 
 	p.attachMessages(span, rc, redactor, mode)
 
@@ -89,16 +86,29 @@ func prepareBody(v string, r *privacy.Redactor, mode string) preparedBody {
 	if len(v) <= maxBodyAttrBytes {
 		return preparedBody{value: v}
 	}
-	// Walk back to a rune boundary. Slicing by byte index can end the string
-	// mid-rune, and an OTLP attribute is a proto string: proto.Marshal rejects
-	// the whole message rather than the offending field, so a single body cut
-	// through a multi-byte character would take its entire batch of unrelated
-	// spans with it. Non-ASCII prompts are not an edge case.
-	cut := maxBodyAttrBytes
+	return preparedBody{value: truncateAtRune(v, maxBodyAttrBytes), originalBytes: len(v), truncated: true}
+}
+
+// truncateAtRune cuts to at most max bytes on a rune boundary. An OTLP
+// attribute is a proto string and proto.Marshal rejects the whole message, so
+// one value cut mid-rune takes its entire batch of unrelated spans with it.
+func truncateAtRune(v string, max int) string {
+	if len(v) <= max {
+		return v
+	}
+	cut := max
 	for cut > 0 && !utf8.RuneStart(v[cut]) {
 		cut--
 	}
-	return preparedBody{value: v[:cut], originalBytes: len(v), truncated: true}
+	return v[:cut]
+}
+
+// privacyMode prefers the org's setting over the caller's, as the log does.
+func privacyMode(rc *models.RequestContext) string {
+	if orgMode := rc.Metadata["org_privacy_mode"]; orgMode != "" {
+		return orgMode
+	}
+	return rc.Metadata["privacy_mode"]
 }
 
 // redactorFor prefers the org's redactor over the gateway-wide one, matching

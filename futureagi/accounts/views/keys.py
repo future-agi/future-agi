@@ -13,26 +13,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
 
-logger = structlog.get_logger(__name__)
-
-FI_AUTH_REVOKE_CHANNEL = "fi:auth:revoke"
-
-
-def _publish_key_revocation(api_key: str, secret_key: str) -> None:
-    """
-    Publish a cache-bust to fi-collector so revoked keys are evicted immediately.
-    """
-    try:
-        cache_key = hashlib.sha256(f"{api_key}:{secret_key}".encode()).hexdigest()
-        r = redis.Redis.from_url(
-            getattr(settings, "REDIS_URL", "redis://localhost:6379/0"),
-            decode_responses=True,
-        )
-        r.publish(FI_AUTH_REVOKE_CHANNEL, cache_key)
-    except Exception:
-        logger.warning("fi_auth_revoke_publish_failed", exc_info=True)
-
 from accounts.models import OrgApiKey
+from accounts.permissions import RequiresIndependentAuth
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
     AccountsStringResultResponseSerializer,
@@ -55,6 +37,24 @@ from tfc.constants.roles import RolePermissions
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
+
+logger = structlog.get_logger(__name__)
+FI_AUTH_REVOKE_CHANNEL = "fi:auth:revoke"
+
+
+def _publish_key_revocation(api_key: str, secret_key: str) -> None:
+    """
+    Publish a cache-bust to fi-collector so revoked keys are evicted immediately.
+    """
+    try:
+        cache_key = hashlib.sha256(f"{api_key}:{secret_key}".encode()).hexdigest()
+        r = redis.Redis.from_url(
+            getattr(settings, "REDIS_URL", "redis://localhost:6379/0"),
+            decode_responses=True,
+        )
+        r.publish(FI_AUTH_REVOKE_CHANNEL, cache_key)
+    except Exception:
+        logger.warning("fi_auth_revoke_publish_failed", exc_info=True)
 
 
 class GetKeysView(APIView):
@@ -96,6 +96,12 @@ class GetKeysView(APIView):
 class SecretKeyAPIViewSet(ViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        permission_classes = list(self.permission_classes)
+        if self.action == "generate_secret_key":
+            permission_classes.append(RequiresIndependentAuth)
+        return [permission() for permission in permission_classes]
 
     # Map frontend field names (camelCase) to database field names
     SORT_FIELD_MAP = {
@@ -289,6 +295,18 @@ class SecretKeyAPIViewSet(ViewSet):
                 type="user",
                 user=request.user,
             )
+            try:
+                from tfc.deployment_telemetry.events import record_event
+
+                record_event(
+                    "api_key_created",
+                    actor_type="api_key",
+                    actor_id=org_key.id,
+                    source="web",
+                    organization_id=org_key.organization_id,
+                )
+            except Exception:
+                logger.debug("deployment_telemetry_api_key_event_failed", exc_info=True)
             response = {
                 "key_id": org_key.id,
                 "key_name": org_key.name,

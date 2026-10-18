@@ -20,6 +20,14 @@ func FromContext(ctx context.Context) *ResolveResult {
 
 type cacheKeyCtxKey struct{}
 
+// WithResolvedContext carries an already authenticated result across an
+// in-process boundary. Callers must verify the key and project/workspace
+// membership first; this helper does not authenticate untrusted request data.
+func WithResolvedContext(ctx context.Context, result *ResolveResult, cacheKey string) context.Context {
+	ctx = context.WithValue(ctx, contextKey{}, result)
+	return context.WithValue(ctx, cacheKeyCtxKey{}, cacheKey)
+}
+
 // CacheKeyFromContext retrieves the hashed cache key from context.
 func CacheKeyFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(cacheKeyCtxKey{}).(string)
@@ -55,8 +63,7 @@ func (a *Authenticator) GRPCInterceptor() grpc.UnaryServerInterceptor {
 			return nil, status.Error(codes.Unavailable, "service temporarily unavailable")
 		}
 
-		ctx = context.WithValue(ctx, contextKey{}, result)
-		ctx = context.WithValue(ctx, cacheKeyCtxKey{}, CacheKey(apiKey, secretKey))
+		ctx = WithResolvedContext(ctx, result, CacheKey(apiKey, secretKey))
 		return handler(ctx, req)
 	}
 }

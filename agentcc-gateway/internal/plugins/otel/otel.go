@@ -2,7 +2,6 @@ package otel
 
 import (
 	"context"
-	"encoding/json"
 	"hash/fnv"
 	"log/slog"
 	"os"
@@ -30,8 +29,16 @@ type Plugin struct {
 	// Body capture: off unless configured, and redacted through the same
 	// per-org privacy config the request log uses.
 	includeBodies bool
-	redactor      *privacy.Redactor
-	tenantStore   *tenant.Store
+	// tracePropagation honours an inbound W3C traceparent (see config).
+	tracePropagation bool
+	// metadataAttributes flattens caller metadata into its own attributes.
+	metadataAttributes bool
+	// captureHeaders is the compiled request-header allowlist; nil captures none.
+	captureHeaders *headerMatcher
+	// bodyAttributes exports the body's unknown top-level fields.
+	bodyAttributes bool
+	redactor       *privacy.Redactor
+	tenantStore    *tenant.Store
 
 	// spans stores in-flight spans keyed by request ID.
 	spans sync.Map
@@ -79,15 +86,24 @@ func New(cfg config.OTelConfig) *Plugin {
 	if cfg.Enabled && cfg.IncludeBodies {
 		slog.Warn("otel body capture is enabled — prompts and completions will be sent to the trace collector")
 	}
+	if cfg.Enabled && len(cfg.CaptureHeaders) > 0 {
+		slog.Warn("otel request-header capture is enabled — matching headers will be sent to the trace collector",
+			"patterns", cfg.CaptureHeaders)
+	}
 
 	return &Plugin{
-		exporter:      exp,
-		metrics:       &otelpkg.Metrics{},
-		sampleRate:    sampleRate,
-		enabled:       cfg.Enabled,
-		serviceName:   serviceName,
-		attributes:    cfg.Attributes,
-		includeBodies: cfg.Enabled && cfg.IncludeBodies,
+		exporter:         exp,
+		metrics:          &otelpkg.Metrics{},
+		sampleRate:       sampleRate,
+		enabled:          cfg.Enabled,
+		serviceName:      serviceName,
+		attributes:       cfg.Attributes,
+		includeBodies:    cfg.Enabled && cfg.IncludeBodies,
+		tracePropagation: cfg.TracePropagation,
+		// Unset means on — the flattened copies are additive.
+		metadataAttributes: cfg.MetadataAttributes == nil || *cfg.MetadataAttributes,
+		bodyAttributes:     cfg.BodyAttributes == nil || *cfg.BodyAttributes,
+		captureHeaders:     newHeaderMatcher(cfg.CaptureHeaders),
 	}
 }
 
@@ -101,11 +117,13 @@ func (p *Plugin) SetTenantStore(s *tenant.Store) { p.tenantStore = s }
 // NewWithExporter creates a plugin with a specific exporter (for testing).
 func NewWithExporter(exp otelpkg.SpanExporter, sampleRate float64, enabled bool) *Plugin {
 	return &Plugin{
-		exporter:    exp,
-		metrics:     &otelpkg.Metrics{},
-		sampleRate:  sampleRate,
-		enabled:     enabled,
-		serviceName: "agentcc-gateway",
+		exporter:           exp,
+		metrics:            &otelpkg.Metrics{},
+		sampleRate:         sampleRate,
+		enabled:            enabled,
+		serviceName:        "agentcc-gateway",
+		metadataAttributes: true,
+		bodyAttributes:     true,
 	}
 }
 
@@ -135,6 +153,20 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		span.TraceID = rc.TraceID
 	}
 
+	// Nest under the caller's span rather than starting a second root.
+	if p.tracePropagation {
+		if traceID, parentID, ok := parseTraceparent(rc.RequestHeaders.Get("traceparent")); ok {
+			// agentcc.trace_id is normally derived from span.TraceID and is what
+			// joins a span to its request-log row, so pin the gateway's own id
+			// before the caller's overwrites it.
+			if rc.TraceID != "" {
+				span.SetAttribute("agentcc.trace_id", rc.TraceID)
+			}
+			span.TraceID = traceID
+			span.ParentID = parentID
+		}
+	}
+
 	// Classification. Without span.kind the platform files every span as
 	// UNKNOWN, so this is not optional.
 	kind, operation := classifyEndpoint(rc.EndpointType)
@@ -156,20 +188,11 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		span.SetAttribute("gen_ai.request.max_tokens", *rc.Request.MaxTokens)
 	}
 
-	// Caller-supplied dimensions from x-agentcc-metadata (profile, tenant,
-	// application...), as one JSON object under the conventional `metadata`
-	// key. JSON, not a Go map — the consumer parses this string.
-	if len(rc.CustomMetadataKeys) > 0 {
-		custom := make(map[string]string, len(rc.CustomMetadataKeys))
-		for _, k := range rc.CustomMetadataKeys {
-			if v, ok := rc.Metadata[k]; ok {
-				custom[k] = v
-			}
-		}
-		if encoded, err := json.Marshal(custom); err == nil {
-			span.SetAttribute("metadata", string(encoded))
-		}
-	}
+	// Caller-supplied dimensions (profile, tenant, application...) and, when
+	// configured, allowlisted request headers.
+	p.attachMetadata(span, rc)
+	p.attachBodyExtras(span, rc)
+	p.attachRequestHeaders(span, rc)
 
 	// Add resource attributes from config.
 	for k, v := range p.attributes {
@@ -348,4 +371,52 @@ func (p *Plugin) shouldSample(requestID string) bool {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(requestID))
 	return float64(h.Sum32()%10000)/10000.0 < p.sampleRate
+}
+
+// parseTraceparent extracts the trace id and span id from a W3C `traceparent`
+// header, per https://www.w3.org/TR/trace-context/.
+//
+//	00-<32 hex trace id>-<16 hex span id>-<2 hex flags>
+//
+// It reports ok only for a sampled (flags bit 0 set) version-00 header with
+// non-zero ids. An unsampled caller never exports the span it names, so
+// parenting to it would leave a permanently dangling reference.
+func parseTraceparent(h string) (traceID, parentID string, ok bool) {
+	parts := strings.Split(strings.TrimSpace(h), "-")
+	if len(parts) != 4 {
+		return "", "", false
+	}
+	version, tid, sid, flags := parts[0], parts[1], parts[2], parts[3]
+
+	// Only version 00 is defined. "ff" is explicitly invalid.
+	if version != "00" {
+		return "", "", false
+	}
+	if !isHex(tid, 32) || !isHex(sid, 16) {
+		return "", "", false
+	}
+	if strings.Trim(tid, "0") == "" || strings.Trim(sid, "0") == "" {
+		return "", "", false
+	}
+	if !isHex(flags, 2) {
+		return "", "", false
+	}
+	f, err := strconv.ParseUint(flags, 16, 8)
+	if err != nil || f&0x01 == 0 {
+		return "", "", false
+	}
+	return tid, sid, true
+}
+
+func isHex(s string, n int) bool {
+	if len(s) != n {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }

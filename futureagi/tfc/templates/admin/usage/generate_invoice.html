@@ -40,6 +40,11 @@
   <div style="font-size:0.85em; color:var(--body-quiet-color,#666); margin-bottom:16px; line-height:1.5">
     Works for any paid plan (PAYG / Boost / Scale / Enterprise / Custom). Free-plan orgs cannot be invoiced. The invoice bundles the platform fee for the selected period (advance, prorated if the plan started mid-month) with the prior period's usage (arrears) — matching how Stripe issues its monthly invoice.
   </div>
+  {% if read_only %}
+  <div class="gi-msg gi-msg-warning" id="read-only-banner">
+    <strong>Read only.</strong> You can preview what would be billed, but only superusers can generate an invoice.
+  </div>
+  {% endif %}
   <div id="gi-message"></div>
   <div id="gi-loading">Processing...</div>
 
@@ -84,11 +89,13 @@
       <tbody id="preview-tbody"></tbody>
     </table>
     <div class="gi-summary" id="preview-summary"></div>
+    {% if not read_only %}
     <div style="margin-top: 20px;">
       <button class="gi-btn gi-btn-generate" onclick="generateInvoice()" id="generate-btn" disabled>
         Generate Invoice
       </button>
     </div>
+    {% endif %}
   </div>
 
   <!-- Step 3: Result -->
@@ -104,6 +111,12 @@
 const ORG_CHOICES = {{ org_choices_json|safe }};
 
 let previewData = null;
+
+// Absent on the staff (read-only) page.
+function setGenerateEnabled(enabled) {
+  const btn = document.getElementById("generate-btn");
+  if (btn) btn.disabled = !enabled;
+}
 
 // Populate dropdowns
 (function() {
@@ -201,7 +214,7 @@ async function previewUsage() {
     previewData = data.result;
     renderPreview(previewData);
     document.getElementById("preview-section").style.display = "block";
-    document.getElementById("generate-btn").disabled = false;
+    setGenerateEnabled(true);
 
     if (previewData.invoice_exists) {
       showMsg("Warning: An invoice already exists for this period. Generation will fail unless it is deleted first.", "warning");
@@ -335,7 +348,7 @@ function resetForm() {
   document.getElementById("gi-org-id").value = "";
   document.getElementById("preview-section").style.display = "none";
   document.getElementById("result-section").style.display = "none";
-  document.getElementById("generate-btn").disabled = true;
+  setGenerateEnabled(false);
   document.getElementById("preview-tbody").innerHTML = "";
   document.getElementById("preview-summary").innerHTML = "";
   document.getElementById("preview-notices").innerHTML = "";

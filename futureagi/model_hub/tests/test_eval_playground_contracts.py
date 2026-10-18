@@ -3,12 +3,8 @@ import json
 import pytest
 from rest_framework import status
 
-pytest.importorskip("ee.usage.models.usage", reason="requires ee/")
-pytestmark = pytest.mark.requires_ee
-
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
-from ee.usage.models.usage import APICallLog, APICallStatusChoices
 from model_hub.models.choices import OwnerChoices, SourceChoices
 from model_hub.models.error_localizer_model import (
     ErrorLocalizerSource,
@@ -18,6 +14,11 @@ from model_hub.models.error_localizer_model import (
 from model_hub.models.evals_metric import EvalSettings, EvalTemplate, Feedback
 from model_hub.serializers.contracts import EvalApiLogTableQuerySerializer
 from model_hub.views.separate_evals import create_column_config_playground
+
+usage_models = pytest.importorskip("ee.usage.models.usage", reason="requires ee/")
+APICallLog = usage_models.APICallLog
+APICallStatusChoices = usage_models.APICallStatusChoices
+pytestmark = pytest.mark.requires_ee
 
 
 def _create_workspace(organization, user, name):
@@ -62,9 +63,7 @@ def _create_other_org_template(user, name="other-playground-code"):
 
 
 @pytest.mark.django_db
-def test_eval_playground_rejects_template_from_another_organization(
-    auth_client, user
-):
+def test_eval_playground_rejects_template_from_another_organization(auth_client, user):
     template = _create_other_org_template(user)
 
     response = auth_client.post(
@@ -506,10 +505,10 @@ def test_get_eval_config_rejects_deleted_user_template(auth_client, user, worksp
 
 
 @pytest.mark.django_db
-def test_eval_template_name_picker_excludes_deleted_and_other_org_sources(
+def test_eval_template_name_picker_matches_visible_workspace_scoped_eval_list(
     auth_client, user, workspace
 ):
-    active = _create_code_eval_template(
+    _create_code_eval_template(
         user.organization, workspace, name="active-eval-name-picker"
     )
     deleted = _create_code_eval_template(
@@ -518,17 +517,33 @@ def test_eval_template_name_picker_excludes_deleted_and_other_org_sources(
     deleted.deleted = True
     deleted.save(update_fields=["deleted"])
     other_org = _create_other_org_template(user, name="other-eval-name-picker")
-
-    for template in (active, deleted, other_org):
-        APICallLog.objects.create(
-            organization=user.organization,
-            workspace=workspace,
-            status=APICallStatusChoices.SUCCESS.value,
-            cost=0,
-            source=SourceChoices.EVAL_PLAYGROUND.value,
-            source_id=str(template.id),
-            config=json.dumps({"mappings": {"output": "value"}}),
-        )
+    hidden = _create_code_eval_template(
+        user.organization, workspace, name="hidden-eval-name-picker"
+    )
+    hidden.visible_ui = False
+    hidden.save(update_fields=["visible_ui"])
+    other_workspace = Workspace.objects.create(
+        name="other-eval-name-picker-workspace",
+        organization=user.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    same_org_other_workspace = _create_code_eval_template(
+        user.organization,
+        other_workspace,
+        name="other-workspace-eval-name-picker",
+    )
+    unlogged_system = EvalTemplate.no_workspace_objects.create(
+        name="unlogged-system-eval-name-picker",
+        organization=None,
+        workspace=None,
+        owner=OwnerChoices.SYSTEM.value,
+        eval_type="code",
+        config={"output": "Pass/Fail", "eval_type_id": "CustomCodeEval"},
+        visible_ui=True,
+        output_type_normalized="pass_fail",
+    )
 
     response = auth_client.post(
         "/model-hub/get-eval-template-names",
@@ -539,8 +554,11 @@ def test_eval_template_name_picker_excludes_deleted_and_other_org_sources(
     assert response.status_code == status.HTTP_200_OK
     names = {row["name"] for row in response.data["result"]}
     assert "active-eval-name-picker" in names
+    assert unlogged_system.name in names
     assert "deleted-eval-name-picker" not in names
-    assert "other-eval-name-picker" not in names
+    assert hidden.name not in names
+    assert other_org.name not in names
+    assert same_org_other_workspace.name not in names
 
 
 @pytest.mark.django_db

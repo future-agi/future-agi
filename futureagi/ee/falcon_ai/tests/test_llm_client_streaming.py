@@ -40,7 +40,10 @@ async def test_managed_stream_forwards_incremental_tool_calls_usage_and_metadata
     chunks = [
         {
             "choices": [
-                {"delta": {"content": "Working"}, "finish_reason": None}
+                {
+                    "delta": {"content": "Working"},
+                    "finish_reason": None,
+                }
             ]
         },
         {
@@ -81,7 +84,7 @@ async def test_managed_stream_forwards_incremental_tool_calls_usage_and_metadata
                             },
                             {
                                 "index": 1,
-                                "function": {"arguments": '1}'},
+                                "function": {"arguments": "1}"},
                             },
                         ]
                     },
@@ -160,7 +163,14 @@ async def test_managed_stream_inlines_ref_tool_schemas():
 @pytest.mark.asyncio
 async def test_managed_stream_normalizes_length_finish_reason():
     async def managed_stream(payload):
-        yield {"choices": [{"delta": {}, "finish_reason": "length"}]}
+        yield {
+            "choices": [
+                {
+                    "delta": {},
+                    "finish_reason": "length",
+                }
+            ]
+        }
 
     with patch(
         "ee.licensing.managed_ai.stream_chat_completion",

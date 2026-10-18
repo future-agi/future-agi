@@ -122,9 +122,6 @@ const EvalsIndividualGroup = lazyWithRetry(
 const AddNewPrompt = lazyWithRetry(
   () => import("src/pages/dashboard/Prompt/AddNewPrompt"),
 );
-const ProjectList = lazyWithRetry(
-  () => import("src/pages/dashboard/projects/ProjectList"),
-);
 const GatewayOverview = lazyWithRetry(
   () => import("src/pages/dashboard/gateway/GatewayOverview"),
 );
@@ -172,9 +169,6 @@ const ObserveList = lazyWithRetry(
 );
 const ProjectWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/projects/ProjectWrapper"),
-);
-const ProjectDetail = lazyWithRetry(
-  () => import("src/pages/dashboard/projects/ProjectDetail"),
 );
 const HuggingFacePage = lazyWithRetry(
   () => import("src/pages/dashboard/huggingface/HuggingFace"),
@@ -224,9 +218,6 @@ const IndividualExperimentSummary = lazyWithRetry(
 );
 const PreviewScreen = lazyWithRetry(
   () => import("src/sections/develop-detail/AnnotationsTab/PreviewScreen"),
-);
-const RunInsidePage = lazyWithRetry(
-  () => import("src/pages/dashboard/run-inside/run-inside"),
 );
 const ObserverWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/observe/ObserverWrapper"),
@@ -320,6 +311,33 @@ const CreateNewAgentDefinition = lazyWithRetry(
 // );
 const RunTests = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTests"),
+);
+const HarnessList = lazyWithRetry(
+  () => import("src/pages/dashboard/harness/HarnessList"),
+);
+const HarnessCreate = lazyWithRetry(
+  () => import("src/pages/dashboard/harness/HarnessCreate"),
+);
+const HarnessDetail = lazyWithRetry(
+  () => import("src/pages/dashboard/harness/HarnessDetail"),
+);
+const SimulateEnvironmentsHome = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/EnvironmentsHome"),
+);
+const SimulatePrebuiltEnvironments = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/PrebuiltEnvironments"),
+);
+const SimulateUseTemplate = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/UseTemplate"),
+);
+const SimulateEnvironmentWorkspace = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/EnvironmentWorkspace"),
+);
+const WorkspaceExecutionDetail = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/simulate/environments/workspace/runs/WorkspaceExecutionDetail"
+    ),
 );
 const RunTestDetail = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTestDetail"),
@@ -837,7 +855,7 @@ export const dashboardRoutes = (
   const dashboardChildren = [
     {
       index: true,
-      element: <Navigate to="/dashboard/prototype" replace />,
+      element: <Navigate to="/dashboard/develop" replace />,
     },
     {
       path: "/dashboard/get-started",
@@ -1008,29 +1026,29 @@ export const dashboardRoutes = (
     //     },
     //   ],
     // },
-    {
-      path: "prototype",
-      element: <ProjectWrapper />,
-      children: [
-        {
-          index: true,
-          element: <ProjectList />,
-        },
-      ],
-    },
-    {
-      path: "prototype/:projectId",
-      children: [
-        {
-          index: true,
-          element: <ProjectDetail />,
-        },
-        {
-          path: ":runId",
-          element: <RunInsidePage />,
-        },
-      ],
-    },
+    // {
+    //   path: "prototype",
+    //   element: <ProjectWrapper />,
+    //   children: [
+    //     {
+    //       index: true,
+    //       element: <ProjectList />,
+    //     },
+    //   ],
+    // },
+    // {
+    //   path: "prototype/:projectId",
+    //   children: [
+    //     {
+    //       index: true,
+    //       element: <ProjectDetail />,
+    //     },
+    //     {
+    //       path: ":runId",
+    //       element: <RunInsidePage />,
+    //     },
+    //   ],
+    // },
     // {
     //   path: "projects",
     //   element: <ProjectWrapper />,
@@ -1326,6 +1344,69 @@ export const dashboardRoutes = (
     {
       path: "simulate",
       children: [
+        {
+          path: "environments",
+          element: <SimulateEnvironmentsHome />,
+        },
+        {
+          path: "environments/templates",
+          element: <SimulatePrebuiltEnvironments />,
+        },
+        {
+          path: "environments/templates/:templateId",
+          element: <SimulateUseTemplate />,
+        },
+        {
+          // Build is no longer a page of its own — the source panels create the
+          // job and route straight to the workspace, which hosts the build. An
+          // old /build link lands back on the Build entry tab.
+          path: "environments/build",
+          element: <Navigate to="/dashboard/simulate/environments?tab=build" replace />,
+        },
+        {
+          path: "environments/:envId",
+          element: <SimulateEnvironmentWorkspace />,
+          children: [
+            {
+              path: "runs/:testId/:executionId",
+              element: <WorkspaceExecutionDetail />,
+              children: [
+                {
+                  index: true,
+                  element: <Navigate to="call-details" replace />,
+                },
+                {
+                  path: "call-details",
+                  element: <TestExecutionCallDetail />,
+                },
+                {
+                  path: "performance",
+                  element: <TestExecutionPerformanceDetail />,
+                },
+                {
+                  path: "analytics",
+                  element: <TestExecutionAnalyticsDetail />,
+                },
+                {
+                  path: "optimization_runs",
+                  element: <TestExecutionOptimizationRunsDetail />,
+                },
+              ],
+            },
+          ],
+        },
+        {
+          path: "harness",
+          element: <HarnessList />,
+        },
+        {
+          path: "harness/new",
+          element: <HarnessCreate />,
+        },
+        {
+          path: "harness/:jobId",
+          element: <HarnessDetail />,
+        },
         {
           path: "agent-definitions",
           element: <AgentDefinitions />,

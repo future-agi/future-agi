@@ -1,0 +1,44 @@
+eval_id: 206
+name: voice_mail_detection
+description: Detects whether an outbound call reached a voicemail box rather than a live person, from the call audio - voicemail
+  greeting, beep, an automated leave-a-message prompt, or no live customer response.
+criteria: "You are evaluating whether the call reached a voicemail rather than a live person.\n\n## Criteria\n- Voicemail\
+  \ indicators: The call contains a voicemail greeting, a beep, an automated \"please leave a message\" prompt, or the customer\
+  \ never speaks.\n- No live response: There is no back-and-forth exchange between the agent and a live customer.\n\n## Anti-bias\
+  \ Rules\n- A customer who is briefly silent before speaking is NOT a voicemail.\n- Automated IVR menus are NOT voicemail\
+  \ - only flag if a voicemail greeting or beep is present.\n- If evidence is ambiguous, default to FAIL (treat the call as not a voicemail).\n\
+  \n## Scoring\n- Return PASS if the call reached a voicemail and the agent is correctly able to identify (voicemail greeting,\
+  \ beep, or no live customer response detected).\n- Return FAIL if the call reached a live person.\n\n## Input\n<audio_url>{{conversation}}</audio_url>"
+eval_tags:
+- Agents
+- Audio
+- Conversation
+- Voice
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+choices:
+- Passed
+- Failed
+output_type_normalized: pass_fail
+pass_threshold: 0.5
+config:
+  required_keys:
+  - conversation
+  output: Pass/Fail
+  eval_type_id: AgentEvaluator
+  config: {}
+  config_params_desc:
+    conversation: The call audio to be evaluated
+  param_modalities:
+    conversation:
+    - AUDIO
+  rule_prompt: "You are evaluating whether the call reached a voicemail rather than a live person.\n\n## Criteria\n- Voicemail\
+    \ indicators: The call contains a voicemail greeting, a beep, an automated \"please leave a message\" prompt, or the customer\
+    \ never speaks.\n- No live response: There is no back-and-forth exchange between the agent and a live customer.\n\n##\
+    \ Anti-bias Rules\n- A customer who is briefly silent before speaking is NOT a voicemail.\n- Automated IVR menus are NOT\
+    \ voicemail - only flag if a voicemail greeting or beep is present.\n- If evidence is ambiguous, default to FAIL (treat the call as not\
+    \ a voicemail).\n\n## Scoring\n- Return PASS if the call reached a voicemail and the agent is correctly able to identify\
+    \ (voicemail greeting, beep, or no live customer response detected).\n- Return FAIL if the call reached a live person.\n\
+    \n## Input\n<audio_url>{{conversation}}</audio_url>"

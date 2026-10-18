@@ -12,7 +12,7 @@ import {
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import { readQuery, endpoints } from "src/utils/axios";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
 
 import SessionHistory from "./SessionHistory";
@@ -26,6 +26,7 @@ import { useParams } from "react-router";
 import { useTraceDrawerStore } from "./useTraceDrawerStore";
 import { formatMs } from "src/utils/utils";
 import InlineAnnotator from "src/components/InlineAnnotator";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
 
 function a11yProps(index) {
   return {
@@ -34,7 +35,13 @@ function a11yProps(index) {
   };
 }
 
-const TracesDrawer = ({ open, onClose, rowData, userIdForUserMode }) => {
+const TracesDrawer = ({
+  open,
+  onClose,
+  rowData,
+  userIdForUserMode,
+  navigationContext,
+}) => {
   const theme = useTheme();
   const { projectId, observeId } = useParams();
   const projectIdToUse = projectId || observeId;
@@ -45,37 +52,81 @@ const TracesDrawer = ({ open, onClose, rowData, userIdForUserMode }) => {
   const { viewType, setViewType } = useTraceDrawerStore();
 
   const activeSessionId = currentSessionId || sessionId;
+  const { currentWorkspaceId } = useWorkspace();
+  const hasListContext = navigationContext !== undefined;
+  const contextInScope =
+    !hasListContext ||
+    Boolean(
+      currentWorkspaceId &&
+        navigationContext?.workspace_id === currentWorkspaceId &&
+        (navigationContext.project_id === null ||
+          (typeof navigationContext.project_id === "string" &&
+            navigationContext.project_id)) &&
+        Array.isArray(navigationContext.filters) &&
+        Array.isArray(navigationContext.sort_params),
+    );
 
   const {
-    data: _traceDetail,
+    data: queryData,
+    isPlaceholderData,
     isLoading,
     fetchNextPage,
     isFetchingNextPage,
     isFetching,
   } = useInfiniteQuery({
-    queryKey: ["traceSession", activeSessionId, userIdForUserMode],
+    queryKey: [
+      "traceSession",
+      activeSessionId,
+      userIdForUserMode,
+      currentWorkspaceId,
+      navigationContext,
+    ],
     queryFn: ({ pageParam }) => {
-      return axios.get(`${endpoints.project.traceSession}${activeSessionId}/`, {
-        params: {
-          page_number: pageParam,
-          page_size: 10,
-          ...(userIdForUserMode ? { user_id: userIdForUserMode } : {}),
+      if (!contextInScope) throw new Error("Session list workspace changed");
+      return readQuery(
+        endpoints.project.traceSessionQuery(activeSessionId),
+        {
+          params: {
+            page_number: pageParam,
+            page_size: 10,
+            ...(userIdForUserMode ? { user_id: userIdForUserMode } : {}),
+            ...(navigationContext !== undefined
+              ? { navigation_context: JSON.stringify(navigationContext) }
+              : {}),
+          },
         },
-      });
+      );
     },
     getNextPageParam: (page, _, pageParams) => {
       return page.data?.result?.next ? pageParams + 1 : null;
     },
     initialPageParam: 0,
-    enabled: Boolean(activeSessionId),
+    enabled: Boolean(activeSessionId) && contextInScope,
   });
+  // Disabled queries can retain cached data; global keepPreviousData can also
+  // supply another context's pages. Gate every consumer, not only the arrows.
+  const _traceDetail =
+    contextInScope && (!hasListContext || !isPlaceholderData)
+      ? queryData
+      : undefined;
 
   const scrollRef = useScrollEnd(() => {
-    if (isFetchingNextPage || isLoading) {
+    if (
+      !contextInScope ||
+      (hasListContext && isPlaceholderData) ||
+      isFetchingNextPage ||
+      isLoading
+    ) {
       return;
     }
     fetchNextPage();
-  }, [isFetchingNextPage, isLoading]);
+  }, [
+    contextInScope,
+    hasListContext,
+    isPlaceholderData,
+    isFetchingNextPage,
+    isLoading,
+  ]);
 
   const sessionMetadata =
     _traceDetail?.pages[0]?.data?.result?.session_metadata;
@@ -457,6 +508,7 @@ TracesDrawer.propTypes = {
   onClose: PropTypes.func.isRequired,
   rowData: PropTypes.object,
   userIdForUserMode: PropTypes.string,
+  navigationContext: PropTypes.object,
 };
 
 export default TracesDrawer;

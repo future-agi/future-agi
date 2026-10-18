@@ -71,17 +71,17 @@ export const falconAIQueryKeys = {
   connector: (id) => ["falcon-ai", "connector", id],
 };
 
+export async function getConnector(id) {
+  const { data } = await axiosInstance.get(endpoints.falconAI.connector(id));
+  return data?.result || data;
+}
+
 export function useConnector(id, options = {}) {
   const { enabled = true, ...queryOptions } = options;
 
   return useQuery({
     queryKey: falconAIQueryKeys.connector(id),
-    queryFn: async () => {
-      const { data } = await axiosInstance.get(
-        endpoints.falconAI.connector(id),
-      );
-      return data?.result || data;
-    },
+    queryFn: () => getConnector(id),
     enabled: Boolean(id) && enabled,
     ...queryOptions,
   });

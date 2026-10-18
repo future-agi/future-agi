@@ -29,6 +29,8 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
+	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -52,16 +54,18 @@ type Config struct {
 // the only difference: gRPC uses the generated stub; HTTP accepts
 // `application/x-protobuf` and `application/json` per the OTLP/HTTP spec.
 type Server struct {
-	cfg      Config
-	writer   *chwriter.Writer
-	curated  *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
-	auth     *auth.Authenticator
-	usage    UsageEmitter
-	metering Metering
-	log      *slog.Logger
-	pricer   chexp.Pricer
-	grpc     *grpc.Server
-	httpd    *http.Server
+	traceNotifier   TraceNotifier
+	cfg             Config
+	writer          *chwriter.Writer
+	curated         *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
+	propertyCatalog PropertyCatalogWriter // observed keys + values spool; default nil
+	auth            *auth.Authenticator
+	usage           UsageEmitter
+	metering        Metering
+	log             *slog.Logger
+	pricer          chexp.Pricer
+	grpc            *grpc.Server
+	httpd           *http.Server
 
 	// Batching: the receiver handler pushes converted rows onto `pending` and
 	// signals via `pendCh`. A single flusher goroutine drains it on either
@@ -74,10 +78,12 @@ type Server struct {
 	// trace_sessions best-effort insert — bounding the curated latency and
 	// avoiding many tiny RMT parts. It rides the same lock + flush cycle as
 	// `pend` so the curated dual-write flushes with the span batch.
-	pendMu      sync.Mutex
-	pend        []map[string]any
-	pendCurated *curatedwriter.Batch
-	pendCh      chan struct{}
+	pendMu       sync.Mutex
+	pend         []map[string]any
+	pendCurated  *curatedwriter.Batch
+	pendProperty []observedcatalog.ScopedSpan
+	pendRoots    []traceavailable.Root
+	pendCh       chan struct{}
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -85,9 +91,18 @@ type Server struct {
 
 // Option configures optional Server dependencies.
 type Option struct {
-	log    *slog.Logger
-	pricer chexp.Pricer
+	traceNotifier   TraceNotifier
+	log             *slog.Logger
+	pricer          chexp.Pricer
+	propertyCatalog PropertyCatalogWriter
 }
+
+// TraceNotifier receives ended roots only after their canonical batch is stored.
+type TraceNotifier interface {
+	EnqueueRoots([]traceavailable.Root) error
+}
+
+func WithTraceNotifier(n TraceNotifier) Option { return Option{traceNotifier: n} }
 
 // WithLogger sets the server's logger.
 func WithLogger(l *slog.Logger) Option { return Option{log: l} }
@@ -95,6 +110,11 @@ func WithLogger(l *slog.Logger) Option { return Option{log: l} }
 // WithPricer sets the server's token-cost pricer. Nil (the zero value)
 // disables token-based cost (see chexp.Pricer).
 func WithPricer(p chexp.Pricer) Option { return Option{pricer: p} }
+
+// WithPropertyCatalogWriter installs the default-off observed catalog spool.
+func WithPropertyCatalogWriter(w PropertyCatalogWriter) Option {
+	return Option{propertyCatalog: w}
+}
 
 // New wires up the server but does NOT start serving. Call Run().
 //
@@ -131,23 +151,33 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 
 	log := slog.Default()
 	var pricer chexp.Pricer
+	var propertyCatalogWriter PropertyCatalogWriter
+	var traceNotifier TraceNotifier
 	for _, o := range opts {
+		if o.traceNotifier != nil {
+			traceNotifier = o.traceNotifier
+		}
 		if o.log != nil {
 			log = o.log
 		}
 		if o.pricer != nil {
 			pricer = o.pricer
 		}
+		if o.propertyCatalog != nil {
+			propertyCatalogWriter = o.propertyCatalog
+		}
 	}
 
 	s := &Server{
-		cfg:      cfg,
-		writer:   writer,
-		auth:     authenticator,
-		usage:    usage,
-		metering: metering,
-		log:      log,
-		pricer:   pricer,
+		traceNotifier:   traceNotifier,
+		cfg:             cfg,
+		writer:          writer,
+		auth:            authenticator,
+		usage:           usage,
+		metering:        metering,
+		log:             log,
+		pricer:          pricer,
+		propertyCatalog: propertyCatalogWriter,
 		// Share the span writer's HTTP client (keep-alive) for the curated RMTs,
 		// but the curated path writes BEST-EFFORT (chwriter.InsertBestEffort:
 		// single POST, no retry, no dead-letter) so it can't stall the span flush
@@ -318,8 +348,13 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 		return ptraceotlp.NewExportResponse(), status.Errorf(codes.ResourceExhausted, "quota exceeded: %s", check.Reason)
 	}
 
-	// Stamp auth-resolved org/project IDs onto resource attributes.
+	// Keep the authenticated workspace out-of-band. StampResourceAttrs retains
+	// the existing org/project behavior but deliberately does not add a
+	// workspace attribute to the canonical span payload.
+	var propertyOrganizationID, propertyWorkspaceID string
+	var propertyProjectIDs map[string]struct{}
 	if result := auth.FromContext(ctx); result != nil {
+		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
 		ck := auth.CacheKeyFromContext(ctx)
 		dropped, err := auth.StampResourceAttrs(ctx, h.s.auth, ck, req.Traces(), result)
 		if err != nil {
@@ -328,13 +363,18 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 		if dropped > 0 {
 			h.s.log.Warn("dropped ResourceSpans with unresolvable project", "dropped", dropped)
 		}
+		var scoped bool
+		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
+		if !scoped {
+			return ptraceotlp.NewExportResponse(), status.Error(codes.InvalidArgument, "auth project/workspace scope mismatch")
+		}
 	}
 
 	rows, ids, err := chexp.ConvertWithIdentities(ctx, req.Traces(), h.s.pricer)
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), err
 	}
-	h.s.enqueue(rows, ids)
+	h.s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs)
 
 	payloadBytes, _ := req.MarshalProto()
 	h.s.emitUsage(ctx, req.Traces(), int64(len(payloadBytes)))
@@ -412,8 +452,11 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stamp auth-resolved org/project IDs onto resource attributes.
+	// Keep the authenticated workspace out-of-band; see the gRPC path above.
+	var propertyOrganizationID, propertyWorkspaceID string
+	var propertyProjectIDs map[string]struct{}
 	if result := auth.FromContext(r.Context()); result != nil {
+		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
 		ck := auth.CacheKeyFromContext(r.Context())
 		dropped, err := auth.StampResourceAttrs(r.Context(), s.auth, ck, req.Traces(), result)
 		if err != nil {
@@ -423,6 +466,12 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		if dropped > 0 {
 			s.log.Warn("dropped ResourceSpans with unresolvable project", "dropped", dropped)
 		}
+		var scoped bool
+		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
+		if !scoped {
+			http.Error(w, "auth project/workspace scope mismatch", http.StatusBadRequest)
+			return
+		}
 	}
 
 	rows, ids, err := chexp.ConvertWithIdentities(r.Context(), req.Traces(), s.pricer)
@@ -431,7 +480,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "convert: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.enqueue(rows, ids)
+	s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs)
 
 	s.emitUsage(r.Context(), req.Traces(), int64(len(body)))
 
@@ -485,11 +534,44 @@ func trimSpace(s string) string {
 // they ride alongside `rows` so the curated dual-write flushes with the span
 // batch. A nil / empty Batch is skipped (the common no-user/no-session case).
 func (s *Server) enqueue(rows []map[string]any, ids *curatedwriter.Batch) {
+	s.enqueueScoped(rows, ids, "", "", nil)
+}
+
+// enqueueScoped keeps the authenticated workspace in a drain-local sidecar.
+// The sidecar is only allocated when the default-off observed writer is
+// installed, and no field is added to the canonical span row.
+func (s *Server) enqueueScoped(
+	rows []map[string]any,
+	ids *curatedwriter.Batch,
+	organizationID string,
+	workspaceID string,
+	workspaceProjectIDs map[string]struct{},
+) {
 	if len(rows) == 0 {
 		return
 	}
 	s.pendMu.Lock()
 	s.pend = append(s.pend, rows...)
+	if s.traceNotifier != nil {
+		s.pendRoots = append(s.pendRoots, traceavailable.ExtractRoots(rows, organizationID, workspaceID, workspaceProjectIDs)...)
+	}
+	if s.propertyCatalog != nil && organizationID != "" && workspaceID != "" {
+		for _, row := range rows {
+			projectID, _ := row["project_id"].(string)
+			scopeError := ""
+			if workspaceProjectIDs == nil {
+				scopeError = "missing_project_workspace_proof"
+			} else if _, allowed := workspaceProjectIDs[projectID]; !allowed {
+				scopeError = "project_workspace_mismatch"
+			}
+			s.pendProperty = append(s.pendProperty, observedcatalog.ScopedSpan{
+				OrganizationID: organizationID,
+				WorkspaceID:    workspaceID,
+				ScopeError:     scopeError,
+				Row:            row,
+			})
+		}
+	}
 	if ids != nil && !ids.Empty() {
 		if s.pendCurated == nil {
 			s.pendCurated = curatedwriter.NewBatch()
@@ -530,17 +612,35 @@ func (s *Server) drainNow(ctx context.Context) {
 	s.pendMu.Lock()
 	batch := s.pend
 	curated := s.pendCurated
+	property := s.pendProperty
+	roots := s.pendRoots
 	s.pend = nil
 	s.pendCurated = nil
+	s.pendProperty = nil
+	s.pendRoots = nil
 	s.pendMu.Unlock()
 	if len(batch) == 0 {
 		return
 	}
-	_ = s.writer.Insert(ctx, batch)
+	spanErr := s.writer.Insert(ctx, batch)
+	if spanErr == nil && s.traceNotifier != nil && len(roots) > 0 {
+		if err := s.traceNotifier.EnqueueRoots(roots); err != nil {
+			s.log.Warn("error feed stored-root notification gap", "error", err)
+		}
+	}
 	// Insert returns an error on dead-letter; the writer already persisted
 	// the rows + bumped stats. We swallow here because the flusher's job
 	// is to make progress, not propagate per-batch failures. /healthz
 	// surfaces the writer's failure counter.
+
+	// Transfer observation ownership to the fsync-backed catalog spool only
+	// after confirmed canonical success. Backfill repairs the preceding crash
+	// gap. Catalog errors never change canonical writer health or dead-letter.
+	if spanErr == nil && s.propertyCatalog != nil && len(property) > 0 {
+		if err := s.propertyCatalog.EnqueueCanonicalSpans(property); err != nil {
+			observedcatalog.LogHandoffGap(s.log, property, err)
+		}
+	}
 
 	// CH-derived dimensions (P3b step2 HALF 2): BEST-EFFORT mirror the
 	// drain-scoped curated end_users / trace_sessions identities AFTER the span

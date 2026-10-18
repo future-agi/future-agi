@@ -24,6 +24,10 @@ const (
 	defaultTokenURL    = "https://oauth2.googleapis.com/token"
 )
 
+// tokenClient bounds the exchange: Token holds the provider's lock while it
+// runs, so a hung exchange would stall every request that needs a token.
+var tokenClient = &http.Client{Timeout: 10 * time.Second}
+
 type serviceAccountKey struct {
 	ClientEmail string `json:"client_email"`
 	PrivateKey  string `json:"private_key"`
@@ -52,10 +56,21 @@ func NewTokenProvider(credentialsFile, scope string) (*TokenProvider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gauth: read credentials file: %w", err)
 	}
+	return NewTokenProviderJSON(data, scope)
+}
 
+// NewTokenProviderJSON loads a service account without writing its private key to disk.
+// Managed providers receive this value from encrypted per-organization credentials.
+func NewTokenProviderJSON(data []byte, scope string) (*TokenProvider, error) {
 	var sa serviceAccountKey
 	if err := json.Unmarshal(data, &sa); err != nil {
-		return nil, fmt.Errorf("gauth: parse credentials file: %w", err)
+		return nil, fmt.Errorf("gauth: parse service account JSON: %w", err)
+	}
+	if sa.ClientEmail == "" || sa.PrivateKey == "" {
+		return nil, fmt.Errorf("gauth: service account JSON requires client_email and private_key")
+	}
+	if sa.TokenURI != "" && sa.TokenURI != defaultTokenURL {
+		return nil, fmt.Errorf("gauth: unsupported Google token URI")
 	}
 
 	block, _ := pem.Decode([]byte(sa.PrivateKey))
@@ -111,12 +126,16 @@ func (t *TokenProvider) Token() string {
 	jwt := sigInput + "." + base64.RawURLEncoding.EncodeToString(sig)
 
 	form := "grant_type=" + url.QueryEscape("urn:ietf:params:oauth:grant-type:jwt-bearer") + "&assertion=" + jwt
-	resp, err := http.Post(t.tokenURL, "application/x-www-form-urlencoded", strings.NewReader(form)) //nolint:noctx
+	resp, err := tokenClient.Post(t.tokenURL, "application/x-www-form-urlencoded", strings.NewReader(form)) //nolint:noctx
 	if err != nil {
 		slog.Warn("gauth: token exchange error", "error", err)
 		return ""
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		slog.Warn("gauth: token exchange rejected", "status", resp.StatusCode)
+		return ""
+	}
 
 	var tokenResp struct {
 		AccessToken string `json:"access_token"`
@@ -130,4 +149,14 @@ func (t *TokenProvider) Token() string {
 	t.accessToken = tokenResp.AccessToken
 	t.tokenExpiry = now.Add(time.Duration(tokenResp.ExpiresIn-60) * time.Second)
 	return t.accessToken
+}
+
+// Invalidate discards a cached access token after an upstream authentication rejection.
+// Google can revoke a token before its advertised expiry; the next request should exchange a
+// fresh service-account assertion instead of replaying the rejected token until the clock wins.
+func (t *TokenProvider) Invalidate() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.accessToken = ""
+	t.tokenExpiry = time.Time{}
 }

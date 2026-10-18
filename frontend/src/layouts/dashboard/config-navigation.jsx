@@ -177,16 +177,16 @@ export function useNavData() {
             path: paths.dashboard.annotations.queues,
             icon: ICONS.annotate,
           },
-          // {
-          //   title: "Alerts",
-          //   path: paths.dashboard.alerts,
-          //   icon: ICONS.alerts,
-          //   eventTrigger: () => {
-          //     trackEvent(Events.navigationAlertTabClicked, {
-          //       [PropertyName.click]: true,
-          //     });
-          //   },
-          // },
+          {
+            title: "Alerts",
+            path: paths.dashboard.alerts,
+            icon: ICONS.alerts,
+            eventTrigger: () => {
+              trackEvent(Events.navigationAlertTabClicked, {
+                [PropertyName.click]: true,
+              });
+            },
+          },
           {
             title: "Dashboards",
             path: paths.dashboard.dashboards.root,
@@ -208,6 +208,11 @@ export function useNavData() {
       {
         subheader: "Simulate",
         items: [
+          {
+            title: "Environment",
+            path: paths.dashboard.simulate.environments.root,
+            icon: <Iconify icon="solar:server-square-cloud-linear" />,
+          },
           {
             title: "Agent Definition",
             path: paths.dashboard.simulate.agentDefinition,

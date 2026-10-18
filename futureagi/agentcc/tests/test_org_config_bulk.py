@@ -93,6 +93,32 @@ class TestOrgConfigBulk:
 
         assert result[str(organization.id)]["routing"] == {"strategy": "active"}
 
+    def test_one_unbuildable_config_does_not_fail_the_response(
+        self, admin_client, organization, db
+    ):
+        # The gateway drops its whole org store when this endpoint errors, so a
+        # single org whose config the contract rejects must not take the rest
+        # of the fleet offline. See issue #3131.
+        _make_active_config(organization)
+        org_b = Organization.objects.create(name="Bulk Sync Healthy Org")
+        _make_active_config(org_b)
+
+        def _fail_for_first_org(org_id, cfg):
+            if org_id == str(organization.id):
+                raise ValueError("1 validation error for OrgConfig")
+            return {"routing": {}}
+
+        with patch(
+            "agentcc.views.org_config_bulk._build_payload",
+            side_effect=_fail_for_first_org,
+        ):
+            response = admin_client.get("/agentcc/org-configs/bulk/")
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert str(organization.id) not in result
+        assert str(org_b.id) in result
+
     def test_soft_deleted_configs_excluded(self, admin_client, organization, db):
         # Soft-deleted rows are still present in the DB but must be filtered
         # out of the bulk payload the gateway pulls.

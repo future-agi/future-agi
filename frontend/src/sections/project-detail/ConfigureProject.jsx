@@ -232,8 +232,9 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                         fontWeight={"fontWeightRegular"}
                         color={"text.secondary"}
                       >
-                        Defines the percentage of data processed for agent
-                        compass
+                        Controls Error Feed only. Eval tasks have their own
+                        sampling rate and are not affected by this. Error Feed
+                        uses very few credits.
                       </Typography>
                       <a
                         href="https://docs.futureagi.com/docs/error-feed/features/sampling"
