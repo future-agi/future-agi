@@ -512,11 +512,20 @@ class HarnessCompositionScenarioSerializer(serializers.Serializer):
     derived_from = serializers.CharField(allow_null=True)
 
 
+class HarnessCompositionRuleSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    text = serializers.CharField(allow_blank=True)
+
+
 class HarnessCompositionSuiteSerializer(serializers.Serializer):
     digest = serializers.CharField()
     name = serializers.CharField()
     parent_digest = serializers.CharField(allow_null=True)
     policy_profile = serializers.JSONField()
+    unscored_agent_rules = HarnessCompositionRuleSerializer(
+        many=True,
+        help_text="The environment's agent_policy rules no scenario in this suite grades.",
+    )
     scenarios = HarnessCompositionScenarioSerializer(many=True)
 
 

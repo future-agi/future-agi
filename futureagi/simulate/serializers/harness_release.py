@@ -73,7 +73,3 @@ class HarnessReleaseAgentRequestSerializer(serializers.Serializer):
     agent = HarnessAgentSerializer()
     name = serializers.CharField(max_length=255)
     idempotency_key = serializers.CharField(max_length=255)
-
-
-class HarnessCompositionCreateResponseSerializer(serializers.Serializer):
-    id = serializers.UUIDField(help_text="The composition, an environment id.")

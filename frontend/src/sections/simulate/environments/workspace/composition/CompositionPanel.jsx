@@ -200,10 +200,11 @@ function AlignmentTable({ composition }) {
 
 AlignmentTable.propTypes = { composition: PropTypes.object };
 
-function PolicyProfile({ profile }) {
+function PolicyProfile({ profile, unscored }) {
   const parameters = Object.entries(profile?.parameters || {});
-  const rules = profile?.scored_agent_rules || [];
-  if (!parameters.length && !rules.length) {
+  const scored = Object.entries(profile?.scored_agent_rules || {});
+  const notScored = unscored || [];
+  if (!parameters.length && !scored.length && !notScored.length) {
     return (
       <Typography sx={{ typography: "s2", color: "text.subtitle", p: 2 }}>
         The suite uses the environment&apos;s default policy.
@@ -224,16 +225,25 @@ function PolicyProfile({ profile }) {
           </Typography>
         </Stack>
       ))}
-      {rules.length > 0 && (
-        <Typography sx={{ typography: "s2" }}>
-          Scored agent rules: {rules.map(displayText).join(", ")}
+      {scored.map(([rule, checks]) => (
+        <Typography key={rule} sx={{ typography: "s2" }}>
+          Scored: <b>{rule}</b>, judged by {checks.map(displayText).join(", ")}
+        </Typography>
+      ))}
+      {notScored.length > 0 && (
+        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+          Not scored by this suite (no scenario exercises it):{" "}
+          {notScored.map((rule) => rule.id).join(", ")}
         </Typography>
       )}
     </Stack>
   );
 }
 
-PolicyProfile.propTypes = { profile: PropTypes.object };
+PolicyProfile.propTypes = {
+  profile: PropTypes.object,
+  unscored: PropTypes.array,
+};
 
 function ScenarioProof({ composition }) {
   const proof = composition?.binding_proof?.scenarios || {};
@@ -389,9 +399,12 @@ export default function CompositionPanel({ composition }) {
 
       <SectionCard
         title="Policy profile"
-        subtitle="The policy settings the suite was proved under"
+        subtitle="The policy settings the suite was proved under, and which agent rules it scores"
       >
-        <PolicyProfile profile={suite.policy_profile} />
+        <PolicyProfile
+          profile={suite.policy_profile}
+          unscored={suite.unscored_agent_rules}
+        />
       </SectionCard>
 
       <SectionCard

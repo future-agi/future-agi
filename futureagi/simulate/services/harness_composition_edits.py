@@ -174,6 +174,7 @@ def _applied(
     _checked_binding(
         binding,
         agent=binding["agent"],
+        target_id=binding["agent"].get("provider_target_id") or "",
         environment_digest=environment_digest,
         suite_digest=suite["digest"],
         proof=proof,

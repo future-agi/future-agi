@@ -423,7 +423,12 @@ def _with_digest(document: dict[str, Any]) -> dict[str, Any]:
     return {**document, "digest": canonical_digest(document)}
 
 
-def agent_reference(agent_version: AgentVersion, connector: str) -> dict[str, Any]:
+def agent_reference(
+    agent_version: AgentVersion, connector: str, config: dict[str, Any]
+) -> dict[str, Any]:
+    """The platform's half of a binding's agent identity (contract §2.4); adaptation adds the
+    provider agent it inspected. `config` is the connection's non-secret config: the provider
+    target and its dynamic variables, so another target is another identity."""
     return {
         "agent_definition_id": str(agent_version.agent_definition_id),
         "agent_version_id": str(agent_version.id),
@@ -431,40 +436,22 @@ def agent_reference(agent_version: AgentVersion, connector: str) -> dict[str, An
             agent_version.configuration_snapshot or {}
         ),
         "connector": connector,
+        "agent_config_digest": canonical_digest(config or {}),
     }
-
-
-def binding_document(
-    agent_version: AgentVersion, environment_digest: str, connector: str
-) -> dict[str, Any]:
-    """A normalized canonical binding (contract §2.4): every field present, so the guest's
-    recomputed digest matches."""
-    return _with_digest(
-        {
-            "schema_version": AGENT_BINDING_SCHEMA,
-            "agent": agent_reference(agent_version, connector),
-            "environment": {"digest": environment_digest},
-            "mode": "canonical",
-            "agent_tools": [],
-            "tools": [],
-            "fixtures": {},
-            "aliases": {},
-            "rendering": {},
-            "prompt_changes": [],
-        }
-    )
 
 
 def _checked_binding(
     document: Any,
     *,
     agent: dict[str, Any],
+    target_id: str,
     environment_digest: str,
     suite_digest: str,
     proof: Any,
 ) -> dict[str, Any]:
     """A given binding the composition may use: normalized, sealed over exactly its content,
-    targeting this agent version and environment, and proved against this suite when routed.
+    adapted for this agent version, connection and provider target, targeting this environment,
+    and proved against this suite when routed.
     """
     if (
         not isinstance(document, dict)
@@ -478,8 +465,16 @@ def _checked_binding(
         raise _error(
             "binding_invalid", "the binding's digest does not match its content"
         )
-    if document["agent"] != agent:
-        raise _error("binding_invalid", "the binding targets another agent version")
+    bound = document["agent"] if isinstance(document["agent"], dict) else {}
+    if {key: bound.get(key) for key in agent} != agent:
+        raise _error(
+            "binding_invalid",
+            "the binding was adapted for another agent version or connection config",
+        )
+    if bound.get("provider_target_id") != target_id or not bound.get("provider_digest"):
+        raise _error(
+            "binding_invalid", "the binding was adapted for another provider agent"
+        )
     if document["environment"] != {"digest": environment_digest}:
         raise _error("binding_invalid", "the binding targets another environment")
     if document["prompt_changes"]:
@@ -542,7 +537,7 @@ def create_composition(
     agent_version: AgentVersion,
     name: str,
     idempotency_key: str,
-    binding: dict[str, Any] | None = None,
+    binding: dict[str, Any],
     alignment: dict[str, Any] | None = None,
     binding_proof: dict[str, Any] | None = None,
     trajectories: dict[str, Any] | None = None,
@@ -550,10 +545,10 @@ def create_composition(
     """A completed environment that runs `agent` against `suite` and its environment.
 
     `agent` is the same connection a hosted job carries (connector, mode, config, secret refs).
-    `agent_version` is the platform identity results are attributed to. `binding` is a sealed
-    document from adaptation (with its `alignment` and, when tool-routed, `binding_proof` and the
-    agent's proved `trajectories`, which a suite edit re-proves the binding with: §7.8); without
-    one the composition uses a canonical binding.
+    `agent_version` is the platform identity results are attributed to. `binding` is the sealed
+    document adaptation produced, the only way an agent is admitted (§7.5), with its `alignment`
+    and, when tool-routed, `binding_proof` and the agent's proved `trajectories`, which a suite
+    edit re-proves the binding with (§7.8).
     """
     from simulate.serializers.harness_job import HarnessJobCreateSerializer
     from simulate.services.alk_simulate_ingestion import (
@@ -587,16 +582,17 @@ def create_composition(
         )
     _check_modality(agent_version, connector)
     chain = _chain(suite)
-    if binding is None:
-        binding = binding_document(agent_version, chain[-1].digest, connector)
-    else:
-        binding = _checked_binding(
-            binding,
-            agent=agent_reference(agent_version, connector),
-            environment_digest=chain[-1].digest,
-            suite_digest=suite.digest,
-            proof=binding_proof,
-        )
+    target_key = "assistant_id" if connector == "vapi" else "agent_id"
+    binding = _checked_binding(
+        binding,
+        agent=agent_reference(
+            agent_version, connector, payload["agent"].get("config") or {}
+        ),
+        target_id=str((payload["agent"].get("config") or {}).get(target_key) or ""),
+        environment_digest=chain[-1].digest,
+        suite_digest=suite.digest,
+        proof=binding_proof,
+    )
     HarnessAgentBinding.no_workspace_objects.get_or_create(
         organization=organization,
         digest=binding["digest"],
@@ -978,7 +974,9 @@ def adaptation_payload(
             "object_key": suite.object_key,
         },
         "agent_version_id": str(agent_version.id),
-        "agent": agent_reference(agent_version, connector),
+        "agent": agent_reference(
+            agent_version, connector, payload["agent"].get("config") or {}
+        ),
     }
     return json.loads(json.dumps(payload, default=str))
 
