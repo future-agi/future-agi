@@ -169,6 +169,9 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		healthMonitor = router.GetHealthMonitor()
 	}
 	if healthMonitor == nil {
+		if latencyTracker == nil {
+			latencyTracker = routing.NewLatencyTracker(0.3)
+		}
 		healthMonitor = routing.NewHealthMonitor(latencyTracker, cbReg)
 	} else {
 		healthMonitor.SetCircuitBreakerRegistry(cbReg)
