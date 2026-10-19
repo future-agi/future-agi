@@ -8,7 +8,7 @@ from django.db import transaction
 from django.db.models import Count, F, Max, Min, Q
 from django.utils import timezone
 
-from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSION
+from tracer.constants.grouping_versions import SAMPLED_GROUPING_POLICY_VERSIONS
 from tracer.models.trace_error_analysis import (
     ErrorClusterTraces,
     FeedIssueStatus,
@@ -792,7 +792,7 @@ def _unassign(
             "scope": scope,
             "disposition": (
                 "waiting_budget"
-                if scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+                if scope.policy_version in SAMPLED_GROUPING_POLICY_VERSIONS
                 and reason.startswith("budget_exhausted:")
                 else "deferred"
             ),
@@ -991,7 +991,7 @@ def publish_grouping(
             for item in snap["occurrences"]
         }
         if (
-            scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+            scope.policy_version in SAMPLED_GROUPING_POLICY_VERSIONS
             and attempt.pending_occurrence_ids
         ):
             if not set(attempt.pending_occurrence_ids).issubset(pending_ids):
@@ -1010,7 +1010,7 @@ def publish_grouping(
         }
         if set(states) != set(attempt.offered_issue_ids):
             raise GroupingConflict("offered issue changed")
-        sampled = scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
+        sampled = scope.policy_version in SAMPLED_GROUPING_POLICY_VERSIONS
         membership = {}
         evidence_members = {}
         for key, state in states.items():
@@ -1696,6 +1696,14 @@ def publish_grouping(
         scope.registry_revision = F("registry_revision") + 1
         scope.save(update_fields=["registry_revision", "updated_at"])
         scope.refresh_from_db(fields=["registry_revision"])
+        if new_ids or any(command["type"] == "merge" for command in commands):
+            from tracer.services.grouping.revisit import requeue_deferred_reports
+
+            requeue_deferred_reports(
+                scope=scope,
+                source_attempt=attempt,
+                reviewed_work_ids=[work.id for work in works],
+            )
         result = {
             "status": "completed",
             "registry_revision": scope.registry_revision,

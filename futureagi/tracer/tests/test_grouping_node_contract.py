@@ -13,6 +13,7 @@ from django.test import override_settings
 from tracer.constants.grouping_versions import (
     GROUPING_POLICY_VERSION,
     SAMPLED_GROUPING_POLICY_VERSION,
+    SIMULATION_GROUPING_POLICY_VERSION,
 )
 from tracer.models.trace_error_analysis import ErrorClusterTraces
 from tracer.models.trace_grouping import (
@@ -44,15 +45,62 @@ pytestmark = pytest.mark.django_db
     ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
 )
 @pytest.mark.parametrize(
-    "policy_version", [GROUPING_POLICY_VERSION, SAMPLED_GROUPING_POLICY_VERSION]
+    "policy_version,defer_discovery",
+    [
+        (GROUPING_POLICY_VERSION, False),
+        (SAMPLED_GROUPING_POLICY_VERSION, False),
+        (SIMULATION_GROUPING_POLICY_VERSION, False),
+        (SIMULATION_GROUPING_POLICY_VERSION, True),
+    ],
 )
-def test_python_claim_node_features_python_completion(observe_project, policy_version):
+def test_python_claim_node_features_python_completion(
+    observe_project,
+    policy_version,
+    defer_discovery,
+    auth_client,
+    organization,
+    workspace,
+):
     worker_root = os.environ.get("OMEGA_GROUPING_WORKER_ROOT")
     if not worker_root:
         pytest.skip("set OMEGA_GROUPING_WORKER_ROOT to the worker checkout")
     coordinator = Path(worker_root) / "workers/error-feed-node/grouping/coordinator.mjs"
     assert coordinator.is_file()
-    report = _saved_report(observe_project)
+    if policy_version == SIMULATION_GROUPING_POLICY_VERSION:
+        from simulate.models import Scenarios
+        from simulate.models.test_execution import CallExecution
+        from tracer.models.trace_investigation import TraceInvestigationReport
+        from tracer.services.trace_investigation import claim_due_investigations
+        from tracer.tests.test_simulation_investigation import _execution, _publish
+
+        scenario = Scenarios.objects.create(
+            name="Refund",
+            source="Refund policy",
+            organization=organization,
+            workspace=workspace,
+        )
+        execution, _ = _execution(
+            organization,
+            workspace,
+            scenario,
+            "contract",
+            CallExecution.CallStatus.COMPLETED,
+        )
+        assert (
+            auth_client.post(
+                f"/simulate/test-executions/{execution.id}/debug-analysis/"
+            ).status_code
+            == 202
+        )
+        (investigation,) = claim_due_investigations(
+            worker_id="contract", engine_version="omega-v1", limit=1
+        )["claims"]
+        _publish(investigation)
+        report = TraceInvestigationReport.no_workspace_objects.get(
+            job_id=investigation["job_id"]
+        )
+    else:
+        report = _saved_report(observe_project)
     enqueue_grouping_features(report=report)
     claim = claim_feature_jobs(worker_id="contract-test", limit=1)["claims"][0]
     script = """
@@ -95,7 +143,7 @@ process.stdout.write(JSON.stringify(completion));
     vectors = [
         {**row, "bucket_keys": row["index_buckets"]} for row in completion["features"]
     ]
-    TraceGroupingScope.no_workspace_objects.filter(project=observe_project).update(
+    TraceGroupingScope.no_workspace_objects.filter(project=report.project).update(
         policy_version=policy_version
     )
     with patch(
@@ -111,7 +159,7 @@ process.stdout.write(JSON.stringify(completion));
     )
 
     def run_engine(receipt_ids=None):
-        wire = {"claim": grouping_claim}
+        wire = {"claim": grouping_claim, "defer_discovery": defer_discovery}
         if receipt_ids is not None:
             wire["receipt_ids_override"] = receipt_ids
         process = subprocess.run(
@@ -149,6 +197,21 @@ process.stdout.write(JSON.stringify(completion));
             output_tokens=10,
         )
     final = run_engine(receipt_ids)
+    if defer_discovery:
+        receipts = final["final_checkpoint"]["files"]["checkpoint.json"]["receipts"]
+        targeted = [
+            item for item in receipts if item.get("phase") == "targeted_revisit"
+        ]
+        assert len(targeted) == 1
+        (created,) = [
+            item
+            for item in final["publish_body"]["commands"]
+            if item["type"] == "create"
+        ]
+        assert (
+            created["admission"]["primary_receipt_id"]
+            == targeted[0]["primary_receipt_id"]
+        )
     checkpoint_attempt(
         attempt_id=grouping_claim["attempt_id"],
         lease_token=grouping_claim["lease_token"],
