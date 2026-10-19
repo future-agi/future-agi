@@ -1104,7 +1104,9 @@ class HostedHarnessProvider:
         organization = request_organization(request)
         if organization is None:
             return Response(
-                {"detail": "Organization not found"},
+                build_error_envelope(
+                    "Organization not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
                 status=status.HTTP_404_NOT_FOUND,
             )
         data = request.validated_data
@@ -1586,11 +1588,11 @@ class HostedHarnessProvider:
         ).get("adaptation"):
             # Only the adaptation process answers its conversation, and it has exited.
             return Response(
-                {
-                    "error": "conversation_closed",
-                    "message": "This adaptation has finished; start a new one to change it.",
-                    "retryable": False,
-                },
+                build_error_envelope(
+                    "This adaptation has finished; start a new one to change it.",
+                    status_code=status.HTTP_409_CONFLICT,
+                    code="conversation_closed",
+                ),
                 status=status.HTTP_409_CONFLICT,
             )
         if job.state in terminal_states:
