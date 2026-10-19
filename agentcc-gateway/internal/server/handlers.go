@@ -248,7 +248,7 @@ func (h *Handlers) ReloadRouting(cfg *config.Config, registry *providers.Registr
 	}
 
 	// Rebuild router in registry.
-	if err := registry.ReloadRouter(cfg.Routing); err != nil {
+	if err := registry.ReloadRouter(cfg.Routing, h.healthMonitor); err != nil {
 		return fmt.Errorf("reload router: %w", err)
 	}
 
