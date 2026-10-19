@@ -1,147 +1,146 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { render } from "src/utils/test-utils";
 
-const enqueueSnackbar = vi.fn();
 const navigate = vi.fn();
-
-vi.mock("notistack", () => ({ enqueueSnackbar: (...a) => enqueueSnackbar(...a) }));
+const createHarnessAdaptation = vi.fn();
+const releases = { data: [], error: null, isLoading: false };
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
   return { ...actual, useNavigate: () => navigate };
 });
 
+vi.mock("src/api/harness/releases", () => ({
+  useHarnessReleases: () => releases,
+  createHarnessAdaptation: (...args) => createHarnessAdaptation(...args),
+}));
+
+vi.mock("src/api/harness/harness", () => ({
+  harnessIdempotencyKey: () => "key-1",
+  storeHarnessSecretValues: async () => ({
+    secret_refs: {
+      RETELL_API_KEY: { manager: "platform-vault", key: "ref-1" },
+    },
+  }),
+}));
+
+vi.mock("src/components/run-tests/common", () => ({
+  useAgentDefinitions: () => ({
+    agentDefinitions: [{ id: "agent-1", agent_name: "Clinic chat" }],
+    isLoading: false,
+  }),
+}));
+
+vi.mock("src/api/agent-definition/agent-definition-version", () => ({
+  useAgentDefinitionVersions: () => ({
+    data: { pages: [{ results: [{ id: "version-1", version_name: "v1" }] }] },
+    isLoading: false,
+  }),
+}));
+
 const { default: PrebuiltEnvironmentsBrowse } = await import(
   "../PrebuiltEnvironmentsBrowse"
 );
 
-const renderBrowse = () => {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={client}>
+const CLINIC = {
+  id: "release-1",
+  digest: "sha256:" + "a".repeat(64),
+  name: "appointment_booking",
+  system: true,
+  parent: null,
+  tools: [],
+  policy: { parameters: [], agent_rules: [] },
+  suites: [
+    {
+      id: "suite-1",
+      digest: "sha256:" + "b".repeat(64),
+      name: "appointment_booking_base",
+      scenario_count: 8,
+      origins: { base: 8, specialized: 0, custom: 0 },
+      policy_profile: {},
+    },
+  ],
+};
+
+const renderBrowse = () =>
+  render(
+    <QueryClientProvider client={new QueryClient()}>
       <PrebuiltEnvironmentsBrowse />
     </QueryClientProvider>,
   );
-};
-
-const tile = (name) => screen.getByRole("button", { name: new RegExp(name) });
 
 describe("PrebuiltEnvironmentsBrowse", () => {
   beforeEach(() => {
-    enqueueSnackbar.mockReset();
     navigate.mockReset();
+    createHarnessAdaptation.mockReset();
+    releases.data = [CLINIC];
   });
 
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("renders agent-type category headers and tiles from the fixture", async () => {
+  it("lists released environments only, never the static template catalog", () => {
     renderBrowse();
 
-    expect(await screen.findByText("Customer Support Line")).toBeInTheDocument();
-    ["Voice & chat", "Computer use", "Code"].forEach((group) => {
-      expect(screen.getByText(group)).toBeInTheDocument();
-    });
-    ["Retail Banking Assistant", "Browser", "Coding", "Verilog"].forEach(
-      (name) => expect(screen.getByText(name)).toBeInTheDocument(),
-    );
-  });
-
-  it("reports the exact scenario count on a tile", async () => {
-    renderBrowse();
-    // Customer Support Line: 8 tools, 6 rules, 4 data-trap tables, Starter depth 3.
-    expect(await screen.findByText(/68 scenarios/)).toBeInTheDocument();
-  });
-
-  it("filters tiles by name as the user searches", async () => {
-    const user = userEvent.setup();
-    renderBrowse();
-    await screen.findByText("Customer Support Line");
-
-    await user.type(
-      screen.getByPlaceholderText("Search templates…"),
-      "Verilog",
-    );
-
-    await waitFor(() =>
-      expect(screen.queryByText("Customer Support Line")).not.toBeInTheDocument(),
-    );
-    expect(screen.getByText("Verilog")).toBeInTheDocument();
-    expect(screen.queryByText("Voice & chat")).not.toBeInTheDocument();
-    expect(screen.getByText("Code")).toBeInTheDocument();
-  });
-
-  it("hides the build panel until a template is selected", async () => {
-    renderBrowse();
-    await screen.findByText("Customer Support Line");
-
-    expect(screen.queryByRole("tab", { name: /Build here/ })).not.toBeInTheDocument();
-  });
-
-  it("opens the inline build panel for the clicked row without navigating", async () => {
-    const user = userEvent.setup();
-    renderBrowse();
-    await screen.findByText("Customer Support Line");
-
-    await user.click(tile("Customer Support Line"));
-
-    expect(screen.getByRole("tab", { name: /Build here/ })).toBeInTheDocument();
-    expect(screen.getByText("Build in the cloud")).toBeInTheDocument();
+    expect(screen.getByText("appointment_booking")).toBeInTheDocument();
+    expect(screen.queryByText("Customer Support Line")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Build environment/ }),
-    ).toBeInTheDocument();
-    expect(navigate).not.toHaveBeenCalled();
-    expect(enqueueSnackbar).not.toHaveBeenCalled();
+      screen.queryByText("Retail Banking Assistant"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: /Use with my agent/ }),
+    ).toHaveLength(1);
   });
 
-  it("selects a row from the keyboard (Enter)", async () => {
-    renderBrowse();
-    await screen.findByText("Customer Support Line");
-
-    const target = tile("Customer Support Line");
-    expect(target).toHaveAttribute("tabindex", "0");
-    fireEvent.keyDown(target, { key: "Enter" });
-
-    expect(await screen.findByRole("tab", { name: /Build here/ })).toBeInTheDocument();
-    expect(navigate).not.toHaveBeenCalled();
-  });
-
-  it("collapses the selection when search filters it out", async () => {
+  it("adopts a release only by adapting the agent to its suite", async () => {
     const user = userEvent.setup();
+    createHarnessAdaptation.mockResolvedValue({ job: { job_id: "job-1" } });
     renderBrowse();
-    await screen.findByText("Customer Support Line");
 
-    await user.click(tile("Customer Support Line"));
-    expect(screen.getByRole("tab", { name: /Build here/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Use with my agent/ }));
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).queryByRole("button", { name: /Compose/ }),
+    ).not.toBeInTheDocument();
 
-    await user.type(
-      screen.getByPlaceholderText("Search templates…"),
-      "Verilog",
-    );
-
-    await waitFor(() =>
-      expect(screen.queryByRole("tab", { name: /Build here/ })).not.toBeInTheDocument(),
-    );
-  });
-
-  it("returns to the environments home from the back button", async () => {
-    const user = userEvent.setup();
-    renderBrowse();
-    await screen.findByText("Customer Support Line");
-
+    await user.click(within(dialog).getByRole("combobox", { name: "Agent" }));
+    await user.click(screen.getByRole("option", { name: "Clinic chat" }));
     await user.click(
-      screen.getByRole("button", { name: /Back to how you want to start/ }),
+      within(dialog).getByRole("combobox", { name: "Agent version" }),
+    );
+    await user.click(screen.getByRole("option", { name: "v1" }));
+    await user.type(within(dialog).getByLabelText("RETELL_API_KEY"), "secret");
+    await user.type(
+      within(dialog).getByLabelText("Retell chat agent ID"),
+      "agent_abc",
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: /Adapt to my agent/ }),
     );
 
-    expect(navigate).toHaveBeenCalledWith(
-      "/dashboard/simulate/environments",
+    expect(createHarnessAdaptation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suite_id: "suite-1",
+        agent_version_id: "version-1",
+        agent: expect.objectContaining({
+          connector: "retell_chat",
+          config: { agent_id: "agent_abc" },
+        }),
+      }),
     );
+    expect(navigate).toHaveBeenCalledWith(expect.stringContaining("job-1"));
+  });
+
+  it("says there is nothing to adopt when no environment is released", () => {
+    releases.data = [];
+    renderBrowse();
+
+    expect(
+      screen.getByText("No prebuilt environments yet."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Use with my agent/ }),
+    ).not.toBeInTheDocument();
   });
 });

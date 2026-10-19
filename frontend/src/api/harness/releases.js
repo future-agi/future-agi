@@ -3,19 +3,15 @@ import { useQuery } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 
-// Released environments, adaptation and composition (environment-releases.md §7.5-§7.7).
+// Released environments, adaptation and run reports (environment-releases.md §7.5-§7.7).
 
 export const listHarnessReleases = async () =>
   (await axios.get(apiPath("/simulate/api/harness-releases/"))).data;
 
-// Both take `{suite_id, agent_version_id, agent, name, idempotency_key}`. Adaptation answers 202
-// with the hosted job it started; composition answers 201 `{id}`, the composed environment.
+// Takes `{suite_id, agent_version_id, agent, name, idempotency_key}` and answers 202 with the
+// hosted job it started; a completed adaptation creates the composed environment.
 export const createHarnessAdaptation = async (payload) =>
   (await axios.post(apiPath("/simulate/api/harness-adaptations/"), payload))
-    .data;
-
-export const createHarnessComposition = async (payload) =>
-  (await axios.post(apiPath("/simulate/api/harness-compositions/"), payload))
     .data;
 
 export const getHarnessRunReport = async (id, runId, baseline) =>

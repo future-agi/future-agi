@@ -29,7 +29,6 @@ import {
 } from "src/api/harness/harness";
 import {
   createHarnessAdaptation,
-  createHarnessComposition,
   useHarnessReleases,
 } from "src/api/harness/releases";
 import { paths } from "src/routes/paths";
@@ -137,7 +136,7 @@ export function UseReleaseDialog({ release, open, onClose }) {
   const [targetId, setTargetId] = useState("");
   const [dynamicVariables, setDynamicVariables] = useState("");
   const [name, setName] = useState(release?.name || "");
-  const [submitting, setSubmitting] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   // One key per dialog, so a retried click cannot start a second adaptation.
   const [idempotencyKey] = useState(harnessIdempotencyKey);
@@ -148,32 +147,28 @@ export function UseReleaseDialog({ release, open, onClose }) {
     Boolean(name.trim()) &&
     !submitting;
 
-  const submit = async (kind) => {
-    setSubmitting(kind);
+  const submit = async () => {
+    setSubmitting(true);
     setError("");
     try {
       const stored = await storeHarnessSecretValues({ [keyName]: apiKey });
-      const payload = releaseUsePayload({
-        suiteId,
-        agentVersionId: version.id,
-        name,
-        connector,
-        targetId,
-        dynamicVariables,
-        secretRefs: stored?.secret_refs || {},
-        idempotencyKey: `${idempotencyKey}-${kind}`,
-      });
-      if (kind === "adapt") {
-        const job = await createHarnessAdaptation(payload);
-        queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
-        navigate(paths.dashboard.simulate.harness.detail(job.job.job_id));
-      } else {
-        const composition = await createHarnessComposition(payload);
-        navigate(paths.dashboard.simulate.environments.detail(composition.id));
-      }
+      const job = await createHarnessAdaptation(
+        releaseUsePayload({
+          suiteId,
+          agentVersionId: version.id,
+          name,
+          connector,
+          targetId,
+          dynamicVariables,
+          secretRefs: stored?.secret_refs || {},
+          idempotencyKey,
+        }),
+      );
+      queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
+      navigate(paths.dashboard.simulate.harness.detail(job.job.job_id));
     } catch (requestError) {
       setError(errorMessage(requestError));
-      setSubmitting("");
+      setSubmitting(false);
     }
   };
 
@@ -258,10 +253,9 @@ export function UseReleaseDialog({ release, open, onClose }) {
             onChange={(event) => setName(event.target.value)}
           />
           <Typography variant="caption" color="text.secondary">
-            Adapting maps your agent&apos;s tools onto this environment, asks
-            about your policies and proposes scenario changes for you to
-            approve. Composing skips that and needs an agent that already calls
-            the environment&apos;s own tools.
+            Adapting inspects your agent, maps its tools onto this environment
+            and proves the mapping on every scenario, then asks you to approve
+            it. The scenario suite stays as released.
           </Typography>
           {error && (
             <Alert severity="error" variant="outlined">
@@ -271,31 +265,15 @@ export function UseReleaseDialog({ release, open, onClose }) {
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button
-          color="inherit"
-          onClick={onClose}
-          disabled={Boolean(submitting)}
-        >
+        <Button color="inherit" onClick={onClose} disabled={submitting}>
           Cancel
-        </Button>
-        <Button
-          variant="outlined"
-          disabled={!ready}
-          onClick={() => submit("compose")}
-          startIcon={
-            submitting === "compose" ? <CircularProgress size={14} /> : null
-          }
-        >
-          Compose without adaptation
         </Button>
         <Button
           variant="contained"
           disabled={!ready}
-          onClick={() => submit("adapt")}
+          onClick={submit}
           startIcon={
-            submitting === "adapt" ? (
-              <CircularProgress size={14} color="inherit" />
-            ) : null
+            submitting ? <CircularProgress size={14} color="inherit" /> : null
           }
         >
           Adapt to my agent
@@ -370,9 +348,9 @@ ReleaseCard.propTypes = {
 };
 
 // Released environments: proved worlds and suites a hosted agent can run against without
-// authoring a new environment.
-export default function ReleaseGallery() {
-  const { data: releases = [], error } = useHarnessReleases();
+// authoring a new environment. `empty` renders once the list has loaded with nothing in it.
+export default function ReleaseGallery({ empty = null }) {
+  const { data: releases = [], error, isLoading } = useHarnessReleases();
   const [using, setUsing] = useState(null);
 
   if (error) {
@@ -382,7 +360,7 @@ export default function ReleaseGallery() {
       </Alert>
     );
   }
-  if (!releases.length) return null;
+  if (!releases.length) return isLoading ? null : empty;
 
   return (
     <Box>
@@ -412,3 +390,5 @@ export default function ReleaseGallery() {
     </Box>
   );
 }
+
+ReleaseGallery.propTypes = { empty: PropTypes.node };

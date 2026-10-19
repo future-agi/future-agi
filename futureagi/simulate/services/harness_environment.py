@@ -487,7 +487,11 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
 
 def _composition_section(job: HostedHarnessJob) -> dict[str, Any] | None:
     """What a composition is made of (contract §7.6); None for an authored environment."""
-    from simulate.models import AgentVersion, HarnessSuiteRelease
+    from simulate.models import (
+        AgentVersion,
+        HarnessEnvironmentRelease,
+        HarnessSuiteRelease,
+    )
     from simulate.services.harness_releases import _visible, composition_of
 
     composition = composition_of(job)
@@ -498,6 +502,13 @@ def _composition_section(job: HostedHarnessJob) -> dict[str, Any] | None:
         HarnessSuiteRelease, job.organization, composition["suite"]["digest"]
     )
     manifest = suite.manifest if suite is not None else {}
+    profile = manifest.get("policy_profile") or {}
+    environment = _visible(
+        HarnessEnvironmentRelease,
+        job.organization,
+        composition["environment"][-1]["digest"],
+    )
+    scored = profile.get("scored_agent_rules") or {}
     version = (
         AgentVersion.no_workspace_objects.filter(
             id=binding["agent"]["agent_version_id"]
@@ -515,7 +526,15 @@ def _composition_section(job: HostedHarnessJob) -> dict[str, Any] | None:
             "digest": composition["suite"]["digest"],
             "name": composition["suite"]["name"],
             "parent_digest": (manifest.get("parent") or {}).get("digest"),
-            "policy_profile": manifest.get("policy_profile") or {},
+            "policy_profile": profile,
+            "unscored_agent_rules": [
+                {"id": rule["id"], "text": rule.get("text") or ""}
+                for rule in ((environment.policy if environment else {}) or {}).get(
+                    "rules"
+                )
+                or []
+                if rule.get("class") == "agent_policy" and rule["id"] not in scored
+            ],
             "scenarios": [
                 {
                     "key": entry["key"],

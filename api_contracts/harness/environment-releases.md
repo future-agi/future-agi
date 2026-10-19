@@ -137,6 +137,10 @@ The sealer verifies the parent, then refuses an extension that:
 It may add tools, handlers, tables with their own rows, and rules. A run
 carries the chain base-first.
 
+An extension only adds. Replacing a prebuilt tool or handler with the
+customer's own implementation is not supported in v1: the sealer refuses any
+change to a parent tool, handler, rule or table.
+
 ### 2.3 SuiteRelease — `futureagi.suite-release.v1`
 
 Layout:
@@ -159,7 +163,7 @@ provision.json      written by the sealer: the platform's scenario records
 | `name` | slug |
 | `environment` | `{"digest"}`: the exact release (or extension) every scenario was proved against |
 | `parent` | `null`, or `{"digest"}` of the suite this one was derived from |
-| `policy_profile` | `{"parameters": {...}, "scored_agent_rules": [rule ids]}` |
+| `policy_profile` | `{"parameters": {...}, "scored_agent_rules": {rule id: [sub-goal names]}}`: each scored `agent_policy` rule and the judged sub-goals that grade it |
 | `scenarios` | `[{key, path, origin, derived_from}]`, `path` is `scenarios/<name>` |
 | `files`, `provenance`, `metadata` | as §2.1 |
 
@@ -174,8 +178,13 @@ provision.json      written by the sealer: the platform's scenario records
 Sealing:
 
 1. Verifies the environment release and checks the profile: parameters must
-   exist and satisfy their type and `allowed`; `scored_agent_rules` must be
-   `agent_policy` rule ids.
+   exist and satisfy their type and `allowed`; every `scored_agent_rules` key must
+   be an `agent_policy` rule id naming at least one sub-goal, each in the suite's
+   `sub_goals.json` and named by at least one scenario. A rule the policy
+   declares but the map leaves out is not scored by the suite, and the
+   composition shows it as unscored (§7.6); a base suite is a starter suite,
+   not full policy coverage. State outcomes (code checks) and policy verdicts
+   (judged sub-goals) are separate checkpoints of the same scenario.
 2. Checks every folder is listed, each `scenario.json`'s `scenario_key` equals
    its `key`, and each origin matches its files against the parent suite.
 3. Copies the environment's world, writes the profile into
@@ -207,7 +216,7 @@ producers and the guest compute the same digest (§3).
 | Field | Rule |
 |---|---|
 | `schema_version`, `digest` | §3 |
-| `agent` | `{agent_definition_id, agent_version_id, configuration_digest, connector}`; `configuration_digest` is the canonical digest of `AgentVersion.configuration_snapshot`; `connector` is a resolved `HarnessAgentSerializer.connector` value (`livekit`, `vapi`, `retell`, `retell_chat`, `phone`) |
+| `agent` | `{agent_definition_id, agent_version_id, configuration_digest, connector, agent_config_digest, provider_target_id, provider_digest}`. The platform supplies the first five: `configuration_digest` is the canonical digest of `AgentVersion.configuration_snapshot`, `connector` is a resolved `HarnessAgentSerializer.connector` value (`livekit`, `vapi`, `retell`, `retell_chat`, `phone`), `agent_config_digest` is the canonical digest of the connection's non-secret `config` (provider target id, dynamic variables). Adaptation adds `provider_target_id` and `provider_digest`, the digest of the provider agent it inspected (prompt, model, voice, tools; secrets redacted). A new agent version, another target or connection config, or a provider agent changed after adaptation is a new binding identity, even when the mapping is reused; the suite is unchanged by it |
 | `environment` | `{"digest"}`: the release (or extension) the binding targets |
 | `mode` | `canonical`, `tool_routed` or `conversation_only` |
 | `agent_tools` | `[]` unless `tool_routed`: the agent's admitted tools (§6.3), `[{name, description, parameters, admission}]`, `parameters` a JSON Schema object, `admission` `routed` or `replaced` |
@@ -452,7 +461,8 @@ of an authoring archive:
 environments keep their path. It refuses, before writing anything:
 - any verification failure from §2.5 (`check_run_inputs`);
 - a suite without a PostgreSQL proof (`suite_runtime_unproved`);
-- a job connector that differs from the binding's;
+- a job connector that differs from the binding's, or a provider target other
+  than the binding's `agent.provider_target_id` (`run_inputs_mismatch`);
 - a combination it does not compose (`compose_unsupported`). It composes
   `canonical` and `tool_routed` bindings on `retell_chat`, `retell` and `vapi`.
 
@@ -466,15 +476,18 @@ deterministic: the same inputs give the same bundle digest.
 | `tool-server` | source process from `generated/tool-server` (§6.1) with the release's `tools.json`, `handlers/` and the run's `binding.json`, user `svc-tools`, one per world, environment `REQUEST_BINDING=1` |
 | capabilities | `world_db` (postgres), `tools` (http, `tool-server`, health `/health`) |
 | runtime | `kind: process`, `evidence_seam: tool_trace` |
-| `metadata.provider_import` | `type` `retell` (connectors `retell`, `retell_chat`) or `vapi`; `source_target_id` from `job.agent.config` `agent_id` (Retell) or `assistant_id` (Vapi); public capability `tools`; `environment_tools` = the release's tool names (`canonical`) or the binding's `agent_tools` names (`tool_routed`); `target_modality` `chat` for `retell_chat`, else `voice`; `admission: "per_tool"`; `request_binding: true` |
+| `metadata.provider_import` | `type` `retell` (connectors `retell`, `retell_chat`) or `vapi`; `source_target_id` from `job.agent.config` `agent_id` (Retell) or `assistant_id` (Vapi); public capability `tools`; `environment_tools` = the release's tool names (`canonical`) or the binding's `agent_tools` names (`tool_routed`); `target_modality` `chat` for `retell_chat`, else `voice`; `admission: "per_tool"`; `request_binding: true`; `profile_digest` = the binding's `agent.provider_digest` |
 | `metadata.release` | the manifest, environment, suite and binding digests, and the binding mode |
 | files | the suite's `scenarios/`, `sub_goals.json`, `simulator_prompt.md`; the release's `handlers/`; a generated `contract.json` (agent name, `modality` `chat` or `voice`, the tools the agent calls: the release's for `canonical`, `agent_tools` for `tool_routed`) |
 
 The guest then clones the customer's agent once per world (`provider_import`)
 with per-tool admission (§6.3), pointing every admitted tool at that world's
-`tools` capability. The existing Retell chat runner or hosted voice runner
-drives each scenario, and checks grade the world through the hosted world
-handle.
+`tools` capability. Before cloning it inspects the provider agent exactly as
+adaptation did and refuses (`provider_configuration_changed`, creating nothing)
+when the digest differs from `profile_digest`: a changed prompt, model, voice
+or tool is another agent, which is adapted again rather than run under this
+binding. The existing Retell chat runner or hosted voice runner drives each
+scenario, and checks grade the world through the hosted world handle.
 
 ### 6.1 Tool server
 
@@ -633,7 +646,7 @@ are indexed from the suite's `scenario.json` documents (number, name,
 instruction, persona, sub-goals), so chat and the Scenarios tab address them by
 number. `create_composition` (`services/harness_releases.py`) builds it for
 `retell_chat`, `retell` and `vapi` agents in `provider_import` mode, from a
-given binding document (adaptation) or a `canonical` one it produces.
+given binding document; adaptation is the only producer.
 
 ### 7.4 Runs
 
@@ -691,7 +704,11 @@ carries the agent reference (§2.4). Adaptation jobs are followed as jobs
 finished one is refused (409 `conversation_closed`).
 
 **Mode.** `canonical` when every admitted tool is an environment tool with the
-same name; `conversation_only` when none is admitted; otherwise `tool_routed`,
+same name and compatible arguments: every argument the agent sends is an
+environment argument of the same JSON type whose values the environment
+accepts, and every required environment argument is one the agent sends. A
+tool with the environment's name and other arguments is mapped like any other.
+`conversation_only` when none is admitted; otherwise `tool_routed`,
 and the builder writes the binding.
 
 **Tools** (the builder drafts; code decides):
@@ -747,8 +764,7 @@ Under `/simulate/api/`, organization-scoped like the other harness routes.
 |---|---|---|
 | `GET harness-releases/` | | `{results: [{id, digest, name, system, parent: {digest, name} or null, tools: [{name, description, mutates_state}], policy: {parameters: [{name, type, default, allowed}], agent_rules: [{id, text}]}, suites: [{id, digest, name, scenario_count, origins: {base, specialized, custom}, policy_profile}]}]}`; system releases and the organization's own |
 | `POST harness-adaptations/` | `{suite_id, agent_version_id, agent, name, idempotency_key}` (the key in the body); `agent` as in a hosted job (`connector` `retell_chat`, `retell` or `vapi`, `mode: "provider_import"`, `config`, `secret_refs`); the agent definition's type must match the connector's modality (400 `agent_modality_mismatch`) | 202, the job (`HarnessJobReadSerializer`); the UI follows it like any harness job |
-| `POST harness-compositions/` | as `harness-adaptations/` | 201 `{id}`: a `canonical` composition, without adaptation |
-| `GET harness-environments/{id}/` | | adds `composition`: `null`, or `{environment: [{digest, name}], suite: {digest, name, parent_digest, policy_profile, scenarios: [{key, origin, derived_from}]}, binding: {digest, mode, agent_tools, tools}, agent: {agent_definition_id, agent_version_id, connector, name, version_name}, alignment, binding_proof: {passed, scenarios}}` |
+| `GET harness-environments/{id}/` | | adds `composition`: `null`, or `{environment: [{digest, name}], suite: {digest, name, parent_digest, policy_profile, unscored_agent_rules: [{id, text}], scenarios: [{key, origin, derived_from}]}, binding: {digest, mode, agent_tools, tools}, agent: {agent_definition_id, agent_version_id, connector, name, version_name}, alignment, binding_proof: {passed, scenarios}}` |
 | `GET harness-environments/{id}/runs/{run_id}/report/` | `?baseline=<run_id>`; a run is named by its test execution ID or its run job ID; the baseline may be a run of another composition in the organization | §7.7; 409 `not_a_composition` for other environments |
 
 ### 7.7 Run report
@@ -774,8 +790,12 @@ Under `/simulate/api/`, organization-scoped like the other harness routes.
 - `comparability` is `null` without `baseline`. `differing` applies §5 to the
   two runs' manifests (`environment`, `suite`, `simulator`, `scorer`,
   `runtime`, `selection.scenario_keys`); `comparable` is true when it is empty.
+- The report reads what the run froze, never the composition's current state:
+  the suite named by `manifest.suite`, and the binding and alignment from the
+  composition copy on the run job. A later suite edit does not change an
+  earlier run's scenarios, metadata or coverage.
 - `coverage.base_scenarios` counts the root suite of the chain;
-  `unscorable` comes from the composition's alignment; `runnable` is the suite's
+  `unscorable` comes from the run's alignment; `runnable` is the suite's
   scenarios minus `unscorable`; `extension_tools` are the extension release's
   tools when the chain has one.
 - A trial without a receipt is `null`: outside `pass_1`, and its scenario does
@@ -788,7 +808,10 @@ world, its tools, the policy and the binding are fixed. Only the suite changes,
 and every saved change is a child `SuiteRelease` of the composition's suite
 (§2.3), proved like any suite, with a `tool_routed` binding re-proved against
 it. The composition then runs the child; its earlier runs keep the manifests
-they froze (§7.4), and comparing across the change reports `suite` (§5).
+they froze (§7.4), and comparing across the change reports `suite` (§5). A
+change that removes every scenario grading a scored rule drops that rule from
+the child's `scored_agent_rules`, and the change summary lists it under
+`no_longer_scored`.
 
 **Workspace.** With no saved chat workspace, and on every chat restart (keeping
 only the chat's own root dot files, as for authored environments), the gateway

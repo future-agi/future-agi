@@ -131,10 +131,14 @@ def run_report(
 
     A trial without a receipt yet is `null`: it is neither passed nor failed, so it stays out of
     `pass_1`, and its scenario has not passed all of its trials.
+
+    Read from what the run froze, never the composition's current state: a later chat edit gives
+    the composition another suite, which must not change an earlier run's scenarios or coverage.
     """
-    composition = composition_of(environment)
+    # The composition as it stood when this run was submitted, copied onto the run job.
+    composition = composition_of(run)
     suite = _visible(
-        HarnessSuiteRelease, environment.organization, composition["suite"]["digest"]
+        HarnessSuiteRelease, environment.organization, manifest["suite"]["digest"]
     )
     by_key = {entry["key"]: entry for entry in suite.manifest["scenarios"]}
     personas = {persona["scenario_key"]: persona for persona in suite.personas}
