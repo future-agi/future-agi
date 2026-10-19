@@ -416,7 +416,7 @@ func connectivityCheck(name, baseURL, pathPrefix string) {
 }
 
 // ReloadRouter rebuilds the load balancing router from new routing config.
-func (r *Registry) ReloadRouter(routingCfg config.RoutingConfig) error {
+func (r *Registry) ReloadRouter(routingCfg config.RoutingConfig, health ...*routing.HealthMonitor) error {
 	r.mu.RLock()
 	providerIDs := make(map[string]bool, len(r.providers))
 	for id := range r.providers {
@@ -426,6 +426,9 @@ func (r *Registry) ReloadRouter(routingCfg config.RoutingConfig) error {
 	var sharedHealth *routing.HealthMonitor
 	if r.router != nil {
 		sharedHealth = r.router.GetHealthMonitor()
+	}
+	if len(health) > 0 && health[0] != nil {
+		sharedHealth = health[0]
 	}
 	r.mu.RUnlock()
 
