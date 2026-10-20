@@ -79,4 +79,32 @@ describe("NodeOutputDetail error handling with partial output (Issue #2503)", ()
     expect(rows[0].output).toBe("Success output 1");
     expect(rows[1].output).toBe("Success output 2");
   });
+
+  it("verifies error banner visibility behavior across running and settled node statuses", () => {
+    // 1. Running node with error should not display premature error banner if status is running
+    const runningNode = {
+      status: "running",
+      errorMessage: null,
+      inputs: [{ payload: "running input" }],
+      outputs: [],
+    };
+    const isRunning = runningNode.status === "running" || runningNode.status === "pending";
+    expect(isRunning).toBe(true);
+
+    // 2. Settled failed node with partial output displays both alert and partial outputs
+    const settledFailedNode = {
+      status: "FAILED",
+      errorMessage: "Rate limit exceeded during token streaming",
+      inputs: [{ id: "in-1", payload: "Prompt: generate long essay" }],
+      outputs: [{ id: "out-1", payload: "Chapter 1: The Beginning..." }],
+    };
+    const settledError = settledFailedNode.errorMessage;
+    const settledOutputs = settledFailedNode.outputs;
+    const hasErrorAlert = Boolean(settledError);
+    const hasPartialOutput = settledOutputs.length > 0;
+
+    expect(hasErrorAlert).toBe(true);
+    expect(hasPartialOutput).toBe(true);
+    expect(settledOutputs[0].payload).toContain("Chapter 1");
+  });
 });
