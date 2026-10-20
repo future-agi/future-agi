@@ -910,6 +910,35 @@ func translateToolChoice(raw json.RawMessage) *geminiFunctionCallingConfig {
 		}
 	}
 
+	var at struct {
+		Type         string `json:"type"`
+		AllowedTools struct {
+			Mode  string `json:"mode"`
+			Tools []struct {
+				Type     string `json:"type"`
+				Function struct {
+					Name string `json:"name"`
+				} `json:"function"`
+			} `json:"tools"`
+		} `json:"allowed_tools"`
+	}
+	if err := json.Unmarshal(raw, &at); err == nil && at.Type == "allowed_tools" {
+		var names []string
+		for _, item := range at.AllowedTools.Tools {
+			if item.Function.Name != "" {
+				names = append(names, item.Function.Name)
+			}
+		}
+		mode := "AUTO"
+		if at.AllowedTools.Mode == "required" {
+			mode = "ANY"
+		}
+		return &geminiFunctionCallingConfig{
+			Mode:                 mode,
+			AllowedFunctionNames: names,
+		}
+	}
+
 	return nil
 }
 
