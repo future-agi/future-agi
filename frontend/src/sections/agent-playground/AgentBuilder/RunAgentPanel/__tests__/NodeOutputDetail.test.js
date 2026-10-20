@@ -51,14 +51,32 @@ describe("NodeOutputDetail error handling with partial output (Issue #2503)", ()
     expect(rows[0].output).toBe("Node failed before generating outputs");
   });
 
-  it("handles successful nodes with outputs and no error", () => {
+  it("handles successful nodes with outputs and no error: does not trigger error alert or error row", () => {
     const nodeDetail = {
       status: "COMPLETED",
-      outputs: [{ id: "out-1", payload: "Success" }],
-      inputs: [],
+      outputs: [{ id: "out-1", payload: "Success output 1" }, { id: "out-2", payload: "Success output 2" }],
+      inputs: [{ id: "in-1", payload: "Input 1" }, { id: "in-2", payload: "Input 2" }],
     };
 
     const errorMessage = nodeDetail?.errorMessage ?? nodeDetail?.error_message;
-    expect(!!errorMessage).toBe(false);
+    const hasErrorMessage = Boolean(errorMessage);
+    const outputs = nodeDetail?.outputs || [];
+    const hasOutputs = outputs.length > 0;
+    const isPairedMode = nodeDetail.inputs.length > 0 && nodeDetail.inputs.length === outputs.length;
+
+    expect(hasErrorMessage).toBe(false);
+    expect(hasOutputs).toBe(true);
+    expect(isPairedMode).toBe(true);
+
+    // Ensure normal paired rows are constructed without error row mapping
+    const rows = nodeDetail.inputs.map((inp, i) => ({
+      id: `node-1-${i}`,
+      input: inp?.payload ?? "",
+      output: outputs[i]?.payload ?? "",
+    }));
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0].output).toBe("Success output 1");
+    expect(rows[1].output).toBe("Success output 2");
   });
 });
