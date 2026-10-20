@@ -1,11 +1,19 @@
-import React from "react";
+import React, { useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Typography } from "@mui/material";
+import { Box, Typography, Button, Collapse } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 
 export default function NodeErrorAlert({ errorMessage }) {
+  const [showFullError, setShowFullError] = useState(false);
+
   if (!errorMessage) return null;
+
+  const isLongError = errorMessage.length > 200 || errorMessage.includes("\n");
+  const displayMessage =
+    !showFullError && isLongError
+      ? `${errorMessage.slice(0, 200)}...`
+      : errorMessage;
 
   return (
     <Box
@@ -59,8 +67,26 @@ export default function NodeErrorAlert({ errorMessage }) {
             color: "text.secondary",
           }}
         >
-          {errorMessage}
+          {displayMessage}
         </Typography>
+        {isLongError && (
+          <Button
+            size="small"
+            variant="text"
+            color="error"
+            onClick={() => setShowFullError((prev) => !prev)}
+            sx={{
+              p: 0,
+              minWidth: "auto",
+              mt: 0.5,
+              fontSize: "0.75rem",
+              textTransform: "none",
+              fontWeight: 600,
+            }}
+          >
+            {showFullError ? "Show less" : "Show full error"}
+          </Button>
+        )}
       </Box>
     </Box>
   );
