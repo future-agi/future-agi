@@ -257,7 +257,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
       return [{ id: nodeExecutionIdentifier, _running: true }];
     }
 
-    if (hasErrorMessage) {
+    if (hasErrorMessage && !hasOutputs) {
       if (inputs.length > 0) {
         // Has inputs but output errored — one row per input
         return inputs.map((inp, i) => ({
@@ -332,7 +332,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     }
 
     const usePairedInput =
-      isPairedMode || (hasErrorMessage && inputs.length > 0);
+      isPairedMode || (hasErrorMessage && !hasOutputs && inputs.length > 0);
     const cols = [];
 
     if (showInputs) {
@@ -355,7 +355,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
       );
     }
 
-    if (hasErrorMessage) {
+    if (hasErrorMessage && !hasOutputs) {
       cols.push({
         field: "output",
         headerName: "Output",
