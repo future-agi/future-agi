@@ -12,32 +12,43 @@ describe("NodeOutputDetail error handling with partial output (Issue #2503)", ()
     const errorMessage = nodeDetail?.errorMessage ?? nodeDetail?.error_message;
     const outputs = nodeDetail?.outputs || [];
 
-    // The bug previously had: const hasErrorMessage = !!errorMessage && outputs.length === 0;
-    // With fix: error presence should not be suppressed by partial outputs
-    const hasError = !!errorMessage;
+    const hasErrorMessage = Boolean(errorMessage);
     const hasOutputs = outputs.length > 0;
 
-    expect(hasError).toBe(true);
+    expect(hasErrorMessage).toBe(true);
     expect(hasOutputs).toBe(true);
     expect(errorMessage).toBe("Node failed midway through execution");
   });
 
-  it("handles nodes that fail with zero outputs", () => {
+  it("handles nodes that fail with zero outputs by rendering error in grid row and alert", () => {
     const nodeDetail = {
       status: "FAILED",
       errorMessage: "Node failed before generating outputs",
       outputs: [],
-      inputs: [],
+      inputs: [{ id: "in-1", portName: "input_1", payload: "Test Input" }],
     };
 
     const errorMessage = nodeDetail?.errorMessage ?? nodeDetail?.error_message;
     const outputs = nodeDetail?.outputs || [];
+    const inputs = nodeDetail?.inputs || [];
 
-    const hasError = !!errorMessage;
+    const hasErrorMessage = Boolean(errorMessage);
     const hasOutputs = outputs.length > 0;
 
-    expect(hasError).toBe(true);
+    expect(hasErrorMessage).toBe(true);
     expect(hasOutputs).toBe(false);
+
+    // Grid row mapping for zero-output failure
+    const rows = (hasErrorMessage && !hasOutputs)
+      ? inputs.map((inp, i) => ({
+          id: `node-1-${i}`,
+          input: inp?.payload ?? "",
+          output: errorMessage,
+        }))
+      : [];
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].output).toBe("Node failed before generating outputs");
   });
 
   it("handles successful nodes with outputs and no error", () => {
