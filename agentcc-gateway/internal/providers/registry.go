@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -396,7 +397,7 @@ func autoDiscoverModels(name string, cfg *config.ProviderConfig) []string {
 		legacyText := strings.HasPrefix(m.ID, "abab") ||
 			(strings.HasPrefix(m.ID, "MiniMax-M") && !strings.HasPrefix(m.ID, "MiniMax-Music") &&
 				m.ID != "MiniMax-M3.1-Flash" && m.ID != "MiniMax-M3")
-		if cfg.Type == "minimax" && legacyText {
+		if cfg.Type == "minimax" && (legacyText || slices.Contains(cfg.Models, m.ID)) {
 			continue
 		}
 		if m.ID != "" {

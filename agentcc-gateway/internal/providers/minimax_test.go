@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
@@ -42,6 +43,11 @@ func TestMiniMaxDiscoveryPreservesConfiguredAndMedia(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg.Models, []string{"MiniMax-M2.7"}) {
 		t.Fatal("explicit models changed")
+	}
+	defaults := config.ProviderConfig{Type: "minimax", BaseURL: srv.URL, AutoDiscover: &discover}
+	applyProviderPreset(&defaults)
+	if got := autoDiscoverModels("minimax", &defaults); !reflect.DeepEqual(got, []string{"speech-2.8-hd"}) {
+		t.Fatalf("defaults duplicated by discovery: %v", got)
 	}
 	cfg.Type = "custom"
 	if got := autoDiscoverModels("custom", &cfg); len(got) != 5 {
@@ -80,9 +86,9 @@ func TestMiniMaxHTTPRequests(t *testing.T) {
 								req.Extra = map[string]json.RawMessage{"reasoning_effort": json.RawMessage(`"` + effort + `"`), "thinking": json.RawMessage(`{"type":"adaptive"}`)}
 							}
 							before, _ := json.Marshal(req)
-							called := false
+							var called atomic.Bool
 							srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-								called = true
+								called.Store(true)
 								if r.Method != http.MethodPost || r.URL.Path != path {
 									t.Errorf("request = %s %s", r.Method, r.URL.Path)
 								}
@@ -169,7 +175,7 @@ func TestMiniMaxHTTPRequests(t *testing.T) {
 								t.Fatal(err)
 							}
 							after, _ := json.Marshal(req)
-							if !called || string(before) != string(after) {
+							if !called.Load() || string(before) != string(after) {
 								t.Error("transport not called or caller history mutated")
 							}
 						})
