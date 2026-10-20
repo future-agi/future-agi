@@ -237,7 +237,8 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     () => nodeDetail?.outputs || [],
     [nodeDetail?.outputs],
   );
-  const hasErrorMessage = !!errorMessage && outputs.length === 0;
+  const hasErrorMessage = Boolean(errorMessage);
+  const hasOutputs = outputs.length > 0;
   const isPairedMode = inputs.length > 0 && inputs.length === outputs.length;
 
   // Map API response to AG Grid row data
