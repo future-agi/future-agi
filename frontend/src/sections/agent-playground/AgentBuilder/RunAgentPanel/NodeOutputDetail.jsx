@@ -13,6 +13,7 @@ import { AgGridReact } from "ag-grid-react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useGetNodeExecutionDetail } from "src/api/agent-playground/agent-playground";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
+import NodeErrorAlert from "./NodeErrorAlert";
 
 const tryParseJson = (str) => {
   if (typeof str !== "string") return null;
@@ -537,6 +538,9 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
           }
         />
       </Box>
+
+      {/* Node Error Alert for execution failures */}
+      {hasErrorMessage && <NodeErrorAlert errorMessage={errorMessage} />}
 
       {/* AG Grid Table */}
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
