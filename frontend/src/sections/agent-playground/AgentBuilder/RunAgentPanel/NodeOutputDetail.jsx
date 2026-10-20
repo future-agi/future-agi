@@ -396,7 +396,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     }
 
     return cols;
-  }, [showInputs, hasErrorMessage, isPairedMode, isNodeRunning, inputs.length]);
+  }, [showInputs, hasErrorMessage, hasOutputs, isPairedMode, isNodeRunning, inputs.length]);
 
   const PORT_ROW_HEIGHT = 120;
 
