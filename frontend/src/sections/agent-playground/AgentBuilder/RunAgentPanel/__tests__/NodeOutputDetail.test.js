@@ -107,4 +107,16 @@ describe("NodeOutputDetail error handling with partial output (Issue #2503)", ()
     expect(hasPartialOutput).toBe(true);
     expect(settledOutputs[0].payload).toContain("Chapter 1");
   });
+
+  it("extracts error message from various API field keys: errorMessage, error_message, error", () => {
+    const fromCamelCase = { errorMessage: "CamelCase failure" };
+    const fromSnakeCase = { error_message: "Snake_case failure" };
+    const fromRawError = { error: "Raw error string" };
+
+    const getMsg = (d) => d?.errorMessage || d?.error_message || d?.error || null;
+
+    expect(getMsg(fromCamelCase)).toBe("CamelCase failure");
+    expect(getMsg(fromSnakeCase)).toBe("Snake_case failure");
+    expect(getMsg(fromRawError)).toBe("Raw error string");
+  });
 });
