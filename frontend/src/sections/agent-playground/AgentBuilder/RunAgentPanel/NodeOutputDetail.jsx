@@ -231,7 +231,9 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     nodeDetail?.nodeExecutionId ||
     nodeDetail?.node_execution_id ||
     nodeExecutionId;
-  const errorMessage = nodeDetail?.errorMessage ?? nodeDetail?.error_message;
+  const errorMessage = useMemo(() => {
+    return nodeDetail?.errorMessage || nodeDetail?.error_message || nodeDetail?.error || null;
+  }, [nodeDetail?.errorMessage, nodeDetail?.error_message, nodeDetail?.error]);
 
   const inputs = useMemo(() => nodeDetail?.inputs || [], [nodeDetail?.inputs]);
   const outputs = useMemo(
