@@ -1,6 +1,7 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 
 export default function NodeErrorAlert({ errorMessage }) {
@@ -8,6 +9,7 @@ export default function NodeErrorAlert({ errorMessage }) {
 
   return (
     <Box
+      data-testid="node-error-alert"
       sx={{
         display: "flex",
         alignItems: "flex-start",
@@ -15,10 +17,16 @@ export default function NodeErrorAlert({ errorMessage }) {
         p: 1.5,
         mb: 2,
         borderRadius: 1,
-        bgcolor: "error.lighter",
+        bgcolor: (theme) =>
+          theme.palette.mode === "dark"
+            ? alpha(theme.palette.error.dark, 0.2)
+            : alpha(theme.palette.error.light, 0.12),
         border: "1px solid",
-        borderColor: "error.light",
-        color: "error.darker",
+        borderColor: (theme) =>
+          theme.palette.mode === "dark"
+            ? alpha(theme.palette.error.main, 0.3)
+            : alpha(theme.palette.error.main, 0.25),
+        color: "text.primary",
       }}
     >
       <Iconify
@@ -32,16 +40,23 @@ export default function NodeErrorAlert({ errorMessage }) {
         }}
       />
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.25 }}>
-          Execution Error
+        <Typography
+          typography="s2"
+          sx={{
+            fontWeight: 600,
+            mb: 0.5,
+            color: "error.main",
+          }}
+        >
+          Node execution failed
         </Typography>
         <Typography
-          variant="body2"
+          typography="s3"
           sx={{
             fontFamily: "monospace",
-            fontSize: "0.8125rem",
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
+            color: "text.secondary",
           }}
         >
           {errorMessage}
