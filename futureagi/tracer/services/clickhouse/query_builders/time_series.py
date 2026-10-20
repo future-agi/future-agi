@@ -5,17 +5,19 @@ Replaces ``get_all_system_metrics()`` and ``get_system_metric_data()`` from
 ``tracer.utils.graphs_optimized`` with ClickHouse-native queries.
 
 Strategy:
-- Unfiltered dashboard queries read from the ``spans_hourly_rollup``
-  pre-aggregated AggregatingMergeTree (v2 schema 010) using ``countMerge`` /
-  ``sumMerge`` / ``quantilesTDigestMerge`` combinators. The rollup is fed
-  directly from the v2 typed-JSON ``spans`` table via an incremental MV.
-- When attribute filters are present, falls back to scanning the v2
-  ``spans`` table directly.
+- Unfiltered queries read ``spans``'s own hourly aggregate states through
+  ``hourly_aggregate_state_source`` and combine them with ``countMerge`` /
+  ``sumMerge`` / ``quantilesTDigestMerge``. The states live in projections
+  maintained inside ``spans``, per physical part: unmerged row versions and
+  retained ``is_deleted`` tombstones are counted, so the result is an
+  approximation of the latest live rows and is published as inexact.
+- When attribute filters are present, scans the v2 ``spans`` table directly.
 
-CH25 close-out (2026-05-28): cut over from the legacy ``span_metrics_hourly``
-(fed by ``spans_mv`` ← ``tracer_observation_span`` CDC mirror) to
-``spans_hourly_rollup``. Removes the last dashboard read-path dependency on
-the legacy CDC-based aggregate.
+Both branches therefore read one physical table. The unfiltered branch used to
+read the separate ``spans_hourly_rollup`` materialized view, which counted
+insert deliveries the ``ReplacingMergeTree`` base had already collapsed and so
+answered "All" at a multiple of the sum of its own filtered parts; see
+``hourly_aggregate_states`` for the mechanism and the measurements.
 """
 
 import re
@@ -23,6 +25,10 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.hourly_aggregate_states import (
+    ERROR_RATE_MERGE_EXPRESSION,
+    hourly_aggregate_state_source,
+)
 
 _SAFE_CLUSTER_NAME_RE = re.compile(r"\A[A-Za-z0-9_-]+\Z")
 
@@ -50,15 +56,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             reserved for future per-model breakdowns).
     """
 
-    # Pre-aggregated table (AggregatingMergeTree)
-    # CH25 close-out (2026-05-28): switched from the legacy
-    # `span_metrics_hourly` (fed by `spans_mv` ← `tracer_observation_span` CDC
-    # mirror) to the v2 `spans_hourly_rollup` (fed directly from the v2 typed-
-    # JSON `spans` table — no CDC). The v2 rollup uses AggregateFunction
-    # columns + `*Merge()` combinators (real AggregatingMergeTree pattern)
-    # whereas the legacy table stored already-summed Int64s.
-    AGG_TABLE = "spans_hourly_rollup"
-    # Denormalized raw table (for filtered queries)
+    # Denormalized raw table. Both the filtered scan and the unfiltered
+    # aggregate-state read target it; only the shape of the aggregates differs.
     RAW_TABLE = "spans"
 
     def __init__(
@@ -162,6 +161,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 exact_filter_plan.required_matches,
                 exact_filter_plan.match_condition_groups,
                 exact_filter_plan.contribution_predicates,
+                root_contribution=exact_filter_plan.root_contribution,
             )
         if extra_where:
             return self._build_raw_query(extra_where)
@@ -331,20 +331,23 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
     # ------------------------------------------------------------------
 
     def _build_agg_query(self) -> tuple[str, dict[str, Any]]:
-        """Build a query against the pre-aggregated ``spans_hourly_rollup`` table.
+        """Build the unfiltered query from ``spans``'s own hourly states.
 
-        Uses ``*Merge()`` aggregate combinators (``countMerge``,
-        ``sumMerge``, ``quantilesTDigestMerge``) to reconstruct metrics
-        from the ``AggregatingMergeTree`` state columns. See
-        ``tracer/services/clickhouse/v2/schema/010_hourly_downsample.sql``
-        for the rollup table definition.
+        The inner source emits aggregate states at ``(project_id, hour,
+        status)`` grain — the grain ``spans``'s aggregate projections are
+        maintained at — and this level merges them into the requested bucket.
+        Those states are rebuilt with the parts they belong to, so replayed
+        deliveries stop counting once merged, which the separate hourly rollup
+        this replaced never did. They are still per part, not latest-live:
+        see ``hourly_aggregate_states``.
         """
         bucket_fn = self.time_bucket_expr(self.interval)
 
         # quantilesTDigestMerge returns a Tuple; index [1] is the 0.5 (median).
-        # The v2 rollup stores 3 quantiles (0.5, 0.95, 0.99) vs the legacy 4
+        # The stored states hold 3 quantiles (0.5, 0.95, 0.99) vs the legacy 4
         # (0.5, 0.9, 0.95, 0.99) — we still surface the median as avg_latency
-        # to preserve the dashboard contract.
+        # to preserve the dashboard contract. This is the same statistic the
+        # retired rollup rendered, so the line does not change meaning here.
         query = f"""
         SELECT
             {bucket_fn}(hour) AS time_bucket,
@@ -356,12 +359,11 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             countMerge(n) AS traffic_count,
             sumMerge(prompt_tokens_sum) AS prompt_tokens,
             sumMerge(completion_tokens_sum) AS completion_tokens,
-            countIfMerge(error_count) * 100.0 / greatest(countMerge(n), 1)
-                AS error_rate
-        FROM {self.AGG_TABLE}
-        WHERE project_id = %(project_id)s
-          AND hour >= %(start_date)s
-          AND hour < %(end_date)s
+            {ERROR_RATE_MERGE_EXPRESSION} AS error_rate
+        FROM {hourly_aggregate_state_source(
+            self.project_filter_sql(),
+            table=self.RAW_TABLE,
+        )}
         GROUP BY time_bucket
         ORDER BY time_bucket
         """
@@ -392,6 +394,41 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
+    def _exact_span_candidate_plan(self) -> Any | None:
+        """One necessary typed-Map leaf; never replace graph membership truth."""
+        if not (
+            self.exact_snapshot and self.observe_type == "span"
+            and self.resolve_span_versions
+        ):
+            return None
+        from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+            partition_span_filter_plans,
+        )
+
+        try:
+            attributes = []
+            for item in self.filters:
+                config = item.get("filter_config") or item.get("filterConfig") or {}
+                if str(config.get("col_type") or config.get("colType") or "").upper() == "SPAN_ATTRIBUTE":
+                    attributes.append(item)
+            plans, _ = partition_span_filter_plans(attributes)
+        except (TypeError, ValueError):
+            return None  # A graph-only shape retains its existing exact route.
+        candidates = [
+            plan for plan in plans
+            if plan.raw_graph_value_witness_predicate
+            and plan.scope == "span" and not plan.exclude_group_matches
+            and plan.aggregates and all(
+                any(column in aggregate for column in ("span_attr_num", "span_attr_str", "span_attr_bool"))
+                for aggregate in plan.aggregates
+            )
+        ]
+        # Cost order only: numeric value proofs before wider string maps.
+        return min(candidates, key=lambda plan: (
+            "span_attr_num[" not in plan.raw_graph_value_witness_predicate,
+            plan.raw_witness_rank if plan.raw_witness_rank is not None else 100,
+        ), default=None)
+
     def _exact_latest_scalar_source(
         self,
         *,
@@ -400,6 +437,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         scan_start_param: str,
         scan_end_param: str,
         candidate_trace_ids_param: str | None = None,
+        candidate_span_predicate: str = "",
+        with_version: bool = False,
     ) -> str:
         """Collapse physical versions to one narrow current-row tuple.
 
@@ -432,6 +471,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             "status",
             "is_deleted",
         ]
+        if with_version:
+            scalar_expressions.append("_version")
+            scalar_aliases.append("_version")
         for index, predicate in enumerate(row_predicates):
             scalar_expressions.append(f"toUInt8(ifNull(({predicate}), 0))")
             scalar_aliases.append(f"graph_row_match_{index}")
@@ -453,6 +495,20 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             if candidate_trace_ids_param
             else ""
         )
+        candidate_span_fragment = ""
+        if candidate_span_predicate:
+            # Only the immutable full key crosses this boundary. Replay every
+            # version, including clears/tombstones, before exact graph truth.
+            identity = "project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id"
+            candidate_span_fragment = f"""
+                  AND ({identity}) IN (
+                      SELECT {identity}
+                      FROM {self.RAW_TABLE}
+                      PREWHERE {self.project_filter_sql()}
+                        AND start_time >= %({scan_start_param})s
+                        AND start_time < %({scan_end_param})s
+                      WHERE ({candidate_span_predicate})
+                  )"""
         return f"""(
             SELECT
                 trace_id,
@@ -469,7 +525,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 FROM {self.RAW_TABLE}
                 PREWHERE {self.project_filter_sql()}
                   AND start_time >= %({scan_start_param})s
-                  AND start_time < %({scan_end_param})s{candidate_trace_fragment}
+                  AND start_time < %({scan_end_param})s{candidate_trace_fragment}{candidate_span_fragment}
                 GROUP BY
                     project_id,
                     observation_type,
@@ -488,6 +544,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         contribution_predicates: tuple[str, ...],
         scan_start_param: str,
         scan_end_param: str,
+        with_version: bool = False,
     ) -> str:
         """Project append-only physical span rows to the graph scalars.
 
@@ -507,6 +564,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             "toInt64(completion_tokens) AS completion_tokens",
             "status",
         ]
+        if with_version:
+            scalar_columns.append("_version")
         scalar_columns.extend(
             f"toUInt8(ifNull(({predicate}), 0)) AS graph_row_match_{index}"
             for index, predicate in enumerate(row_predicates)
@@ -547,8 +606,13 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                     f"duplicate raw trace candidate params: {duplicate_params}"
                 )
             self.params.update(self.raw_trace_candidate_params)
+            # GLOBAL IN broadcasts one materialised set to every shard and is
+            # required only when the source is a cluster table. On a single
+            # node it forces that same temporary set where a plain IN lets the
+            # reader use the subquery as an index condition instead.
+            set_operator = "GLOBAL IN" if self.raw_replica_shard_cluster else "IN"
             candidate_trace_fragment = f"""
-              AND trace_id GLOBAL IN (
+              AND trace_id {set_operator} (
                   SELECT trace_id
                   FROM {candidate_source}
                   PREWHERE project_id = toUUID(%(project_id)s)
@@ -576,6 +640,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         contribution_predicates: tuple[str, ...],
         scan_start_param: str,
         scan_end_param: str,
+        with_version: bool = False,
     ) -> str:
         if self.resolve_span_versions:
             return self._exact_latest_scalar_source(
@@ -583,12 +648,14 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 contribution_predicates=contribution_predicates,
                 scan_start_param=scan_start_param,
                 scan_end_param=scan_end_param,
+                with_version=with_version,
             )
         return self._raw_scalar_source(
             row_predicates=row_predicates,
             contribution_predicates=contribution_predicates,
             scan_start_param=scan_start_param,
             scan_end_param=scan_end_param,
+            with_version=with_version,
         )
 
     def build_exact_trace_contribution_batch(
@@ -793,11 +860,27 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             filters.append(row_filter)
         exact_row_filter = " AND ".join(f"({item})" for item in filters)
 
+        candidate_predicate = ""
+        candidate_plan = self._exact_span_candidate_plan()
+        if candidate_plan is not None:
+            from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
+                _namespace_params,
+            )
+            from tracer.services.clickhouse.v2.query_builders.filters import (
+                rewrite_v1_sql_to_v2,
+            )
+
+            candidate_predicate, candidate_params = _namespace_params(
+                rewrite_v1_sql_to_v2(candidate_plan.raw_graph_value_witness_predicate),
+                candidate_plan.params, filter_index="span_seed",
+            )
+            self.params.update(candidate_params)
         latest_source = self._exact_latest_scalar_source(
             row_predicates=exact_filter_plan.predicates,
             contribution_predicates=exact_filter_plan.contribution_predicates,
             scan_start_param="graph_partition_start",
             scan_end_param="graph_partition_end",
+            candidate_span_predicate=candidate_predicate,
         )
         bucket_fn = self.time_bucket_expr(self.interval)
         query = f"""
@@ -827,6 +910,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         required_matches: tuple[bool, ...],
         match_condition_groups: tuple[tuple[tuple[int, bool], ...], ...],
         contribution_predicates: tuple[str, ...],
+        *,
+        root_contribution: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Aggregate the configured scalar source over the bounded window.
 
@@ -918,7 +1003,30 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 contribution_predicates=contribution_predicates,
                 scan_start_param="graph_witness_start_date",
                 scan_end_param="graph_witness_end_date",
+                with_version=root_contribution,
             )
+
+            # A voice call contributes its root once per bucket. A re-polled
+            # root stays several live physical rows until ClickHouse merges
+            # them, so take the newest version's scalars, as the Voice list
+            # does, instead of adding every version.
+            def contributed(value: str) -> str:
+                if root_contribution:
+                    return f"argMaxIf({value}, _version, {contribution_condition})"
+                return f"sumIf({value}, {contribution_condition})"
+
+            if root_contribution:
+                row_count = f"toUInt64(countIf({contribution_condition}) > 0)"
+                error_count = (
+                    f"toUInt64(upper({contributed('status')})"
+                    " IN ('ERROR', 'ERRORED', 'FAILED'))"
+                )
+            else:
+                row_count = f"countIf({contribution_condition})"
+                error_count = f"""countIf(
+                            ({contribution_condition})
+                            AND upper(status) IN ('ERROR', 'ERRORED', 'FAILED')
+                        )"""
             source = f"""(
             SELECT
                 graph_output_bucket
@@ -948,21 +1056,18 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                             {sentinel_bucket}
                         ) AS graph_bucket,
                         toUInt8({output_window}) AS graph_in_output_window,
-                        sumIf(toInt64(latency_ms), {contribution_condition})
+                        {contributed("toInt64(latency_ms)")}
                             AS graph_latency_sum,
-                        sumIf(toInt64(total_tokens), {contribution_condition})
+                        {contributed("toInt64(total_tokens)")}
                             AS graph_total_tokens_sum,
-                        sumIf(cost, {contribution_condition})
+                        {contributed("cost")}
                             AS graph_cost_sum,
-                        countIf({contribution_condition}) AS graph_row_count,
-                        sumIf(toInt64(prompt_tokens), {contribution_condition})
+                        {row_count} AS graph_row_count,
+                        {contributed("toInt64(prompt_tokens)")}
                             AS graph_prompt_tokens_sum,
-                        sumIf(toInt64(completion_tokens), {contribution_condition})
+                        {contributed("toInt64(completion_tokens)")}
                             AS graph_completion_tokens_sum,
-                        countIf(
-                            ({contribution_condition})
-                            AND upper(status) IN ('ERROR', 'ERRORED', 'FAILED')
-                        ) AS graph_error_count,
+                        {error_count} AS graph_error_count,
 {local_match_columns}
                     FROM {latest_source}
                     GROUP BY trace_id, graph_bucket, graph_in_output_window

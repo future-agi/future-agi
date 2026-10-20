@@ -1,11 +1,5 @@
 /* eslint-disable react/prop-types */
-import React, {
-  useState,
-  useMemo,
-  useCallback,
-  useEffect,
-  useRef,
-} from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -21,27 +15,13 @@ import {
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import {
-  useGetSharedLinks,
-  useCreateSharedLink,
-  useUpdateSharedLink,
   useAddSharedLinkAccess,
   useRemoveSharedLinkAccess,
 } from "src/api/shared-links";
-
-/* ── helpers ──────────────────────────────────── */
-
-function buildFallbackUrl() {
-  // Use current page URL — it already has the drawer/trace state in query params
-  return window.location.href;
-}
-
-function copyToClipboard(text) {
-  navigator.clipboard.writeText(text);
-  enqueueSnackbar("Link copied!", {
-    variant: "success",
-    autoHideDuration: 1500,
-  });
-}
+import useDialogGeneration from "./useDialogGeneration";
+import useShareLink from "./useShareLink";
+import useShareAccess from "./useShareAccess";
+import useCopyLink from "./useCopyLink";
 
 /* ── AccessOption ─────────────────────────────── */
 
@@ -52,13 +32,24 @@ const AccessOption = ({
   description,
   selected,
   disabled,
+  pending,
+  unconfirmed,
   onClick,
 }) => (
   <Box
     role="button"
+    aria-pressed={selected ? "true" : "false"}
+    aria-busy={pending ? "true" : undefined}
     aria-disabled={disabled ? "true" : undefined}
     tabIndex={disabled ? -1 : 0}
     onClick={disabled ? undefined : onClick}
+    onKeyDown={(e) => {
+      if (disabled || !onClick) return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onClick();
+      }
+    }}
     sx={{
       display: "flex",
       alignItems: "center",
@@ -103,121 +94,64 @@ const AccessOption = ({
         {description}
       </Typography>
     </Box>
-    {selected && (
-      <Iconify
-        icon="mdi:check-circle"
-        width={18}
-        sx={{ color: "primary.main", flexShrink: 0 }}
-      />
+    {pending ? (
+      <Typography sx={{ fontSize: 11, color: "text.disabled", flexShrink: 0 }}>
+        Updating…
+      </Typography>
+    ) : selected && unconfirmed ? (
+      <Typography sx={{ fontSize: 11, color: "text.disabled", flexShrink: 0 }}>
+        Last confirmed
+      </Typography>
+    ) : (
+      selected && (
+        <Iconify
+          icon="mdi:check-circle"
+          width={18}
+          sx={{ color: "primary.main", flexShrink: 0 }}
+        />
+      )
     )}
   </Box>
 );
 
 /* ── ShareDialog ──────────────────────────────── */
 
-const ShareDialog = ({
-  open,
-  onClose,
-  resourceType,
-  resourceId,
-  fallbackShareUrl,
-}) => {
+const ShareDialog = ({ open, onClose, resourceType, resourceId }) => {
   const [emailInput, setEmailInput] = useState("");
-  const [copied, setCopied] = useState(false);
   const [localEmails, setLocalEmails] = useState([]); // optimistic local ACL
-  const [accessMode, setAccessMode] = useState("restricted"); // "restricted" | "public"
 
-  // Fetch existing shared links for this resource
-  const {
-    data: links,
-    isLoading: linksLoading,
-    isError: linksError,
-  } = useGetSharedLinks(open ? resourceType : null, open ? resourceId : null);
-  // Handle both camelCase (isActive) and snake_case (is_active) from DRF
-  const activeLink = useMemo(() => {
-    if (!links || !Array.isArray(links)) return null;
-    return links.find((l) => (l.is_active ?? l.isActive) !== false) || null;
-  }, [links]);
+  const generation = useDialogGeneration(
+    open,
+    `${resourceType ?? ""}|${resourceId ?? ""}`,
+  );
+  const link = useShareLink({ open, resourceType, resourceId, generation });
+  const access = useShareAccess({
+    shareLink: link.shareLink,
+    linksUpdatedAt: link.linksUpdatedAt,
+    linkBlocked: link.blocked,
+    refetch: link.refetch,
+    generation,
+  });
+  const { shareLink, loading } = link;
+  const shareLinkReady = access.ready;
 
-  const createMutation = useCreateSharedLink();
-  const updateMutation = useUpdateSharedLink();
+  // Only a token link is shareable: a dashboard page URL needs sign-in.
+  const shareUrl = link.tokenUrl || null;
+  const copyReady = Boolean(shareUrl) && !link.blocked && !access.settling;
+  const { copied, copy: handleCopy } = useCopyLink({
+    url: shareUrl,
+    ready: copyReady,
+    generation,
+  });
+
+  const notice = link.notice || access.notice;
+  const handleRetry = () => link.retry(access.clearUnknown);
+
   const addAccessMutation = useAddSharedLinkAccess();
   const removeAccessMutation = useRemoveSharedLinkAccess();
-  const autoCreated = useRef(false);
-  const createdLink =
-    createMutation.data?.data?.result || createMutation.data?.result || null;
-  const shareLink = activeLink || createdLink;
-  const shareLinkReady = Boolean(shareLink?.id);
-
-  // Auto-create a restricted shared link when dialog opens and none exists
-  useEffect(() => {
-    if (!open || !resourceType || !resourceId) return;
-    // Only attempt create when links loaded successfully, is empty, and we haven't tried yet
-    if (
-      !linksLoading &&
-      !linksError &&
-      links &&
-      links.length === 0 &&
-      !createMutation.isPending &&
-      !autoCreated.current
-    ) {
-      autoCreated.current = true;
-      createMutation.mutate({
-        resource_type: resourceType,
-        resource_id: resourceId,
-        access_type: "restricted",
-      });
-    }
-  }, [
-    open,
-    links,
-    linksLoading,
-    linksError,
-    resourceType,
-    resourceId,
-    createMutation,
-  ]);
-
-  // Reset auto-create flag when dialog closes
-  useEffect(() => {
-    if (!open) autoCreated.current = false;
-  }, [open]);
-
-  // Sync access mode from server link
-  useEffect(() => {
-    if (shareLink) {
-      const serverMode = shareLink.accessType || shareLink.access_type;
-      if (serverMode) setAccessMode(serverMode);
-    }
-  }, [shareLink]);
-
-  // Persist access mode changes to server
-  const handleAccessModeChange = useCallback(
-    (mode) => {
-      setAccessMode(mode);
-      if (shareLink?.id) {
-        updateMutation.mutate({ id: shareLink.id, access_type: mode });
-      }
-    },
-    [shareLink, updateMutation],
-  );
-
-  // Share URL: token-based when link exists, direct fallback otherwise
-  // Also use the just-created link data from createMutation
-  const shareUrl = useMemo(() => {
-    // First check the active link from the query
-    const token = shareLink?.token;
-    if (token) {
-      return `${window.location.origin}/shared/${token}`;
-    }
-    // Caller-supplied direct fallback (e.g. a voice-call full-page URL)
-    if (fallbackShareUrl) return fallbackShareUrl;
-    // Last-resort fallback — current page URL.
-    return buildFallbackUrl();
-  }, [shareLink, fallbackShareUrl]);
 
   const allEmails = useMemo(() => {
-    const accessList = shareLink?.accessList || shareLink?.access_list || [];
+    const accessList = shareLink?.access_list || [];
     const backendEmails = accessList.map((e) => ({
       id: e.id,
       email: e.email,
@@ -228,12 +162,6 @@ const ShareDialog = ({
       .map((e) => ({ id: e, email: e, source: "local" }));
     return [...backendEmails, ...localOnly];
   }, [shareLink, localEmails]);
-
-  const handleCopy = useCallback(() => {
-    copyToClipboard(shareUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [shareUrl]);
 
   const handleAddEmail = useCallback(() => {
     const email = emailInput.trim().toLowerCase();
@@ -248,10 +176,13 @@ const ShareDialog = ({
       return;
     }
     const linkId = shareLink?.id;
-    if (!linkId) {
-      enqueueSnackbar("Share link is still being generated", {
-        variant: "warning",
-      });
+    if (!linkId || !shareLinkReady) {
+      enqueueSnackbar(
+        loading
+          ? "Share link is still being generated"
+          : "Share link isn't ready yet",
+        { variant: "warning" },
+      );
       return;
     }
 
@@ -264,7 +195,14 @@ const ShareDialog = ({
     });
 
     addAccessMutation.mutate({ linkId, emails: [email] });
-  }, [emailInput, allEmails, shareLink, addAccessMutation]);
+  }, [
+    emailInput,
+    allEmails,
+    shareLink,
+    shareLinkReady,
+    loading,
+    addAccessMutation,
+  ]);
 
   const handleRemoveEmail = useCallback(
     (entry) => {
@@ -363,20 +301,26 @@ const ShareDialog = ({
               width={16}
               sx={{ color: "text.disabled", flexShrink: 0 }}
             />
-            {linksLoading || createMutation.isPending ? (
+            {loading || !shareUrl ? (
               <Typography
                 sx={{ flex: 1, fontSize: 12, color: "text.disabled" }}
               >
-                Generating share link...
+                {link.generating
+                  ? "Generating share link..."
+                  : link.verifying
+                    ? "Checking share link..."
+                    : "Share link not available"}
               </Typography>
             ) : (
               <Typography
                 noWrap
+                title={shareUrl}
                 sx={{
                   flex: 1,
                   fontSize: 12,
                   fontFamily: "monospace",
                   color: "text.secondary",
+                  userSelect: "all",
                 }}
               >
                 {shareUrl}
@@ -386,7 +330,7 @@ const ShareDialog = ({
               size="small"
               variant={copied ? "contained" : "outlined"}
               onClick={handleCopy}
-              disabled={linksLoading || createMutation.isPending}
+              disabled={!copyReady}
               startIcon={
                 <Iconify
                   icon={copied ? "mdi:check" : "mdi:content-copy"}
@@ -412,6 +356,32 @@ const ShareDialog = ({
             </Button>
           </Box>
 
+          {notice && (
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              role="status"
+              aria-live="polite"
+              sx={{ mt: -1, mb: 2 }}
+            >
+              <Typography sx={{ flex: 1, fontSize: 12, color: "warning.dark" }}>
+                {notice.message}
+              </Typography>
+              {notice.action && (
+                <Button
+                  size="small"
+                  variant="text"
+                  onClick={handleRetry}
+                  disabled={link.retryBusy || loading}
+                  sx={{ textTransform: "none", fontSize: 12, flexShrink: 0 }}
+                >
+                  {notice.action}
+                </Button>
+              )}
+            </Stack>
+          )}
+
           {/* ── Access Mode ───────────────────── */}
           <Typography
             sx={{
@@ -431,18 +401,22 @@ const ShareDialog = ({
               iconColor="text.disabled"
               label="Anyone with the link"
               description="No sign-in required to view"
-              selected={accessMode === "public"}
+              selected={access.confirmedMode === "public"}
+              pending={access.pendingMode === "public"}
+              unconfirmed={access.accessUnknown}
               disabled={!shareLinkReady}
-              onClick={() => handleAccessModeChange("public")}
+              onClick={() => access.changeMode("public")}
             />
             <AccessOption
               icon="mdi:shield-lock-outline"
               iconColor="text.disabled"
               label="Restricted"
               description="Only people you add can view"
-              selected={accessMode === "restricted"}
+              selected={access.confirmedMode === "restricted"}
+              pending={access.pendingMode === "restricted"}
+              unconfirmed={access.accessUnknown}
               disabled={!shareLinkReady}
-              onClick={() => handleAccessModeChange("restricted")}
+              onClick={() => access.changeMode("restricted")}
             />
           </Stack>
 
@@ -601,7 +575,6 @@ ShareDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   resourceType: PropTypes.string.isRequired,
-  fallbackShareUrl: PropTypes.string,
   resourceId: PropTypes.string.isRequired,
 };
 

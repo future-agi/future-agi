@@ -1,6 +1,7 @@
 import {
   COLUMN_TYPE_ALIASES,
   FIELD_TYPE_ALIASES,
+  FILTER_CONTRACT,
   FILTER_TYPE_ALLOWED_OPS,
   LIST_FILTER_OPS,
   NO_VALUE_FILTER_OPS,
@@ -22,8 +23,10 @@ const MULTI_VALUE_TYPES = new Set([
 // Keep exact typed attribute strings aligned with the retained-value contract.
 // The backend independently enforces the same byte ceiling; this client-side
 // guard prevents an oversized saved/manual value from becoming a query body.
-export const FILTER_STRING_MAX_UTF8_BYTES = 4 * 1024;
-export const TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES = 16 * 1024;
+export const FILTER_STRING_MAX_UTF8_BYTES =
+  FILTER_CONTRACT.limits.stringMaxUtf8Bytes;
+export const TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES =
+  FILTER_CONTRACT.limits.typedStringMaxUtf8Bytes;
 
 export const getUtf8ByteLength = (value) =>
   new TextEncoder().encode(String(value ?? "")).byteLength;
@@ -46,13 +49,21 @@ export const truncateUtf8String = (value, maxUtf8Bytes) => {
 const assertBoundedTypedAttributeStrings = (
   filterValue,
   attributeValueTypes,
+  colType,
+  filterType,
 ) => {
-  if (!Array.isArray(filterValue) || !Array.isArray(attributeValueTypes)) {
-    return;
-  }
-  filterValue.forEach((value, index) => {
+  const strings =
+    colType === "SPAN_ATTRIBUTE" &&
+    filterType === "text" &&
+    typeof filterValue === "string"
+      ? [filterValue]
+      : Array.isArray(filterValue) && Array.isArray(attributeValueTypes)
+        ? filterValue.filter(
+            (_, index) => attributeValueTypes[index] === "string",
+          )
+        : [];
+  strings.forEach((value) => {
     if (
-      attributeValueTypes[index] === "string" &&
       typeof value === "string" &&
       getUtf8ByteLength(value) > TYPED_ATTRIBUTE_STRING_FILTER_MAX_UTF8_BYTES
     ) {
@@ -121,6 +132,9 @@ export const normalizeColumnType = (rawColType) => {
   if (!rawColType) return undefined;
   return COLUMN_TYPE_ALIASES[String(rawColType).toLowerCase()] || rawColType;
 };
+
+export const isNativeColumnType = (rawColType) =>
+  [undefined, "NORMAL", "SYSTEM_METRIC"].includes(normalizeColumnType(rawColType));
 
 const isMultiValueCandidate = (filterType, value) =>
   Array.isArray(value) && value.length > 1 && MULTI_VALUE_TYPES.has(filterType);
@@ -219,7 +233,12 @@ export const buildApiFilterFromPanelRow = (row) => {
     return normalized.some(Boolean) ? normalized : undefined;
   })();
 
-  assertBoundedTypedAttributeStrings(filterValue, attributeValueTypes);
+  assertBoundedTypedAttributeStrings(
+    filterValue,
+    attributeValueTypes,
+    apiColType,
+    filterType,
+  );
 
   if (!isAllowedFilterOperator(filterType, filterOp)) {
     throw new Error(
@@ -319,7 +338,12 @@ export const serializeFilterForApi = (filter) => {
       );
     }
   }
-  assertBoundedTypedAttributeStrings(filterValue, attributeValueTypes);
+  assertBoundedTypedAttributeStrings(
+    filterValue,
+    attributeValueTypes,
+    normalizeColumnType(config.col_type),
+    filterType,
+  );
   if (
     filterOp !== "is_null" &&
     filterOp !== "is_not_null" &&
@@ -352,10 +376,50 @@ export const serializeFilterForApi = (filter) => {
   };
 };
 
-export const serializeFilterListForApi = (filters = []) =>
-  filters
+const filterStringBytes = (value) => {
+  if (typeof value === "string") return getUtf8ByteLength(value);
+  if (Array.isArray(value))
+    return value.reduce((sum, item) => sum + filterStringBytes(item), 0);
+  return value && typeof value === "object"
+    ? Object.entries(value).reduce(
+        (sum, [key, item]) =>
+          sum + getUtf8ByteLength(key) + filterStringBytes(item),
+        0,
+      )
+    : 0;
+};
+
+export const serializeFilterListForApi = (filters = []) => {
+  const serialized = filters
     .filter((filter) => !isEmptyFilterDraft(filter))
     .map(serializeFilterForApi);
+  const limits = FILTER_CONTRACT.limits;
+  if (serialized.length > limits.maxItems)
+    throw new Error(
+      `At most ${limits.maxItems} filters may be applied at once.`,
+    );
+  const total = serialized.reduce(
+    (sum, { filter_config, ...metadata }) =>
+      sum +
+      filterStringBytes([
+        ...Object.values(metadata),
+        ...Object.values(filter_config),
+      ]),
+    0,
+  );
+  if (total > limits.totalStringMaxUtf8Bytes)
+    throw new Error(
+      `Filter strings exceed the ${limits.totalStringMaxUtf8Bytes} UTF-8 byte request limit.`,
+    );
+  if (
+    getUtf8ByteLength(JSON.stringify(serialized)) >
+    limits.serializedMaxUtf8Bytes
+  )
+    throw new Error(
+      `Serialized filters exceed the ${limits.serializedMaxUtf8Bytes} UTF-8 byte request limit.`,
+    );
+  return serialized;
+};
 
 const moveAliasKeys = (value, aliases) => {
   const next = { ...value };

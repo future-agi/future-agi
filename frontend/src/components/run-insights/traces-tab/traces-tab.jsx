@@ -3,7 +3,7 @@ import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import React, { useMemo, useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
-import axios, { endpoints } from "src/utils/axios";
+import { readQuery, endpoints } from "src/utils/axios";
 import PropTypes from "prop-types";
 import { getRandomId } from "src/utils/utils";
 import "./tracesTab.css";
@@ -263,7 +263,7 @@ const TraceTab = React.forwardRef(
 
             const results = await readRunInsightListPage(
               ({ signal, timeout }) =>
-                axios.get(endpoints.project.getTraceList(), {
+                readQuery(endpoints.project.getTraceList(), {
                   signal,
                   timeout,
                   params: {

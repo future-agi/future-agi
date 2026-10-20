@@ -1,8 +1,12 @@
 import json
 import math
+import re
 from datetime import UTC, datetime, timedelta
 
+import structlog
+
 from simulate.temporal.utils.async_storage import convert_audio_url_to_s3_sync
+from tfc.utils.ssrf_guard import safe_fetch
 from tracer.utils.helper import flatten_dict
 from tracer.utils.otel import (
     CallAttributes,
@@ -11,6 +15,8 @@ from tracer.utils.otel import (
     SpanAttributes,
 )
 from tracer.utils.vapi_recording import VapiRecordingService
+
+logger = structlog.get_logger(__name__)
 
 _RETELL_RECORDING_KEY_BY_ARTIFACT_TYPE = {
     "mono_combined": (
@@ -34,6 +40,8 @@ def normalize_retell_data(log: dict, *, project_id: str | None = None) -> dict:
     rehost_uploads = _rehost_recording_urls_sync(
         log, eval_attributes, project_id=project_id
     )
+    if project_id:
+        _attach_provider_log_issues(log, eval_attributes)
 
     prompt_tokens = eval_attributes.get(SpanAttributes.USAGE_INPUT_TOKENS)
     completion_tokens = eval_attributes.get(SpanAttributes.USAGE_OUTPUT_TOKENS)
@@ -87,9 +95,15 @@ def _rehost_recording_urls_sync(
                 artifact_type=artifact_type,
                 project_id=project_id,
             )
-        except Exception:
+        except Exception as exc:
             # Rehosting is best-effort; retaining Retell's URL makes a later
             # poll eligible to retry this artifact.
+            logger.warning(
+                "retell_recording_rehost_failed",
+                project_id=project_id,
+                artifact_type=artifact_type,
+                error_type=type(exc).__name__,
+            )
             continue
 
         if durable_url and durable_url != source_url:
@@ -97,6 +111,65 @@ def _rehost_recording_urls_sync(
             bytes_by_artifact_type[artifact_type] = artifact_bytes
 
     return bytes_by_artifact_type
+
+
+# "2026-01-31 10:00:00.123 <call id> error: <message>"; payload lines of a tool
+# call follow without that prefix and are not events of their own.
+_PROVIDER_LOG_LINE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))? \S+ ([a-z]+): (.*)$"
+)
+_PROVIDER_LOG_MAX_BYTES = 256 * 1024
+_PROVIDER_LOG_MAX_ISSUES = 50
+_PROVIDER_LOG_MAX_MESSAGE = 200
+
+
+def provider_log_issues(text: str) -> list[dict[str, object]]:
+    """Warning and error lines of a provider call log, timed from its first line."""
+    issues: list[dict[str, object]] = []
+    started = None
+    for line in text.splitlines():
+        match = _PROVIDER_LOG_LINE.match(line)
+        if match is None:
+            continue
+        moment = datetime.strptime(match[1], "%Y-%m-%d %H:%M:%S") + timedelta(
+            microseconds=int((match[2] or "0").ljust(6, "0"))
+        )
+        started = started or moment
+        level = "warn" if match[3].startswith("warn") else match[3]
+        if level in ("warn", "error") and len(issues) < _PROVIDER_LOG_MAX_ISSUES:
+            issues.append(
+                {
+                    "at": round((moment - started).total_seconds(), 2),
+                    "level": level,
+                    "message": match[4][:_PROVIDER_LOG_MAX_MESSAGE],
+                }
+            )
+    return issues
+
+
+def _attach_provider_log_issues(log: dict, eval_attributes: dict) -> None:
+    """Best-effort read of the provider's own call log.
+
+    The log records what the call payload does not: a model response that timed
+    out, a transfer or a custom function that failed. Only its warning and error
+    lines are kept. A log that cannot be read leaves the attribute absent, so a
+    reader can tell "no issues" from "not looked at".
+    """
+    url = log.get("public_log_url") if isinstance(log, dict) else None
+    if not isinstance(url, str) or not url.startswith("https://"):
+        return
+    try:
+        response = safe_fetch(
+            url, method="GET", timeout=5, max_bytes=_PROVIDER_LOG_MAX_BYTES
+        )
+        response.raise_for_status()
+        issues = provider_log_issues(response.content.decode("utf-8", "replace"))
+    except Exception as exc:
+        # Same rule as the recording rehost: ingest never fails on an extra.
+        logger.warning("retell_provider_log_read_failed", error_type=type(exc).__name__)
+        return
+    # A JSON string, so an empty list survives the span export.
+    eval_attributes[ConversationAttributes.PROVIDER_LOG_ISSUES] = json.dumps(issues)
 
 
 def _map_status(call_status: str) -> str:
@@ -109,16 +182,20 @@ def _map_status(call_status: str) -> str:
 
 
 def _extract_timestamps(log: dict) -> tuple:
-    """Extracts start and end timestamps from a Retell AI log."""
+    """Extracts start and end timestamps from a Retell AI log.
+
+    A present-but-null value (the poll path hydrates via a merge that can
+    leave a key with a null) is treated the same as an absent key.
+    """
+    raw_start = log.get("start_timestamp")
+    raw_end = log.get("end_timestamp")
     start_time = (
-        datetime.fromtimestamp(log["start_timestamp"] / 1000, tz=UTC)
-        if "start_timestamp" in log
+        datetime.fromtimestamp(raw_start / 1000, tz=UTC)
+        if raw_start is not None
         else None
     )
     end_time = (
-        datetime.fromtimestamp(log["end_timestamp"] / 1000, tz=UTC)
-        if "end_timestamp" in log
-        else None
+        datetime.fromtimestamp(raw_end / 1000, tz=UTC) if raw_end is not None else None
     )
     return start_time, end_time
 

@@ -849,9 +849,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   // --- Refresh ---
   const refreshSessions = useCallback(() => {
     trackEvent(Events.pObserveRefreshClicked);
-    withLiveGridApi(getLiveSessionGridApi(sessionGridApiRef), (api) =>
-      api.refreshServerSide?.(),
-    );
+    // ObserveHeader dispatches observe-refresh; SessionGrid owns cursor invalidation.
     queryClient.invalidateQueries({ queryKey: ["session-list"] });
   }, [queryClient]);
 

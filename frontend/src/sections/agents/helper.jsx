@@ -10,9 +10,10 @@ import TalkRatioCell from "./CallLogs/TalkRatioCell";
 import EvalCellRenderer from "../test-detail/CellRenderers/EvalCellRenderer";
 import CallLogsHeaderCellRenderer from "./CallLogs/CallLogsHeaderCellRenderer";
 import { useQuery } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import axios, { readQuery, endpoints } from "src/utils/axios";
 import { Box, Skeleton } from "@mui/material";
 import EvaluationCell from "src/sections/projects/LLMTracing/Renderers/EvaluationCell";
+import { evalColumnMinWidth } from "src/sections/projects/LLMTracing/evalCellModel";
 import { AGENT_TYPES, isLiveKitProvider, VOICE_TRANSPORT } from "./constants";
 import AnnotationHeaderCellRenderer from "./CallLogs/AnnotationHeaderCellRenderer";
 import NewAnnotationCellRenderer from "./NewAnnotationCellRenderer";
@@ -422,7 +423,7 @@ export const generateEvalColumnsFromConfig = (items = []) => {
         minWidth: 140,
         hide: item.is_visible === false,
         headerComponent: CallLogsHeaderCellRenderer,
-        headerComponentParams: { displayName },
+        headerComponentParams: { displayName, targetType: item.target_type },
         valueGetter: (params) => {
           const v = params.data?.[evalId];
           return v === null || v === undefined || v === "" ? null : Number(v);
@@ -468,6 +469,18 @@ export const generateEvalColumnsFromConfig = (items = []) => {
           </Box>
         );
       }
+      // Project call lists send count tiles, rendered as on the Observe lists.
+      if (evalData?.counts && typeof evalData.counts === "object") {
+        return (
+          <EvaluationCell
+            value={evalData.counts}
+            column={{
+              outputType: item.output_type,
+              choicesMap: item.choices_map,
+            }}
+          />
+        );
+      }
       // PASS_FAIL carries a numeric pass rate — route it through the score
       // (percentage) renderer so it shows "X%" instead of the pill path,
       // which string-matches "fail" and would render 0% as a false "Pass".
@@ -491,10 +504,13 @@ export const generateEvalColumnsFromConfig = (items = []) => {
       headerName: displayName,
       field: `eval_outputs.${evalId}`,
       flex: 1,
-      minWidth: isReason ? 240 : 140,
+      minWidth: isReason ? 240 : evalColumnMinWidth(item, 140),
       hide: item.is_visible === false,
       headerComponent: CallLogsHeaderCellRenderer,
-      headerComponentParams: { displayName },
+      headerComponentParams: {
+        displayName,
+        targetType: isReason ? undefined : item.target_type,
+      },
       valueGetter: (params) => params.data?.eval_outputs?.[dataKey] || {},
       ...(isFilterableEval && {
         context: {
@@ -996,7 +1012,7 @@ export const useCallLogs = ({
           targetRowCount: pageLimit,
           cancellationSignal: signal,
           loadResponse: (requestSignal) =>
-            axios.get(getEndpoint(), {
+            readQuery(getEndpoint(), {
               params: cursorPagination.requestParams(
                 page - 1,
                 cursorBaseParams,
@@ -1004,7 +1020,7 @@ export const useCallLogs = ({
               signal: requestSignal,
             }),
           nextResponse: (cursor, requestSignal) =>
-            axios.get(getEndpoint(), {
+            readQuery(getEndpoint(), {
               params: listContinuationParams(cursorBaseParams, cursor),
               signal: requestSignal,
             }),
@@ -1043,7 +1059,7 @@ export const useCallLogs = ({
             : mergedResult,
         };
       }
-      return axios.get(getEndpoint(), {
+      return readQuery(getEndpoint(), {
         params: paginationParams
           ? { ...params, ...paginationParams }
           : baseParams,
@@ -1112,7 +1128,7 @@ export const prefetchCallLogs = (
           targetRowCount: pageLimit,
           cancellationSignal: signal,
           loadResponse: (requestSignal) =>
-            axios.get(endpoint, {
+            readQuery(endpoint, {
               params: cursorPagination.requestParams(
                 page - 1,
                 cursorBaseParams,
@@ -1120,7 +1136,7 @@ export const prefetchCallLogs = (
               signal: requestSignal,
             }),
           nextResponse: (cursor, requestSignal) =>
-            axios.get(endpoint, {
+            readQuery(endpoint, {
               params: listContinuationParams(cursorBaseParams, cursor),
               signal: requestSignal,
             }),
@@ -1159,7 +1175,7 @@ export const prefetchCallLogs = (
             : mergedResult,
         };
       }
-      return axios.get(endpoint, {
+      return readQuery(endpoint, {
         params: paginationParams
           ? { ...params, ...paginationParams }
           : baseParams,
@@ -1183,12 +1199,22 @@ export const useCallExecutionDetail = (callExecutionId, enabled = false) => {
   });
 };
 
-export const useVoiceCallDetail = (traceId, enabled = false) => {
+// Pass the project the call was opened from whenever it is known: the same
+// trace id can exist in several projects.
+export const useVoiceCallDetail = (
+  traceId,
+  { enabled = false, projectId } = {},
+) => {
   return useQuery({
-    queryKey: ["voiceCallDetail", traceId],
+    queryKey: projectId
+      ? ["voiceCallDetail", traceId, projectId]
+      : ["voiceCallDetail", traceId],
     queryFn: () =>
       axios.get(endpoints.project.getVoiceCallDetail, {
-        params: { trace_id: traceId },
+        params: {
+          trace_id: traceId,
+          ...(projectId ? { project_id: projectId } : {}),
+        },
       }),
     enabled: !!traceId && enabled,
     select: (data) => data?.data?.result,

@@ -25,14 +25,30 @@ func init() {
 	minimaxM3.Provider = "minimax"
 	minimaxM3.Mode = ModeChat
 	minimaxM3.MaxInputTokens = 1_000_000
-	minimaxM3.Pricing.InputPerToken = 0.6e-6
-	minimaxM3.Pricing.OutputPerToken = 2.4e-6
-	minimaxM3.Pricing.CachedInputPerToken = 0.12e-6
+	// Standard pricing up to 512k context; the flat pricing schema does not
+	// represent long-context or priority tiers.
+	minimaxM3.Pricing.InputPerToken = 0.3e-6
+	minimaxM3.Pricing.OutputPerToken = 1.2e-6
+	minimaxM3.Pricing.CachedInputPerToken = 0.06e-6
 	minimaxM3.Capabilities.Vision = true
 	minimaxM3.Capabilities.Streaming = true
 	minimaxM3.Capabilities.PromptCaching = true
 	minimaxM3.Capabilities.Reasoning = true
 
+	BundledModels["minimax/MiniMax-M3.1-Flash"] = &ModelInfo{
+		Provider: "minimax", Mode: ModeChat,
+		MaxInputTokens: 1_000_000, MaxOutputTokens: 524_288,
+		Pricing: PricingInfo{
+			InputPerToken: 0.15e-6, OutputPerToken: 0.60e-6,
+			CachedInputPerToken: 0.015e-6,
+		},
+		Capabilities: CapabilityFlags{
+			Vision: true, Streaming: true, PromptCaching: true,
+			Reasoning: true, FunctionCalling: true, SystemMessages: true,
+		},
+	}
+
+	// Retain legacy metadata for explicit saved requests and cost lookup.
 	minimaxM27 := BundledModels["minimax/MiniMax-M2.7"]
 	if minimaxM27 == nil {
 		minimaxM27 = &ModelInfo{}

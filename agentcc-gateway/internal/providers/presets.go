@@ -51,6 +51,9 @@ func applyProviderPreset(cfg *config.ProviderConfig) {
 	if cfg.APIFormat == "" && preset.APIFormat != "" {
 		cfg.APIFormat = preset.APIFormat
 	}
+	if cfg.Type == "minimax" && len(cfg.Models) == 0 {
+		cfg.Models = []string{"MiniMax-M3.1-Flash", "MiniMax-M3"}
+	}
 	if cfg.APIPathPrefix == nil && preset.APIFormat == "openai" {
 		prefix := preset.PathPrefix
 		cfg.APIPathPrefix = &prefix

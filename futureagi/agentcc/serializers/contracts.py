@@ -90,6 +90,9 @@ class GatewayConfigProviderSerializer(serializers.Serializer):
         allow_null=True,
         help_text=API_FORMAT_HELP_TEXT,
     )
+    api_path_prefix = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
     models = serializers.ListField(child=serializers.JSONField())
     is_active = serializers.BooleanField()
     default_timeout = serializers.IntegerField(allow_null=True)
@@ -439,9 +442,11 @@ class APIKeyBulkItemSerializer(serializers.Serializer):
     name = serializers.CharField()
     owner = serializers.CharField(allow_blank=True)
     key_hash = serializers.CharField()
+    key_prefix = serializers.CharField(allow_blank=True)
     models = serializers.ListField(child=serializers.CharField())
     providers = serializers.ListField(child=serializers.CharField())
     metadata = serializers.DictField()
+    expires_at = serializers.DateTimeField(allow_null=True)
 
 
 class APIKeyBulkResponseSerializer(serializers.Serializer):
@@ -471,6 +476,11 @@ class OrgConfigBulkItemSerializer(serializers.Serializer):
 class OrgConfigBulkResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = serializers.DictField(child=OrgConfigBulkItemSerializer())
+    unbuilt_org_ids = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Orgs with an active config that could not be built. The "
+        "gateway keeps their last good config instead of dropping them.",
+    )
 
 
 class SpendSummaryQuerySerializer(serializers.Serializer):

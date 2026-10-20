@@ -1354,7 +1354,14 @@ const SimulationTestMode = React.forwardRef(
             !!selectedExecutionId)));
 
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+          height: "100%",
+        }}
+      >
         {/* Simulation (Run Test) selector */}
         <Box>
           <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>

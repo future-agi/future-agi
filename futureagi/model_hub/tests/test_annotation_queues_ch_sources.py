@@ -34,6 +34,7 @@ from unittest import mock
 
 import pytest
 from rest_framework import status
+from structlog.testing import capture_logs
 
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
@@ -139,8 +140,10 @@ class _ReaderCM:
             return []
         return [self._span] if str(self._span.id) in ids else []
 
-    def get(self, span_id):
+    def get(self, span_id, *, project_id=None, project_ids=None):
         if self._span is None:
+            return None
+        if project_ids is not None and str(self._span.project_id) not in project_ids:
             return None
         return self._span if str(span_id) == str(self._span.id) else None
 
@@ -172,7 +175,7 @@ class _ReaderCM:
             str(self._span.trace_id): (str(self._span.id), str(self._span.project_id))
         }
 
-    def scope_by_ids(self, span_ids):
+    def scope_by_ids(self, span_ids, *, project_ids=None):
         """``{span_id: scope}`` where ``scope.project_id`` — for-source span match."""
         ids = {str(s) for s in span_ids}
         if self._span is None or str(self._span.id) not in ids:
@@ -230,6 +233,80 @@ def test_enumerated_queue_resolution_rejects_reused_bare_span_id():
         )
 
     assert resolved == {}
+
+
+class _FailingReaderCM:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def __getattr__(self, _name):
+        def _read(*_args, **_kwargs):
+            raise RuntimeError("CH unavailable")
+
+        return _read
+
+
+# The page-batched CH reads behind CollectorSourceCache, by logged source_type.
+_CH_BATCH_READS = {
+    "span": lambda helpers, **kw: helpers._batch_ch_spans(["span-1"], **kw),
+    "trace": lambda helpers, **kw: helpers._batch_ch_trace_roots(["trace-1"], **kw),
+    "session": lambda helpers, **kw: helpers._batch_ch_session_fields(
+        ["session-1"], **kw
+    ),
+    "project": lambda helpers, **kw: helpers._newest_ch_source_projects(
+        ["span-1"], ["trace-1"], item=None, **kw
+    ),
+}
+
+
+@pytest.fixture
+def ch_unavailable():
+    from model_hub.utils import annotation_queue_helpers as helpers
+
+    with (
+        mock.patch(CH_READER_PATH, return_value=_FailingReaderCM()),
+        mock.patch(SESSION_FIELDS_PATH, side_effect=RuntimeError("CH unavailable")),
+        mock.patch.object(
+            helpers, "_queue_item_source_project_ids", return_value=["project-1"]
+        ),
+    ):
+        yield helpers
+
+
+@pytest.mark.parametrize("source_type", _CH_BATCH_READS)
+def test_ch_batch_read_error_on_a_write_path_is_raised_not_logged(
+    ch_unavailable, source_type
+):
+    # The write fails the request; the request boundary logs it, once.
+    with capture_logs() as logs:
+        with pytest.raises(RuntimeError, match="CH unavailable"):
+            _CH_BATCH_READS[source_type](
+                ch_unavailable, caller="notes_target", raise_on_error=True
+            )
+
+    assert logs == []
+
+
+@pytest.mark.parametrize("source_type", _CH_BATCH_READS)
+def test_ch_batch_read_error_on_a_render_path_is_logged_with_its_traceback(
+    ch_unavailable, source_type
+):
+    with capture_logs() as logs:
+        resolved = _CH_BATCH_READS[source_type](ch_unavailable, caller="render")
+
+    assert resolved in ({}, ({}, {}))
+    [warning] = logs
+    assert warning["event"] == "ch_bulk_resolve_failed"
+    assert warning["log_level"] == "warning"
+    assert warning["source_type"] == source_type
+    assert warning["count"] == (2 if source_type == "project" else 1)
+    assert warning["caller"] == "render"
+    assert warning["error_type"] == "RuntimeError"
+    assert warning["exc_info"] is True
+    assert "error" not in warning
 
 
 def _project(organization, workspace):

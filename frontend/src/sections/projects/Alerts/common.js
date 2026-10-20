@@ -74,6 +74,10 @@ export const normalizeAlertDetail = (detail = {}) => ({
   warningThresholdValue:
     detail?.warningThresholdValue ?? detail?.warning_threshold_value,
   alertFrequency: detail?.alertFrequency ?? detail?.alert_frequency,
+  // The span across every fire, aggregated server-side before the issue grid's
+  // type filter and pagination — so it stays put whichever slice is loaded.
+  windowStart: detail?.windowStart ?? detail?.window_start,
+  windowEnd: detail?.windowEnd ?? detail?.window_end,
   autoThresholdTimeWindow:
     detail?.autoThresholdTimeWindow ?? detail?.auto_threshold_time_window,
   notificationEmails: detail?.notificationEmails ?? detail?.notification_emails,
@@ -926,3 +930,13 @@ export const ISSUE_FILTER_FIELDS = [
     choiceLabels: { critical: "Critical", warning: "Warning" },
   },
 ];
+
+// Output types whose alert metric is the share of one chosen label. A Scoring
+// eval may also carry labels, but its metric is the mean score, so it must not
+// offer a choice.
+export const CHOICE_THRESHOLD_OUTPUT_TYPES = ["Pass/Fail", "choices"];
+
+export const evalUsesChoiceThreshold = (evaluation) =>
+  CHOICE_THRESHOLD_OUTPUT_TYPES.includes(evaluation?.output_type) &&
+  Array.isArray(evaluation?.choices) &&
+  evaluation.choices.length > 0;

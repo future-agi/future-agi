@@ -145,7 +145,7 @@ def test_annotation_filter_uses_one_strictly_project_scoped_score_read(observe_t
     assert "graph_relation_entity_key" in predicate
     assert "FROM spans" not in predicate
     assert plan.params["graph_filter_1_relation_project_id"] == PROJECT_ID
-    assert plan.params["graph_filter_1_annotation_text_1"] == "approved"
+    assert plan.params["graph_filter_1_ann_1"] == "approved"
 
 
 @pytest.mark.unit
@@ -215,6 +215,65 @@ def test_has_annotation_with_no_configured_labels_is_exact(
     assert plan.required_matches == (wants_complete,)
     assert plan.match_condition_groups == (((0, wants_complete),),)
     assert plan.params == {}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("column_id", ["has_eval", "has_annotation", "my_annotations"])
+@pytest.mark.parametrize(
+    ("filter_op", "expected"), [("is_null", "0 = 1"), ("is_not_null", "1 = 1")]
+)
+def test_boolean_meta_presence_operators_compile_a_total_flag(
+    column_id,
+    filter_op,
+    expected,
+):
+    # These flags are derived per row and never NULL, so the graph compiles a
+    # constant instead of rejecting the leaf as an unsupported shape.
+    leaf = {
+        "column_id": column_id,
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "boolean",
+            "filter_op": filter_op,
+            "filter_value": None,
+        },
+    }
+    plan = compile_exact_graph_row_predicates(
+        [_time_filter(), leaf],
+        project_id=PROJECT_ID,
+        observe_type="trace",
+        annotation_label_ids=[ANNOTATION_LABEL_ID, SECOND_ANNOTATION_LABEL_ID],
+    )
+
+    assert plan.predicates == (expected,)
+    assert plan.match_condition_groups == (((0, True),),)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("wants_complete", [True, False])
+def test_has_annotation_not_equals_negates_the_requested_completeness(wants_complete):
+    leaf = {
+        "column_id": "has_annotation",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "boolean",
+            "filter_op": "not_equals",
+            "filter_value": wants_complete,
+        },
+    }
+    plan = compile_exact_graph_row_predicates(
+        [_time_filter(), leaf],
+        project_id=PROJECT_ID,
+        observe_type="trace",
+        annotation_label_ids=[ANNOTATION_LABEL_ID, SECOND_ANNOTATION_LABEL_ID],
+    )
+
+    negated = not wants_complete
+    assert plan.required_matches == (negated, negated)
+    if negated:
+        assert plan.match_condition_groups == (((0, True),), ((1, True),))
+    else:
+        assert plan.match_condition_groups == (((0, False), (1, False)),)
 
 
 @pytest.mark.unit
@@ -495,3 +554,31 @@ def test_negative_relation_requirement_is_applied_at_the_correct_scope(observe_t
         assert "graph_bucket_match_0" not in query
         assert "toUInt8(ifNull((arrayExists(" in query
         assert "graph_row_match_0 = 0" in query
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("kind,op,value,proven", [
+    ("number", "equals", 2, True), ("number", "equals", 0, False),
+    ("text", "in", [0, 2], True), ("number", "not_equals", 2, False),
+    ("number", "is_null", None, False), ("boolean", "equals", False, False),
+])
+def test_span_witness_keeps_relation_siblings_and_requires_value_proof(kind, op, value, proven):
+    scalar = {"column_id": "score", "filter_config": {"col_type": "SPAN_ATTRIBUTE",
+        "filter_type": kind, "filter_op": op, "filter_value": value}}
+    if op == "in":
+        scalar["filter_config"]["attribute_value_types"] = ["number", "number"]
+    patches = _patch_eval_resolution()
+    with patches[0], patches[1]:
+        builder = TimeSeriesQueryBuilder(project_id=PROJECT_ID, interval="day",
+            filters=[scalar, _eval_filter(), _annotation_filter()], observe_type="span",
+            exact_snapshot=True, start_date=START, end_date=END)
+        plan = builder._exact_span_candidate_plan()
+        assert (plan is not None) == proven
+        if op == "in":
+            # Typed zero permits a key-only superset, not raw value narrowing.
+            assert plan.raw_graph_value_witness_predicate == plan.raw_key_witness_predicate
+            assert "span_attr_num[" not in plan.raw_graph_value_witness_predicate
+        sql, _ = builder.build_exact_span_partition(partition_start=START, partition_end=END)
+    assert ("graph_filter_span_seed_" in sql) == proven
+    assert "FROM tracer_eval_logger" in sql and "FROM model_hub_score" in sql
+    assert all(f"graph_row_match_{i} = 1" in sql for i in range(3))

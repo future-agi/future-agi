@@ -247,6 +247,48 @@ describe("useCursorAttributeInventory", () => {
     expect(fetchNextPage).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps catalog-backed attribute arrays stable across unchanged renders", () => {
+    mocks.catalogResult = {
+      data: { pages: [{ metrics: [] }] },
+      error: null,
+      legacyFallbackRequired: false,
+      metrics: [
+        {
+          name: "customer.tier",
+          property_id: "custom_attribute:customer.tier",
+          type: "string",
+        },
+      ],
+      hasNextPage: false,
+      continuationKey: null,
+      fetchNextPage: vi.fn(),
+      isFetchingNextPage: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      isFetchNextPageError: false,
+      cursorChainStopped: false,
+      refetch: vi.fn(),
+    };
+
+    const { result, rerender } = renderHook(
+      () =>
+        useUnifiedCursorAttributeInventory({
+          projectId: "project-a",
+          search: "customer",
+        }),
+      { wrapper: createWrapper() },
+    );
+    const first = result.current;
+    rerender();
+
+    // LLMTracingView rebuilds its filter definitions whenever `attributes`
+    // changes; a fresh array on every render kept the Trace tab re-rendering.
+    expect(result.current.rawAttributes).toBe(first.rawAttributes);
+    expect(result.current.attributes).toBe(first.attributes);
+    expect(result.current.filteredAttributes).toBe(first.filteredAttributes);
+  });
+
   it("uses the authorized workspace cursor scope without a project fan-out", async () => {
     mocks.get.mockResolvedValue(attributePage(["workspace.attribute"]));
 

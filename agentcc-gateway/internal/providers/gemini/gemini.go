@@ -49,6 +49,7 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		MaxIdleConnsPerHost: poolSize,
 		IdleConnTimeout:     90 * time.Second,
 		ForceAttemptHTTP2:   true,
+		DialContext:         cfg.DialContext,
 	}
 
 	baseURL := strings.TrimRight(cfg.BaseURL, "/")
@@ -75,8 +76,14 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		headers:   cfg.Headers,
 	}
 
-	if vertexAI && cfg.CredentialsFile != "" {
-		tp, err := gauth.NewTokenProvider(cfg.CredentialsFile, gauth.ScopeCloudPlatform)
+	if vertexAI && (cfg.CredentialsFile != "" || cfg.ServiceAccountJSON != "") {
+		var tp *gauth.TokenProvider
+		var err error
+		if cfg.ServiceAccountJSON != "" {
+			tp, err = gauth.NewTokenProviderJSON([]byte(cfg.ServiceAccountJSON), gauth.ScopeCloudPlatform)
+		} else {
+			tp, err = gauth.NewTokenProvider(cfg.CredentialsFile, gauth.ScopeCloudPlatform)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("gemini: vertex ai credentials: %w", err)
 		}
@@ -88,11 +95,21 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 
 func (p *Provider) ID() string { return p.id }
 
+// ClientTimeout reports the timeout on this provider's HTTP client. It bounds
+// the whole exchange, a streamed body included, so it is a hard ceiling on any
+// request this provider serves.
+func (p *Provider) ClientTimeout() time.Duration { return p.httpClient.Timeout }
+
 func (p *Provider) bearerToken() string {
 	if p.tokenProvider != nil {
 		return p.tokenProvider.Token()
 	}
 	return p.apiKey
+}
+
+// sentToken is the access token a request carried, so a rejection invalidates only that token.
+func sentToken(req *http.Request) string {
+	return strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
 }
 
 func (p *Provider) acquireSemaphore(ctx context.Context) error {
@@ -157,6 +174,9 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized && p.tokenProvider != nil {
+			p.tokenProvider.Invalidate(sentToken(httpReq))
+		}
 		return nil, parseGeminiError(resp.StatusCode, respBody)
 	}
 
@@ -197,7 +217,9 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			url += "&key=" + p.apiKey
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+		upstreamCtx, cancelUpstream := context.WithCancel(ctx)
+		defer cancelUpstream()
+		httpReq, err := http.NewRequestWithContext(upstreamCtx, "POST", url, bytes.NewReader(body))
 		if err != nil {
 			errs <- models.ErrInternal(fmt.Sprintf("gemini: creating request: %v", err))
 			return
@@ -226,6 +248,9 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			if resp.StatusCode == http.StatusUnauthorized && p.tokenProvider != nil {
+				p.tokenProvider.Invalidate(sentToken(httpReq))
+			}
 			respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 			if readErr != nil {
 				errs <- models.ErrUpstreamProvider(resp.StatusCode,
@@ -260,9 +285,23 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			}
 
 			if chunk != nil && len(chunk.Choices) > 0 {
+				finished := false
+				for _, choice := range chunk.Choices {
+					if choice.FinishReason != nil && *choice.FinishReason != "" {
+						finished = true
+						break
+					}
+				}
 				select {
 				case chunks <- *chunk:
 				case <-ctx.Done():
+					return
+				}
+				// Gemini may keep the HTTP stream open after its terminal candidate.
+				// Close our stream as soon as the finish reason arrives so callers
+				// receive their final message event without waiting for EOF.
+				if finished {
+					cancelUpstream()
 					return
 				}
 			}

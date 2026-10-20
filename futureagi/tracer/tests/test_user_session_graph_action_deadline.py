@@ -152,13 +152,13 @@ def test_graph_action_public_wall_starts_before_invalid_runtime_validation_witho
     assert events == [
         "deadline_started",
         "runtime_validation",
-        "deadline_checked",
     ]
+    deadline.remaining_ms.assert_not_called()
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize(("module_kind", "action_name"), GRAPH_ACTION_TARGETS)
-def test_graph_action_invalid_validation_cannot_publish_after_wall_expires(
+def test_graph_action_preserves_validation_error_after_wall_expires(
     monkeypatch,
     module_kind,
     action_name,
@@ -193,13 +193,12 @@ def test_graph_action_invalid_validation_cannot_publish_after_wall_expires(
 
     response = public_action(view, request)
 
-    assert response.status_code == 503
-    assert response.data["code"] == "service_unavailable"
+    assert response.status_code == 400
     assert events == [
         "deadline_started",
         "runtime_validation",
-        "deadline_checked",
     ]
+    deadline.remaining_ms.assert_not_called()
     assert "private" not in str(response.data)
 
 
@@ -422,7 +421,6 @@ def test_session_graph_starts_wall_before_scope_and_passes_only_remaining_time(
         "pg_exit",
         ("remaining", 4_321),
         "graph_dispatch",
-        ("remaining", 4_000),
     ]
     assert dispatched[0]["wall_deadline_ms"] == 4_321
 
@@ -446,7 +444,6 @@ def test_session_eval_config_read_reuses_the_action_postgres_wall(monkeypatch):
         "pg_exit",
         ("remaining", 4_321),
         "graph_dispatch",
-        ("remaining", 4_000),
     ]
     assert dispatched[0]["wall_deadline_ms"] == 4_321
 
@@ -467,7 +464,9 @@ def test_session_graph_pg_timeout_is_sanitized_and_prevents_dispatch(monkeypatch
 
 
 @pytest.mark.unit
-def test_session_graph_does_not_publish_after_shared_wall_expires(monkeypatch):
+def test_session_graph_preserves_completed_result_after_shared_wall_expires(
+    monkeypatch,
+):
     response, events, dispatched = _call_session_graph(
         monkeypatch,
         deadline_values=[
@@ -476,10 +475,9 @@ def test_session_graph_does_not_publish_after_shared_wall_expires(monkeypatch):
         ],
     )
 
-    assert events[-2] == "graph_dispatch"
+    assert events[-1] == "graph_dispatch"
     assert dispatched[0]["wall_deadline_ms"] == 4_321
-    assert response.status_code == 503
-    assert response.data["code"] == "service_unavailable"
+    assert response.status_code == 200
     assert "private" not in str(response.data)
 
 
@@ -634,7 +632,6 @@ def test_project_user_actions_start_before_scope_and_pass_only_remaining_time(
         "pg_exit",
         ("remaining", 4_321),
         "graph_dispatch",
-        ("remaining", 4_000),
     ]
     assert dispatched[0]["timeout_ms"] == 4_321
 
@@ -659,7 +656,6 @@ def test_project_user_eval_config_read_reuses_the_action_postgres_wall(monkeypat
         "pg_exit",
         ("remaining", 4_321),
         "graph_dispatch",
-        ("remaining", 4_000),
     ]
     assert dispatched[0]["timeout_ms"] == 4_321
 
@@ -700,7 +696,7 @@ def test_project_user_pg_timeout_is_sanitized_and_prevents_dispatch(
         "get_user_graph_data",
     ],
 )
-def test_project_user_actions_do_not_publish_after_shared_wall_expires(
+def test_project_user_actions_preserve_completed_result_after_shared_wall_expires(
     monkeypatch,
     action_name,
 ):
@@ -713,8 +709,7 @@ def test_project_user_actions_do_not_publish_after_shared_wall_expires(
         ],
     )
 
-    assert events[-2] == "graph_dispatch"
+    assert events[-1] == "graph_dispatch"
     assert dispatched[0]["timeout_ms"] == 4_321
-    assert response.status_code == 503
-    assert response.data["code"] == "service_unavailable"
+    assert response.status_code == 200
     assert "private" not in str(response.data)

@@ -1,10 +1,10 @@
-"""Ground-truth visibility on the simple-eval Observe path.
+"""Ground Truth on the simple-eval Observe path.
 
-Composite children reach ``GroundTruthService.inject_context`` through
-``run_eval_func``; the simple-eval path does not, so a template with Ground
-Truth switched on runs uncalibrated on spans, traces and sessions. These tests
-pin the run-level warning that makes that state visible, pin that it keys off
-the injected blocks rather than the config, and pin that the run still succeeds.
+Spans, traces and sessions retrieve Ground Truth few-shot examples and hand
+them to the judge, the same way composite children do through
+``run_eval_func``. These tests pin that the blocks reach the engine for the
+evaluators that read them, that every other evaluator is left untouched, and
+that the run-level warning still marks the runs Ground Truth cannot calibrate.
 """
 
 from __future__ import annotations
@@ -13,12 +13,18 @@ import pytest
 
 # Breaks the tracer.utils.eval <-> model_hub.tasks import cycle, as in test_eval_task_runtime.py.
 import model_hub.tasks  # noqa: F401
+from evaluations.constants import (
+    AGENT_EVALUATOR_TYPE_ID,
+    CUSTOM_PROMPT_EVALUATOR_TYPE_ID,
+)
 from model_hub.models.evals_metric import EvalGroundTruth
 from model_hub.utils.eval_input_validation import PARTIAL_INPUT_WARNING_TYPE
 from tracer.models.observation_span import EvalLogger
 from tracer.utils.eval import GROUND_TRUTH_NOT_APPLIED_WARNING_TYPE as GT_WARNING_TYPE
 
 RUN_PARAMS = {"input": "hello", "output": "world"}
+GT_ROW = {"question": "hello", "answer": "world"}
+GT_BLOCK = {"type": "text", "text": "Expected output: world"}
 
 
 def _make_ground_truth(
@@ -44,6 +50,32 @@ def _make_ground_truth(
         is_active=True,
         enabled=enabled,
     )
+
+
+def _stub_retrieval(monkeypatch, examples=(GT_ROW,)):
+    """Serve GT rows without the vector store, and record that it was asked."""
+    from model_hub.services.ground_truth_service import GroundTruthService
+
+    calls = []
+
+    def _retrieve(**_kwargs):
+        calls.append(_kwargs)
+        return list(examples), {"question": "text"}
+
+    monkeypatch.setattr(
+        GroundTruthService, "retrieve_few_shot", staticmethod(_retrieve)
+    )
+    return calls
+
+
+def _use_eval_type(eval_template, eval_type_id):
+    eval_template.config["eval_type_id"] = eval_type_id
+    eval_template.save(update_fields=["config"])
+
+
+def _engine_inputs(stub_run_eval):
+    assert stub_run_eval.requests, "the engine was never reached"
+    return stub_run_eval.requests[-1].inputs
 
 
 def _warnings_on(eval_log):
@@ -238,9 +270,7 @@ def test_no_warning_until_the_ground_truth_rows_are_embedded(
     stub_cost_log,
 ):
     """An unembedded row is not injected on any path, so Observe is not the fault."""
-    _make_ground_truth(
-        eval_template, organization, workspace, embedding_status=status
-    )
+    _make_ground_truth(eval_template, organization, workspace, embedding_status=status)
 
     _run_span_eval(observation_span, custom_eval_config)
 
@@ -511,3 +541,272 @@ def test_task_logs_endpoint_counts_rows_while_groups_count_warnings(
     assert counts[PARTIAL_INPUT_WARNING_TYPE] == 1
     assert counts[GT_WARNING_TYPE] == 1
     assert sum(counts.values()) == 2
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "eval_type_id", [CUSTOM_PROMPT_EVALUATOR_TYPE_ID, AGENT_EVALUATOR_TYPE_ID]
+)
+def test_span_eval_hands_ground_truth_blocks_to_the_engine(
+    eval_type_id,
+    organization,
+    workspace,
+    project,
+    trace,
+    observation_span,
+    eval_template,
+    custom_eval_config,
+    stub_run_eval,
+    stub_cost_log,
+    monkeypatch,
+):
+    _use_eval_type(eval_template, eval_type_id)
+    _make_ground_truth(eval_template, organization, workspace)
+    _stub_retrieval(monkeypatch)
+
+    _run_span_eval(observation_span, custom_eval_config)
+
+    assert GT_BLOCK in _engine_inputs(stub_run_eval)["ground_truth_blocks"]
+    assert _gt_warnings(_latest_log(custom_eval_config)) == []
+
+
+@pytest.mark.django_db
+def test_trace_eval_hands_ground_truth_blocks_to_the_engine(
+    organization,
+    workspace,
+    project,
+    trace,
+    observation_span,
+    eval_template,
+    custom_eval_config,
+    stub_run_eval,
+    stub_cost_log,
+    monkeypatch,
+):
+    from tracer.utils.eval import _execute_evaluation_for_trace
+
+    _use_eval_type(eval_template, CUSTOM_PROMPT_EVALUATOR_TYPE_ID)
+    _make_ground_truth(eval_template, organization, workspace)
+    _stub_retrieval(monkeypatch)
+
+    _execute_evaluation_for_trace(
+        trace=trace,
+        anchor_span=observation_span,
+        custom_eval_config=custom_eval_config,
+        eval_task_id=None,
+        run_params=dict(RUN_PARAMS),
+    )
+
+    assert GT_BLOCK in _engine_inputs(stub_run_eval)["ground_truth_blocks"]
+    assert _gt_warnings(_latest_log(custom_eval_config)) == []
+
+
+@pytest.mark.django_db
+def test_session_eval_hands_ground_truth_blocks_to_the_engine(
+    organization,
+    workspace,
+    observe_project,
+    trace_session,
+    eval_template,
+    custom_eval_config,
+    stub_run_eval,
+    stub_cost_log,
+    monkeypatch,
+):
+    from tracer.utils.eval import _execute_evaluation_for_session
+
+    _use_eval_type(eval_template, CUSTOM_PROMPT_EVALUATOR_TYPE_ID)
+    _make_ground_truth(eval_template, organization, workspace)
+    _stub_retrieval(monkeypatch)
+
+    _execute_evaluation_for_session(
+        trace_session=trace_session,
+        custom_eval_config=custom_eval_config,
+        eval_task_id=None,
+        run_params=dict(RUN_PARAMS),
+    )
+
+    assert GT_BLOCK in _engine_inputs(stub_run_eval)["ground_truth_blocks"]
+    assert _gt_warnings(_latest_log(custom_eval_config)) == []
+
+
+@pytest.mark.django_db
+def test_evaluators_that_cannot_read_the_blocks_are_never_handed_them(
+    organization,
+    workspace,
+    project,
+    trace,
+    observation_span,
+    eval_template,
+    custom_eval_config,
+    stub_run_eval,
+    stub_cost_log,
+    monkeypatch,
+):
+    """A function eval splats its kwargs into a bare operation, so the extra key
+    would raise. It keeps the warning instead, which names the remedy it can use."""
+    _use_eval_type(eval_template, "FunctionEvaluator")
+    _make_ground_truth(eval_template, organization, workspace)
+    _stub_retrieval(monkeypatch)
+
+    _run_span_eval(observation_span, custom_eval_config)
+
+    assert "ground_truth_blocks" not in _engine_inputs(stub_run_eval)
+    eval_log = _latest_log(custom_eval_config)
+    assert eval_log.error is False
+    assert len(_gt_warnings(eval_log)) == 1
+
+
+@pytest.mark.django_db
+def test_ground_truth_blocks_stay_out_of_the_cost_log_mappings(
+    organization,
+    workspace,
+    project,
+    trace,
+    observation_span,
+    eval_template,
+    custom_eval_config,
+    stub_run_eval,
+    stub_cost_log,
+    monkeypatch,
+):
+    """Blocks are prompt payload, not resolved inputs, so APICallLog rows stay lean."""
+    _use_eval_type(eval_template, CUSTOM_PROMPT_EVALUATOR_TYPE_ID)
+    _make_ground_truth(eval_template, organization, workspace)
+    _stub_retrieval(monkeypatch)
+
+    logged = []
+
+    def _spy(**kwargs):
+        logged.append(kwargs["config"])
+        return stub_cost_log(**kwargs)
+
+    monkeypatch.setattr("tracer.utils.eval.log_and_deduct_cost_for_api_request", _spy)
+
+    _run_span_eval(observation_span, custom_eval_config)
+
+    assert GT_BLOCK in _engine_inputs(stub_run_eval)["ground_truth_blocks"]
+    assert logged
+    assert logged[-1]["mappings"] == RUN_PARAMS
+    assert "ground_truth_blocks" not in logged[-1]["required_keys"]
+
+
+@pytest.mark.django_db
+def test_warning_still_fires_when_retrieval_finds_nothing(
+    organization,
+    workspace,
+    project,
+    trace,
+    observation_span,
+    eval_template,
+    custom_eval_config,
+    stub_run_eval,
+    stub_cost_log,
+    monkeypatch,
+):
+    _use_eval_type(eval_template, CUSTOM_PROMPT_EVALUATOR_TYPE_ID)
+    _make_ground_truth(eval_template, organization, workspace)
+    retrievals = _stub_retrieval(monkeypatch, examples=())
+
+    _run_span_eval(observation_span, custom_eval_config)
+
+    assert retrievals, "retrieval was never attempted"
+    assert "ground_truth_blocks" not in _engine_inputs(stub_run_eval)
+    assert len(_gt_warnings(_latest_log(custom_eval_config))) == 1
+
+
+@pytest.mark.django_db
+def test_eval_runs_when_ground_truth_injection_raises(
+    organization,
+    workspace,
+    project,
+    trace,
+    observation_span,
+    eval_template,
+    custom_eval_config,
+    stub_run_eval,
+    stub_cost_log,
+    monkeypatch,
+):
+    """Fail open: a broken retrieval leaves the run uncalibrated, never failed."""
+    from model_hub.services.ground_truth_service import GroundTruthService
+
+    attempts = []
+
+    def _boom(*_args, **_kwargs):
+        attempts.append(_kwargs)
+        raise RuntimeError("gt_injection_blew_up")
+
+    _use_eval_type(eval_template, CUSTOM_PROMPT_EVALUATOR_TYPE_ID)
+    _make_ground_truth(eval_template, organization, workspace)
+    monkeypatch.setattr(GroundTruthService, "inject_context", staticmethod(_boom))
+
+    _run_span_eval(observation_span, custom_eval_config)
+
+    assert attempts, "ground truth was never attempted"
+    assert _engine_inputs(stub_run_eval) == RUN_PARAMS
+    eval_log = _latest_log(custom_eval_config)
+    assert eval_log.error is False
+    assert len(_gt_warnings(eval_log)) == 1
+
+
+@pytest.mark.django_db
+def test_workspaceless_project_injects_from_the_default_workspace(
+    organization,
+    project,
+    trace,
+    observation_span,
+    eval_template,
+    custom_eval_config,
+    stub_run_eval,
+    stub_cost_log,
+    monkeypatch,
+):
+    """Retrieval resolves the default workspace; the eval request still must not.
+
+    ``workspace_id`` also picks the provider API key and the billing
+    attribution, so it stays the project's own.
+    """
+    from accounts.models.workspace import Workspace
+
+    default_ws = Workspace.objects.filter(
+        organization=organization, is_default=True, is_active=True
+    ).first()
+    project.workspace = None
+    project.save(update_fields=["workspace"])
+    _use_eval_type(eval_template, CUSTOM_PROMPT_EVALUATOR_TYPE_ID)
+    _make_ground_truth(eval_template, organization, default_ws)
+    _stub_retrieval(monkeypatch)
+
+    _run_span_eval(observation_span, custom_eval_config)
+
+    assert GT_BLOCK in _engine_inputs(stub_run_eval)["ground_truth_blocks"]
+    assert stub_run_eval.requests[-1].workspace_id is None
+    assert _gt_warnings(_latest_log(custom_eval_config)) == []
+
+
+@pytest.mark.django_db
+def test_another_tenants_ground_truth_is_never_injected(
+    organization,
+    workspace,
+    project,
+    trace,
+    observation_span,
+    eval_template,
+    custom_eval_config,
+    stub_run_eval,
+    stub_cost_log,
+    monkeypatch,
+):
+    from accounts.models.organization import Organization
+
+    other_org = Organization.objects.create(name="other org")
+    _use_eval_type(eval_template, CUSTOM_PROMPT_EVALUATOR_TYPE_ID)
+    _make_ground_truth(eval_template, other_org, None)
+    retrievals = _stub_retrieval(monkeypatch)
+
+    _run_span_eval(observation_span, custom_eval_config)
+
+    assert retrievals == []
+    assert "ground_truth_blocks" not in _engine_inputs(stub_run_eval)
+    assert _gt_warnings(_latest_log(custom_eval_config)) == []

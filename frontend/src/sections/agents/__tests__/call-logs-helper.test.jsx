@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 const axiosMocks = vi.hoisted(() => ({
   get: vi.fn(),
   projectGetCallLogs: "/tracer/trace/list_voice_calls/",
+  projectGetVoiceCallDetail: "/tracer/trace/voice_call_detail/",
   agentGetCallLogs: vi.fn((id, version) => {
     if (!id || !version) {
       throw new Error("missing path param");
@@ -16,12 +17,14 @@ const axiosMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("src/utils/axios", () => ({
+  readQuery: axiosMocks.get,
   default: {
     get: axiosMocks.get,
   },
   endpoints: {
     project: {
       getCallLogs: axiosMocks.projectGetCallLogs,
+      getVoiceCallDetail: axiosMocks.projectGetVoiceCallDetail,
     },
     agentDefinitions: {
       getCallLogs: axiosMocks.agentGetCallLogs,
@@ -299,11 +302,11 @@ describe("useCallLogs", () => {
       ({ page }) =>
         useCallLogs({
           module: "project",
-          id: "project-colly",
+          id: "project-fixture",
           page,
           pageLimit: 1,
           params: {
-            project_id: "project-colly",
+            project_id: "project-fixture",
             filters: propertyFilters,
           },
           cursorPagination: pagination,
@@ -321,14 +324,14 @@ describe("useCallLogs", () => {
     );
 
     expect(axiosMocks.get.mock.calls[0][1].params).toEqual({
-      project_id: "project-colly",
+      project_id: "project-fixture",
       filters: propertyFilters,
       cursor_mode: true,
       page: 1,
       page_size: 1,
     });
     expect(axiosMocks.get.mock.calls[1][1].params).toEqual({
-      project_id: "project-colly",
+      project_id: "project-fixture",
       filters: propertyFilters,
       cursor_mode: true,
       cursor: "signed-voice-property-page-2",
@@ -517,6 +520,7 @@ import {
   getAgentLatencyFilterValue,
   prefetchCallLogs,
   useCallLogs,
+  useVoiceCallDetail,
 } from "../helper";
 import { createListCursorPagination } from "src/sections/projects/LLMTracing/listCursorPagination";
 import { VOICE_CALL_FILTER_FIELDS } from "src/sections/projects/LLMTracing/voiceCallFilterFields";
@@ -558,5 +562,43 @@ describe("getAgentLatencyFilterValue", () => {
     expect(
       getAgentLatencyFilterValue({ data: { avg_agent_latency_ms: "n/a" } }),
     ).toBeNull();
+  });
+});
+
+describe("useVoiceCallDetail", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    axiosMocks.get.mockResolvedValue({ data: { result: {} } });
+  });
+
+  it("pins the read to the project the call was opened from", async () => {
+    renderHook(
+      () =>
+        useVoiceCallDetail("trace-1", {
+          enabled: true,
+          projectId: "project-1",
+        }),
+      {
+        wrapper: createWrapper(),
+      },
+    );
+
+    await waitFor(() => expect(axiosMocks.get).toHaveBeenCalledTimes(1));
+    expect(axiosMocks.get).toHaveBeenCalledWith(
+      axiosMocks.projectGetVoiceCallDetail,
+      { params: { trace_id: "trace-1", project_id: "project-1" } },
+    );
+  });
+
+  it("omits project_id when the caller has no project in context", async () => {
+    renderHook(() => useVoiceCallDetail("trace-1", { enabled: true }), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(axiosMocks.get).toHaveBeenCalledTimes(1));
+    expect(axiosMocks.get).toHaveBeenCalledWith(
+      axiosMocks.projectGetVoiceCallDetail,
+      { params: { trace_id: "trace-1" } },
+    );
   });
 });

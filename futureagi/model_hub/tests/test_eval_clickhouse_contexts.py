@@ -3,7 +3,6 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
 
 from model_hub.selectors.eval_list_charts import read_eval_list_charts
 from model_hub.serializers.contracts import (
@@ -11,6 +10,12 @@ from model_hub.serializers.contracts import (
     LegacyEvalTemplatesRequestSerializer,
 )
 from model_hub.views.separate_evals import EvalTemplateListChartsView
+from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+
+
+@pytest.fixture(autouse=True)
+def _configured_mock_clickhouse(settings):
+    settings.CLICKHOUSE = {"CH_ENABLED": True, "CH_HOST": "offline.invalid"}
 
 
 class _FakeClickHouseClient:
@@ -95,7 +100,7 @@ def test_eval_list_charts_accepts_over_budget_request_and_explicitly_degrades(
     }
 
 
-def test_eval_list_charts_uses_one_bounded_materialized_clickhouse_aggregate(
+def test_eval_list_charts_uses_one_uncapped_materialized_clickhouse_aggregate(
     monkeypatch,
 ):
     template_id = uuid4()
@@ -133,10 +138,12 @@ def test_eval_list_charts_uses_one_bounded_materialized_clickhouse_aggregate(
     assert result["query_sampled"] is False
     assert len(client.calls) == 1
     call = client.calls[0]
-    assert call["timeout_ms"] == 2_000
+    assert call["timeout_ms"] is None
     assert call["settings"]["max_threads"] == 2
-    assert "max_rows_to_read" not in call["settings"]
-    assert call["settings"]["max_bytes_to_read"] == 36 * 1024 * 1024 * 1024
+    assert call["settings"]["max_rows_to_read"] == 0
+    assert call["settings"]["max_bytes_to_read"] == 0
+    assert call["settings"]["max_result_rows"] == 0
+    assert call["settings"]["max_result_bytes"] == 0
     assert call["settings"]["max_memory_usage"] == 36 * 1024 * 1024 * 1024
     assert "eval_score" in call["query"]
     assert "eval_output_str" in call["query"]
@@ -181,7 +188,7 @@ def test_eval_list_charts_returns_stale_result_when_clickhouse_exceeds_budget(
         "data_stale": True,
         "query_error_code": "read_budget_exceeded",
     }
-    assert client.calls[0]["timeout_ms"] == 2_000
+    assert client.calls[0]["timeout_ms"] is None
 
 
 def test_eval_list_charts_marks_cold_budget_failure_degraded(monkeypatch):

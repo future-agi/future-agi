@@ -25,10 +25,12 @@ type anthropicRequest struct {
 	Tools         []json.RawMessage      `json:"tools,omitempty"`
 	ToolChoice    *anthropicToolChoice   `json:"tool_choice,omitempty"`
 	OutputConfig  *anthropicOutputConfig `json:"output_config,omitempty"`
+	Thinking      json.RawMessage        `json:"thinking,omitempty"`
 }
 
 type anthropicOutputConfig struct {
 	Format *anthropicOutputFormat `json:"format,omitempty"`
+	Effort string                 `json:"effort,omitempty"`
 }
 
 type anthropicOutputFormat struct {
@@ -429,7 +431,8 @@ func translateToolChoice(raw json.RawMessage) (*anthropicToolChoice, error) {
 		case "auto":
 			return &anthropicToolChoice{Type: "auto"}, nil
 		case "none":
-			return nil, nil // Anthropic doesn't have "none" — just omit tools.
+			// Tools stay declared so earlier tool_use turns remain valid.
+			return &anthropicToolChoice{Type: "none"}, nil
 		case "required":
 			return &anthropicToolChoice{Type: "any"}, nil
 		}

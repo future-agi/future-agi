@@ -16,6 +16,7 @@ from tracer.services.clickhouse.v2.query_builders.trace_list import (
     UserEnrichmentLimitExceeded,
 )
 from tracer.services.clickhouse.v2.span_selectors import merge_content_rows
+from tracer.tests.test_trace_root_physical_replay import root_row
 from tracer.views.trace import _collect_trace_enrichment_futures
 
 PROJECT_A = "10000000-0000-0000-0000-000000000001"
@@ -274,10 +275,24 @@ def test_org_content_merge_keys_same_trace_by_project() -> None:
 def test_content_query_preserves_project_in_public_identity() -> None:
     builder = TraceListQueryBuilderV2(project_ids=[PROJECT_A, PROJECT_B])
 
-    query, _ = builder.build_content_query(["shared"])
+    roots = [
+        root_row(project_id=project, trace_id="shared")
+        for project in (PROJECT_A, PROJECT_B)
+    ]
+    query, params = builder.build_content_query(
+        ["shared"], root_identities=builder.content_root_identities_for_rows(roots)
+    )
 
     assert "toString(project_id) AS project_id" in query
-    assert "LIMIT 1 BY project_id, trace_id" in query
+    assert "GROUP BY project_id, observation_type, service_name" in query
+    assert "IN %(content_physical_keys)s" in query
+    assert {(root[0], root[1]) for root in params["content_root_identities"]} == {
+        (PROJECT_A, "shared"),
+        (PROJECT_B, "shared"),
+    }
+    assert len(params["content_physical_keys"]) == 2
+    assert builder.content_root_rows_match(roots, roots)
+    assert not builder.content_root_rows_match(roots, [roots[0], roots[0]])
 
 
 def _local_ch25_client():

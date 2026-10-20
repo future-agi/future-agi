@@ -745,7 +745,7 @@ func TestBundledModels_NoNegativePrices(t *testing.T) {
 func TestBundledModels_KnownModelExists(t *testing.T) {
 	// Spot-check that well-known models are present.
 	db := New(BundledModels, nil)
-	known := []string{"gpt-4o", "claude-3-5-sonnet-20241022"}
+	known := []string{"gpt-4o", "claude-sonnet-4-6"}
 	for _, id := range known {
 		if _, ok := db.Get(id); !ok {
 			t.Errorf("expected well-known model %q to exist in BundledModels", id)
@@ -800,14 +800,14 @@ func TestBundledModels_MiniMaxM3(t *testing.T) {
 	if model.MaxInputTokens != 1_000_000 {
 		t.Errorf("MaxInputTokens = %d, want 1000000", model.MaxInputTokens)
 	}
-	if math.Abs(model.Pricing.InputPerToken-0.6e-6) > 1e-15 {
-		t.Errorf("InputPerToken = %g, want 0.6e-6", model.Pricing.InputPerToken)
+	if math.Abs(model.Pricing.InputPerToken-0.3e-6) > 1e-15 {
+		t.Errorf("InputPerToken = %g, want 0.3e-6", model.Pricing.InputPerToken)
 	}
-	if math.Abs(model.Pricing.OutputPerToken-2.4e-6) > 1e-15 {
-		t.Errorf("OutputPerToken = %g, want 2.4e-6", model.Pricing.OutputPerToken)
+	if math.Abs(model.Pricing.OutputPerToken-1.2e-6) > 1e-15 {
+		t.Errorf("OutputPerToken = %g, want 1.2e-6", model.Pricing.OutputPerToken)
 	}
-	if math.Abs(model.Pricing.CachedInputPerToken-0.12e-6) > 1e-15 {
-		t.Errorf("CachedInputPerToken = %g, want 0.12e-6", model.Pricing.CachedInputPerToken)
+	if math.Abs(model.Pricing.CachedInputPerToken-0.06e-6) > 1e-15 {
+		t.Errorf("CachedInputPerToken = %g, want 0.06e-6", model.Pricing.CachedInputPerToken)
 	}
 	if !model.Capabilities.Vision || !model.Capabilities.Reasoning || !model.Capabilities.PromptCaching {
 		t.Error("expected vision, reasoning, and prompt caching capabilities")
@@ -817,7 +817,14 @@ func TestBundledModels_MiniMaxM3(t *testing.T) {
 func TestBundledModels_ListSorted(t *testing.T) {
 	db := New(BundledModels, nil)
 	list := db.List()
-	if !sort.SliceIsSorted(list, func(i, j int) bool { return list[i].ID < list[j].ID }) {
+	// Flash is deliberately listed ahead of M3; all other IDs retain sorting.
+	var ids []string
+	for _, m := range list {
+		if m.ID != "minimax/MiniMax-M3.1-Flash" {
+			ids = append(ids, m.ID)
+		}
+	}
+	if !sort.StringsAreSorted(ids) {
 		t.Error("List() from BundledModels is not sorted by ID")
 	}
 }

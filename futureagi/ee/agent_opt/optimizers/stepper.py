@@ -16,7 +16,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set
 
+import structlog
+
 from ee.agent_opt.types import IterationHistory
+
+logger = structlog.get_logger(__name__)
+
+TEACHER_ATTEMPTS = 3
 
 VariationGenerator = Callable[
     [str, int, str, Dict[str, Any], Optional[str], str], List[str]
@@ -302,6 +308,11 @@ class MetaPromptStepper(OptimizerStepper):
         improved_prompt = self._generate_improved_prompt(meta_prompt, generate_kwargs)
         if improved_prompt:
             self.current_prompt = improved_prompt
+        else:
+            logger.warning(
+                "Teacher model produced no improved prompt; keeping current prompt",
+                round_index=self.round_index,
+            )
 
     def to_state(self) -> Dict[str, Any]:
         return {
@@ -340,14 +351,24 @@ class MetaPromptStepper(OptimizerStepper):
     def _generate_improved_prompt(
         self, meta_prompt: str, generate_kwargs: Dict[str, Any]
     ) -> Optional[str]:
-        for attempt in range(3):
+        for attempt in range(TEACHER_ATTEMPTS):
             try:
                 response = self.teacher_generate(meta_prompt, generate_kwargs)
                 parsed = self._parse_output_from_json(response)
                 if parsed:
                     return parsed.get("improved_prompt")
+                logger.warning(
+                    "Teacher response was not parseable JSON",
+                    attempt=attempt + 1,
+                    max_attempts=TEACHER_ATTEMPTS,
+                )
             except Exception:
-                continue
+                logger.warning(
+                    "Teacher model call failed",
+                    attempt=attempt + 1,
+                    max_attempts=TEACHER_ATTEMPTS,
+                    exc_info=True,
+                )
         return None
 
     @staticmethod

@@ -82,13 +82,18 @@ sendTrace(req, { collectorUrl, apiKey, secretKey, projectName, rootName? })
   : Promise<{ traceId, spanIds: [rootId, childId], projectName }>
 ```
 
-POSTs OTLP/HTTP JSON to `${collectorUrl}/v1/traces` with `X-Api-Key` / `X-Secret-Key`. Fixed shape:
-resource attributes `project_name` and `service.name`; exactly two spans — a root named
-`rootName ?? 'e2e.root'` with no attributes, and a child `e2e.llm-call` carrying the single
-attribute `fi.span.kind='llm'`. The collector auto-creates the Postgres `tracer_project` row under
-the key's org. `traceId` is the dashed UUID as stored in ClickHouse; `spanIds` are 16-hex.
-Use a fresh `await request.newContext()` (no `baseURL`) for `req`, and dispose it as the last line.
-Any other span shape means writing your own payload — see `harness-gaps.md`.
+POSTs OTLP/HTTP JSON to `${collectorUrl}/v1/traces` with `X-Api-Key` / `X-Secret-Key`.
+It always sends a two-span tree, with resource `project_name` and `service.name`,
+root `rootName ?? 'e2e.root'`, and child `childName ?? 'e2e.llm-call'`.
+Optional root/child/resource attributes support recursive scalars, arrays and objects;
+the child defaults to `fi.span.kind='llm'`. Optional stable IDs and nanosecond
+timestamps support replay and grouping fixtures. See `lib/otlp.ts` for validation
+and `harness/otlp-shapes.spec.ts` for exercised cases.
+The collector auto-creates the Postgres `tracer_project` row under the key's scope.
+Returned `traceId` is the dashed UUID stored in ClickHouse; `spanIds` are 16-hex.
+Use a fresh `await request.newContext()` (no `baseURL`) and dispose it in `finally`.
+Deeper trees, events and gRPC need a separately planned harness extension; do not
+assemble alternative seeding helpers inline in a flow.
 
 ### `StateProbe` — `e2e/lib/state-probe.ts:StateProbe`
 
@@ -152,7 +157,7 @@ Reusable, already verified by shipped flows. Copy the constant _and_ its provena
 | AG Grid cell          | `page.locator('.ag-row [col-id="span_name"]')`                                                        | span table                                                                                                                                              |
 | Span Evals tab        | `page.getByRole('tab', { name: 'Evals' })`, then `'1/1 passed'`                                       | `e2e/flows/evals/eval-task.spec.ts`                                                                                                                     |
 | Login                 | `/auth/jwt/login`, `POST /accounts/token/`; a new org routes to `/auth/jwt/setup-org`                 | `e2e/flows/auth/login.spec.ts`                                                                                                                          |
-| Gateway, in-container | `http://agentcc-gateway:8080/v1`, key `local-dev-only-shared-secret-replace-me`                       | `docker-compose.yml` `AGENTCC_INTERNAL_URL` (which is the bare origin — the `/v1` is the OpenAI suffix the spec appends) and `AGENTCC_INTERNAL_API_KEY` |
+| Gateway, in-container | `http://agentcc-gateway:8080/v1`, key `local-dev-only-shared-secret-replace-me`                       | `docker-compose.distributed.yml` `AGENTCC_INTERNAL_URL` (which is the bare origin — the `/v1` is the OpenAI suffix the spec appends) and `AGENTCC_INTERNAL_API_KEY` |
 
 **Before planning locators, grep product code for hooks that already exist:**
 `grep -rn 'data-[a-z-]*=' frontend/src/sections frontend/src/components`. Grep the whole tree, not a
@@ -220,9 +225,11 @@ prompt → gateway → mock → parse → Postgres → CDC → ClickHouse path r
 
 ## ClickHouse and Postgres binding traps
 
-- Every ClickHouse read takes `FINAL`. `spans`, `traces` and every CDC-fed table are
-  ReplacingMergeTree; a Postgres row updated through pending → running → terminal lands as several
-  versions, and an unmerged read returns the stale one.
+- Latest-state probes over replacing source/CDC tables use `FINAL`: `spans`,
+  `traces` and the mirrored fact tables can contain several versions of one row.
+  Observed catalog indexes use AggregatingMergeTree instead: group by the full
+  logical identity and read `min(first_seen)` / `max(last_seen)`, not `FINAL` or
+  physical row counts. Pin each table's actual engine before choosing the probe.
 - `spans.trace_id` is the dashed UUID **string** → bind `{t:String}`.
 - Curated `traces` has no `trace_id` column — it is keyed by `id` → bind `{t:UUID}`.
 - `spans.id` is the 16-hex span id.

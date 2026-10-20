@@ -14,9 +14,8 @@ import (
 
 type builderFixture struct {
 	Scope struct {
-		ProjectID    string `json:"project_id"`
-		SeenAt       string `json:"seen_at"`
-		CatalogEpoch uint16 `json:"catalog_epoch"`
+		ProjectID string `json:"project_id"`
+		SeenAt    string `json:"seen_at"`
 	} `json:"scope"`
 	Limits struct {
 		MaxKeys         int `json:"max_keys"`
@@ -80,7 +79,7 @@ func TestBuilderMatchesSharedGoldenFixture(t *testing.T) {
 	}
 
 	result, err := BuildRows(
-		Scope{fixture.Scope.ProjectID, seenAt, fixture.Scope.CatalogEpoch},
+		Scope{ProjectID: fixture.Scope.ProjectID, SeenAt: seenAt},
 		SpanAttributeMaps{fixture.Attributes.Strings, numbers, fixture.Attributes.Booleans, extra},
 		BuildLimits{fixture.Limits.MaxKeys, fixture.Limits.MaxArrayMembers, fixture.Limits.MaxEncodedBytes},
 	)
@@ -239,7 +238,7 @@ func assertExpectedBuilderRows(t *testing.T, fixture builderFixture, result Buil
 	keys := make([][]any, 0, len(result.KeyRows))
 	for _, row := range result.KeyRows {
 		if row.ProjectID != fixture.Scope.ProjectID || row.FirstSeen.Format(time.RFC3339Nano) != fixture.Scope.SeenAt ||
-			row.LastSeen != row.FirstSeen || row.CatalogEpoch != fixture.Scope.CatalogEpoch {
+			row.LastSeen != row.FirstSeen {
 			t.Fatalf("key scope mismatch: %#v", row)
 		}
 		keys = append(keys, []any{row.AttributeKey, row.KeyFolded, row.AttributeType})
@@ -247,7 +246,7 @@ func assertExpectedBuilderRows(t *testing.T, fixture builderFixture, result Buil
 	values := make([][]any, 0, len(result.ValueRows))
 	for _, row := range result.ValueRows {
 		if row.ProjectID != fixture.Scope.ProjectID || row.FirstSeen.Format(time.RFC3339Nano) != fixture.Scope.SeenAt ||
-			row.LastSeen != row.FirstSeen || row.CatalogEpoch != fixture.Scope.CatalogEpoch {
+			row.LastSeen != row.FirstSeen {
 			t.Fatalf("value scope mismatch: %#v", row)
 		}
 		values = append(values, []any{row.AttributeKey, row.AttributeType, row.ValueJSON, row.ValueFingerprint})

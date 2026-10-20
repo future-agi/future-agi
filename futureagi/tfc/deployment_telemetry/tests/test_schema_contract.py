@@ -19,9 +19,11 @@ import pytest
 
 from tfc.ee_loader import has_ee
 
-# Skip on the OSS lane only; with ee present the import runs so divergence fails loud.
-if not has_ee("ee"):
-    pytest.skip("requires ee/ (OSS lane)", allow_module_level=True)
+# Skip on the OSS lane only; with ee/cloud present the import runs so divergence
+# fails loud. Check ee.cloud itself: the open-source tree ships ee/ without the
+# private cloud package, which fork CI runs cannot check out.
+if not has_ee("ee.cloud"):
+    pytest.skip("requires ee/cloud (OSS lane)", allow_module_level=True)
 
 from ee.cloud.telemetry import schema as receiver_schema  # noqa: E402
 from tfc.deployment_telemetry import schema as sender_schema  # noqa: E402

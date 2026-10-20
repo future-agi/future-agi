@@ -3,6 +3,7 @@ package cost
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
@@ -86,8 +87,14 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		}
 	case "image":
 		// Image cost varies by provider; skip for now.
-	case "speech", "transcription":
-		// Audio cost varies by provider; skip for now.
+	case "transcription", "translation", "transcription_relay":
+		if seconds, err := strconv.ParseFloat(rc.Metadata["audio_seconds"], 64); err == nil {
+			cost, ok = db.AudioCost(model, seconds)
+		}
+	case "speech", "speech_stream", "speech_relay":
+		if characters, err := strconv.Atoi(rc.Metadata["input_characters"]); err == nil {
+			cost, ok = db.CharacterCost(model, characters)
+		}
 	case "rerank":
 		// Rerank billing varies by provider; skip for now.
 	default: // "chat" or empty

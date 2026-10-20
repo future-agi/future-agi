@@ -27,6 +27,10 @@ import {
   SS_KEY_ORG_ROLE,
   SS_KEY_USER_ID,
 } from "src/utils/sessionKeys";
+import {
+  SAML_AUTH_GENERATION_KEY,
+  SESSION_KEYS_TO_CLEAR,
+} from "src/auth/saml-bootstrap";
 
 // Helper to decode JWT and extract user ID (without verification)
 function decodeTokenUserId(token) {
@@ -190,6 +194,14 @@ export function AuthProvider({ children }) {
   // When another tab logs in as a different user, force logout this tab
   useEffect(() => {
     const handleStorageChange = (event) => {
+      if (event.key === SAML_AUTH_GENERATION_KEY) {
+        queryClient.clear();
+        SESSION_KEYS_TO_CLEAR.forEach((key) => sessionStorage.removeItem(key));
+        dispatch({ type: "LOGOUT" });
+        window.location.replace("/dashboard/develop");
+        return;
+      }
+
       // Only handle accessToken changes from other tabs
       if (event.key !== STORAGE_KEY) return;
 
@@ -296,11 +308,11 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  const awsRegister = useCallback(async (payload) => {
+  const marketplaceRegister = useCallback(async (endpoint, payload) => {
     try {
       const data = { ...payload };
 
-      const response = await axios.post(endpoints.auth.awsSignUp, data);
+      const response = await axios.post(endpoint, data);
 
       return response.data; // Return response so calling function can use it
     } catch (error) {
@@ -386,7 +398,7 @@ export function AuthProvider({ children }) {
       logout,
       initialize,
       updateUserData,
-      awsRegister,
+      marketplaceRegister,
     }),
     [
       user,
@@ -396,7 +408,7 @@ export function AuthProvider({ children }) {
       logout,
       initialize,
       updateUserData,
-      awsRegister,
+      marketplaceRegister,
     ],
   );
 

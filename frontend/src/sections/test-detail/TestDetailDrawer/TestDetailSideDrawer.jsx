@@ -17,7 +17,7 @@ import RightSection from "src/components/CallLogsDetailDrawer/RightSection";
 import LeftSection from "src/components/CallLogsDetailDrawer/LeftSection";
 import AudioPlayerCustom from "./AudioPlayerCustom";
 import { useQueryClient } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import axios, { readQuery, endpoints } from "src/utils/axios";
 import { transformMetricDetails } from "src/sections/agents/CallLogs/utils";
 import { enqueueSnackbar } from "notistack";
 import { deepEqual } from "src/utils/utils";
@@ -107,10 +107,10 @@ const TestDetailSideDrawerChild = ({
       data?.observation_span?.[0]?.observation_type === "conversation" ||
       data?.simulation_call_type === "voice");
   const { data: voiceDetail, isLoading: isVoiceDetailLoading } =
-    useVoiceCallDetail(
-      traceId,
-      urlModule === "project" && isVoiceCall && !!traceId,
-    );
+    useVoiceCallDetail(traceId, {
+      enabled: urlModule === "project" && isVoiceCall && !!traceId,
+      projectId: resolvedProjectId,
+    });
 
   // Fetch full call execution detail for simulate calls. The list response
   // strips `transcript` when `detail_mode=false` (see
@@ -375,12 +375,10 @@ const TestDetailSideDrawerChild = ({
         baseParams: projectVoiceNavigatorParams,
         pageSize: standardPageLimit,
         request: (requestParams, requestOptions) =>
-          axios
-            .get(endpoints.project.getCallLogs, {
-              params: requestParams,
-              ...(requestOptions || {}),
-            })
-            .then((response) => response.data),
+          readQuery(endpoints.project.getCallLogs, {
+            params: requestParams,
+            ...(requestOptions || {}),
+          }).then((response) => response.data),
       });
     }
     return projectVoiceNavigatorRef.current;
@@ -609,8 +607,9 @@ const TestDetailSideDrawerChild = ({
         rootSpanId: rootObsSpanId,
         module: urlModule,
         callExecutionId: data?.id,
+        projectId: resolvedProjectId,
       }),
-    [traceId, rootObsSpanId, urlModule, data?.id],
+    [traceId, rootObsSpanId, urlModule, data?.id, resolvedProjectId],
   );
   const hasCurrentTerminalNavigator =
     urlModule === "project" &&

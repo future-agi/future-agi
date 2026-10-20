@@ -84,7 +84,7 @@ from collections.abc import Iterable
 
 import structlog
 
-from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
+from tracer.services.clickhouse.read_budget import ReadDeadline
 from tracer.services.clickhouse.v2 import get_v2_config
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
@@ -151,6 +151,7 @@ def _get_client():
                     username=cfg["user"],
                     password=cfg["password"] or "",
                     database=cfg["database"],
+                    application_read=True,
                 )
         return _client
 
@@ -168,9 +169,11 @@ def _get_client():
                 client.close()
             except Exception:
                 pass
-        import clickhouse_connect
+        from tracer.services.clickhouse.application_read_transport import (
+            create_application_read_http_client,
+        )
 
-        client = clickhouse_connect.get_client(
+        client = create_application_read_http_client(
             host=cfg["host"],
             port=cfg["http_port"],
             username=cfg["user"],
@@ -186,9 +189,11 @@ def _get_client():
         return _client
     with _client_lock:
         if _client is None:
-            import clickhouse_connect
+            from tracer.services.clickhouse.application_read_transport import (
+                create_application_read_http_client,
+            )
 
-            _client = clickhouse_connect.get_client(
+            _client = create_application_read_http_client(
                 host=cfg["host"],
                 port=cfg["http_port"],
                 username=cfg["user"],
@@ -540,39 +545,25 @@ def resolve_session_fields(
     overlay_queryset = overlay_queryset.values_list(
         "trace_session_id", "bookmarked", "display_name"
     )
-    if deadline is None:
-        overlay_rows = list(overlay_queryset)
-    else:
-        from contextlib import nullcontext
+    from django.db import DatabaseError, connection, transaction
 
-        from django.db import DatabaseError, connection, transaction
+    from tracer.services.postgres_read_policy import (
+        ApplicationPostgresReadError,
+        application_postgres_reads,
+    )
 
-        timeout_ms = deadline.remaining_ms()
-        already_in_atomic_block = connection.in_atomic_block
-        try:
-            if connection.vendor == "postgresql":
-                transaction_context = (
-                    nullcontext() if already_in_atomic_block else transaction.atomic()
-                )
-                with transaction_context:
-                    with connection.cursor() as cursor:
-                        # The direct SELECT harness may already own a read-only
-                        # outer transaction. SET TRANSACTION is invalid after
-                        # its savepoint/prior statement, while SET LOCAL remains
-                        # valid and preserves the request-owned statement wall.
-                        if not already_in_atomic_block:
-                            cursor.execute("SET TRANSACTION READ ONLY")
-                        cursor.execute(
-                            "SELECT set_config('statement_timeout', %s, true)",
-                            [str(timeout_ms)],
-                        )
-                    overlay_rows = list(overlay_queryset)
-            else:
-                overlay_rows = list(overlay_queryset)
-        except DatabaseError as exc:
-            raise ReadDeadlineExceeded(
-                "Session-label PostgreSQL read exceeded its request deadline"
-            ) from exc
+    try:
+        with application_postgres_reads(
+            connection=connection,
+            atomic=transaction.atomic,
+            check_request=deadline.remaining_ms if deadline is not None else None,
+            read_only=True,
+        ):
+            overlay_rows = list(overlay_queryset)
+    except DatabaseError as exc:
+        raise ApplicationPostgresReadError(
+            "Session-label PostgreSQL read unavailable"
+        ) from exc
 
     for tsid, bookmarked, display_name in overlay_rows:
         overlay_by_resolved[str(tsid)] = {

@@ -7,7 +7,6 @@ import pytest
 
 from tracer.models.project import Project
 from tracer.services.clickhouse.read_budget import ReadDeadline
-from tracer.services.clickhouse.v2.property_catalog.runtime_limits import RUNTIME_LIMITS
 from tracer.services.dashboard_metrics_catalog import (
     _resolve_metrics_catalog_project_scope,
     resolve_property_catalog_project_scope,
@@ -122,10 +121,10 @@ def test_legacy_metrics_scope_does_not_inherit_observe_only_eligibility():
     "project_ids",
     [
         ["not-a-uuid"],
-        ["11111111-1111-4111-8111-111111111111"] * (RUNTIME_LIMITS.max_projects + 1),
+        ["11111111-1111-4111-8111-111111111111"] * 1024 + ["not-a-uuid"],
     ],
 )
-def test_property_catalog_project_scope_rejects_malformed_or_oversized_input(
+def test_property_catalog_project_scope_rejects_malformed_input_at_any_size(
     project_ids,
 ):
     workspace = SimpleNamespace(
@@ -171,3 +170,39 @@ def test_property_catalog_project_scope_rejects_mixed_foreign_ids():
             [authorized, foreign],
             deadline=ReadDeadline.start(8_500),
         )
+
+
+@pytest.mark.parametrize("project_count", (178, 257, 1024))
+@pytest.mark.parametrize("include_foreign", (False, True))
+def test_large_project_scope_is_authorized_completely(project_count, include_foreign):
+    projects = [f"00000000-0000-4000-8000-{i:012x}" for i in range(project_count)]
+    workspace = SimpleNamespace(
+        id="22222222-2222-4222-8222-222222222222",
+        organization_id=ORGANIZATION_ID,
+    )
+    manager = MagicMock()
+    manager.filter.return_value.order_by.return_value.values_list.return_value = (
+        projects[:-1] if include_foreign else projects
+    )
+    with (
+        patch.object(Project, "no_workspace_objects", manager),
+        patch(
+            "tracer.services.dashboard_metrics_catalog._run_metrics_catalog_pg_read",
+            side_effect=lambda _deadline, _family, read: read(),
+        ),
+    ):
+        if include_foreign:
+            with pytest.raises(ValueError, match="Some project_ids are invalid"):
+                resolve_property_catalog_project_scope(
+                    workspace, projects, deadline=ReadDeadline.start(8_500)
+                )
+        else:
+            assert (
+                resolve_property_catalog_project_scope(
+                    workspace, projects, deadline=ReadDeadline.start(8_500)
+                )
+                == projects
+            )
+    assert manager.filter.call_args.kwargs["id__in"] == projects
+    assert manager.filter.call_args.kwargs["workspace"] is workspace
+    assert manager.filter.call_args.kwargs["organization_id"] == ORGANIZATION_ID

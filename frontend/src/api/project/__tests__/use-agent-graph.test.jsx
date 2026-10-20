@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({ get: vi.fn() }));
 
 vi.mock("src/utils/axios", () => ({
   default: mocks,
+  readQuery: mocks.get,
   endpoints: {
     project: { getAgentGraph: () => "/tracer/trace/agent-graph/" },
   },
@@ -122,5 +123,25 @@ describe("useAgentGraph bounded polling", () => {
     expect(mocks.get).toHaveBeenCalledTimes(5);
     expect(result.current.isError).toBe(false);
     expect(result.current.pollingPaused).toBe(false);
+  });
+});
+
+describe("useAgentGraph revisits", () => {
+  it("asks the server again when the graph remounts on the same window", async () => {
+    // The toolbar window is hour-stable, so a remount replays the same key.
+    // The server serves the cached graph and revalidates it when it is old;
+    // a client-side cache hit would never learn that.
+    mocks.get.mockResolvedValue(exactResponse());
+    const wrapper = createQueryWrapper();
+    const first = renderHook(() => useAgentGraph("project-1"), { wrapper });
+    await act(async () => {});
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+    first.unmount();
+
+    renderHook(() => useAgentGraph("project-1"), { wrapper });
+    await act(async () => {});
+
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+    expect(mocks.get.mock.calls.at(-1)[1].params.refresh).toBeUndefined();
   });
 });

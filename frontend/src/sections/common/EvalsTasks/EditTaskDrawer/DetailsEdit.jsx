@@ -35,8 +35,6 @@ import {
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import {
-  extractAttributeFilters,
-  getTaskFilterApiKey,
   getNewTaskFilters,
   NewTaskValidationSchema,
 } from "../NewTaskDrawer/validation";
@@ -264,28 +262,11 @@ const DetailsEdit = ({
   const onUpdateSubmit = (data, editType) => {
     // Flat chip list with col_type for the BE dispatcher; observation_type
     // (incl. node_type alias) still rides as a sibling key.
-    const attributeFilters = extractAttributeFilters(data?.filters);
-
-    // Task system filter aggregation. The task filter UI only exposes
-    // backend-supported system fields plus span attributes, so unsupported
-    // TraceFilterPanel fields cannot be saved and silently ignored.
-    const systemFilters = {};
-    (data.filters || []).forEach((f) => {
-      if (!f?.property || f.property === "attributes") return;
-      const apiKey = getTaskFilterApiKey(f.property);
-      const v = f?.filterConfig?.filterValue;
-      const values = Array.isArray(v)
-        ? v
-        : v !== undefined && v !== null && v !== ""
-          ? [v]
-          : [];
-      if (!values.length) return;
-      if (systemFilters[apiKey]) {
-        systemFilters[apiKey].push(...values);
-      } else {
-        systemFilters[apiKey] = [...values];
-      }
-    });
+    const { filters: systemFilters, attributeFilters } = getNewTaskFilters(
+      data,
+      data.project,
+      true,
+    );
 
     const transformedData = {
       evals: data.evalsDetails?.map((item) => item.id) || [],

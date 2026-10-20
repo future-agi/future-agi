@@ -1,11 +1,10 @@
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from inspect import unwrap
 from types import SimpleNamespace
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 from django.conf import settings as django_settings
-from django.db import DatabaseError
 
 from tracer.services.clickhouse import graph_action_deadline as action_deadline
 from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
@@ -35,84 +34,36 @@ def test_graph_action_wall_uses_the_interactive_analytics_default():
 
 
 @pytest.mark.unit
-def test_graph_action_postgres_statements_receive_a_shrinking_timeout(monkeypatch):
-    installed = {}
-    raw_cursor = MagicMock()
-    fake_connection = SimpleNamespace(
-        vendor="postgresql",
-        execute_wrapper=lambda wrapper: (
-            installed.setdefault("wrapper", wrapper) or nullcontext()
-        ),
-    )
+def test_graph_action_postgres_ignores_legacy_statement_cap_and_restores(monkeypatch):
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
 
-    @contextmanager
-    def install_wrapper(wrapper):
-        installed["wrapper"] = wrapper
-        yield
-
-    fake_connection.execute_wrapper = install_wrapper
-    monkeypatch.setattr(action_deadline, "connection", fake_connection)
-    monkeypatch.setattr(
-        action_deadline,
-        "transaction",
-        SimpleNamespace(atomic=lambda: nullcontext()),
-    )
-    deadline = _SequencedDeadline([9_000, 8_500, 7_000, 6_500, 6_000])
-    executed = []
-
-    with action_deadline.graph_action_postgres_budget(deadline):
-        wrapper = installed["wrapper"]
-        context = {"cursor": SimpleNamespace(cursor=raw_cursor)}
-
-        def execute(sql, params, many, _context):
-            executed.append((sql, params, many))
-            return sql
-
-        assert wrapper(execute, "SELECT first", (), False, context) == "SELECT first"
-        assert wrapper(execute, "SELECT second", (), False, context) == "SELECT second"
-
-    assert raw_cursor.execute.call_args_list == [
-        call(
-            "SELECT set_config('statement_timeout', %s, true)",
-            ("9000",),
-        ),
-        call(
-            "SELECT set_config('statement_timeout', %s, true)",
-            ("7000",),
-        ),
-    ]
-    assert [item[0] for item in executed] == ["SELECT first", "SELECT second"]
+    pg = FakePostgres()
+    monkeypatch.setattr(action_deadline, "connection", pg)
+    monkeypatch.setattr(action_deadline.transaction, "atomic", pg.atomic)
+    deadline = MagicMock()
+    deadline.remaining_ms.return_value = 8_000
+    with action_deadline.graph_action_postgres_budget(deadline, timeout_cap_ms=1):
+        assert pg.events == []
+        assert pg.execute("SELECT first") == "SELECT first"
+        assert pg.execute("SELECT second") == "SELECT second"
+    assert pg.query_timeouts == ["0", "0"]
+    assert pg.timeout == "750ms" and not pg.in_atomic_block and not pg.wrappers
 
 
 @pytest.mark.unit
-def test_graph_action_postgres_timeout_fails_closed(monkeypatch):
-    installed = {}
-    fake_connection = SimpleNamespace(vendor="postgresql")
+def test_graph_action_postgres_failure_fails_closed_without_timeout_claim(monkeypatch):
+    from tracer.tests.test_postgres_application_read_policy import FakePostgres
 
-    @contextmanager
-    def install_wrapper(wrapper):
-        installed["wrapper"] = wrapper
-        yield
-
-    fake_connection.execute_wrapper = install_wrapper
-    monkeypatch.setattr(action_deadline, "connection", fake_connection)
-    monkeypatch.setattr(
-        action_deadline,
-        "transaction",
-        SimpleNamespace(atomic=lambda: nullcontext()),
-    )
-    deadline = _SequencedDeadline([8_000])
-    context = {"cursor": SimpleNamespace(cursor=MagicMock())}
-
-    with pytest.raises(action_deadline.GraphActionUnavailable):
+    pg = FakePostgres(outer=True, failure="statement")
+    monkeypatch.setattr(action_deadline, "connection", pg)
+    monkeypatch.setattr(action_deadline.transaction, "atomic", pg.atomic)
+    deadline = MagicMock()
+    deadline.remaining_ms.return_value = 8_000
+    with pytest.raises(action_deadline.GraphActionUnavailable) as error:
         with action_deadline.graph_action_postgres_budget(deadline):
-            installed["wrapper"](
-                lambda *_args: (_ for _ in ()).throw(DatabaseError("private")),
-                "SELECT slow",
-                (),
-                False,
-                context,
-            )
+            pg.execute("SELECT slow")
+    assert str(error.value) == "Graph action PostgreSQL read unavailable"
+    assert pg.timeout == "750ms" and pg.in_atomic_block and not pg.wrappers
 
 
 def _call_graph_action(
@@ -320,7 +271,7 @@ def test_expired_pg_scope_prevents_graph_dispatch(monkeypatch, view_kind):
 
 @pytest.mark.unit
 @pytest.mark.parametrize("view_kind", ["trace", "span"])
-def test_graph_result_is_not_published_after_action_wall_expires(
+def test_completed_graph_result_remains_usable_after_action_wall_expires(
     monkeypatch, view_kind
 ):
     deadline = _SequencedDeadline(
@@ -335,5 +286,4 @@ def test_graph_result_is_not_published_after_action_wall_expires(
 
     assert events[-1] == "graph_dispatch"
     assert dispatched[0]["timeout_ms"] == 4_000
-    assert response.status_code == 503
-    assert response.data["code"] == "service_unavailable"
+    assert response.status_code == 200

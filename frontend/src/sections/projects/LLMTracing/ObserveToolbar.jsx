@@ -1,8 +1,13 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
 import { Badge, Button, MenuItem, Popover, Stack } from "@mui/material";
-import { startOfToday, startOfTomorrow, startOfYesterday, sub } from "date-fns";
 import Iconify from "src/components/iconify";
 import DisplayPanel from "./DisplayPanel";
 import TraceFilterPanel from "./TraceFilterPanel";
@@ -11,8 +16,12 @@ import { pillSx } from "./toolbarStyles";
 import { useTabStoreShallow } from "./tabStore";
 import { ID_ONLY_FIELDS } from "./idFields";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
-import { formatDate } from "src/utils/report-utils";
-import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
+import { observePresetDateFilter } from "../timeWindowPresets";
+import {
+  buildApiFilterFromPanelRow,
+  isNativeColumnType,
+  normalizeColumnType,
+} from "src/api/contracts/filter-contract";
 
 const DATE_OPTIONS = [
   { key: "Today", label: "Today" },
@@ -119,7 +128,8 @@ const ObserveToolbar = ({
   const [displayAnchor, setDisplayAnchor] = useState(null);
   const filterButtonRef = useRef(null);
   const [filterButtonEl, setFilterButtonEl] = useState(null);
-  const [panelFilters, setPanelFilters] = useState(null); // stores raw panel-format filters
+  // Callers without graphFilters keep the last applied rows locally.
+  const [appliedPanelFilters, setAppliedPanelFilters] = useState(null);
   const [dateAnchor, setDateAnchor] = useState(null);
   const [customDateOpen, setCustomDateOpen] = useState(false);
   const dateButtonRef = useRef(null);
@@ -155,47 +165,9 @@ const ObserveToolbar = ({
       setCustomDateOpen(true);
       return;
     }
-    let filter = null;
-    switch (option) {
-      case "Today":
-        filter = [formatDate(startOfToday()), formatDate(startOfTomorrow())];
-        break;
-      case "Yesterday":
-        filter = [formatDate(startOfYesterday()), formatDate(startOfToday())];
-        break;
-      case "7D":
-        filter = [
-          formatDate(sub(new Date(), { days: 7 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "30D":
-        filter = [
-          formatDate(sub(new Date(), { days: 30 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "3M":
-        filter = [
-          formatDate(sub(new Date(), { months: 3 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "6M":
-        filter = [
-          formatDate(sub(new Date(), { months: 6 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "12M":
-        filter = [
-          formatDate(sub(new Date(), { months: 12 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      default:
-        break;
-    }
+    // One shared window per preset: hour-floored start, next-midnight end,
+    // identical to the default load (see observePresetDateFilter).
+    const filter = observePresetDateFilter(option);
     if (filter)
       setDateFilter((prev) => ({
         ...prev,
@@ -204,12 +176,12 @@ const ObserveToolbar = ({
       }));
   };
 
-  // Sync extra filters (the single source of truth) into panelFilters
-  useEffect(() => {
-    if (!graphFilters?.length) {
-      setPanelFilters(null);
-      return;
-    }
+  // Derived during render, not synced in an effect: TraceFilterPanel seeds its
+  // rows on the render it opens, which is also the render a graph Filter
+  // button switches filterTarget, so an effect would hand it the other
+  // graph's filters.
+  const graphPanelFilters = useMemo(() => {
+    if (!graphFilters?.length) return null;
     const RANGE_OPS = new Set(["between", "not_between"]);
     const newPanelFilters = graphFilters.map((gf) => {
       const rawOp = gf.filter_config?.filter_op || "equals";
@@ -246,18 +218,14 @@ const ObserveToolbar = ({
         value = rawVal != null ? String(rawVal) : "";
       } else if (isMapType) {
         value = rawVal && typeof rawVal === "object" ? rawVal : "";
-      } else if (isArrayType || rawType === "json") {
+      } else {
+        // Canonical list members and exact scalar strings must stay intact.
+        // Splitting commas also corrupts aligned attribute_value_types.
         value = Array.isArray(rawVal)
           ? rawVal
           : rawVal !== undefined && rawVal !== null && rawVal !== ""
             ? [rawVal]
             : [];
-      } else {
-        value = rawVal
-          ? String(rawVal)
-              .split(",")
-              .map((v) => v.trim())
-          : [];
       }
       // Derive fieldCategory from col_type (reverse of colTypeMap)
       const colTypeReverseMap = {
@@ -266,13 +234,18 @@ const ObserveToolbar = ({
         EVAL_METRIC: "eval",
         ANNOTATION: "annotation",
       };
-      const isDirectIdFilter = ID_ONLY_FIELDS.has(gf.column_id);
+      const explicitColType = normalizeColumnType(
+        gf.filter_config?.col_type || gf.col_type,
+      );
+      const isDirectIdFilter =
+        ID_ONLY_FIELDS.has(gf.column_id) && !explicitColType;
       const rawColType =
-        gf.filter_config?.col_type ||
-        gf.col_type ||
-        (isDirectIdFilter ? undefined : "SYSTEM_METRIC");
+        explicitColType || (isDirectIdFilter ? undefined : "SYSTEM_METRIC");
       const rawFilterType = gf.filter_config?.filter_type;
-      const isGlobalAnnotatorFilter = gf.column_id === "annotator";
+      const isGlobalAnnotatorFilter =
+        gf.column_id === "annotator" &&
+        (isNativeColumnType(explicitColType) ||
+          explicitColType === "ANNOTATION");
       // Auto-migrate legacy saved views: thumbs annotations used to be
       // stored as filter_type=categorical with values like ["Thumbs Up",
       // "Thumbs Down"]. Detect and upgrade to the dedicated `thumbs` type
@@ -316,18 +289,22 @@ const ObserveToolbar = ({
                             rawColType === "ANNOTATION"
                           ? "text"
                           : "string",
-        apiColType: isDirectIdFilter
-          ? undefined
-          : isGlobalAnnotatorFilter
-            ? "SYSTEM_METRIC"
-            : rawColType,
+        apiColType:
+          explicitColType ||
+          (isDirectIdFilter
+            ? undefined
+            : isGlobalAnnotatorFilter
+              ? "SYSTEM_METRIC"
+              : rawColType),
         operator: rawOp,
         value,
         valueTypes: gf.filter_config?.attribute_value_types,
       };
     });
-    setPanelFilters(newPanelFilters);
+    return newPanelFilters;
   }, [graphFilters]);
+  const panelFilters =
+    graphFilters === undefined ? appliedPanelFilters : graphPanelFilters;
   const { openCreateModal } = useTabStoreShallow((s) => ({
     openCreateModal: s.openCreateModal,
   }));
@@ -387,6 +364,7 @@ const ObserveToolbar = ({
             open={customDateOpen}
             onClose={() => setCustomDateOpen(false)}
             anchorEl={dateButtonRef.current}
+            value={dateFilter?.dateFilter}
             setDateFilter={(range) => {
               setDateFilter?.((prev) => ({
                 ...prev,
@@ -456,7 +434,7 @@ const ObserveToolbar = ({
             projectId={projectId}
             allowWorkspaceScope={allowWorkspaceScope}
             onApply={(newFilters) => {
-              setPanelFilters(newFilters);
+              setAppliedPanelFilters(newFilters);
               if (!newFilters || newFilters.length === 0) {
                 if (filterTarget === "compare") {
                   if (onClearCompareExtraFilters) {
