@@ -91,6 +91,8 @@ RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
 export default function ScenariosStep({ env, envState, patch, locked = false, onStartRun, canRun = false, runBlockedReason }) {
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
+  // A composition's suite is a sealed release; the amend route cannot change it, its chat can.
+  const editHint = env?.composition ? SCENARIOS_COPY.compositionEditHint : null;
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -408,6 +410,11 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
               Couldn&apos;t refresh the scenarios. Showing the last loaded list.
             </Alert>
           )}
+          {editHint && (
+            <Alert severity="info" sx={{ mb: 2, typography: "s3", flexShrink: 0 }}>
+              {editHint}
+            </Alert>
+          )}
           <Box sx={{ flex: 1, minHeight: 320, minWidth: 0, display: "flex", flexDirection: "column" }}>
             {/* The bulk-action bar covers the toolbar's row while a selection is
                 active. Both sit in one grid cell, the toolbar staying mounted
@@ -451,7 +458,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
                   <Box sx={{ flex: 1, minWidth: 0 }}>
                     <SelectionBar
                       count={sel.count}
-                      onDelete={bulkDelete}
+                      onDelete={editHint ? undefined : bulkDelete}
                       onClear={sel.clear}
                       onRun={canRun && onStartRun ? handleRunSelected : undefined}
                       runBlockedReason={onStartRun && !canRun ? runBlockedReason : undefined}
@@ -493,6 +500,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
                 filters={filters}
                 groupBy={activeGroupBy}
                 locked={locked}
+                editHint={editHint}
                 rowHeight={rowHeight}
                 readout={filtered ? {
                   shown: pageData.total,

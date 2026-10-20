@@ -30,11 +30,11 @@ const onKeyActivate = (fn) => (e) => {
 // The grouped body: each use-case section as a collapsible block with a sticky
 // header. The per-row edit pencil opens the editor through onEdit; remove works
 // through onRemove.
-export default function GroupedScenarioList({ groups, env, onEdit, onRemove, onHideGroup, selection, locked = false }) {
+export default function GroupedScenarioList({ groups, env, onEdit, onRemove, onHideGroup, selection, locked = false, editHint = null }) {
   return (
     <Box>
       {groups.map((g) => (
-        <CollapsibleGroup key={g.id} group={g} env={env} onEdit={onEdit} onRemove={onRemove} onHideGroup={onHideGroup} selection={selection} locked={locked} />
+        <CollapsibleGroup key={g.id} group={g} env={env} onEdit={onEdit} onRemove={onRemove} onHideGroup={onHideGroup} selection={selection} locked={locked} editHint={editHint} />
       ))}
     </Box>
   );
@@ -49,9 +49,10 @@ GroupedScenarioList.propTypes = {
   // in the design; supplying this adds them, matching the table.
   selection: PropTypes.object,
   locked: PropTypes.bool,
+  editHint: PropTypes.string,
 };
 
-function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection, locked = false }) {
+function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection, locked = false, editHint = null }) {
   const [open, setOpen] = useState(true);
 
   // Selection is opt-in and drops out entirely on a locked template, mirroring
@@ -158,11 +159,11 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
                 <Box sx={{ flex: 1, minWidth: 0 }}>
                   <ScenarioDetail row={s} env={env} />
                 </Box>
-                <Tooltip arrow title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.editLabel}>
+                <Tooltip arrow title={locked ? LOCK_TOOLTIP : editHint || SCENARIOS_COPY.editLabel}>
                   <Box component="span" sx={{ display: "inline-flex", mt: 1, flexShrink: 0 }}>
                     <IconButton
                       size="small"
-                      disabled={locked}
+                      disabled={locked || Boolean(editHint)}
                       aria-label={SCENARIOS_COPY.editLabel}
                       onClick={() => onEdit?.(s)}
                     >
@@ -170,11 +171,11 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
                     </IconButton>
                   </Box>
                 </Tooltip>
-                <Tooltip arrow title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.removeLabel}>
+                <Tooltip arrow title={locked ? LOCK_TOOLTIP : editHint || SCENARIOS_COPY.removeLabel}>
                   <Box component="span" sx={{ display: "inline-flex", mt: 1, mr: 1.5, flexShrink: 0 }}>
                     <IconButton
                       size="small"
-                      disabled={locked}
+                      disabled={locked || Boolean(editHint)}
                       aria-label={SCENARIOS_COPY.removeLabel}
                       onClick={() => onRemove(s.id)}
                     >
@@ -198,4 +199,5 @@ CollapsibleGroup.propTypes = {
   onHideGroup: PropTypes.func,
   selection: PropTypes.object,
   locked: PropTypes.bool,
+  editHint: PropTypes.string,
 };

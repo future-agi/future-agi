@@ -380,7 +380,7 @@ Frozen by the platform at run submission, before dispatch:
 | `binding` | `{digest}` |
 | `agent` | as in the binding |
 | `selection` | `{scenario_keys, trials}`; keys unique, trials 1–20 |
-| `simulator` | `{llm: {provider, model, location, thinking}, voice: {stt, tts, voice}, persona: {prompt_digest, temperature, interrupt_sensitivity, conversation_speed, finished_speaking_sensitivity, max_call_duration_in_minutes, initial_message_delay}}` |
+| `simulator` | `{llm: {provider, model, location, thinking, fallback_models}, voice: {stt, tts, voice}, persona: {prompt_digest, temperature, interrupt_sensitivity, conversation_speed, finished_speaking_sensitivity, max_call_duration_in_minutes, initial_message_delay}}` |
 | `scorer` | `{alk_version, evals: [{name, version}]}` |
 | `runtime` | `{provider, image_name, image_digest}` |
 | `digest` | §3 |
@@ -643,10 +643,22 @@ and scenario rows are created from the suite's personas with the existing
 `provision_alk_sim_run_test` (modality `text` for `retell_chat`, `voice` for
 `retell` and `vapi`); the `RunTest` carries the bound agent version. The rows
 are indexed from the suite's `scenario.json` documents (number, name,
-instruction, persona, sub-goals), so chat and the Scenarios tab address them by
-number. `create_composition` (`services/harness_releases.py`) builds it for
+instruction, persona, sub-goals) by exact scenario key, so chat and the
+Scenarios tab address them by number and a new scenario reusing a removed one's
+name is a new row. `create_composition` (`services/harness_releases.py`) builds it for
 `retell_chat`, `retell` and `vapi` agents in `provider_import` mode, from a
 given binding document; adaptation is the only producer.
+
+`metadata.adaptation`, `adaptation_result`, `release_composition` and
+`run_manifest` are written only by these services; a job request carrying any
+of them is refused (400). At launch the gateway resolves the archives from the
+suite release the job's organization may use (its own, else a system release)
+and that suite's own environment chain, never from object keys in the job, and
+quotes every path in the sandbox's prepare command.
+
+The Scenarios tab does not edit or delete a composition's scenarios: the
+amend route answers 409 `composition_edit_in_chat`, and the tab points to the
+chat, where a change becomes a proved child suite (§7.8).
 
 ### 7.4 Runs
 
@@ -657,7 +669,7 @@ frozen values come from:
 
 | Field | Source |
 |---|---|
-| simulator | the deployment settings the gateway would use, and the `RunTest`'s simulator agent; `voice` for `retell` and `vapi` is `{stt: "provider/model", tts: "provider/model", voice}` (a half may be empty; `null` lets ALK choose), `null` for `retell_chat`. The gateway applies the frozen values and removes any setting frozen as unset |
+| simulator | the gateway's own resolver (`simulator_settings`, the values it would send the sandbox, including the default model and the fallback chain) and the `RunTest`'s simulator agent; `location` is `null` (every simulator model call goes through AgentCC); `voice` for `retell` and `vapi` is `{stt: "provider/model", tts: "provider/model", voice}` (a half may be empty; `null` lets ALK choose), `null` for `retell_chat`. The gateway applies the frozen values and removes any setting frozen as unset |
 | runtime | the sandbox provider's image, after the resource profile's override |
 | scorer | that image, and the run test's eval configs |
 
@@ -869,7 +881,7 @@ the new proof), registers the suite for the organization (`HarnessSuiteRelease`
 with `parent` the current suite) and sets `metadata.release_composition`
 `suite`, `binding_proof`, `alignment.unscorable` and `trajectories`, and
 `authoring_revision` to the new suite digest. Scenario rows are re-indexed from
-the suite: numbers stay, dropped rows are soft-deleted, new rows take the next
+the suite by exact key: numbers stay, dropped rows are soft-deleted, new rows take the next
 numbers and get dataset rows from the suite's `provision.json`. Publishing
 answers `{applied, revision, scenario_count, added, removed, changed}` as for
 authored environments.
