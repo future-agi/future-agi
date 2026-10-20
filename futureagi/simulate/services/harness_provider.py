@@ -1944,6 +1944,7 @@ class HostedHarnessProvider:
 
     def amend_scenarios(self, request, pk) -> Response:
         """Edit a finished run's authored suite, one receipt per requested change."""
+        from simulate.services.harness_releases import composition_of
         from simulate.services.hosted_harness_gateway import (
             AuthoringArchiveKept,
             push_scenarios_into_live_sandbox,
@@ -1968,6 +1969,17 @@ class HostedHarnessProvider:
             if job is None:
                 return Response(
                     {"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND
+                )
+            if composition_of(job) is not None:
+                # Its suite is a sealed release: a change is a proved child suite (§7.8).
+                return Response(
+                    build_error_envelope(
+                        "A prebuilt environment's scenarios change through its chat, "
+                        "where each change is proved and saved as a new suite version.",
+                        status_code=status.HTTP_409_CONFLICT,
+                        code="composition_edit_in_chat",
+                    ),
+                    status=status.HTTP_409_CONFLICT,
                 )
             output = (
                 HostedHarnessStageOutput.no_workspace_objects.select_for_update()

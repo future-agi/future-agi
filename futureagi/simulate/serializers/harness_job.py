@@ -442,6 +442,11 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             "parallelism_clamped",
             "parallelism_warnings",
             "observability_refusal",
+            # Written only by the release services; they name the archives a sandbox unpacks.
+            "adaptation",
+            "adaptation_result",
+            "release_composition",
+            "run_manifest",
         }
         if reserved.intersection(value):
             raise serializers.ValidationError(

@@ -283,6 +283,7 @@ def promote_composition_checkpoint(
                             suite, lambda path: (suite_dir / path).read_bytes()
                         ),
                         prune=True,
+                        exact_keys=True,
                     )
                     _bind_added_scenarios(
                         environment,

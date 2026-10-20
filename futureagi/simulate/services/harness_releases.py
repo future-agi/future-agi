@@ -16,7 +16,8 @@ import gzip
 import hashlib
 import io
 import json
-import os
+import re
+import shlex
 import tarfile
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -82,11 +83,16 @@ BINDING_PATH = "/work/binding.json"
 RUN_MANIFEST_PATH = "/work/run-manifest.json"
 
 
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+
+
 def _error(code: str, message: str, status_code: int = 400) -> HostedHarnessError:
     return HostedHarnessError(code, message, status_code=status_code)
 
 
 def _hex(digest: str) -> str:
+    if not _DIGEST.fullmatch(digest):
+        raise _error("release_invalid", f"{digest!r} is not a release digest")
     return digest.removeprefix("sha256:")
 
 
@@ -667,7 +673,11 @@ def create_composition(
         )
         # The scenarios the chat and the Scenarios tab address by number (contract §7.8).
         files = archive_files(_download(suite.object_key))
-        index_scenarios(job, scenario_documents(suite.manifest, files.__getitem__))
+        index_scenarios(
+            job,
+            scenario_documents(suite.manifest, files.__getitem__),
+            exact_keys=True,
+        )
         now = timezone.now()
         job.run_test = run_test
         job.state = HostedHarnessJob.State.COMPLETED
@@ -695,40 +705,38 @@ def composition_of(job: HostedHarnessJob) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def _voice_choice(prefix: str) -> str | None:
+def _voice_choice(settings: dict[str, str], prefix: str) -> str | None:
     """`provider/model` of one simulator voice stage as the gateway passes it; either half may be
     empty, and None means ALK picks both."""
-    provider = str(os.environ.get(f"{prefix}_PROVIDER") or "").strip()
-    model = str(os.environ.get(f"{prefix}_MODEL") or "").strip()
+    provider = settings.get(f"{prefix}_PROVIDER", "")
+    model = settings.get(f"{prefix}_MODEL", "")
     return f"{provider}/{model}" if provider or model else None
 
 
 def _simulator(run_test, connector: str) -> dict[str, Any]:
-    """What the gateway will give the simulator, read from the same deployment settings at
-    submission and then frozen; the gateway applies these values rather than re-reading them.
+    """What the gateway will give the simulator, from the gateway's own resolver at submission
+    and then frozen; the gateway applies these values rather than re-reading them.
     """
-    thinking = str(os.environ.get("SIMULATOR_LLM_THINKING") or "").strip() or None
+    from simulate.services.hosted_harness_gateway import simulator_settings
+
+    settings = simulator_settings()
     agent = getattr(run_test, "simulator_agent", None)
     prompt = str(getattr(agent, "prompt", "") or "")
+    fallbacks = settings.get("SIMULATOR_LLM_FALLBACK_MODELS", "")
     return {
         "llm": {
-            "provider": str(
-                os.environ.get("SIMULATOR_LLM_PROVIDER") or "vertex"
-            ).strip(),
-            "model": str(
-                os.environ.get("SIMULATOR_LLM_MODEL") or "gemini-3.8-flash"
-            ).strip(),
-            "location": str(
-                os.environ.get("GOOGLE_CLOUD_LOCATION") or "global"
-            ).strip(),
-            "thinking": thinking,
+            "provider": settings["SIMULATOR_LLM_PROVIDER"],
+            "model": settings["SIMULATOR_LLM_MODEL"],
+            # Every simulator model call goes through AgentCC, so no region is chosen here.
+            "location": None,
+            "thinking": settings.get("SIMULATOR_LLM_THINKING"),
+            "fallback_models": fallbacks.split(",") if fallbacks else [],
         },
         "voice": (
             {
-                "stt": _voice_choice("SIMULATOR_STT"),
-                "tts": _voice_choice("SIMULATOR_TTS"),
-                "voice": str(os.environ.get("SIMULATOR_TTS_VOICE") or "").strip()
-                or None,
+                "stt": _voice_choice(settings, "SIMULATOR_STT"),
+                "tts": _voice_choice(settings, "SIMULATOR_TTS"),
+                "voice": settings.get("SIMULATOR_TTS_VOICE"),
             }
             if MODALITY.get(connector) == "voice"
             else None
@@ -826,23 +834,37 @@ def freeze_run_manifest(
 
 
 def _release_archives(
-    environment: list[dict[str, Any]], suite: dict[str, Any]
+    organization, environment: list[dict[str, Any]], suite: dict[str, Any]
 ) -> tuple[list[tuple[str, bytes]], str]:
     """The release archives for the §6 layout under /work/releases, and the command that
     extracts them. Archives land directly in /work, which exists; the command creates the tree.
+
+    Job metadata only names digests: the archives come from release records `organization`
+    may use, and the environment chain must be the suite's own.
     """
-    uploads: list[tuple[str, bytes]] = []
-    extract: list[str] = []
+    record = _visible(HarnessSuiteRelease, organization, str(suite.get("digest") or ""))
+    if record is None:
+        raise _error("release_not_found", "suite release not found", 404)
+    chain = _chain(record)
+    if [str(entry.get("digest") or "") for entry in environment] != [
+        release.digest for release in chain
+    ]:
+        raise _error(
+            "release_invalid", "the environment chain is not the suite's own", 422
+        )
     archives = [
         (
-            f"/work/release-{_hex(entry['digest'])}.tar.gz",
-            f"{RELEASES_ROOT}/environment/{_hex(entry['digest'])}",
-            entry["object_key"],
+            f"/work/release-{_hex(release.digest)}.tar.gz",
+            f"{RELEASES_ROOT}/environment/{_hex(release.digest)}",
+            release.object_key,
         )
-        for entry in environment
-    ] + [("/work/release-suite.tar.gz", f"{RELEASES_ROOT}/suite", suite["object_key"])]
+        for release in chain
+    ] + [("/work/release-suite.tar.gz", f"{RELEASES_ROOT}/suite", record.object_key)]
+    uploads: list[tuple[str, bytes]] = []
+    extract: list[str] = []
     for archive, target, object_key in archives:
         uploads.append((archive, _download(object_key)))
+        archive, target = shlex.quote(archive), shlex.quote(target)
         extract.append(
             f"mkdir -p {target} && tar -xzf {archive} -C {target} && rm {archive}"
         )
@@ -873,7 +895,7 @@ def release_launch_for(job: HostedHarnessJob) -> ReleaseLaunch | None:
             409,
         )
     uploads, prepare_command = _release_archives(
-        composition["environment"], composition["suite"]
+        job.organization, composition["environment"], composition["suite"]
     )
     uploads.append((BINDING_PATH, json.dumps(composition["binding"]).encode()))
     uploads.append((RUN_MANIFEST_PATH, json.dumps(manifest).encode()))
@@ -899,6 +921,8 @@ def apply_frozen_simulator(values: dict[str, str], simulator: dict[str, Any]) ->
         "SIMULATOR_LLM_PROVIDER": llm["provider"],
         "SIMULATOR_LLM_MODEL": llm["model"],
         "SIMULATOR_LLM_THINKING": llm.get("thinking"),
+        "SIMULATOR_LLM_FALLBACK_MODELS": ",".join(llm.get("fallback_models") or [])
+        or None,
         "SIMULATOR_TTS_VOICE": voice.get("voice"),
     }
     if llm.get("location"):
@@ -995,7 +1019,7 @@ def adaptation_launch_for(job: HostedHarnessJob) -> AdaptationLaunch | None:
     if adaptation is None:
         return None
     uploads, prepare_command = _release_archives(
-        adaptation["environment"], adaptation["suite"]
+        job.organization, adaptation["environment"], adaptation["suite"]
     )
     return AdaptationLaunch(
         uploads=tuple(uploads),
