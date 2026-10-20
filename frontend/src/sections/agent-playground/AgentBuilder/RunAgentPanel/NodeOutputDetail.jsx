@@ -210,6 +210,16 @@ const NODE_OUTPUT_THEME_PARAMS = {
   headerColumnBorder: { width: 0 },
 };
 
+/**
+ * NodeOutputDetail
+ *
+ * Displays node input and output execution details in AG Grid.
+ *
+ * Error Handling Behavior (Issue #2503):
+ * - If a node fails without producing output, the failure error message is rendered in the grid output cell as well as the error alert.
+ * - If a node fails after producing partial output, NodeErrorAlert displays the error banner above the grid while the grid preserves and displays the partial output rows.
+ * - If a node succeeds, no error banner or error cell is rendered.
+ */
 export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
   const agTheme = useAgThemeWith(NODE_OUTPUT_THEME_PARAMS);
   const gridApiRef = useRef(null);
