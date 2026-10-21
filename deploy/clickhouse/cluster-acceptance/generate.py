@@ -8,12 +8,12 @@ import shutil
 from pathlib import Path
 
 
-def generate(out, port):
+def generate(out, port, application_deps=False):
     out = Path(out).resolve()
     out.mkdir(parents=True, exist_ok=False)
     password = secrets.token_hex(24)
     project = "fagi-cluster-" + secrets.token_hex(5)
-    image = "clickhouse/clickhouse-server:25.3-alpine"
+    image = "clickhouse/clickhouse-server:25.3.14.14"
     services = {}
     raft = "".join(
         f"<server><id>{n}</id><hostname>keeper{n}</hostname><port>9234</port></server>"
@@ -54,7 +54,7 @@ def generate(out, port):
     for s in (1, 2, 3):
         for r in (1, 2):
             name = f"ch{s}{r}"
-            config = f"""<clickhouse><logger><level>warning</level><console>true</console></logger><listen_host>0.0.0.0</listen_host><max_server_memory_usage>600000000</max_server_memory_usage><mark_cache_size>16777216</mark_cache_size><uncompressed_cache_size>8388608</uncompressed_cache_size><background_pool_size>2</background_pool_size><background_merges_mutations_concurrency_ratio>4</background_merges_mutations_concurrency_ratio><merge_tree><number_of_free_entries_in_pool_to_execute_mutation>1</number_of_free_entries_in_pool_to_execute_mutation><number_of_free_entries_in_pool_to_execute_optimize_entire_partition>1</number_of_free_entries_in_pool_to_execute_optimize_entire_partition><number_of_free_entries_in_pool_to_lower_max_size_of_merge>1</number_of_free_entries_in_pool_to_lower_max_size_of_merge></merge_tree><macros><shard>{s}</shard><replica>{r}</replica></macros><zookeeper>{keepers}</zookeeper><distributed_ddl><path>/acceptance/ddl</path></distributed_ddl><remote_servers><acceptance>{shards}</acceptance></remote_servers><query_log remove="1"/><trace_log remove="1"/><metric_log remove="1"/><asynchronous_metric_log remove="1"/><part_log remove="1"/></clickhouse>"""
+            config = f"""<clickhouse><logger><level>warning</level><console>true</console></logger><listen_host>0.0.0.0</listen_host><max_server_memory_usage>600000000</max_server_memory_usage><mark_cache_size>16777216</mark_cache_size><uncompressed_cache_size>8388608</uncompressed_cache_size><background_pool_size>2</background_pool_size><background_schedule_pool_size>4</background_schedule_pool_size><background_fetches_pool_size>2</background_fetches_pool_size><background_move_pool_size>1</background_move_pool_size><background_common_pool_size>2</background_common_pool_size><background_distributed_schedule_pool_size>2</background_distributed_schedule_pool_size><background_message_broker_schedule_pool_size>1</background_message_broker_schedule_pool_size><background_merges_mutations_concurrency_ratio>4</background_merges_mutations_concurrency_ratio><merge_tree><number_of_free_entries_in_pool_to_execute_mutation>1</number_of_free_entries_in_pool_to_execute_mutation><number_of_free_entries_in_pool_to_execute_optimize_entire_partition>1</number_of_free_entries_in_pool_to_execute_optimize_entire_partition><number_of_free_entries_in_pool_to_lower_max_size_of_merge>1</number_of_free_entries_in_pool_to_lower_max_size_of_merge></merge_tree><macros><shard>{s}</shard><replica>{r}</replica></macros><zookeeper>{keepers}</zookeeper><distributed_ddl><path>/acceptance/ddl</path></distributed_ddl><remote_servers><acceptance>{shards}</acceptance></remote_servers><query_log remove="1"/><trace_log remove="1"/><metric_log remove="1"/><asynchronous_metric_log remove="1"/><part_log remove="1"/></clickhouse>"""
             (out / f"{name}.xml").write_text(config)
             services[name] = {
                 "image": image,
@@ -73,18 +73,59 @@ def generate(out, port):
                 "mem_limit": "768m",
                 "ulimits": {"nofile": {"soft": 65536, "hard": 65536}},
             }
+    fixture = {
+        "project": project,
+        "password": password,
+        "port": port,
+        "clickhouse_image": image,
+    }
+    if application_deps:
+        fixture.update(pg_port=port + 6, redis_port=port + 7, native_port=port + 8)
+        services["ch11"]["ports"].append(f"127.0.0.1:{port + 8}:9000")
+        services["postgres"] = {
+            "image": "postgres:16-alpine",
+            "mem_limit": "256m",
+            "cpus": 1,
+            "environment": {
+                "POSTGRES_USER": "test",
+                "POSTGRES_PASSWORD": password,
+                "POSTGRES_DB": "cluster_acceptance",
+            },
+            "command": [
+                "postgres",
+                "-c",
+                "shared_buffers=32MB",
+                "-c",
+                "max_connections=40",
+            ],
+            "ports": [f"127.0.0.1:{port + 6}:5432"],
+            "volumes": ["postgres:/var/lib/postgresql/data"],
+        }
+        services["redis"] = {
+            "image": "redis:7-alpine",
+            "mem_limit": "128m",
+            "cpus": 0.5,
+            "ports": [f"127.0.0.1:{port + 7}:6379"],
+            "command": [
+                "redis-server",
+                "--save",
+                "",
+                "--appendonly",
+                "no",
+                "--maxmemory",
+                "64mb",
+            ],
+        }
     (out / "compose.json").write_text(
         json.dumps(
             {"services": services, "volumes": {name: {} for name in services}}, indent=2
         )
     )
-    (out / "fixture.json").write_text(
-        json.dumps({"project": project, "password": password, "port": port})
-    )
+    (out / "fixture.json").write_text(json.dumps(fixture))
     for file in out.iterdir():
         file.chmod(0o644 if file.suffix == ".xml" else 0o600)
     print(
-        f"Rendered {out}; nothing started. Uses approximately 5.3 GiB maximum container memory."
+        f"Rendered {out}; nothing started. Uses approximately {5.625 if application_deps else 5.25:.3f} GiB maximum container memory."
     )
     compose = shutil.which("docker-compose") or "docker compose"
     print(f"{compose} -p {project} -f {out / 'compose.json'} up -d")
@@ -98,7 +139,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--port", type=int, default=18123, help="First of six loopback-only ports"
     )
+    parser.add_argument(
+        "--application-deps",
+        action="store_true",
+        help="Add isolated PostgreSQL/Redis for real migrations and CDC qualification",
+    )
     args = parser.parse_args()
-    if not 1024 <= args.port <= 65530:
-        parser.error("port must leave six unprivileged ports")
-    generate(args.output, args.port)
+    if not 1024 <= args.port <= 65527:
+        parser.error("port must leave nine unprivileged ports")
+    generate(args.output, args.port, args.application_deps)

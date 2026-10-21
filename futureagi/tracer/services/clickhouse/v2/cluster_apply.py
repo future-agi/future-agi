@@ -8,7 +8,12 @@ The operator owns an exclusive schema window (stop ingestion during bootstrap).
 from __future__ import annotations
 
 from .apply_schema_rewriter import with_dictionary_credentials
-from .cluster_schema import ClusterSchemaError, ClusterTopology, SchemaStep
+from .cluster_schema import (
+    ClusterSchemaError,
+    ClusterTopology,
+    SchemaStep,
+    engine_signature,
+)
 
 DDL_SETTINGS = {
     "distributed_ddl_task_timeout": 120,
@@ -129,12 +134,11 @@ def verify(client, topology, steps, *, complete=True):
             path = f"'{topology.keeper_prefix}/{topology.database}/{{shard}}/{name}'"
             if path not in engine_full or "'{replica}'" not in engine_full:
                 raise ClusterSchemaError(f"{name}: foreign Keeper path on {host}")
-        elif engine == "Distributed":
-            for part in (topology.cluster, topology.database, name + "_local"):
-                if f"'{part}'" not in engine_full:
-                    raise ClusterSchemaError(
-                        f"{name}: foreign Distributed target on {host}"
-                    )
+        if engine.startswith("Replicated") or engine == "Distributed":
+            if engine_signature(engine_full) != engine_signature(step.sql):
+                raise ClusterSchemaError(
+                    f"{name}: full replication/routing engine differs on {host}"
+                )
         found.setdefault(name, set()).add(host)
     if complete:
         missing = [

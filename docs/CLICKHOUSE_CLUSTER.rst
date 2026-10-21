@@ -192,7 +192,11 @@ Migration, backfill, cutover and rollback
    ``CH_USE_REPLICATED_ENGINES=false`` as Helm does. The latter controls the old
    local/hosted bootstrap and is deliberately not the new topology switch.
    New native upgrades append a numbered SQL file with named ADD COLUMN/INDEX/
-   PROJECTION IF NOT EXISTS actions. Columns update both schemas; indexes and
+   PROJECTION IF NOT EXISTS actions. Packaged ``v2/schema`` files numbered 028
+   and later are included after the frozen baseline. Every new table declares
+   ``-- cluster-shard-key: table_name = cityHash64(immutable_columns)`` in that
+   new file; missing routing declarations fail closed. Later MVs use cumulative
+   known-table mapping, including pre-existing local sources/targets. Columns update both schemas; indexes and
    projections update only local storage. MODIFY/DROP/mutations are refused.
 3. Pause all canonical writers (collectors, workers, maintenance/backfills,
    metadata and eval writes), drain acknowledged work and record the cutover
@@ -273,6 +277,34 @@ shard grouping, eval insertion, RMT replacement and replica-loss policy. It is
 **not** the whole-app E2E suite, a benchmark, a cloud certification or a backup
 restore test. Keep command output and image digests as qualification evidence.
 
+Hosted bounded acceptance
+-------------------------
+
+``.github/workflows/clickhouse-cluster-ci.yml`` runs independently on a disposable
+hosted runner, on relevant PR paths or manual dispatch. It has a 40-minute hard
+limit and a 90-span fixture, not a load benchmark. Application mode adds a 256 MiB
+PostgreSQL and 128 MiB Redis to the 3x2 topology (5.625 GiB total container limits).
+It installs OSS dependencies before services start, runs actual Django migrations,
+replays the native bootstrap, creates every inspected CDC mirror/dependent view,
+and proves captured insert/update/delete through the real outbox installer/drain.
+It then applies a later additive table/MV/column migration without replacing the
+baseline and checks global rollups plus strict and explicitly weaker failure
+policies. An evidence JSON gate refuses absent/skipped proofs. Only this job's
+uniquely named project is removed; sanitized logs/evidence are uploaded for seven
+days, never the generated password/config files. No GKE/EKS resources are created.
+
+Equivalent explicitly provisioned isolated run::
+
+  python deploy/clickhouse/cluster-acceptance/generate.py \
+    --output /path/to/NEW/fixture --port 28123 --application-deps
+  # Start the exact generated project on the approved host, then:
+  futureagi/.venv/bin/python deploy/clickhouse/cluster-acceptance/acceptance.py \
+    --directory /path/to/NEW/fixture --application --allow-faults
+
+This mode publishes CH HTTP on 28123-28128, PostgreSQL on 28129, Redis on 28130
+and the first CH native port on 28131. The actual product UI/Temporal-worker E2E
+suite remains a separate release gate; this job does not silently claim it.
+
 Evidence and public architecture references
 ------------------------------------------
 
@@ -294,7 +326,10 @@ claims describe the vendor's workload, not a transferable capacity target.
   https://clickhouse.com/docs/guides/oss/deployment-and-scaling/examples/2-shards-2-replicas
 * Langfuse: ClickHouse observability storage plus queued raw events in blob
   storage. Lesson: ingest buffering is a separate durability layer, not supplied
-  by replicas alone. https://langfuse.com/handbook/product-engineering/architecture
+  by replicas alone. Self-managed Langfuse's ClickHouse documentation explicitly
+  describes one shard with configurable replicas, not multi-shard support;
+  replication is not equivalent to sharding. https://langfuse.com/handbook/product-engineering/architecture
+  and https://langfuse.com/self-hosting/deployment/infrastructure/clickhouse
 * Braintrust: Brainstore appends a WAL to object storage, then builds indexes and
   colocates trace spans in segments. This implementation does not claim that WAL
   or storage/compute separation. https://www.braintrust.dev/blog/brainstore-architecture

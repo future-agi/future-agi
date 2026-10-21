@@ -113,14 +113,28 @@ def verify_columns(client, topology, steps, *, allow_missing_additions=False):
             + ")"
             + tail
         )
+        _, live_entries, _ = _table_parts(row[-1])
+        expected_constraints = {
+            core._tokens(entry) for entry in entries if entry.startswith("CONSTRAINT ")
+        }
+        live_constraints = {
+            core._tokens(entry)
+            for entry in live_entries
+            if entry.startswith("CONSTRAINT ")
+        }
+        if expected_constraints != live_constraints:
+            raise core.BootstrapError(
+                f"{table}: incompatible CHECK constraints on {host}"
+            )
+        is_cdc = physical[table].key.startswith("cdc-v1-")
         core._check_table(
-            table,
+            table.removesuffix("_local") if is_cdc else table,
             row,
             columns.get((host, table), {}),
             {},
             ddl,
             database=topology.database,
-            native=True,
+            native=not is_cdc,
             source_owned=True,
             allow_additions=allow_missing_additions,
             additions=planned_additions,

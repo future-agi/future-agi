@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
-def run(directory, allow_faults):
+def run(directory, allow_faults, application=False):
     import clickhouse_connect
 
     root = Path(__file__).resolve().parents[3]
@@ -26,6 +26,8 @@ def run(directory, allow_faults):
     from tracer.services.clickhouse.v2.cluster_cdc import verify_columns
     from tracer.services.clickhouse.v2.cluster_schema import (
         ClusterTopology,
+        compile_addition,
+        compile_definitions,
         native_plan,
     )
 
@@ -67,9 +69,60 @@ def run(directory, allow_faults):
     )
     plan = native_plan(topology)
     admin = clients[0]
-    assert apply_plan(admin, topology, plan, password=fixture["password"]) == len(plan)
+    application_evidence = {}
+    if application:
+        from app_bootstrap import prepare, qualify
+
+        # Production order: relational migrations, then native schema, catalog
+        # and the existing outbox installer. Do not bootstrap CH ahead of PG.
+        prepare(fixture)
+        application_evidence = qualify(fixture)
+        assert apply_plan(admin, topology, plan, password=fixture["password"]) == 0
+    else:
+        assert apply_plan(admin, topology, plan, password=fixture["password"]) == len(
+            plan
+        )
     verify_columns(admin, topology, plan)
     assert apply_plan(clients[3], topology, plan, password=fixture["password"]) == 0
+    versions = [client.query("SELECT version()").first_row[0] for client in clients]
+    assert len(set(versions)) == 1 and versions[0] == "25.3.14.14", versions
+    evidence = {
+        "native_schema_steps": len(plan),
+        "schema_replay": True,
+        "server_versions": versions,
+        "clickhouse_image": fixture["clickhouse_image"],
+        **application_evidence,
+    }
+    # A later migration adds storage plus an MV over a PREEXISTING native table.
+    # The old baseline receipts stay unchanged and its raw data is never replaced.
+    upgrades = compile_definitions(
+        [
+            "CREATE TABLE IF NOT EXISTS acceptance_upgrade_counts (project_id UUID, n AggregateFunction(count)) ENGINE=AggregatingMergeTree ORDER BY project_id",
+            "CREATE MATERIALIZED VIEW IF NOT EXISTS acceptance_upgrade_counts_mv TO acceptance_upgrade_counts AS SELECT project_id, countState() AS n FROM spans WHERE acceptance_generation = 0 GROUP BY project_id",
+        ],
+        topology,
+        version="acceptance-additive-v1",
+        shard_keys={"acceptance_upgrade_counts": "cityHash64(project_id)"},
+        known_tables={"spans"},
+    )
+    upgrades += compile_addition(
+        "ALTER TABLE spans ADD COLUMN IF NOT EXISTS acceptance_generation UInt8 DEFAULT 0",
+        topology,
+        version="acceptance-additive-v1",
+        known_tables={"spans"},
+    )
+    upgrades = [step for step in upgrades if step.engine != "MaterializedView"] + [
+        step for step in upgrades if step.engine == "MaterializedView"
+    ]
+    assert apply_plan(
+        admin, topology, plan + upgrades, password=fixture["password"]
+    ) == len(upgrades)
+    verify_columns(admin, topology, plan + upgrades)
+    assert (
+        apply_plan(clients[4], topology, plan + upgrades, password=fixture["password"])
+        == 0
+    )
+    evidence["post_bootstrap_additive_upgrade"] = True
     project, session, user = [str(uuid.uuid4()) for _ in range(3)]
     ids = [str(uuid.uuid4()) for _ in range(90)]
     stamp = datetime(2026, 10, 1, 1, tzinfo=UTC)
@@ -95,6 +148,9 @@ def run(directory, allow_faults):
         client.command("SYSTEM SYNC REPLICA acceptance_v1.spans_local")
         client.command("SYSTEM SYNC REPLICA acceptance_v1.spans_per_session_local")
         client.command("SYSTEM SYNC REPLICA acceptance_v1.span_user_rollup_local")
+        client.command(
+            "SYSTEM SYNC REPLICA acceptance_v1.acceptance_upgrade_counts_local"
+        )
     assert (
         admin.query("SELECT count() FROM acceptance_v1.spans FINAL").first_row[0] == 90
     )
@@ -107,6 +163,12 @@ def run(directory, allow_faults):
     assert (
         admin.query(
             "SELECT countMerge(span_count) FROM acceptance_v1.span_user_rollup"
+        ).first_row[0]
+        == 90
+    )
+    assert (
+        admin.query(
+            "SELECT countMerge(n) FROM acceptance_v1.acceptance_upgrade_counts"
         ).first_row[0]
         == 90
     )
@@ -160,6 +222,15 @@ def run(directory, allow_faults):
     print(
         "PASS schema reapply, 3-shard reads, same-block dedup, MV once-per-shard, cross-shard grouping, RMT replacement, GLOBAL membership"
     )
+    evidence.update(
+        logical_span_count=90,
+        shard_count=3,
+        local_mv_fanout=True,
+        eval_insert=True,
+        rmt_update=True,
+        global_membership=True,
+    )
+    (directory / "evidence.json").write_text(json.dumps(evidence, indent=2))
     if not allow_faults:
         print(
             "NOT RUN replica/queue fault gates: rerun a fresh fixture with --allow-faults"
@@ -241,6 +312,13 @@ def run(directory, allow_faults):
             .first_row[0]
         )
         assert found == 90
+        evidence.update(
+            replica_loss=True,
+            strict_quorum_refused_unsafe_ack=True,
+            explicit_availability_mode=True,
+            acknowledged_rows_survived=found,
+        )
+        (directory / "evidence.json").write_text(json.dumps(evidence, indent=2))
         print(
             "PASS acknowledged pre-fault data survived; strict quorum refused unsafe ack; explicit quorum=1 writes continued; queue empty; replica caught up"
         )
@@ -255,5 +333,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--directory", required=True)
     parser.add_argument("--allow-faults", action="store_true")
+    parser.add_argument(
+        "--application",
+        action="store_true",
+        help="Require real app migrations, full CDC bootstrap and insert/update/delete",
+    )
     args = parser.parse_args()
-    run(args.directory, args.allow_faults)
+    run(args.directory, args.allow_faults, args.application)

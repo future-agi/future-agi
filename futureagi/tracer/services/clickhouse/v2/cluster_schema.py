@@ -151,20 +151,71 @@ def _clean(sql):
     )
 
 
-def _local_references(sql, tables, database):
-    # Lexical replacement avoids corrupting literals, dictionary names, or
-    # columns whose name happens to contain a table name.
-    sql = _TOKEN.sub(
-        lambda m: m[0] + "_local" if m[0] in tables else m[0], sql
-    ).replace("__database__", database)
-    for table in tables:
-        sql = re.sub(
-            rf"\b(FROM|TO)\s+({re.escape(table)}_local)\b", rf"\1 {database}.\2", sql
-        )
+def _local_references(sql, tables, database, *, local=True):
+    # Rewrite relation positions only, never literals, output columns or aliases.
+    tokens = list(_TOKEN.finditer(sql))
+    edits = []
+    for index, token in enumerate(tokens[:-1]):
+        if token[0].upper() not in {"FROM", "JOIN", "TO"}:
+            continue
+        if (
+            token[0].upper() == "JOIN"
+            and index
+            and tokens[index - 1][0].upper() == "ARRAY"
+        ):
+            continue  # ARRAY JOIN expands expressions, not a relation
+        first = tokens[index + 1]
+        if first[0] == "(":
+            continue  # a subquery; its own FROM is visited separately
+        last = first
+        name = first[0].strip("`")
+        if index + 3 < len(tokens) and tokens[index + 2][0] == ".":
+            if name != database:
+                raise ClusterSchemaError(
+                    "materialized view references a foreign database"
+                )
+            last = tokens[index + 3]
+            name = last[0].strip("`")
+        if name not in tables:
+            raise ClusterSchemaError(
+                f"materialized view references unknown local table: {name}"
+            )
+        suffix = "_local" if local else ""
+        edits.append((first.start(), last.end(), f"{database}.{name}{suffix}"))
+    for start, end, replacement in reversed(edits):
+        sql = sql[:start] + replacement + sql[end:]
     return sql
 
 
-def compile_definitions(definitions, topology, *, version, shard_keys=None):
+def engine_signature(sql):
+    """Exact constructor tokens, ignoring only whitespace/comments/backticks.
+
+    Do not compare substrings: identical targets with rand() instead of the
+    immutable hash would split versions across shards and break FINAL.
+    """
+    tokens = [
+        m[0].strip("`")
+        for m in _TOKEN.finditer(sql)
+        if not m[0].startswith(("--", "/*")) and m[0] != ";"
+    ]
+    start = tokens.index("ENGINE") + 1 if "ENGINE" in tokens else 0
+    if tokens[start : start + 1] == ["="]:
+        start += 1
+    if len(tokens) <= start:
+        raise ClusterSchemaError("missing engine constructor")
+    if tokens[start + 1 : start + 2] != ["("]:
+        return (tokens[start],)
+    depth = 0
+    for index in range(start + 1, len(tokens)):
+        depth += (tokens[index] == "(") - (tokens[index] == ")")
+        if depth == 0:
+            return tuple(tokens[start : index + 1])
+    raise ClusterSchemaError("unbalanced engine constructor")
+
+
+def compile_definitions(
+    definitions, topology, *, version, shard_keys=None, known_tables=()
+):
     keys = {**SHARD_KEYS, **(shard_keys or {})}
     parsed = []
     for sql in definitions:
@@ -178,7 +229,9 @@ def compile_definitions(definitions, topology, *, version, shard_keys=None):
     names = [name for _, name, _, _ in parsed]
     if len(set(names)) != len(names):
         raise ClusterSchemaError("duplicate schema object")
-    tables = {name for kind, name, _, _ in parsed if kind == "TABLE"}
+    tables = set(known_tables) | {
+        name for kind, name, _, _ in parsed if kind == "TABLE"
+    }
     local, aliases, dictionaries, views = [], [], [], []
     for kind, name, sql, match in parsed:
         qualified = f"{topology.database}.{name}"
@@ -224,6 +277,8 @@ def compile_definitions(definitions, topology, *, version, shard_keys=None):
         else:
             if kind == "MATERIALIZED VIEW":
                 sql = _local_references(sql, tables, topology.database)
+            else:
+                sql = _local_references(sql, tables, topology.database, local=False)
             sql = sql.replace(header, f"{header} {topology.on_cluster}", 1)
             views.append(
                 SchemaStep(
@@ -247,15 +302,61 @@ def compile_definitions(definitions, topology, *, version, shard_keys=None):
     )
 
 
-def native_plan(topology):
-    steps = []
-    known_tables = set()
-    for path in sorted(Path(__file__).with_name("cluster_schema").glob("*.sql")):
-        statements = split_statements(path.read_text())
+def native_plan(topology, *, baseline_dir=None, schema_dir=None):
+    baseline_dir = baseline_dir or Path(__file__).with_name("cluster_schema")
+    schema_dir = schema_dir or Path(__file__).with_name("schema")
+    # 002-027 are folded into the immutable baseline. Future packaged schemas
+    # are compiled automatically but need explicit, reviewed routing annotations.
+    paths = sorted(baseline_dir.glob("*.sql"))
+    paths += sorted(
+        path
+        for path in schema_dir.glob("*.sql")
+        if path.name[:3].isdigit() and int(path.name[:3]) > 27
+    )
+    steps, known_tables = [], set()
+    for path in paths:
+        text = path.read_text()
+        shard_keys = {}
+        for table, expression in re.findall(
+            r"^-- cluster-shard-key: ([A-Za-z_][A-Za-z_0-9]*) = ([^\n]+)$",
+            text,
+            re.MULTILINE,
+        ):
+            if table in shard_keys or any(
+                m[0] == ";" for m in _TOKEN.finditer(expression)
+            ):
+                raise ClusterSchemaError(
+                    "invalid/duplicate packaged shard-key declaration"
+                )
+            expression = expression.strip()
+            if not re.fullmatch(
+                r"cityHash64\([A-Za-z_][A-Za-z_0-9]*(?:\s*,\s*[A-Za-z_][A-Za-z_0-9]*)*\)",
+                expression,
+            ):
+                raise ClusterSchemaError(
+                    "packaged shard keys must hash an explicit immutable column list"
+                )
+            shard_keys[table] = expression
+        statements = split_statements(text)
         creates = [sql for sql in statements if not _clean(sql).startswith("ALTER ")]
         additions = [sql for sql in statements if _clean(sql).startswith("ALTER ")]
-        created = compile_definitions(creates, topology, version=path.stem)
-        steps.extend(created)
+        created = compile_definitions(
+            creates,
+            topology,
+            version=path.stem,
+            shard_keys=shard_keys,
+            known_tables=known_tables,
+        )
+        declared = {step.name for step in created if step.engine == "Distributed"}
+        if set(shard_keys) - declared:
+            raise ClusterSchemaError(
+                "shard-key declaration has no matching CREATE TABLE"
+            )
+        # Added columns must exist before views that reference them are analyzed.
+        deferred_views = [
+            step for step in created if step.engine in {"View", "MaterializedView"}
+        ]
+        steps.extend(step for step in created if step not in deferred_views)
         known_tables.update(
             step.name for step in created if step.engine == "Distributed"
         )
@@ -265,6 +366,7 @@ def native_plan(topology):
                     sql, topology, version=path.stem, known_tables=known_tables
                 )
             )
+        steps.extend(deferred_views)
     return steps
 
 

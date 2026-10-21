@@ -166,7 +166,8 @@ class FakeCluster:
             self.objects["cluster_schema_versions"] = ("ReplicatedMergeTree", sql)
         for step in self.steps:
             if sql == step.sql:
-                self.objects[step.name] = (step.engine, sql)
+                if step.engine:
+                    self.objects[step.name] = (step.engine, sql)
                 if step.key == self.fail:
                     raise RuntimeError("DDL timed out after some nodes applied it")
 
@@ -372,3 +373,114 @@ def test_unknown_table_requires_reviewed_shard_key(topology):
 def test_nullable_dead_letter_project_is_not_routing_key(plan):
     step = next(s for s in plan if s.name == "spans_v2_dead_letter")
     assert "cityHash64(pg_id)" in step.sql
+
+
+@pytest.mark.parametrize(
+    "key", ["rand()", "cityHash64(project_id)", "cityHash64(trace_id, project_id)"]
+)
+def test_existing_alias_with_changed_routing_is_rejected(topology, plan, key):
+    from tracer.services.clickhouse.v2.cluster_apply import verify
+
+    step = next(s for s in plan if s.name == "spans")
+    client = FakeCluster(topology, [step])
+    client.objects["spans"] = (
+        "Distributed",
+        step.sql.replace("cityHash64(project_id, trace_id)", key),
+    )
+    with pytest.raises(ClusterSchemaError, match="routing engine"):
+        verify(client, topology, [step])
+
+
+def test_engine_comparison_ignores_only_nonsemantic_formatting(topology, plan):
+    from tracer.services.clickhouse.v2.cluster_apply import verify
+
+    step = next(s for s in plan if s.name == "spans")
+    client = FakeCluster(topology, [step])
+    client.objects["spans"] = (
+        "Distributed",
+        step.sql.replace(
+            "cityHash64(project_id, trace_id)",
+            "cityHash64( `project_id` ,\n `trace_id` )",
+        ),
+    )
+    verify(client, topology, [step])
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "/tests/cluster/test_cluster_v1/{shard}/wrong_local",
+        "/tests/cluster/test_cluster_v1/constant/traces_local",
+    ],
+)
+def test_keeper_path_with_same_install_prefix_is_rejected(topology, plan, replacement):
+    from tracer.services.clickhouse.v2.cluster_apply import verify
+
+    step = next(s for s in plan if s.name == "traces_local")
+    client = FakeCluster(topology, [step])
+    client.objects[step.name] = (
+        step.engine,
+        step.sql.replace(
+            "/tests/cluster/test_cluster_v1/{shard}/traces_local", replacement
+        ),
+    )
+    with pytest.raises(ClusterSchemaError, match="foreign Keeper"):
+        verify(client, topology, [step])
+
+
+def test_subsequent_packaged_schema_uses_existing_local_sources(topology, tmp_path):
+    baseline = tmp_path / "baseline"
+    future = tmp_path / "schema"
+    baseline.mkdir()
+    future.mkdir()
+    (baseline / "001.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS spans (project_id UUID, trace_id String) ENGINE=MergeTree ORDER BY (project_id,trace_id);\n"
+    )
+    before = native_plan(topology, baseline_dir=baseline, schema_dir=future)
+    client = FakeCluster(topology, before)
+    with patch("tracer.services.clickhouse.v2.cluster_apply.preflight"):
+        assert apply_plan(client, topology, before) == 2
+        (future / "028_metrics.sql").write_text(
+            "-- cluster-shard-key: metric_snapshot = cityHash64(project_id)\nALTER TABLE spans ADD COLUMN IF NOT EXISTS category String DEFAULT '';\nCREATE TABLE IF NOT EXISTS metric_snapshot (project_id UUID, n UInt64) ENGINE=SummingMergeTree ORDER BY project_id;\nCREATE MATERIALIZED VIEW IF NOT EXISTS metrics_mv TO metric_snapshot AS SELECT project_id, count() AS n FROM spans WHERE category = '' GROUP BY project_id;\n"
+        )
+        after = native_plan(topology, baseline_dir=baseline, schema_dir=future)
+        client.steps = after
+        assert apply_plan(client, topology, after) == 5
+        assert apply_plan(client, topology, after) == 0
+    assert after[:2] == before
+    mv = next(s for s in after if s.name == "metrics_mv")
+    assert "TO test_cluster_v1.metric_snapshot_local" in mv.sql
+    assert "FROM test_cluster_v1.spans_local" in mv.sql
+    assert next(
+        i for i, step in enumerate(after) if "ADD COLUMN" in step.sql
+    ) < after.index(mv)
+
+
+def test_new_packaged_table_without_shard_declaration_fails_closed(topology, tmp_path):
+    (tmp_path / "028_missing.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS unregistered (id UUID) ENGINE=MergeTree ORDER BY id;\n"
+    )
+    with pytest.raises(ClusterSchemaError, match="immutable shard key"):
+        native_plan(topology, baseline_dir=tmp_path / "none", schema_dir=tmp_path)
+
+
+def test_packaged_upgrade_cannot_register_random_routing(topology, tmp_path):
+    (tmp_path / "028_bad.sql").write_text(
+        "-- cluster-shard-key: random_data = rand()\nCREATE TABLE IF NOT EXISTS random_data (id UUID) ENGINE=MergeTree ORDER BY id;\n"
+    )
+    with pytest.raises(ClusterSchemaError, match="immutable column list"):
+        native_plan(topology, baseline_dir=tmp_path / "none", schema_dir=tmp_path)
+
+
+def test_regular_future_views_are_database_qualified_but_remain_distributed(topology):
+    steps = compile_definitions(
+        [
+            "CREATE VIEW IF NOT EXISTS committed_results AS SELECT r.* FROM metric_results AS r INNER JOIN (SELECT * FROM metric_commits FINAL) AS c ON r.id = c.id"
+        ],
+        topology,
+        version="028",
+        known_tables={"metric_results", "metric_commits"},
+    )
+    assert "FROM test_cluster_v1.metric_results" in steps[0].sql
+    assert "FROM test_cluster_v1.metric_commits FINAL" in steps[0].sql
+    assert "_local" not in steps[0].sql
