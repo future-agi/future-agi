@@ -15,6 +15,12 @@ import { ShowComponent } from "src/components/show";
 import APIKeyReadOnlyView from "src/components/custom-model-dropdown/APIKeyReadOnlyView";
 import Actions from "./Actions";
 import { LOGO_WITH_BLACK_BACKGROUND } from "src/components/custom-model-dropdown/common";
+import { RESPONSE_CODES } from "src/utils/constants";
+
+// Kept in sync with tfc.utils.error_codes.err_dict["INVALID_API_KEY"] on the
+// backend -- this is only a fallback for the rare case the server response
+// doesn't carry a message, so it must read identically to that string.
+const INVALID_API_KEY_MESSAGE = "Invalid API key, please type in the right one.";
 
 const KeyCardComponent = ({ data, onDeleteClick }) => {
   const theme = useTheme();
@@ -28,6 +34,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
     reset,
     watch,
     clearErrors,
+    setError,
     handleSubmit,
     setValue,
     formState: { isDirty },
@@ -85,6 +92,33 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
     hasClearedOnceRef.current = false;
   }, [data, reset]);
 
+  // Surface a rejected key. Text-key providers get an inline error under the
+  // input (matches the AI Providers design); JSON-config providers
+  // (Vertex/Azure/Bedrock) never mount a "key" field here -- they render
+  // APIKeyReadOnlyView + the CloudProviderModals dialog instead, which is
+  // already closed by the time this resolves, so setError('key', ...) would
+  // write into a sink nothing renders and the save would silently appear to
+  // do nothing. Only a definitive key rejection (INVALID_API_KEY) is a "key"
+  // problem on the text path -- every other 400 (e.g. UNABLE_TO_ADD_API_KEY
+  // from the save block) is an unrelated failure and always gets a toast.
+  const handleSaveError = (error) => {
+    const message = error?.message || INVALID_API_KEY_MESSAGE;
+    const isKeyRejection = error?.code === "INVALID_API_KEY";
+
+    if (isKeyRejection && !isJsonKey) {
+      setError("key", { type: "server", message });
+      return;
+    }
+
+    if (error?.statusCode === RESPONSE_CODES.PAYMENT_REQUIRED) {
+      // The axios response interceptor already enqueues an error snackbar for
+      // 402 upgrade_required; avoid stacking a second, identical toast here.
+      return;
+    }
+
+    enqueueSnackbar(message, { variant: "error" });
+  };
+
   const { mutate: createApiKey, isPending } = useMutation({
     mutationFn: (d) => axios.post(endpoints.develop.apiKey.create, d),
     onSuccess: () => {
@@ -97,6 +131,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
       setEditMode(false);
       hasClearedOnceRef.current = false;
     },
+    onError: handleSaveError,
   });
 
   const { mutate: updateApiKey, isPending: isUpdatingApiKey } = useMutation({
@@ -110,11 +145,15 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
       setEditMode(false);
       hasClearedOnceRef.current = false;
     },
+    onError: handleSaveError,
   });
   const handleFormSubmit = async (formData) => {
     // trackEvent(Events.saveApiClicked, {
     //   [PropertyName.click]: formData?.provider,
     // });
+
+    // Clear any prior "invalid key" error before re-submitting.
+    clearErrors("key");
 
     // Add the hasKey property from the original data
     const submitData = {
@@ -130,6 +169,9 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
   };
 
   const handleSubmitData = async (submitData) => {
+    // Clear any prior "invalid key" error before re-submitting.
+    clearErrors("key");
+
     // For JSON keys, ensure provider is included from the component's data
     const dataToSubmit = {
       ...submitData,
