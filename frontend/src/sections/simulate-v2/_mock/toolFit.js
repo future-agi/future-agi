@@ -19,7 +19,7 @@
  */
 import { getRows } from "./scenarios";
 import { actorsOf, getActor } from "./actors";
-import { inferTools } from "./toolInference";
+import { inferTools, sandboxScenario } from "./toolInference";
 import { agentVersions, environmentVersions, currentEnvVersion, currentAgentVersion, nextEnvVersion, versionNumber } from "./versions";
 import { toolFaultsOf } from "./toolEnv";
 
@@ -299,6 +299,11 @@ export const runInputs = (env, envState, { agent, envVersion, actors, actorEdits
  */
 export const requiredToolsOf = (row, knownTools = []) => {
   if (Array.isArray(row?.requiredTools) && row.requiredTools.length) return row.requiredTools;
+  /* A SaaS sandbox scenario is about one app (Gmail, Slack…), and the sandbox
+     answers that app's own API — it needs no named tool. Guessing from words
+     here matched Gmail "labels" to the agent's generate_return_label and
+     marked a brand-new sandbox's scenarios Outdated. */
+  if (sandboxScenario(row)) return [];
   return inferTools(row, knownTools);
 };
 

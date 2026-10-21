@@ -10,7 +10,7 @@
  * every reload is not a demo. Same seed in, same run out.
  */
 import { admissionOf } from "./coverage";
-import { inferTools } from "./toolInference";
+import { inferTools, sandboxScenario } from "./toolInference";
 import { blockerReason } from "./releaseBlocker";
 import { scriptFor } from "./runScripts";
 
@@ -250,7 +250,7 @@ function buildCallLog(scenario, tools, r, failed) {
     : [];
   /* Recorded, else named, else read from its wording — the same inference
      the Scenarios tab shows, so a run exercises the tools the row lists. */
-  const inferred = recorded.length ? [] : inferTools(scenario, tools);
+  const inferred = recorded.length || sandboxScenario(scenario) ? [] : inferTools(scenario, tools);
   const required = (recorded.length
     ? recorded
     : tools.filter((t) => named.includes(t.name) || inferred.includes(t.name))).slice(0, 3);

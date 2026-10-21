@@ -29,6 +29,11 @@ const tokens = (s = "") => (String(s).toLowerCase().match(/[a-z]{4,}/g) || [])
 
 const textOf = (row) => `${row?.useCase || ""} ${row?.title || ""} ${row?.task || ""} ${row?.situation || ""} ${row?.summary || ""} ${row?.expected || ""}`;
 
+/* A SaaS sandbox scenario — about one app (`twinService`) or several
+   (`services`, from the sandbox library). The sandbox answers the apps' own
+   APIs, so it needs no named tool and none is guessed for it. */
+export const sandboxScenario = (row) => !!row?.twinService || (Array.isArray(row?.services) && row.services.length > 0);
+
 export const inferTools = (row, tools = []) => {
   if (!tools.length) return [];
   const text = textOf(row).toLowerCase();
