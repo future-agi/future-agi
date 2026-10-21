@@ -1,0 +1,482 @@
+"""Real ORM isolation tests; run against the normal PostgreSQL test database."""
+
+from datetime import timedelta
+from uuid import uuid4
+
+import pytest
+from django.utils import timezone
+from unittest.mock import patch
+
+from accounts.models.organization import Organization
+from accounts.models.organization_membership import OrganizationMembership
+from accounts.models.user import User
+from accounts.models.workspace import Workspace, WorkspaceMembership
+from model_hub.models.ai_model import AIModel
+from tracer.models.project import Project
+from tracer.models.sql_query import SQLExecution
+from tracer.sql_workbench.access import AccessDenied, Actor, authorize
+from tracer.sql_workbench import service
+
+pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture
+def tenants(monkeypatch):
+    monkeypatch.setenv("SQL_WORKBENCH_DERIVED_METRICS_ENABLED", "false")
+    values = []
+    for i in range(2):
+        org = Organization.objects.create(name=f"sql-org-{uuid4()}")
+        user = User(
+            id=uuid4(),
+            email=f"sql-{uuid4()}@example.test",
+            name="SQL reader",
+            organization=org,
+        )
+        User.objects.bulk_create([user])
+        workspace = Workspace(
+            id=uuid4(), name=f"sql-workspace-{i}", organization=org, created_by=user
+        )
+        Workspace.no_workspace_objects.bulk_create([workspace])
+        om = OrganizationMembership(id=uuid4(), user=user, organization=org, level=3)
+        OrganizationMembership.no_workspace_objects.bulk_create([om])
+        wm = WorkspaceMembership(
+            id=uuid4(),
+            user=user,
+            workspace=workspace,
+            level=3,
+            organization_membership=om,
+        )
+        WorkspaceMembership.no_workspace_objects.bulk_create([wm])
+        project = Project(
+            id=uuid4(),
+            name=f"sql-project-{i}",
+            organization=org,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        Project.no_workspace_objects.bulk_create([project])
+        values.append((Actor(user.id, org.id, workspace.id), project, user))
+    return values
+
+
+def create_job(actor, project, **kwargs):
+    now = timezone.now()
+    return SQLExecution.objects.create(
+        project=project,
+        organization_id=actor.organization_id,
+        workspace_id=actor.workspace_id,
+        created_by_id=actor.user_id,
+        sql="SELECT * FROM spans",
+        start=now - timedelta(hours=1),
+        end=now,
+        deadline=now + timedelta(seconds=90),
+        expires_at=now + timedelta(hours=24),
+        **kwargs,
+    )
+
+
+def test_members_can_access_only_exact_project_scope(tenants):
+    (actor, project, _), (other, foreign, _) = tenants
+    assert authorize(actor, project.id) == project
+    for candidate in [foreign.id, None, uuid4()]:
+        with pytest.raises(AccessDenied):
+            authorize(actor, candidate)
+    for bad_actor in [
+        Actor(actor.user_id, other.organization_id, actor.workspace_id),
+        Actor(actor.user_id, actor.organization_id, other.workspace_id),
+        Actor(actor.user_id, actor.organization_id, None),
+    ]:
+        with pytest.raises(AccessDenied):
+            authorize(bad_actor, project.id)
+
+
+def test_null_and_other_workspace_projects_are_not_legacy_bypasses(tenants):
+    (actor, project, user), _ = tenants
+    Project.no_workspace_objects.filter(id=project.id).update(workspace=None)
+    with pytest.raises(AccessDenied):
+        authorize(actor, project.id)
+    ws = Workspace.no_workspace_objects.create(
+        name=f"other-{uuid4()}", organization_id=actor.organization_id, created_by=user
+    )
+    Project.no_workspace_objects.filter(id=project.id).update(workspace=ws)
+    with pytest.raises(AccessDenied):
+        authorize(actor, project.id)
+
+
+def test_viewer_can_read_but_not_save_or_share(tenants):
+    (actor, project, _), _ = tenants
+    OrganizationMembership.no_workspace_objects.filter(user_id=actor.user_id).update(
+        level=1
+    )
+    assert authorize(actor, project.id) == project
+    with pytest.raises(AccessDenied):
+        authorize(actor, project.id, write=True)
+    with pytest.raises(AccessDenied):
+        service.save_query(
+            actor,
+            project_id=project.id,
+            name="forbidden",
+            sql="SELECT * FROM spans",
+            visibility="project",
+            chart={},
+            window_hours=24,
+        )
+
+
+@pytest.mark.parametrize("membership", ["organization", "workspace"])
+def test_revocation_denies_history_result_export_and_saved_query(tenants, membership):
+    (actor, project, _), _ = tenants
+    job = create_job(
+        actor, project, state="succeeded", result={"columns": [], "rows": []}
+    )
+    saved = service.save_query(
+        actor,
+        project_id=project.id,
+        name="saved",
+        sql=job.sql,
+        visibility="project",
+        chart={},
+        window_hours=24,
+    )
+    model = (
+        OrganizationMembership if membership == "organization" else WorkspaceMembership
+    )
+    model.no_workspace_objects.filter(user_id=actor.user_id).update(is_active=False)
+    for operation in [
+        lambda: service.history(actor, project.id, 0),
+        lambda: service.execution(actor, project.id, job.id),
+        lambda: service.export_result(actor, project.id, job.id, "csv"),
+        lambda: service.cancel(actor, project.id, job.id),
+        lambda: service.saved_query(actor, project.id, saved.id),
+    ]:
+        with pytest.raises(AccessDenied):
+            operation()
+
+
+def test_other_tenant_cannot_read_job_even_with_exact_id(tenants):
+    (actor, project, _), (other, foreign, _) = tenants
+    job = create_job(
+        actor, project, state="succeeded", result={"columns": [], "rows": []}
+    )
+    for project_id in [project.id, foreign.id]:
+        with pytest.raises(AccessDenied):
+            service.execution(other, project_id, job.id)
+        with pytest.raises(AccessDenied):
+            service.export_result(other, project_id, job.id, "parquet")
+    assert service.history(other, foreign.id, 0)["items"] == []
+
+
+def test_project_share_does_not_share_result_or_private_queries(tenants):
+    (actor, project, user), (other, _, other_user) = tenants
+    org_membership = OrganizationMembership(
+        id=uuid4(), user=other_user, organization_id=actor.organization_id, level=1
+    )
+    OrganizationMembership.no_workspace_objects.bulk_create([org_membership])
+    WorkspaceMembership.no_workspace_objects.bulk_create(
+        [
+            WorkspaceMembership(
+                id=uuid4(),
+                user=other_user,
+                workspace_id=actor.workspace_id,
+                level=1,
+                organization_membership=org_membership,
+            )
+        ]
+    )
+    viewer = Actor(other.user_id, actor.organization_id, actor.workspace_id)
+    shared = service.save_query(
+        actor,
+        project_id=project.id,
+        name="shared",
+        sql="SELECT * FROM spans",
+        visibility="project",
+        chart={},
+        window_hours=24,
+    )
+    private = service.save_query(
+        actor,
+        project_id=project.id,
+        name="private",
+        sql="SELECT * FROM spans",
+        visibility="private",
+        chart={},
+        window_hours=24,
+    )
+    assert service.saved_query(viewer, project.id, shared.id).id == shared.id
+    with pytest.raises(AccessDenied):
+        service.saved_query(viewer, project.id, private.id)
+    job = create_job(actor, project)
+    with pytest.raises(AccessDenied):
+        service.execution(viewer, project.id, job.id)
+    with pytest.raises(AccessDenied):
+        service.delete_saved(viewer, project.id, shared.id)
+
+
+def test_export_escapes_spreadsheet_formula_and_parquet_roundtrips(tenants):
+    import io
+    import pyarrow.parquet as pq
+
+    (actor, project, _), _ = tenants
+    result = {
+        "columns": [
+            {"name": "label", "type": "String"},
+            {"name": "value", "type": "Int64"},
+        ],
+        "rows": [['  =HYPERLINK("evil")', 2], ["safe", None]],
+    }
+    job = create_job(actor, project, state="succeeded", result=result)
+    data, kind = service.export_result(actor, project.id, job.id, "csv")
+    assert "'  =HYPERLINK" in data.decode("utf-8-sig")
+    data, kind = service.export_result(actor, project.id, job.id, "parquet")
+    assert kind == "application/vnd.apache.parquet"
+    assert pq.read_table(io.BytesIO(data)).to_pydict() == {
+        "label": [result["rows"][0][0], "safe"],
+        "value": [2, None],
+    }
+
+
+def test_expired_results_not_served(tenants):
+    (actor, project, _), _ = tenants
+    job = create_job(
+        actor, project, state="succeeded", result={"columns": [], "rows": []}
+    )
+    job.expires_at = timezone.now() - timedelta(seconds=1)
+    job.save()
+    assert service.snapshot(job)["result"] == {}
+    assert service.snapshot(job)["expired"]
+    with pytest.raises(service.QueryUnavailable):
+        service.export_result(actor, project.id, job.id, "csv")
+
+
+def test_run_admission_is_locked_and_bounded(
+    tenants, django_capture_on_commit_callbacks
+):
+    (actor, project, _), _ = tenants
+    now = timezone.now()
+    with (
+        patch("tracer.sql_workbench.service.connection_config"),
+        patch("tracer.sql_workbench.tasks.execute_sql.apply_async") as enqueue,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        service.submit(
+            actor,
+            project_id=project.id,
+            sql="SELECT count() FROM spans",
+            start=now - timedelta(hours=1),
+            end=now,
+        )
+        with pytest.raises(service.AdmissionFull):
+            service.submit(
+                actor,
+                project_id=project.id,
+                sql="SELECT count() FROM spans",
+                start=now - timedelta(hours=1),
+                end=now,
+            )
+        assert enqueue.call_count == 0
+    # Publish happens only after the surrounding transaction commits.
+    assert enqueue.call_count == 1
+    assert len(SQLExecution.objects.filter(project=project)) == 1
+
+
+def test_saved_query_cannot_be_attached_to_other_tenant_dashboard(tenants):
+    from tracer.models.dashboard import Dashboard
+
+    (actor, project, _), (other, _, _) = tenants
+    saved = service.save_query(
+        actor,
+        project_id=project.id,
+        name="shared",
+        sql="SELECT * FROM spans",
+        visibility="project",
+        chart={},
+        window_hours=24,
+    )
+    dashboard = Dashboard.no_workspace_objects.create(
+        workspace_id=other.workspace_id, name="other", created_by_id=other.user_id
+    )
+    with pytest.raises(AccessDenied):
+        service.add_widget(actor, project.id, saved.id, dashboard.id)
+
+
+def api_request(actor, user, method, path, data):
+    from rest_framework.test import APIRequestFactory, force_authenticate
+    from types import SimpleNamespace
+
+    request = getattr(APIRequestFactory(), method)(path, data, format="json")
+    request.organization = SimpleNamespace(id=actor.organization_id)
+    request.workspace = SimpleNamespace(id=actor.workspace_id)
+    force_authenticate(request, user=user)
+    return request
+
+
+def test_catalog_api_and_saved_api_are_scoped_and_no_store(tenants):
+    from tracer.views.sql_query import SQLQueryViewSet, SavedSQLQueryViewSet
+
+    (actor, project, user), (_, foreign, _) = tenants
+    view = SQLQueryViewSet.as_view({"get": "catalog"})
+    response = view(
+        api_request(
+            actor,
+            user,
+            "get",
+            "/tracer/sql-query/catalog/",
+            {"project_id": str(project.id)},
+        )
+    )
+    assert response.status_code == 200
+    assert response["Cache-Control"] == "no-store"
+    assert {entry["name"] for entry in response.data["datasets"]} == {
+        "spans",
+        "traces",
+        "sessions",
+        "users",
+        "annotations",
+        "eval_results",
+        "derived_metrics",
+    }
+    response = view(
+        api_request(
+            actor,
+            user,
+            "get",
+            "/tracer/sql-query/catalog/",
+            {"project_id": str(foreign.id)},
+        )
+    )
+    assert response.status_code == 403
+    create = SavedSQLQueryViewSet.as_view({"post": "create"})
+    response = create(
+        api_request(
+            actor,
+            user,
+            "post",
+            "/tracer/saved-sql-query/",
+            {
+                "project_id": str(project.id),
+                "name": "Real API save",
+                "sql": "SELECT name FROM spans",
+                "visibility": "project",
+            },
+        )
+    )
+    assert response.status_code == 201
+    assert response.data["project_id"] == project.id
+
+
+@pytest.mark.parametrize(
+    "bad_project",
+    [None, "NULL", "';DROP TABLE spans--", "00000000-0000-0000-0000-000000000000"],
+)
+def test_api_missing_or_malicious_project_fails_closed(tenants, bad_project):
+    from tracer.views.sql_query import SQLQueryViewSet
+
+    actor, project, user = tenants[0]
+    body = {} if bad_project is None else {"project_id": bad_project}
+    response = SQLQueryViewSet.as_view({"get": "catalog"})(
+        api_request(actor, user, "get", "/tracer/sql-query/catalog/", body)
+    )
+    assert response.status_code in {400, 403}
+
+
+def test_binary_download_api_does_not_collide_with_drf_format_negotiation(tenants):
+    from tracer.views.sql_query import SQLQueryViewSet
+
+    actor, project, user = tenants[0]
+    job = create_job(
+        actor,
+        project,
+        state="succeeded",
+        result={"columns": [{"name": "n", "type": "Int64"}], "rows": [[1]]},
+    )
+    response = SQLQueryViewSet.as_view({"get": "download"})(
+        api_request(
+            actor,
+            user,
+            "get",
+            f"/tracer/sql-query/{job.id}/download/",
+            {"project_id": str(project.id), "file_format": "csv"},
+        ),
+        pk=str(job.id),
+    )
+    assert response.status_code == 200
+    assert response["Cache-Control"] == "no-store"
+    assert response["Content-Disposition"] == 'attachment; filename="query-results.csv"'
+    assert response.content.decode("utf-8-sig") == "n\r\n1\r\n"
+
+
+def test_saved_query_owner_updates_but_other_project_cannot(tenants):
+    (actor, project, _), (other, foreign, _) = tenants
+    saved = service.save_query(
+        actor,
+        project_id=project.id,
+        name="owned",
+        sql="SELECT * FROM spans",
+        visibility="private",
+        chart={},
+        window_hours=24,
+    )
+    update = dict(
+        project_id=project.id,
+        name="shared",
+        sql="SELECT count() FROM spans",
+        visibility="project",
+        chart={"type": "table"},
+        window_hours=1,
+    )
+    assert service.update_saved(actor, saved.id, **update).visibility == "project"
+    with pytest.raises(AccessDenied):
+        service.update_saved(other, saved.id, **update)
+    with pytest.raises(AccessDenied):
+        service.update_saved(actor, saved.id, **{**update, "project_id": foreign.id})
+
+
+def test_history_does_not_load_result_payloads(tenants, django_assert_num_queries):
+    actor, project, _ = tenants[0]
+    create_job(actor, project, state="succeeded", result={"rows": [["private"]]})
+    # Three authorization reads plus one metadata-only history query, not N+1
+    # deferred loads of up to 8MB per historical result.
+    with django_assert_num_queries(4) as captured:
+        result = service.history(actor, project.id, 0)
+    assert result["items"][0]["result"] == {}
+    assert '"result"' not in captured.captured_queries[-1]["sql"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_postgres_concurrent_admission_serializes_same_actor(tenants):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from django.db import connection, connections
+
+    if connection.vendor != "postgresql":
+        pytest.skip("Row-lock concurrency requires PostgreSQL, not SQLite.")
+    actor, project, _ = tenants[0]
+    barrier = Barrier(2)
+    now = timezone.now()
+
+    def submit_once():
+        try:
+            barrier.wait(timeout=5)
+            try:
+                service.submit(
+                    actor,
+                    project_id=project.id,
+                    sql="SELECT count() FROM spans",
+                    start=now - timedelta(hours=1),
+                    end=now,
+                )
+                return "accepted"
+            except service.AdmissionFull:
+                return "rejected"
+        finally:
+            connections.close_all()
+
+    with (
+        patch("tracer.sql_workbench.service.connection_config"),
+        patch("tracer.sql_workbench.tasks.execute_sql.apply_async"),
+    ):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(lambda _: submit_once(), range(2)))
+    assert sorted(outcomes) == ["accepted", "rejected"]
+    assert SQLExecution.objects.filter(project=project).count() == 1

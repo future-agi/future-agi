@@ -28730,6 +28730,96 @@ export interface GenerateScenarioApi {
   generate_graph?: boolean;
 }
 
+export type SQLSavedApiVisibility =
+  (typeof SQLSavedApiVisibility)[keyof typeof SQLSavedApiVisibility];
+
+export const SQLSavedApiVisibility = {
+  private: "private",
+  project: "project",
+} as const;
+
+export type SQLSavedApiChart = { [key: string]: unknown };
+
+export interface SQLSavedApi {
+  readonly id?: string;
+  readonly project_id?: string;
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly sql?: string;
+  readonly visibility?: SQLSavedApiVisibility;
+  readonly chart?: SQLSavedApiChart;
+  readonly window_hours?: number;
+  readonly created_at?: string;
+  readonly created_by_id?: string;
+}
+
+export interface SQLSavedListApi {
+  items: SQLSavedApi[];
+  has_more: boolean;
+}
+
+export type SQLSaveApiVisibility =
+  (typeof SQLSaveApiVisibility)[keyof typeof SQLSaveApiVisibility];
+
+export const SQLSaveApiVisibility = {
+  private: "private",
+  project: "project",
+} as const;
+
+export type SQLChartApiType =
+  (typeof SQLChartApiType)[keyof typeof SQLChartApiType];
+
+export const SQLChartApiType = {
+  table: "table",
+  bar: "bar",
+} as const;
+
+export interface SQLChartApi {
+  type?: SQLChartApiType;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  x?: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  y?: string;
+}
+
+export interface SQLSaveApi {
+  project_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 160
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 32768
+   */
+  sql: string;
+  visibility?: SQLSaveApiVisibility;
+  chart?: SQLChartApi;
+  /**
+   * @minimum 1
+   * @maximum 744
+   */
+  window_hours?: number;
+}
+
+export interface SQLWidgetApi {
+  project_id: string;
+  dashboard_id: string;
+}
+
+export interface SQLWidgetResponseApi {
+  id: string;
+  dashboard_id: string;
+}
+
 export interface SavedViewDefaultTabApi {
   /** @minLength 1 */
   key: string;
@@ -29136,6 +29226,94 @@ export interface SharedLinkResolveErrorApi {
   error?: string;
   attr?: string;
   details?: SharedLinkResolveErrorApiDetails;
+}
+
+export type SQLExecutionApiState =
+  (typeof SQLExecutionApiState)[keyof typeof SQLExecutionApiState];
+
+export const SQLExecutionApiState = {
+  queued: "queued",
+  running: "running",
+  succeeded: "succeeded",
+  failed: "failed",
+  cancelled: "cancelled",
+} as const;
+
+export interface SQLColumnApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  type: string;
+}
+
+export type SQLResultApiRowsItemItem = { [key: string]: unknown };
+
+export interface SQLResultApi {
+  columns?: SQLColumnApi[];
+  rows?: SQLResultApiRowsItemItem[][];
+  truncated?: boolean;
+  row_count?: number;
+  elapsed_ms?: number;
+}
+
+export interface SQLExecutionApi {
+  id: string;
+  project_id: string;
+  /** @minLength 1 */
+  sql: string;
+  state: SQLExecutionApiState;
+  created_at: string;
+  expires_at: string;
+  error: string;
+  result: SQLResultApi;
+  expired: boolean;
+}
+
+export interface SQLHistoryApi {
+  items: SQLExecutionApi[];
+  has_more: boolean;
+}
+
+export interface SQLDatasetApi {
+  available: boolean;
+  unavailable_reason: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  columns: SQLColumnApi[];
+}
+
+export interface SQLCatalogApi {
+  /** @minLength 1 */
+  identity_semantics: string;
+  version: number;
+  datasets: SQLDatasetApi[];
+  max_rows: number;
+  max_window_days: number;
+  can_save: boolean;
+}
+
+export interface SQLRunSavedApi {
+  project_id: string;
+  saved_query_id: string;
+  start?: string;
+  end?: string;
+}
+
+export interface SQLRunApi {
+  project_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 32768
+   */
+  sql: string;
+  start: string;
+  end: string;
+}
+
+export interface SQLProjectApi {
+  project_id: string;
 }
 
 export type TraceAnnotationValueResponseApiAnnotationValue = {
@@ -36657,6 +36835,23 @@ export type TracerProjectProjectSdkCode200 = {
   results: ProjectApi[];
 };
 
+export type TracerSavedSqlQueryListParams = {
+  project_id: string;
+  /**
+   * @minimum 0
+   * @maximum 10000
+   */
+  offset?: number;
+};
+
+export type TracerSavedSqlQueryReadParams = {
+  project_id: string;
+};
+
+export type TracerSavedSqlQueryDeleteParams = {
+  project_id: string;
+};
+
 export type TracerSavedViewsListParams = {
   /**
    * A page number within the paginated result set.
@@ -36685,6 +36880,36 @@ export type TracerSharedLinksList200 = {
   previous?: string;
   results: SharedLinkListApi[];
 };
+
+export type TracerSqlQueryListParams = {
+  project_id: string;
+  /**
+   * @minimum 0
+   * @maximum 10000
+   */
+  offset?: number;
+};
+
+export type TracerSqlQueryCatalogParams = {
+  project_id: string;
+};
+
+export type TracerSqlQueryReadParams = {
+  project_id: string;
+};
+
+export type TracerSqlQueryDownloadParams = {
+  project_id: string;
+  file_format: TracerSqlQueryDownloadFileFormat;
+};
+
+export type TracerSqlQueryDownloadFileFormat =
+  (typeof TracerSqlQueryDownloadFileFormat)[keyof typeof TracerSqlQueryDownloadFileFormat];
+
+export const TracerSqlQueryDownloadFileFormat = {
+  csv: "csv",
+  parquet: "parquet",
+} as const;
 
 export type TracerTraceAnnotationGetAnnotationValuesParams = {
   /**
