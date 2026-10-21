@@ -82,6 +82,19 @@ from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
 logger = logging.getLogger("simulate.hosted_harness_gateway")
+
+
+def _postgres_json_safe(value: Any) -> Any:
+    """Remove NUL bytes PostgreSQL cannot store in JSON text values."""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, list):
+        return [_postgres_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _postgres_json_safe(item) for key, item in value.items()}
+    return value
+
+
 structlog_logger = structlog.get_logger(__name__)
 
 HOSTED_ENGINE_CATALOG = {
@@ -3189,6 +3202,7 @@ class HostedHarnessGateway:
         activities = _activity_events()
         if activities:
             outputs.append({"kind": "activity", "events": activities})
+        outputs = _postgres_json_safe(outputs)
         if isinstance(scenarios, list) and scenarios:
             from simulate.services.harness_scenarios import index_scenarios
 
