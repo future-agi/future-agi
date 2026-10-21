@@ -25157,10 +25157,10 @@ export interface SamplingWindowApi {
    */
   start: string;
   /**
-   * Exclusive ISO 8601 UTC event time; maximum interval 31 days.
+   * Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).
    * @minLength 1
    */
-  end: string;
+  end?: string;
 }
 
 export type SamplingPredicateApiSource =
@@ -25720,6 +25720,7 @@ export interface SamplingPreviewResultApi {
   /** @minLength 1 */
   mode: string;
   window: SamplingWindowApi;
+  preview_window: SamplingWindowApi;
   as_of: string;
   strata: SamplingPreviewCellApi[];
   /** @minimum 0 */

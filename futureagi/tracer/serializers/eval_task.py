@@ -17,6 +17,7 @@ from tracer.serializers.eval_sampling import SamplingPolicySerializer
 from tracer.services.eval_tasks.sampling.policy import (
     InvalidSamplingPolicy,
     validate_policy,
+    validate_live_filter_sources,
 )
 from tracer.serializers.filters import (
     SortParamListQueryParamField,
@@ -428,6 +429,19 @@ class EvalTaskSerializer(serializers.ModelSerializer):
             and not attrs.get("spans_limit", getattr(self.instance, "spans_limit", None))
         ):
             raise serializers.ValidationError({"spans_limit": "Set a row limit before disabling the sampling policy."})
+        if has_policy and has_policy["mode"] == "live" and attrs.get("run_type", getattr(self.instance, "run_type", None)) != RunType.CONTINUOUS:
+            raise serializers.ValidationError({"sampling_policy": "Live percentage policies require a continuous task."})
+        try:
+            validate_live_filter_sources(has_policy, attrs.get("filters", getattr(self.instance, "filters", {})))
+        except InvalidSamplingPolicy as exc:
+            raise serializers.ValidationError({"sampling_policy": str(exc)}) from exc
+        if has_policy:
+            project = attrs.get("project") or getattr(self.instance, "project", None)
+            evals = attrs.get("evals")
+            if evals is None and self.instance is not None:
+                evals = self.instance.evals.all()
+            if project is not None and any(config.project_id != project.id for config in (evals or [])):
+                raise serializers.ValidationError({"evals": "Evaluators must belong to the sampling task project."})
         if run_type == RunType.HISTORICAL and not spans_limit and not has_policy:
             raise serializers.ValidationError(
                 {"spans_limit": "spans_limit is required for historical runs."}

@@ -8,7 +8,10 @@ from tracer.serializers.eval_sampling import (
     SamplingPreviewRequestSerializer,
     SamplingPreviewResponseSerializer,
 )
-from tracer.services.eval_tasks.sampling.policy import InvalidSamplingPolicy
+from tracer.services.eval_tasks.sampling.policy import (
+    InvalidSamplingPolicy,
+    population_changed,
+)
 from tracer.services.eval_tasks.sampling.service import (
     SamplingPreviewTooLarge,
     preview_policy,
@@ -24,6 +27,19 @@ class SamplingPreviewMixin:
         # must not inherit the arrival watermark of a different population.
         current = serializer.instance.sampling_policy
         incoming = serializer.validated_data
+        if population_changed(serializer.instance, incoming):
+            from rest_framework.exceptions import ValidationError
+
+            from tracer.models.observation_span import EvalLogger
+
+            if EvalLogger.objects.filter(
+                eval_task_id=str(serializer.instance.id)
+            ).exists():
+                raise ValidationError(
+                    {
+                        "sampling_policy": "Sampling population changes require Delete & rerun through update_eval_task, or duplicate the task to preserve prior results."
+                    }
+                )
         if (current is not None or incoming.get("sampling_policy") is not None) and any(
             field in incoming
             for field in ("sampling_policy", "filters", "project", "row_type")
@@ -64,6 +80,9 @@ class SamplingPreviewMixin:
         task = EvalTask(
             project=project,
             row_type=data["row_type"],
+            run_type="continuous"
+            if data["sampling_policy"]["mode"] == "live"
+            else "historical",
             filters=filters,
             sampling_policy=data["sampling_policy"],
         )

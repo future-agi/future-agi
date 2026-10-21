@@ -17,6 +17,16 @@ from tracer.services.eval_tasks.reconciler import reconcile
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def controlled_sampling_clock(monkeypatch):
+    # These engine/ORM tests control CH streams; real CH integration tests use
+    # the actual server clock and have no such replacement.
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.sampling_clock",
+        lambda: timezone.now(),
+    )
+
+
 def make_task(project, config, *, mode="closed"):
     now = timezone.now()
     task = EvalTask.objects.create(
@@ -31,7 +41,9 @@ def make_task(project, config, *, mode="closed"):
             "mode": mode,
             "window": {
                 "start": (now - timedelta(days=1)).isoformat(),
-                "end": (now - timedelta(seconds=1)).isoformat(),
+                "end": (now - timedelta(seconds=1)).isoformat()
+                if mode == "closed"
+                else None,
             },
             "default": {"target_n": 1} if mode == "closed" else {"rate": 50},
         },
@@ -141,6 +153,17 @@ def test_live_decision_never_flips_on_late_stratum_change(
     project, custom_eval_config, monkeypatch
 ):
     task = make_task(project, custom_eval_config, mode="live")
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.live_scan_windows",
+        lambda *_: iter(
+            [
+                {
+                    "start": task.sampling_policy["window"]["start"],
+                    "end": timezone.now().isoformat(),
+                }
+            ]
+        ),
+    )
     stub_materialization(monkeypatch, task)
     rows = [
         [
@@ -492,3 +515,182 @@ def test_generic_row_type_change_revalidates_existing_policy(
     assert response.status_code == 400
     task.refresh_from_db()
     assert task.row_type == "spans"
+
+
+def test_closed_quota_edit_requires_fresh_run_and_keeps_deleted_provenance(
+    auth_client, project, custom_eval_config, monkeypatch
+):
+    from tracer.models.eval_task import EvalTaskStatus
+
+    task = make_task(project, custom_eval_config)
+    stub_materialization(monkeypatch, task)
+
+    def stream(sql, params):
+        if "WHERE selected" in sql:
+            current = EvalTask.objects.get(pk=task.pk).sampling_policy["default"][
+                "target_n"
+            ]
+            yield (
+                [("session:a", "control", 0.5, 2)]
+                if current == 1
+                else [("session:a", "control", 1, 2), ("session:b", "control", 1, 2)]
+            )
+        else:
+            yield [
+                ("a-span", "session:a", "", 0, False),
+                ("b-span", "session:b", "", 0, False),
+            ]
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.stream_query", stream
+    )
+    reconcile(task)
+    EvalLogger.objects.filter(eval_task_id=str(task.id)).update(
+        status=EvalEntryStatus.COMPLETED
+    )
+    old = EvalLogger.objects.get(eval_task_id=str(task.id))
+    old_metadata = old.output_metadata
+    task.status = EvalTaskStatus.PAUSED
+    task.save(update_fields=["status"])
+    changed = {**task.sampling_policy, "default": {"target_n": 2}}
+    rejected = auth_client.patch(
+        "/tracer/eval-task/update_eval_task/",
+        {
+            "eval_task_id": str(task.id),
+            "sampling_policy": changed,
+            "edit_type": "edit_rerun",
+        },
+        format="json",
+    )
+    assert rejected.status_code == 400
+    assert "Delete & rerun" in rejected.content.decode()
+    direct = auth_client.patch(
+        f"/tracer/eval-task/{task.id}/", {"sampling_policy": changed}, format="json"
+    )
+    assert direct.status_code == 400
+    fresh = auth_client.patch(
+        "/tracer/eval-task/update_eval_task/",
+        {
+            "eval_task_id": str(task.id),
+            "sampling_policy": changed,
+            "edit_type": "fresh_run",
+        },
+        format="json",
+    )
+    assert fresh.status_code == 200, fresh.data
+    reconcile(task)
+    visible = list(EvalLogger.objects.filter(eval_task_id=str(task.id)))
+    assert {entry.observation_span_id for entry in visible} == {"a-span", "b-span"}
+    samples = [
+        entry.output_metadata["_task_selection"]["sampling"] for entry in visible
+    ]
+    assert {sample["inclusion_probability"] for sample in samples} == {1}
+    assert len({sample["cohort_id"] for sample in samples}) == 1
+    assert (
+        samples[0]["cohort_id"]
+        != old_metadata["_task_selection"]["sampling"]["cohort_id"]
+    )
+    archived = EvalLogger.all_objects.get(pk=old.pk)
+    assert archived.deleted
+    assert archived.output_metadata == old_metadata
+
+
+def test_live_policy_admits_new_contacts_in_future_windows(
+    project, custom_eval_config, monkeypatch
+):
+    task = make_task(project, custom_eval_config, mode="live")
+    stub_materialization(monkeypatch, task)
+    first = timezone.now()
+    future = first + timedelta(days=40)
+    scans = []
+
+    def windows(_task, _policy, ceiling, floor):
+        scans.append(ceiling)
+        yield {
+            "start": (ceiling - timedelta(days=1)).isoformat(),
+            "end": ceiling.isoformat(),
+        }
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.live_scan_windows", windows
+    )
+    rows = [[("first", "session:first", "control", 0.5, True)]]
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.stream_query",
+        lambda *_: iter(rows),
+    )
+    with patch(
+        "tracer.services.eval_tasks.sampling.service.sampling_clock", return_value=first
+    ):
+        reconcile(task)
+    original = EvalSamplingCohort.objects.get(task=task)
+    rows[:] = [
+        [
+            ("future", "session:future", "control", 0.5, True),
+            ("late-first", "session:first", "changed", 0.1, False),
+        ]
+    ]
+    with patch(
+        "tracer.services.eval_tasks.sampling.service.sampling_clock",
+        return_value=future,
+    ):
+        reconcile(task)
+    entries = list(EvalLogger.objects.filter(eval_task_id=str(task.id)))
+    assert {entry.observation_span_id for entry in entries} == {
+        "first",
+        "future",
+        "late-first",
+    }
+    assert {
+        entry.output_metadata["_task_selection"]["sampling"]["cohort_id"]
+        for entry in entries
+    } == {str(original.id)}
+    assert all(
+        entry.output_metadata["_task_selection"]["sampling"]["window"]["end"] is None
+        for entry in entries
+    )
+    assert scans == [first, future]
+
+
+def test_policy_cursor_uses_ch_clock_without_pg_creation_floor(
+    project, custom_eval_config, monkeypatch
+):
+    from tracer.services.eval_tasks.cursor_policy import CONTINUOUS_CURSOR_OVERLAP
+
+    task = make_task(project, custom_eval_config, mode="live")
+    server_now = task.created_at - timedelta(seconds=10)
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.sampling_clock", lambda: server_now
+    )
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.live_scan_windows",
+        lambda *_: iter([]),
+    )
+    reconcile(task)
+    task.refresh_from_db()
+    assert task.continuous_cursor == server_now - CONTINUOUS_CURSOR_OVERLAP
+    assert task.continuous_cursor < task.created_at
+
+
+def test_generic_policy_task_edit_rejects_cross_project_evaluator(
+    auth_client, project, custom_eval_config
+):
+    from tracer.models.project import Project
+    from tracer.tests.test_eval_task import make_custom_eval_config_for_project
+
+    task = make_task(project, custom_eval_config)
+    other = Project.objects.create(
+        organization=project.organization,
+        workspace=project.workspace,
+        name="foreign-policy-project",
+        trace_type="observe",
+        model_type=project.model_type,
+    )
+    foreign = make_custom_eval_config_for_project(
+        other, custom_eval_config, "foreign-policy-eval"
+    )
+    response = auth_client.patch(
+        f"/tracer/eval-task/{task.id}/", {"evals": [str(foreign.id)]}, format="json"
+    )
+    assert response.status_code == 400
+    assert list(task.evals.values_list("id", flat=True)) == [custom_eval_config.id]

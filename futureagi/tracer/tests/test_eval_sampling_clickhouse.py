@@ -16,7 +16,11 @@ from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 from tracer.services.eval_tasks.reconciler import reconcile
 from tracer.services.eval_tasks.sampling.policy import unit_hash
-from tracer.services.eval_tasks.sampling.query import SamplingQuery, stream_query
+from tracer.services.eval_tasks.sampling.query import (
+    SamplingQuery,
+    sampling_clock,
+    stream_query,
+)
 from tracer.services.eval_tasks.sampling.service import preview_policy, task_policy
 from tracer.tests._ch_seed import _get_ch_client, seed_ch_spans
 
@@ -38,7 +42,9 @@ def make_policy(**overrides):
     }
 
 
-def seed_contact(project, session, attributes, *, traces=2, observation_type="llm"):
+def seed_contact(
+    project, session, attributes, *, traces=2, observation_type="llm", seed=True
+):
     spans = []
     for _index in range(traces):
         trace = Trace.objects.create(
@@ -58,7 +64,8 @@ def seed_contact(project, session, attributes, *, traces=2, observation_type="ll
                     start_time=timezone.now() - timedelta(minutes=5),
                 )
             )
-    seed_ch_spans(spans)
+    if seed:
+        seed_ch_spans(spans)
     return spans
 
 
@@ -80,8 +87,9 @@ def test_twenty_cells_overlap_exact_quotas_late_rows_and_row_filter(
                 }
                 sessions[str(session.id)] = (session, attributes)
                 spans_by_session[str(session.id)] = seed_contact(
-                    project, session, attributes
+                    project, session, attributes, seed=False
                 )
+    seed_ch_spans([span for spans in spans_by_session.values() for span in spans])
     policy = make_policy(
         group_by=[{"key": "locale"}, {"key": "category"}],
         strata=[
@@ -190,7 +198,7 @@ def test_canonical_old_and_new_ids_are_one_sampling_unit(
     members = [
         row
         for block in stream_query(
-            *SamplingQuery(task, policy, version, timezone.now()).members()
+            *SamplingQuery(task, policy, version, sampling_clock()).members()
         )
         for row in block
     ]
@@ -242,10 +250,167 @@ def test_hash_order_in_clickhouse_matches_portable_reference(project, ch_seed):
     selected = [
         row[0]
         for block in stream_query(
-            *SamplingQuery(task, policy, version, timezone.now()).members()
+            *SamplingQuery(task, policy, version, sampling_clock()).members()
         )
         for row in block
     ]
     assert sorted(selected) == sorted(
         sorted(ids, key=lambda unit: unit_hash(version, unit))[:3]
     )
+
+
+def test_live_contact_sampling_continues_beyond_preview_window(
+    project, custom_eval_config, ch_seed
+):
+    from unittest.mock import patch
+
+    initial = sampling_clock()
+    first_session = TraceSession.objects.create(project=project, name="ongoing-first")
+    first = seed_contact(project, first_session, {"vip": True})
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        sampling_policy={
+            "version": 1,
+            "sampling_unit": "session",
+            "mode": "live",
+            "window": {"start": (initial - timedelta(days=1)).isoformat(), "end": None},
+            "strata": [
+                {
+                    "name": "vip",
+                    "filters": [{"key": "vip", "op": "in", "values": [True]}],
+                    "rate": 100,
+                }
+            ],
+            "default": {"rate": 0},
+        },
+        filters={},
+    )
+    task.evals.add(custom_eval_config)
+    reconcile(task)
+    original_cohort = EvalSamplingMember.objects.get(
+        cohort__task=task, selected=True
+    ).cohort_id
+    assert set(
+        EvalLogger.objects.filter(eval_task_id=str(task.id)).values_list(
+            "observation_span_id", flat=True
+        )
+    ) == {span.id for span in first}
+    future = sampling_clock() + timedelta(days=40)
+    new_session = TraceSession.objects.create(project=project, name="ongoing-future")
+    rejected_session = TraceSession.objects.create(
+        project=project, name="ongoing-rejected"
+    )
+    later = []
+    expected = {span.id for span in first}
+    for session, vip, is_late in [
+        (first_session, False, True),
+        (new_session, True, False),
+        (rejected_session, False, False),
+    ]:
+        spans = seed_contact(project, session, {"vip": vip}, traces=1, seed=False)
+        for span in spans:
+            span.created_at = future - timedelta(seconds=1)
+            span.updated_at = span.created_at
+            if not is_late:
+                span.start_time = future - timedelta(minutes=5)
+        later.extend(spans)
+        if session != rejected_session:
+            expected.update(span.id for span in spans)
+    seed_ch_spans(later, version_from_created_at=True)
+    # The fixture plants future arrival/event timestamps, then advances only
+    # the sampler's clock. All discovery/classification/materialization SQL is real.
+    with patch(
+        "tracer.services.eval_tasks.sampling.service.sampling_clock",
+        return_value=future,
+    ):
+        reconcile(task)
+    entries = list(EvalLogger.objects.filter(eval_task_id=str(task.id)))
+    assert {entry.observation_span_id for entry in entries} == expected
+    assert len(entries) == 8
+    assert {
+        entry.output_metadata["_task_selection"]["sampling"]["cohort_id"]
+        for entry in entries
+    } == {str(original_cohort)}
+    assert all(
+        entry.output_metadata["_task_selection"]["sampling"]["window"]["end"] is None
+        for entry in entries
+    )
+    assert EvalSamplingMember.objects.filter(cohort__task=task).count() == 3
+
+
+def test_population_filters_use_latest_values_not_stale_versions(project, ch_seed):
+    excluded = TraceSession.objects.create(project=project, name="corrected-locale")
+    included = TraceSession.objects.create(project=project, name="current-locale")
+    old = seed_contact(project, excluded, {"locale": "en"}, traces=1)
+    seed_contact(project, included, {"locale": "en"}, traces=1)
+    for span in old:
+        span.span_attributes = {"locale": "fr"}
+        span.updated_at = timezone.now()
+    seed_ch_spans(old)
+    task = EvalTask(
+        project=project,
+        row_type="spans",
+        filters={
+            "filters": [
+                {
+                    "column_id": "locale",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": ["en"],
+                    },
+                }
+            ]
+        },
+        sampling_policy=make_policy(default={"target_n": 1}),
+    )
+    preview = preview_policy(task)
+    assert sum(cell["eligible_units"] for cell in preview["strata"]) == 1
+    assert sum(cell["selected_rows"] for cell in preview["strata"]) == 2
+    policy, version = task_policy(task, now=sampling_clock())
+    members = [
+        row
+        for block in stream_query(
+            *SamplingQuery(task, policy, version, sampling_clock()).members()
+        )
+        for row in block
+    ]
+    assert members[0][0] == f"session:{included.id}"
+    assert members[0][2] == 1
+
+
+def test_corrected_timestamp_outside_window_does_not_resurrect_old_version(
+    project, ch_seed
+):
+    hour = (sampling_clock() - timedelta(hours=2)).replace(
+        minute=0, second=0, microsecond=0
+    )
+    bad = TraceSession.objects.create(project=project, name="moved-outside-window")
+    good = TraceSession.objects.create(project=project, name="inside-window")
+    changed = seed_contact(project, bad, {}, traces=1, seed=False)
+    kept = seed_contact(project, good, {}, traces=1, seed=False)
+    for span in [*changed, *kept]:
+        span.start_time = hour + timedelta(minutes=5)
+    seed_ch_spans([*changed, *kept])
+    for span in changed:
+        span.start_time = hour + timedelta(minutes=40)
+        span.updated_at = timezone.now()
+    seed_ch_spans(changed)
+    task = EvalTask(
+        project=project,
+        row_type="spans",
+        filters={},
+        sampling_policy=make_policy(
+            window={
+                "start": hour.isoformat(),
+                "end": (hour + timedelta(minutes=10)).isoformat(),
+            },
+            default={"target_n": 1},
+        ),
+    )
+    preview = preview_policy(task)
+    assert sum(cell["eligible_units"] for cell in preview["strata"]) == 1
+    assert sum(cell["selected_rows"] for cell in preview["strata"]) == 2

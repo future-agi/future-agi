@@ -201,6 +201,7 @@ export default function SamplingPolicyEditor({ control, getValues }) {
     name: "samplingPolicy",
     defaultValue: null,
   });
+  const { field: runTypeField } = useController({ control, name: "runType" });
   const project = useWatch({ control, name: "project" });
   const scope = useWatch({
     control,
@@ -354,9 +355,14 @@ export default function SamplingPolicyEditor({ control, getValues }) {
                 const { target_n, min_n, max_n, rare_below, ...rest } = rule;
                 return { ...rest, rate: rule.rate ?? 10 };
               };
+              if (live) runTypeField.onChange("continuous");
               update({
                 ...policy,
                 mode: e.target.value,
+                window: {
+                  ...policy.window,
+                  end: live ? null : new Date(Date.now() - 1000).toISOString(),
+                },
                 strata: policy.strata.map(clean),
                 default: clean(policy.default),
               });
@@ -366,32 +372,34 @@ export default function SamplingPolicyEditor({ control, getValues }) {
             <MenuItem value="live">Live window · percentage only</MenuItem>
           </TextField>
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-            {["start", "end"].map((key) => (
-              <TextField
-                key={key}
-                type="datetime-local"
-                label={`UTC window ${key}`}
-                size="small"
-                InputLabelProps={{ shrink: true }}
-                value={policy.window[key].slice(0, 16)}
-                onChange={(e) => {
-                  if (e.target.value)
-                    update({
-                      ...policy,
-                      window: {
-                        ...policy.window,
-                        [key]: new Date(`${e.target.value}Z`).toISOString(),
-                      },
-                    });
-                }}
-                fullWidth
-              />
-            ))}
+            {(policy.mode === "live" ? ["start"] : ["start", "end"]).map(
+              (key) => (
+                <TextField
+                  key={key}
+                  type="datetime-local"
+                  label={`UTC window ${key}`}
+                  size="small"
+                  InputLabelProps={{ shrink: true }}
+                  value={policy.window[key].slice(0, 16)}
+                  onChange={(e) => {
+                    if (e.target.value)
+                      update({
+                        ...policy,
+                        window: {
+                          ...policy.window,
+                          [key]: new Date(`${e.target.value}Z`).toISOString(),
+                        },
+                      });
+                  }}
+                  fullWidth
+                />
+              ),
+            )}
           </Stack>
           <Typography variant="caption" color="text.secondary">
-            Maximum 31 days. Closed cohorts freeze at first execution; new
-            contacts arriving afterward are excluded, but late rows of selected
-            contacts remain selected. Live decisions persist on first admission.
+            {policy.mode === "live"
+              ? "No end date: new contacts continue to be admitted. Preview covers the last 24 hours; first-admission decisions persist across future windows."
+              : "Maximum 31 days. Closed cohorts freeze at first execution; new contacts arriving afterward are excluded, but late rows of selected contacts remain selected."}
             Neither mode truncates a contact to the legacy row limit. Trace rows
             use root-span attributes; session rows use the earliest eligible
             root for contact identity.

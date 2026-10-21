@@ -38,7 +38,9 @@ class SamplingRuleSerializer(StrictInputSerializer):
 class SamplingWindowSerializer(StrictInputSerializer):
     start = serializers.CharField(help_text="Inclusive ISO 8601 UTC event time.")
     end = serializers.CharField(
-        help_text="Exclusive ISO 8601 UTC event time; maximum interval 31 days."
+        required=False,
+        allow_null=True,
+        help_text="Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
     )
 
 
@@ -83,6 +85,7 @@ class SamplingPreviewResultSerializer(serializers.Serializer):
     sampling_unit = serializers.CharField()
     mode = serializers.CharField()
     window = SamplingWindowSerializer()
+    preview_window = SamplingWindowSerializer()
     as_of = serializers.DateTimeField()
     strata = SamplingPreviewCellSerializer(many=True)
     evaluator_count = serializers.IntegerField(min_value=0)

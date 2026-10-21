@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING
 
 from tracer.services.eval_tasks.sampling.policy import parse_time, threshold
@@ -16,6 +16,8 @@ BATCH_SIZE = 1000
 READ_SETTINGS = {
     "max_execution_time": 30,
     "max_query_size": 2097152,
+    "optimize_move_to_prewhere": 0,
+    "query_plan_merge_expressions": 0,
     "timeout_overflow_mode": "throw",
     "max_threads": 2,
     "max_result_bytes": 134217728,
@@ -32,17 +34,34 @@ READ_SETTINGS = {
 
 class SamplingQuery:
     def __init__(
-        self, task: EvalTask, policy: dict, version: str, snapshot: datetime
+        self,
+        task: EvalTask,
+        policy: dict,
+        version: str,
+        snapshot: datetime,
+        *,
+        scan_window: dict | None = None,
     ) -> None:
         self.task, self.policy, self.version = task, policy, version
+        self.scan_window = scan_window or (
+            policy["window"]
+            if policy["mode"] == "closed"
+            else {
+                "start": max(
+                    parse_time(policy["window"]["start"]), snapshot - timedelta(days=1)
+                ).isoformat(),
+                "end": snapshot.isoformat(),
+            }
+        )
         self.params = {
             "sp_project": str(task.project_id),
             "sp_version": version,
-            "sp_start": parse_time(policy["window"]["start"]),
-            "sp_end": parse_time(policy["window"]["end"]),
+            "sp_start": parse_time(self.scan_window["start"]),
+            "sp_end": parse_time(self.scan_window["end"]),
             "sp_snapshot": snapshot,
         }
         self._counter = 0
+        self.live_floor = None
 
     def bind(self, value: object) -> str:
         self._counter += 1
@@ -101,8 +120,8 @@ class SamplingQuery:
                     "filter_type": "datetime",
                     "filter_op": "between",
                     "filter_value": [
-                        self.policy["window"]["start"],
-                        self.policy["window"]["end"],
+                        self.scan_window["start"],
+                        self.scan_window["end"],
                     ],
                 },
             }
@@ -114,6 +133,7 @@ class SamplingQuery:
             sampling_rate=100,
             filters=filters,
             limit=None,
+            source_table="sampling_source",
         )
         self.params.update(params)
         # Remap groups are expanded only for ids touched by this scoped window.
@@ -132,8 +152,8 @@ class SamplingQuery:
                     ) GROUP BY new_id
                 ) GROUP BY any_id
             )""")
-        session = f"toString({resolved_id_expr('s.trace_session_id', 'sm')})"
-        user = f"toString({resolved_id_expr('s.end_user_id', 'um')})"
+        session = "toString(s.trace_session_id)"
+        user = "toString(s.end_user_id)"
         unit = self.policy["sampling_unit"]
         if unit == "attribute":
             exists, value = self.attribute(self.policy["unit_attribute"])
@@ -150,10 +170,13 @@ class SamplingQuery:
             row_type
         ]
         valid_id = f"({identity} IS NOT NULL AND {identity} NOT IN ('', '00000000-0000-0000-0000-000000000000'))"
+        fallback_unit = {"spans": "span", "traces": "trace", "sessions": "session"}[
+            row_type
+        ]
         fallback = (
             "''"
             if self.policy["missing_id"] == "exclude"
-            else f"concat('row:', {row_id})"
+            else f"concat('{fallback_unit}:', {row_id})"
         )
         unit_id = (
             f"if({valid_id}, concat('{unit}:', assumeNotNull({identity})), {fallback})"
@@ -184,19 +207,60 @@ class SamplingQuery:
         eligible_id = {"spans": "id", "traces": "trace_id", "sessions": "session_id"}[
             row_type
         ]
+        from tracer.services.clickhouse.v2.query_builders.span_list import (
+            SpanListQueryBuilderV2,
+        )
+
+        hour_scope = """toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(sp_start)s, 6, 'UTC'))
+            AND toStartOfHour(start_time) <= toStartOfHour(toDateTime64(%(sp_end)s, 6, 'UTC') - INTERVAL 1 MICROSECOND)"""
+        scope = f"project_id = %(sp_project)s AND {hour_scope}"
+        if row_type != "spans":
+            # Row filters can match a child outside the root's event interval.
+            # Replay complete traces, not only the root-window slice.
+            scope = f"project_id = %(sp_project)s AND trace_id IN (SELECT trace_id FROM spans PREWHERE project_id = %(sp_project)s AND {hour_scope} WHERE parent_span_id = '')"
+        elif self.live_floor is not None:
+            self.params["sp_arrival_floor_ns"] = (
+                int(self.live_floor.timestamp() * 1_000_000) * 1000
+            )
+            # A version lower bound cannot discard the maximum version of an
+            # identity that has a change in this delta. Never push an upper
+            # bound, tombstone or mutable attribute below latest-state replay.
+            scope += " AND _version >= %(sp_arrival_floor_ns)s"
+        arrival = "greatest(created_at, updated_at, fromUnixTimestamp64Nano(toInt64(_version), 'UTC'))"
+        consumer = " ".join(
+            [
+                eligible,
+                unit_id,
+                rule_expr,
+                groups_expr,
+                arrival,
+                "project_id trace_id id start_time parent_span_id trace_session_id end_user_id is_deleted",
+            ]
+        )
+        latest = SpanListQueryBuilderV2(
+            project_id=str(self.task.project_id)
+        )._latest_state_source_sql(
+            "sampling_latest",
+            scope_sql=scope,
+            consumer_sql=consumer,
+        )
+        canonical_session = resolved_id_expr("s.trace_session_id", "sm")
+        canonical_user = resolved_id_expr("s.end_user_id", "um")
         return f"""WITH raw AS (
-            SELECT id, trace_id, trace_session_id, end_user_id, parent_span_id, start_time, created_at,
-                   greatest(created_at, updated_at, fromUnixTimestamp64Nano(toInt64(_version), 'UTC')) AS source_arrival,
-                   attrs_string, attrs_number, attrs_bool, attributes_extra, resource_attrs, metadata FROM spans FINAL
-            PREWHERE project_id = %(sp_project)s AND start_time >= %(sp_start)s AND start_time < %(sp_end)s
+            SELECT *, {arrival} AS source_arrival FROM {latest}
             WHERE is_deleted = 0 AND created_at < %(sp_snapshot)s AND source_arrival < %(sp_snapshot)s
-        ), {", ".join(maps)}, eligible AS ({eligible}), projected AS (
-            SELECT {row_id} AS row_id, {unit_id} AS unit_id, {rule_expr} AS rule_index,
-                   {groups_expr} AS groups, s.start_time AS event_time, s.id AS span_id, s.source_arrival AS arrival
+        ), {", ".join(maps)}, sampling_source AS (
+            SELECT s.* EXCEPT(trace_session_id, end_user_id),
+                   {canonical_session} AS trace_session_id, {canonical_user} AS end_user_id
             FROM raw AS s
             LEFT JOIN session_map AS sm ON s.trace_session_id = sm.any_id
             LEFT JOIN user_map AS um ON s.end_user_id = um.any_id
+        ), eligible AS ({eligible}), projected AS (
+            SELECT {row_id} AS row_id, {unit_id} AS unit_id, {rule_expr} AS rule_index,
+                   {groups_expr} AS groups, s.start_time AS event_time, s.id AS span_id, s.source_arrival AS arrival
+            FROM sampling_source AS s
             WHERE {row_id} IN (SELECT {eligible_id} FROM eligible) {root}
+              AND s.start_time >= %(sp_start)s AND s.start_time < %(sp_end)s
         ), rows AS (
             SELECT p.row_id AS row_id, argMin(p.unit_id, tuple(p.event_time, p.span_id)) AS unit_id,
                    min(p.rule_index) AS rule_index,
@@ -277,6 +341,7 @@ class SamplingQuery:
         arrival_floor: datetime | None = None,
         unit_ids: list[str] | None = None,
     ) -> tuple[str, dict]:
+        self.live_floor = arrival_floor if self.policy["mode"] == "live" else None
         ctes = self._source() if self.policy["mode"] == "closed" else self._classified()
         predicates = ["r.unit_id != ''"]
         if unit_ids is not None:
@@ -302,6 +367,7 @@ class SamplingQuery:
         )
 
     def preview(self) -> tuple[str, dict]:
+        self.live_floor = None
         ctes = self._classified()
         # One extra cell proves overflow rather than silently truncating strata.
         return (
@@ -349,3 +415,52 @@ def stream_query(sql: str, params: dict) -> Iterator[list[tuple]]:
             settings=READ_SETTINGS,
         ) as blocks:
             yield from blocks
+
+
+def live_scan_windows(
+    task: EvalTask, policy: dict, ceiling: datetime, floor: datetime | None
+) -> Iterator[dict]:
+    """Discover only event days touched by a bounded physical-arrival delta.
+
+    _version is the CH25 ingestion/change clock, including backdated spans;
+    event timestamps only choose which partition-sized follow-up reads to run.
+    """
+    params = {
+        "project": str(task.project_id),
+        "start": parse_time(policy["window"]["start"]),
+        "ceiling": ceiling,
+        "ceiling_ns": int(ceiling.timestamp() * 1_000_000) * 1000,
+    }
+    version_floor = ""
+    if floor is not None:
+        params["floor_ns"] = int(floor.timestamp() * 1_000_000) * 1000
+        version_floor = "AND _version >= %(floor_ns)s"
+    sql = f"""SELECT toDate(start_time, 'UTC') AS day FROM spans
+        PREWHERE project_id = %(project)s AND _version < %(ceiling_ns)s {version_floor}
+        WHERE start_time >= %(start)s AND start_time < %(ceiling)s
+        GROUP BY day ORDER BY day LIMIT 367"""
+    days = []
+    for block in stream_query(sql, params):
+        days.extend(row[0] for row in block)
+        if len(days) > 366:
+            raise ValueError(
+                "Live catch-up touches more than 366 event days. Narrow the policy start."
+            )
+    for value in days:
+        day = value if isinstance(value, date) else date.fromisoformat(str(value))
+        start = datetime.combine(day, time.min, tzinfo=UTC)
+        yield {
+            "start": max(start, params["start"]).isoformat(),
+            "end": min(start + timedelta(days=1), ceiling).isoformat(),
+        }
+
+
+def sampling_clock() -> datetime:
+    """Use the same clock as CH25 physical arrival versions, not the API host."""
+    rows = [
+        row for block in stream_query("SELECT now64(6, 'UTC')", {}) for row in block
+    ]
+    if len(rows) != 1 or not isinstance(rows[0][0], datetime):
+        raise RuntimeError("Could not resolve the sampling arrival watermark.")
+    value = rows[0][0]
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)

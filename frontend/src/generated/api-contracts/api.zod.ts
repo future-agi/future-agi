@@ -52823,8 +52823,9 @@ export const TracerEvalTaskListResponse = zod.object({
             end: zod
               .string()
               .min(1)
+              .optional()
               .describe(
-                "Exclusive ISO 8601 UTC event time; maximum interval 31 days.",
+                "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
               ),
           }),
           strata: zod
@@ -53367,8 +53368,9 @@ export const TracerEvalTaskCreateBody = zod.object({
         end: zod
           .string()
           .min(1)
+          .optional()
           .describe(
-            "Exclusive ISO 8601 UTC event time; maximum interval 31 days.",
+            "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
           ),
       }),
       strata: zod
@@ -53908,8 +53910,9 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
             end: zod
               .string()
               .min(1)
+              .optional()
               .describe(
-                "Exclusive ISO 8601 UTC event time; maximum interval 31 days.",
+                "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
               ),
           }),
           strata: zod
@@ -54501,8 +54504,9 @@ export const TracerEvalTaskGetEvalTaskLogsResponse = zod.object({
             end: zod
               .string()
               .min(1)
+              .optional()
               .describe(
-                "Exclusive ISO 8601 UTC event time; maximum interval 31 days.",
+                "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
               ),
           }),
           strata: zod
@@ -55446,8 +55450,9 @@ export const TracerEvalTaskSamplingPreviewBody = zod.object({
       end: zod
         .string()
         .min(1)
+        .optional()
         .describe(
-          "Exclusive ISO 8601 UTC event time; maximum interval 31 days.",
+          "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
         ),
     }),
     strata: zod
@@ -55667,8 +55672,19 @@ export const TracerEvalTaskSamplingPreviewResponse = zod.object({
       end: zod
         .string()
         .min(1)
+        .optional()
         .describe(
-          "Exclusive ISO 8601 UTC event time; maximum interval 31 days.",
+          "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
+        ),
+    }),
+    preview_window: zod.object({
+      start: zod.string().min(1).describe("Inclusive ISO 8601 UTC event time."),
+      end: zod
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
         ),
     }),
     as_of: zod.string().datetime({ offset: true }),
@@ -55827,8 +55843,9 @@ export const TracerEvalTaskUpdateEvalTaskBody = zod.object({
         end: zod
           .string()
           .min(1)
+          .optional()
           .describe(
-            "Exclusive ISO 8601 UTC event time; maximum interval 31 days.",
+            "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
           ),
       }),
       strata: zod
@@ -56546,8 +56563,9 @@ export const TracerEvalTaskReadResponse = zod.object({
         end: zod
           .string()
           .min(1)
+          .optional()
           .describe(
-            "Exclusive ISO 8601 UTC event time; maximum interval 31 days.",
+            "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
           ),
       }),
       strata: zod
@@ -57043,8 +57061,9 @@ export const TracerEvalTaskUpdateBody = zod.object({
         end: zod
           .string()
           .min(1)
+          .optional()
           .describe(
-            "Exclusive ISO 8601 UTC event time; maximum interval 31 days.",
+            "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
           ),
       }),
       strata: zod
@@ -57530,8 +57549,9 @@ export const TracerEvalTaskUpdateResponse = zod.object({
         end: zod
           .string()
           .min(1)
+          .optional()
           .describe(
-            "Exclusive ISO 8601 UTC event time; maximum interval 31 days.",
+            "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
           ),
       }),
       strata: zod
@@ -58033,8 +58053,9 @@ export const TracerEvalTaskPartialUpdateBody = zod.object({
         end: zod
           .string()
           .min(1)
+          .optional()
           .describe(
-            "Exclusive ISO 8601 UTC event time; maximum interval 31 days.",
+            "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
           ),
       }),
       strata: zod
@@ -58552,8 +58573,9 @@ export const TracerEvalTaskPartialUpdateResponse = zod.object({
         end: zod
           .string()
           .min(1)
+          .optional()
           .describe(
-            "Exclusive ISO 8601 UTC event time; maximum interval 31 days.",
+            "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
           ),
       }),
       strata: zod

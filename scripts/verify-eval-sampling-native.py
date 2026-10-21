@@ -143,8 +143,11 @@ def generate(directory: Path) -> None:
         task = SimpleNamespace(
             project_id=PROJECT, row_type=row_type, filters=filters or {}
         )
+        scan_window = policy["window"] if policy.get("mode") == "live" else None
+        if scan_window:
+            policy = {**policy, "window": {"start": scan_window["start"], "end": None}}
         clean = validate_policy(policy, now=NOW, row_type=row_type)
-        query = SamplingQuery(task, clean, "native-proof", NOW)
+        query = SamplingQuery(task, clean, "native-proof", NOW, scan_window=scan_window)
         if method == "witnesses":
             from tracer.services.eval_tasks.sampling.witnesses import TraceWitnessReader
 

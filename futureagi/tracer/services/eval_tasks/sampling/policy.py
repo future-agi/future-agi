@@ -12,6 +12,10 @@ import math
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tracer.models.eval_task import EvalTask
 
 MAX_STRATA = 100
 MAX_WINDOW = timedelta(days=31)
@@ -194,16 +198,27 @@ def validate_policy(
     policy["mode"] = mode
     window = policy.get("window")
     _keys(window, {"start", "end"}, "window")
-    start, end = parse_time(window.get("start")), parse_time(window.get("end"))
-    if not timedelta(0) < end - start <= MAX_WINDOW:
-        raise InvalidSamplingPolicy(
-            "Use a positive event-time window of at most 31 days."
-        )
-    if mode == "closed" and end > (now or datetime.now(UTC)):
-        raise InvalidSamplingPolicy(
-            "Exact quotas require a closed window ending in the past."
-        )
-    policy["window"] = {"start": start.isoformat(), "end": end.isoformat()}
+    start = parse_time(window.get("start"))
+    current = now or datetime.now(UTC)
+    if mode == "live":
+        if window.get("end") is not None:
+            raise InvalidSamplingPolicy(
+                "Live percentage sampling has no end; omit window.end or set it to null."
+            )
+        if start > current:
+            raise InvalidSamplingPolicy("Live sampling cannot start in the future.")
+        policy["window"] = {"start": start.isoformat(), "end": None}
+    else:
+        end = parse_time(window.get("end"))
+        if not timedelta(0) < end - start <= MAX_WINDOW:
+            raise InvalidSamplingPolicy(
+                "Use a positive event-time window of at most 31 days."
+            )
+        if end > current:
+            raise InvalidSamplingPolicy(
+                "Exact quotas require a closed window ending in the past."
+            )
+        policy["window"] = {"start": start.isoformat(), "end": end.isoformat()}
     strata = policy.get("strata", [])
     if not isinstance(strata, list) or len(strata) > MAX_STRATA:
         raise InvalidSamplingPolicy(f"Use at most {MAX_STRATA} ordered strata.")
@@ -258,3 +273,42 @@ def target_size(rule: dict, population: int) -> int:
     return min(
         population, rule.get("max_n", population), max(rule.get("min_n", 0), target)
     )
+
+
+def population_changed(task: EvalTask, changes: dict) -> bool:
+    """Changing sampling populations requires an explicit fresh execution."""
+    if task.sampling_policy is None and changes.get("sampling_policy") is None:
+        return False
+    return any(
+        key in changes and changes[key] != getattr(task, key)
+        for key in ("sampling_policy", "filters", "project", "row_type")
+    )
+
+
+def validate_live_filter_sources(policy: dict | None, filters: dict | None) -> None:
+    if not policy or policy["mode"] != "live":
+        return
+    for item in [
+        *((filters or {}).get("filters") or []),
+        *((filters or {}).get("span_attributes_filters") or []),
+    ]:
+        config = item.get("filter_config") or {}
+        if str(config.get("col_type", "")).upper() == "SPAN_ATTRIBUTE":
+            continue  # Explicit raw attributes cannot be shadowed by system aliases.
+        if str(config.get("col_type", "")).upper() in {
+            "EVAL_METRIC",
+            "ANNOTATION",
+            "TRACE_END_USER",
+        } or item.get("column_id") in {
+            "has_eval",
+            "has_annotation",
+            "my_annotations",
+            "annotator",
+            "user",
+            "user_id",
+            "user_id_type",
+            "session",
+        }:
+            raise InvalidSamplingPolicy(
+                "Live policies support span-data row filters. Evaluation, annotation and mutable profile filters require a closed window."
+            )

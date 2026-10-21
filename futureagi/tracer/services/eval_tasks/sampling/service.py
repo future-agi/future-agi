@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 from django.db import transaction
 from django.db.models import Prefetch, Q, prefetch_related_objects
-from django.utils import timezone
 
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_sampling import EvalSamplingCohort, EvalSamplingMember
@@ -17,9 +16,15 @@ from tracer.models.eval_task import EvalTask, RunType
 from tracer.services.eval_tasks.sampling.policy import (
     InvalidSamplingPolicy,
     policy_version,
+    validate_live_filter_sources,
     validate_policy,
 )
-from tracer.services.eval_tasks.sampling.query import SamplingQuery, stream_query
+from tracer.services.eval_tasks.sampling.query import (
+    SamplingQuery,
+    live_scan_windows,
+    sampling_clock,
+    stream_query,
+)
 from tracer.services.eval_tasks.sampling.witnesses import TraceWitnessReader
 
 if TYPE_CHECKING:
@@ -43,6 +48,11 @@ def task_policy(task: EvalTask, *, now: datetime) -> tuple[dict, str]:
     )
     if policy is None:
         raise InvalidSamplingPolicy("A sampling policy is required.")
+    if policy["mode"] == "live" and task.run_type != RunType.CONTINUOUS:
+        raise InvalidSamplingPolicy(
+            "Live percentage policies require a continuous task."
+        )
+    validate_live_filter_sources(policy, task.filters)
     version = policy_version(
         policy,
         project_id=str(task.project_id),
@@ -62,7 +72,10 @@ def member_metadata(
         if policy["mode"] == "closed"
         else None,
         "membership_mode": policy["mode"],
-        "sampling_unit": policy["sampling_unit"],
+        "sampling_unit": member.unit_id.split(":", 1)[0],
+        "requested_sampling_unit": policy["sampling_unit"],
+        "missing_id_fallback": member.unit_id.split(":", 1)[0]
+        != policy["sampling_unit"],
         "sampling_unit_id": member.unit_id,
         "stratum": member.stratum,
         "inclusion_probability": member.inclusion_probability,
@@ -74,10 +87,11 @@ def member_metadata(
 def preview_policy(
     task: EvalTask, *, now: datetime | None = None, evaluator_count: int = 0
 ) -> dict:
-    now = now or timezone.now()
+    now = now or sampling_clock()
     policy, version = task_policy(task, now=now)
     cells = []
-    for block in stream_query(*SamplingQuery(task, policy, version, now).preview()):
+    query = SamplingQuery(task, policy, version, now)
+    for block in stream_query(*query.preview()):
         for (
             name,
             population,
@@ -106,6 +120,7 @@ def preview_policy(
         "policy_version": version,
         "sampling_unit": policy["sampling_unit"],
         "window": policy["window"],
+        "preview_window": query.scan_window,
         "mode": policy["mode"],
         "as_of": now,
         "strata": cells,
@@ -133,9 +148,12 @@ def iter_selected_row_blocks(
     floor: datetime | None,
 ) -> Iterator[list[tuple]]:
     if policy["mode"] == "live":
-        yield from stream_query(
-            *SamplingQuery(task, policy, version, now).rows(arrival_floor=floor)
-        )
+        for window in live_scan_windows(task, policy, now, floor):
+            yield from stream_query(
+                *SamplingQuery(task, policy, version, now, scan_window=window).rows(
+                    arrival_floor=floor
+                )
+            )
         return
     # Transfer only selected closed-cohort rows, not the unsampled population.
     # Both the unit count and encoded parameter size are finite for custom IDs.
@@ -170,7 +188,6 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
     from tracer.services.eval_tasks.entries import materialize_pending
     from tracer.services.eval_tasks.reconciler import (
         ReconcileResult,
-        _advance_continuous_cursor,
         _continuous_requires_full_reclassification,
         _live_count,
         _requeue_and_drop,
@@ -193,7 +210,7 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                 queryset=CustomEvalConfig.objects.select_related("eval_template"),
             ),
         )
-        now = timezone.now()
+        now = sampling_clock()
         policy, version = task_policy(task, now=now)
         cohort, cohort_created = EvalSamplingCohort.objects.get_or_create(
             task=task,
@@ -313,6 +330,13 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
             .update(deleted=True, deleted_at=now)
         )
         result.created = _live_count(task) - before + result.dropped
-        _advance_continuous_cursor(task, now)
+        if task.run_type == RunType.CONTINUOUS:
+            from tracer.services.eval_tasks.cursor_policy import (
+                CONTINUOUS_CURSOR_OVERLAP,
+            )
+
+            parked = now - CONTINUOUS_CURSOR_OVERLAP
+            if task.continuous_cursor is None or parked > task.continuous_cursor:
+                EvalTask.objects.filter(pk=task.pk).update(continuous_cursor=parked)
         _stamp_reclassified_revision(task)
         return result

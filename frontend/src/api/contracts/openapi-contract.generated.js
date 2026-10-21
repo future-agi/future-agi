@@ -102085,6 +102085,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "sampling_unit",
         "mode",
         "window",
+        "preview_window",
         "as_of",
         "strata",
         "evaluator_count",
@@ -102112,6 +102113,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
         window: {
+          $ref: "#/definitions/SamplingWindow",
+        },
+        preview_window: {
           $ref: "#/definitions/SamplingWindow",
         },
         as_of: {
@@ -109082,7 +109086,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     SamplingWindow: {
-      required: ["start", "end"],
+      required: ["start"],
       type: "object",
       properties: {
         start: {
@@ -109094,9 +109098,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         end: {
           title: "End",
           description:
-            "Exclusive ISO 8601 UTC event time; maximum interval 31 days.",
+            "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
           type: "string",
           minLength: 1,
+          "x-nullable": true,
         },
       },
     },

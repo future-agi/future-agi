@@ -85,6 +85,7 @@ from tracer.serializers.eval_task import (
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.eval_tasks.edit_options import validate_edit_action
 from tracer.services.eval_tasks.entries import soft_delete_live
+from tracer.services.eval_tasks.sampling.policy import population_changed
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -3076,8 +3077,13 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 )
                 new_run_type = update_fields.get("run_type")
 
-                # Enforce which rerun action is allowed for what changed.
-                action_error = validate_edit_action(
+                # A new sampling population must not mix completed results from
+                # the old cohort with newly selected rows under different p.
+                sampling_changed = population_changed(eval_task, update_fields)
+                if sampling_changed and edit_type != "fresh_run":
+                    return self._gm.bad_request("Sampling population changes require Delete & rerun; duplicate the task to preserve the prior results.")
+                # Preserve historical action rules for unchanged/legacy populations.
+                action_error = None if sampling_changed else validate_edit_action(
                     edit_type,
                     original_run_type=original_run_type,
                     new_run_type=new_run_type,

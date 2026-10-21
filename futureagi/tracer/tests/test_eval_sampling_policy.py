@@ -19,7 +19,7 @@ NOW = datetime(2026, 10, 21, tzinfo=UTC)
 
 
 def policy(**changes):
-    return {
+    value = {
         "version": 1,
         "sampling_unit": "session",
         "mode": "closed",
@@ -27,6 +27,9 @@ def policy(**changes):
         "default": {"target_n": 10},
         **changes,
     }
+    if changes.get("mode") == "live" and "window" not in changes:
+        value["window"]["end"] = None
+    return value
 
 
 @pytest.mark.parametrize("unit", ["span", "trace", "session", "user", "attribute"])
@@ -160,7 +163,7 @@ def test_query_bounds_scope_remap_and_parameterized_attributes():
     assert "contact' OR" not in sql
     assert "contact' OR 1=1" in params.values()
     assert "project_id = %(sp_project)s" in sql
-    assert "start_time >= %(sp_start)s AND start_time < %(sp_end)s" in sql
+    assert "s.start_time >= %(sp_start)s AND s.start_time < %(sp_end)s" in sql
     assert "created_at < %(sp_snapshot)s" in sql
     assert "fromUnixTimestamp64Nano(toInt64(_version), 'UTC')" in sql
     assert "source_arrival < %(sp_snapshot)s" in sql
@@ -363,3 +366,94 @@ def test_preview_counts_evaluation_runs_without_fabricated_pricing():
     assert preview["expected_evaluations"] == 24
     assert preview["selected_evaluations"] == 24
     assert preview["estimated_cost"] is None
+
+
+def test_live_policy_is_open_ended_and_discovers_future_and_backdated_event_days():
+    from datetime import date, timedelta
+
+    from tracer.services.eval_tasks.sampling.query import live_scan_windows
+
+    value = validate_policy(policy(mode="live", default={"rate": 50}), now=NOW)
+    assert value["window"]["end"] is None
+    task = SimpleNamespace(project_id="ba052ed0-921f-4aa9-972d-7bbbc79e5d30")
+    future = NOW + timedelta(days=40)
+    with patch(
+        "tracer.services.eval_tasks.sampling.query.stream_query",
+        return_value=iter([[(date(2026, 10, 19),), (future.date(),)]]),
+    ) as query:
+        windows = list(live_scan_windows(task, value, future, NOW))
+    assert len(windows) == 2
+    assert windows[0]["start"].startswith("2026-10-19")
+    assert windows[1]["end"] == future.isoformat()
+    sql, parameters = query.call_args.args
+    assert "_version >= %(floor_ns)s" in sql
+    assert parameters["ceiling"] == future
+    assert "LIMIT 367" in sql
+
+
+def test_fixed_end_is_rejected_for_live_mode():
+    with pytest.raises(InvalidSamplingPolicy, match="no end"):
+        validate_policy(
+            policy(
+                mode="live",
+                default={"rate": 50},
+                window={"start": "2026-10-19T00:00Z", "end": "2026-10-20T00:00Z"},
+            ),
+            now=NOW,
+        )
+
+
+def test_missing_id_fallback_reports_actual_sampling_unit():
+    from tracer.models.eval_sampling import EvalSamplingMember
+    from tracer.services.eval_tasks.sampling.service import member_metadata
+
+    member = EvalSamplingMember(
+        cohort_id="ba052ed0-921f-4aa9-972d-7bbbc79e5d30",
+        unit_id="span:anonymous",
+        stratum="fallback",
+        selected=True,
+        inclusion_probability=0.5,
+        population_size=2,
+    )
+    metadata = member_metadata(
+        member,
+        validate_policy(policy(missing_id="row"), now=NOW),
+        "version",
+        frozen_at=NOW,
+    )
+    assert metadata["sampling_unit"] == "span"
+    assert metadata["requested_sampling_unit"] == "session"
+    assert metadata["missing_id_fallback"] is True
+    assert metadata["sampling_unit_id"] == "span:anonymous"
+
+
+@pytest.mark.parametrize(
+    "kind,key",
+    [("EVAL_METRIC", "quality"), ("ANNOTATION", "label"), ("TRACE_END_USER", "tier")],
+)
+def test_live_policy_rejects_untracked_non_span_change_domains(kind, key):
+    from tracer.services.eval_tasks.sampling.policy import validate_live_filter_sources
+
+    value = validate_policy(policy(mode="live", default={"rate": 50}), now=NOW)
+    filters = {"filters": [{"column_id": key, "filter_config": {"col_type": kind}}]}
+    with pytest.raises(InvalidSamplingPolicy, match="closed window"):
+        validate_live_filter_sources(value, filters)
+    validate_live_filter_sources(validate_policy(policy(), now=NOW), filters)
+
+
+def test_live_raw_attribute_named_user_id_is_not_a_profile_filter():
+    from tracer.services.eval_tasks.sampling.policy import validate_live_filter_sources
+
+    value = validate_policy(policy(mode="live", default={"rate": 50}), now=NOW)
+    validate_live_filter_sources(
+        value,
+        {
+            "filters": [
+                {
+                    "column_id": "user_id",
+                    "filter_config": {"col_type": "SPAN_ATTRIBUTE"},
+                }
+            ]
+        },
+    )
+    validate_live_filter_sources(value, {"filters": None})

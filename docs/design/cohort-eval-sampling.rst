@@ -54,10 +54,12 @@ Implemented requirements
 Precise population contract
 ---------------------------
 
-``window`` is an explicit, half-open **event-time eligibility** interval
-``[start, end)``, at most 31 days. Task filters further restrict evaluation rows.
-The policy does not silently read all historical/future activity for a contact
-outside that interval. Trace evaluations use root-span attributes; session
+Closed ``window`` is an explicit, half-open **event-time eligibility** interval
+``[start, end)``, at most 31 days. Live percentage policies instead require
+``end: null`` and a continuous task: new contacts remain eligible indefinitely
+from ``start`` onward, including after the preview and across future event days.
+Task filters further restrict evaluation rows. The policy does not silently
+read activity before its start or outside a closed interval. Trace evaluations use root-span attributes; session
 identity is represented by the earliest eligible root. Finer sampling units
 than the evaluation row are rejected (for example span-unit session evaluation).
 Voice-call policy sampling is not enabled by this change.
@@ -88,11 +90,20 @@ partially materialized first page can masquerade as an exact quota.
 Live mode uses the same stable SHA-256, compared with the exact integer
 threshold ``floor(rate / 100 * 2**256)``. The inclusion probability is rate/100.
 Both accepted and rejected first-admission decisions are retained, so a later
-span's changed category cannot flip a contact's original decision. Live previews
+span's changed category cannot flip a contact's original decision. Live previews cover the last 24 hours (reported as ``preview_window``); they
 are prospective snapshots, not forecasts of an unlimited stream's exact count.
+Each live poll discovers changed event days from the project-scoped physical
+``_version`` arrival range, then reads only those bounded day partitions. A
+backdated span still triggers its old event day. Decisions and policy/cohort
+identity persist across those scans; daily scanning does not resample contacts.
+Catch-up touching more than 366 event days fails without advancing the cursor.
+Live row filters currently support span data; evaluation/annotation and mutable
+profile-dependent filters require a closed policy rather than silently missing
+non-span change triggers.
 
-There are no automatically recurring quotas in this revision: create an explicit
-new closed window when another cohort is needed. A preview is not a reservation;
+There are no automatically recurring exact quotas in this revision: create an
+explicit new closed window when another cohort is needed. This restriction does
+not stop ongoing percentage sampling, whose policy has no end date. A preview is not a reservation;
 the population can change before the first successful execution. No dollar price
 is fabricated: the preview returns ``estimated_cost: null`` and explains that
 actual evaluator token usage/provider pricing are not fixed by a sampling policy.
@@ -113,7 +124,9 @@ Every selected ``EvalLogger`` carries ``output_metadata._task_selection.sampling
     cohort_id                immutable population/cohort identity
     cohort_frozen_at         UTC cutoff for closed mode; null for live mode
     membership_mode          closed | live
-    sampling_unit            span | trace | session | user | attribute
+    sampling_unit            actual unit: span | trace | session | user | attribute
+    requested_sampling_unit  configured policy unit
+    missing_id_fallback      true when an independent row replaced a missing ID
     sampling_unit_id         namespaced canonical identity
     stratum                  stable JSON cell identity
     inclusion_probability    0 < p <= 1
@@ -123,15 +136,21 @@ Every selected ``EvalLogger`` carries ``output_metadata._task_selection.sampling
 The existing task-selection result-write context preserves this metadata through
 success, errors and retries. Trace-filter witnesses are retained alongside it,
 so explicit/unique filter-bound evaluation mappings still read the span that
-proved the trace predicate, not an arbitrary child. Completed paid results retain
-their original cohort metadata on edits; pending entries from a changed selection
-revision are replaced. Do not combine multiple cohort versions as if they were
-one newly randomized sample.
+proved the trace predicate, not an arbitrary child. Changing a sampling population requires explicit Delete & rerun (or duplicating
+the task to preserve the prior result view). Ordinary edit_rerun is rejected for
+policy/filter population changes, and generic PATCH cannot bypass this once
+results exist. Fresh reruns archive old entries without rewriting their
+probabilities or cohort IDs; all new visible entries have the new population's
+provenance. Re-running an unchanged closed policy reuses its frozen membership.
+Do not combine multiple cohort versions as if they were one randomized sample.
 
 For a contact-level pass rate, first aggregate evaluation rows to the chosen
 unit/cohort, then compute ``sum(pass / p) / sum(1 / p)``. Weighting duplicated spans
 before forming contact-level outcomes would give large contacts extra influence.
-Legacy results without a policy have no inferred probability: consumers must
+Zero-rate cells are intentional exclusions, not evidence for an unbiased
+whole-population estimate. Missing-ID row fallbacks carry their actual row unit
+and an explicit fallback flag; do not combine them into contact-level metrics
+without an explicit estimand. Legacy results without a policy have no inferred probability: consumers must
 choose an explicit legacy/unweighted policy rather than fabricate metadata.
 
 Security and scale
@@ -144,7 +163,11 @@ checks. The planner receives the authorized project, uses fixed table names,
 and binds all external values. Remap expansion is restricted to IDs touched by
 that project's finite source window, avoiding a global remap fanout.
 
-Native reads retain microseconds by binding UTC DateTime64 text: native driver
+Sampling freezes and forward watermarks use the ClickHouse server's UTC clock,
+the authority for physical arrival versions, rather than the API host's clock.
+Policy cursors are not clamped to PostgreSQL task creation time, so host/DB clock
+skew cannot create an arrival gap. Native reads retain microseconds by binding
+UTC DateTime64 text: native driver
 ``datetime`` interpolation otherwise truncates the fractional part. The sampling
 proof explicitly opts out of application mode that removes abort limits. Reads
 have 30-second wall/server budgets, 512 MiB query memory, spill thresholds,
@@ -176,6 +199,13 @@ Documentation checked 2026-10-21:
   limit and seven-day run eligibility. Those are thread evaluation semantics,
   not evidence for this span-result/contact-membership contract.
   https://docs.langchain.com/langsmith/online-evaluations-multi-turn
+
+* Langfuse's 2026-08-05 changelog documents consistent evaluator sampling of
+  matching observations. Its separate SDK ingestion sampler retains/drops
+  whole traces and associated scores. Neither statement establishes
+  cross-trace contact sampling or exact stratified quotas.
+  https://langfuse.com/changelog/2026-08-05-deterministic-evaluator-sampling
+  https://langfuse.com/docs/observability/features/sampling
 
 These sources support the distinctions above. They do not establish that no
 other product implements stratification or contact-consistent sampling.
@@ -216,8 +246,9 @@ first-admission stability, tenant rejection and create/edit/result round-trips.
 An isolated SQLite smoke harness is useful for logic checks but does not qualify
 PostgreSQL migrations, row locks, constraints or concurrency.
 
-Release gates remain the full PostgreSQL + CH25 integration suite, managed
-browser create/edit/preview/late-selection flow and a one-sided fallibility run
+The approved browser flow is EVAL-E2E-020 in the generated E2E catalog. Release
+gates remain the full PostgreSQL + CH25 integration suite, managed execution of
+that create/edit/preview/late-selection flow and a one-sided fallibility run
 per backend assertion. Catalog/typecheck and mocked HTTP component tests are not
 substitutes for those gates. Automatic recurring windows, unbounded contact
 history outside the explicit event interval, voice policy support and measured
