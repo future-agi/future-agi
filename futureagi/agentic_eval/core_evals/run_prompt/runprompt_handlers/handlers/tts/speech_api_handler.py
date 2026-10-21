@@ -111,7 +111,7 @@ class SpeechAPIHandler(BaseModelHandler):
 
         try:
             # Extract input text
-            input_text = AudioProcessor.extract_text_from_messages(
+            input_text = AudioProcessor.extract_literal_speech_script(
                 self.context.messages
             )
 
@@ -191,7 +191,7 @@ class SpeechAPIHandler(BaseModelHandler):
 
         try:
             # Extract input text
-            input_text = AudioProcessor.extract_text_from_messages(
+            input_text = AudioProcessor.extract_literal_speech_script(
                 self.context.messages
             )
 
