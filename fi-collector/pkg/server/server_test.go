@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -612,6 +613,150 @@ func TestOTLPHTTPRejectsBadContentType(t *testing.T) {
 	if got := resp.Header.Get("Accept"); !strings.Contains(got, "application/x-protobuf") ||
 		!strings.Contains(got, "application/json") {
 		t.Errorf("Accept header missing supported media types: %q", got)
+	}
+}
+
+// gzipBytes compresses b for the Content-Encoding tests below.
+func gzipBytes(t *testing.T, b []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(b); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// TestOTLPHTTPGzip — OTLP requires every server to accept gzip, and the OTel
+// Collector's otlphttp exporter compresses with gzip by default. A gzip body
+// must decode and land in CH exactly like an uncompressed one.
+func TestOTLPHTTPGzip(t *testing.T) {
+	httpAddr, _, sawCH, stop := startServerWithHTTP(t)
+	defer stop()
+
+	traces := makeTraces("http-gzip-test-span", "abababab-abab-4bab-8bab-abababababab")
+	pb, err := ptraceotlp.NewExportRequestFromTraces(traces).MarshalProto()
+	if err != nil {
+		t.Fatalf("MarshalProto: %v", err)
+	}
+
+	httpReq, _ := http.NewRequest("POST", "http://"+httpAddr+"/v1/traces", bytes.NewReader(gzipBytes(t, pb)))
+	httpReq.Header.Set("Content-Type", "application/x-protobuf")
+	httpReq.Header.Set("Content-Encoding", "gzip")
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		msg, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d (want 200): %s", resp.StatusCode, msg)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if n, _ := sawCH(); n > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	n, body := sawCH()
+	if n != 1 {
+		t.Fatalf("CH not POST'd; seen=%d", n)
+	}
+	if !strings.Contains(body, "http-gzip-test-span") {
+		t.Errorf("CH body missing span name: %q", body)
+	}
+}
+
+// TestOTLPHTTPGzipCapAppliesAfterDecompression — a few KiB of gzip can expand
+// past maxOTLPHTTPBodyBytes, so the cap has to bound the decompressed bytes,
+// not the bytes on the wire.
+func TestOTLPHTTPGzipCapAppliesAfterDecompression(t *testing.T) {
+	httpAddr, _, _, stop := startServerWithHTTP(t)
+	defer stop()
+
+	bomb := gzipBytes(t, make([]byte, maxOTLPHTTPBodyBytes+1))
+	if len(bomb) >= maxOTLPHTTPBodyBytes {
+		t.Fatalf("fixture should be far smaller than the cap on the wire, got %d bytes", len(bomb))
+	}
+
+	httpReq, _ := http.NewRequest("POST", "http://"+httpAddr+"/v1/traces", bytes.NewReader(bomb))
+	httpReq.Header.Set("Content-Type", "application/x-protobuf")
+	httpReq.Header.Set("Content-Encoding", "gzip")
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status %d, want 413", resp.StatusCode)
+	}
+}
+
+// TestOTLPHTTPRejectsUnsupportedContentEncoding — an encoding we can't decode
+// (e.g. an exporter configured for zstd or brotli) gets 415 plus an
+// Accept-Encoding header naming what we do accept, instead of a misleading
+// protobuf decode error.
+func TestOTLPHTTPRejectsUnsupportedContentEncoding(t *testing.T) {
+	httpAddr, _, _, stop := startServerWithHTTP(t)
+	defer stop()
+
+	httpReq, _ := http.NewRequest("POST", "http://"+httpAddr+"/v1/traces", strings.NewReader("not brotli"))
+	httpReq.Header.Set("Content-Type", "application/x-protobuf")
+	httpReq.Header.Set("Content-Encoding", "br")
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Errorf("status %d, want 415", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Accept-Encoding"); !strings.Contains(got, "gzip") {
+		t.Errorf("Accept-Encoding = %q, want it to list gzip", got)
+	}
+}
+
+// TestOTLPGRPCGzip — OTLP/gRPC exporters, including the OTel Collector's
+// default otlp exporter, send grpc-encoding: gzip. The client uses grpc's
+// legacy per-connection compressor on purpose: importing
+// google.golang.org/grpc/encoding/gzip here would register the codec for the
+// whole test binary and hide a server that never registered it.
+func TestOTLPGRPCGzip(t *testing.T) {
+	_, grpcAddr, sawCH, stop := startServerWithHTTP(t)
+	defer stop()
+
+	conn, err := grpc.NewClient(grpcAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithCompressor(grpc.NewGZIPCompressor()), //nolint:staticcheck // see the comment above
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	traces := makeTraces("grpc-gzip-test-span", "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd")
+	if _, err := ptraceotlp.NewGRPCClient(conn).Export(context.Background(), ptraceotlp.NewExportRequestFromTraces(traces)); err != nil {
+		t.Fatalf("gzip OTLP/gRPC Export: %v", err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if n, _ := sawCH(); n > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	n, body := sawCH()
+	if n != 1 {
+		t.Fatalf("CH not POST'd; seen=%d", n)
+	}
+	if !strings.Contains(body, "grpc-gzip-test-span") {
+		t.Errorf("CH body missing span name: %q", body)
 	}
 }
 
