@@ -1,5 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen, fireEvent } from "src/utils/test-utils";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  act,
+  render,
+  renderWithRouter,
+  screen,
+  fireEvent,
+} from "src/utils/test-utils";
 import DashboardDetailView from "../DashboardDetailView";
 import { DATE_PRESETS } from "../constants";
 
@@ -10,6 +16,7 @@ const h = vi.hoisted(() => ({
   deleteDashboard: { mutate: vi.fn(), isPending: false },
   widgets: [{ id: "w-1", name: "Tokens", position: 0, width: 12 }],
   widgetChartProps: null,
+  widgetChartMounts: 0,
   dashboardId: "dash-1",
   // Permission state the useCanEditDashboard mock returns; per-test controllable
   // so we can drive both the writer and viewer (read-only) paths.
@@ -62,12 +69,19 @@ vi.mock("../hooks/useCanEditDashboard", () => ({
   default: () => h.canEdit,
 }));
 
-vi.mock("../WidgetChart", () => ({
-  default: (props) => {
-    h.widgetChartProps = props;
-    return <div data-testid="widget-chart" />;
-  },
-}));
+vi.mock("../WidgetChart", async () => {
+  const { useEffect } = await vi.importActual("react");
+  return {
+    default: function WidgetChartStub(props) {
+      h.widgetChartProps = props;
+      // A real WidgetChart queries on mount, so each mount is one request.
+      useEffect(() => {
+        h.widgetChartMounts += 1;
+      }, []);
+      return <div data-testid="widget-chart" />;
+    },
+  };
+});
 
 vi.mock("src/components/snackbar", () => ({
   useSnackbar: () => ({ enqueueSnackbar: vi.fn() }),
@@ -161,6 +175,81 @@ describe("DashboardDetailView — time filter bar visibility", () => {
     render(<DashboardDetailView />);
     expect(screen.getByText(presetLabel)).toBeInTheDocument();
     expect(screen.queryByText(/no widgets yet/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("DashboardDetailView — time filter debounce (#1968)", () => {
+  const chip = (value) =>
+    screen
+      .getByText(DATE_PRESETS.find((p) => p.value === value).label)
+      .closest(".MuiChip-root");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-13T12:00:00.000Z"));
+    h.canEdit = { ...WRITER };
+    h.widgetChartProps = null;
+    h.widgetChartMounts = 0;
+    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    window.history.pushState({}, "", "/");
+  });
+
+  it("switches the chip at once but queries widgets only for the last rapid pick", () => {
+    render(<DashboardDetailView />);
+    expect(h.widgetChartProps.globalDateRange).toBeNull();
+    expect(h.widgetChartMounts).toBe(1);
+
+    fireEvent.click(chip("7D"));
+    expect(chip("7D")).toHaveClass("MuiChip-filled");
+    expect(h.widgetChartProps.globalDateRange).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    fireEvent.click(chip("30D"));
+    expect(chip("30D")).toHaveClass("MuiChip-filled");
+    expect(chip("7D")).not.toHaveClass("MuiChip-filled");
+    expect(h.widgetChartProps.globalDateRange).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(299);
+    });
+    expect(h.widgetChartProps.globalDateRange).toBeNull();
+    // No remount (and so no query) for either click while the user is still picking.
+    expect(h.widgetChartMounts).toBe(1);
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    // 30D resolved at the moment it was clicked, 250 ms after the first click.
+    expect(h.widgetChartProps.globalDateRange).toEqual({
+      start: "2026-07-14T12:00:00.250Z",
+      end: "2026-08-13T12:00:00.250Z",
+    });
+    expect(h.widgetChartMounts).toBe(2);
+  });
+
+  it("restores the timePreset URL param on the first render, without waiting", () => {
+    renderWithRouter(<DashboardDetailView />, {
+      route: "/dashboard/dashboards/dash-1?timePreset=7D",
+    });
+
+    expect(chip("7D")).toHaveClass("MuiChip-filled");
+    expect(h.widgetChartProps.globalDateRange).toEqual({
+      start: "2026-08-06T12:00:00.000Z",
+      end: "2026-08-13T12:00:00.000Z",
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(h.widgetChartMounts).toBe(1);
   });
 });
 
