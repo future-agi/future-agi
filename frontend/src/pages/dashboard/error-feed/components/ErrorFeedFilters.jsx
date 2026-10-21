@@ -271,130 +271,133 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
 
   return (
     <Stack gap={1.25}>
-      {/* Row 1: search + quick filters */}
-      <Stack
-        direction="row"
-        alignItems="center"
-        justifyContent="space-between"
-        gap={1.5}
-      >
-        <Stack direction="row" alignItems="center" gap={1}>
-          {/* Search */}
-          <OutlinedInput
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search errors"
-            size="small"
-            startAdornment={
-              <InputAdornment position="start">
-                <Iconify
-                  icon="mdi:magnify"
-                  width={16}
-                  sx={{ color: "text.disabled" }}
-                />
+      {/* Row 1: search, quick filters and bulk actions in one wrapping row.
+          When the controls fill the width (laptop screens at 100% zoom) they
+          continue on the next line instead of being pushed past the page's
+          overflow-hidden content edge and clipped (TH-8210). */}
+      <Stack direction="row" alignItems="center" flexWrap="wrap" gap={1}>
+        {/* Search */}
+        <OutlinedInput
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search errors"
+          size="small"
+          startAdornment={
+            <InputAdornment position="start">
+              <Iconify
+                icon="mdi:magnify"
+                width={16}
+                sx={{ color: "text.disabled" }}
+              />
+            </InputAdornment>
+          }
+          endAdornment={
+            searchQuery ? (
+              <InputAdornment position="end">
+                <IconButton
+                  size="small"
+                  onClick={() => setSearchQuery("")}
+                  edge="end"
+                >
+                  <Iconify icon="mdi:close" width={14} />
+                </IconButton>
               </InputAdornment>
-            }
-            endAdornment={
-              searchQuery ? (
-                <InputAdornment position="end">
-                  <IconButton
-                    size="small"
-                    onClick={() => setSearchQuery("")}
-                    edge="end"
-                  >
-                    <Iconify icon="mdi:close" width={14} />
-                  </IconButton>
-                </InputAdornment>
-              ) : null
-            }
-            sx={{
-              height: 32,
-              width: 280,
-              fontSize: "13px",
-              borderRadius: "6px",
-              "& .MuiOutlinedInput-notchedOutline": { borderColor: "divider" },
-            }}
-            notched={false}
-          />
+            ) : null
+          }
+          sx={{
+            height: 32,
+            width: 280,
+            fontSize: "13px",
+            borderRadius: "6px",
+            "& .MuiOutlinedInput-notchedOutline": { borderColor: "divider" },
+          }}
+          notched={false}
+        />
 
-          <Divider
-            orientation="vertical"
-            flexItem
-            sx={{ mx: 0.25, height: 20, alignSelf: "center" }}
-          />
+        <Divider
+          orientation="vertical"
+          flexItem
+          sx={{ mx: 0.25, height: 20, alignSelf: "center" }}
+        />
 
-          {/* Quick selects */}
-          <CompactSelect
-            value={timeRange}
-            onChange={setTimeRange}
-            options={TIME_RANGE_OPTIONS}
-            minWidth={140}
-          />
-          <CompactSelect
-            value={selectedProject}
-            onChange={setSelectedProject}
-            options={projectOptions}
-            minWidth={140}
-          />
+        {/* Quick selects */}
+        <CompactSelect
+          value={timeRange}
+          onChange={setTimeRange}
+          options={TIME_RANGE_OPTIONS}
+          minWidth={140}
+        />
+        <CompactSelect
+          value={selectedProject}
+          onChange={setSelectedProject}
+          options={projectOptions}
+          minWidth={140}
+        />
 
-          <CompactSelect
-            value={selectedStatus}
-            onChange={setSelectedStatus}
-            options={STATUS_OPTIONS}
-            minWidth={125}
-          />
-          <CompactSelect
-            value={selectedSeverity}
-            onChange={setSelectedSeverity}
-            options={SEVERITY_OPTIONS}
-            minWidth={130}
-          />
-          <CompactSelect
-            value={selectedFixLayer}
-            onChange={setSelectedFixLayer}
-            options={FIX_LAYER_OPTIONS}
-            minWidth={140}
-          />
-          <CompactSelect
-            value={selectedSource}
-            onChange={setSelectedSource}
-            options={SOURCE_OPTIONS}
-            minWidth={120}
-          />
+        <CompactSelect
+          value={selectedStatus}
+          onChange={setSelectedStatus}
+          options={STATUS_OPTIONS}
+          minWidth={125}
+        />
+        <CompactSelect
+          value={selectedSeverity}
+          onChange={setSelectedSeverity}
+          options={SEVERITY_OPTIONS}
+          minWidth={130}
+        />
+        <CompactSelect
+          value={selectedFixLayer}
+          onChange={setSelectedFixLayer}
+          options={FIX_LAYER_OPTIONS}
+          minWidth={140}
+        />
+        <CompactSelect
+          value={selectedSource}
+          onChange={setSelectedSource}
+          options={SOURCE_OPTIONS}
+          minWidth={120}
+        />
 
-          {hasActiveFilters && (
-            <Tooltip title="Clear all filters" arrow>
-              <Button
-                size="small"
-                variant="text"
-                onClick={clearAllFilters}
-                startIcon={
-                  <Iconify icon="mdi:filter-remove-outline" width={14} />
-                }
-                sx={{
-                  height: 32,
-                  fontSize: "12px",
-                  color: "text.secondary",
-                  minWidth: 0,
-                  px: 1,
-                }}
-              >
-                Clear
-              </Button>
-            </Tooltip>
-          )}
-        </Stack>
+        {hasActiveFilters && (
+          <Tooltip title="Clear all filters" arrow>
+            <Button
+              size="small"
+              variant="text"
+              onClick={clearAllFilters}
+              startIcon={
+                <Iconify icon="mdi:filter-remove-outline" width={14} />
+              }
+              sx={{
+                height: 32,
+                fontSize: "12px",
+                color: "text.secondary",
+                minWidth: 0,
+                px: 1,
+              }}
+            >
+              Clear
+            </Button>
+          </Tooltip>
+        )}
 
-        {/* Right: bulk actions */}
-        <Stack direction="row" alignItems="center" gap={1}>
-          {selected.length > 0 && (
+        {/* Bulk actions. Never shrinks; pushed to the right end of whichever
+            line it lands on. Rendered only with a selection so an empty group
+            cannot wrap onto a blank line. */}
+        {selected.length > 0 && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            gap={1}
+            sx={{ flexShrink: 0, ml: "auto" }}
+          >
             <BulkActionMenu
               count={selected.length}
               selected={selected}
               onClear={onClearSelection}
             />
-          )}
-        </Stack>
+          </Stack>
+        )}
       </Stack>
     </Stack>
   );
