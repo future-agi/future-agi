@@ -318,7 +318,7 @@ instead, set `FI_OBSERVED_CATALOG_KAFKA_BROKERS` in `fiCollector.extraEnv`;
 | Cluster | Kubernetes 1.27 to 1.37; kind | GKE, EKS, AKS ([`examples/cloud/`](examples/cloud)); OpenShift (`global.compatibility.openshift`); k3s, Docker Desktop, OrbStack | the code sandbox in a `baseline` or `restricted` Pod Security namespace (it is privileged) |
 | Helm and GitOps | Helm 3.22, Helm 4.3 | older Helm 3 from 3.10; Argo CD; Flux | |
 | PostgreSQL | 16 (11 or newer works), direct connection, password auth | PgBouncer in transaction mode (`postgres.pooler`); a read replica | IAM database authentication |
-| ClickHouse | 25.3 or newer, single node, with the `tiered` storage policy | an operator-managed single-node server (Altinity) | TLS-only endpoints (ClickHouse Cloud); replicated clusters |
+| ClickHouse | 25.3 or newer, single node, with the `tiered` storage policy | opt-in sharded/replicated profile and managed private clusters; see [cluster qualification gates](../../../docs/CLICKHOUSE_CLUSTER.rst) | TLS-only public endpoints; unqualified capacity/zero-data-loss promises |
 | Redis | 6 or newer, databases 0 to 4, plain or TLS for the app | managed Redis (ElastiCache, Memorystore, Azure Cache) | TLS for the LLM gateway (it has no Redis TLS) and for fi-collector |
 | Temporal | self-hosted 1.2x, plain gRPC | the temporalio/temporal chart | Temporal Cloud (TLS, API keys) |
 | Object storage | AWS S3, S3-compatible (MinIO) with access keys | GCS through HMAC keys | IAM roles for service accounts, Workload Identity, Entra ID; Azure Blob |
@@ -385,9 +385,11 @@ fiCollector:
 
 ### ClickHouse
 
-- ClickHouse 25.3 or newer, **single node**, over plain HTTP (8123) and the
-  native protocol (9000): the schema installer and fi-collector do not speak
-  TLS to ClickHouse, and the schema uses non-replicated engines.
+- ClickHouse 25.3 or newer, **single node by default**, over private HTTP
+  (8123) and native protocol (9000). The opt-in [sharded/replicated profile](../../../docs/CLICKHOUSE_CLUSTER.rst)
+  keeps logical table names, adds Keeper and requires staged new-database
+  migration. Existing clients do not all speak TLS; an encrypting mesh or
+  private endpoint is required, not a public plaintext service.
 - The spans table needs a storage policy named `tiered` with a `cold`
   volume: parts move to `cold` after 7 days and are deleted after 90. The
   bootstrap job stops with `native tiered storage policy required` without
@@ -467,8 +469,9 @@ reachable from your users' browsers.
 | Temporal | `temporal.external.address` | the single-binary dev server, SQLite on a 5 GiB volume | `temporalio/temporal:1.9.1` |
 | Object storage | `objectStorage.backend`, keys, `objectStorage.external.endpoint` | one MinIO server, 20 GiB volume | the last community MinIO release (as in Docker Compose), pinned by digest |
 
-Bundled datastores are for evaluation: one replica each, no replication,
-no backups, and upgrades of their images are yours to plan. PostgreSQL,
+Bundled datastore defaults are for evaluation: one replica each, no replication
+or backups. ClickHouse has a separate opt-in [replicated/sharded profile](../../../docs/CLICKHOUSE_CLUSTER.rst);
+that does not add HA or backups to the other stores. Image upgrades are yours to plan. PostgreSQL,
 Redis and MinIO are pinned by digest on their default tags only: another
 `<datastore>.bundled.image.tag`, or `image.pinDigests=false`, runs by tag
 unless you also set that image's `digest`. Moving from bundled to external
@@ -1187,6 +1190,17 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `postgres.bundled.podSecurityContext` | `{}` | Pod securityContext merged over the chart's (runAsNonRoot, the image's user and group, fsGroup, RuntimeDefault seccomp). `global.compatibility.openshift.adaptSecurityContext` drops the fixed IDs. |
 | `postgres.bundled.containerSecurityContext` | `{}` | Container securityContext merged over the chart's (no privilege escalation, all capabilities dropped). |
 | `clickhouse.mode` | `"external"` | `external` or `bundled`. ClickHouse 25.3 or newer. |
+| `clickhouse.cluster.enabled` | `false` | Opt-in sharded topology. Existing installs must migrate to a new database/release; never flip in place. |
+| `clickhouse.cluster.name` | `"futureagi_cluster"` | remote_servers cluster name (must already exist on every external node). |
+| `clickhouse.cluster.shards` | `3` | Immutable at install. Changing shard count requires resharding into a new database. |
+| `clickhouse.cluster.replicas` | `2` | Replicas per shard. Two copies is the small reference profile. |
+| `clickhouse.cluster.keeperPathPrefix` | `"/futureagi/clickhouse"` | Keeper namespace, unique per installation. The database/shard/table are appended. |
+| `clickhouse.cluster.insertQuorum` | `2` | Successful writes require this many copies. 2 blocks writes with one of two replicas unavailable; 1 prioritizes availability, not two-copy durability. |
+| `clickhouse.cluster.privateNetwork` | `false` | Explicit acknowledgement that HTTP/native traffic needs a private network or an encrypting service mesh. Public endpoints are unsupported. |
+| `clickhouse.cluster.keeper.replicas` | `3` | Bundled Keeper voting members; production requires an odd majority (3 or 5). |
+| `clickhouse.cluster.keeper.persistence.size` | `"10Gi"` | Persistent volume per Keeper member; retained across pod restarts. |
+| `clickhouse.cluster.keeper.persistence.storageClass` | `""` | Keeper StorageClass. Empty uses global.storageClass or the cluster default. |
+| `clickhouse.cluster.keeper.resources` | see values.yaml | Resources per Keeper member. |
 | `clickhouse.database` | `"default"` | [CH_DATABASE, CH25_DATABASE] database of traces and analytics. |
 | `clickhouse.user` | `"default"` | [CH_USERNAME] needs CREATE on the database; the bootstrap also creates the observed-attribute index (CREATE DATABASE, CREATE USER, GRANT) unless `bootstrap.propertyCatalog` is false. Bundled: `default`, the bundled server's only user. |
 | `clickhouse.password` | `""` | [CH_PASSWORD]. External: may be empty. Bundled: empty generates one. |

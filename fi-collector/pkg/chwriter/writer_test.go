@@ -490,3 +490,46 @@ func TestContextCancellationStopsRetries(t *testing.T) {
 		t.Errorf("context cancellation should bound runtime; ran for %v", elapsed)
 	}
 }
+
+func TestDistributedInsertConfirmation(t *testing.T) {
+	for _, curated := range []bool{false, true} {
+		cfg := mkConfig(t, "http://offline.invalid")
+		cfg.Distributed, cfg.InsertQuorum = true, 2
+		w, err := New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = w.Close() })
+		w.client.Transport = confirmationRoundTripper(func(r *http.Request) (*http.Response, error) {
+			q := r.URL.Query()
+			for key, value := range map[string]string{"async_insert": "0", "distributed_foreground_insert": "1", "insert_quorum": "2", "insert_quorum_timeout": "10000", "wait_end_of_query": "1"} {
+				if q.Get(key) != value {
+					t.Errorf("%s=%q, want %s", key, q.Get(key), value)
+				}
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody, Request: r}, nil
+		})
+		rows := []map[string]any{{"id": "cluster-row"}}
+		if curated {
+			err = w.InsertBestEffort(context.Background(), "end_users", rows)
+		} else {
+			err = w.Insert(context.Background(), rows)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestDistributedRejectsUnconfirmedAsyncAndMissingQuorum(t *testing.T) {
+	for _, async := range []bool{false, true} {
+		cfg := mkConfig(t, "http://offline.invalid")
+		cfg.Distributed, cfg.AsyncInsert = true, async
+		if async {
+			cfg.InsertQuorum = 2
+		}
+		if _, err := New(cfg); err == nil {
+			t.Fatal("unsafe distributed config accepted")
+		}
+	}
+}

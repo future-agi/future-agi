@@ -1,4 +1,4 @@
-{{- if eq .Values.clickhouse.mode "bundled" }}
+{{- if and (eq .Values.clickhouse.mode "bundled") (not .Values.clickhouse.cluster.enabled) }}
 {{- /* Evaluation only: one replica, no replication, no backups. */ -}}
 {{- $c := .Values.clickhouse -}}
 {{- $bundled := $c.bundled -}}

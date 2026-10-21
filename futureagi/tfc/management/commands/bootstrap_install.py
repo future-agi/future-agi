@@ -245,6 +245,12 @@ def migrate_and_seed(log: Callable[[str], None]) -> None:
 
 def clickhouse_native_schema(log: Callable[[str], None], timeout: int) -> None:
     from tracer.services.clickhouse import oss_cdc_install
+    from tracer.services.clickhouse.v2.cluster_schema import cluster_enabled
+
+    if cluster_enabled():
+        log("ClickHouse sharded native schema ...")
+        call("ch25_cluster_schema", log, apply=True)
+        return
 
     log("ClickHouse native schema ...")
     started = time.monotonic()
@@ -296,6 +302,19 @@ def property_catalog(log: Callable[[str], None], env=None) -> None:
         "password": env.get("CH_PASSWORD", ""),
     }
     admin = clickhouse_connect.get_client(**connect)
+    from tracer.services.clickhouse.v2.cluster_schema import cluster_enabled
+
+    if cluster_enabled(env):
+        from tracer.services.clickhouse.v2.cluster_cdc import apply_observed_catalog
+
+        try:
+            apply_observed_catalog(
+                admin, database=target, writer_password=writer, reader_password=reader
+            )
+        finally:
+            admin.close()
+        log("sharded observed-attribute index done")
+        return
     try:
         admin.command(f"CREATE DATABASE IF NOT EXISTS `{target}`")
         catalog = clickhouse_connect.get_client(database=target, **connect)

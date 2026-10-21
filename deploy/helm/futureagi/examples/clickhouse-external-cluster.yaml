@@ -1,0 +1,20 @@
+# Overlay on your external-datastore values. The managed operator configures
+# remote_servers/macros/Keeper and the profile in docs/CLICKHOUSE_CLUSTER.rst.
+# Point to a PRIVATE HA endpoint or an encrypting sidecar/mesh, never public
+# plaintext. TLS-only public managed services are not supported by all clients.
+clickhouse:
+  mode: external
+  database: futureagi_cluster_v1
+  existingSecret: clickhouse-credentials
+  external:
+    host: clickhouse.internal.example
+    httpPort: 8123
+    nativePort: 9000
+  cluster:
+    enabled: true
+    privateNetwork: true
+    name: futureagi_cluster
+    keeperPathPrefix: /futureagi/clickhouse
+    shards: 3
+    replicas: 2
+    insertQuorum: 2

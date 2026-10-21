@@ -284,6 +284,20 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	if v := os.Getenv("FI_CH_PASSWORD"); v != "" {
 		c.Writer.Password = v
 	}
+	if v := os.Getenv("FI_CH_DISTRIBUTED"); v != "" {
+		value, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("FI_CH_DISTRIBUTED must be a boolean")
+		}
+		c.Writer.Distributed = value
+	}
+	if v := os.Getenv("FI_CH_INSERT_QUORUM"); v != "" {
+		value, err := strconv.Atoi(v)
+		if err != nil || value < 0 {
+			return fmt.Errorf("FI_CH_INSERT_QUORUM must be a nonnegative integer")
+		}
+		c.Writer.InsertQuorum = value
+	}
 	if v := os.Getenv("FI_GRPC_ADDR"); v != "" {
 		c.Server.GRPCAddr = v
 	}

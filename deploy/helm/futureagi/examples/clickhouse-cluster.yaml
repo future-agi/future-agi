@@ -1,0 +1,19 @@
+# Overlay on examples/bundled.yaml. Requires >=3 schedulable worker nodes,
+# persistent volumes and a NetworkPolicy-capable CNI. This is NOT an in-place
+# upgrade from the single-node release. See docs/CLICKHOUSE_CLUSTER.rst.
+clickhouse:
+  mode: bundled
+  database: futureagi_cluster_v1
+  cluster:
+    enabled: true
+    privateNetwork: true
+    shards: 3
+    replicas: 2
+    insertQuorum: 2
+  bundled:
+    lowMemory: false
+    resources:
+      requests: {cpu: "2", memory: 4Gi}
+      limits: {cpu: "4", memory: 8Gi}
+networkPolicy:
+  enabled: true
