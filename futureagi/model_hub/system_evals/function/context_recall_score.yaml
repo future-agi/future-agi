@@ -1,0 +1,78 @@
+eval_id: 201
+name: context_recall_score
+description: 'RAG Context Recall: Evaluates factual coverage by measuring the fraction of reference statements supported across all retrieved contexts.'
+eval_tags:
+- RAG
+- Retrieval Systems
+- Output Validation
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - hypothesis
+  - reference
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  config_params_desc:
+    hypothesis: Retrieved context chunks (list or JSON string)
+    reference: Ground-truth reference contexts (list or JSON string)
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json
+        import ast
+        import re
+        from collections import Counter
+        def _parse(val):
+            if val is None:
+                return []
+            if isinstance(val, list):
+                return [str(x).strip() for x in val if str(x).strip()]
+            if isinstance(val, str):
+                val = val.strip()
+                if not val:
+                    return []
+                try:
+                    p = json.loads(val)
+                    if isinstance(p, list):
+                        return [str(x).strip() for x in p if str(x).strip()]
+                except Exception:
+                    pass
+                try:
+                    p = ast.literal_eval(val)
+                    if isinstance(p, list):
+                        return [str(x).strip() for x in p if str(x).strip()]
+                except Exception:
+                    pass
+                return [x.strip() for x in val.splitlines() if x.strip()]
+            return [str(val).strip()]
+        def _tokenize(text):
+            return re.findall(r'\b\w+\b', str(text).lower())
+        def _is_ref_covered(ref_str, ret_chunks, min_overlap=0.7):
+            r_toks = _tokenize(ref_str)
+            if not r_toks:
+                return True
+            r_counts = Counter(r_toks)
+            for chunk in ret_chunks:
+                c_toks = _tokenize(chunk)
+                if not c_toks:
+                    continue
+                c_counts = Counter(c_toks)
+                overlap = sum((r_counts & c_counts).values())
+                cov = overlap / len(r_toks)
+                if cov >= min_overlap or str(ref_str).lower().strip() in str(chunk).lower().strip():
+                    return True
+            return False
+        ret = _parse(kwargs.get('hypothesis', kwargs.get('output', output)))
+        ref = _parse(kwargs.get('reference', kwargs.get('expected', expected)))
+        if not ref:
+            return {'score': 1.0 if not ret else 0.0, 'reason': 'No reference contexts'}
+        if not ret:
+            return {'score': 0.0, 'reason': '0 reference contexts recalled (empty retrieval)'}
+        recalled = sum(1 for r in ref if _is_ref_covered(r, ret))
+        score = recalled / len(ref)
+        return {'score': float(score), 'reason': f'Context Recall: {score:.4f} ({recalled}/{len(ref)} reference contexts recalled)'}

@@ -1,0 +1,65 @@
+eval_id: 203
+name: noise_sensitivity
+description: 'RAG Noise Sensitivity: Measures the extent to which the response includes irrelevant or distracting information introduced by extraneous context chunks.'
+eval_tags:
+- RAG
+- Retrieval Systems
+- Output Validation
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - output
+  - context
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  config_params_desc:
+    output: Generated response text
+    expected: Ground truth expected answer
+    context: Full retrieved context containing signal and noise
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json
+        import re
+        from collections import Counter
+        def _parse(val):
+            if val is None:
+                return ''
+            if isinstance(val, list):
+                return '\n'.join(str(x).strip() for x in val if str(x).strip())
+            if isinstance(val, str):
+                val = val.strip()
+                try:
+                    p = json.loads(val)
+                    if isinstance(p, list):
+                        return '\n'.join(str(x).strip() for x in p if str(x).strip())
+                except Exception:
+                    pass
+                return val
+            return str(val).strip()
+        out_text = _parse(kwargs.get('output', output))
+        exp_text = _parse(kwargs.get('expected', expected))
+        ctx_text = _parse(kwargs.get('context', context))
+        if not out_text:
+            return {'score': 0.0, 'reason': 'No output provided'}
+        if not ctx_text:
+            return {'score': 0.0, 'reason': 'No context provided'}
+        def _tokenize(text):
+            return re.findall(r'\b\w+\b', str(text).lower())
+        out_toks = Counter(_tokenize(out_text))
+        if not out_toks:
+            return {'score': 0.0, 'reason': 'Empty output after tokenization'}
+        exp_toks = Counter(_tokenize(exp_text)) if exp_text else Counter()
+        ctx_toks = Counter(_tokenize(ctx_text))
+        noise_in_output = 0
+        total_out = sum(out_toks.values())
+        for token, count in out_toks.items():
+            if token in ctx_toks and token not in exp_toks:
+                noise_in_output += min(count, ctx_toks[token])
+        sensitivity = noise_in_output / total_out if total_out > 0 else 0.0
+        return {'score': float(sensitivity), 'reason': f'Noise Sensitivity: {sensitivity:.4f} ({noise_in_output}/{total_out} tokens driven by extraneous context)'}

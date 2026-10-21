@@ -1,0 +1,71 @@
+eval_id: 202
+name: faithfulness_score
+description: 'RAG Faithfulness: Quantifies the ratio of atomic claims in the generated answer that are directly supported by the retrieved context, penalizing hallucinations.'
+eval_tags:
+- RAG
+- Hallucination
+- Output Validation
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - output
+  - context
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  config_params_desc:
+    output: Generated answer text
+    context: Retrieved context passage (text or JSON array of strings)
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json
+        import re
+        from collections import Counter
+        def _parse(val):
+            if val is None:
+                return ''
+            if isinstance(val, list):
+                return '\n'.join(str(x).strip() for x in val if str(x).strip())
+            if isinstance(val, str):
+                val = val.strip()
+                try:
+                    p = json.loads(val)
+                    if isinstance(p, list):
+                        return '\n'.join(str(x).strip() for x in p if str(x).strip())
+                except Exception:
+                    pass
+                return val
+            return str(val).strip()
+        out_text = _parse(kwargs.get('output', output))
+        ctx_text = _parse(kwargs.get('context', context))
+        if not out_text and not ctx_text:
+            return {'score': 1.0, 'reason': 'Both output and context are empty'}
+        if not out_text:
+            return {'score': 1.0, 'reason': 'Empty output is vacuously faithful'}
+        if not ctx_text:
+            return {'score': 0.0, 'reason': 'Context is empty, output cannot be grounded'}
+        def _tokenize(text):
+            return re.findall(r'\b\w+\b', str(text).lower())
+        raw_claims = re.split(r'(?<=[.!?])\s+|\n+', out_text)
+        claims = [s.strip() for s in raw_claims if len(s.strip()) > 3]
+        if not claims:
+            claims = [out_text]
+        ctx_toks = Counter(_tokenize(ctx_text))
+        supported = 0
+        for claim in claims:
+            c_toks = _tokenize(claim)
+            if not c_toks:
+                supported += 1
+                continue
+            c_counts = Counter(c_toks)
+            overlap = sum((c_counts & ctx_toks).values())
+            ratio = overlap / len(c_toks)
+            if ratio >= 0.70 or claim.lower() in ctx_text.lower():
+                supported += 1
+        score = supported / len(claims)
+        return {'score': float(score), 'reason': f'Faithfulness: {score:.4f} ({supported}/{len(claims)} statements grounded in context)'}
