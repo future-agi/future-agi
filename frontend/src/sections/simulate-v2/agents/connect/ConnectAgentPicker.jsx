@@ -1,8 +1,7 @@
 import PropTypes from "prop-types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSnackbar } from "notistack";
-import { Box, Button, Stack, Typography } from "@mui/material";
-import Iconify from "src/components/iconify";
+import { Box, Stack } from "@mui/material";
 import { useSimStore } from "../../store";
 import { agentRecordFromSource } from "../../_mock/agentRegistry";
 import { DEFAULT_LIMITS } from "../../_mock/optimizationRuns";
@@ -10,14 +9,15 @@ import { emptyProfile, limitsCustomised, observeChoiceOf, observeProjectById, pr
 import { currentUser } from "../../_mock/scenarioProvenance";
 import { ConnectModeContext, InDrawerContext } from "../../environments/connectMode";
 import { FlowPanel } from "../../environments/StartEnvironment";
-import { Directory, PasteBar } from "../../environments/ConnectDirectory";
+import ConnectCatalog from "./ConnectCatalog";
 import SetupDrawer from "../../environments/SetupDrawer";
-import { detectAgentPaste, newAgentChoicesFor, pasteExamplesFor } from "./agentConnectData";
+import { POPULAR_IDS, detectAgentPaste, newAgentChoicesFor } from "./agentConnectData";
 import HostedAgentFlow from "./HostedAgentFlow";
 import RepoAgentFlow from "./RepoAgentFlow";
 import BuiltinAgentFlow from "./BuiltinAgentFlow";
 import FrameworkAgentFlow from "./FrameworkAgentFlow";
 import ClosedPlatformFlow from "./ClosedPlatformFlow";
+import TracesAgentFlow from "./TracesAgentFlow";
 import { CLOSED_WAY, CONNECT_KINDS, MORE_WAYS } from "./connectKinds";
 import { useConnectSubmitLabel } from "./connectSubmit";
 
@@ -77,14 +77,16 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
     /* Vapi, Retell and Bland agents are linked through their key (call
        logs); an issue's project comes with any agent. Anything else is
        chosen on the agent's page, in Finish setting up — never guessed here. */
-    const observeProject = (source.kind === "platform" && observeChoiceOf({ ...source, name: agentName }, prefill?.project))
+    /* Read from traces: the project they land in is the one — settled. */
+    const observeProject = (source.kind === "traces" && source.observeProject)
+      || (source.kind === "platform" && observeChoiceOf({ ...source, name: agentName }, prefill?.project))
       || (observe || prefill?.project ? resolveObserve(observe, prefill?.project, agentName) : null);
     const full = {
       ...source,
       ...profileSourceOf(profile, { defaultChannel: source.agentType === "voice" ? "voice" : "chat", owner: currentUser().name, flowReach }),
       ...(observeProject && { observeProject }),
       /* Connected from an issue: its project is the one — settled, not a suggestion. */
-      ...(prefill?.project && observeProject?.id === prefill.project && { observeChosenAt: new Date().toISOString() }),
+      ...(((prefill?.project && observeProject?.id === prefill.project) || source.kind === "traces") && { observeChosenAt: new Date().toISOString() }),
     };
     const agentKey = agentRecordFromSource(full).key;
     /* Saved at once — connecting from an issue goes straight back to it. */
@@ -135,9 +137,12 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
     }),
     [name, runtime, needsRuntime, submitLabel],
   );
-  /* Code first, then the platforms; built in Future AGI is its own choice. */
-  const { builtin, groups } = useMemo(() => newAgentChoicesFor(channel), [channel]);
-  const pickItem = (item) => open(item.kind, item.initial, item.id, { name: item.name, logo: item.logo, icon: item.icon });
+  /* Code first, then the platforms. Built in Future AGI is reached by pasting a prompt. */
+  const { groups } = useMemo(() => newAgentChoicesFor(channel), [channel]);
+  /* The traces flow switches between its two ways in, so its drawer is named for both. */
+  const pickItem = (item) => open(item.kind, item.initial, item.id, item.kind === "traces"
+    ? { name: "An agent from its traces", icon: "solar:pulse-2-linear" }
+    : { name: item.name, logo: item.logo, icon: item.icon });
   const legacy = MORE_WAYS.find((o) => o.id === choice);
   const kind = CONNECT_KINDS.find((o) => o.id === choice);
   const flowProps = {
@@ -152,6 +157,7 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
           {choice === "repo" && <RepoAgentFlow {...flowProps} preset={preset} />}
           {choice === "builtin" && <BuiltinAgentFlow {...flowProps} />}
           {choice === CLOSED_WAY.id && <ClosedPlatformFlow {...flowProps} title={CLOSED_WAY.title} />}
+          {choice === "traces" && <TracesAgentFlow {...flowProps} title="From traces" onOpen={(r) => r && open(r.kind, r.initial, r.id, r.meta)} />}
           {choice === "framework" && (
             <FrameworkAgentFlow
               {...flowProps}
@@ -173,39 +179,16 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
     <Stack spacing={flowsIn === "inline" ? 2.5 : 4}>
       {catalogue && (
       <>
-      <PasteBar
-        detect={detectAgentPaste}
-        examples={pasteExamplesFor(channel)}
-        hint={channel ? "Paste a link or an ID. We open the right setup." : "Paste a link, an ID or a prompt. We open the right setup."}
-        placeholder={channel === "voice" ? "Paste a Vapi or Retell ID, a GitHub or GitLab repo, or a phone number" : "Paste a GitHub, GitLab or Bitbucket repo, a Vapi or Retell ID, an endpoint — or a prompt"}
-        onPick={(kind, initial, meta) => open(kind, initial, "paste", meta)}
-      />
-      <Directory
-        title="Connect your agent"
-        subtitle={`Bring it from code — GitHub or an upload — or from the platform ${channel ? `your ${channel} agent` : "it"} runs on today, or build it in Future AGI. Each group says how far a fix can go.`}
+      <ConnectCatalog
         groups={groups}
+        popularIds={POPULAR_IDS}
         compact={flowsIn === "inline"}
-        /* Long groups fold behind "N more" — search always shows every match. */
-        perGroup={8}
         pickedId={choice ? picked?.id : null}
         onPick={pickItem}
+        detect={detectAgentPaste}
+        onPaste={(kind, initial, meta) => open(kind, initial, "paste", meta)}
         emptyHint="If it runs somewhere we can call, connect it as an agent endpoint."
-        footer={builtin && (
-          <Stack direction="row" alignItems="center" spacing={1.25}>
-            <Iconify icon={builtin.icon} width={18} sx={{ color: "text.secondary", flexShrink: 0 }} />
-            <Box flex={1} minWidth={0}>
-              <Typography sx={{ typography: "s1", fontWeight: 700 }}>Built in Future AGI</Typography>
-              <Typography sx={{ typography: "s3", color: "text.secondary" }}>Prompt, model and tools, defined and run here. Fixes ship as a new version.</Typography>
-            </Box>
-            <Button
-              size="small" variant={choice === "builtin" ? "contained" : "outlined"} color={choice === "builtin" ? "primary" : "inherit"}
-              onClick={() => pickItem(builtin)}
-              sx={{ typography: "s3", fontWeight: 700, height: 28, flexShrink: 0, ...(choice !== "builtin" && { color: "text.primary", borderColor: "divider" }) }}
-            >
-              Build in Future AGI
-            </Button>
-          </Stack>
-        )}
+        onFallback={() => pickItem(groups.flatMap((g) => g.items).find((it) => it.id === "running"))}
       />
       </>
       )}

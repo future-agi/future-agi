@@ -382,7 +382,7 @@ export function CopyField({ label, value, mono = true, wrap = false }) {
           sx={{
             flex: 1, minWidth: 0,
             typography: "s2",
-            ...(wrap && { wordBreak: "break-all" }),
+            ...(wrap && { overflowWrap: "anywhere", whiteSpace: "pre-wrap" }),
             fontFamily: mono ? "ui-monospace, SFMono-Regular, Menlo, monospace" : undefined,
             color: "text.primary",
           }}

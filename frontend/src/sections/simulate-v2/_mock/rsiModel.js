@@ -112,7 +112,7 @@ export const proofKindOf = (agent) => {
   /* A world's sample agent calls exactly the world's tools, in our sandbox —
      sealed, not a prompt on its own. */
   if (agent?.sample) return { kind: "sealed", tier: "ours", ...PROOF_KINDS.sealed, tierLabel: TRUST_TIERS.ours.label };
-  if (kind === "builtin" || v.provider === "other") return { kind: "prompt-only", tier: "ours", ...PROOF_KINDS["prompt-only"], tierLabel: TRUST_TIERS.ours.label };
+  if (kind === "builtin" || kind === "traces" || v.provider === "other") return { kind: "prompt-only", tier: "ours", ...PROOF_KINDS["prompt-only"], tierLabel: TRUST_TIERS.ours.label };
   if (kind === "platform") {
     /* An imported copy with its tool code uploaded runs sealed in our sandbox.
        Otherwise the assistant runs live in the customer's account — one we

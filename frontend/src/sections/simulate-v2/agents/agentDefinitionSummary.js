@@ -113,7 +113,7 @@ const MORE_AREAS = ["opening", "turnTaking", "variables", "analysis", "account"]
 
 /* What we can read for a source: hosted platforms and agents built here hold
    their settings; code shows what's in the repository; an endpoint shows nothing. */
-const readsSettings = (kind) => ["platform", "builtin", "prompt"].includes(kind);
+const readsSettings = (kind) => ["platform", "builtin", "prompt", "traces"].includes(kind);
 const readsCode = (kind) => ["repo", "upload", "framework"].includes(kind);
 
 const VARIABLES = {
@@ -177,6 +177,7 @@ export const areaValueOf = ({ agent, definition, source, id, member }) => {
       return { value: voice ? "Call summary · success when resolved without a transfer · 3 structured fields" : "Conversation summary · success when the question is answered · 2 structured fields" };
     case "account":
       if (kind === "builtin") return { value: "This Future AGI workspace — nothing of yours to reach" };
+      if (kind === "traces") return { value: "Not known yet — its traces don't say where it runs. Connect it there to test it live or sealed." };
       if (kind === "platform") return { value: `${provider || "Platform"} account · API key by reference${voice ? ` · up to ${reach.maxConcurrent} calls at once` : ""}` };
       return { value: "Your deployment's credentials — never read" };
     default:

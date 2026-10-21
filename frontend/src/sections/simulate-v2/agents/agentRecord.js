@@ -93,6 +93,9 @@ export const sourceRowsOf = ({ agent, source, definition, version }) => {
       mono: !!v.apiKeyRef,
       muted: !v.apiKeyRef && !v.hasApiKey,
     });
+  } else if (kind === "traces") {
+    rows.push({ label: "Traces from", value: `${d.project || "Observe project"}${v.fromTraces?.traces ? ` · ${Number(v.fromTraces.traces).toLocaleString()} traces read` : ""}`, mono: !!d.project });
+    rows.push({ label: "Where it runs", value: "Not known yet — connect it there to test it live or sealed", muted: true });
   } else if (source.runtime?.where) {
     rows.push({ label: source.phone ? "Phone number" : "Endpoint", value: source.runtime.where, mono: true });
   }

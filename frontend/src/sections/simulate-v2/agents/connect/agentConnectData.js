@@ -15,13 +15,14 @@ const frameworkItems = Object.entries(FRAMEWORK_META).map(([id, f]) => ({
   ...(f.logo && { logo: f.logo }),
   need: `SDK adapter · ${f.structure.toLowerCase()}`,
   kind: "framework",
+  fix: "Pull request",
   initial: { framework: id },
 }));
 
 /* Hosted platforms beyond the five with bundled logos — their brand mark
    from Iconify, or a generic one where none exists. */
 const hosted = (id, name, channel, extra = {}) => ({
-  id: channel === "chat" ? `${id}-chat` : id, name, kind: "hosted", channels: [channel], initial: { agentType: channel, platform: id }, ...extra,
+  id: channel === "chat" ? `${id}-chat` : id, name, kind: "hosted", fix: "In your account", channels: [channel], initial: { agentType: channel, platform: id }, ...extra,
 });
 
 /* Closed platforms: test only, by phone, chat or conversation API. */
@@ -31,6 +32,7 @@ const closedItems = CLOSED_PLATFORMS.map((c) => ({
   icon: CLOSED_PLATFORM_REACH[c.id]?.icon || "solar:chat-round-dots-linear",
   need: `Test only · ${CLOSED_PLATFORM_REACH[c.id]?.ways.map((w) => ({ phone: "phone", chat: "chat", api: "API" })[w]).join(", ")}`,
   kind: "closed",
+  fix: "Suggested change",
   /* Phone reaches a voice agent; chat and the API a chat agent. */
   channels: [...new Set(CLOSED_PLATFORM_REACH[c.id]?.ways.map((w) => (w === "phone" ? "voice" : "chat")))],
   initial: { closedPlatform: c.id },
@@ -42,10 +44,10 @@ export const AGENT_CONNECT_GROUPS = [
     title: "Voice platforms",
     reach: "Your API key and assistant — tested in your account on a copy, draft or branch.",
     items: [
-      { id: "vapi", name: "Vapi", logo: "vapi", need: "API key · assistant", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "vapi" } },
-      { id: "retell", name: "Retell AI", logo: "retell", need: "API key · agent", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "retell" } },
-      { id: "elevenlabs", name: "ElevenLabs", logo: "elevenlabs", need: "Agents API key", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "elevenlabs" } },
-      { id: "bland", name: "Bland.ai", logo: "bland", need: "API key · agent", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "bland" } },
+      { id: "vapi", name: "Vapi", fix: "In your account", logo: "vapi", need: "API key · assistant", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "vapi" } },
+      { id: "retell", name: "Retell AI", fix: "In your account", logo: "retell", need: "API key · agent", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "retell" } },
+      { id: "elevenlabs", name: "ElevenLabs", fix: "In your account", logo: "elevenlabs", need: "Agents API key", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "elevenlabs" } },
+      { id: "bland", name: "Bland.ai", fix: "In your account", logo: "bland", need: "API key · agent", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "bland" } },
       hosted("telnyx", "Telnyx", "voice", { icon: "solar:phone-calling-linear", need: "API key · assistant" }),
       hosted("google_cx", "Google CX Agent Studio", "voice", { icon: "simple-icons:dialogflow", need: "Service account · agent" }),
       hosted("voiceflow", "Voiceflow", "voice", { icon: "solar:routing-2-linear", need: "API key · project" }),
@@ -56,7 +58,7 @@ export const AGENT_CONNECT_GROUPS = [
     title: "Chat and built here",
     reach: "The same platforms over chat, chat-first platforms, or one you build here.",
     items: [
-      { id: "vapi-chat", name: "Vapi chat", logo: "vapi", need: "Same assistant, over chat", kind: "hosted", channels: ["chat"], initial: { agentType: "chat", platform: "vapi" } },
+      { id: "vapi-chat", name: "Vapi chat", fix: "In your account", logo: "vapi", need: "Same assistant, over chat", kind: "hosted", channels: ["chat"], initial: { agentType: "chat", platform: "vapi" } },
       hosted("retell", "Retell chat", "chat", { logo: "retell", need: "API key · chat agent" }),
       hosted("elevenlabs", "ElevenLabs chat", "chat", { logo: "elevenlabs", need: "Chat or WhatsApp agent" }),
       hosted("bland", "Bland messaging", "chat", { logo: "bland", need: "API key · messaging agent" }),
@@ -72,12 +74,21 @@ export const AGENT_CONNECT_GROUPS = [
     title: "Repo and SDK",
     reach: "We read your repo or SDK — fixes come back as pull or merge requests.",
     items: [
-      { id: "github", name: "GitHub", logo: "github", need: "Read-only app · repo and folder", kind: "repo", initial: { host: "github" } },
-      { id: "gitlab", name: "GitLab", logo: "gitlab", need: "Group token · repo and folder", kind: "repo", initial: { host: "gitlab" } },
-      { id: "bitbucket", name: "Bitbucket", logo: "bitbucket", need: "Workspace token · repo and folder", kind: "repo", initial: { host: "bitbucket" } },
+      { id: "github", name: "GitHub", fix: "Pull request", logo: "github", need: "Read-only app · repo and folder", kind: "repo", initial: { host: "github" } },
+      { id: "gitlab", name: "GitLab", fix: "Pull request", logo: "gitlab", need: "Group token · repo and folder", kind: "repo", initial: { host: "gitlab" } },
+      { id: "bitbucket", name: "Bitbucket", fix: "Pull request", logo: "bitbucket", need: "Workspace token · repo and folder", kind: "repo", initial: { host: "bitbucket" } },
       /* No framework: code that calls the model APIs itself. */
-      { id: "direct-api", name: "OpenAI, Anthropic or Gemini calls", icon: "solar:code-square-linear", need: "No framework · name where it starts", kind: "repo", initial: { host: "github", direct: true } },
+      { id: "direct-api", name: "OpenAI, Anthropic or Gemini calls", fix: "Pull request", icon: "solar:code-square-linear", need: "No framework · name where it starts", kind: "repo", initial: { host: "github", direct: true } },
       ...frameworkItems,
+    ],
+  },
+  {
+    id: "traces",
+    title: "Traces",
+    reach: "Already sending traces, or add traceAI now — we read the agent from its spans: prompt, model and tools.",
+    items: [
+      { id: "traces-project", name: "Traces in an Observe project", icon: "solar:pulse-2-linear", need: "Pick the project they land in", kind: "traces", fix: "Suggested change", initial: { mode: "project" } },
+      { id: "traces-new", name: "Send traces with traceAI", icon: "solar:code-scan-linear", need: "A few lines in your agent's code", kind: "traces", fix: "Suggested change", initial: { mode: "send" } },
     ],
   },
   {
@@ -85,13 +96,13 @@ export const AGENT_CONNECT_GROUPS = [
     title: "Other ways",
     reach: "Anything we can call, upload or phone — and agents connected for testing only.",
     items: [
-      { id: "upload", name: "Upload a folder", icon: "solar:upload-minimalistic-linear", need: "Folder or .zip, up to 200 MB", kind: "upload" },
+      { id: "upload", name: "Upload a folder", fix: "Patch", icon: "solar:upload-minimalistic-linear", need: "Folder or .zip, up to 200 MB", kind: "upload" },
       /* LiveKit Agents is a code framework (under Repo and SDK); a running
          agent can still be connected by its LiveKit project, for testing —
          its fixes end as a suggested change. */
-      { id: "livekit", name: "LiveKit project", logo: "livekit", need: "Test only · server URL · agent name", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "livekit" } },
-      { id: "running", name: "Agent endpoint", icon: "solar:global-linear", need: "HTTP or WebSocket URL", kind: "running", channels: ["chat", "voice"] },
-      { id: "phone", name: "Phone number", icon: "solar:phone-calling-rounded-linear", need: "Any agent you can call", kind: "phone", channels: ["voice"] },
+      { id: "livekit", name: "LiveKit project", fix: "Suggested change", logo: "livekit", need: "Test only · server URL · agent name", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "livekit" } },
+      { id: "running", name: "Agent endpoint", fix: "Suggested change", icon: "solar:global-linear", need: "HTTP or WebSocket URL", kind: "running", channels: ["chat", "voice"] },
+      { id: "phone", name: "Phone number", fix: "Suggested change", icon: "solar:phone-calling-rounded-linear", need: "Any agent you can call", kind: "phone", channels: ["voice"] },
       ...closedItems,
     ],
   },
@@ -140,6 +151,9 @@ export const newAgentChoicesFor = (channel) => {
     .filter((g) => g.items.length);
   return { builtin, groups: [...groups.filter((g) => g.id === "code"), ...groups.filter((g) => g.id !== "code")] };
 };
+
+/* What most people start with — shown first when nothing is searched. */
+export const POPULAR_IDS = ["github", "vapi", "retell", "traces-new", "running", "upload"];
 
 export const pasteExamplesFor = (channel) => (!channel ? AGENT_PASTE_EXAMPLES : AGENT_PASTE_EXAMPLES.filter((e) => !e.channels || e.channels.includes(channel)));
 

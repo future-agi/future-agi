@@ -7,11 +7,10 @@ import {
   WORLD_TYPES, detectPaste,
   prebuiltWorlds, worldTotal,
 } from "./landingData";
-import { newAgentChoicesFor } from "../agents/connect/agentConnectData";
-import { AGENT_TYPES } from "./connectOptions";
-import ChipCard from "./ChipCard";
+import { POPULAR_IDS, newAgentChoicesFor } from "../agents/connect/agentConnectData";
+import ConnectCatalog from "../agents/connect/ConnectCatalog";
 import { SectionHead, WorldCard } from "./LandingBits";
-import { Directory, PasteBar } from "./ConnectDirectory";
+import { PasteBar } from "./ConnectDirectory";
 import { OUTLINE_BTN, focusRing } from "./landingStyles";
 import WorldDrawer from "./WorldDrawer";
 import SaasSandboxRow from "./SaasSandbox";
@@ -93,7 +92,10 @@ export default function EnvironmentsLanding({ onPick, onBrowseWorlds, picked, ex
         sectionRef={connectRef}
         pickedId={picked?.from === "directory" ? picked.itemId : null}
         onPick={(item, prefill) => onPick(item.choice, prefill ?? item.prefill ?? null, "directory", item.id, { name: item.name, logo: item.logo, icon: item.icon })}
-        onConnect={(item) => openConnect(item.kind, item.initial || null, item.id, { name: item.name, logo: item.logo, icon: item.icon })}
+        onConnect={(item) => openConnect(item.kind, item.initial || null, item.id, item.kind === "traces"
+          /* The traces flow switches between its two ways in — named for both. */
+          ? { name: "An agent from its traces", icon: "solar:pulse-2-linear" }
+          : { name: item.name, logo: item.logo, icon: item.icon })}
         onTools={() => onPick("mcp", null, "directory", "mcp", { name: "MCP server", logo: "mcp" })}
       />
 
@@ -129,44 +131,34 @@ EnvironmentsLanding.propTypes = {
 
 const linkSx = { color: "text.primary", fontWeight: 600, cursor: "pointer", "&:hover": { textDecoration: "underline" } };
 
-/* Agents already connected are listed under Your agents, at the bottom. */
-/* The landing's columns for one agent type (or all): the same ways in as
-   New agent — code first, built here on its own line — each opening with
-   the type set. */
-function ConnectSection({ sectionRef, onPick, onConnect, onTools }) {
-  const [type, setType] = useState(null);
-  const { builtin, groups } = useMemo(() => newAgentChoicesFor(type), [type]);
+/* The same catalogue as Agents → New agent — searchable, by where the agent
+   lives, every row saying how a fix comes back. Pasting is the box at the top
+   of this page, so here it only searches. Agents already connected are under
+   Your agents, at the bottom. */
+function ConnectSection({ sectionRef, onPick, onConnect, onTools, pickedId }) {
+  const { groups } = useMemo(() => newAgentChoicesFor(null), []);
+  const all = useMemo(() => groups.flatMap((g) => g.items), [groups]);
   return (
-    <Directory
-      sectionRef={sectionRef}
-      perGroup={5}
-      title="Connect your agent"
-      subtitle="Pick where it runs today — it joins Agents, then you build its environment here."
-      groups={groups}
-      topBand={(
-        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, px: 2, py: 1.5, borderBottom: "1px solid", borderColor: "divider" }}>
-          <ChipCard label="All types" on={!type} onClick={() => setType(null)} />
-          {AGENT_TYPES.map((t) => (
-            <ChipCard key={t.id} icon={t.icon} label={t.label} comingSoon={t.comingSoon} on={type === t.id} onClick={() => setType(t.id)} />
-          ))}
-        </Box>
-      )}
-      onPick={(item) => (item.choice ? onPick(item) : onConnect(item))}
-      emptyHint="If it runs somewhere we can call, connect it as an agent endpoint — or paste its link above."
-      footer={(
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          {builtin && (
-            <>
-              {"No agent yet? "}
-              <Box component="span" {...clickable(() => onConnect(builtin))} sx={{ ...linkSx, "&:focus-visible": focusRing }}>Build one in Future AGI</Box>
-              {" · "}
-            </>
-          )}
-          {"Tools on an MCP server? "}
-          <Box component="span" {...clickable(onTools)} sx={{ ...linkSx, "&:focus-visible": focusRing }}>Use them as an agent&apos;s world</Box>
-        </Typography>
-      )}
-    />
+    <Box ref={sectionRef} sx={{ scrollMarginTop: 16 }}>
+      <SectionHead
+        title="Connect your agent"
+        subtitle="Pick where it runs today — it joins Agents, then you build its environment here."
+      />
+      <ConnectCatalog
+        groups={groups}
+        popularIds={POPULAR_IDS}
+        /* This page has other ways in below and above — open on the few most people use. */
+        initialFilter="popular"
+        pickedId={pickedId}
+        onPick={(item) => (item.choice ? onPick(item) : onConnect(item))}
+        emptyHint="If it runs somewhere we can call, connect it as an agent endpoint — or paste its link at the top."
+        onFallback={() => onConnect(all.find((it) => it.id === "running"))}
+      />
+      <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 1.25 }}>
+        {"Tools on an MCP server? "}
+        <Box component="span" {...clickable(onTools)} sx={{ ...linkSx, "&:focus-visible": focusRing }}>Use them as an agent&apos;s world</Box>
+      </Typography>
+    </Box>
   );
 }
 ConnectSection.propTypes = {

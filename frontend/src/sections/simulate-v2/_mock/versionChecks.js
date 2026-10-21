@@ -44,6 +44,8 @@ export const versionChecksOf = (agent, source, version) => {
     add("endpoint", "Endpoint answered", v.endpoint || null);
   } else if (kind === "mcp") {
     add("server", "Server answered");
+  } else if (kind === "traces") {
+    add("traces", "Traces read", v.fromTraces?.traces ? `${v.fromTraces.traces} from ${v.fromTraces.project}` : v.fromTraces?.project || null);
   } else if (kind === "builtin" || kind === "prompt") {
     add("prompt", "Prompt and model resolve");
   }

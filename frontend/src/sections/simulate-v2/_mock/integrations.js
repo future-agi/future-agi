@@ -593,6 +593,54 @@ const TRACE_AI_DEFAULT = { pkg: "traceAI-openai", module: "traceai_openai", cls:
 
 export const setTracing = (key, value) => set({ tracing: { ...state.tracing, [key]: value } });
 
+/* The frameworks traceAI instruments, for picking one by hand. */
+export const TRACE_AI_FRAMEWORKS = [
+  { id: "OpenAI SDK", label: "OpenAI SDK" },
+  { id: "OpenAI Agents SDK", label: "OpenAI Agents SDK" },
+  { id: "LangGraph", label: "LangGraph / LangChain" },
+  { id: "LiveKit Agents", label: "LiveKit Agents" },
+];
+
+/**
+ * Setting traceAI up by hand — the same instrumentor the tracing pull request
+ * adds, as the three things to do: install, set the keys, add the lines.
+ * Keys are read from the environment, never written into the code.
+ * → { install, env, code, ts } — `ts` is false when the framework has no
+ *   TypeScript instrumentor (Python is used instead).
+ */
+export const traceAiSetupFor = ({ framework = "OpenAI SDK", language = "Python", project = "agent" } = {}) => {
+  const t = TRACE_AI[framework] || TRACE_AI_DEFAULT;
+  const env = "export FI_API_KEY=… FI_SECRET_KEY=…   # from Keys — set where the agent runs";
+  if (language === "TypeScript" && (t.ts || framework === "OpenAI SDK")) {
+    const tsT = t.ts || TRACE_AI_DEFAULT.ts;
+    return {
+      ts: true,
+      install: `npm install @traceai/fi-core ${tsT.pkg}`,
+      env,
+      code: [
+        'import { register, ProjectType } from "@traceai/fi-core";',
+        `import { ${tsT.cls} } from "${tsT.pkg}";`,
+        "",
+        `const tracerProvider = register({ projectType: ProjectType.OBSERVE, projectName: "${project}" });`,
+        `new ${tsT.cls}().setTracerProvider(tracerProvider);`,
+      ].join("\n"),
+    };
+  }
+  return {
+    ts: false,
+    install: `pip install fi-instrumentation-otel ${t.pkg}`,
+    env,
+    code: [
+      "from fi_instrumentation import register",
+      "from fi_instrumentation.fi_types import ProjectType",
+      `from ${t.module} import ${t.cls}`,
+      "",
+      `trace_provider = register(project_type=ProjectType.OBSERVE, project_name="${project}")`,
+      `${t.cls}().instrument(tracer_provider=trace_provider)`,
+    ].join("\n"),
+  };
+};
+
 /**
  * The "Do you want traceAI?" pull request. Detects the language and
  * framework from what the scan found, adds the dependency, a small setup

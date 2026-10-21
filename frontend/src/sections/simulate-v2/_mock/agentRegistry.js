@@ -197,11 +197,19 @@ const SOURCE_META = {
   /* Label and icon come from the framework; this is the fallback. */
   framework: { icon: "solar:layers-minimalistic-linear", label: "SDK adapter" },
   mcp: { icon: "solar:plug-circle-linear", label: "MCP manifest" },
+  /* Read from the agent's own production traces: its prompt, model and tools,
+     as the spans report them. Where it runs isn't known yet. */
+  traces: { icon: "solar:pulse-2-linear", label: "Read from traces" },
 };
 
 /** How we reach the agent when a simulation runs. */
 export const runtimeOf = (agent) => {
   const v = agent?.values || {};
+  /* Read from traces: we have its prompt and tools, not a way to call it —
+     it runs as that prompt on our model until its home is connected. */
+  if (definitionOf(agent).kind === "traces") {
+    return { kind: "platform", label: "Its prompt and tools, on our model", where: "until you connect where it runs", by: "web call" };
+  }
   /* Built here, so it runs here — nothing of theirs to call or deploy. */
   if (definitionOf(agent).kind === "builtin") {
     return { kind: "platform", label: "Runs in Future AGI", where: "nothing to deploy", by: v.contact?.mode === "phone" ? "phone" : v.contact ? "web call" : null };
@@ -284,6 +292,7 @@ export const agentSourceOf = (agent) => {
       : kind === "platform" ? (v.agentId || "")
         : kind === "prompt" ? "pasted when connected"
           : kind === "builtin" ? (d.kind === "prompt" ? "prompt written here" : `${d.model || "model not set"} · ${(d.tools || []).length} tool${(d.tools || []).length === 1 ? "" : "s"}`)
+            : kind === "traces" ? `Observe · ${d.project || "project"}`
             : runtime.where;
   /* Sync re-reads the definition, so it needs one we can read again — a
      framework agent is re-read by asking its adapter, wherever it runs. */
@@ -404,6 +413,24 @@ export const agentRecordFromSource = (source, now = new Date().toISOString()) =>
       definition: linkedRepo ? { kind: "repo", repoUrl: normalizeRepoUrl(linkedRepo), ref: "main" }
         : source?.systemPrompt ? { kind: "prompt", prompt: source.systemPrompt }
           : { kind: "none" },
+    };
+  } else if (kind === "traces") {
+    /* Saved from its production traces: the prompt, model and tools the spans
+       report, and the Observe project they come from — watched from the start. */
+    record = {
+      typeId: voice ? "voice_platform" : "chat_openai",
+      values: {
+        observability: { on: true, since: now, project: source?.project || null },
+        fromTraces: { project: source?.project || null, traces: source?.traceCount || null, framework: source?.framework || null, language: source?.language || null },
+      },
+      definition: {
+        kind: "traces",
+        project: source?.project || null,
+        prompt: source?.prompt || "",
+        model: source?.model || null,
+        tools: source?.tools || [],
+        ...(source?.framework && { framework: source.framework }),
+      },
     };
   } else if (kind === "builtin") {
     /* Defined here — instructions, tools and model — and run here. */
@@ -826,14 +853,14 @@ export const agentDefinitionOf = ({ agent, version, env, envState }) => {
   const voiceChange = [...upTo].reverse().flatMap((x) => x.changes || []).find((c) => c.kind === "voice");
 
   const def = definitionOf(agent);
-  const prompt = kind === "prompt" || kind === "builtin" || (kind === "platform" && def.prompt)
-    ? { text: editedPrompt ?? def.prompt ?? "", origin: editedPrompt != null ? "Edited in a later version" : kind === "platform" ? `Imported from ${PROVIDER_LABELS[v.provider] || "the platform"}` : "Written in Future AGI" }
+  const prompt = kind === "prompt" || kind === "builtin" || kind === "traces" || (kind === "platform" && def.prompt)
+    ? { text: editedPrompt ?? def.prompt ?? "", origin: editedPrompt != null ? "Edited in a later version" : kind === "platform" ? `Imported from ${PROVIDER_LABELS[v.provider] || "the platform"}` : kind === "traces" ? `Read from traces in ${def.project || "its Observe project"}` : "Written in Future AGI" }
     : agentPromptOf(
       { kind, value: def.repoUrl || agent?.location || v.endpoint || v.mcpUrl || "" },
       /* Voice or chat as the agent's Type says (agentChannelsOf), not the testing environment. */
       { ...env, surface: agentIsVoice(agent) ? "voice" : "chat", tools: env && envState ? agentToolsFor(env, envState, label) : env?.tools },
     );
-  const instructionsVisible = kind === "platform" || kind === "repo" || kind === "mcp" || kind === "upload" || kind === "prompt" || kind === "builtin" || kind === "framework";
+  const instructionsVisible = kind === "platform" || kind === "repo" || kind === "mcp" || kind === "upload" || kind === "prompt" || kind === "builtin" || kind === "framework" || kind === "traces";
   const instructions = instructionsVisible
     ? {
       visible: true,
@@ -844,7 +871,7 @@ export const agentDefinitionOf = ({ agent, version, env, envState }) => {
     }
     : { visible: false, why: UNSEEN.endpoint };
 
-  const modelVisible = kind === "platform" || kind === "repo" || kind === "upload" || kind === "builtin" || kind === "framework";
+  const modelVisible = kind === "platform" || kind === "repo" || kind === "upload" || kind === "builtin" || kind === "framework" || kind === "traces";
   const baseModel = v.model || def.model || MODELS[seed % 2];
   const model = modelVisible
     ? { visible: true, name: modelChange?.to || baseModel, temperature: def.temperature ?? 0.3, maxTokens: 1024 }
@@ -873,7 +900,8 @@ export const agentDefinitionOf = ({ agent, version, env, envState }) => {
     ? { visible: true, items: knowledgeFor(env) }
     : kind === "repo"
       ? { visible: true, items: [{ name: "policies.md", meta: "docs/ · indexed at build" }, { name: "faq.md", meta: "docs/ · indexed at build" }] }
-      : { visible: false, why: kind === "mcp" ? "An MCP server publishes tools and instructions, not the documents the agent reads." : UNSEEN[kind] || UNSEEN.endpoint };
+      : { visible: false, why: kind === "mcp" ? "An MCP server publishes tools and instructions, not the documents the agent reads."
+        : kind === "traces" ? "Traces show what the agent sent the model, not the documents it reads." : UNSEEN[kind] || UNSEEN.endpoint };
 
   const SECRET_FLAGS = { hasApiKey: "API key", hasToken: "Auth token" };
   /* Lifecycle and policy marks have their own rows on Connections. */

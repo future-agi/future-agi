@@ -31,7 +31,7 @@ export default function AgentDefinitionTab({
       <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
         {"Read-only record of "}
         <Box component="span" sx={{ fontFamily: MONO, color: "text.primary" }}>{`${label}${label === latest ? " (latest)" : ""}`}</Box>
-        {source.kind === "endpoint" ? " · an endpoint shows what the agent does, not how it's set up" : ` · read from ${source.label}`}
+        {source.kind === "endpoint" ? " · an endpoint shows what the agent does, not how it's set up" : source.kind === "traces" ? " · read from its traces" : ` · read from ${source.label}`}
       </Typography>
 
       <Section title="Identity" action={<ActionText onClick={() => onTab("connections")}>Edit on Connections</ActionText>}>
