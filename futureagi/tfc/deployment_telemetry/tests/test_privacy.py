@@ -128,3 +128,22 @@ def test_heartbeat_payload_shape_matches_contract(counts):
 
     extras = set(payload) - HEARTBEAT_FIELDS
     assert not extras, f"heartbeat payload added off-contract fields: {extras}"
+
+
+def test_opt_out_disclosure_names_every_field_the_minimal_ping_sends(monkeypatch):
+    """The log line an operator reads after opting out must not understate
+    what still leaves the install."""
+    from structlog.testing import capture_logs
+
+    from tfc.deployment_telemetry import sender
+
+    monkeypatch.setattr(sender, "_disclosure_logged", False)
+    monkeypatch.setattr(sender, "telemetry_is_disabled", lambda: True)
+    with capture_logs() as records:
+        sender._log_disclosure()
+
+    (record,) = [r for r in records if r["event"] == "deployment_telemetry_disclosure"]
+    sent = set(build_minimal_registration_payload(uuid4()))
+    # schema_version and telemetry_disabled describe the ping, not the install.
+    for field in sent - {"schema_version", "telemetry_disabled"}:
+        assert field.replace("_", " ") in record["sends"], field

@@ -165,7 +165,7 @@ export default function WorkspaceUsageTable({
           params.node.rowPinned ? { component: TotalCellRenderer } : undefined,
       },
       {
-        headerName: "Agent compass",
+        headerName: "Error Feed",
         field: "agent_compass",
         flex: 1,
         valueGetter: (params) =>

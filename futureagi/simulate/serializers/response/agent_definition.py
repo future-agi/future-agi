@@ -29,6 +29,7 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
             "agent_type",
             "contact_number",
             "inbound",
+            "target_speaks_first",
             "description",
             "assistant_id",
             "provider",
@@ -57,7 +58,21 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
     @staticmethod
     def _get_latest_creds(obj):
         """Get ProviderCredentials from the active or latest version."""
-        version = obj.active_version or obj.latest_version
+        prefetched_versions = getattr(obj, "_prefetched_versions", None)
+        if prefetched_versions is None:
+            active_version = obj.active_version
+            latest_version = obj.latest_version
+        else:
+            active_version = next(
+                (
+                    version
+                    for version in prefetched_versions
+                    if version.status == AgentVersion.StatusChoices.ACTIVE
+                ),
+                None,
+            )
+            latest_version = prefetched_versions[0] if prefetched_versions else None
+        version = active_version or latest_version
         if not version:
             return None
         try:
@@ -66,7 +81,7 @@ class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
             pass
         # Active version may exist without credentials (e.g. legacy data
         # with multiple active versions). Fall back to latest version.
-        fallback = obj.latest_version
+        fallback = latest_version
         if fallback and fallback.pk != version.pk:
             try:
                 return fallback.credentials
@@ -159,6 +174,7 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
             "agent_type",
             "contact_number",
             "inbound",
+            "target_speaks_first",
             "description",
             "assistant_id",
             "provider",

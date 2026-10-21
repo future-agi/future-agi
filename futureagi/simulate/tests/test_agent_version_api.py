@@ -211,9 +211,7 @@ class TestCreateAgentVersion:
         assert version.credentials.get_api_key() == raw_api_key
         serialized = response.json()
         assert raw_api_key not in str(serialized)
-        assert serialized["version"]["api_key"] == mask_key(
-            raw_api_key
-        )
+        assert serialized["version"]["api_key"] == mask_key(raw_api_key)
 
     def test_create_with_masked_api_key_preserves_direct_version_creds(
         self, auth_client, agent_definition, agent_version
@@ -251,6 +249,52 @@ class TestCreateAgentVersion:
         serialized = response.json()
         assert raw_api_key not in str(serialized)
         assert serialized["version"]["api_key"] == mask_key(raw_api_key)
+
+    def test_create_with_masked_livekit_secret_preserves_existing(
+        self, auth_client, agent_definition, agent_version
+    ):
+        from simulate.services.agent_definition import sync_provider_credentials
+        from simulate.services.types.agent_definition import ProviderCredentialsInput
+
+        raw_key = "APIlivekit-key-abc123"
+        raw_secret = "livekit-secret-def456ghi"
+        sync_provider_credentials(
+            agent_version,
+            ProviderCredentialsInput(
+                provider="livekit",
+                livekit_api_key=raw_key,
+                livekit_api_secret=raw_secret,
+                livekit_url="https://lk.example.com",
+                livekit_agent_name="receptionist-1",
+                provider_was_provided=True,
+            ),
+        )
+        assert agent_version.credentials.get_api_key() == raw_key
+        assert agent_version.credentials.get_api_secret() == raw_secret
+
+        # The UI resends the LiveKit key/secret masked on a new version.
+        response = auth_client.post(
+            _url(agent_definition.id, "create/"),
+            {
+                "commit_message": "New version, LiveKit secrets unchanged",
+                "provider": "livekit",
+                "livekit_url": "https://lk.example.com",
+                "livekit_agent_name": "receptionist-1",
+                "livekit_api_key": mask_key(raw_key),
+                "livekit_api_secret": "********",
+                "description": "Should preserve masked LiveKit key/secret",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        new_version = agent_definition.latest_version
+        assert new_version.id != agent_version.id
+        assert new_version.credentials.get_api_key() == raw_key
+        assert new_version.credentials.get_api_secret() == raw_secret
+        body = str(response.json())
+        assert raw_key not in body
+        assert raw_secret not in body
 
     def test_creates_snapshot(self, auth_client, agent_definition, agent_version):
         response = auth_client.post(
@@ -876,6 +920,42 @@ class TestAgentVersionCallExecutions:
         assert data["count"] >= 15
         # 15 rows / 5 per page = 3 pages
         assert data["total_pages"] == 3
+
+    def test_call_executions_honour_page_size(
+        self,
+        auth_client,
+        agent_definition,
+        agent_version,
+        scenario,
+        test_execution,
+        pass_fail_config,
+    ):
+        """The call-log grid sends page_size, as the trace lists do; it must set
+        the page size here too, not fall back to the default of 10."""
+        pf_id = str(pass_fail_config.id)
+        for i in range(30):
+            CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario,
+                agent_version=agent_version,
+                phone_number=f"+9710000{i:03d}",
+                status="completed",
+                eval_outputs={
+                    pf_id: {
+                        "name": "Quality Gate",
+                        "output": "Passed",
+                        "output_type": "Pass/Fail",
+                    }
+                },
+            )
+        url = _version_url(agent_definition.id, agent_version.id, "call-executions/")
+
+        first = auth_client.get(url + "?page=1&page_size=25").json()
+        assert len(first["results"]) == 25
+        assert first["total_pages"] == 2
+
+        last = auth_client.get(url + "?page=2&page_size=25").json()
+        assert len(last["results"]) == first["count"] - 25
 
     def test_unauthenticated(self, api_client, agent_definition, agent_version):
         response = api_client.get(

@@ -456,15 +456,23 @@ const ManageMonitorSettings = ({
                   <FormTextFieldV2
                     size="small"
                     label={
-                      selectedMetric?.output_type === "system_metric"
-                        ? "Value"
-                        : "Percentage"
+                      thresholdType === "auto"
+                        ? "Percentage"
+                        : ["choices", "Pass/Fail"].includes(
+                              selectedMetric?.output_type,
+                            )
+                          ? "Fraction (0-1)"
+                          : "Value"
                     }
                     fieldName="thresholdValue"
                     placeholder={
-                      selectedMetric?.output_type === "system_metric"
-                        ? "Enter value"
-                        : "Enter percentage"
+                      thresholdType === "auto"
+                        ? "Enter percentage"
+                        : ["choices", "Pass/Fail"].includes(
+                              selectedMetric?.output_type,
+                            )
+                          ? "Enter fraction, e.g. 0.095 for 9.5%"
+                          : "Enter value"
                     }
                     control={control}
                     sx={{ minWidth: "162px", flex: 1 }}

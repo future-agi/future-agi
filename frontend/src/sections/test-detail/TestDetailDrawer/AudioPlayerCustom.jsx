@@ -12,6 +12,8 @@ import LoadingStateComponent from "src/components/CallLogsDetailDrawer/LoadingSt
 import { getLoadingStateWithRespectiveStatus } from "../common";
 import { normalizeRecordings } from "src/utils/utils";
 import useStereoChannels from "src/hooks/use-stereo-channels";
+import RecordingFailure from "src/components/multi-track-audio-player/RecordingFailure";
+import { UNAVAILABLE } from "src/components/multi-track-audio-player/failureVariants";
 
 const isUpdatedWithinTwoMinutes = (timestamp) => {
   if (!timestamp) return false;
@@ -82,6 +84,7 @@ export const StereoMultiTrackPlayer = ({
   height = 70,
   onInstance,
   isInbound = false,
+  provider = null,
 }) => {
   const theme = useTheme();
   // Speaker palette — matches the TranscriptView timeline strip / talk
@@ -98,7 +101,12 @@ export const StereoMultiTrackPlayer = ({
     customerUrl: stereoCustomer,
     loading: stereoLoading,
     error: stereoError,
-  } = useStereoChannels(recordings?.stereo || "", isInbound);
+  } = useStereoChannels(
+    recordings?.stereo || "",
+    isInbound,
+    provider,
+    recordings?.stereoChannels,
+  );
 
   // Use stereo-split channels when available, fall back to separate mono files
   const useStereo =
@@ -111,7 +119,10 @@ export const StereoMultiTrackPlayer = ({
   // neither be filled nor tell the speakers apart, and the player only becomes
   // ready once every track loads. Hand it to the single-track bar instead.
   const combinedOnly =
-    !useStereo && !assistantUrl && !customerUrl && Boolean(recordings?.combined);
+    !useStereo &&
+    !assistantUrl &&
+    !customerUrl &&
+    Boolean(recordings?.combined);
 
   const trackUrls = useMemo(
     () => [
@@ -131,6 +142,17 @@ export const StereoMultiTrackPlayer = ({
 
   if (combinedOnly) {
     return <SingleTrackPlayer url={recordings.combined} />;
+  }
+
+  // The stereo split was the only source and it failed (403, CORS, decode),
+  // or produced nothing: no track has a URL, so the multi-track player would
+  // wait on them forever.
+  if (!useStereo && !assistantUrl && !customerUrl) {
+    return (
+      <Box sx={{ position: "relative", height: height * 2 + 20 }}>
+        <RecordingFailure variant={UNAVAILABLE} />
+      </Box>
+    );
   }
 
   if (useStereo && stereoLoading) {
@@ -169,6 +191,7 @@ StereoMultiTrackPlayer.propTypes = {
   height: PropTypes.number,
   onInstance: PropTypes.func,
   isInbound: PropTypes.bool,
+  provider: PropTypes.string,
 };
 
 const AudioPlayerCustom = ({ data, onInstance }) => {
@@ -185,6 +208,7 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
       data?.call_type ||
       ""
     ).toLowerCase() === "inbound";
+  const provider = data?.provider || data?.call_metadata?.provider || null;
   if (isCallInProgress) {
     return (
       <Box sx={{ height: 200 }}>
@@ -210,18 +234,40 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
 
     // Normalize recordings to flat format for project module
     const normalizedRecordings = normalizeRecordings(data?.recording);
+    // The drawer only mounts this once the detail response has arrived, so a
+    // call that still has no URL here has none to play.
+    const hasAnyUrl = Boolean(
+      normalizedRecordings.stereo ||
+        normalizedRecordings.combined ||
+        normalizedRecordings.assistant ||
+        normalizedRecordings.customer,
+    );
+    if (!hasAnyUrl) {
+      return (
+        <Box sx={{ position: "relative", height: 200 }}>
+          <RecordingFailure variant={UNAVAILABLE} />
+        </Box>
+      );
+    }
     return (
       <StereoMultiTrackPlayer
         recordings={normalizedRecordings}
         id={data?.id}
         onInstance={onInstance}
         isInbound={isInbound}
+        provider={provider}
       />
     );
   }
 
   // Normalize recordings structure to flat format: {stereo, combined, assistant, customer}
-  const recordings = normalizeRecordings(data?.recordings);
+  const recordings = normalizeRecordings({
+    ...(data?.recordings || {}),
+    // Keep the player resilient to older/detail responses that expose only
+    // the canonical audio_url field.
+    combined:
+      data?.recordings?.combined || data?.audio_url || data?.audioUrl || "",
+  });
   const hasRecordingData =
     (data?.audio_url ?? data?.audioUrl) ||
     recordings?.assistant ||
@@ -252,6 +298,7 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
         id={data?.id}
         onInstance={onInstance}
         isInbound={isInbound}
+        provider={provider}
       />
     );
   }

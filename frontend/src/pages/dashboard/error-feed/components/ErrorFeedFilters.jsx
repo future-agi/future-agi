@@ -37,6 +37,12 @@ const SEVERITY_OPTIONS = [
   { value: "low", label: "Low" },
 ];
 
+const SOURCE_OPTIONS = [
+  { value: "", label: "All Sources" },
+  { value: "scanner", label: "Scanner" },
+  { value: "eval", label: "Eval" },
+];
+
 const TIME_RANGE_OPTIONS = [
   { value: "1", label: "Last 24 hours" },
   { value: "7", label: "Last 7 days" },
@@ -233,6 +239,8 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
     setSelectedStatus,
     selectedSeverity,
     setSelectedSeverity,
+    selectedSource,
+    setSelectedSource,
     selectedFixLayer,
     setSelectedFixLayer,
     timeRange,
@@ -246,12 +254,17 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
   );
 
   const hasActiveFilters =
-    selectedProject || selectedStatus || selectedSeverity || selectedFixLayer;
+    selectedProject ||
+    selectedStatus ||
+    selectedSeverity ||
+    selectedSource ||
+    selectedFixLayer;
 
   const clearAllFilters = () => {
     setSelectedProject("");
     setSelectedStatus("");
     setSelectedSeverity("");
+    setSelectedSource("");
     setSelectedFixLayer("");
     setSearchQuery("");
   };
@@ -341,6 +354,12 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
             onChange={setSelectedFixLayer}
             options={FIX_LAYER_OPTIONS}
             minWidth={140}
+          />
+          <CompactSelect
+            value={selectedSource}
+            onChange={setSelectedSource}
+            options={SOURCE_OPTIONS}
+            minWidth={120}
           />
 
           {hasActiveFilters && (

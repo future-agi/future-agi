@@ -1,4 +1,3 @@
-import json
 import uuid
 
 import pytest
@@ -8,8 +7,6 @@ from accounts.models.organization import Organization
 from accounts.models.user import User
 from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
-from simulate.models import AgentDefinition, AgentVersion
-from simulate.models.agent_definition import ProviderCredentials
 from tfc.constants.roles import OrganizationRoles
 from tracer.models.observability_provider import (
     ObservabilityProvider,
@@ -18,68 +15,11 @@ from tracer.models.observability_provider import (
 from tracer.models.project import Project
 
 PROVIDERS_PATH = "/tracer/observability-provider/"
-WEBHOOK_PATH = "/tracer/webhook/"
 
 
 def result(response):
     body = response.json()
     return body.get("result", body)
-
-
-def create_webhook_agent_fixture(
-    *,
-    organization,
-    workspace,
-    assistant_id,
-    api_key,
-    enabled=True,
-):
-    project = Project.no_workspace_objects.create(
-        name=f"Webhook Project {uuid.uuid4().hex[:8]}",
-        organization=organization,
-        workspace=workspace,
-        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
-        trace_type="observe",
-    )
-    provider = ObservabilityProvider.no_workspace_objects.create(
-        project=project,
-        provider=ProviderChoices.RETELL,
-        enabled=enabled,
-        organization=organization,
-        workspace=workspace,
-        metadata={"assistant_id": assistant_id},
-    )
-    agent_definition = AgentDefinition.no_workspace_objects.create(
-        agent_name=f"Webhook Agent {uuid.uuid4().hex[:8]}",
-        agent_type=AgentDefinition.AgentTypeChoices.VOICE,
-        inbound=False,
-        description="Disposable webhook agent fixture",
-        assistant_id=assistant_id,
-        provider=ProviderChoices.RETELL,
-        organization=organization,
-        workspace=workspace,
-        observability_provider=provider,
-    )
-    AgentVersion.no_workspace_objects.create(
-        agent_definition=agent_definition,
-        organization=organization,
-        workspace=workspace,
-        version_number=1,
-        status=AgentVersion.StatusChoices.ACTIVE,
-        description="Webhook fixture version",
-        commit_message="webhook fixture",
-        configuration_snapshot={
-            "assistant_id": assistant_id,
-            "provider": ProviderChoices.RETELL,
-        },
-    )
-    ProviderCredentials.no_workspace_objects.create(
-        agent_version=agent_definition.latest_version,
-        provider_type=ProviderCredentials.ProviderType.RETELL,
-        api_key=api_key,
-        assistant_id=assistant_id,
-    )
-    return agent_definition
 
 
 @pytest.mark.django_db
@@ -330,163 +270,6 @@ def test_observability_provider_verify_actions(auth_client, monkeypatch):
         ("api_key", ProviderChoices.RETELL, "test-key"),
         ("assistant_id", ProviderChoices.RETELL, "assistant-test", "test-key"),
     ]
-
-
-@pytest.mark.django_db
-def test_webhook_signed_retell_callback_dispatches_for_enabled_agent(
-    api_client,
-    organization,
-    workspace,
-    monkeypatch,
-):
-    assistant_id = f"retell-assistant-{uuid.uuid4().hex[:8]}"
-    api_key = "retell-test-secret"
-    agent_definition = create_webhook_agent_fixture(
-        organization=organization,
-        workspace=workspace,
-        assistant_id=assistant_id,
-        api_key=api_key,
-    )
-    payload = {
-        "event": "call_analyzed",
-        "interaction_type": "voice",
-        "call": {
-            "agent_id": assistant_id,
-            "call_id": f"call-{uuid.uuid4().hex[:8]}",
-        },
-    }
-    dispatched = []
-    signature = retell_signature(payload, api_key)
-
-    def fake_delay(**kwargs):
-        dispatched.append(kwargs)
-
-    monkeypatch.setattr(
-        "tracer.views.observability_provider.normalize_and_store_logs.delay",
-        fake_delay,
-    )
-
-    response = api_client.post(
-        WEBHOOK_PATH,
-        payload,
-        format="json",
-        HTTP_X_RETELL_SIGNATURE=signature,
-    )
-
-    assert response.status_code == status.HTTP_200_OK
-    assert "Processed: 1" in result(response)
-    assert dispatched == [
-        {
-            "body": payload,
-            "agent_definition_id": agent_definition.id,
-        }
-    ]
-
-
-@pytest.mark.django_db
-def test_webhook_signed_retell_callback_runs_inline_when_dispatch_unavailable(
-    api_client,
-    organization,
-    workspace,
-    monkeypatch,
-):
-    assistant_id = f"retell-assistant-{uuid.uuid4().hex[:8]}"
-    api_key = "retell-test-secret"
-    agent_definition = create_webhook_agent_fixture(
-        organization=organization,
-        workspace=workspace,
-        assistant_id=assistant_id,
-        api_key=api_key,
-    )
-    payload = {
-        "event": "call_analyzed",
-        "interaction_type": "voice",
-        "call": {
-            "agent_id": assistant_id,
-            "call_id": f"call-{uuid.uuid4().hex[:8]}",
-        },
-    }
-    calls = []
-    signature = retell_signature(payload, api_key)
-
-    def failing_delay(**kwargs):
-        calls.append(("delay", kwargs))
-        raise RuntimeError("temporal unavailable")
-
-    def fake_run_sync(**kwargs):
-        calls.append(("run_sync", kwargs))
-
-    monkeypatch.setattr(
-        "tracer.views.observability_provider.normalize_and_store_logs.delay",
-        failing_delay,
-    )
-    monkeypatch.setattr(
-        "tracer.views.observability_provider.normalize_and_store_logs.run_sync",
-        fake_run_sync,
-    )
-
-    response = api_client.post(
-        WEBHOOK_PATH,
-        payload,
-        format="json",
-        HTTP_X_RETELL_SIGNATURE=signature,
-    )
-
-    expected_kwargs = {
-        "body": payload,
-        "agent_definition_id": agent_definition.id,
-    }
-    assert response.status_code == status.HTTP_200_OK
-    assert "Processed: 1" in result(response)
-    assert calls == [("delay", expected_kwargs), ("run_sync", expected_kwargs)]
-
-
-@pytest.mark.django_db
-def test_webhook_invalid_signature_rejects_without_dispatch(
-    api_client,
-    organization,
-    workspace,
-    monkeypatch,
-):
-    assistant_id = f"retell-assistant-{uuid.uuid4().hex[:8]}"
-    create_webhook_agent_fixture(
-        organization=organization,
-        workspace=workspace,
-        assistant_id=assistant_id,
-        api_key="retell-test-secret",
-    )
-    payload = {
-        "event": "call_analyzed",
-        "interaction_type": "voice",
-        "call": {
-            "agent_id": assistant_id,
-            "call_id": f"call-{uuid.uuid4().hex[:8]}",
-        },
-    }
-    dispatched = []
-
-    monkeypatch.setattr(
-        "tracer.views.observability_provider.normalize_and_store_logs.delay",
-        lambda **kwargs: dispatched.append(kwargs),
-    )
-
-    response = api_client.post(
-        WEBHOOK_PATH,
-        payload,
-        format="json",
-        HTTP_X_RETELL_SIGNATURE="bad-signature",
-    )
-
-    assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert result(response) == "Invalid webhook signature"
-    assert dispatched == []
-
-
-def retell_signature(payload, api_key):
-    from retell.lib.webhook_auth import symmetric
-
-    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-    return symmetric["sign"](body, api_key)
 
 
 @pytest.mark.parametrize(

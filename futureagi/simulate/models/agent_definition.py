@@ -76,6 +76,18 @@ class AgentDefinition(BaseModel):
 
     inbound = models.BooleanField(help_text="Whether the agent handles inbound calls")
 
+    target_speaks_first = models.BooleanField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Whether the target agent speaks first (greets) in a hosted voice "
+            "simulation. True: the simulator waits for the target's greeting; "
+            "False: the simulator opens the conversation; null: derive from "
+            "inbound/outbound. Retell targets always let the simulator open "
+            "(SDK limitation)."
+        ),
+    )
+
     description = models.TextField(
         help_text="Detailed description of the AI agent's purpose and capabilities"
     )

@@ -37,6 +37,7 @@ import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 import { unwrapCellValue } from "./datasetCellValue";
 import { buildTree } from "./columnTree";
 import RequiredMark from "src/components/RequiredMark";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 const DATASET_PAGE_SIZE = 25;
 
@@ -1308,16 +1309,15 @@ const DatasetTestMode = React.forwardRef(
             startErrorLocalizerPoll(data.result.log_id);
           }
         } else {
-          const errMsg = data?.result || "Evaluation failed";
+          const errMsg = "Evaluation failed. Please retry.";
           setError(errMsg);
           onTestResult?.(false, errMsg);
         }
       } catch (err) {
-        const errMsg =
-          err?.result ||
-          err?.detail ||
-          err?.message ||
-          "Failed to run evaluation";
+        const errMsg = getSafeActionErrorMessage(
+          err,
+          "Failed to run evaluation. Please retry.",
+        );
         setError(errMsg);
         onTestResult?.(false, errMsg);
       } finally {
@@ -1424,7 +1424,14 @@ const DatasetTestMode = React.forwardRef(
     );
 
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1.5,
+          height: "100%",
+        }}
+      >
         {/* Dataset selector — hidden when initialDatasetId or sourceColumns is provided */}
         {!initialDatasetId && !isWorkbenchMode && (
           <Box>

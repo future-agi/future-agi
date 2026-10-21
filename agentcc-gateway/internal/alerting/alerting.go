@@ -120,12 +120,25 @@ func (m *Manager) Record(metric string, value float64) {
 	}
 }
 
+// averagedMetrics are compared by their mean over the window. Every other
+// metric is a count or a total and is compared by its sum.
+var averagedMetrics = map[string]bool{"latency_avg": true}
+
+// value returns what the rule compares with its threshold. ok is false when
+// an averaged metric has no sample in the window: there is no mean to compare.
+func (r *Rule) value() (value float64, ok bool) {
+	if averagedMetrics[r.Metric] {
+		return r.counter.Mean()
+	}
+	return r.counter.Sum(), true
+}
+
 // Evaluate checks all rules and fires alerts if thresholds are exceeded.
 func (m *Manager) Evaluate() {
 	now := time.Now()
 	for _, r := range m.rules {
-		sum := r.counter.Sum()
-		if !conditionMet(sum, r.Condition, r.Threshold) {
+		value, ok := r.value()
+		if !ok || !conditionMet(value, r.Condition, r.Threshold) {
 			continue
 		}
 
@@ -141,7 +154,7 @@ func (m *Manager) Evaluate() {
 		alert := Alert{
 			Name:      r.Name,
 			Metric:    r.Metric,
-			Value:     sum,
+			Value:     value,
 			Threshold: r.Threshold,
 			Condition: r.Condition,
 			Window:    r.Window.String(),
@@ -190,6 +203,7 @@ func conditionMet(value float64, condition string, threshold float64) bool {
 type WindowCounter struct {
 	mu       sync.Mutex
 	buckets  []float64
+	samples  []int         // values recorded per bucket, for Mean
 	interval time.Duration // per-bucket interval
 	nBuckets int
 	cursor   int
@@ -203,6 +217,7 @@ func NewWindowCounter(window time.Duration, nBuckets int) *WindowCounter {
 	}
 	return &WindowCounter{
 		buckets:  make([]float64, nBuckets),
+		samples:  make([]int, nBuckets),
 		interval: window / time.Duration(nBuckets),
 		nBuckets: nBuckets,
 		lastTick: time.Now(),
@@ -215,6 +230,7 @@ func (w *WindowCounter) Record(value float64) {
 	defer w.mu.Unlock()
 	w.advance()
 	w.buckets[w.cursor] += value
+	w.samples[w.cursor]++
 }
 
 // Sum returns the total across all buckets.
@@ -227,6 +243,24 @@ func (w *WindowCounter) Sum() float64 {
 		total += v
 	}
 	return total
+}
+
+// Mean returns the average of the values recorded in the window. ok is false
+// when nothing was recorded.
+func (w *WindowCounter) Mean() (mean float64, ok bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.advance()
+	var total float64
+	var n int
+	for i, v := range w.buckets {
+		total += v
+		n += w.samples[i]
+	}
+	if n == 0 {
+		return 0, false
+	}
+	return total / float64(n), true
 }
 
 // advance moves the cursor forward, zeroing stale buckets.
@@ -244,6 +278,7 @@ func (w *WindowCounter) advance() {
 	for i := 0; i < ticks; i++ {
 		w.cursor = (w.cursor + 1) % w.nBuckets
 		w.buckets[w.cursor] = 0
+		w.samples[w.cursor] = 0
 	}
 	// Snap to tick boundary instead of using wall clock to prevent drift.
 	w.lastTick = w.lastTick.Add(time.Duration(ticks) * w.interval)

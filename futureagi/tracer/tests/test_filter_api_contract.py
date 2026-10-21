@@ -40,9 +40,18 @@ def test_filter_request_schemas_are_not_generic_json_objects():
     that silently accepts camelCase drift.
     """
 
-    definitions = _swagger()["definitions"]
+    swagger = _swagger()
+    definitions = swagger["definitions"]
 
-    _assert_filter_item_schema(definitions["FetchGraph"]["properties"]["filters"])
+    fetch_graph = swagger["paths"]["/tracer/charts/fetch_graph/"]["get"]
+    fetch_filters = next(
+        parameter
+        for parameter in fetch_graph["parameters"]
+        if parameter["name"] == "filters"
+    )
+    assert fetch_filters["type"] == "string"
+    assert "items" not in fetch_filters
+    assert fetch_filters["default"] == "[]"
     _assert_filter_item_schema(definitions["Selection"]["properties"]["filter"])
 
 

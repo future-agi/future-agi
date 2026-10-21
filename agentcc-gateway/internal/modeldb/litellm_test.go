@@ -389,7 +389,7 @@ func TestParseLiteLLM_ActualFile(t *testing.T) {
 		mode     ModelMode
 	}{
 		{"gpt-4o", "openai", ModeChat},
-		{"claude-3-5-sonnet-20241022", "anthropic", ModeChat},
+		{"claude-sonnet-4-6", "anthropic", ModeChat},
 		{"text-embedding-3-small", "openai", ModeEmbedding},
 	}
 

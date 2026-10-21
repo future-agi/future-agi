@@ -452,6 +452,21 @@ class EvalLogger(BaseModel):
                 fields=["eval_task_id", "status"],
                 name="eval_logger_task_status_idx",
             ),
+            models.Index(
+                fields=["eval_task_id", "created_at", "id"],
+                name="eval_logger_task_created_idx",
+                condition=models.Q(eval_task_id__isnull=False, deleted=False),
+            ),
+            models.Index(
+                fields=[
+                    "eval_task_id",
+                    "custom_eval_config",
+                    "created_at",
+                    "id",
+                ],
+                name="eval_log_task_cfg_created_idx",
+                condition=models.Q(eval_task_id__isnull=False, deleted=False),
+            ),
         ]
         constraints = [
             # Mutual-exclusion rule: span and trace targets share the

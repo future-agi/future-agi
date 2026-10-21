@@ -6,6 +6,7 @@ criteria: Validates that an agent's execution uses an appropriate number of step
 eval_tags:
 - Agents
 - Output Validation
+- Tools
 visible_ui: true
 permissions:
   allow_edit: false

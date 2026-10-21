@@ -1,0 +1,6 @@
+# CI only: the application keys from an existing Secret, as Argo CD needs (it
+# renders without `lookup`, so it cannot read generated ones back), over
+# examples/external.yaml. hack/check.sh renders it twice: the two renders must
+# be identical, since every sync re-renders the chart.
+secrets:
+  existingSecret: futureagi-app

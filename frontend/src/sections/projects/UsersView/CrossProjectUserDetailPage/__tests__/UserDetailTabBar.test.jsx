@@ -1,7 +1,12 @@
 /* eslint-disable react/prop-types */
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithRouter, screen, userEvent } from "src/utils/test-utils";
+import {
+  renderWithRouter,
+  screen,
+  userEvent,
+  waitFor,
+} from "src/utils/test-utils";
 
 // Capture the payload the save mutation receives so we can assert the encoded
 // `sub_tab`. The grouping (trace vs span) is read from the `selectedTab` URL
@@ -89,4 +94,53 @@ describe("UserDetailTabBar — saved-view grouping (sub_tab)", () => {
     );
     expect(config.sub_tab).toBe("sessions");
   });
+});
+
+describe("UserDetailTabBar — direct-link filters", () => {
+  it.each([
+    {
+      activeTab: "sessions",
+      dateKey: "sessionDateFilter",
+      filterKey: "sessionFilter",
+    },
+    {
+      activeTab: "traces",
+      dateKey: "primaryTraceDateFilter",
+      filterKey: "primaryTraceFilter",
+    },
+  ])(
+    "preserves explicit $activeTab date and filter state on mount",
+    async ({ activeTab, dateKey, filterKey }) => {
+      const dateFilter = {
+        dateFilter: ["2026-07-01 00:00:00", "2026-07-08 00:00:00"],
+        dateOption: "7D",
+      };
+      const filters = [
+        {
+          column_id: "status",
+          filter_config: {
+            filter_type: "text",
+            filter_op: "equals",
+            filter_value: "success",
+          },
+        },
+      ];
+      const params = new URLSearchParams({
+        userTab: activeTab,
+        [dateKey]: JSON.stringify(dateFilter),
+        [filterKey]: JSON.stringify(filters),
+      });
+
+      renderWithRouter(
+        <UserDetailTabBar activeTab={activeTab} onTabChange={vi.fn()} />,
+        { route: `/dashboard/users/bob?${params.toString()}` },
+      );
+
+      await waitFor(() => {
+        const current = new URLSearchParams(window.location.search);
+        expect(current.get(dateKey)).toBe(JSON.stringify(dateFilter));
+        expect(current.get(filterKey)).toBe(JSON.stringify(filters));
+      });
+    },
+  );
 });

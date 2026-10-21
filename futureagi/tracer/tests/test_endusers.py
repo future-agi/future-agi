@@ -128,6 +128,16 @@ def _empty_enrichment_result():
     )
 
 
+def _dimension_exists_result():
+    return QueryResult(
+        data=[{"has_curated_user": 1}],
+        row_count=1,
+        backend_used="clickhouse",
+        query_time_ms=0.0,
+        columns=["has_curated_user"],
+    )
+
+
 _EXECUTE_CH_PATH = (
     "tracer.services.clickhouse.query_service.AnalyticsQueryService.execute_ch_query"
 )
@@ -264,7 +274,10 @@ class TestUsersViewAPI(APITestCase):
             ),
         ]
         mock_get_spans.side_effect = [
+            _dimension_exists_result(),
             _make_user_list_result(mock_rows),
+            _empty_enrichment_result(),
+            _empty_enrichment_result(),
             _empty_enrichment_result(),
         ]
 
@@ -333,8 +346,14 @@ class TestUsersViewAPI(APITestCase):
 
         response = self.client.get(self.url, data)
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("error fetching users", str(response.data["result"]))
+        # An arbitrary executor defect is a sanitized server failure, not a
+        # client validation error. The response must still hide CH internals.
+        self.assertEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        self.assertEqual(
+            response.data["result"],
+            "User data could not be loaded",
+        )
+        self.assertNotIn("Database connection error", str(response.data))
 
     @patch(_EXECUTE_CH_PATH)
     def test_users_list_page_calculation_exact_division(self, mock_get_spans):
@@ -366,7 +385,10 @@ class TestUsersViewAPI(APITestCase):
             )
         ]
         mock_get_spans.side_effect = [
+            _dimension_exists_result(),
             _make_user_list_result(mock_rows),
+            _empty_enrichment_result(),
+            _empty_enrichment_result(),
             _empty_enrichment_result(),
         ]
 
@@ -407,7 +429,10 @@ class TestUsersViewAPI(APITestCase):
             )
         ]
         mock_get_spans.side_effect = [
+            _dimension_exists_result(),
             _make_user_list_result(mock_rows),
+            _empty_enrichment_result(),
+            _empty_enrichment_result(),
             _empty_enrichment_result(),
         ]
 
@@ -421,13 +446,12 @@ class TestUsersViewAPI(APITestCase):
         )  # 23/10 = 2 + 1 for remainder
 
     @patch(_EXECUTE_CH_PATH)
-    def test_users_list_invalid_column_in_sort(self, mock_get_spans):
-        """Test handling of invalid column in sort parameters"""
+    def test_users_list_invalid_column_in_sort_uses_default_order(self, mock_get_spans):
+        """Unknown legacy sort columns remain ignored for wire compatibility."""
         mock_get_spans.side_effect = [
+            _dimension_exists_result(),
             _make_user_list_result([]),
-            _empty_enrichment_result(),
         ]
-
         data = {
             "project_id": self.test_project_id,
             "sort_params": json.dumps(
@@ -438,11 +462,7 @@ class TestUsersViewAPI(APITestCase):
         response = self.client.get(self.url, data)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-        # Invalid column should result in None for sort_by
-        mock_get_spans.assert_called_once()
-        call_args = mock_get_spans.call_args[1]
-        self.assertNotIn("sort_by", call_args)  # None values are filtered out
+        self.assertEqual(mock_get_spans.call_count, 2)
 
 
 @pytest.mark.integration

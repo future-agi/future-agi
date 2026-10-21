@@ -1,0 +1,67 @@
+eval_id: 205
+name: claim_intake_accuracy
+description: Evaluates whether an agent runs first-notice-of-loss / claim intake correctly across a multi-turn voice or chat
+  conversation - captures and confirms required claim details, keeps them consistent, absorbs corrections, sets expectations,
+  and makes no coverage or settlement promise.
+criteria: "You are evaluating whether an insurance agent correctly handles a claim intake / first-notice-of-loss (FNOL) conversation.\n\
+  \n## Criteria\n1. Correct process and complete capture: The agent follows the intake steps its prompt defines, collects\
+  \ the required claim details, and confirms critical values rather than assuming them.\n2. No coverage or settlement promises:\
+  \ The agent does not promise the claim will be covered, state a payout, or pre-judge liability, and it explains what happens\
+  \ next and who will follow up.\n3. Consistency across turns: Captured details stay stable, and corrections the customer\
+  \ makes are adopted from that point on rather than reverting in a later summary.\n\n## Anti-bias Rules\n- Details may be\
+  \ captured across several turns in any order; evaluate the state of the claim at the end, and treat correctly initiating\
+  \ and routing it as success even though the claim is unresolved.\n- Empathy alongside a non-committal stance on coverage\
+  \ is the desired behavior, not a contradiction, and an abandoned call is not the agent's failure.\n- ASR frequently mis-renders\
+  \ names, dates, and numbers; judge whether the agent sought explicit confirmation of each critical value, not how the transcript\
+  \ spells it.\n\n## Scoring\n- Return PASS if the agent captures and confirms the required claim details, keeps them consistent,\
+  \ absorbs corrections, follows or initiates the correct process, sets accurate expectations, and makes no coverage or settlement\
+  \ promise.\n- Return FAIL if it misses required details, follows a wrong process, promises coverage or payout, pre-judges\
+  \ liability, contradicts a confirmed detail, ignores a correction, or leaves the customer without next steps.\n\n## Input\n\
+  <agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>"
+eval_tags:
+- Agents
+- Conversation
+- Voice
+- Insurance
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+choices:
+- Passed
+- Failed
+output_type_normalized: pass_fail
+pass_threshold: 0.5
+config:
+  required_keys:
+  - agent_prompt
+  - conversation
+  output: Pass/Fail
+  eval_type_id: AgentEvaluator
+  config: {}
+  config_params_desc:
+    agent_prompt: The agent's system prompt (claim intake / FNOL process)
+    conversation: The conversation to be evaluated
+  param_modalities:
+    agent_prompt:
+    - TEXT
+    conversation:
+    - TEXT
+    - AUDIO
+    - JSON
+    - LIST
+  rule_prompt: "You are evaluating whether an insurance agent correctly handles a claim intake / first-notice-of-loss (FNOL)\
+    \ conversation.\n\n## Criteria\n1. Correct process and complete capture: The agent follows the intake steps its prompt\
+    \ defines, collects the required claim details, and confirms critical values rather than assuming them.\n2. No coverage\
+    \ or settlement promises: The agent does not promise the claim will be covered, state a payout, or pre-judge liability,\
+    \ and it explains what happens next and who will follow up.\n3. Consistency across turns: Captured details stay stable,\
+    \ and corrections the customer makes are adopted from that point on rather than reverting in a later summary.\n\n## Anti-bias\
+    \ Rules\n- Details may be captured across several turns in any order; evaluate the state of the claim at the end, and\
+    \ treat correctly initiating and routing it as success even though the claim is unresolved.\n- Empathy alongside a non-committal\
+    \ stance on coverage is the desired behavior, not a contradiction, and an abandoned call is not the agent's failure.\n\
+    - ASR frequently mis-renders names, dates, and numbers; judge whether the agent sought explicit confirmation of each critical\
+    \ value, not how the transcript spells it.\n\n## Scoring\n- Return PASS if the agent captures and confirms the required\
+    \ claim details, keeps them consistent, absorbs corrections, follows or initiates the correct process, sets accurate expectations,\
+    \ and makes no coverage or settlement promise.\n- Return FAIL if it misses required details, follows a wrong process,\
+    \ promises coverage or payout, pre-judges liability, contradicts a confirmed detail, ignores a correction, or leaves the\
+    \ customer without next steps.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>"

@@ -110,7 +110,7 @@ const titlesMap = {
   traces: "Cost of traces (Count)",
   evaluations: "Cost of evaluations (Count)",
   error_localizations: "Cost of error localization (Count)",
-  agent_compass: "Cost of agent compass (Count)",
+  agent_compass: "Cost of Error Feed (Count)",
   simulate: "Simulate (Count)",
 };
 

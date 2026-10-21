@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
+  Alert,
   Drawer,
   Box,
   Typography,
@@ -80,15 +81,26 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
     [weekAgo, now, gatewayId, resolvedKeyId],
   );
 
-  const { data: overviewData } = useAnalyticsOverview(
+  // These are ambient reads of this drawer's Usage panel, not the result of
+  // anything the user just submitted. `errorHandled` keeps the app-wide query
+  // error toast off them, so a failed refetch cannot land next to a save and
+  // read as "your save failed"; the panel reports it where it happened.
+  const analyticsOptions = {
+    enabled: Boolean(resolvedKeyId),
+    meta: { errorHandled: true },
+  };
+
+  const { data: overviewData, isError: overviewFailed } = useAnalyticsOverview(
     resolvedKeyId ? analyticsParams : {},
-    { enabled: Boolean(resolvedKeyId) },
+    analyticsOptions,
   );
 
-  const { data: usageData } = useAnalyticsUsage(
+  const { data: usageData, isError: usageFailed } = useAnalyticsUsage(
     resolvedKeyId ? { ...analyticsParams, granularity: "1h" } : {},
-    { enabled: Boolean(resolvedKeyId) },
+    analyticsOptions,
   );
+
+  const analyticsFailed = overviewFailed || usageFailed;
 
   const handleRevoke = () => {
     revokeMutation.mutate(keyId, {
@@ -310,6 +322,11 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
               <Typography variant="subtitle2" mb={1.5}>
                 Usage (Last 7 days)
               </Typography>
+              {analyticsFailed && (
+                <Alert severity="warning" sx={{ mb: 1.5 }}>
+                  Usage for this key could not be loaded.
+                </Alert>
+              )}
               <Stack direction="row" spacing={2} mb={1.5}>
                 <Box sx={{ flex: 1, textAlign: "center" }}>
                   <Typography variant="caption" color="text.secondary">

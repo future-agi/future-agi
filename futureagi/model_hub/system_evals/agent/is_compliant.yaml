@@ -18,6 +18,7 @@ criteria: "You are evaluating whether the output adheres to legal, regulatory, a
 eval_tags:
 - Safety
 - Output Validation
+- Compliance
 visible_ui: false
 permissions:
   allow_edit: false

@@ -17,7 +17,7 @@ import {
   Tabs,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import {
@@ -26,7 +26,12 @@ import {
   formatTokenCount,
 } from "src/sections/projects/LLMTracing/formatters";
 import Markdown from "react-markdown";
-import { JsonView, allExpanded, defaultStyles } from "react-json-view-lite";
+import {
+  JsonView,
+  allExpanded,
+  darkStyles,
+  defaultStyles,
+} from "react-json-view-lite";
 import "react-json-view-lite/dist/index.css";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { enqueueSnackbar } from "notistack";
@@ -41,6 +46,7 @@ import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
 import EvalsTabView, { collectAllEvalsFromEntry } from "./EvalsTabView";
+import EvalRollupBreakdown from "./EvalRollupSection/EvalRollupBreakdown";
 import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFalcon";
 import ImageCard from "src/components/multimodal/ImageCard";
 import AudioCellRenderer from "src/sections/common/DevelopCellRenderer/CellRenderers/AudioCellRenderer";
@@ -73,53 +79,6 @@ function stringify(val) {
   if (typeof val === "string") return val;
   return JSON.stringify(val, null, 2);
 }
-
-/* ── JsonSyntax — lightweight JSON syntax highlighting ── */
-
-const JsonSyntax = ({ json }) => {
-  if (!json) return null;
-  // Regex-based syntax coloring — matches keys, strings, numbers, booleans, null
-  const parts = json.split(/("(?:[^"\\]|\\.)*")\s*:/g);
-  const result = [];
-  for (let i = 0; i < parts.length; i++) {
-    if (i % 2 === 1) {
-      // This is a key
-      result.push(
-        <span key={i} style={{ color: "var(--text-primary)", fontWeight: 500 }}>
-          {parts[i]}
-        </span>,
-      );
-      result.push(
-        <span key={`${i}c`} style={{ color: "var(--text-disabled)" }}>
-          :{" "}
-        </span>,
-      );
-    } else {
-      // This is value content — colorize inline
-      const chunk = parts[i];
-      const colored = chunk.replace(
-        /("(?:[^"\\]|\\.)*")|(\b(?:true|false)\b)|(\bnull\b)|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
-        (match, str, bool, nul, num) => {
-          if (str)
-            return `<span style="color:var(--syntax-string)">${str}</span>`;
-          if (bool)
-            return `<span style="color:var(--syntax-boolean)">${match}</span>`;
-          if (nul)
-            return `<span style="color:var(--text-disabled)">${match}</span>`;
-          if (num)
-            return `<span style="color:var(--syntax-number)">${match}</span>`;
-          return match;
-        },
-      );
-      result.push(
-        <span key={i} dangerouslySetInnerHTML={{ __html: colored }} />,
-      );
-    }
-  }
-  return <>{result}</>;
-};
-
-JsonSyntax.propTypes = { json: PropTypes.string };
 
 /* ── MetricChip ───────────────────────────────────────── */
 
@@ -405,6 +364,8 @@ const JsonPreviewBlock = ({
   hideInlineSearch = false,
 }) => {
   const [jsonSearch, setJsonSearch] = useState("");
+  const isDark = useTheme().palette.mode === "dark";
+  const jsonViewBase = isDark ? darkStyles : defaultStyles;
 
   const jsonData = useMemo(() => {
     const data = {};
@@ -507,11 +468,27 @@ const JsonPreviewBlock = ({
       {/* JSON tree view */}
       <Box
         sx={{
-          maxHeight: "calc(100vh - 380px)",
-          overflow: "auto",
+          // No vertical cap: a fixed height nests a second scroll container
+          // inside the Preview pane and traps the wheel there.
+          overflowX: "auto",
           p: 1,
           fontSize: 12,
-          "& > div": { fontFamily: "monospace !important" },
+          "& > div": {
+            fontFamily: "monospace !important",
+            backgroundColor: "transparent !important",
+          },
+          // Syntax palette, theme-aware via global.css.
+          "& .fi-json-label": { color: "var(--text-primary)" },
+          "& .fi-json-clickable": {
+            color: "var(--text-primary)",
+            fontWeight: 600,
+            cursor: "pointer",
+          },
+          "& .fi-json-string": { color: "var(--syntax-string)" },
+          "& .fi-json-number": { color: "var(--syntax-number)" },
+          "& .fi-json-boolean": { color: "var(--syntax-boolean)" },
+          "& .fi-json-nullish": { color: "var(--text-disabled)" },
+          "& .fi-json-punctuation": { color: "var(--syntax-punctuation)" },
           // Highlight matching text lines
           ...(activeSearch
             ? {
@@ -526,22 +503,21 @@ const JsonPreviewBlock = ({
           data={jsonData}
           shouldExpandNode={allExpanded}
           clickToExpandNode
+          // Class names, not style objects — the objects previously here
+          // became `class="[object Object]"` and applied nothing. Blank
+          // container/basicChildStyle preserves the original spacing.
           style={{
-            ...defaultStyles,
-            container: {
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: "11px",
-              lineHeight: "18px",
-              backgroundColor: "transparent",
-            },
-            basicChildStyle: { paddingLeft: "16px" },
-            label: { color: "var(--text-primary)", fontWeight: 500 },
-            stringValue: { color: "var(--syntax-string)" },
-            numberValue: { color: "var(--syntax-number)" },
-            booleanValue: { color: "var(--syntax-boolean)" },
-            nullValue: { color: "var(--text-disabled)" },
-            undefinedValue: { color: "var(--text-disabled)" },
-            punctuation: { color: "var(--text-disabled)" },
+            ...jsonViewBase,
+            container: "",
+            basicChildStyle: "",
+            label: "fi-json-label",
+            clickableLabel: `${jsonViewBase.clickableLabel} fi-json-clickable`,
+            stringValue: "fi-json-string",
+            numberValue: "fi-json-number",
+            booleanValue: "fi-json-boolean",
+            nullValue: "fi-json-nullish",
+            undefinedValue: "fi-json-nullish",
+            punctuation: "fi-json-punctuation",
           }}
         />
       </Box>
@@ -1459,7 +1435,7 @@ EvalCard.propTypes = { ev: PropTypes.object, spanLabel: PropTypes.string };
 
 /* ── AnnotationsTabContent — uses ScoresListSection ── */
 
-const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
+const AnnotationsTabContent = ({ spanId, traceId, projectId, onAction }) => (
   <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
     <Box sx={{ flex: 1, overflow: "auto", p: 2 }}>
       <ScoresListSection
@@ -1467,6 +1443,7 @@ const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
         sourceId={spanId}
         secondarySourceType="trace"
         secondarySourceId={traceId}
+        projectId={projectId}
         title=""
         openQueueItemOnRowClick
         renderActions={
@@ -1499,6 +1476,7 @@ const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
 AnnotationsTabContent.propTypes = {
   spanId: PropTypes.string,
   traceId: PropTypes.string,
+  projectId: PropTypes.string,
   onAction: PropTypes.func,
 };
 
@@ -1745,9 +1723,28 @@ const SpanDetailPane = ({
   onClose,
   onAction,
   onSelectSpan,
+  initialEvalFocus = false,
   drawerOpen = true,
 }) => {
   const [activeTab, setActiveTab] = useState("preview");
+  const evalFocusSeededRef = useRef(false);
+  const lastEntryIdRef = useRef(null);
+  useEffect(() => {
+    if (!drawerOpen) {
+      evalFocusSeededRef.current = false;
+      return;
+    }
+    if (initialEvalFocus && !evalFocusSeededRef.current) {
+      evalFocusSeededRef.current = true;
+      setActiveTab("evals");
+    }
+  }, [drawerOpen, initialEvalFocus]);
+  useEffect(() => {
+    const entryId = entry?.observation_span?.id || entry?.observationSpan?.id;
+    if (entryId === lastEntryIdRef.current) return;
+    lastEntryIdRef.current = entryId;
+    if (!initialEvalFocus) setActiveTab("preview");
+  }, [entry, initialEvalFocus]);
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState("markdown"); // "markdown" | "json" | "chat"
 
@@ -2151,7 +2148,14 @@ const SpanDetailPane = ({
             shared EvalsTabView component so the trace drawer and the
             voice drawer use the same eval UI. */}
         {activeTab === "evals" && (
-          <EvalsTabView
+          <>
+            {entry?.eval_rollup && (
+              <EvalRollupBreakdown
+                rollup={entry.eval_rollup}
+                onSelectSpan={onSelectSpan}
+              />
+            )}
+            <EvalsTabView
             evals={collectAllEvalsFromEntry(entry)}
             onSelectSpan={onSelectSpan}
             emptyMessage="No evaluations for this span or its children"
@@ -2196,7 +2200,8 @@ const SpanDetailPane = ({
                 },
               });
             }}
-          />
+            />
+          </>
         )}
 
         {/* Annotations Tab */}
@@ -2204,6 +2209,7 @@ const SpanDetailPane = ({
           <AnnotationsTabContent
             spanId={span?.id}
             traceId={span?.trace}
+            projectId={projectId}
             onAction={onAction}
           />
         )}
@@ -2760,6 +2766,7 @@ SpanDetailPane.propTypes = {
     observationSpan: PropTypes.object,
     eval_scores: PropTypes.array,
     evalScores: PropTypes.array,
+    eval_rollup: PropTypes.object,
     annotations: PropTypes.array,
   }),
   allSpans: PropTypes.array,
@@ -2770,6 +2777,7 @@ SpanDetailPane.propTypes = {
   onClose: PropTypes.func.isRequired,
   onAction: PropTypes.func,
   onSelectSpan: PropTypes.func,
+  initialEvalFocus: PropTypes.bool,
   drawerOpen: PropTypes.bool,
 };
 

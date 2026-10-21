@@ -166,6 +166,35 @@ describe("resolvePath", () => {
     expect(resolvePath(null, "x").status).toBe("missing");
     expect(resolvePath(detail, "").status).toBe("missing");
   });
+
+  it("returns missing without throwing for an object path", () => {
+    const path = { value: "input" };
+    expect(() => resolvePath(detail, path)).not.toThrow();
+    expect(resolvePath(detail, path)).toEqual({ status: "missing" });
+  });
+
+  it("returns missing without throwing for an array path", () => {
+    const path = ["input", "value"];
+    expect(() => resolvePath(detail, path)).not.toThrow();
+    expect(resolvePath(detail, path)).toEqual({ status: "missing" });
+  });
+
+  it("returns missing without throwing for a number path", () => {
+    expect(() => resolvePath(detail, 42)).not.toThrow();
+    expect(resolvePath(detail, 42)).toEqual({ status: "missing" });
+  });
+
+  it("keeps resolving string paths alongside a non-string one", () => {
+    expect(resolvePath(detail, { value: "input" }).status).toBe("missing");
+    expect(resolvePath(detail, "input")).toEqual({
+      status: "resolved",
+      value: "top-level",
+    });
+    expect(resolvePath(detail, "llm.model_name")).toEqual({
+      status: "resolved",
+      value: "gpt",
+    });
+  });
 });
 
 describe("dotted attribute keys (flat collector bags)", () => {

@@ -213,6 +213,7 @@ const CreateSyntheticDataView = ({
       );
       reset();
     },
+    meta: { errorHandled: true },
     onError: (error) => {
       enqueueSnackbar(
         getRequestErrorMessage(error, "Failed to create synthetic dataset", {

@@ -16,6 +16,7 @@ from tfc.logging.sentry import (
     _get_before_send,
     _is_sensitive_key,
     _scrub,
+    _scrub_deployment_telemetry_event,
     _scrub_event,
 )
 
@@ -45,6 +46,14 @@ def test_drops_opentelemetry_logger_events():
 def test_drops_opentelemetry_child_loggers_by_prefix():
     event = {"logger": "opentelemetry.exporter.otlp.proto.grpc.exporter"}
     assert before_send(event, {}) is None
+
+
+def test_drops_saml_dependency_loggers_but_keeps_saml2_auth():
+    """The pysaml2 prefix must not swallow the app's own saml2_auth loggers."""
+
+    assert before_send({"logger": "saml2.response", "message": "x"}, {}) is None
+    for name in ("saml2_auth.views", "saml2_auth.security"):
+        assert before_send({"logger": name, "message": "boom"}, {}) is not None
 
 
 def test_drops_ignored_exception_types():
@@ -126,3 +135,49 @@ def test_scrub_event_is_resilient_to_unexpected_shapes():
 def test_before_send_handles_unexpected_logentry_shape():
     event = {"logger": "tracer.views.foo", "message": "real error", "logentry": "x"}
     assert before_send(event, {}) is not None
+
+
+def test_transaction_scrubber_accepts_list_breadcrumbs():
+    event = {
+        "breadcrumbs": [
+            {
+                "data": {
+                    "url": "https://example.test/telemetry/registration/",
+                    "body": "secret",
+                    "data": {"token": "secret"},
+                    "method": "POST",
+                }
+            },
+            "unexpected-shape",
+            {"data": "unexpected-shape"},
+        ]
+    }
+
+    out = _scrub_deployment_telemetry_event(event)
+
+    assert out is event
+    assert out["breadcrumbs"][0]["data"] == {
+        "url": "https://example.test/telemetry/registration/",
+        "method": "POST",
+    }
+
+
+def test_transaction_scrubber_keeps_mapping_breadcrumb_contract():
+    event = {
+        "breadcrumbs": {
+            "values": [
+                {
+                    "data": {
+                        "url": "https://example.test/telemetry/heartbeat/",
+                        "request_body": "secret",
+                    }
+                }
+            ]
+        }
+    }
+
+    out = _scrub_deployment_telemetry_event(event)
+
+    assert out["breadcrumbs"]["values"][0]["data"] == {
+        "url": "https://example.test/telemetry/heartbeat/"
+    }

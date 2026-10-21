@@ -8,7 +8,7 @@ from io import BytesIO
 from math import ceil
 from typing import Optional  # Import ceil to use for rounding up
 
-import av
+from tfc.utils.lazy_extras import av
 import requests
 import structlog
 import tiktoken
@@ -27,6 +27,8 @@ from accounts.services.aws_marketplace_metering import (
     aws_marketplace_metering,
 )
 from agentic_eval.core.utils.functions import detect_input_type
+from ee.usage.deployment import DeploymentMode
+from tfc.utils.api_errors import ApiErrorCode
 
 logger = structlog.get_logger(__name__)
 from model_hub.utils import call_websocket
@@ -1554,6 +1556,15 @@ def log_and_deduct_cost_for_resource_request(
                     logger.error(f"Unhandled api_call_type: {api_call_type}")
                     return None
 
+            if detail.get("error_code") == ApiErrorCode.DATASET_LIMIT_CHECK_FAILED:
+                if not sdk_source:
+                    # The limit was never verified: refuse without recording a
+                    # resource-limit hit or sending the upgrade alert.
+                    return None
+                # SDK uploads are not held to the dataset limit, so a limit
+                # that could not be verified does not stop them either.
+                request_status, detail = True, {}
+
             is_billing_api_call = check_if_api_call_is_billing_api_call(
                 api_call_type, config
             )
@@ -2173,12 +2184,14 @@ def check_if_dataset_creation_is_allowed(organization, config=None):
     from model_hub.models.develop_dataset import Dataset
 
     try:
-        from usage.services.entitlements import Entitlements
+        from ee.usage.services.entitlements import Entitlements
 
         dataset_count = Dataset.objects.filter(
             organization=organization, source__in=["build", "observe"], deleted=False
         ).count()
-        result = Entitlements.can_create(str(organization.id), "datasets", dataset_count)
+        result = Entitlements.can_create(
+            str(organization.id), "datasets", dataset_count
+        )
         if not result.allowed:
             detail = {
                 "resource_name": ResourceTypeChoices.DATASET.value,
@@ -2186,9 +2199,15 @@ def check_if_dataset_creation_is_allowed(organization, config=None):
             }
             return False, detail
         return True, {}
-    except Exception as e:
-        logger.exception(f"Error checking if dataset creation is allowed: {str(e)}")
-        return True, {}
+    except Exception:
+        logger.exception(
+            "dataset_limit_check_failed", organization_id=str(organization.id)
+        )
+        # Self-hosted has no dataset count limit (Entitlements.can_create
+        # allows off-cloud); on cloud the quota is billing, so fail closed.
+        if not DeploymentMode.is_cloud():
+            return True, {}
+        return False, {"error_code": ApiErrorCode.DATASET_LIMIT_CHECK_FAILED}
 
 
 def check_if_row_limit_reached(organization, row_count):

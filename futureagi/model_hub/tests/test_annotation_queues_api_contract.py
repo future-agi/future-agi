@@ -48,9 +48,7 @@ def _operation(path, method):
 
 
 def _body_ref(operation):
-    body = next(
-        p for p in operation.get("parameters", []) if p.get("in") == "body"
-    )
+    body = next(p for p in operation.get("parameters", []) if p.get("in") == "body")
     return body["schema"]["$ref"].rsplit("/", 1)[-1]
 
 
@@ -152,9 +150,31 @@ def test_annotation_queue_mutations_have_body_contracts():
 def test_annotation_queue_endpoints_have_response_contracts():
     """Every listed operation carries the expected response schema."""
     for (method, path, status_code), definition in RESPONSE_CONTRACTS.items():
-        assert (
-            _response_ref(_operation(path, method), status_code) == definition
-        ), (method, path, status_code)
+        assert _response_ref(_operation(path, method), status_code) == definition, (
+            method,
+            path,
+            status_code,
+        )
+
+
+def test_filter_add_contract_exposes_signed_continuation_fields():
+    swagger = _swagger()
+    definitions = swagger["definitions"]
+    selection = definitions["Selection"]["properties"]
+    result = definitions["QueueAddItemsResult"]["properties"]
+    operation = _operation(
+        "/model-hub/annotation-queues/{queue_id}/items/add-items/",
+        "POST",
+    )
+
+    assert selection["cursor"]["maxLength"] == 4096
+    assert {
+        "has_more",
+        "next_cursor",
+        "next_cursor_fingerprint",
+        "total_matching_is_lower_bound",
+    } <= set(result)
+    assert _response_ref(operation, "400") == "ApiTextErrorResponse"
 
 
 def test_annotation_queue_contract_debt_stays_burned_down():
@@ -173,8 +193,7 @@ def test_annotation_queue_contract_debt_stays_burned_down():
         offenders = [
             item
             for item in report[bucket]
-            if "annotation-queue" in str(
-                item.get("path", "") if isinstance(item, dict) else item
-            )
+            if "annotation-queue"
+            in str(item.get("path", "") if isinstance(item, dict) else item)
         ]
         assert offenders == [], f"{bucket}: {offenders}"

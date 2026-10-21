@@ -101,13 +101,11 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 		drops = append(drops, tcDrops...)
 	}
 
-	// ── thinking config → Extra ────────────────────────────────────────────────
+	// ── thinking config ────────────────────────────────────────────────────────
+	// No canonical field carries it, and Extra is forwarded to OpenAI-format
+	// upstreams verbatim, which reject unknown parameters.
 	if req.Thinking != nil {
-		b, err := json.Marshal(req.Thinking)
-		if err != nil {
-			return nil, nil, fmt.Errorf("anthropic: marshal thinking_config: %w", err)
-		}
-		out.Extra["anthropic_thinking_config"] = b
+		drops = append(drops, "thinking_unsupported")
 	}
 
 	// ── Build messages slice ───────────────────────────────────────────────────

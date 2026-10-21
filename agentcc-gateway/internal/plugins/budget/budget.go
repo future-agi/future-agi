@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	budgetpkg "github.com/futureagi/agentcc-gateway/internal/budget"
@@ -34,7 +35,14 @@ type Plugin struct {
 	tenantStore  *tenant.Store
 	redisBudget  RedisBudgetBackend // nil = local-only
 	orgCounters  sync.Map           // orgID -> *orgHierarchyCounters
+
+	unpricedWarned      sync.Map     // model -> struct{}: models already warned about
+	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
 }
+
+// maxUnpricedWarnings bounds the warn-once set so a caller cycling through
+// model names cannot grow it without limit.
+const maxUnpricedWarnings = 1024
 
 // SetRedisBudget attaches a Redis-backed budget store for multi-replica support.
 func (p *Plugin) SetRedisBudget(rb RedisBudgetBackend) {
@@ -578,9 +586,34 @@ func (p *Plugin) calculateCost(rc *models.RequestContext) float64 {
 		}
 	}
 	if !ok {
+		if rc.Response.Usage.PromptTokens+rc.Response.Usage.CompletionTokens > 0 {
+			p.warnUnpriced(rc, model)
+		}
 		return 0
 	}
 	return cost
+}
+
+// warnUnpriced logs, once per model, that spend for the model cannot be
+// metered. Returning a silent zero here is what let budgets pass unpriced
+// traffic without any sign that they were not counting it. Budgets price from
+// their own table, not the model database the cost plugin reads, so the hint
+// names both keys: setting only one leaves the other gap open.
+func (p *Plugin) warnUnpriced(rc *models.RequestContext, model string) {
+	if !p.enabled || p.unpricedWarnedCount.Load() >= maxUnpricedWarnings {
+		return
+	}
+	if _, seen := p.unpricedWarned.LoadOrStore(model, struct{}{}); seen {
+		return
+	}
+	p.unpricedWarnedCount.Add(1)
+	slog.Warn("budget: no pricing for model; its requests are not counted against any budget",
+		"model", model,
+		"provider", rc.Provider,
+		"request_id", rc.RequestID,
+		"hint", "set cost_tracking.custom_pricing.<model> (input_per_mtok / output_per_mtok, USD per million tokens); "+
+			"the request log's cost is priced separately, from model_database.overrides.<model>.pricing (input_per_token / output_per_token, USD per token)",
+	)
 }
 
 func extractIdentity(rc *models.RequestContext) (team, user, keyName, model string) {
