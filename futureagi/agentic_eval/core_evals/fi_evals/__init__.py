@@ -109,6 +109,7 @@ except ImportError:
     RankingEvaluator = _ee_stub("RankingEvaluator")
 
 from ...core_evals.fi_evals.llm.custom_prompt_evaluator.evaluator import CustomPromptEvaluator
+from ...core_evals.fi_evals.sre_root_cause_accuracy.evaluator import SRERootCauseAccuracyEvaluator
 
 try:
     from ee.evals.llm.agent_evaluator.evaluator import AgentEvaluator
@@ -222,4 +223,5 @@ __all__ = [
     "IsRefusal",
     "LatencyCheck",
     "FleissKappa",
+    "SRERootCauseAccuracyEvaluator",
 ]
