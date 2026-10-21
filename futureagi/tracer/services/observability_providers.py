@@ -15,7 +15,11 @@ from django.utils import timezone
 
 from simulate.models.agent_definition import AgentDefinition, ProviderCredentials
 from tracer.constants.external_endpoints import ObservabilityRoutes
-from tracer.models.observability_provider import ObservabilityProvider, ProviderChoices
+from tracer.models.observability_provider import (
+    VOICE_CALL_PROVIDERS,
+    ObservabilityProvider,
+    ProviderChoices,
+)
 from tracer.models.project import VoiceCallLogs
 from tracer.utils.attribute_accessor import vapi_customer
 
@@ -1338,6 +1342,26 @@ class ObservabilityService:
         return VoiceCallLogs(**processed_log).model_dump()
 
     @staticmethod
+    def resolve_voice_provider(
+        provider: str | None, span_attributes: dict | None
+    ) -> str:
+        """The voice provider of a call root, from its provider and attributes.
+
+        The ``provider`` hot column can carry the LLM provider (e.g. 'openai')
+        for a voice span whose assistant runs an OpenAI model — the collector
+        ranks gen_ai.provider.name above gen_ai.system. A label that names no
+        voice provider falls back to gen_ai.system, then to vapi (the dominant
+        provider) rather than 400 the whole voice list on an unrecognized
+        label. ``voice_provider_expression`` is the ClickHouse side of this
+        rule.
+        """
+        labels = (provider, (span_attributes or {}).get("gen_ai.system"))
+        for label in (str(value or "").lower() for value in labels):
+            if label in VOICE_CALL_PROVIDERS:
+                return label
+        return ProviderChoices.VAPI
+
+    @staticmethod
     def process_raw_logs(
         raw_log: dict,
         provider: str,
@@ -1348,7 +1372,9 @@ class ObservabilityService:
 
         Args:
             raw_log: Raw call log from the provider
-            provider: One of ProviderChoices.VAPI or ProviderChoices.RETELL
+            provider: The call root's provider label. It is resolved with
+                ``resolve_voice_provider``, so an LLM provider or an unknown
+                label falls back to ``gen_ai.system``, then to Vapi.
             span_attributes: Optional ObservationSpan.span_attributes. When
                 provided, the canonical recording URLs from the span (which
                 may be FAGI-S3-rehosted) override the provider URLs read from
@@ -1356,9 +1382,6 @@ class ObservabilityService:
 
         Returns:
             VoiceCallLogs object containing processed call logs
-
-        Raises:
-            ValueError: If provider is not recognized
         """
         if not raw_log:
             # OTLP export drops raw_log; rebuild the call-log shape from the span's call.* attrs.
@@ -1392,22 +1415,9 @@ class ObservabilityService:
                 "call_metadata": sim_meta,
             }
 
-        # The `provider` hot column can carry the LLM provider (e.g. 'openai')
-        # for a voice span whose assistant runs an OpenAI model — the collector
-        # ranks gen_ai.provider.name above gen_ai.system. Resolve the real voice
-        # provider: prefer gen_ai.system, then default to vapi (the dominant
-        # provider) rather than 400 the whole voice list on an unrecognized label.
-        voice_providers = {
-            ProviderChoices.VAPI,
-            ProviderChoices.RETELL,
-            ProviderChoices.ELEVEN_LABS,
-            ProviderChoices.BLAND,
-            ProviderChoices.TWILIO,
-        }
-        if provider not in voice_providers:
-            provider = (span_attributes or {}).get("gen_ai.system") or provider
-        if provider not in voice_providers:
-            provider = ProviderChoices.VAPI
+        provider = ObservabilityService.resolve_voice_provider(
+            provider, span_attributes
+        )
 
         if provider == ProviderChoices.RETELL:
             processed = ObservabilityService._process_retell_logs(raw_log)
