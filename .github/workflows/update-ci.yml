@@ -1,0 +1,184 @@
+# bin/update CI (deploy/update/README.md).
+#   unit  deploy/tests/test_update_*.py: the manifest and its generator and
+#         schema, settings, the env-file writer, signature verification,
+#         planning, apply/rollback/recovery and the CLI with fakes, plus the
+#         release workflow and repository invariants they depend on. Standard
+#         library only (jsonschema when installed), on the oldest Python
+#         bin/update supports and on a current one, seconds to run.
+#   compose  bin/update's read-only Compose calls (config, config --services,
+#         config --profiles, the version-key probe) against the repository's
+#         compose files under Docker Compose releases that behave differently:
+#         the oldest supported, v2.24.1 and v2.24.7 (bugs bin/update works
+#         around or names), v2.25.0 (refused) and the newest. No daemon.
+#   e2e   the same tool against real Docker Compose stacks: fake Future AGI
+#         images in a registry on the runner, manifests signed with a test
+#         cosign key, then check, apply, failed health checks, rollback,
+#         tampered signatures and digests, interrupts and recovery, under the
+#         runner's Compose and under v2.24.7.
+name: Update CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "bin/update"
+      - "deploy/update/**"
+      - "deploy/tests/test_update_*.py"
+      - "deploy/tests/update_e2e/**"
+      - "scripts/generate_update_manifest.py"
+      - "docker-compose.yml"
+      - "docker-compose.distributed.yml"
+      - "deploy/docker-compose.production.yml"
+      - "deploy/setup.sh"
+      - ".env.example"
+      - "deploy/.env.production.example"
+      - "deploy/env-reference.toml"
+      - ".gitignore"
+      - ".github/actions/setup-helm-tools/**"
+      - ".github/workflows/release-update-manifest.yml"
+      - ".github/workflows/release-images.yml"
+      - ".github/workflows/update-ci.yml"
+      - ".github/workflows/build-image-multiarch.yml"
+      - ".github/workflows/helm-release.yml"
+      # deploy/update/deployment-files.txt: a release hashes these, and its
+      # generator refuses a git-tracked file the digest of a directory skips.
+      - "agentcc-gateway/config.example.yaml"
+      - "deploy/clickhouse/users.d/**"
+      - "deploy/standalone/clickhouse/**"
+      - "futureagi/.ci/clickhouse-storage-policy.xml"
+      - "futureagi/config/peerdb/temporal-dynamicconfig.yaml"
+      - "futureagi/scripts/property_catalog_oss/**"
+      - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
+      - ".gitattributes"
+  push:
+    branches: [dev, main]
+    paths:
+      - "bin/update"
+      - "deploy/update/**"
+      - "deploy/tests/test_update_*.py"
+      - "deploy/tests/update_e2e/**"
+      - "scripts/generate_update_manifest.py"
+      - "docker-compose.yml"
+      - "docker-compose.distributed.yml"
+      - "deploy/docker-compose.production.yml"
+      - "deploy/setup.sh"
+      - ".env.example"
+      - "deploy/.env.production.example"
+      - "deploy/env-reference.toml"
+      - ".gitignore"
+      - ".github/actions/setup-helm-tools/**"
+      - ".github/workflows/release-update-manifest.yml"
+      - ".github/workflows/release-images.yml"
+      - ".github/workflows/update-ci.yml"
+      - ".github/workflows/build-image-multiarch.yml"
+      - ".github/workflows/helm-release.yml"
+      # deploy/update/deployment-files.txt: a release hashes these, and its
+      # generator refuses a git-tracked file the digest of a directory skips.
+      - "agentcc-gateway/config.example.yaml"
+      - "deploy/clickhouse/users.d/**"
+      - "deploy/standalone/clickhouse/**"
+      - "futureagi/.ci/clickhouse-storage-policy.xml"
+      - "futureagi/config/peerdb/temporal-dynamicconfig.yaml"
+      - "futureagi/scripts/property_catalog_oss/**"
+      - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
+      - ".gitattributes"
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  unit:
+    name: unit (Python ${{ matrix.python }})
+    # Python 3.9 (the oldest bin/update supports) has setup-python builds for
+    # Ubuntu 22.04 and 24.04 only; ubuntu-latest is moving to 26.04.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # bin/update refuses anything older than 3.9.
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Schema validator
+        if: matrix.python == '3.12'
+        run: python -m pip install --quiet jsonschema==4.23.0
+      - name: deploy/tests/test_update_*.py
+        run: python -m unittest discover -s deploy/tests -p 'test_update_*.py' -v
+
+  compose:
+    name: compose versions
+    # Python 3.9 (the oldest bin/update supports) has setup-python builds for
+    # Ubuntu 22.04 and 24.04 only; ubuntu-latest is moving to 26.04.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Docker Compose releases
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/compose-versions"
+          mkdir -p "$dir"
+          for v in v2.24.0 v2.24.1 v2.24.7 v2.25.0 v2.26.0 v2.40.3 v5.1.4; do
+            base="https://github.com/docker/compose/releases/download/$v/docker-compose-linux-x86_64"
+            curl -fsSL --retry 3 -o "$dir/docker-compose-$v" "$base"
+            want=$(curl -fsSL --retry 3 "$base.sha256" | cut -d' ' -f1)
+            echo "$want  $dir/docker-compose-$v" | sha256sum -c -
+            chmod +x "$dir/docker-compose-$v"
+          done
+          echo "FUTURE_AGI_UPDATE_COMPOSE_MATRIX=$dir" >> "$GITHUB_ENV"
+      - name: Compose matrix tests
+        run: python -m unittest discover -s deploy/tests -p 'test_update_install_cli.py' -k ComposeMatrix -v
+
+  # deploy/tests/update_e2e/harness.py: every resource it creates carries its
+  # suite's prefix and is removed at the end, so the suites run side by side.
+  e2e:
+    name: e2e (${{ matrix.suite }}, Compose ${{ matrix.compose }})
+    # Python 3.9 (the oldest bin/update supports) has setup-python builds for
+    # Ubuntu 22.04 and 24.04 only; ubuntu-latest is moving to 26.04.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [standalone, distributed]
+        # runner: the runner's own Compose. v2.24.7 ignores profiles in
+        # `config --format json`, which bin/update must not depend on.
+        compose: [runner, v2.24.7]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # The oldest Python bin/update supports runs the updater itself.
+          python-version: "3.9"
+      - name: Docker Compose ${{ matrix.compose }}
+        if: matrix.compose != 'runner'
+        env:
+          COMPOSE_VERSION: ${{ matrix.compose }}
+        run: |
+          set -euo pipefail
+          base="https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-x86_64"
+          bin="$RUNNER_TEMP/docker-compose-$COMPOSE_VERSION"
+          curl -fsSL --retry 3 -o "$bin" "$base"
+          want=$(curl -fsSL --retry 3 "$base.sha256" | cut -d' ' -f1)
+          echo "$want  $bin" | sha256sum -c -
+          chmod +x "$bin"
+          echo "FUTURE_AGI_UPDATE_E2E_COMPOSE=$bin" >> "$GITHUB_ENV"
+      - name: deploy/tests/test_update_e2e_${{ matrix.suite }}.py
+        env:
+          SUITE: ${{ matrix.suite }}
+          FUTURE_AGI_UPDATE_E2E: "1"
+          FUTURE_AGI_UPDATE_E2E_DIR: ${{ runner.temp }}/update-e2e
+        run: python -m unittest discover -s deploy/tests -p "test_update_e2e_${SUITE}.py" -v

@@ -1,0 +1,19 @@
+# Files a release's Docker Compose setup is built from. The release manifest
+# records a sha256 of each (a directory: of its files), and bin/update refuses
+# to start a release's images while the checkout's copies differ, because new
+# images need their own compose files and bind-mounted bootstrap files.
+# deploy/tests/test_update_install_cli.py keeps this list complete: every ./
+# bind mount of the compose files must be covered.
+docker-compose.yml
+docker-compose.distributed.yml
+deploy/docker-compose.production.yml
+.env.example
+deploy/.env.production.example
+agentcc-gateway/config.example.yaml
+deploy/clickhouse/users.d/zz-default-password.xml
+deploy/standalone/clickhouse/config.d/zz-small-host.xml
+deploy/standalone/clickhouse/users.d/zz-small-host.xml
+futureagi/.ci/clickhouse-storage-policy.xml
+futureagi/config/peerdb/temporal-dynamicconfig.yaml
+futureagi/scripts/property_catalog_oss
+futureagi/tracer/services/clickhouse/v2/observed_catalog

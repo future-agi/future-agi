@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/future-agi/future-agi/blob/main/deploy/update/release-manifest.schema.json",
+  "title": "Future AGI release manifest (bin/update)",
+  "description": "Mirrors deploy/update/manifest.py validate_manifest(). Rules JSON Schema cannot express are enforced only there: each component image is tagged with exactly the manifest version (serving_gpu with the version plus -gpu), minimum_version is not newer than version, helm.version equals the version without its leading v, and schema_version is the JSON integer 1 (JSON Schema also accepts 1.0). Patterns spell digits [0-9] (ASCII only), allow at most 18 digits in each version number, and are anchored with ^ and $.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "product", "channel", "version", "source_sha", "published_at", "minimum_version", "signature", "components", "helm", "deployment", "migration"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "product": {"const": "future-agi"},
+    "channel": {"enum": ["stable", "beta"]},
+    "version": {"$ref": "#/$defs/version"},
+    "source_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "published_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "minimum_version": {"$ref": "#/$defs/version"},
+    "release_notes": {"type": "string", "pattern": "^https://\\S+$"},
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bundle"],
+      "properties": {
+        "bundle": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$"},
+        "identity": {"$ref": "#/$defs/trimmed"},
+        "issuer": {"$ref": "#/$defs/trimmed"}
+      }
+    },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["standalone", "backend", "frontend", "fi_collector", "agentcc_gateway", "serving", "serving_gpu", "code_executor", "simulation_runner"],
+      "properties": {
+        "standalone": {"$ref": "#/$defs/component"},
+        "backend": {"$ref": "#/$defs/component"},
+        "frontend": {"$ref": "#/$defs/component"},
+        "fi_collector": {"$ref": "#/$defs/component"},
+        "agentcc_gateway": {"$ref": "#/$defs/component"},
+        "serving": {"$ref": "#/$defs/component"},
+        "serving_gpu": {"$ref": "#/$defs/component"},
+        "code_executor": {"$ref": "#/$defs/component"},
+        "simulation_runner": {"$ref": "#/$defs/component"}
+      },
+      "allOf": [
+        {
+          "description": "Each component's image is its own repository, after an optional registry host (a name with a dot or a port, or localhost) that mirrors may change, tagged with a version (serving_gpu: the version plus -gpu).",
+          "properties": {
+            "standalone": {"properties": {"image": {"pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/standalone:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$"}}},
+            "backend": {"properties": {"image": {"pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/future-agi:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$"}}},
+            "frontend": {"properties": {"image": {"pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/frontend:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$"}}},
+            "fi_collector": {"properties": {"image": {"pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/fi-collector:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$"}}},
+            "agentcc_gateway": {"properties": {"image": {"pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/agentcc-gateway:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$"}}},
+            "serving": {"properties": {"image": {"pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/serving:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$"}}},
+            "serving_gpu": {"properties": {"image": {"pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/serving:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?-gpu$"}}},
+            "code_executor": {"properties": {"image": {"pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/code-executor:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$"}}},
+            "simulation_runner": {"properties": {"image": {"pattern": "^(?:(?:localhost|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+(?::[0-9]{1,5})?|[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?:[0-9]{1,5})/)?futureagi/future-agi-simulation-runner:v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$"}}}
+          }
+        }
+      ]
+    },
+    "helm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chart", "version", "digest"],
+      "properties": {
+        "chart": {
+          "description": "oci://<registry host[:port]>/<path>, untagged and without a digest.",
+          "type": "string",
+          "pattern": "^oci://[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)+$"
+        },
+        "version": {"type": "string", "pattern": "^(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$"},
+        "digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["files"],
+      "properties": {
+        "files": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "description": "A normalized path relative to the checkout: no leading /, no backslash, no empty, . or .. segment, no surrounding whitespace.",
+            "pattern": "^(?=\\S)(?:(?!\\.\\.?/)[^/\\\\]+/)*(?!\\.\\.?$)[^/\\\\]*[^/\\\\\\s]$"
+          },
+          "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requires_bootstrap", "rollback"],
+      "properties": {
+        "requires_bootstrap": {"type": "boolean"},
+        "rollback": {"enum": ["manual", "unsupported"]}
+      }
+    }
+  },
+  "if": {"properties": {"channel": {"const": "stable"}}, "required": ["channel"]},
+  "then": {"properties": {"version": {"$ref": "#/$defs/release_version"}}},
+  "$defs": {
+    "version": {"type": "string", "pattern": "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$"},
+    "release_version": {
+      "description": "A version without a prerelease suffix: what the stable channel carries.",
+      "type": "string",
+      "pattern": "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})$"
+    },
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "trimmed": {"type": "string", "pattern": "^\\S(?:[\\s\\S]*\\S)?$"},
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "digest"],
+      "properties": {
+        "image": {"type": "string", "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"},
+        "digest": {"$ref": "#/$defs/digest"},
+        "platforms": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["linux/amd64", "linux/arm64"]}
+        }
+      }
+    }
+  }
+}

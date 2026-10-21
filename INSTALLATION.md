@@ -216,7 +216,7 @@ literal placeholder `CHANGEME-set-by-bin-install`).
 | Requirement | Standalone | Distributed | Notes |
 | --- | --- | --- | --- |
 | Docker Engine | 24.0+ | 24.0+ | Docker Desktop, Colima or OrbStack on macOS and Windows, or Docker Engine on Linux |
-| Docker Compose | v2.24+ | v2.24+ | `docker compose version` should print v2.x |
+| Docker Compose | v2.24+ | v2.24+ | `docker compose version` should print v2.x or later. `./bin/update` does not run on v2.25.0 |
 | CPU | 2 vCPU | 4+ vCPU | |
 | Docker memory | 4 GB (3 GB minimum); idles at about 1 GB | 12–16 GB (6 GB minimum) | The Docker VM's memory, not the host's. `bin/install` measures it |
 | Disk | 10 GB free | 20 GB free | Images plus data; data grows from there |
@@ -982,13 +982,36 @@ git pull
 ```
 
 Re-running the installer keeps your `.env` secrets, adds new keys from
-`.env.example`, stays on the setup `.env` records, pulls the new images and
-waits for the stack to be ready. Migrations run automatically on start.
+`.env.example`, stays on the setup `.env` records, pulls the images `.env`
+selects and waits for the stack to be ready. Migrations run automatically on
+start. An install that follows `:latest` (empty version keys) gets the new
+release this way; one whose version keys are set, by you or by `./bin/update`,
+keeps running those versions until you change the keys (or use
+`./bin/update`, below).
 
 On Helm: `helm upgrade futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z --namespace futureagi -f my-values.yaml --timeout 20m`,
 always with your values file (never `--reuse-values` across versions);
 the bootstrap Job migrates before any Deployment is rolled. See the
 [chart README](deploy/helm/futureagi/README.md#upgrading).
+
+**Signed updates with rollback.** `./bin/update` applies a signed release to
+a Docker Compose install. It backs up first, verifies every image digest
+against the release's Sigstore-signed manifest, waits for the stack the way
+`./bin/install` does, and can roll the update back. It changes only the image
+version keys in `.env`:
+
+```bash
+git fetch --tags && git checkout vX.Y.Z   # the release's compose files
+./bin/install --no-up -y                  # only if the release adds settings
+./bin/update check                        # what would happen; changes nothing
+./bin/update apply
+```
+
+The first update pins the version keys of an install that followed `:latest`;
+keep upgrading it with `./bin/update`. See
+[`deploy/update/README.md`](deploy/update/README.md) for the backup hook,
+production installs (a two-step update around the release's initialization
+jobs), rollback and exit codes.
 
 > **Upgrading from a release where `docker-compose.yml` was the Distributed
 > stack.** The root `docker-compose.yml` is now Standalone, and the old

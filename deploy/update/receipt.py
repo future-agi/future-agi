@@ -1,0 +1,366 @@
+"""Update state on disk: the host lock, the in-progress journal and receipts.
+
+Everything lives in .futureagi-updates/ in the checkout (mode 0700, files
+0600, ignored by git). Receipts record version values and image digests,
+never env file contents; text that came from a command is scrubbed of the
+env file's secret values before it is stored.
+
+Every failure to read, write or lock the state is a StateError that names
+the file and, when another user owns it (an earlier `sudo ./bin/update`),
+how to give it back: never a traceback.
+"""
+
+from __future__ import annotations
+
+import errno
+import json
+import os
+import re
+import shlex
+import time
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Dict, Iterator, List, Mapping, Optional
+
+STATE_DIR = ".futureagi-updates"
+JOURNAL = "journal.json"
+LOCK = "update.lock"
+RECEIPT_SCHEMA = 2
+IDENTITY_FIELDS = ("mode", "production", "env_file", "project")
+_SECRET_KEY_RE = re.compile(r"(PASSWORD|SECRET|TOKEN|_KEY|KEY_|CREDENTIAL|DSN|PRIVATE|LICENSE)", re.I)
+_RECEIPT_NAME_RE = re.compile(r"^receipt-\d{8}T\d{6}Z-\d+\.json$")
+# Fields of a journal or receipt whose text came from a command or an exception (and may quote the env
+# file). Only these are scrubbed: structural fields (project, env_file, paths, images, digests, versions,
+# previous_values, found_values) are compared and written back, so they must stay exactly as they are.
+_FREE_TEXT_FIELDS = ("error", "message", "note")
+# What flock() answers on a file system without working locks (NFS without a lock daemon, some SMB and FUSE
+# mounts).
+_NO_LOCKS = frozenset(getattr(errno, name) for name in ("ENOLCK", "EOPNOTSUPP", "ENOTSUP", "ENOSYS")
+                      if hasattr(errno, name))
+# How long lock() keeps trying when the lock is held only for a moment (lock_holder() peeking at it).
+_LOCK_RETRY_SECONDS = 0.25
+
+
+class StateError(RuntimeError):
+    """Update state cannot be read, written or locked."""
+
+
+def secret_values(env: Mapping[str, str]) -> List[str]:
+    return sorted({v for k, v in env.items() if _SECRET_KEY_RE.search(k) and len(v) >= 6}, key=len, reverse=True)
+
+
+def scrub(text: str, secrets: List[str]) -> str:
+    for value in secrets:
+        text = text.replace(value, "***")
+    return text
+
+
+def scrub_tree(value: Any, secrets: List[str]) -> Any:
+    if isinstance(value, str):
+        return scrub(value, secrets)
+    if isinstance(value, Mapping):
+        return {k: scrub_tree(v, secrets) for k, v in value.items()}
+    if isinstance(value, list):
+        return [scrub_tree(v, secrets) for v in value]
+    return value
+
+
+def scrub_record(record: Mapping[str, Any], secrets: List[str]) -> Dict[str, Any]:
+    """`record` with its free-text fields scrubbed: error, message, note and signature.error.
+
+    Nothing else is touched: a weak secret such as `futureagi` must not turn
+    the project `futureagi` (or an image name, or a path) into `***`.
+    """
+
+    body = dict(record)
+    for key in _FREE_TEXT_FIELDS:
+        if key in body:
+            body[key] = scrub_tree(body[key], secrets)
+    signature = body.get("signature")
+    if isinstance(signature, Mapping) and "error" in signature:
+        body["signature"] = dict(signature, error=scrub_tree(signature["error"], secrets))
+    return body
+
+
+def _user_name(uid: int) -> Optional[str]:
+    try:
+        import pwd
+        return pwd.getpwuid(uid).pw_name
+    except (ImportError, KeyError):
+        return None
+
+
+def ownership_hint(path: Path, state_dir: Path) -> str:
+    """Why `path` may be out of reach, when another user owns it (or the state directory), and the fix."""
+
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is None:
+        return ""
+    me = geteuid()
+    for candidate in (path, state_dir):
+        try:
+            owner = os.stat(str(candidate)).st_uid
+        except OSError:
+            continue
+        if owner != me:
+            name = _user_name(owner) or f"uid {owner}"
+            # chown takes a numeric id where no name is known.
+            mine = _user_name(me) or str(me)
+            return (f". It belongs to {name}, probably from an earlier run as {name} (sudo): run bin/update as "
+                    f"{name}, or give the state back with `sudo chown -R {shlex.quote(mine)} "
+                    f"{shlex.quote(str(state_dir))}`")
+    return ""
+
+
+def _write_json(path: Path, value: Mapping[str, Any], state_dir: Optional[Path] = None) -> None:
+    hint = lambda: ownership_hint(path, state_dir or path.parent)  # noqa: E731
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        fd = os.open(str(temp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    except OSError as exc:
+        raise StateError(f"cannot write {path}: {exc}{hint()}") from exc
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, sort_keys=True, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+    except BaseException as exc:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+        if isinstance(exc, OSError):  # a full disk, say: an error bin/update reports, not a traceback
+            raise StateError(f"cannot write {path}: {exc}{hint()}") from exc
+        raise
+
+
+def _read_json(path: Path, state_dir: Optional[Path] = None) -> Dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise StateError(f"cannot read {path}: {exc}") from exc
+    except OSError as exc:
+        raise StateError(f"cannot read {path}: {exc}{ownership_hint(path, state_dir or path.parent)}") from exc
+    if not isinstance(value, dict):
+        raise StateError(f"{path} is not a JSON object")
+    return value
+
+
+def _receipt_number(path: Path) -> int:
+    return int(path.stem.rsplit("-", 1)[1])
+
+
+class StateDir:
+    def __init__(self, root: Path, secrets: Optional[List[str]] = None) -> None:
+        self.path = root / STATE_DIR
+        self.secrets = secrets or []
+
+    def _hint(self, path: Path) -> str:
+        return ownership_hint(path, self.path)
+
+    def ensure(self) -> None:
+        try:
+            self.path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        except OSError as exc:
+            raise StateError(f"cannot create {self.path}: {exc}{self._hint(self.path)}") from exc
+        try:
+            os.chmod(self.path, 0o700)
+        except OSError as exc:
+            raise StateError(f"cannot use {self.path}: {exc}{self._hint(self.path)}") from exc
+
+    @property
+    def lock_path(self) -> Path:
+        return self.path / LOCK
+
+    @contextmanager
+    def lock(self) -> Iterator[None]:
+        """One bin/update at a time per checkout (apply and rollback)."""
+
+        self.ensure()
+        try:
+            import fcntl
+        except ImportError as exc:  # Windows
+            raise StateError("bin/update needs a POSIX system (Linux, macOS or WSL)") from exc
+        path = self.lock_path
+        try:
+            fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
+        except OSError as exc:
+            raise StateError(f"cannot open {path}: {exc}{self._hint(path)}") from exc
+        try:
+            deadline = time.monotonic() + _LOCK_RETRY_SECONDS
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError as exc:
+                    if time.monotonic() < deadline:
+                        time.sleep(0.02)
+                        continue
+                    holder = self._holder_text(fd)
+                    raise StateError(
+                        f"another bin/update is running in this checkout ({holder or 'lock held'})") from exc
+                except OSError as exc:
+                    if exc.errno in _NO_LOCKS:
+                        raise StateError(
+                            f"cannot lock {path}: {exc}. The checkout is on a file system without working file "
+                            "locks (NFS without a lock daemon, for example): run bin/update from a checkout on a "
+                            "local disk, or enable locking on that mount") from exc
+                    raise StateError(f"cannot lock {path}: {exc}{self._hint(path)}") from exc
+            try:
+                try:
+                    os.ftruncate(fd, 0)
+                    os.pwrite(fd, f"pid {os.getpid()}\n".encode("ascii"), 0)
+                except OSError:
+                    pass  # who holds the lock is only informational
+                yield
+            finally:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                except OSError:
+                    pass  # closing the descriptor releases it as well
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def _holder_text(fd: int) -> str:
+        try:
+            return os.pread(fd, 64, 0).decode("ascii", "replace").strip()
+        except OSError:
+            return ""
+
+    def lock_holder(self) -> Optional[str]:
+        """Who holds the lock ('pid N'), or None when no bin/update does.
+
+        Never blocks and never takes the lock from a holder; creates nothing.
+        A lock file that cannot be opened or locked (another user's, or a file
+        system without locks) reads as not held: lock() reports it properly.
+        """
+
+        try:
+            import fcntl
+        except ImportError:
+            return None
+        try:
+            fd = os.open(str(self.lock_path), os.O_RDONLY)
+        except OSError:  # no state directory or no lock file yet, or not ours to read
+            return None
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return self._holder_text(fd) or "lock held"
+            except OSError:
+                return None
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            return None
+        finally:
+            os.close(fd)
+
+    # --------------------------------------------------------- journal --
+    @property
+    def journal_path(self) -> Path:
+        return self.path / JOURNAL
+
+    def read_journal(self) -> Optional[Dict[str, Any]]:
+        # Read rather than test exists(): exists() hides an unreadable journal on newer Pythons and raises on
+        # older ones; either way an interrupted run must not go unnoticed.
+        try:
+            text = self.journal_path.read_text(encoding="utf-8")
+        except (FileNotFoundError, NotADirectoryError):
+            return None
+        except OSError as exc:
+            raise StateError(f"cannot read {self.journal_path}: {exc}{self._hint(self.journal_path)}") from exc
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise StateError(f"cannot read {self.journal_path}: {exc}") from exc
+        if not isinstance(value, dict):
+            raise StateError(f"{self.journal_path} is not a JSON object")
+        return value
+
+    def write_journal(self, record: Mapping[str, Any]) -> None:
+        self.ensure()
+        _write_json(self.journal_path, scrub_record(record, self.secrets), self.path)
+
+    def clear_journal(self) -> None:
+        try:
+            self.journal_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise StateError(f"cannot remove {self.journal_path}: {exc}{self._hint(self.journal_path)}") from exc
+
+    # -------------------------------------------------------- receipts --
+    def write_receipt(self, record: Mapping[str, Any]) -> Path:
+        self.ensure()
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        # Receipts are ordered by this number. The wall clock alone can step backwards (NTP, a manual
+        # fix), which would put this receipt before older ones: it always comes after the newest.
+        existing = self.receipts()
+        number = max(time.time_ns(), _receipt_number(existing[-1]) + 1 if existing else 0)
+        path = self.path / f"receipt-{stamp}-{number}.json"
+        body = dict(record)
+        body["schema_version"] = RECEIPT_SCHEMA
+        body.pop("_path", None)
+        _write_json(path, scrub_record(body, self.secrets), self.path)
+        return path
+
+    def receipts(self) -> List[Path]:
+        try:
+            names = os.listdir(str(self.path))
+        except (FileNotFoundError, NotADirectoryError):
+            return []
+        except OSError as exc:
+            raise StateError(f"cannot read {self.path}: {exc}{self._hint(self.path)}") from exc
+        return sorted((self.path / name for name in names if _RECEIPT_NAME_RE.fullmatch(name)), key=_receipt_number)
+
+    def latest_receipt(self, identity: Optional[Mapping[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """The newest receipt; with `identity`, the newest one written for that install.
+
+        A field `identity` sets to None (the project, when Docker cannot say)
+        is not compared, and neither is one the receipt does not record.
+        """
+
+        for path in reversed(self.receipts()):
+            record = _read_json(path, self.path)
+            if identity is None or all(identity.get(field) is None or record.get(field) is None
+                                       or record.get(field) == identity.get(field) for field in IDENTITY_FIELDS):
+                record["_path"] = str(path)
+                return record
+        return None
+
+    def history(self, identity: Mapping[str, Any]) -> List[Dict[str, Any]]:
+        """This install's receipts, oldest first, each with its `_path`.
+
+        One checkout can serve several installs (a second production env
+        file, another project): only receipts whose mode, production flag, env
+        file and project all equal `identity` belong to this one. Receipts
+        written by another version of bin/update are left out.
+        """
+
+        records = []
+        for path in self.receipts():
+            record = _read_json(path, self.path)
+            if record.get("schema_version") != RECEIPT_SCHEMA:
+                continue
+            if all(record.get(field) == identity.get(field) for field in IDENTITY_FIELDS):
+                record["_path"] = str(path)
+                records.append(record)
+        return records
+
+    def load_receipt(self, path: Path) -> Dict[str, Any]:
+        """A receipt from this checkout's state directory, and nowhere else."""
+
+        resolved = path.resolve()
+        if resolved.parent != self.path.resolve() or not _RECEIPT_NAME_RE.fullmatch(resolved.name):
+            raise StateError(f"{path} is not a receipt in {self.path}; use the path bin/update printed")
+        record = _read_json(resolved, self.path)
+        if record.get("schema_version") != RECEIPT_SCHEMA:
+            raise StateError(f"{path} was written by another version of bin/update")
+        record["_path"] = str(resolved)
+        return record

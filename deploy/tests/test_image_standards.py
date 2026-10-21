@@ -1503,6 +1503,12 @@ class Workflows(unittest.TestCase):
         # images it deploys are published.
         chart = jobs.pop("helm-chart")
         self.assertEqual(chart["uses"], "./.github/workflows/helm-release.yml")
+        # Round 5 (T56): the signed update manifest bin/update reads is published
+        # once the images it names are.
+        manifest = jobs.pop("update-manifest")
+        self.assertEqual(
+            manifest["uses"], "./.github/workflows/release-update-manifest.yml"
+        )
         for name, job in jobs.items():
             if "uses" in job:
                 with self.subTest(job=name):
@@ -1705,6 +1711,8 @@ class Workflows(unittest.TestCase):
             "release-worker": "bump",
             "dispatch-docs": "docs",
             "helm-chart": "helm-chart",
+            "build-digests": "update-manifest",
+            "update-manifest": "update-manifest",
         }
         for job, component in component_of.items():
             with self.subTest(job=job):
@@ -1719,6 +1727,8 @@ class Workflows(unittest.TestCase):
             "dispatch-ee",
             "dispatch-docs",
             "helm-chart",
+            "build-digests",
+            "update-manifest",
         ):
             with self.subTest(job=job):
                 condition = " ".join(str(jobs[job]["if"]).split())
@@ -1798,7 +1808,8 @@ class Workflows(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(selected[0], "frontend")
         self.assertEqual(selected[-1], "bump")
-        self.assertEqual(len(selected), 14)
+        self.assertEqual(len(selected), 15)
+        self.assertIn("update-manifest", selected)
         self.assertEqual(urls, [])
         # A dispatch without a list is the deployment bump retry, from any ref
         # and for any version.
