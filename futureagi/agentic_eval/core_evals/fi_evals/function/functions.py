@@ -3654,8 +3654,15 @@ def calculate_spearman_correlation(output, expected, **kwargs):
         return ranks
 
     rx, ry = _rank(x), _rank(y)
-    d_sq = sum((rxi - ryi) ** 2 for rxi, ryi in zip(rx, ry))
-    rho = 1 - (6 * d_sq) / (n * (n ** 2 - 1))
+    # Pearson's r over the midranks: the 1 - 6*sum(d^2)/(n*(n^2-1)) shortcut
+    # is only exact when neither input has ties.
+    mx, my = sum(rx) / n, sum(ry) / n
+    ss_x = sum((rxi - mx) ** 2 for rxi in rx)
+    ss_y = sum((ryi - my) ** 2 for ryi in ry)
+    if ss_x == 0 or ss_y == 0:
+        # A constant input has no rank correlation; score it as none, not perfect.
+        return {"result": 0.5, "reason": "Zero variance in one or both inputs"}
+    rho = sum((rxi - mx) * (ryi - my) for rxi, ryi in zip(rx, ry)) / (ss_x * ss_y) ** 0.5
     score = (rho + 1) / 2
     return {"result": score, "reason": f"Spearman rho={rho:.4f}, normalized={score:.4f}"}
 
