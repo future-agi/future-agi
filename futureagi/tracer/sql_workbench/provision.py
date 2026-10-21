@@ -83,7 +83,7 @@ def direct_access_ddl(scope: Scope, *, database, principal, password, cidr):
     for table, condition in ownership_predicates(scope).items():
         statements.append(f"GRANT SELECT ON {database}.{name(table)} TO {definer}")
         statements.append(
-            f"CREATE ROW POLICY {principal}_{name(table)} ON {database}.{name(table)} FOR SELECT USING {condition} TO {definer}"
+            f"CREATE ROW POLICY {principal}_{name(table)} ON {database}.{name(table)} FOR SELECT USING {condition} AS RESTRICTIVE TO {definer}"
         )
     for dataset, text in templates.items():
         tree = sqlglot.parse_one(text, read="clickhouse")

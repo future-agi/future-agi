@@ -480,3 +480,276 @@ def test_postgres_concurrent_admission_serializes_same_actor(tenants):
             outcomes = list(pool.map(lambda _: submit_once(), range(2)))
     assert sorted(outcomes) == ["accepted", "rejected"]
     assert SQLExecution.objects.filter(project=project).count() == 1
+
+
+def test_rolling_result_storage_budget_rejects_before_dispatch(tenants):
+    actor, project, _ = tenants[0]
+    now = timezone.now()
+    create_job(
+        actor,
+        project,
+        state="succeeded",
+        output_bytes=service.MAX_ACTOR_RESULT_BYTES_24H,
+    )
+    with (
+        patch("tracer.sql_workbench.service.connection_config"),
+        patch("tracer.sql_workbench.tasks.execute_sql.apply_async") as dispatch,
+    ):
+        with pytest.raises(service.AdmissionFull, match="storage budget"):
+            service.submit(
+                actor,
+                project_id=project.id,
+                sql="SELECT count() FROM spans",
+                start=now - timedelta(hours=1),
+                end=now,
+            )
+    dispatch.assert_not_called()
+
+
+def test_expiry_purge_erases_body_and_quota_accounting_without_deleting_audit(tenants):
+    actor, project, _ = tenants[0]
+    job = create_job(
+        actor,
+        project,
+        state="succeeded",
+        output_bytes=1024,
+        result={"rows": [["retained until expiry"]]},
+    )
+    SQLExecution.objects.filter(id=job.id).update(
+        expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    assert service.purge_expired_results(batch_size=1) == {
+        "expired_result_bodies": 1,
+        "old_audit_rows": 0,
+    }
+    job.refresh_from_db()
+    assert job.result == {} and job.output_bytes == 0 and job.state == "succeeded"
+    assert SQLExecution.objects.filter(
+        id=job.id, project=project, created_by_id=actor.user_id
+    ).exists()
+
+
+def test_temporal_result_cleanup_is_registered_every_fifteen_minutes():
+    import django
+
+    django.setup()
+    from tfc.temporal.schedules import ALL_SCHEDULES
+    from tracer.sql_workbench.tasks import purge_expired_sql_results
+
+    schedule = next(
+        value
+        for value in ALL_SCHEDULES
+        if value.schedule_id == "sql-workbench-result-retention"
+    )
+    assert schedule.interval_seconds == 900 and schedule.queue == "exact_aggregation"
+    assert schedule.activity_name == purge_expired_sql_results._activity_name
+    assert purge_expired_sql_results._metadata["max_retries"] == 0
+
+
+def test_organization_result_storage_budget_counts_other_members(tenants):
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from accounts.models.workspace import WorkspaceMembership
+    from tfc.constants.levels import Level
+
+    actor, project, owner = tenants[0]
+    workspace = owner.workspace_memberships.first().workspace
+    now = timezone.now()
+    members = []
+    for index in range(5):
+        user = User.objects.create_user(
+            email=f"sql-quota-{uuid4()}@example.test",
+            password="password",
+            name="Quota member",
+            organization=owner.organization,
+        )
+        org_membership = OrganizationMembership.objects.create(
+            user=user,
+            organization=owner.organization,
+            level=Level.MEMBER,
+            is_active=True,
+        )
+        WorkspaceMembership.objects.create(
+            user=user,
+            workspace=workspace,
+            organization_membership=org_membership,
+            level=Level.WORKSPACE_MEMBER,
+            is_active=True,
+        )
+        members.append(Actor(user.id, owner.organization_id, workspace.id))
+    for member in members[:4]:
+        create_job(
+            member,
+            project,
+            state="succeeded",
+            output_bytes=service.MAX_ACTOR_RESULT_BYTES_24H,
+        )
+    # The fifth active member has no personal usage but the org already reached its cap.
+    with (
+        patch("tracer.sql_workbench.service.connection_config"),
+        patch("tracer.sql_workbench.tasks.execute_sql.apply_async") as dispatch,
+    ):
+        with pytest.raises(service.AdmissionFull, match="storage budget"):
+            service.submit(
+                members[4],
+                project_id=project.id,
+                sql="SELECT count() FROM spans",
+                start=now - timedelta(hours=1),
+                end=now,
+            )
+    dispatch.assert_not_called()
+
+
+def test_result_cleanup_schedule_is_unique():
+    import django
+
+    django.setup()
+    from tfc.temporal.schedules import ALL_SCHEDULES
+
+    ids = [schedule.schedule_id for schedule in ALL_SCHEDULES]
+    assert len(ids) == len(set(ids))
+    assert ids.count("sql-workbench-result-retention") == 1
+
+
+def test_query_submission_limit_bounds_sql_audit_growth(tenants):
+    actor, project, _ = tenants[0]
+    now = timezone.now()
+    # The state (including failures/cancellations) is the audit row budget.
+    rows = [
+        SQLExecution(
+            project=project,
+            organization_id=actor.organization_id,
+            workspace_id=actor.workspace_id,
+            created_by_id=actor.user_id,
+            sql="SELECT 1",
+            start=now - timedelta(hours=1),
+            end=now,
+            state="failed",
+            deadline=now,
+            expires_at=now + timedelta(days=1),
+        )
+        for _ in range(service.MAX_ACTOR_QUERIES_24H)
+    ]
+    SQLExecution.objects.bulk_create(rows)
+    with (
+        patch("tracer.sql_workbench.service.connection_config"),
+        patch("tracer.sql_workbench.tasks.execute_sql.apply_async") as dispatch,
+    ):
+        with pytest.raises(service.AdmissionFull, match="audit submission limit"):
+            service.submit(
+                actor,
+                project_id=project.id,
+                sql="SELECT count() FROM spans",
+                start=now - timedelta(hours=1),
+                end=now,
+            )
+    dispatch.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "state", ["queued", "running", "succeeded", "failed", "cancelled"]
+)
+def test_default_preserves_old_audit_metadata_and_configured_policy_never_deletes_active_jobs(
+    tenants, settings, state
+):
+    actor, project, _ = tenants[0]
+    now = timezone.now()
+    job = create_job(actor, project, state=state)
+    SQLExecution.objects.filter(id=job.id).update(
+        created_at=now - timedelta(days=180), expires_at=now - timedelta(days=1)
+    )
+    settings.SQL_WORKBENCH_AUDIT_RETENTION_DAYS = None
+    assert service.purge_expired_results()["old_audit_rows"] == 0
+    assert SQLExecution.objects.filter(id=job.id).exists()
+    settings.SQL_WORKBENCH_AUDIT_RETENTION_DAYS = 90
+    assert service.purge_expired_results()["old_audit_rows"] == int(
+        state in service.TERMINAL_STATES
+    )
+    assert SQLExecution.objects.filter(id=job.id).exists() == (
+        state not in service.TERMINAL_STATES
+    )
+
+
+def test_resource_limits_are_operator_configurable(tenants, settings):
+    actor, project, _ = tenants[0]
+    now = timezone.now()
+    create_job(actor, project, state="failed")
+    settings.SQL_WORKBENCH_MAX_ACTOR_QUERIES_24H = 1
+    with patch("tracer.sql_workbench.service.connection_config"):
+        with pytest.raises(service.AdmissionFull, match="audit submission"):
+            service.submit(
+                actor,
+                project_id=project.id,
+                sql="SELECT count() FROM spans",
+                start=now - timedelta(hours=1),
+                end=now,
+            )
+
+
+@pytest.mark.parametrize(
+    "state", ["queued", "running", "succeeded", "failed", "cancelled"]
+)
+def test_dispatch_timeout_never_overwrites_an_accepted_workflow_state(
+    tenants, django_capture_on_commit_callbacks, state
+):
+    actor, project, _ = tenants[0]
+    now = timezone.now()
+    stored = (
+        {"columns": [{"name": "n", "type": "UInt64"}], "rows": [[7]]}
+        if state == "succeeded"
+        else {}
+    )
+
+    def accepted_then_timeout(*, args, **kwargs):
+        SQLExecution.objects.filter(id=args[0]).update(
+            state=state,
+            result=stored,
+            error="original worker error" if state == "failed" else "",
+            finished_at=now if state in service.TERMINAL_STATES else None,
+        )
+        raise TimeoutError("ACK lost after acceptance")
+
+    with (
+        patch("tracer.sql_workbench.service.connection_config"),
+        patch(
+            "tracer.sql_workbench.tasks.execute_sql.apply_async",
+            side_effect=accepted_then_timeout,
+        ),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        job = service.submit(
+            actor,
+            project_id=project.id,
+            sql="SELECT count() FROM spans",
+            start=now - timedelta(hours=1),
+            end=now,
+        )
+    assert job.state == ("failed" if state == "queued" else state)
+    assert job.result == stored
+    if state == "failed":
+        assert job.error == "original worker error"
+    if state == "succeeded":
+        assert service.snapshot(job)["result"]["rows"] == [[7]]
+
+
+def test_table_chart_without_axes_saves_and_round_trips(tenants):
+    from tracer.views.sql_query import SavedSQLQueryViewSet
+
+    actor, project, user = tenants[0]
+    response = SavedSQLQueryViewSet.as_view({"post": "create"})(
+        api_request(
+            actor,
+            user,
+            "post",
+            "/tracer/saved-sql-query/",
+            {
+                "project_id": str(project.id),
+                "name": "table before execution",
+                "sql": "SELECT name FROM spans",
+                "chart": {"type": "table"},
+            },
+        )
+    )
+    assert response.status_code == 201
+    saved = service.saved_query(actor, project.id, response.data["id"])
+    assert saved.chart == {"type": "table"}

@@ -207,6 +207,7 @@ def run(compiled_sql, query_id, cancelled):
             "rows": rows,
             "truncated": truncated,
             "row_count": len(rows),
+            "result_bytes": size,
             "elapsed_ms": round((time.monotonic() - started) * 1000),
         }
     except Exception as exc:

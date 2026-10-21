@@ -49,10 +49,13 @@ describe("SQL execution lifecycle", () => {
     await act(async () =>
       result.current.run({ sql: "SELECT count() FROM spans" }),
     );
-    expect(sqlApi.run).toHaveBeenCalledWith({
-      project_id: "project",
-      sql: "SELECT count() FROM spans",
-    });
+    expect(sqlApi.run).toHaveBeenCalledWith(
+      {
+        project_id: "project",
+        sql: "SELECT count() FROM spans",
+      },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     await waitFor(() => expect(result.current.job.state).toBe("succeeded"));
     expect(sqlApi.result.mock.calls[0][0]).toBe("project");
     expect(result.current.job.result.rows).toEqual([[1]]);
@@ -70,10 +73,52 @@ describe("SQL execution lifecycle", () => {
     await act(async () =>
       result.current.run({ saved_query_id: "saved" }, true),
     );
-    expect(sqlApi.runSaved).toHaveBeenCalledWith({
-      project_id: "project",
-      saved_query_id: "saved",
-    });
+    expect(sqlApi.runSaved).toHaveBeenCalledWith(
+      {
+        project_id: "project",
+        saved_query_id: "saved",
+      },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(sqlApi.run).not.toHaveBeenCalled();
   });
+});
+
+it("stops a waiting dashboard submission when cancelled", async () => {
+  sqlApi.runSaved.mockRejectedValue(
+    Object.assign(new Error("busy"), { statusCode: 429 }),
+  );
+  const { result } = renderHook(() =>
+    useSQLExecution("project", { retryAdmission: true }),
+  );
+  let pending;
+  act(() => {
+    pending = result.current.run({ saved_query_id: "waiting" }, true);
+  });
+  await waitFor(() => expect(result.current.waitingForAdmission).toBe(true));
+  await act(async () => {
+    await result.current.cancel();
+    await pending;
+  });
+  expect(result.current.busy).toBeFalsy();
+  expect(result.current.waitingForAdmission).toBe(false);
+  expect(sqlApi.runSaved).toHaveBeenCalledTimes(1);
+});
+
+it("bounds admission retries instead of retrying permanently", async () => {
+  sqlApi.runSaved.mockRejectedValue(
+    Object.assign(new Error("busy"), { statusCode: 429 }),
+  );
+  const { result } = renderHook(() =>
+    useSQLExecution("project", {
+      retryAdmission: true,
+      admissionTimeoutMs: 10,
+    }),
+  );
+  await act(async () => {
+    await result.current.run({ saved_query_id: "waiting" }, true);
+  });
+  expect(result.current.busy).toBeFalsy();
+  expect(result.current.error).toBe("busy");
+  expect(sqlApi.runSaved).toHaveBeenCalledTimes(1);
 });

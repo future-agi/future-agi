@@ -49,6 +49,7 @@ class SQLExecution(models.Model):
     )
     result = models.JSONField(default=dict)
     error = models.CharField(max_length=300, blank=True)
+    output_bytes = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True)
     deadline = models.DateTimeField()
@@ -58,6 +59,13 @@ class SQLExecution(models.Model):
         indexes = [
             models.Index(
                 fields=["organization", "state", "deadline"], name="sql_admission_idx"
+            ),
+            models.Index(
+                fields=["organization", "created_at"], name="sql_org_quota_idx"
+            ),
+            models.Index(
+                fields=["organization", "created_by", "created_at"],
+                name="sql_actor_quota_idx",
             ),
             models.Index(
                 fields=["project", "created_by", "-created_at"], name="sql_history_idx"

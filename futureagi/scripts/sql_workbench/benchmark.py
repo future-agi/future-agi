@@ -103,7 +103,11 @@ def main():
                     f"/tracer/sql-query/{job_id}/?"
                     + urlencode({"project_id": str(args.project)}),
                 )
-            if job["state"] != "succeeded" or job.get("result", {}).get("truncated"):
+            if (
+                job["state"] != "succeeded"
+                or job.get("result", {}).get("truncated")
+                or job.get("result", {}).get("row_count", 0) == 0
+            ):
                 raise RuntimeError(
                     "Query did not complete with nonempty, exact bounded output."
                 )

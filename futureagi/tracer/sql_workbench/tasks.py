@@ -47,7 +47,10 @@ def execute_sql(job_id):
         # Revocation during execution must not publish a previously admitted result.
         authorize(actor, job.project_id)
         SQLExecution.objects.filter(id=job_id, state="running").update(
-            state="succeeded", result=result, finished_at=timezone.now()
+            state="succeeded",
+            result=result,
+            output_bytes=result["result_bytes"],
+            finished_at=timezone.now(),
         )
     except QueryCancelled:
         SQLExecution.objects.filter(id=job_id, state="running").update(
@@ -68,3 +71,18 @@ def execute_sql(job_id):
         SQLExecution.objects.filter(id=job_id, state="running").update(
             state="failed", error=message[:300], result={}, finished_at=timezone.now()
         )
+
+
+@temporal_activity(
+    name="tracer.sql_workbench.purge_expired_results",
+    queue="exact_aggregation",
+    time_limit=30,
+    schedule_to_start_timeout=900,
+    workflow_run_timeout=960,
+    workflow_execution_timeout=990,
+    max_retries=0,
+)
+def purge_expired_sql_results():
+    from .service import purge_expired_results
+
+    return purge_expired_results(batch_size=1000)

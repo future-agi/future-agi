@@ -132,6 +132,7 @@ def test_direct_access_has_per_table_policies_and_no_base_grants_to_login():
     assert "secretsecret" not in text
     assert "HOST NONE" in text and "HOST IP '10.3.0.0/24'" in text
     assert text.count("CREATE ROW POLICY") == 6
+    assert text.count("AS RESTRICTIVE TO sqld_bi_reader") == 6
     assert text.count("SQL SECURITY DEFINER") == 6
     assert "readonly = 1 READONLY" in text
     login_grants = [

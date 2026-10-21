@@ -63,7 +63,11 @@ export default function QueryResults({ result, chart = {}, onChartChange }) {
     setPage(0);
   }, [result]);
   useEffect(() => {
-    onChartChange?.({ type: mode, x: xName, y: yName });
+    onChartChange?.(
+      mode === "bar" && xName && yName
+        ? { type: "bar", x: xName, y: yName }
+        : { type: "table" },
+    );
   }, [mode, xName, yName, onChartChange]);
   if (!result?.columns)
     return (

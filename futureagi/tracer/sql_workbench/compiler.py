@@ -53,6 +53,30 @@ row_number dense_rank first_value last_value nullif coalesce
 )
 
 
+DATE_UNITS = frozenset(
+    {
+        "YEAR",
+        "QUARTER",
+        "MONTH",
+        "WEEK",
+        "DAY",
+        "HOUR",
+        "MINUTE",
+        "SECOND",
+        "MILLISECOND",
+        "MICROSECOND",
+        "NANOSECOND",
+    }
+)
+DATE_UNIT_PARENTS = (
+    exp.Interval,
+    exp.DateAdd,
+    exp.DateDiff,
+    exp.TimestampTrunc,
+    exp.DateTrunc,
+)
+
+
 class UnsafeQuery(ValueError):
     pass
 
@@ -78,13 +102,30 @@ def validate(sql: str):
     if len(nodes) > MAX_AST_NODES:
         raise UnsafeQuery("The query is too complex.")
     for node in nodes:
-        if isinstance(node, exp.Func):
-            name = node.name if isinstance(node, exp.Anonymous) else node.sql_name()
-            if name.lower() not in FUNCTIONS | FUNCTION_ALIASES and not isinstance(
-                node, (exp.Cast, exp.TryCast, exp.Case, exp.If)
+        if isinstance(node, exp.Var):
+            if (
+                node.arg_key != "unit"
+                or not isinstance(node.parent, DATE_UNIT_PARENTS)
+                or node.name.upper() not in DATE_UNITS
             ):
+                raise UnsafeQuery(
+                    "Only approved date units in date/interval expressions are supported."
+                )
+        elif type(node).__name__ in NODE_NAMES:
+            # Boolean operators and safe constructors are Func subclasses too;
+            # authorize their syntax here, then validate every child normally.
+            pass
+        elif isinstance(node, exp.Func):
+            name = (
+                node.name
+                if isinstance(
+                    node, (exp.Anonymous, exp.CombinedAggFunc, exp.ParameterizedAgg)
+                )
+                else node.sql_name()
+            )
+            if name.lower() not in FUNCTIONS | FUNCTION_ALIASES:
                 raise UnsafeQuery(f"Function {name} is not in the approved catalog.")
-        elif type(node).__name__ not in NODE_NAMES:
+        else:
             raise UnsafeQuery(f"SQL construct {type(node).__name__} is not supported.")
         if isinstance(node, exp.Identifier):
             _identifier(node.this)

@@ -15,7 +15,11 @@ Delivered surface
   the saved id to the same service and reauthorizes the viewer on each execution.
   It does not run SQL copied from dashboard JSON.
 * MCP tools ``run_sql``, ``get_sql_result``, ``cancel_sql``, ``get_sql_catalog``.
-  ``run_sql`` returns HTTP 202 and a personal execution id, not synchronous rows.
+  Their generated raw-envelope contract preserves id/state/error/result instead
+  of unwrapping only rows. ``run_sql`` returns HTTP 202 and a personal execution
+  id. Dashboard widgets retry temporary admission pressure with bounded backoff
+  for at most 90 seconds; queued waits and superseded work are cancellable,
+  without relaxing the server's one-active-query-per-actor rule.
 * Operator tooling emits separate application-service and project-specific BI
   principals, explicit grants, locked resource profiles, scoped views and row policies.
 
@@ -71,8 +75,8 @@ there is no user-readable system-schema discovery.
 ``derived_metrics`` is an optional seventh dataset over the committed-attempt view
 from the derived metrics feature. It preserves metric/run/result ids, version,
 rollup/group key, value/numerator/denominator, status, unit/valid/missing/invalid
-probability counts, UTC window/as-of, definition/source lineage and ``sampling_scope``
-(``cohort_id:policy_version``, empty when unavailable). All three
+probability counts, UTC window/as-of, definition/source lineage and
+``sampling_scope`` (``cohort_id:policy_version``, empty when unavailable). All three
 org/workspace/project predicates apply. Only metric windows fully contained in
 the selected window are returned; no FINAL is applied to the view. Enable
 ``SQL_WORKBENCH_DERIVED_METRICS_ENABLED=true`` after its migration and invoke
@@ -123,7 +127,10 @@ Security and lifecycle
 * Writes, multiple statements, SETTINGS, FORMAT, OUTFILE, table functions,
   dictionaries, system/information_schema access, file/network functions, recursive
   CTEs, ARRAY/CROSS/GLOBAL/NATURAL joins and Cartesian ON expressions are rejected.
-  JOIN ON supports equality between different table aliases (or use USING).
+  JOIN ON supports one or more AND-combined equality keys between different
+  aliases (or USING). Ordinary AND/OR filters, reviewed If aggregate combinators,
+  now/percentiles and approved date units work; a Var is allowed only in the
+  reviewed date/interval unit positions, never as unrestricted SQL text.
 * Memberships must be active at admission, worker execution, completion, polling,
   history, cancellation, export and saved-query/widget operations. A viewer can
   read but cannot save, share, delete or attach queries. Organization-level viewer
@@ -132,9 +139,18 @@ Security and lifecycle
   creator-scoped. Removing a membership revokes access to previously completed
   results. API responses and downloads carry ``Cache-Control: no-store``.
 * PostgreSQL locks serialize per-organization admission (two active jobs maximum,
-  one per actor; 2-second admission lock and 5-second statement ceilings); a locked
-  ClickHouse service profile additionally caps global
-  service-principal concurrency at two. No process-local-only semaphore.
+  one per actor; 2-second admission lock and 5-second statement ceilings). Daily
+  operational defaults allow 1,500 submissions per actor and 30,000 per
+  organization per 24 hours, with 128 MiB/512 MiB result-body budgets. Operators
+  configure these positive limits through ``SQL_WORKBENCH_MAX_ACTOR_QUERIES_24H``,
+  ``SQL_WORKBENCH_MAX_ORG_QUERIES_24H``, ``SQL_WORKBENCH_MAX_ACTOR_RESULT_BYTES_24H``
+  and ``SQL_WORKBENCH_MAX_ORG_RESULT_BYTES_24H``. They are resource protection,
+  not pricing or edition entitlements. Admission reserves the maximum 8 MB
+  result using one statement snapshot of completed output and in-flight jobs;
+  a concurrent completion cannot disappear between separate count/sum reads.
+  Counters use organization/actor timestamp indexes. A locked ClickHouse service profile
+  additionally caps global service-principal concurrency at two. No
+  process-local-only semaphore.
 * Jobs expire in the queue after 90 seconds. Execution is capped at 30 seconds,
   10 million scanned rows, 1 GB scanned bytes, 256 MiB memory, 64 MiB join state,
   one million/64 MiB candidate-set entries,
@@ -155,12 +171,16 @@ Security and lifecycle
   ``prefer_global_in_and_join=1``, ``distributed_product_mode=global``,
   ``max_parallel_replicas=1`` and ``skip_unavailable_shards=0``. These preserve
   initiator merging/global lookups without pretending sessions/users are shard-local.
-* Results are readable/downloadable for 24 hours; physical erasure is operator-scheduled. ``purge_sql_results`` erases up to 1,000 expired
-  payloads per invocation; schedule it regularly in an operator job. Audit records
-  retain actor, org/workspace/project, original SQL, window, state and timestamps.
-  SQL text may contain sensitive literals: apply your PostgreSQL audit retention
-  policy and do not publish it to application logs. Error responses do not expose
-  driver errors, compiled SQL or physical schema details.
+* Results are readable/downloadable for 24 hours. The existing Temporal worker
+  erases expired terminal result bodies in batches of at most 1,000 every 15
+  minutes. Audit metadata is preserved by default: no policy means no hard
+  deletion. An operator may explicitly set ``SQL_WORKBENCH_AUDIT_RETENTION_DAYS``
+  to a positive day count (for example, 90). Only expired terminal records older
+  than that configured cutoff are eligible; queued/running jobs are never deleted
+  by cleanup. ``purge_sql_results`` invokes this same policy manually. Audit
+  metadata includes actor, org/workspace/project, original SQL, window, state and
+  timestamps. SQL text can contain sensitive literals and is not written to
+  application logs. Driver errors/physical schema details are not returned.
 * CSV export neutralizes spreadsheet formulas. Both exports contain the same
   bounded snapshot as the table, not an unbounded second scan. Very wide numeric
   values are strings to avoid JavaScript precision loss. Nonfinite floats are null.
@@ -253,7 +273,11 @@ exact-aggregation worker after schema bootstrap, and does not add an application
 admin fallback. Its dependency/profile/guard tests and Compose rendering were
 checked; the browser flow itself still needs execution and fallibility proofs.
 
-Live release gates remain explicit: PostgreSQL migrations and row locks; optional
+The actual PostgreSQL 17 migration graph, API/MCP permission paths and concurrent
+admission locking also passed against the isolated SQL test database; its existing
+repository flush fixture handles legacy unmanaged-table foreign keys.
+
+Live release gates remain explicit: optional
 derived-metric integration and direct-user policy/privilege probes;
 Temporal-dispatched native cancellation under a running scan; complete browser flow and independent
 fallibility perturbations; distributed-table behavior; 1-billion-span latency and
@@ -272,17 +296,46 @@ UNION and window functions, and enterprise background execution restrictions.
 This workbench supports bounded equality joins and UNION across its scoped
 catalog and asynchronous execution. It does not claim equivalent full SQL breadth,
 CLI parity, unlimited asynchronous scans or measured performance superiority.
-Parquet is implemented here; that particular source page does not establish a
-Braintrust Parquet claim. Other vendors and nonpublic claims are not relied upon.
+Parquet is implemented here; that particular SQL page does not establish a
+Braintrust export claim. A separate Braintrust first-party export page
+(https://www.braintrust.dev/docs/admin/data-management/export, reviewed
+2026-10-21) documents enterprise JSONL/Parquet automations; its custom-query
+exports are same-project logs and exclude subqueries/aggregates. That scheduled
+export is distinct from this workbench's interactive bounded result download.
+
+Other first-party boundaries (also reviewed 2026-10-21): Datadog's LLM
+Observability dataset docs
+(https://docs.datadoghq.com/ddsql_reference/data_directory/dd/dd.llm_observability.dataset.md)
+and general DDSQL reference (https://docs.datadoghq.com/ddsql_reference.md)
+document a typed LLM span/evaluation source and SQL joins; the editor requires
+``ddsql_editor_read`` (https://docs.datadoghq.com/ddsql_editor.md), and the MCP
+SQL toolset is separately marked Preview. This design therefore exposes a
+purpose-built typed LLM catalog but makes *its own* stable scope and maturity
+explicit rather than equating an MCP preview label with the editor.
+
+Opik's scoped analytics endpoint
+(https://www.comet.com/docs/opik/reference/rest-api/system-analytics-queries/execute-scoped-analytics-query)
+is documented as an internal read-only ClickHouse endpoint, not a GA user SQL
+editor. Its workspace-wide experiment/dataset scope differs from its optional
+project scoping for traces/spans/feedback/threads. This workbench deliberately
+requires a concrete project for every virtual dataset, including joins and
+nested queries; it does not claim general workspace-wide raw SQL. Arize AX
+custom metrics (https://arize.com/docs/ax/observe/projects/custom-metrics-api)
+are documented AQL scalar metrics and saved dashboard/monitor objects, not a
+claim that the AX data plane exposes equivalent interactive SQL. Arize Data
+Fabric (https://arize.com/docs/ax/security-and-settings/data-fabric) is hourly
+Iceberg warehouse sync with late eval/annotation updates; it is not a synchronous
+SQL connector and is outside this feature. Claims are limited to these public
+first-party docs; no internal customer intelligence is included.
 
 Dedicated full-scale profile (not executed locally)
 --------------------------------------------------
 
 ``futureagi/scripts/sql_workbench/profile.json`` declares the one-billion-span
 project / one-hour query window / 24-hour, single-client profile. The benchmark
-client uses the normal authenticated asynchronous API, requires nonempty join results, polls personal results,
-cancels failed/timed-out jobs and records timing/status metadata without result
-values. It never increases backend limits, seeds data, or independently proves the
+client uses the normal authenticated asynchronous API, requires nonempty join
+results, polls personal results, cancels failed/timed-out jobs and records
+timing/status metadata without result values. It never increases backend limits, seeds data, or independently proves the
 fixture's claimed size. Supply a manifest from the ingestion fixture's verified
 row-count evidence (``project_id``, ``span_count``), and retain that evidence with
 the measurements. Keep ingesting matching session/evaluation fixtures during the
@@ -310,3 +363,11 @@ topology. Sources must remain the logical Distributed tables, never ``*_local``.
 The cluster deployment owns immutable routing, consistent per-node schema and
 Keeper paths. A multi-node runtime qualification is still required; the local
 single-node checks do not establish it.
+
+The E2E-only Compose dependency graph and account bootstrap were verified
+separately; the browser flow and live Temporal-to-browser round trip have not run. Direct BI row-policy probes use an intentionally broad
+permissive policy against one source table and verify the additional tenant
+policy remains restrictive. The ClickHouse policy mechanism's documented
+OR-combination of permissive policies is why the emitted policy explicitly uses
+``AS RESTRICTIVE``; without that distinction, an existing broad policy could
+bypass a tenant filter.

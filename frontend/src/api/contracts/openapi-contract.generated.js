@@ -102391,6 +102391,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Row count",
           type: "integer",
         },
+        result_bytes: {
+          title: "Result bytes",
+          type: "integer",
+        },
         elapsed_ms: {
           title: "Elapsed ms",
           type: "integer",

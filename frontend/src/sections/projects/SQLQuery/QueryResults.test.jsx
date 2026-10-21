@@ -1,5 +1,5 @@
 import React from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import QueryResults, { numericColumns } from "./QueryResults";
@@ -69,4 +69,18 @@ describe("SQL query results", () => {
       screen.getByRole("table", { name: "SQL query results" }),
     ).toBeInTheDocument();
   });
+});
+
+it.each([
+  undefined,
+  { columns: [{ name: "name", type: "String" }], rows: [], elapsed_ms: 1 },
+  {
+    columns: [{ name: "name", type: "String" }],
+    rows: [["text only"]],
+    elapsed_ms: 1,
+  },
+])("emits a valid table config without empty axes", (data) => {
+  const onChartChange = vi.fn();
+  renderResult({ result: data, onChartChange });
+  expect(onChartChange).toHaveBeenLastCalledWith({ type: "table" });
 });

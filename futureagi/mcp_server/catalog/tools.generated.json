@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "7767d381e2b73e13bcea597631b939f1523d589f73e37ee7afc34e6375dd6b02",
+  "source_contract_sha256": "1e672ba2152767a7ef755123a57db92e0d88e679a271c49c2a67ff87831f7343",
   "tool_count": 109,
   "tools": [
     {
@@ -10932,7 +10932,7 @@
         }
       },
       "response": {
-        "unwrap": "result"
+        "unwrap": null
       },
       "source": {
         "operationId": "tracer_sql-query_run"
@@ -10979,7 +10979,7 @@
         }
       },
       "response": {
-        "unwrap": "result"
+        "unwrap": null
       },
       "source": {
         "operationId": "tracer_sql-query_read"
@@ -11027,7 +11027,7 @@
         }
       },
       "response": {
-        "unwrap": "result"
+        "unwrap": null
       },
       "source": {
         "operationId": "tracer_sql-query_cancel"
@@ -11068,7 +11068,7 @@
         }
       },
       "response": {
-        "unwrap": "result"
+        "unwrap": null
       },
       "source": {
         "operationId": "tracer_sql-query_catalog"

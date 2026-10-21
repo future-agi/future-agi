@@ -31,17 +31,48 @@ def scoped_clickhouse():
     database = assigned or f"test_sql_{uuid4().hex}"
     assert re.fullmatch(r"test_[A-Za-z0-9_]+", database)
     created = []
+    reused = set()
+    tenants = []
     with _ch_test_native_client(owned_database=database) as client:
         if assigned:
+            # Full migrations may already have installed the real native schema.
+            # Reuse only empty, compatible tables; never replace/drop them.
+            import sqlglot
+            from sqlglot import exp
+
             existing = client.execute(
-                "SELECT name FROM system.tables WHERE database=%(db)s AND name IN %(tables)s",
+                "SELECT name, engine, total_rows FROM system.tables WHERE database=%(db)s AND name IN %(tables)s",
                 {"db": database, "tables": tuple(TABLES)},
             )
-            assert not existing, "Refusing to replace pre-existing SQL fixture tables"
+            for table, engine, rows in existing:
+                assert (
+                    engine == "ReplacingMergeTree" and rows == 0
+                ), "SQL tests require an empty isolated source namespace"
+                expected = {
+                    column.name
+                    for column in sqlglot.parse_one(
+                        f"CREATE TABLE x ({TABLES[table]})", read="clickhouse"
+                    ).find_all(exp.ColumnDef)
+                }
+                if table in {"trace_sessions", "end_users"}:
+                    expected.discard("_version")
+                actual = {
+                    row[0]
+                    for row in client.execute(
+                        "SELECT name FROM system.columns WHERE database=%(db)s AND table=%(table)s",
+                        {"db": database, "table": table},
+                    )
+                }
+                assert (
+                    expected <= actual
+                ), "Installed SQL source lacks required catalog columns"
+                reused.add(table)
         else:
             client.execute(f"CREATE DATABASE {database}")
         try:
             for table, columns in TABLES.items():
+                if table in reused:
+                    continue
                 key = (
                     "(project_id, id)"
                     if table == "spans"
@@ -120,8 +151,8 @@ def scoped_clickhouse():
                     [(p, o, user, f"user-{index}", now)],
                 )
                 client.execute(
-                    f"INSERT INTO {database}.tracer_eval_logger_v2 (id,trace_session_id,custom_eval_config_id,target_type,output_float,created_at) VALUES",
-                    [(evaluation, session, c, "session", 0.5, now)],
+                    f"INSERT INTO {database}.tracer_eval_logger_v2 (id,trace_session_id,custom_eval_config_id,target_type,output_float,created_at,_version) VALUES",
+                    [(evaluation, session, c, "session", 0.5, now, 0)],
                 )
                 client.execute(
                     f"INSERT INTO {database}.model_hub_score (id,organization_id,workspace_id,tracer_project_id,trace_session_id,label_id,value,created_at) VALUES",
@@ -178,14 +209,43 @@ def scoped_clickhouse():
             client.execute(
                 f"INSERT INTO {database}.spans (project_id,org_id,id,trace_id,name,start_time) VALUES",
                 [
-                    (project, None, "null-org", "bad", "null-org", now),
-                    (project, tenants[1][0], "foreign-org", "bad", "foreign-org", now),
+                    (project, None, "null-org", str(ids[0]["trace"]), "null-org", now),
+                    (
+                        project,
+                        tenants[1][0],
+                        "foreign-org",
+                        str(ids[0]["trace"]),
+                        "foreign-org",
+                        now,
+                    ),
                 ],
             )
             yield client, scope, ids[0]
         finally:
             if assigned:
-                # Only tables this fixture created in our assigned empty namespace.
+                # Remove only this test's minted project/config rows from the
+                # installed native tables. Preserve their schema and peer state.
+                for table in sorted(reused):
+                    if tenants:
+                        key = (
+                            "custom_eval_config_id"
+                            if table == "tracer_eval_logger_v2"
+                            else (
+                                "tracer_project_id"
+                                if table == "model_hub_score"
+                                else "project_id"
+                            )
+                        )
+                        ids = tuple(
+                            t[3] if table == "tracer_eval_logger_v2" else t[2]
+                            for t in tenants
+                        )
+                        client.execute(
+                            f"ALTER TABLE {database}.{table} DELETE WHERE {key} IN %(ids)s",
+                            {"ids": ids},
+                            settings={"mutations_sync": 2},
+                        )
+                # Only tables created by this fixture may be dropped.
                 for table in reversed(created):
                     client.execute(f"DROP TABLE {database}.{table} SYNC")
             else:
@@ -472,11 +532,25 @@ def test_direct_bi_views_and_row_policies_are_tenant_safe(
     )
     created_users, created_policies = [], []
     created_database = False
+    injected_permissive_policy = False
     reader = None
     before = client.execute(f"SELECT count() FROM {scope.database}.spans")
     try:
         for statement in statements:
             client.execute(statement)
+            if (
+                statement.startswith("CREATE USER sqld_")
+                and not injected_permissive_policy
+            ):
+                # Existing broad permissive source policy must not OR-bypass the
+                # tenant filter; generated restrictive source policies are AND.
+                client.execute(
+                    f"CREATE ROW POLICY sql_test_broad_{principal} ON {scope.database}.spans USING 1 TO {definer}"
+                )
+                created_policies.append(
+                    (f"sql_test_broad_{principal}", f"{scope.database}.spans")
+                )
+                injected_permissive_policy = True
             if statement.startswith("CREATE USER "):
                 created_users.append(statement.split()[2])
             elif statement.startswith("CREATE DATABASE "):
@@ -622,3 +696,38 @@ def test_recent_backfill_evaluations_keep_old_owned_targets(scoped_clickhouse):
     # User CTE names cannot shadow the server's internal ownership candidates.
     shadow = "WITH __sql_eval_candidates AS (SELECT * FROM annotations) SELECT id FROM eval_results"
     assert {row[0] for row in client.execute(compile_query(shadow, scope))} == returned
+
+
+def test_reviewed_boolean_combinator_and_date_queries_execute(scoped_clickhouse):
+    client, scope, _ = scoped_clickhouse
+    assert client.execute(
+        compile_query(
+            "SELECT count() FROM spans WHERE name='tenant-0' AND (cost=0 OR total_tokens>0)",
+            scope,
+        )
+    ) == [(1,)]
+    assert client.execute(
+        compile_query(
+            "SELECT count() FROM spans s JOIN spans t ON s.id=t.id AND s.trace_id=t.trace_id",
+            scope,
+        )
+    ) == [(1,)]
+    assert client.execute(
+        compile_query(
+            "SELECT sumIf(cost, name='tenant-0'), avgIf(cost, name='tenant-0'), countIf(name='tenant-0') FROM spans",
+            scope,
+        )
+    ) == [(0, 0.0, 1)]
+    rows = client.execute(
+        compile_query(
+            "SELECT toStartOfHour(start_time), toStartOfDay(start_time), dateDiff('day',start_time,now()), dateAdd('day',1,start_time) FROM spans WHERE start_time >= now()-INTERVAL 1 DAY",
+            scope,
+        )
+    )
+    assert len(rows) == 1 and rows[0][2] == 0
+    assert client.execute(
+        compile_query(
+            "SELECT quantile(0.95)(latency_ms),quantileExact(0.5)(cost) FROM spans",
+            scope,
+        )
+    ) == [(0.0, 0.0)]

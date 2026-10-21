@@ -267,3 +267,34 @@ def test_scalar_with_alias_cannot_capture_scope_columns(scope, expression):
         compile_query(
             f"WITH {expression} AS project_id SELECT count() FROM traces", scope
         )
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT id FROM spans WHERE status = 'ERROR' AND (cost > 0 OR total_tokens > 0)",
+        "SELECT s.id FROM spans s JOIN spans t ON s.id=t.id AND s.trace_id=t.trace_id",
+        "SELECT sumIf(cost, status='ERROR'), avgIf(cost, status='OK'), countIf(status='ERROR') FROM spans",
+        "SELECT toStartOfHour(start_time), toStartOfDay(start_time), dateDiff('day', start_time, now()), dateAdd('day', 1, start_time) FROM spans",
+        "SELECT id FROM spans WHERE start_time >= now() - INTERVAL 1 DAY",
+        "SELECT quantile(0.95)(latency_ms), quantileExact(0.5)(cost), now() FROM spans",
+    ],
+)
+def test_reviewed_boolean_date_and_aggregate_grammar(sql, scope):
+    assert "analytics.spans" in compile_query(sql, scope)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT sumState(cost) FROM spans",
+        "SELECT groupArrayIf(name, status='ERROR') FROM spans",
+        "SELECT dateAdd('unreviewed_unit', 1, start_time) FROM spans",
+        "SELECT id FROM spans WHERE status='OK' OR sleep(10)=0",
+        "SELECT s.id FROM spans s JOIN spans t ON s.id=t.id OR s.trace_id=t.trace_id",
+        "SELECT id FROM spans WHERE name IN (SELECT name FROM system.tables) AND 1=1",
+    ],
+)
+def test_grammar_extensions_do_not_expand_privileges(sql, scope):
+    with pytest.raises(UnsafeQuery):
+        compile_query(sql, scope)

@@ -8,24 +8,37 @@ export const sqlApi = {
         params: { project_id: projectId },
       })
       .then((r) => r.data),
-  run: (data) =>
-    axios.post(apiPath("/tracer/sql-query/run/"), data).then((r) => r.data),
-  runSaved: (data) =>
+  run: (data, options = {}) =>
     axios
-      .post(apiPath("/tracer/sql-query/run-saved/"), data)
+      .post(apiPath("/tracer/sql-query/run/"), data, {
+        timeout: 15_000,
+        ...options,
+      })
+      .then((r) => r.data),
+  runSaved: (data, options = {}) =>
+    axios
+      .post(apiPath("/tracer/sql-query/run-saved/"), data, {
+        timeout: 15_000,
+        ...options,
+      })
       .then((r) => r.data),
   result: (projectId, id, signal) =>
     axios
       .get(apiPath("/tracer/sql-query/{id}/", { id }), {
         params: { project_id: projectId },
         signal,
+        timeout: 15_000,
       })
       .then((r) => r.data),
   cancel: (projectId, id) =>
     axios
-      .post(apiPath("/tracer/sql-query/{id}/cancel/", { id }), {
-        project_id: projectId,
-      })
+      .post(
+        apiPath("/tracer/sql-query/{id}/cancel/", { id }),
+        {
+          project_id: projectId,
+        },
+        { timeout: 15_000 },
+      )
       .then((r) => r.data),
   history: (projectId, offset = 0) =>
     axios

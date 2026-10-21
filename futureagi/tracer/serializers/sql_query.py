@@ -94,6 +94,7 @@ class SQLResultSerializer(serializers.Serializer):
     )
     truncated = serializers.BooleanField(required=False)
     row_count = serializers.IntegerField(required=False)
+    result_bytes = serializers.IntegerField(required=False)
     elapsed_ms = serializers.IntegerField(required=False)
 
 

@@ -29253,6 +29253,7 @@ export interface SQLResultApi {
   rows?: SQLResultApiRowsItemItem[][];
   truncated?: boolean;
   row_count?: number;
+  result_bytes?: number;
   elapsed_ms?: number;
 }
 

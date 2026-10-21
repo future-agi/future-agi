@@ -1,19 +1,13 @@
 from django.core.management.base import BaseCommand
-from django.utils import timezone
 
-from tracer.models.sql_query import SQLExecution
+from tracer.sql_workbench.service import purge_expired_results
 
 
 class Command(BaseCommand):
-    help = (
-        "Erase expired SQL result payloads in bounded batches; retain audit metadata."
-    )
+    help = "Erase expired SQL result bodies; delete terminal audit records only under an explicit configured policy."
 
     def handle(self, *args, **options):
-        ids = list(
-            SQLExecution.objects.filter(expires_at__lte=timezone.now())
-            .exclude(result={})
-            .values_list("id", flat=True)[:1000]
+        result = purge_expired_results(batch_size=1000)
+        self.stdout.write(
+            f"Purged {result['expired_result_bodies']} result payloads and {result['old_audit_rows']} audit records under the configured policy."
         )
-        count = SQLExecution.objects.filter(id__in=ids).update(result={})
-        self.stdout.write(f"Purged {count} expired result payloads.")

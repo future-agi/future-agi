@@ -164,6 +164,7 @@ describe("SQL workbench page", () => {
           sql: "SELECT name FROM spans",
           name: "My query",
           visibility: "private",
+          chart: { type: "table" },
         }),
       ),
     );
