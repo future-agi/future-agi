@@ -30,11 +30,14 @@ def sampling_lineage_valid_sql() -> str:
     mode = sampling_field("membership_mode")
     frozen = f"parseDateTime64BestEffortOrNull({sampling_field('cohort_frozen_at')}, 6, 'UTC')"
     population = f"toInt64OrNull(JSONExtractRaw(output_metadata, {METADATA_PATH}, 'population_size'))"
-    return f"""ifNull(isNotNull({start}) AND isNotNull({end}) AND {start} < {end}
-        AND {start} <= toDateTime64(%(start)s, 6, 'UTC')
-        AND {end} >= toDateTime64(%(end)s, 6, 'UTC')
-        AND (({mode} = 'live' AND empty({sampling_field("cohort_frozen_at")}))
-            OR ({mode} = 'closed' AND isNotNull({frozen}) AND {frozen} >= {end}
+    open_end = (
+        f"JSONExtractRaw(output_metadata, {METADATA_PATH}, 'window', 'end') = 'null'"
+    )
+    finite_window = f"isNotNull({end}) AND {start} < {end} AND {end} >= toDateTime64(%(end)s, 6, 'UTC')"
+    return f"""ifNull(isNotNull({start}) AND {start} <= toDateTime64(%(start)s, 6, 'UTC')
+        AND (({mode} = 'live' AND empty({sampling_field("cohort_frozen_at")})
+                AND ({open_end} OR ({finite_window})))
+            OR ({mode} = 'closed' AND ({finite_window}) AND isNotNull({frozen}) AND {frozen} >= {end}
                 AND {frozen} <= toDateTime64(%(as_of)s, 6, 'UTC') AND {population} > 0)), 0)"""
 
 

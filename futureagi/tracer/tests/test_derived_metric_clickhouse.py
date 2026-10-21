@@ -99,10 +99,10 @@ def _schema_client(client):
         latency_ms Int32 DEFAULT 0, cost Float64 DEFAULT 0,
         total_tokens Int32 DEFAULT 0, prompt_tokens Int32 DEFAULT 0, completion_tokens Int32 DEFAULT 0,
         attrs_number Map(String,Float64), attrs_bool Map(String,UInt8), attrs_string Map(String,String)
-    ) ENGINE=ReplacingMergeTree(_version) ORDER BY (project_id,start_time,id)""")
+    ) ENGINE=ReplacingMergeTree(_version) ORDER BY (project_id,start_time,trace_id,id)""")
     client.execute("""CREATE TABLE tracer_eval_logger_v2 (
         id UUID, custom_eval_config_id UUID, config_hash Nullable(String),
-        observation_span_id Nullable(String), trace_session_id Nullable(UUID), target_type String,
+        trace_id Nullable(UUID), observation_span_id Nullable(String), trace_session_id Nullable(UUID), target_type String,
         created_at DateTime64(6,'UTC'), updated_at DateTime64(6,'UTC'), _version UInt64,
         is_deleted UInt8 DEFAULT 0, error UInt8 DEFAULT 0, status String DEFAULT 'completed',
         output_float Nullable(Float64), output_bool Nullable(UInt8), output_str Nullable(String),
@@ -124,16 +124,18 @@ def seed_span(
     resolved=1,
     escalated=0,
     cohort="west",
+    trace_id=None,
 ):
     client.execute(
-        """INSERT INTO spans (id, project_id, org_id, trace_session_id, end_user_id,
+        """INSERT INTO spans (id, project_id, org_id, trace_id, trace_session_id, end_user_id,
         start_time, created_at, updated_at, attrs_number, attrs_string)
-        VALUES (%(span)s, %(project)s, %(org)s, %(session)s, %(user)s, %(at)s, %(at)s, %(at)s,
+        VALUES (%(span)s, %(project)s, %(org)s, %(trace)s, %(session)s, %(user)s, %(at)s, %(at)s, %(at)s,
         map('resolved', %(resolved)s, 'escalated', %(escalated)s), if(%(cohort_present)s, map('region', %(cohort)s), map()))""",
         {
             "span": span_id,
             "project": str(scope.project),
             "org": str(scope.organization),
+            "trace": str(trace_id or uuid4()),
             "session": str(session_id),
             "user": str(user_id),
             "at": when.strftime("%Y-%m-%d %H:%M:%S.%f"),
@@ -163,6 +165,7 @@ def seed_eval(
     status="completed",
     error=0,
     selection_overrides=None,
+    trace_id=None,
 ):
     day = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     sampling = {
@@ -183,14 +186,15 @@ def seed_eval(
     }
     client.execute(
         """INSERT INTO tracer_eval_logger_v2 (id, custom_eval_config_id, config_hash,
-        observation_span_id, trace_session_id, target_type, created_at, updated_at, _version,
+        trace_id, observation_span_id, trace_session_id, target_type, created_at, updated_at, _version,
         is_deleted, output_float, output_metadata, status, error)
-        VALUES (%(id)s, %(config)s, %(hash)s, %(span)s, %(session)s, %(target_type)s,
+        VALUES (%(id)s, %(config)s, %(hash)s, %(trace)s, %(span)s, %(session)s, %(target_type)s,
         %(at)s, %(at)s, %(version)s, %(deleted)s, %(score)s, %(metadata)s, %(status)s, %(error)s)""",
         {
             "id": str(row_id or uuid4()),
             "config": str(config_id),
             "hash": config_hash,
+            "trace": str(trace_id) if trace_id else None,
             "span": span_id,
             "session": str(target) if span_id is None else None,
             "target_type": "session" if span_id is None else "span",
@@ -840,3 +844,192 @@ def test_closed_cohort_has_real_freeze_and_population_provenance(metric_ch):
     )[0]
     assert row["status"] == "ok" and row["value"] == 1
     assert row["numerator"] == row["denominator"] == 2
+
+
+def test_span_ids_are_scoped_by_trace_and_span_target_evals_follow_their_trace(
+    metric_ch,
+):
+    scope, now = (
+        Scope(uuid4(), uuid4(), uuid4()),
+        datetime.now(UTC).replace(microsecond=0),
+    )
+    sessions, traces, configs = (
+        [uuid4(), uuid4()],
+        [uuid4(), uuid4()],
+        [uuid4(), uuid4()],
+    )
+    for index in range(2):
+        seed_span(
+            metric_ch,
+            scope,
+            "same-span-id",
+            sessions[index],
+            uuid4(),
+            now - timedelta(hours=1),
+            trace_id=traces[index],
+        )
+        seed_eval(
+            metric_ch,
+            configs[0],
+            sessions[index],
+            now - timedelta(minutes=10),
+            1 - index,
+            1,
+            span_id="same-span-id",
+            trace_id=traces[index],
+        )
+        seed_eval(
+            metric_ch,
+            configs[1],
+            sessions[index],
+            now - timedelta(minutes=10),
+            index,
+            1,
+            span_id="same-span-id",
+            trace_id=traces[index],
+        )
+    definition = recipe(configs, "none")
+    rows = execute_formula(metric_ch, definition, scope, now)
+    assert rows[0]["status"] == "ok" and rows[0]["value"] == 0.5
+    assert int(rows[0]["unit_count"]) == 2
+
+
+@pytest.mark.parametrize("selection_unit", ["session", "user", "span"])
+def test_distinct_trace_span_pairs_do_not_collapse_source_units(
+    metric_ch, selection_unit
+):
+    scope, now = (
+        Scope(uuid4(), uuid4(), uuid4()),
+        datetime.now(UTC).replace(microsecond=0),
+    )
+    for escalated in [0, 1]:
+        seed_span(
+            metric_ch,
+            scope,
+            "duplicate-id",
+            uuid4(),
+            uuid4(),
+            now - timedelta(hours=1),
+            escalated=escalated,
+            trace_id=uuid4(),
+        )
+    assert metric_ch.execute("SELECT count() FROM spans FINAL")[0][0] == 2
+    definition = recipe()
+    definition.selection_unit = selection_unit
+    row = execute_formula(metric_ch, definition, scope, now)[0]
+    assert (row["unit_count"], row["valid_count"], row["value"]) == (2, 2, 0.5)
+
+
+def test_span_evaluation_never_attaches_to_same_id_in_another_trace(metric_ch):
+    scope, now = (
+        Scope(uuid4(), uuid4(), uuid4()),
+        datetime.now(UTC).replace(microsecond=0),
+    )
+    traces, sessions, configs = (
+        [uuid4(), uuid4()],
+        [uuid4(), uuid4()],
+        [uuid4(), uuid4()],
+    )
+    for index in range(2):
+        seed_span(
+            metric_ch,
+            scope,
+            "reused-id",
+            sessions[index],
+            uuid4(),
+            now - timedelta(hours=1),
+            trace_id=traces[index],
+        )
+    for index, config in enumerate(configs):
+        seed_eval(
+            metric_ch,
+            config,
+            sessions[0],
+            now - timedelta(minutes=10),
+            1 - index,
+            1,
+            span_id="reused-id",
+            trace_id=traces[0],
+        )
+    rows = {
+        row["group_key"]: row
+        for row in execute_formula(metric_ch, recipe(configs), scope, now, "session")
+    }
+    assert rows[str(sessions[0])]["value"] == 1
+    assert rows[str(sessions[1])]["status"] == "missing_inputs"
+    assert rows[str(sessions[1])]["value"] is None
+
+
+@pytest.mark.parametrize("collision", [False, True])
+def test_span_weighting_requires_unambiguous_sampler_identity(metric_ch, collision):
+    scope, now = (
+        Scope(uuid4(), uuid4(), uuid4()),
+        datetime.now(UTC).replace(microsecond=0),
+    )
+    configs = [uuid4(), uuid4()]
+    for _ in range(2 if collision else 1):
+        trace, session = uuid4(), uuid4()
+        seed_span(
+            metric_ch,
+            scope,
+            "sampled-id",
+            session,
+            uuid4(),
+            now - timedelta(hours=1),
+            trace_id=trace,
+        )
+        for number, config in enumerate(configs):
+            seed_eval(
+                metric_ch,
+                config,
+                session,
+                now - timedelta(minutes=10),
+                1 - number,
+                0.5,
+                span_id="sampled-id",
+                trace_id=trace,
+                selection_overrides={
+                    "sampling_unit": "span",
+                    "sampling_unit_id": "span:sampled-id",
+                },
+            )
+    definition = recipe(configs, "inverse_probability")
+    definition.selection_unit = "span"
+    row = execute_formula(metric_ch, definition, scope, now)[0]
+    assert row["status"] == ("invalid_probability" if collision else "ok")
+    assert row["value"] == (None if collision else 1)
+
+
+@pytest.mark.parametrize(
+    "window_end,valid", [(None, True), ("", False), ("invalid", False)]
+)
+def test_live_sampling_window_can_be_explicitly_open_ended(
+    metric_ch, window_end, valid
+):
+    scope, now, session = (
+        Scope(uuid4(), uuid4(), uuid4()),
+        datetime.now(UTC).replace(microsecond=0),
+        uuid4(),
+    )
+    configs = [uuid4(), uuid4()]
+    seed_span(metric_ch, scope, "one", session, uuid4(), now - timedelta(hours=1))
+    for index, config in enumerate(configs):
+        seed_eval(
+            metric_ch,
+            config,
+            session,
+            now - timedelta(minutes=10),
+            1 - index,
+            0.5,
+            selection_overrides={
+                "window": {
+                    "start": (now - timedelta(days=2)).isoformat(),
+                    "end": window_end,
+                }
+            },
+        )
+    row = execute_formula(
+        metric_ch, recipe(configs, "inverse_probability"), scope, now
+    )[0]
+    assert row["status"] == ("ok" if valid else "invalid_probability")
+    assert row["value"] == (1 if valid else None)

@@ -1,8 +1,11 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from threading import Barrier
 from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+from django.db import IntegrityError, close_old_connections, transaction
 from django.utils import timezone
 
 from accounts.models.organization import Organization
@@ -10,6 +13,7 @@ from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from tracer.models.dashboard import DashboardWidget
 from tracer.models.derived_metric import (
+    DerivedMetricMonitorDelivery,
     DerivedMetricRun,
     DerivedMetricVersion,
 )
@@ -639,3 +643,278 @@ def test_scope_permission_rejects_foreign_and_deleted_workspaces(user):
         user=user, workspace=own, organization=user.organization, method="GET"
     )
     assert MetricWorkspacePermission().has_permission(request, None) is False
+
+
+@pytest.mark.django_db
+def test_monitor_delivery_is_idempotent_for_nonconsecutive_replay(
+    auth_client, observe_project, workspace, saved, metric_ch
+):
+    now = timezone.now().replace(microsecond=0)
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    sessions = [uuid4(), uuid4()]
+    for index, session in enumerate(sessions):
+        seed_span(
+            metric_ch,
+            scope,
+            f"delivery-{index}",
+            session,
+            uuid4(),
+            now - timedelta(hours=1),
+            escalated=index,
+        )
+    monitor = UserAlertMonitor.objects.create(
+        name="Replay-safe monitor",
+        organization=workspace.organization,
+        workspace=workspace,
+        project=observe_project,
+        metric_type="derived_metric",
+        metric=saved["id"],
+        threshold_operator="less_than",
+        threshold_type="static",
+        critical_threshold_value=0.75,
+        notification_emails=[],
+        alert_frequency=60,
+    )
+    with (
+        patch("tracer.views.derived_metric._enqueue"),
+        patch(
+            "tracer.services.derived_metrics.service.get_clickhouse_client",
+            return_value=metric_ch,
+        ),
+    ):
+        first = auth_client.post(
+            f"{ROOT}{saved['id']}/runs/", run_body(), format="json"
+        ).data
+        execute_run(first["id"])
+        second = auth_client.post(
+            f"{ROOT}{saved['id']}/runs/", run_body(), format="json"
+        ).data
+        execute_run(second["id"])
+        initial_snapshot = DerivedMetricRun.objects.get(pk=first["id"]).snapshot_id
+        assert UserAlertMonitorLog.objects.filter(alert=monitor).count() == 2
+        assert (
+            auth_client.post(
+                f"{RUNS}{first['id']}/recompute/", {}, format="json"
+            ).status_code
+            == 202
+        )
+        execute_run(first["id"])
+        assert (
+            DerivedMetricRun.objects.get(pk=first["id"]).snapshot_id == initial_snapshot
+        )
+    assert UserAlertMonitorLog.objects.filter(alert=monitor).count() == 2
+    assert DerivedMetricMonitorDelivery.objects.filter(monitor=monitor).count() == 2
+    assert {
+        str(value)
+        for value in DerivedMetricMonitorDelivery.objects.filter(
+            monitor=monitor
+        ).values_list("run_id", flat=True)
+    } == {first["id"], second["id"]}
+    monitor.refresh_from_db()
+    assert str(monitor.last_derived_run_id) == second["id"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_monitor_delivery_is_idempotent_under_concurrent_retries(
+    auth_client, saved, user, observe_project, workspace
+):
+    from tracer.models.derived_metric import DerivedMetric, DerivedMetricMonitorDelivery
+    from tracer.services.derived_metrics.integrations import notify_run_monitors
+
+    metric = DerivedMetric.objects.get(pk=saved["id"])
+    definition = DerivedMetricVersion.objects.get(metric=metric, version=1)
+    run = DerivedMetricRun.objects.create(
+        definition=definition,
+        requested_by=user,
+        window_start=timezone.now() - timedelta(minutes=5),
+        window_end=timezone.now(),
+        as_of=timezone.now(),
+        fingerprint=uuid4().hex,
+        snapshot_id=uuid4(),
+        result_id=uuid4(),
+        source_manifest={"schema_version": 1, "compiler_version": 1},
+        status="complete",
+    )
+    monitor = UserAlertMonitor.objects.create(
+        name="Concurrent delivery monitor",
+        organization=workspace.organization,
+        workspace=workspace,
+        project=observe_project,
+        metric_type="derived_metric",
+        metric=str(metric.id),
+        threshold_operator="less_than",
+        threshold_type="static",
+        critical_threshold_value=0.75,
+        notification_emails=[],
+        alert_frequency=60,
+    )
+
+    ready = Barrier(2)
+
+    def deliver():
+        close_old_connections()
+        ready.wait(timeout=10)
+        try:
+            notify_run_monitors(
+                DerivedMetricRun.objects.select_related("definition__metric").get(
+                    pk=run.id
+                )
+            )
+        finally:
+            close_old_connections()
+
+    with (
+        patch(
+            "tracer.services.derived_metrics.integrations.read_results",
+            return_value={"results": [{"value": 0.5}]},
+        ),
+        ThreadPoolExecutor(max_workers=2) as pool,
+    ):
+        list(pool.map(lambda _: deliver(), range(2)))
+    assert UserAlertMonitorLog.objects.filter(alert=monitor).count() == 1
+    assert (
+        DerivedMetricMonitorDelivery.objects.filter(monitor=monitor, run=run).count()
+        == 1
+    )
+
+
+@pytest.fixture
+def delivery_case(saved, user, observe_project, workspace):
+    definition = DerivedMetricVersion.objects.get(metric_id=saved["id"], version=1)
+    run = DerivedMetricRun.objects.create(
+        definition=definition,
+        requested_by=user,
+        window_start=timezone.now() - timedelta(minutes=5),
+        window_end=timezone.now(),
+        as_of=timezone.now(),
+        fingerprint=uuid4().hex,
+        snapshot_id=uuid4(),
+        result_id=uuid4(),
+        status="complete",
+    )
+    monitor = UserAlertMonitor.objects.create(
+        name="Delivery rollback monitor",
+        organization=workspace.organization,
+        workspace=workspace,
+        project=observe_project,
+        metric_type="derived_metric",
+        metric=saved["id"],
+        threshold_operator="less_than",
+        threshold_type="static",
+        critical_threshold_value=0.75,
+        notification_emails=[],
+        alert_frequency=60,
+    )
+    return run, monitor
+
+
+@pytest.mark.django_db
+def test_monitor_delivery_rolls_back_on_error_and_retries(delivery_case):
+    from tracer.services.derived_metrics.integrations import notify_run_monitors
+
+    run, monitor = delivery_case
+    with patch(
+        "tracer.services.derived_metrics.integrations.read_results",
+        return_value={"results": [{"value": 0.5}]},
+    ):
+        # Raise after the real alert log insert, not before entering the path.
+        with (
+            patch(
+                "tracer.utils.monitor._send_slack_notification",
+                side_effect=RuntimeError("delivery unavailable"),
+            ),
+            pytest.raises(RuntimeError, match="delivery unavailable"),
+        ):
+            notify_run_monitors(run)
+        assert not UserAlertMonitorLog.objects.filter(alert=monitor).exists()
+        assert not DerivedMetricMonitorDelivery.objects.filter(
+            monitor=monitor, run=run
+        ).exists()
+        monitor.refresh_from_db()
+        assert monitor.last_derived_run_id is None
+        notify_run_monitors(run)
+        notify_run_monitors(run)
+    assert UserAlertMonitorLog.objects.filter(alert=monitor).count() == 1
+    assert (
+        DerivedMetricMonitorDelivery.objects.get(monitor=monitor, run=run).alert_type
+        == "critical"
+    )
+    with pytest.raises(IntegrityError), transaction.atomic():
+        DerivedMetricMonitorDelivery.objects.create(
+            monitor=monitor, run=run, alert_type="critical"
+        )
+
+
+@pytest.mark.django_db
+def test_healthy_monitor_evaluation_is_durably_consumed(delivery_case):
+    from tracer.services.derived_metrics.integrations import notify_run_monitors
+
+    run, monitor = delivery_case
+    with patch(
+        "tracer.services.derived_metrics.integrations.read_results",
+        return_value={"results": [{"value": 1.0}]},
+    ):
+        notify_run_monitors(run)
+        UserAlertMonitor.objects.filter(pk=monitor.pk).update(
+            critical_threshold_value=1.5, last_derived_run_id=uuid4()
+        )
+        notify_run_monitors(run)
+    assert not UserAlertMonitorLog.objects.filter(alert=monitor).exists()
+    assert (
+        DerivedMetricMonitorDelivery.objects.get(monitor=monitor, run=run).alert_type
+        == ""
+    )
+
+
+@pytest.mark.django_db
+def test_composite_span_identity_persists_two_trace_scoped_units(
+    auth_client, observe_project, workspace, metric_ch
+):
+    now = timezone.now().replace(microsecond=0)
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    source_traces = [uuid4(), uuid4()]
+    for index, trace_id in enumerate(source_traces):
+        seed_span(
+            metric_ch,
+            scope,
+            "shared-span-id",
+            uuid4(),
+            uuid4(),
+            now - timedelta(hours=1),
+            escalated=index,
+            trace_id=trace_id,
+        )
+    data = body(observe_project)
+    data["selection_unit"] = "span"
+    saved = auth_client.post(ROOT, data, format="json")
+    assert saved.status_code == 201, saved.data
+    with (
+        patch("tracer.views.derived_metric._enqueue"),
+        patch(
+            "tracer.services.derived_metrics.service.get_clickhouse_client",
+            return_value=metric_ch,
+        ),
+    ):
+        response = auth_client.post(
+            f"{ROOT}{saved.data['id']}/runs/", run_body(), format="json"
+        )
+        assert response.status_code == 202, response.data
+        execute_run(response.data["id"])
+        result = auth_client.get(f"{RUNS}{response.data['id']}/results/").data[
+            "results"
+        ][0]
+        assert (result["unit_count"], result["valid_count"], result["value"]) == (
+            2,
+            2,
+            0.5,
+        )
+        run = DerivedMetricRun.objects.get(pk=response.data["id"])
+        frozen = metric_ch.execute(
+            "SELECT unit_id FROM derived_metric_inputs WHERE snapshot_id = %(snapshot)s",
+            {"snapshot": str(run.snapshot_id)},
+        )
+        import json
+
+        assert {tuple(json.loads(row[0])) for row in frozen} == {
+            (str(trace_id), "shared-span-id") for trace_id in source_traces
+        }

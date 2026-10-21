@@ -121,7 +121,7 @@ def test_snapshot_preaggregates_each_eval_and_session_before_join(settings):
     assert params["org_id"] == str(scope.organization)
     assert "ifNull(config_hash, '') = %(hash_resolved)s" in sql
     assert "updated_at <= %(as_of)s" in sql
-    assert "_version DESC LIMIT 1 BY id" in sql
+    assert "_version DESC LIMIT 1 BY project_id, trace_id, id" in sql
     assert "is_deleted = 0" in sql
 
 

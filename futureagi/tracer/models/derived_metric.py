@@ -94,3 +94,31 @@ class DerivedMetricRun(models.Model):
                 name="derived_run_window_idx",
             )
         ]
+
+
+class DerivedMetricMonitorDelivery(models.Model):
+    """Committed monitor/run evaluations; alert_type is empty for a healthy result."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    monitor = models.ForeignKey(
+        "tracer.UserAlertMonitor",
+        on_delete=models.CASCADE,
+        related_name="derived_metric_deliveries",
+    )
+    run = models.ForeignKey(
+        DerivedMetricRun, on_delete=models.CASCADE, related_name="monitor_deliveries"
+    )
+    alert_type = models.CharField(max_length=16)
+    delivered_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["monitor", "run"], name="derived_metric_monitor_run_delivery"
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["monitor", "-delivered_at"], name="derived_monitor_delivery_idx"
+            )
+        ]

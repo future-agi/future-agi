@@ -49,6 +49,9 @@ Semantics
   Membership mode, a normalized sampling window covering the requested window,
   and closed-cohort freeze/population provenance must also agree. Sampling scope
   appends a digest of that selection lineage; equal cohort IDs alone are not proof.
+  Live-rate policies may have an explicit JSON-null window end; missing, empty or
+  malformed end values are not treated as an open window. Closed cohorts still
+  require a finite end and recorded freeze/population evidence.
   ``sampling_scope`` persists this cohort/version identity for SQL consumers.
 * Each input is independently reduced per selection unit (latest/mean/min/max),
   before inputs are joined. Repeated evaluator executions are collapsed by
@@ -63,6 +66,13 @@ Semantics
   Numerator, denominator, unit count and validity diagnostics are persisted.
 * Day attribution is the UTC date of the unit's earliest in-window span. This is
   not the evaluation completion date. A unit spanning days is counted once.
+* Spans are identified by the pair ``(trace_id, span_id)`` within the project,
+  including version collapse, membership, frozen span units and span-target eval
+  joins. Reusing a span ID in another trace cannot collapse or cross-attach it.
+  If persisted sampling metadata identifies only a bare span ID that occurs in
+  multiple traces in the population, weighted span metrics fail closed rather
+  than guess the sampler's draw. Session/user sampling remains canonical-unit
+  scoped.
 * Session/user IDs use the existing canonical-survivor remap helpers. A session
   assigned to multiple users is not guessed when joining a session evaluation to
   a user selection unit. Finer-grained rollups that cannot represent a whole
@@ -128,8 +138,12 @@ Definitions/results/jobs are scoped to current organization/workspace/project
 access. Viewers read; workspace members write/run. Workers reauthorize before
 computation and again before publication so moved/deleted projects cannot retain
 an old workspace's access. Dashboard and monitor adapters reauthorize saved
-references. Monitor delivery is idempotent per run/monitor, and missing metric
-values never alert as zero. Notifications reuse the existing transport behavior;
+references. Monitor evaluations commit a durable unique ``(monitor, run)`` ledger
+row alongside their alert logs under a monitor-row lock. The last-run field is a
+status pointer, not the idempotency key: run A -> B -> recompute A does not emit A
+again. Healthy numeric evaluations are also consumed once; missing values are
+not consumed and never alert as zero. An exception rolls back the ledger and log
+so a subsequent delivery can retry. Notifications reuse the existing transport behavior;
 this change does not claim exactly-once external email or Slack delivery.
 
 The single-slot exact-aggregation worker executes each bounded plan with native
@@ -148,7 +162,9 @@ and evaluation schemas are not rewritten. Provision the ClickHouse schema before
 enabling writes, and register the existing exact-aggregation task queue. An
 application writer connection is required for snapshot persistence; readonly-only
 deployments fail explicitly. PostgreSQL migrations add new empty tables and one
-nullable monitor field, without backfilling historical data. Application rollback
+nullable monitor field, without backfilling historical data. Apply the delivery
+ledger migration before enabling derived monitors; historical delivery identities
+are not fabricated from a last-run pointer. Application rollback
 leaves ClickHouse evidence intact; do not drop snapshot tables to roll back code.
 
 Public competitive references

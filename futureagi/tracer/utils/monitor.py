@@ -402,7 +402,7 @@ def _check_static_threshold(
     current_value: float,
     time_window_start: datetime,
     now: datetime,
-) -> None:
+) -> str | None:
     """Checks for alerts based on static thresholds."""
     op = monitor.threshold_operator
     critical_val = monitor.critical_threshold_value
@@ -425,6 +425,7 @@ def _check_static_threshold(
             f"({monitor.threshold_operator} {threshold_val})."
         )
         _handle_alert_trigger(monitor, message, alert_type, time_window_start, now)
+    return alert_type
 
 
 def _check_percentage_change_threshold(

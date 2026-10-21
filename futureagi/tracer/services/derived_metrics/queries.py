@@ -99,6 +99,7 @@ def snapshot_select(
             "id",
             "custom_eval_config_id",
             "config_hash",
+            "trace_id",
             "observation_span_id",
             "trace_session_id",
             "target_type",
@@ -126,9 +127,20 @@ def snapshot_select(
     session = f"ifNull(toString({resolved_id_expr('s.trace_session_id', 'sm')}), '')"
     user = f"ifNull(toString({resolved_id_expr('s.end_user_id', 'um')}), '')"
     params["cohort_key"] = definition.cohort_key
-    unit = {"span": "toString(s.id)", "session": session, "user": user}[
+    span_identity = "toJSONString(tuple(toString(s.trace_id), toString(s.id)))"
+    unit = {"span": span_identity, "session": session, "user": user}[
         definition.selection_unit
     ]
+    sampling_identity = (
+        "concat('span:', toString(s.id))"
+        if definition.selection_unit == "span"
+        else f"concat('{definition.selection_unit}:', {unit})"
+    )
+    sampling_ambiguity = (
+        "uniqExact(s.trace_id) OVER (PARTITION BY s.id) > 1"
+        if definition.selection_unit == "span"
+        else "0"
+    )
     span_inputs = []
     for item in definition.inputs:
         if item["source"] != "span":
@@ -153,17 +165,18 @@ def snapshot_select(
     projections = ", " + ", ".join(span_inputs) if span_inputs else ""
     ctes = [
         """span_versions AS (
-        SELECT id, project_id, org_id, trace_session_id, end_user_id, start_time, created_at, updated_at,
+        SELECT id, project_id, org_id, trace_id, trace_session_id, end_user_id, start_time, created_at, updated_at,
             _version, is_deleted, model, provider, status, name, service_name,
             latency_ms, cost, total_tokens, prompt_tokens, completion_tokens,
             attrs_number, attrs_bool, attrs_string
         FROM spans
         PREWHERE project_id = %(project_id)s AND start_time >= %(start)s AND start_time < %(end)s
         WHERE (org_id = %(org_id)s OR isNull(org_id)) AND created_at <= %(as_of)s AND updated_at <= %(as_of)s
-        ORDER BY _version DESC LIMIT 1 BY id
+        ORDER BY _version DESC LIMIT 1 BY project_id, trace_id, id
     )""",
         f"""members AS (
-        SELECT toString(s.id) AS span_id, s.trace_session_id AS raw_session_id,
+        SELECT {span_identity} AS span_id, s.trace_id AS raw_trace_id, s.trace_session_id AS raw_session_id,
+            {sampling_identity} AS unit_sampling_id, {sampling_ambiguity} AS unit_sampling_ambiguous,
             {session} AS session_id, {user} AS user_id, {unit} AS unit_id,
             s.start_time, s.updated_at,
             if(%(cohort_key)s = '', '', if(mapContains(s.attrs_string, %(cohort_key)s), toJSONString(tuple('value', s.attrs_string[%(cohort_key)s])), '["missing"]')) AS cohort
@@ -204,12 +217,12 @@ def snapshot_select(
             PREWHERE custom_eval_config_id IN %(configs)s
             WHERE created_at <= %(as_of)s AND updated_at <= %(as_of)s
               AND (%(source_run_id)s = '' OR eval_task_id = %(source_run_id)s)
-              AND (observation_span_id IN (SELECT span_id FROM members)
+              AND ((toJSONString(tuple(toString(trace_id), observation_span_id)) IN (SELECT span_id FROM members))
                    OR trace_session_id IN (SELECT alias_id FROM session_aliases))
             ORDER BY {version} DESC LIMIT 1 BY id
         )""",
                 f"""eval_current AS (
-            SELECT e.*, if(target_type = 'session', toString({canonical_eval_session}), observation_span_id) AS target_id,
+            SELECT e.*, if(e.target_type = 'session', toString({canonical_eval_session}), toJSONString(tuple(toString(e.trace_id), e.observation_span_id))) AS target_id,
                 coalesce(output_float, toFloat64(output_bool), toFloat64OrNull(output_str)) AS score
             FROM eval_versions e
             {remap_left_join("e.trace_session_id", "trace_session_id_remap", "em")}
@@ -226,20 +239,24 @@ def snapshot_select(
             # A session assigned to multiple user units is not guessed. Its input
             # is absent in those units and remains visible as missing data.
             ctes.append("""session_members AS (
-                SELECT m.session_id, any(m.unit_id) AS unit_id FROM members m
+                SELECT m.session_id, any(m.unit_id) AS unit_id,
+                    any(m.unit_sampling_id) AS unit_sampling_id, max(m.unit_sampling_ambiguous) AS unit_sampling_ambiguous
+                FROM members m
                 WHERE notEmpty(m.session_id) GROUP BY m.session_id
                 HAVING uniqExact(m.unit_id) = 1
             )""")
         ctes.append(
             """eval_units AS (
-            SELECT e.*, m.unit_id FROM eval_rows e
-            INNER JOIN (SELECT span_id, any(unit_id) AS unit_id FROM members GROUP BY span_id) m
-                ON e.observation_span_id = m.span_id
+            SELECT e.*, m.unit_id, m.unit_sampling_id, m.unit_sampling_ambiguous FROM eval_rows e
+            INNER JOIN (SELECT span_id, any(unit_id) AS unit_id,
+                any(unit_sampling_id) AS unit_sampling_id, max(unit_sampling_ambiguous) AS unit_sampling_ambiguous
+                FROM members GROUP BY span_id) m
+                ON e.target_id = m.span_id
             WHERE e.target_type != 'session'
             """
             + (
                 """UNION ALL
-            SELECT e.*, m.unit_id FROM eval_rows e
+            SELECT e.*, m.unit_id, m.unit_sampling_id, m.unit_sampling_ambiguous FROM eval_rows e
             INNER JOIN session_members m ON e.target_id = m.session_id
             WHERE e.target_type = 'session'"""
                 if definition.selection_unit != "span"
@@ -287,7 +304,7 @@ def snapshot_select(
                 f"anyIf({metadata_stratum}, {condition}) AS sampling_stratum_{alias}",
                 f"""toUInt8(countIf(({condition}) AND (isNull({probability}) OR NOT isFinite({probability})
                 OR {probability} <= 0 OR {probability} > 1 OR {metadata_unit} != %(selection_unit)s
-                OR {metadata_id} != concat(%(selection_unit)s, ':', unit_id) OR empty({metadata_scope}) OR NOT ({lineage_valid}))) > 0
+                OR {metadata_id} != unit_sampling_id OR unit_sampling_ambiguous OR empty({metadata_scope}) OR NOT ({lineage_valid}))) > 0
                 OR uniqExactIf({probability}, {condition}) > 1 OR uniqExactIf({metadata_scope}, {condition}) > 1
                 OR uniqExactIf({metadata_stratum}, {condition}) > 1) AS invalid_probability_{alias}""",
             ]

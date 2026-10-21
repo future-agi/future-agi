@@ -8,7 +8,11 @@ from uuid import UUID
 from django.db import transaction
 from django.db.models import F
 
-from tracer.models.derived_metric import DerivedMetric, DerivedMetricRun
+from tracer.models.derived_metric import (
+    DerivedMetric,
+    DerivedMetricMonitorDelivery,
+    DerivedMetricRun,
+)
 from tracer.services.clickhouse.query_builders.dashboard import DashboardQueryBuilder
 from tracer.services.derived_metrics.errors import MetricInputError
 from tracer.services.derived_metrics.queries import SCOPE_SQL, Scope
@@ -204,14 +208,41 @@ def notify_run_monitors(run: DerivedMetricRun) -> None:
     ).values_list("id", flat=True)
     for monitor_id in ids.iterator(chunk_size=100):
         with transaction.atomic():
-            monitor = UserAlertMonitor.objects.select_for_update().get(pk=monitor_id)
-            if monitor.last_derived_run_id == run.id or monitor.is_mute:
+            # The monitor lock serializes all deliveries, including different
+            # run IDs. The ledger (not the last-run display pointer) is the
+            # durable identity, so A -> B -> A remains a no-op for A.
+            monitor = (
+                UserAlertMonitor.objects.select_for_update()
+                .filter(
+                    pk=monitor_id,
+                    metric_type="derived_metric",
+                    metric=str(metric.id),
+                    project_id=metric.project_id,
+                    organization_id=metric.organization_id,
+                    workspace_id=metric.workspace_id,
+                    is_mute=False,
+                    deleted=False,
+                )
+                .first()
+            )
+            if (
+                monitor is None
+                or DerivedMetricMonitorDelivery.objects.filter(
+                    monitor_id=monitor_id, run=run
+                ).exists()
+            ):
                 continue
-            DerivedMonitorQueryBuilder(
-                monitor
-            )  # Reauthorize and validate before delivery.
-            _check_static_threshold(
+            current = DerivedMonitorQueryBuilder(monitor)
+            if current.metric.current_version != run.definition.version:
+                continue
+            alert_type = _check_static_threshold(
                 monitor, values[0]["value"], run.window_start, run.window_end
+            )
+            # A raised delivery error rolls back both the log and this row;
+            # retry can proceed. Existing transports retain their best-effort
+            # behavior; this ledger does not promise exactly-once email/Slack.
+            DerivedMetricMonitorDelivery.objects.create(
+                monitor=monitor, run=run, alert_type=alert_type or ""
             )
             monitor.last_derived_run_id = run.id
             monitor.save(update_fields=["last_derived_run_id"])
