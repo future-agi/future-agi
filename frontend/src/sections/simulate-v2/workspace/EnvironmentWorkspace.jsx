@@ -10,7 +10,8 @@ import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
 import { protoRunId } from "../_mock/executionAdapter";
 import { runListCount } from "../_mock/runList";
-import { generatedPool, scenariosFromDescription } from "../_mock/scenarios";
+import { scenariosFromDescription } from "../_mock/scenarios";
+import { scenarioPoolFor } from "../_mock/scenarioPool";
 import { detectAddScenariosIntent, describedAsk } from "../_mock/addScenariosIntent";
 import { stampNewBatch, unanswerableNote, rejectedNote } from "../_mock/addScenarios";
 import { asProposal } from "../_mock/scenarioSources";
@@ -716,7 +717,7 @@ export default function EnvironmentWorkspace() {
       const existing = new Set((latest.scenarios || []).map((sc) => sc.id));
       const fresh = described
         ? scenariosFromDescription(env, described, intent.asked ? intent.count : 3)
-        : generatedPool(env).filter((sc) => !existing.has(sc.id)).slice(0, intent.count);
+        : scenarioPoolFor(env, latest).filter((sc) => !existing.has(sc.id)).slice(0, intent.count);
       if (fresh.length === 0) {
         say("Every scenario this environment would derive is already in. Tell me what's missing — e.g. “callers disputing a double charge” — and I'll write those.");
         return;

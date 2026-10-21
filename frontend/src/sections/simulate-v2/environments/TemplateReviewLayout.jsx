@@ -10,7 +10,7 @@ import { useEnvState } from "../store";
 import { runReadiness } from "../_mock/setupGaps";
 import useRunFitCheck from "../run/useRunFitCheck";
 import { builderRun } from "../_mock/builder";
-import { generatedPool } from "../_mock/scenarios";
+import { scenarioPoolFor } from "../_mock/scenarioPool";
 import { detectAddScenariosIntent } from "../_mock/addScenariosIntent";
 import { stampNewBatch, unanswerableNote, rejectedNote } from "../_mock/addScenarios";
 import { asProposal } from "../_mock/scenarioSources";
@@ -210,7 +210,7 @@ export default function TemplateReviewLayout({
     const intent = detectAddScenariosIntent(trimmed);
     if (intent) {
       const existing = new Set((envState?.scenarios || []).map((r) => r.id));
-      const fresh = generatedPool(env).filter((r) => !existing.has(r.id)).slice(0, intent.count);
+      const fresh = scenarioPoolFor(env, envState).filter((r) => !existing.has(r.id)).slice(0, intent.count);
       if (!fresh.length) return "Every scenario this world can write is already here — remove a few on the Scenarios tab first.";
       const batch = stampNewBatch(fresh.map((r) => ({ ...r, chatAsk: trimmed })), { env, envState, source: "chat", actor: currentUser() });
       if (batch.rows.length) patch({ scenarios: [...(envState?.scenarios || []), ...batch.rows.map((r) => asProposal(r, "chat"))] });

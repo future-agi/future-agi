@@ -1699,6 +1699,29 @@ export const seedScenariosForClone = (services) => {
 };
 
 /**
+ * More scenarios for a sandbox, for chat and Generate: the sandbox's own app
+ * scenarios it doesn't hold yet, then each of them again with a different
+ * caller. Every row keeps its app (`twinService` / `services`), so it's
+ * answered by the sandbox — never by a tool the agent happens to have.
+ */
+export const sandboxScenarioPool = (services, existingRows = []) => {
+  const base = seedScenariosForClone(services);
+  const have = new Set((existingRows || []).map((r) => r.id));
+  const unused = base.filter((sc) => !have.has(sc.id));
+  const variations = base.map((sc, i) => {
+    const persona = personaForScenario(sc, i + 1);
+    return {
+      ...sc,
+      id: `${sc.id}-v2`,
+      name: `${sc.name}-another-caller`,
+      persona,
+      summary: sc.summary ? `${sc.summary} — asked by a ${String(persona?.name || "different caller").toLowerCase()}` : sc.summary,
+    };
+  }).filter((sc) => !have.has(sc.id));
+  return [...unused, ...variations];
+};
+
+/**
  * Raw HTTP request stream for a run. Same events as `twinTimelineFor`
  * (one per turn where the agent touched a twin) but shaped as
  * inspect-ready HTTP records — method, path, status, response body,

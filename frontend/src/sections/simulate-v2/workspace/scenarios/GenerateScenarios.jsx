@@ -8,7 +8,8 @@ import Iconify from "src/components/iconify";
 import { FORCED_O_CELLS, O_TYPES } from "../../_mock/coverage";
 import { generatedSubGoals } from "../../_mock/scenarioSubGoals";
 import { clickable, focusRing } from "../../components/clickable";
-import { generatedPool, goalLabel } from "../../_mock/scenarios";
+import { goalLabel } from "../../_mock/scenarios";
+import { scenarioPoolFor } from "../../_mock/scenarioPool";
 
 /**
  * AI generate — the PRD's six-axis scenario pipeline surfaced as one
@@ -100,7 +101,7 @@ export default function GenerateScenarios({ env, envState, onAdd, selected }) {
     const passCondition = (text) => ({ expected: text, outcome: text, idealOutcome: text });
     /* Real situations and callers from this environment's own pool, so a
        generated batch reads like the scenarios around it. */
-    const pool = generatedPool(env);
+    const pool = scenarioPoolFor(env, envState);
     const steer = focus.trim();
     const baseRows = Array.from({ length: size }).map((_, i) => {
       const from = pool.length ? pool[(i * 7 + Date.now()) % pool.length] : null;
@@ -120,6 +121,9 @@ export default function GenerateScenarios({ env, envState, onAdd, selected }) {
       task: steer || from?.task || "Complete the user's request end-to-end.",
       situation: steer ? `Leans toward: ${steer}` : from?.situation || "A mix of task, caller, mood and call conditions",
       persona: from?.persona || { name: "A caller", role: "adult", age: 40 },
+      /* A sandbox scenario stays about its app — the sandbox answers it. */
+      ...(from?.twinService && { twinService: from.twinService }),
+      ...(from?.services && { services: from.services }),
       /* 2–7, derived from the scenario — not the same three on every row. */
       subGoals: generatedSubGoals(`${focusWord}-${i}-${Date.now().toString(36)}`, env, focus),
       ...passCondition("Agent completes the task under the sampled conditions."),

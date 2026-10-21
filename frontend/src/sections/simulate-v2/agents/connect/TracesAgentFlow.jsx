@@ -65,6 +65,13 @@ export default function TracesAgentFlow({ title, onSave, onOpen, initial = null,
     return received ? firstTraceRead({ project: newProject, framework, channel: lockedType || "chat" }) : null;
   }, [mode, project, received, newProject, framework, lockedType]);
 
+  /* The two ways in name different agents — a name typed or taken from one
+     doesn't carry to the other. */
+  const switchMode = (m) => {
+    if (m === mode) return;
+    setMode(m);
+    setName(m === "project" ? (project?.traced?.agentName || project?.name || "") : received ? newProject.replace(/[-_]+/g, " ").replace(/^\w/, (c) => c.toUpperCase()) : "");
+  };
   const pickProject = (p) => {
     setProjectId(p.id);
     setName(p.traced?.agentName || p.name);
@@ -111,12 +118,12 @@ export default function TracesAgentFlow({ title, onSave, onOpen, initial = null,
           <WhereOption
             icon="solar:pulse-2-linear" label="Already sending traces" short="They land in an Observe project"
             hint="Pick the project — we read the agent from its most recent traces."
-            on={mode === "project"} onClick={() => setMode("project")}
+            on={mode === "project"} onClick={() => switchMode("project")}
           />
           <WhereOption
             icon="solar:code-scan-linear" label="Send traces now" short="Add traceAI to the agent's code"
             hint="A few lines in your agent's code; we wait for the first trace."
-            on={mode === "send"} onClick={() => setMode("send")}
+            on={mode === "send"} onClick={() => switchMode("send")}
           />
         </Box>
 
