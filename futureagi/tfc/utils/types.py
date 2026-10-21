@@ -41,12 +41,14 @@ class ClickhouseDatatypes(Enum):
     def get_data_type(value):
         if isinstance(value, str):
             return ClickhouseDatatypes.STRING
+        elif isinstance(value, bool):
+            # bool is a subclass of int, so this must be checked before int,
+            # otherwise every boolean is classified as INTEGER.
+            return ClickhouseDatatypes.BOOLEAN
         elif isinstance(value, int):
             return ClickhouseDatatypes.INTEGER
         elif isinstance(value, float):
             return ClickhouseDatatypes.FLOAT
-        elif isinstance(value, bool):
-            return ClickhouseDatatypes.BOOLEAN
         elif isinstance(value, datetime):
             return ClickhouseDatatypes.DATE
         elif isinstance(value, list):
