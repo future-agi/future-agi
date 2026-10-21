@@ -6,6 +6,23 @@ import lazyWithRetry from "src/utils/lazyWithRetry";
 // ----------------------------------------------------------------------
 
 const Page404 = lazyWithRetry(() => import("src/pages/404"));
+const DatasetExperimentsMock = import.meta.env.DEV
+  ? lazyWithRetry(
+      () =>
+        import(
+          "src/pages/dashboard/dataset-experiments/DatasetExperimentsMock"
+        ),
+    )
+  : null;
+
+const developmentPreviewRoutes = import.meta.env.DEV
+  ? [
+      {
+        path: "design/dataset-experiments",
+        element: <DatasetExperimentsMock />,
+      },
+    ]
+  : [];
 
 // ----------------------------------------------------------------------
 
@@ -16,6 +33,9 @@ export const mainRoutes = [
     //     <Outlet />
     //   </CompactLayout>
     // ),
-    children: [{ path: "404", element: <Page404 /> }],
+    children: [
+      { path: "404", element: <Page404 /> },
+      ...developmentPreviewRoutes,
+    ],
   },
 ];
