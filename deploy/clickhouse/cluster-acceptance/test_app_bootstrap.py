@@ -6,7 +6,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from app_bootstrap import is_catalog_write_denial  # noqa: E402
+from app_bootstrap import is_catalog_write_denial
 
 
 class CatalogPrivilegeTests(unittest.TestCase):
