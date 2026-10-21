@@ -46,6 +46,9 @@ Semantics
   ``sampling_unit_id`` must equal ``<unit>:<canonical survivor id>``. Every input
   and observed unit must share the same frozen ``cohort_id`` and ``policy_version``.
   Equal probabilities from independent cohorts are insufficient and are rejected.
+  Membership mode, a normalized sampling window covering the requested window,
+  and closed-cohort freeze/population provenance must also agree. Sampling scope
+  appends a digest of that selection lineage; equal cohort IDs alone are not proof.
   ``sampling_scope`` persists this cohort/version identity for SQL consumers.
 * Each input is independently reduced per selection unit (latest/mean/min/max),
   before inputs are joined. Repeated evaluator executions are collapsed by
@@ -228,3 +231,23 @@ Not claimed by this change:
 Browser E2E and its fallibility proof remain an acceptance gate, not something
 inferred from backend/API tests. The pull request must carry the actual execution
 result, including any missing stack dependency or unexecuted scenario.
+
+Approved browser flow
+---------------------
+
+``e2e/flows/dashboards/derived-metric.spec.ts`` defines DASH-E2E-017. It drives
+formula validation/save, monitor creation, preview/run, persisted-result display,
+dashboard creation/reload and a scoped alert log. The four ``EXPECTED_*``
+constants are assertion-only fallibility anchors: alter each independently,
+observe the corresponding failure, restore it and rerun green. They never feed
+seeding or requests. This standalone flow is unweighted and does not establish
+weighted sibling integration.
+
+Reproducible gates::
+
+    cd e2e && yarn typecheck && yarn catalog:check
+    bin/e2e test flows/dashboards/derived-metric.spec.ts
+
+The second command runs from the repository root against branch-built images.
+The managed browser run and all four one-sided fallibility runs must be reported
+separately from typechecking/catalog generation. PR marker: ``E2E: new DASH-E2E-017``.

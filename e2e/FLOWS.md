@@ -680,6 +680,28 @@
 - the widget query returns exactly the seeded per-bucket maxima (190, 250, 210) for latency/max
 - chart_config.chart_type round-trips as column and then as line through the widget detail endpoint
 
+### DASH-E2E-017 — an unweighted resolution formula persists, renders on a dashboard and records an alert
+
+**Goal:** Save an unweighted resolution-ratio formula, freeze a run, inspect its dashboard value and record a threshold alert.  
+**Spec:** `flows/dashboards/derived-metric.spec.ts:37`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest two independently identified sessions with explicit numeric outcomes on both root and child spans
+2. create, validate and save a session-level resolution formula through Derived metrics
+3. create a static monitor, preview a closed window and run the saved formula
+4. inspect the persisted result and frozen one-row-per-session evidence
+5. add the saved run to a dashboard through the UI, then reload that dashboard
+6. verify the scoped monitor recorded one critical alert for the exact frozen run window
+
+**Backend state verified:**
+
+- The exact four seeded spans and typed outcomes belong to the minted project in the actor organization/default workspace.
+- The saved version and completed run own exactly two frozen session units, with persisted numerator 1, denominator 2 and value 0.5.
+- The saved dashboard binding and its actual initial/reloaded query responses return the independent expected run value.
+- The actor-scoped monitor records exactly one critical alert for this run window and marks this run as consumed.
+
 ## datasets
 
 ### DATA-E2E-001 — uploaded dataset values can be discovered and filtered

@@ -553,10 +553,10 @@ def test_weighted_eval_formula_persists_and_drives_real_dashboard_and_monitor_ap
         result = auth_client.get(f"{RUNS}{run.id}/results/").data["results"][0]
         assert result["value"] == pytest.approx(1 / 3)
         assert (result["numerator"], result["denominator"]) == (2, 6)
-        assert (
-            run.source_manifest["sampling_scope"]
-            == "11111111-1111-1111-1111-111111111111:" + "c" * 64
+        assert run.source_manifest["sampling_scope"].startswith(
+            "11111111-1111-1111-1111-111111111111:" + "c" * 64 + ":"
         )
+        assert len(run.source_manifest["sampling_scope"].split(":")[-1]) == 64
         config = {
             "project_ids": [str(observe_project.id)],
             "time_range": {

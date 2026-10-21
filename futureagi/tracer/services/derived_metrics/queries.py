@@ -21,6 +21,7 @@ from tracer.services.derived_metrics.formula import Formula, compile_formula
 from tracer.services.derived_metrics.sampling import (
     probability_sql,
     sampling_field,
+    sampling_lineage_valid_sql,
     sampling_scope_sql,
 )
 
@@ -268,6 +269,7 @@ def snapshot_select(
         metadata_id = sampling_field("sampling_unit_id")
         metadata_scope = sampling_scope_sql()
         metadata_stratum = sampling_field("stratum")
+        lineage_valid = sampling_lineage_valid_sql()
         if item["reducer"] == "latest":
             value = f"if(countIf({condition}) > 0, tupleElement(argMaxIf(tuple(score), tuple(created_at, toString(id)), {condition}), 1), NULL)"
         else:
@@ -285,7 +287,7 @@ def snapshot_select(
                 f"anyIf({metadata_stratum}, {condition}) AS sampling_stratum_{alias}",
                 f"""toUInt8(countIf(({condition}) AND (isNull({probability}) OR NOT isFinite({probability})
                 OR {probability} <= 0 OR {probability} > 1 OR {metadata_unit} != %(selection_unit)s
-                OR {metadata_id} != concat(%(selection_unit)s, ':', unit_id) OR empty({metadata_scope}))) > 0
+                OR {metadata_id} != concat(%(selection_unit)s, ':', unit_id) OR empty({metadata_scope}) OR NOT ({lineage_valid}))) > 0
                 OR uniqExactIf({probability}, {condition}) > 1 OR uniqExactIf({metadata_scope}, {condition}) > 1
                 OR uniqExactIf({metadata_stratum}, {condition}) > 1) AS invalid_probability_{alias}""",
             ]

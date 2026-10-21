@@ -162,7 +162,25 @@ def seed_eval(
     cohort_id="11111111-1111-1111-1111-111111111111",
     status="completed",
     error=0,
+    selection_overrides=None,
 ):
+    day = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    sampling = {
+        "inclusion_probability": probability,
+        "sampling_unit": "session",
+        "sampling_unit_id": "session:" + str(sampling_unit_id or target),
+        "cohort_id": cohort_id,
+        "policy_version": "c" * 64,
+        "stratum": "region-west",
+        "membership_mode": "live",
+        "cohort_frozen_at": None,
+        "population_size": None,
+        "window": {
+            "start": (day - timedelta(days=2)).isoformat(),
+            "end": (day + timedelta(days=1)).isoformat(),
+        },
+        **(selection_overrides or {}),
+    }
     client.execute(
         """INSERT INTO tracer_eval_logger_v2 (id, custom_eval_config_id, config_hash,
         observation_span_id, trace_session_id, target_type, created_at, updated_at, _version,
@@ -182,21 +200,7 @@ def seed_eval(
             "score": score,
             "status": status,
             "error": error,
-            "metadata": json.dumps(
-                {
-                    "_task_selection": {
-                        "sampling": {
-                            "inclusion_probability": probability,
-                            "sampling_unit": "session",
-                            "sampling_unit_id": "session:"
-                            + str(sampling_unit_id or target),
-                            "cohort_id": cohort_id,
-                            "policy_version": "c" * 64,
-                            "stratum": "region-west",
-                        }
-                    }
-                }
-            ),
+            "metadata": json.dumps({"_task_selection": {"sampling": sampling}}),
         },
     )
 
@@ -230,9 +234,24 @@ def recipe(configs=None, weighting="none"):
     )
 
 
-def execute_formula(client, definition, scope, now, rollup="overall"):
+def execute_formula(
+    client,
+    definition,
+    scope,
+    now,
+    rollup="overall",
+    *,
+    window_start=None,
+    window_end=None,
+):
     query, params = snapshot_select(
-        definition, scope, now - timedelta(days=1), now, now, [], ""
+        definition,
+        scope,
+        window_start or now - timedelta(days=1),
+        window_end or now,
+        now,
+        [],
+        "",
     )
     formula = compile_formula(
         definition.formula, [item["alias"] for item in definition.inputs]
@@ -724,3 +743,100 @@ def test_cohort_values_do_not_collide_with_missing_or_mixed_groups(metric_ch):
         '["missing"]',
     }
     assert all(int(row["unit_count"]) == 1 for row in rows)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "window_mismatch",
+        "outside_frame",
+        "missing_mode",
+        "missing_freeze",
+        "future_freeze",
+    ],
+)
+def test_weighted_lineage_requires_compatible_window_and_membership(metric_ch, fault):
+    scope, now, session = (
+        Scope(uuid4(), uuid4(), uuid4()),
+        datetime.now(UTC).replace(microsecond=0),
+        uuid4(),
+    )
+    configs = [uuid4(), uuid4()]
+    seed_span(metric_ch, scope, "one", session, uuid4(), now - timedelta(hours=1))
+    for index, config in enumerate(configs):
+        override = {}
+        if fault == "window_mismatch" and index == 1:
+            override["window"] = {
+                "start": (now - timedelta(days=2)).isoformat(),
+                "end": (now + timedelta(hours=1)).isoformat(),
+            }
+        elif fault == "outside_frame":
+            override["window"] = {
+                "start": (now - timedelta(hours=2)).isoformat(),
+                "end": (now + timedelta(hours=1)).isoformat(),
+            }
+        elif fault == "missing_mode":
+            override["membership_mode"] = None
+        elif fault == "missing_freeze":
+            override["membership_mode"] = "closed"
+        elif fault == "future_freeze":
+            override = {
+                "membership_mode": "closed",
+                "population_size": 2,
+                "cohort_frozen_at": (now + timedelta(minutes=1)).isoformat(),
+                "window": {
+                    "start": (now - timedelta(days=1)).isoformat(),
+                    "end": now.isoformat(),
+                },
+            }
+        seed_eval(
+            metric_ch,
+            config,
+            session,
+            now - timedelta(minutes=10 - index),
+            1 - index,
+            0.5,
+            selection_overrides=override,
+        )
+    row = execute_formula(
+        metric_ch, recipe(configs, "inverse_probability"), scope, now
+    )[0]
+    assert row["status"] == "invalid_probability" and row["value"] is None
+
+
+def test_closed_cohort_has_real_freeze_and_population_provenance(metric_ch):
+    scope, now, session = (
+        Scope(uuid4(), uuid4(), uuid4()),
+        datetime.now(UTC).replace(microsecond=0),
+        uuid4(),
+    )
+    end = now - timedelta(minutes=30)
+    start = end - timedelta(days=1)
+    configs = [uuid4(), uuid4()]
+    seed_span(metric_ch, scope, "one", session, uuid4(), end - timedelta(hours=1))
+    selection = {
+        "membership_mode": "closed",
+        "population_size": 2,
+        "cohort_frozen_at": (end + timedelta(minutes=1)).isoformat(),
+        "window": {"start": start.isoformat(), "end": end.isoformat()},
+    }
+    for index, config in enumerate(configs):
+        seed_eval(
+            metric_ch,
+            config,
+            session,
+            end + timedelta(minutes=2),
+            1 - index,
+            0.5,
+            selection_overrides=selection,
+        )
+    row = execute_formula(
+        metric_ch,
+        recipe(configs, "inverse_probability"),
+        scope,
+        now,
+        window_start=start,
+        window_end=end,
+    )[0]
+    assert row["status"] == "ok" and row["value"] == 1
+    assert row["numerator"] == row["denominator"] == 2

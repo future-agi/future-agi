@@ -1,3 +1,7 @@
+-- cluster-shard-key: derived_metric_inputs = cityHash64(project_id)
+-- cluster-shard-key: derived_metric_results = cityHash64(project_id)
+-- cluster-shard-key: derived_metric_commits = cityHash64(project_id)
+
 -- The direct-write v2 eval store predates work-item/version columns. Evolve it
 -- additively; legacy CDC stores already carry these columns in schema.py.
 ALTER TABLE tracer_eval_logger_v2 ADD COLUMN IF NOT EXISTS status LowCardinality(String) DEFAULT 'completed';
