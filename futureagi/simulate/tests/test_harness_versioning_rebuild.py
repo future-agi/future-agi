@@ -742,8 +742,16 @@ class TestLanding:
             "tools": [{"name": "lookup_order"}, REFUND["tools"][0]],
         }
 
+        world = {"tools": ["refund_order"], "tables": {"orders": 1}}
+
         with django_capture_on_commit_callbacks(execute=True):
-            nudge = _turn(environment, nudge, storage, contract=both)
+            nudge = _turn(
+                environment,
+                nudge,
+                storage,
+                contract=both,
+                **{"manifest.json": json.dumps(world)},
+            )
 
         assert nudge.state == "applied", (nudge.error, nudge.summary)
         e2 = environment.environment_version
@@ -830,6 +838,84 @@ class TestLanding:
         assert all(not one["in_your_unsaved_edits"] for one in nudge.error["problems"])
         body = auth_client.get(f"{BASE}/{environment.id}/nudges/").json()[0]
         assert body["error"]["problems"][0]["kind"] == "contract"
+
+    def test_an_added_tool_the_world_was_not_saved_with_fails(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            "r-unsaved-world",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        e1 = environment.environment_version_id
+        world = {"tools": [], "tables": {"orders": 1}}
+
+        with django_capture_on_commit_callbacks(execute=True):
+            nudge = _turn(
+                environment, nudge, storage, **{"manifest.json": json.dumps(world)}
+            )
+
+        assert nudge.state == "failed", (nudge.error, nudge.summary)
+        assert nudge.error["code"] == "checks_failed"
+        assert [
+            (one["item"], one["kind"], one["in_your_unsaved_edits"])
+            for one in nudge.error["problems"]
+        ] == [("refund_order", "world", False)]
+        assert environment.environment_version_id == e1
+        assert nudge.result_environment_version_id is None
+        assert not HarnessEnvironmentVersion.all_objects.filter(
+            job=environment, nudge=nudge, status="active"
+        ).exists()
+        drafts.require_no_rebuild(environment)
+        assert not HarnessNudge.no_workspace_objects.filter(
+            job=environment, target="suite"
+        ).exists()
+
+    @pytest.mark.parametrize(
+        "world",
+        [
+            {"tools": [], "runtime_tools": ["refund_order"], "tables": {"orders": 1}},
+            {"tools": ["refund_order"], "tables": {"orders": 1}},
+            {"tools": [], "tables": {}},
+        ],
+        ids=["runtime-tool", "handler", "data-free"],
+    )
+    def test_an_added_tool_the_world_covers_lands(
+        self,
+        world,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            "r-saved-world",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+
+        with django_capture_on_commit_callbacks(execute=True):
+            nudge = _turn(
+                environment, nudge, storage, **{"manifest.json": json.dumps(world)}
+            )
+
+        assert nudge.state == "applied", (nudge.error, nudge.summary)
 
     def test_nothing_changed_keeps_the_version_and_records_it_fits(
         self,

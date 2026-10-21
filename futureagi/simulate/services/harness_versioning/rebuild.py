@@ -1419,6 +1419,38 @@ def _result_draft(locked: HostedHarnessJob, nudge: HarnessNudge) -> Any:
     return drafts.fresh_draft(locked, nudge.target, lock=True)
 
 
+def _unhandled_tools(
+    nudge: HarnessNudge, draft: Any, update: Mapping[str, Any] | None
+) -> list[dict[str, str]]:
+    """Contract tools this rebuild added that the saved world has no handler for."""
+    from simulate.services.harness_versioning import archives, drafts
+
+    added = (((update or {}).get("contract") or {}).get("tools") or {}).get("added")
+    if nudge.target != Target.ENVIRONMENT or not added:
+        return []
+    files = drafts._side(
+        archives.read_archive(archives.get_archive(draft.archive_object_key)),
+        "environment",
+    )
+    try:
+        manifest = json.loads(files["manifest.json"])
+    except (KeyError, ValueError):
+        return []
+    if not isinstance(manifest, Mapping) or not (
+        manifest.get("tables") or manifest.get("tools")
+    ):
+        return []
+    covered = {*(manifest.get("tools") or []), *(manifest.get("runtime_tools") or [])}
+    return [
+        {
+            "item": name,
+            "kind": "world",
+            "message": "contract tool has no handler: the world was not saved with it",
+        }
+        for name in sorted(set(added) - covered)
+    ]
+
+
 def land_nudge_result(
     nudge: HarnessNudge, *, checkpoint_key: str | None, turn_event: Any
 ) -> HarnessNudge:
@@ -1453,18 +1485,22 @@ def land_nudge_result(
         draft = _result_draft(locked, nudge)
         result = draft or getattr(locked, f"{nudge.target}_version")
         changes, update, edits = _buckets(nudge, before, result)
-        if not report["passed"]:
+
+        def fail(problems: list[dict[str, Any]]) -> HarnessNudge:
             close(
                 state=State.FAILED,
                 error={
                     "code": "checks_failed",
                     "problems": [
                         {**one, "in_your_unsaved_edits": one["item"] in edits - update}
-                        for one in report["problems"]
+                        for one in problems
                     ],
                 },
             )
             return nudge
+
+        if not report["passed"]:
+            return fail(report["problems"])
         snapshot = (nudge.draft_snapshot or {}).get("piece") or {}
         extra = {
             key: report[key]
@@ -1478,6 +1514,8 @@ def land_nudge_result(
                 locked, nudge, turn_event=turn_event, notes=report["notes"], **extra
             )
             return nudge
+        if unhandled := _unhandled_tools(nudge, draft, changes["update"]):
+            return fail(unhandled)
         summary = _land(locked, nudge, found.get(PROOFS), extra)
         if summary is None:
             close(state=State.FAILED, error={"code": "not_runnable"})
