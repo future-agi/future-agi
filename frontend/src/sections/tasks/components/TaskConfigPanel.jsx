@@ -296,7 +296,7 @@ const TaskConfigPanel = ({
   mode,
   control,
   setValue,
-  getValues: _getValues,
+  getValues,
   projectLocked = false,
   initialProjectName = null,
 }) => {
