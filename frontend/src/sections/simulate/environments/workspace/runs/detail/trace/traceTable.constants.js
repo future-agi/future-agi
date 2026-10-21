@@ -115,9 +115,6 @@ export const TRACE_COLUMNS = [
 // Columns a chat run has no data for: interruptions only happen on a voice call.
 export const VOICE_ONLY_COLUMNS = new Set(["aiInterruptions", "stopLatency"]);
 
-// An eval result's status while its grade is still on the way.
-export const PENDING_EVAL_STATUS = "pending";
-
 // Every group closed: the table's starting state, and Collapse all. Expand all
 // sets `all`; `expanded` holds the labels opened.
 export const CLOSED_GROUP_VIEW = { all: false, expanded: new Set() };
@@ -198,6 +195,15 @@ export const HEAD_ROW_PX = 44;
 export const GROUP_ROW_PX = 57;
 // The band naming each column group, pinned above the head row.
 export const GROUP_BAND_PX = 28;
+
+// The checkbox column stays on the left edge while the table scrolls sideways.
+// Opaque, so the cells scrolling under it don't show through; each row sets
+// its own z-index (head and band above group rows, group rows above calls).
+export const pinnedLeftSx = {
+  position: "sticky",
+  left: 0,
+  bgcolor: "background.paper",
+};
 
 export const bandCellSx = {
   typography: "s3",

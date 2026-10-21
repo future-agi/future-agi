@@ -65,6 +65,17 @@ from simulate.services.hosted_sandbox import (
 
 
 @pytest.fixture(autouse=True)
+def _no_conversation_runtime(monkeypatch):
+    """A launch asks for the conversation's harness; tests never start one."""
+    started: list[str] = []
+    monkeypatch.setattr(
+        "simulate.tasks.hosted_harness_conversation.schedule_conversation_runtime",
+        lambda conversation_id, _base_url: started.append(conversation_id),
+    )
+    return started
+
+
+@pytest.fixture(autouse=True)
 def _isolate_platform_simulator_environment(settings, monkeypatch):
     """Tests opt in explicitly instead of reading the developer machine's provider keys.
 
@@ -153,6 +164,7 @@ def test_platform_simulator_material_uses_deployment_credentials_only(monkeypatc
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-key")
     monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-key")
     monkeypatch.setenv("DEEPGRAM_API_KEY", "platform-deepgram-secret")
+    monkeypatch.setenv("CARTESIA_API_KEY", "platform-cartesia-secret")
     monkeypatch.setenv("LIVEKIT_URL", "wss://platform-livekit.example")
     monkeypatch.setenv("LIVEKIT_API_KEY", "platform-livekit-key")
     monkeypatch.setenv("LIVEKIT_API_SECRET", "platform-livekit-secret")
@@ -163,10 +175,11 @@ def test_platform_simulator_material_uses_deployment_credentials_only(monkeypatc
 
     values = _platform_simulator_material()
 
-    # Behind the gateway the models need no Vertex credential in the sandbox.
+    # Behind the gateway neither the models nor speech need a vendor credential in the sandbox.
     assert "GOOGLE_CLOUD_PROJECT" not in values
     assert "GOOGLE_APPLICATION_CREDENTIALS" not in values
-    assert values["DEEPGRAM_API_KEY"] == "platform-deepgram-secret"
+    assert "DEEPGRAM_API_KEY" not in values
+    assert "CARTESIA_API_KEY" not in values
     assert values["LIVEKIT_URL"] == "wss://platform-livekit.example"
     assert values["LIVEKIT_API_KEY"] == "platform-livekit-key"
     assert values["LIVEKIT_API_SECRET"] == "platform-livekit-secret"
@@ -1743,7 +1756,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "ALK_HARNESS_MODEL": "gemini-3.7-flash",
         "AGENTCC_BASE_URL": "https://gateway.example.test",
         "AGENTCC_API_KEY": "harness-virtual-key",
-        "DEEPGRAM_API_KEY": "platform-simulator-deepgram",
+        "SIMULATOR_STT_PROVIDER": "deepgram",
     }
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
@@ -1785,12 +1798,11 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     assert json.loads(client.sandbox.fs.uploads[_SIMULATOR_SECRETS_PATH]) == (
         simulator_values
     )
-    assert b"platform-simulator-deepgram" not in (
+    assert b"harness-virtual-key" not in (
         client.sandbox.process.session_request.command.encode()
     )
-    assert "--adjustments /run/futureagi/adjustments.jsonl" in (
-        client.sandbox.process.session_request.command
-    )
+    assert "--await-harness" in client.sandbox.process.session_request.command
+    assert job.conversation.messages.get().content.startswith("Build the test environment")
     assert "; fi &&" in client.sandbox.process.session_request.command
     # Authoring and call execution are distinct bounded phases. The sandbox must survive the
     # former rather than using only the 10-minute call-runtime budget plus two minutes.
@@ -1804,12 +1816,57 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     assert client.params.unrestricted_egress is False
     assert set(client.params.allowed_domains) == {
         "agent.example.com",
-        "api.deepgram.com",
         "*.vapi.ai",
         "gateway.example.test",
         "ingest.example.com",
         "platform.example.com",
     }
+
+
+@pytest.mark.django_db
+def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
+    organization, settings, monkeypatch
+):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="launch-gateway-staged")
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = "sha256:" + "b" * 64
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
+    settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
+    settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+    settings.ALK_HOSTED_BUILDER_SESSION = False
+    simulator_values = {
+        "ALK_HARNESS": "vertex-gemini",
+        "ALK_HARNESS_MODEL": "gemini-3.7-flash",
+        "AGENTCC_BASE_URL": "https://gateway.example.test",
+        "AGENTCC_API_KEY": "harness-virtual-key",
+        "DEEPGRAM_API_KEY": "platform-simulator-deepgram",
+    }
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._platform_simulator_material",
+        lambda: simulator_values,
+    )
+
+    selected_capacity = SandboxCapacity("selected", 6, 12_288, 20, 1)
+    with patch(
+        "simulate.services.harness_capacity.configured_capacity",
+        return_value=selected_capacity,
+    ):
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+
+    assert attempt.state == HostedHarnessAttempt.State.RUNNING
+    command = client.sandbox.process.session_request.command
+    assert "--await-harness" not in command and "--adjustments" in command
+    assert not job.conversation.messages.filter(content__startswith="Build the test environment").exists()
+
 
 
 def _launch_and_read_job_json(
@@ -2009,6 +2066,7 @@ def test_daytona_adjustment_is_persisted_and_delivered_to_active_authoring(
         {
             "instruction": "Create 1 more scenario covering discounts",
             "client_request_id": "browser-1",
+            "scenario_delta": 1,
         },
     )
 
@@ -2024,6 +2082,43 @@ def test_daytona_adjustment_is_persisted_and_delivered_to_active_authoring(
     assert records[0]["status"] == "pending"
     assert adjusted.payload["metadata"]["adjustments"] == records
     assert adjusted.payload["scenario_count"] == 3
+
+
+@pytest.mark.django_db
+def test_adjustment_goes_to_the_stage_the_chat_names(organization, settings, tmp_path):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="adjust-named-stage")
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    dockerfile = tmp_path / "Dockerfile.hosted"
+    dockerfile.write_text("FROM python:3.12-slim\n", encoding="utf-8")
+    gateway.dockerfile = str(dockerfile)
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
+    with patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    ):
+        gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    job.refresh_from_db()
+
+    adjusted = gateway.adjust(
+        job,
+        {
+            "instruction": "Identity needs a date of birth; update the scenario callers too",
+            "client_request_id": "chat-1",
+            "target_stage": "environment",
+        },
+    )
+
+    assert adjusted.payload["metadata"]["adjustments"][-1]["target_stage"] == "environment"
 
 
 @pytest.mark.django_db
@@ -2073,7 +2168,7 @@ def test_daytona_retry_replays_persisted_adjustments_before_authoring(
 
 
 @pytest.mark.django_db
-def test_daytona_adjustment_accepts_natural_language_number(
+def test_daytona_adjustment_takes_the_scenario_count_it_is_given(
     organization, settings, tmp_path
 ):
     payload = _payload()
@@ -2105,8 +2200,9 @@ def test_daytona_adjustment_accepts_natural_language_number(
     adjusted = gateway.adjust(
         job,
         {
-            "instruction": "Add one more scenario covering discounts",
+            "instruction": "Cover discounts",
             "client_request_id": "browser-word-1",
+            "scenario_delta": 1,
         },
     )
 

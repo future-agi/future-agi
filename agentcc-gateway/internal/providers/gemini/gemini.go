@@ -95,11 +95,21 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 
 func (p *Provider) ID() string { return p.id }
 
+// ClientTimeout reports the timeout on this provider's HTTP client. It bounds
+// the whole exchange, a streamed body included, so it is a hard ceiling on any
+// request this provider serves.
+func (p *Provider) ClientTimeout() time.Duration { return p.httpClient.Timeout }
+
 func (p *Provider) bearerToken() string {
 	if p.tokenProvider != nil {
 		return p.tokenProvider.Token()
 	}
 	return p.apiKey
+}
+
+// sentToken is the access token a request carried, so a rejection invalidates only that token.
+func sentToken(req *http.Request) string {
+	return strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
 }
 
 func (p *Provider) acquireSemaphore(ctx context.Context) error {
@@ -165,7 +175,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusUnauthorized && p.tokenProvider != nil {
-			p.tokenProvider.Invalidate()
+			p.tokenProvider.Invalidate(sentToken(httpReq))
 		}
 		return nil, parseGeminiError(resp.StatusCode, respBody)
 	}
@@ -239,7 +249,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		if resp.StatusCode != http.StatusOK {
 			if resp.StatusCode == http.StatusUnauthorized && p.tokenProvider != nil {
-				p.tokenProvider.Invalidate()
+				p.tokenProvider.Invalidate(sentToken(httpReq))
 			}
 			respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 			if readErr != nil {

@@ -419,6 +419,17 @@ describe("EvalsStep — template lock (read-only until forked)", () => {
     expect(screen.getAllByLabelText(LOCK_TOOLTIP).length).toBeGreaterThan(0);
   });
 
+  it("puts Add evaluations on the Added evaluations card, with no heading repeating the tab", () => {
+    renderLocked(false);
+    expect(
+      screen.queryByText(/These decide whether each task passed/),
+    ).toBeNull();
+    const addButton = screen.getByRole("button", { name: EVALS_COPY.add });
+    let card = screen.getByText(/^Added evaluations/).parentElement;
+    while (card && !card.contains(addButton)) card = card.parentElement;
+    expect(card.textContent).not.toContain(EVALS_COPY.toolCall.title);
+  });
+
   it("keeps the same controls enabled when not locked", () => {
     renderLocked(false);
     expect(screen.getByRole("button", { name: EVALS_COPY.add })).toBeEnabled();

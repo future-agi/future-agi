@@ -19,9 +19,22 @@ import { GROUP_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
 // intentional rather than broken.
 const LOCK_TOOLTIP = "Fork this environment to edit.";
 
-// Height of the sticky column-header row (size="small" + s3 type ≈ 28.5px).
-// The group headers pin at this offset so they rest just under it, not on top.
-const HEAD_OFFSET = 28;
+// Body cells pinned to an edge need an opaque base (rows scroll under them),
+// the row's hover tint layered on top, and a soft shadow on the inner side.
+const pinnedBodyCellSx = (side) => ({
+  position: "sticky", [side]: 0, zIndex: 1,
+  bgcolor: "background.paper",
+  boxShadow: (t) => `${side === "left" ? 8 : -8}px 0 12px -6px ${alpha(t.palette.common.black, t.palette.mode === "dark" ? 0.45 : 0.08)}`,
+  transition: "background-image 120ms ease",
+  ".MuiTableRow-hover:hover &": {
+    backgroundImage: (t) => `linear-gradient(${t.palette.action.hover}, ${t.palette.action.hover})`,
+  },
+});
+const pinnedSelectCellSx = { ...pinnedBodyCellSx("left"), pl: 1.5, verticalAlign: "top" };
+
+// Height of the sticky column-header row, set on its cells. The group headers
+// pin at this offset so they rest just under it, not on top.
+const HEAD_OFFSET = 36;
 
 const WIDTHS_KEY = "simulate:scenario-table:column-widths";
 const DEFAULT_WIDTHS = { Scenario: 280, Persona: 200, Situation: 320, "Sub-goals": 260, "Ideal outcome": 320 };
@@ -176,14 +189,18 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
                     textTransform: "uppercase", letterSpacing: 0.4,
                     bgcolor: "background.neutral",
                     borderBottom: "1px solid", borderColor: "divider",
-                    whiteSpace: "nowrap",
+                    whiteSpace: "nowrap", height: HEAD_OFFSET,
                     // Sticky column header — pins to the top of the scroll box so
                     // the columns stay labelled while the rows scroll. The group
                     // headers (in the body) pin just below it (top = HEAD_OFFSET).
                     position: "sticky", top: 0, zIndex: 3,
                     ...(h !== FILLER && { width: widthOf(h) }),
                     ...(!isActions && h !== FILLER && { borderRight: "1px solid" }),
-                    ...(isSelect && { "&.MuiTableCell-paddingCheckbox": { width: FIXED_WIDTHS.select } }),
+                    ...(isSelect && {
+                      "&.MuiTableCell-paddingCheckbox": { width: FIXED_WIDTHS.select },
+                      // The top-left corner: sticky on both axes, above all.
+                      left: 0, zIndex: 4,
+                    }),
                     ...(isActions && {
                       // The top-right corner: sticky on both axes, above all.
                       right: 0, zIndex: 4,
@@ -227,10 +244,12 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
                   <TableCell
                     colSpan={columns.length}
                     sx={{
-                      // Pinned directly beneath the sticky column header (~28px).
+                      // Pinned directly beneath the sticky column header.
                       // Opaque paper base + the group tint on top, so rows scroll
                       // cleanly under it instead of bleeding through the tint.
-                      position: "sticky", top: HEAD_OFFSET, zIndex: 1,
+                      // Above the pinned checkbox and action cells, which scroll
+                      // under it too.
+                      position: "sticky", top: HEAD_OFFSET, zIndex: 2,
                       bgcolor: "background.paper",
                       backgroundImage: (t) => {
                         const tint = alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05);
@@ -285,7 +304,9 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
                 return (
                   <TableRow key={row.id} hover>
                     {!locked && (
-                      <TableCell padding="checkbox" sx={{ pl: 1.5, verticalAlign: "top" }}>
+                      // Pinned to the left edge so the selection stays in reach
+                      // while the table scrolls sideways.
+                      <TableCell padding="checkbox" sx={pinnedSelectCellSx}>
                         <Checkbox
                           size="small"
                           checked={rowChecked(row.id)}
@@ -342,15 +363,9 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
                     <TableCell
                       align="right"
                       sx={{
+                        ...pinnedBodyCellSx("right"),
                         whiteSpace: "nowrap", verticalAlign: "top",
-                        position: "sticky", right: 0, zIndex: 1,
                         width: 96, minWidth: 96,
-                        bgcolor: "background.paper",
-                        boxShadow: (t) => `-8px 0 12px -6px ${alpha(t.palette.common.black, t.palette.mode === "dark" ? 0.45 : 0.08)}`,
-                        transition: "background-image 120ms ease",
-                        ".MuiTableRow-hover:hover &": {
-                          backgroundImage: (t) => `linear-gradient(${t.palette.action.hover}, ${t.palette.action.hover})`,
-                        },
                       }}
                     >
                       <Tooltip arrow title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.editLabel}>

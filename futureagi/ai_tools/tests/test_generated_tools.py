@@ -7,6 +7,10 @@ import pytest
 from mcp_server.api_executor import APIExecutionError
 from mcp_server.generated_registry import registry as generated_registry
 from tfc.ee_loader import has_ee
+from accounts.models.workspace import Workspace
+from model_hub.models.choices import DataTypeChoices, DatasetSourceChoices, SourceChoices, StatusType
+from model_hub.models.develop_dataset import Column, Dataset
+from model_hub.models.experiments import ExperimentsTable
 
 from ai_tools.generated import (
     GeneratedAPITool,
@@ -95,6 +99,39 @@ class TestExecution:
 
         assert not result.is_error, result.content
         assert isinstance(result.data, dict)
+
+    def test_get_experiment_rejects_another_workspace(self, tool_context):
+        other_workspace = Workspace.objects.create(
+            name="Generated Tool Other Workspace",
+            organization=tool_context.organization,
+            created_by=tool_context.user,
+        )
+        dataset = Dataset.objects.create(
+            name="Generated Tool Other Dataset",
+            organization=tool_context.organization,
+            workspace=other_workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        column = Column.objects.create(
+            name="Output",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
+        )
+        experiment = ExperimentsTable.objects.create(
+            name="Generated Tool Other Experiment",
+            dataset=dataset,
+            column=column,
+            status=StatusType.COMPLETED.value,
+            user=tool_context.user,
+        )
+
+        result = registry.get("get_experiment").run(
+            {"experiment_id": str(experiment.id)}, tool_context
+        )
+
+        assert result.is_error
+        assert result.error_code == "NOT_FOUND"
 
     def test_missing_resource_is_reported_as_an_error(self, tool_context):
         result = registry.get("get_dataset").run(

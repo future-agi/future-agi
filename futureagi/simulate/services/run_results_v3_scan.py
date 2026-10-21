@@ -49,6 +49,7 @@ from simulate.services.run_results_v3_scoring import (
     live_eval_specs,
     score_tokens,
 )
+from simulate.services.scoring_status import SCORING_ROW_FIELDS, scoring_values
 
 # The orderings the scan reproduces, as ``apply_run_call_query`` writes them.
 ORDERINGS = {
@@ -698,10 +699,12 @@ def scan_call_values(
     *,
     live_evals: LiveEvals | None = None,
     call_ids: list[str] | None = None,
+    scoring: bool = True,
 ) -> list[dict[str, Any]]:
     """``_call_values`` over ``run_calls_queryset(execution)``, in ``ordering``.
 
-    ``call_ids`` narrows the scan to those of the run's calls.
+    ``call_ids`` narrows the scan to those of the run's calls. ``scoring=False``
+    leaves out the scoring state, for a caller that reads no scoring field.
     """
     if ordering not in ORDERINGS:
         raise ValueError(
@@ -877,4 +880,16 @@ def scan_call_values(
             (value for value in (dataset_goal, *fallbacks) if value is not None),
             None,
         )
+    if rows and scoring:
+        # The scoring state comes from the projection ``_call_values`` reads,
+        # so the two paths agree on it by construction.
+        scoring = {
+            str(values["id"]): values
+            for values in scoring_values(
+                CallExecution.all_objects.filter(id__in=[row["id"] for row in rows])
+            )
+        }
+        for row in rows:
+            values = scoring[row["id"]]
+            row.update({field: values[field] for field in SCORING_ROW_FIELDS})
     return rows

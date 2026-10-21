@@ -119,6 +119,11 @@ func (p *Provider) endpoint(path string) string {
 
 func (p *Provider) ID() string { return p.id }
 
+// ClientTimeout reports the timeout on this provider's HTTP client. It bounds
+// the whole exchange, a streamed body included, so it is a hard ceiling on any
+// request this provider serves.
+func (p *Provider) ClientTimeout() time.Duration { return p.httpClient.Timeout }
+
 func (p *Provider) acquireSemaphore(ctx context.Context) error {
 	select {
 	case p.semaphore <- struct{}{}:

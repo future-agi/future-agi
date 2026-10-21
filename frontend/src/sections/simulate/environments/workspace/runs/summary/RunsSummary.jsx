@@ -85,38 +85,6 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
         flexDirection: "column",
       }}
     >
-      <Stack direction="row" alignItems="flex-start" spacing={2} sx={{ mb: 3, flexShrink: 0 }}>
-        <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
-            Simulations summary
-          </Typography>
-          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-            {count} {count === 1 ? "run" : "runs"} · {scenarioCount}{" "}
-            {scenarioCount === 1 ? "scenario" : "scenarios"}
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
-          <Button
-            variant="outlined" size="small" onClick={() => onGo?.("evals")}
-            startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
-            sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
-          >
-            Add Evals
-          </Button>
-          <CustomTooltip show arrow size="small" title="Choosing a winner is coming soon">
-            <span>
-              <Button
-                variant="outlined" size="small" disabled
-                startIcon={<Iconify icon="solar:cup-star-linear" width={15} />}
-                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
-              >
-                Choose winner
-              </Button>
-            </span>
-          </CustomTooltip>
-        </Stack>
-      </Stack>
-
       {/* The graph's tooltip grows down past the chart; a clipping card
           would cut it off. */}
       <SectionCard
@@ -168,11 +136,35 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
 
         <SummaryGraph categories={categories} series={shownSeries} highlightedId={highlightedId} />
 
-        <Box sx={{ px: 2.5, py: 1.25, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}>
+        <Stack
+          direction="row" alignItems="center" spacing={1}
+          sx={{ px: 2.5, py: 1, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        >
           <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}>
             Runs ({count})
           </Typography>
-        </Box>
+          <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>
+            across {scenarioCount} {scenarioCount === 1 ? "scenario" : "scenarios"}
+          </Typography>
+          <Button
+            variant="outlined" size="small" onClick={() => onGo?.("evals")}
+            startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
+            sx={{ typography: "s2", fontWeight: "fontWeightBold", flexShrink: 0 }}
+          >
+            Add Evals
+          </Button>
+          <CustomTooltip show arrow size="small" title="Choosing a winner is coming soon">
+            <span>
+              <Button
+                variant="outlined" size="small" disabled
+                startIcon={<Iconify icon="solar:cup-star-linear" width={15} />}
+                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
+              >
+                Choose winner
+              </Button>
+            </span>
+          </CustomTooltip>
+        </Stack>
 
         <SummaryTable rows={rows} evals={evals} onOpenRun={onOpenRun} />
         {count > RUNS_PAGE_SIZE && (

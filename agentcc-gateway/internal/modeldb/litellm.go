@@ -13,6 +13,8 @@ type liteLLMEntry struct {
 	InputCostPerTokenBatches        float64  `json:"input_cost_per_token_batches"`
 	OutputCostPerTokenBatches       float64  `json:"output_cost_per_token_batches"`
 	OutputCostPerImage              float64  `json:"output_cost_per_image"`
+	InputCostPerSecond              float64  `json:"input_cost_per_second"`
+	InputCostPerCharacter           float64  `json:"input_cost_per_character"`
 	Provider                        string   `json:"litellm_provider"`
 	Mode                            string   `json:"mode"`
 	MaxInputTokens                  float64  `json:"max_input_tokens"`
@@ -78,6 +80,8 @@ func parseLiteLLM(data []byte) (map[string]*ModelInfo, error) {
 				BatchInputPerToken:  entry.InputCostPerTokenBatches,
 				BatchOutputPerToken: entry.OutputCostPerTokenBatches,
 				OutputPerImage:      entry.OutputCostPerImage,
+				InputPerSecond:      entry.InputCostPerSecond,
+				InputPerCharacter:   entry.InputCostPerCharacter,
 			},
 			Capabilities: CapabilityFlags{
 				FunctionCalling:   entry.SupportsFunctionCalling,

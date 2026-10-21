@@ -104,7 +104,7 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusUnauthorized && p.tokenProvider != nil {
-			p.tokenProvider.Invalidate()
+			p.tokenProvider.Invalidate(sentToken(httpReq))
 		}
 		return nil, "", parseGeminiError(resp.StatusCode, respBody)
 	}

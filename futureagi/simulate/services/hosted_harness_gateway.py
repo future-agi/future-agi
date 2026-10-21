@@ -37,6 +37,7 @@ from simulate.models import (
     HostedHarnessJob,
     HostedHarnessSecret,
 )
+from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     activate_attempt_capability,
@@ -119,6 +120,7 @@ _CHAT_POLICY = (
     b"    build: {enabled: true}\n"
     b"    scenarios: {enabled: true}\n"
     b"    run: {enabled: true}\n"
+    b"    builder: {enabled: true}\n"
     b"  lifecycle:\n"
     b"    request_user_input: true\n"
     b"    interrupt_response: true\n"
@@ -155,6 +157,76 @@ def _authoring_ttl_seconds(provider_name: str | None = None) -> int:
             int(getattr(settings, "ALK_HOSTED_AUTHORING_TTL_MINUTES", 40)) * 60,
         )
     return max(60, int(getattr(settings, "ALK_HOSTED_AUTHORING_TIMEOUT", 3900)))
+
+
+def _current_chat_workspace(job: HostedHarnessJob, checkpoint: bytes) -> bytes | None:
+    """The environment's current files, with the chat's own state from its checkpoint.
+
+    A new sandbox always starts from what the environment holds now. Every finished turn saves
+    its changes, so anything in the checkpoint the environment lacks is left over from a turn
+    that never finished; publishing it later would apply changes nobody confirmed. Only the
+    chat's own state (its root dot files: sessions, journal, kept notes) carries over.
+    """
+    environment = job.environment or job
+    revision = str(
+        ((environment.payload or {}).get("metadata") or {}).get("authoring_revision") or ""
+    )
+    if not revision:
+        return checkpoint
+    current = _authoring_archive_for(environment)
+    if current is None:
+        return checkpoint
+    out = io.BytesIO()
+    with (
+        tarfile.open(fileobj=io.BytesIO(checkpoint), mode="r:gz") as chat,
+        tarfile.open(fileobj=io.BytesIO(current), mode="r:gz") as accepted,
+        tarfile.open(fileobj=out, mode="w:gz") as target,
+    ):
+        for member in accepted.getmembers():
+            parts = _archive_parts(member.name)
+            if parts and not parts[0].startswith("."):
+                target.addfile(member, accepted.extractfile(member) if member.isfile() else None)
+        for member in chat.getmembers():
+            parts = _archive_parts(member.name)
+            if (
+                parts
+                and parts[0].startswith(".")
+                and parts[0] not in (AUTHORING_BASIS_FILE, ".futureagi-published.json")
+            ):
+                target.addfile(member, chat.extractfile(member) if member.isfile() else None)
+    return with_authoring_basis(out.getvalue(), revision)
+
+
+def _ask_harness_to_build(
+    job: HostedHarnessJob, attempt: HostedHarnessAttempt, endpoint_base_url: str
+) -> None:
+    """Put the build request into the environment's conversation; its harness does the build."""
+    from simulate.services.hosted_harness_conversation import enqueue_message
+    from simulate.tasks.hosted_harness_conversation import schedule_conversation_runtime
+
+    conversation, _message, _created = enqueue_message(
+        job,
+        content=(
+            f"Build the test environment for this agent, with {job.scenario_count} scenarios."
+        ),
+        client_request_id=f"build-{attempt.id}",
+    )
+    schedule_conversation_runtime(str(conversation.id), endpoint_base_url)
+
+
+def _alk_source_overlay() -> bytes | None:
+    """The ALK source a development chat sandbox runs instead of its image's, when configured."""
+    root = str(getattr(settings, "ALK_HOSTED_SOURCE_OVERLAY", "") or "").strip()
+    if not root or not Path(root, "fi").is_dir():
+        return None
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
+        archive.add(
+            Path(root, "fi"),
+            arcname="fi",
+            filter=lambda member: None if "__pycache__" in member.name else member,
+        )
+    return stream.getvalue()
 
 
 def _chat_idle_seconds() -> int:
@@ -224,9 +296,9 @@ def _platform_simulator_material() -> dict[str, str]:
     added to ``secrets.json`` and therefore cannot acquire the ``target_provider`` purpose or be
     injected into an untrusted agent process.
 
-    Every model call in a hosted run (harness, simulated caller, judge) goes through AgentCC on
-    its key, so no model vendor's credential is placed in a sandbox. Speech still calls its vendor
-    directly, which is why only Deepgram and Cartesia are accepted until it moves to AgentCC too.
+    Every model and speech call in a hosted run (harness, simulated caller, judge) goes through
+    AgentCC on its key, so no vendor's credential is placed in a sandbox. AgentCC relays speech
+    for Deepgram and Cartesia only, which is why no other speech provider is accepted.
     """
     provider = str(os.environ.get("SIMULATOR_LLM_PROVIDER") or "vertex").strip()
     # Gateway model names carry the serving provider: a bare Gemini name is the Gemini API.
@@ -303,8 +375,6 @@ def _platform_simulator_material() -> dict[str, str]:
         {name: value for name, value in platform_phone_telephony().items() if value}
     )
     for name in (
-        "CARTESIA_API_KEY",
-        "DEEPGRAM_API_KEY",
         # Models the simulated caller tries in turn when the chosen one fails.
         "SIMULATOR_LLM_FALLBACK_MODELS",
         "SIMULATOR_STT_MODEL",
@@ -1379,10 +1449,6 @@ def _resolved_egress_domains(
     return _normalize_egress_domains(values)
 
 
-_KNOWN_SIMULATOR_SECRET_ALIASES = (
-    "DEEPGRAM_API_KEY",
-    "CARTESIA_API_KEY",
-)
 _KNOWN_SIMULATOR_CONFIG_NAMES = (
     "SIMULATOR_LLM_PROVIDER",
     "SIMULATOR_STT_PROVIDER",
@@ -1401,9 +1467,6 @@ def _known_simulator_egress_inputs() -> dict[str, str]:
             values[str(alias)] = (
                 raw if "LOCATION" in upper_alias or "REGION" in upper_alias else ""
             )
-    for alias in _KNOWN_SIMULATOR_SECRET_ALIASES:
-        if os.getenv(alias):
-            values.setdefault(alias, "")
     for name in _KNOWN_SIMULATOR_CONFIG_NAMES:
         value = str(os.getenv(name) or "").strip()
         if value:
@@ -2036,8 +2099,17 @@ class HostedHarnessGateway:
                 sandbox.fs.upload_file(adjustment_body, _ADJUSTMENTS_PATH)
             if authoring_archive is not None:
                 sandbox.fs.upload_file(authoring_archive, "/work/authoring.tar.gz")
+            overlay = _alk_source_overlay()
+            if overlay is not None:
+                sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
             prepared = sandbox.process.exec(
-                "if [ -f /work/authoring.tar.gz ]; then "
+                (
+                    "mkdir -p /work/alk-src && tar -xzf /work/alk-src.tar.gz -C /work/alk-src && "
+                    "rm /work/alk-src.tar.gz && "
+                    if overlay is not None
+                    else ""
+                )
+                + "if [ -f /work/authoring.tar.gz ]; then "
                 "mkdir -p /work/authoring && "
                 "tar -xzf /work/authoring.tar.gz -C /work/authoring && "
                 "rm /work/authoring.tar.gz; fi && "
@@ -2082,6 +2154,8 @@ class HostedHarnessGateway:
                 }
             }
             authoring_exports["PATH"] = _CHAT_RUNTIME_PATH
+            if overlay is not None:
+                authoring_exports["PYTHONPATH"] = "/work/alk-src"
             provider_profile_args = (
                 f"--target-secrets {authoring_secrets_path} "
                 "--provider-profile-cache /work/provider-import-profile.json "
@@ -2090,6 +2164,12 @@ class HostedHarnessGateway:
             )
             simulation_only = bool(
                 (dispatch_payload.get("metadata") or {}).get("simulation_only")
+            )
+            # A fresh build is the conversation's harness's work; this command waits for it.
+            harness_builds = (
+                authoring_archive is None
+                and not simulation_only
+                and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
             )
             bundle_command = (
                 "rm -rf /work/bundle && "
@@ -2111,9 +2191,9 @@ class HostedHarnessGateway:
                 SandboxCommandRequest(
                     command=(
                         "if [ ! -f /work/authoring/contract.json ]; then "
-                        "ALK_FOREGROUND_COORDINATOR=1 python -m fi.alk.harness.hosted_authoring_entrypoint "
+                        "python -m fi.alk.harness.hosted_authoring_entrypoint "
                         "/work/job.json --source /work/source --output /work/authoring "
-                        f"--adjustments {_ADJUSTMENTS_PATH} "
+                        + ("--await-harness " if harness_builds else f"--adjustments {_ADJUSTMENTS_PATH} ")
                         + provider_profile_args
                         + "; fi && "
                         + ((extend_command + " && ") if extend_command else "")
@@ -2133,6 +2213,8 @@ class HostedHarnessGateway:
             attempt.state = HostedHarnessAttempt.State.RUNNING
             attempt.heartbeat_at = timezone.now()
             attempt.save(update_fields=["state", "heartbeat_at", "updated_at"])
+            if harness_builds:
+                _ask_harness_to_build(job, attempt, endpoint_base_url)
             return attempt
         except Exception as exc:
             provider_status_code = getattr(exc, "status_code", None)
@@ -2259,8 +2341,18 @@ class HostedHarnessGateway:
                 ).encode("utf-8"),
                 f"/work/authoring/{AUTHORING_BASIS_FILE}",
             )
+        overlay = _alk_source_overlay()
+        if overlay is not None:
+            sandbox.fs.upload_file(overlay, "/work/alk-chat-src.tar.gz")
         prepared = sandbox.process.exec(
-            "mkdir -p /work/authoring && "
+            (
+                "rm -rf /work/alk-chat-src && mkdir -p /work/alk-chat-src && "
+                "tar -xzf /work/alk-chat-src.tar.gz -C /work/alk-chat-src && "
+                "rm /work/alk-chat-src.tar.gz && "
+                if overlay is not None
+                else ""
+            )
+            + "mkdir -p /work/authoring && "
             "chown -R svc-control:svc-control /work/authoring && "
             f"chmod 0600 {_CHAT_CAPABILITIES_PATH} {_CHAT_POLICY_PATH}",
             timeout=60,
@@ -2280,6 +2372,9 @@ class HostedHarnessGateway:
             in {
                 "ALK_HARNESS",
                 "ALK_HARNESS_MODEL",
+                "ALK_HARNESS_WORKERS_AT_ONCE",
+                "ALK_SIMULATOR_FUNDING",
+                "ALK_VOICEMAIL_SCENARIOS",
                 "AGENTCC_BASE_URL",
                 "AGENTCC_API_KEY",
                 "ALK_CLAUDE_GATEWAY_URL",
@@ -2290,16 +2385,15 @@ class HostedHarnessGateway:
             }
         }
         chat_exports["PATH"] = _CHAT_RUNTIME_PATH
-        export_command = " ".join(
-            f"{name}={shlex.quote(value)}"
-            for name, value in sorted(chat_exports.items())
-        )
+        if overlay is not None:
+            chat_exports["PYTHONPATH"] = "/work/alk-chat-src"
         command = sandbox.process.execute_session_command(
             _CHAT_SESSION,
             SandboxCommandRequest(
+                # Settings go in the environment, never on the command line a process listing shows.
+                env=chat_exports,
                 command=(
-                    (f"export {export_command} && " if export_command else "")
-                    + "python -m fi.alk.harness.hosted_chat_entrypoint "
+                    "python -m fi.alk.harness.hosted_chat_entrypoint "
                     "--job /work/job.json --source /work/source "
                     "--workspace /work/authoring "
                     f"--capabilities {_CHAT_CAPABILITIES_PATH} "
@@ -2500,8 +2594,10 @@ class HostedHarnessGateway:
     ) -> HostedHarnessConversationLease:
         """Restore the latest workspace checkpoint into a sandbox of chat's own."""
         workspace_archive = load_workspace_archive(conversation)
+        if workspace_archive is not None:
+            workspace_archive = _current_chat_workspace(job, workspace_archive)
         if workspace_archive is None:
-            workspace_archive = _authoring_archive_for(job)
+            workspace_archive = _authoring_archive_for(job.environment or job)
             if workspace_archive is not None:
                 environment = job.environment or job
                 basis = str(
@@ -2571,6 +2667,9 @@ class HostedHarnessGateway:
                 _CHAT_CAPABILITIES_PATH,
             )
             sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
+            overlay = _alk_source_overlay()
+            if overlay is not None:
+                sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
             prepared = sandbox.process.exec(
                 "mkdir -p /work/authoring && "
                 "tar -xzf /work/conversation.tar.gz -C /work/authoring && "
@@ -2579,7 +2678,13 @@ class HostedHarnessGateway:
                 "rm /work/source.tar.gz && "
                 "chown -R svc-control:svc-control /work/source /work/authoring && "
                 "chmod -R a-w /work/source && "
-                f"chmod 0600 /work/job.json {_CHAT_CAPABILITIES_PATH} "
+                + (
+                    "mkdir -p /work/alk-src && tar -xzf /work/alk-src.tar.gz -C /work/alk-src && "
+                    "rm /work/alk-src.tar.gz && "
+                    if overlay is not None
+                    else ""
+                )
+                + f"chmod 0600 /work/job.json {_CHAT_CAPABILITIES_PATH} "
                 f"{_CHAT_POLICY_PATH}",
                 timeout=120,
             )
@@ -2608,16 +2713,15 @@ class HostedHarnessGateway:
                 }
             }
             chat_exports["PATH"] = _CHAT_RUNTIME_PATH
-            export_command = " ".join(
-                f"{name}={shlex.quote(value)}"
-                for name, value in sorted(chat_exports.items())
-            )
+            if overlay is not None:
+                chat_exports["PYTHONPATH"] = "/work/alk-src"
             command = sandbox.process.execute_session_command(
                 _CHAT_SESSION,
                 SandboxCommandRequest(
+                    # Settings go in the environment, never on the command line a process listing shows.
+                    env=chat_exports,
                     command=(
-                        (f"export {export_command} && " if export_command else "")
-                        + "python -m fi.alk.harness.hosted_chat_entrypoint "
+                        "python -m fi.alk.harness.hosted_chat_entrypoint "
                         "--job /work/job.json --source /work/source "
                         "--workspace /work/authoring "
                         f"--capabilities {_CHAT_CAPABILITIES_PATH} "
@@ -2914,18 +3018,19 @@ class HostedHarnessGateway:
                 if existing is not None:
                     return locked
 
-            delta = _scenario_delta(instruction)
-            if delta and locked.scenario_count + delta > 200:
+            delta = request.get("scenario_delta") or _scenario_delta(instruction)
+            if delta and locked.scenario_count + delta > MAX_SCENARIOS_PER_JOB:
                 raise HostedHarnessError(
                     "scenario_limit_exceeded",
-                    "a hosted run can contain at most 200 scenarios",
+                    f"a hosted run can contain at most {MAX_SCENARIOS_PER_JOB} scenarios",
                     status_code=422,
                 )
             record = {
                 "adjustment_id": str(uuid.uuid4()),
                 "client_request_id": client_request_id,
                 "instruction": instruction,
-                "target_stage": _adjustment_stage(instruction, locked.current_stage),
+                "target_stage": request.get("target_stage")
+                or _adjustment_stage(instruction, locked.current_stage),
                 "scenario_delta": delta,
                 "status": "pending",
                 "created_at": timezone.now().isoformat(),
@@ -2975,16 +3080,21 @@ class HostedHarnessGateway:
             except Exception:  # noqa: BLE001 - an absent/incomplete stage file is expected
                 return None
 
-        def _activity_events() -> list[dict[str, Any]]:
-            try:
-                raw = sandbox.fs.download_file(
+        try:
+            event_lines = (
+                sandbox.fs.download_file(
                     "/work/authoring/harness-events.jsonl",
                     _PROGRESS_FILE_TIMEOUT_SECONDS,
-                ).decode("utf-8")
-            except Exception:  # noqa: BLE001 - the file appears after the first model event
-                return []
+                )
+                .decode("utf-8")
+                .splitlines()
+            )
+        except Exception:  # noqa: BLE001 - the file appears after the first model event
+            event_lines = []
+
+        def _activity_events() -> list[dict[str, Any]]:
             events: list[dict[str, Any]] = []
-            for line in raw.splitlines()[-200:]:
+            for line in event_lines[-200:]:
                 try:
                     item = json.loads(line)
                 except ValueError:
@@ -2993,12 +3103,28 @@ class HostedHarnessGateway:
                     events.append(
                         {
                             "event_id": item.get("event_id"),
-                            "event_type": item.get("event_type"),
+                            "event_type": item.get("type") or item.get("event_type"),
                             "sequence": item.get("sequence"),
                             "payload": item.get("payload") or {},
                         }
                     )
             return events
+
+        def _running_authoring_stage() -> str:
+            """The stage the pipeline last started; after a rewind the files alone would say later."""
+            for line in reversed(event_lines):
+                if "harness.stage.started" not in line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except ValueError:
+                    continue
+                return {
+                    "understand": "understanding_agent",
+                    "environment": "generating_environment",
+                    "scenarios": "generating_scenarios",
+                }.get(str((item.get("payload") or {}).get("stage") or ""), "")
+            return ""
 
         contract = _json("/work/authoring/contract.json")
         environment = _json("/work/authoring/environment.json")
@@ -3101,6 +3227,7 @@ class HostedHarnessGateway:
                 stage = "validating_environment"
             else:
                 stage = "generating_scenarios"
+        stage = _running_authoring_stage() or stage
         HostedHarnessGateway._sync_adjustment_progress(job, sandbox)
         if not outputs:
             return
@@ -5058,11 +5185,24 @@ def _rewritten_authoring_archive(body: bytes, suite: list[dict]) -> bytes | None
 
 
 def store_authoring_archive(
-    job: HostedHarnessJob, body: bytes, *, advance_lifecycle: bool = True
+    job: HostedHarnessJob,
+    body: bytes,
+    *,
+    advance_lifecycle: bool = True,
+    in_place: bool = False,
 ) -> str:
-    """Persist fresh authoring output and attach its opaque key to the hosted job."""
+    """Persist fresh authoring output and attach its opaque key to the hosted job.
+
+    ``in_place`` overwrites the environment's current archive object instead of adding one, so
+    an edit leaves exactly one copy.
+    """
     digest = hashlib.sha256(body).hexdigest()
-    object_key = f"harness-authoring/{job.organization_id}/{job.id}/{digest}.tar.gz"
+    current = str(((job.payload or {}).get("metadata") or {}).get("authoring_object_key") or "")
+    object_key = (
+        current
+        if in_place and current
+        else f"harness-authoring/{job.organization_id}/{job.id}/{digest}.tar.gz"
+    )
     client = get_storage_client()
     ensure_bucket(client, UPLOAD_BUCKET_NAME)
     client.put_object(

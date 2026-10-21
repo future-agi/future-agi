@@ -68,6 +68,11 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 
 func (p *Provider) ID() string { return p.id }
 
+// ClientTimeout reports the timeout on this provider's HTTP client. It bounds
+// the whole exchange, a streamed body included, so it is a hard ceiling on any
+// request this provider serves.
+func (p *Provider) ClientTimeout() time.Duration { return p.httpClient.Timeout }
+
 // endpoint builds an upstream URL for a versioned path such as
 // "/v1/messages". Anthropic has no configurable API path prefix, so this
 // uses the fixed default rather than cfg.EffectiveAPIPathPrefix() -- the

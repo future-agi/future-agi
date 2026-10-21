@@ -12660,7 +12660,7 @@
         "/agentcc/org-configs/bulk/": {
             "get": {
                 "operationId": "agentcc_org-configs_bulk_list",
-                "description": "Bulk endpoint for gateway startup sync.\nReturns all active org configs keyed by org ID.\nAuthenticated by admin token (not user JWT).",
+                "description": "Bulk endpoint for gateway startup sync.\nReturns all active org configs keyed by org ID, plus the ids of orgs whose\npayload could not be built, so the gateway keeps their last good config.\nAuthenticated by admin token (not user JWT).",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -17317,6 +17317,48 @@
             },
             "parameters": []
         },
+        "/integrations/connections/{connection_id}/slack/channels/": {
+            "get": {
+                "operationId": "integrations_connections_slack_channels_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "cursor",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 512
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SlackChannelsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "integrations"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "connection_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/integrations/connections/{id}/": {
             "get": {
                 "operationId": "integrations_connections_read",
@@ -17694,6 +17736,42 @@
                     "type": "string"
                 }
             ]
+        },
+        "/integrations/slack/install/": {
+            "post": {
+                "operationId": "integrations_slack_install_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SlackInstall"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SlackInstallResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "integrations"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
         },
         "/integrations/sync-logs/": {
             "get": {
@@ -18405,6 +18483,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/MCPOAuthTokenErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too many requests",
+                        "schema": {
+                            "$ref": "#/definitions/MCPOAuthTokenErrorResponse"
+                        },
+                        "headers": {
+                            "Retry-After": {
+                                "description": "Seconds before retrying the token request.",
+                                "type": "integer"
+                            }
                         }
                     },
                     "default": {
@@ -52104,6 +52194,91 @@
                 }
             ]
         },
+        "/simulate/api/harness/conversations/{id}/overview/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_overview",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationOverviewQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationOverview"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/publish/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_publish",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationPublish"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationPublish"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness/conversations/{id}/rerun/": {
             "post": {
                 "operationId": "simulate_api_harness_conversations_rerun",
@@ -52169,6 +52344,132 @@
                 "tags": [
                     "simulate"
                 ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/runs/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_runs",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRunsQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRunsQuery"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/runs/start/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_runs_start_run",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRunStart"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRunStart"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/scenarios/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_scenarios",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationScenarioQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationScenarioQuery"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
             },
             "parameters": [
                 {
@@ -58254,6 +58555,253 @@
                 ]
             },
             "parameters": []
+        },
+        "/tracer/alerts/": {
+            "get": {
+                "operationId": "tracer_alerts_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "kind",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "metric",
+                            "error_feed"
+                        ]
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertListResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_alerts_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/AlertWriteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertItemResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/alerts/error_feed/{alert_id}/test/": {
+            "post": {
+                "operationId": "tracer_alerts_error_feed_test_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/AlertTestRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertTestResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "alert_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/alerts/options/": {
+            "get": {
+                "operationId": "tracer_alerts_options_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "kind",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "metric",
+                            "error_feed"
+                        ]
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertOptionsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/alerts/{kind}/{alert_id}/": {
+            "get": {
+                "operationId": "tracer_alerts_read",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertItemResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "patch": {
+                "operationId": "tracer_alerts_partial_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/AlertWriteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertItemResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "tracer_alerts_delete",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AlertDeletedResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "kind",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "alert_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
         },
         "/tracer/bulk-annotation/": {
             "post": {
@@ -88988,7 +89536,8 @@
         "OrgConfigBulkResponse": {
             "required": [
                 "status",
-                "result"
+                "result",
+                "unbuilt_org_ids"
             ],
             "type": "object",
             "properties": {
@@ -89001,6 +89550,14 @@
                     "type": "object",
                     "additionalProperties": {
                         "$ref": "#/definitions/OrgConfigBulkItem"
+                    }
+                },
+                "unbuilt_org_ids": {
+                    "description": "Orgs with an active config that could not be built. The gateway keeps their last good config instead of dropping them.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
                     }
                 }
             }
@@ -92787,7 +93344,8 @@
                         "mixpanel",
                         "cloud_storage",
                         "message_queue",
-                        "linear"
+                        "linear",
+                        "slack"
                     ]
                 },
                 "display_name": {
@@ -92993,7 +93551,8 @@
                         "mixpanel",
                         "cloud_storage",
                         "message_queue",
-                        "linear"
+                        "linear",
+                        "slack"
                     ]
                 },
                 "host_url": {
@@ -93113,7 +93672,8 @@
                         "mixpanel",
                         "cloud_storage",
                         "message_queue",
-                        "linear"
+                        "linear",
+                        "slack"
                     ]
                 },
                 "display_name": {
@@ -93279,7 +93839,8 @@
                         "mixpanel",
                         "cloud_storage",
                         "message_queue",
-                        "linear"
+                        "linear",
+                        "slack"
                     ]
                 },
                 "host_url": {
@@ -93399,6 +93960,72 @@
                 }
             }
         },
+        "SlackChannel": {
+            "required": [
+                "id",
+                "name",
+                "is_private",
+                "is_member"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "is_private": {
+                    "title": "Is private",
+                    "type": "boolean"
+                },
+                "is_member": {
+                    "title": "Is member",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SlackChannelsResult": {
+            "required": [
+                "channels",
+                "next_cursor"
+            ],
+            "type": "object",
+            "properties": {
+                "channels": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SlackChannel"
+                    }
+                },
+                "next_cursor": {
+                    "title": "Next cursor",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "SlackChannelsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SlackChannelsResult"
+                }
+            }
+        },
         "IntegrationConnectionUpdate": {
             "type": "object",
             "properties": {
@@ -93470,6 +94097,46 @@
                 },
                 "result": {
                     "$ref": "#/definitions/IntegrationMessageResult"
+                }
+            }
+        },
+        "SlackInstall": {
+            "type": "object",
+            "properties": {
+                "connection_id": {
+                    "title": "Connection id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "SlackInstallResult": {
+            "required": [
+                "authorization_url"
+            ],
+            "type": "object",
+            "properties": {
+                "authorization_url": {
+                    "title": "Authorization url",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1
+                }
+            }
+        },
+        "SlackInstallResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SlackInstallResult"
                 }
             }
         },
@@ -125845,6 +126512,20 @@
                     "type": "string",
                     "maxLength": 128,
                     "minLength": 1
+                },
+                "target_stage": {
+                    "title": "Target stage",
+                    "type": "string",
+                    "enum": [
+                        "understand",
+                        "environment",
+                        "scenarios"
+                    ]
+                },
+                "scenario_delta": {
+                    "title": "Scenario delta",
+                    "type": "integer",
+                    "minimum": 1
                 }
             }
         },
@@ -126976,6 +127657,20 @@
                     "type": "string",
                     "maxLength": 128,
                     "minLength": 1
+                },
+                "target_stage": {
+                    "title": "Target stage",
+                    "type": "string",
+                    "enum": [
+                        "understand",
+                        "environment",
+                        "scenarios"
+                    ]
+                },
+                "scenario_delta": {
+                    "title": "Scenario delta",
+                    "type": "integer",
+                    "minimum": 1
                 }
             }
         },
@@ -127165,6 +127860,98 @@
                 }
             }
         },
+        "HarnessConversationOverviewQuery": {
+            "type": "object",
+            "properties": {}
+        },
+        "HarnessConversationOverview": {
+            "required": [
+                "environment",
+                "scenario_count",
+                "use_cases",
+                "coverage",
+                "recent_runs",
+                "build_changes",
+                "earlier_messages"
+            ],
+            "type": "object",
+            "properties": {
+                "environment": {
+                    "title": "Environment",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer"
+                },
+                "use_cases": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "coverage": {
+                    "title": "Coverage",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "recent_runs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "build_changes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "earlier_messages": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                }
+            }
+        },
+        "HarnessConversationPublish": {
+            "required": [
+                "digest"
+            ],
+            "type": "object",
+            "properties": {
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                }
+            }
+        },
         "HarnessConversationRerun": {
             "type": "object",
             "properties": {}
@@ -127214,6 +128001,129 @@
                 "receipts": {
                     "title": "Receipts",
                     "type": "object"
+                }
+            }
+        },
+        "HarnessConversationRunsQuery": {
+            "type": "object",
+            "properties": {
+                "run_id": {
+                    "title": "Run id",
+                    "type": "string",
+                    "maxLength": 64
+                },
+                "limit": {
+                    "title": "Limit",
+                    "type": "integer",
+                    "maximum": 50,
+                    "minimum": 1
+                }
+            }
+        },
+        "HarnessConversationRunStart": {
+            "type": "object",
+            "properties": {
+                "numbers": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "maxItems": 5000
+                },
+                "ranges": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "integer",
+                            "minimum": 1
+                        }
+                    },
+                    "maxItems": 100
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "default": 1,
+                    "maximum": 20,
+                    "minimum": 1
+                },
+                "operation_id": {
+                    "title": "Operation id",
+                    "type": "string",
+                    "maxLength": 64
+                }
+            }
+        },
+        "HarnessConversationScenarioQuery": {
+            "type": "object",
+            "properties": {
+                "numbers": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    "maxItems": 5000
+                },
+                "ranges": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "integer",
+                            "minimum": 1
+                        }
+                    },
+                    "maxItems": 100
+                },
+                "names": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 500
+                },
+                "ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "minLength": 1
+                    },
+                    "maxItems": 1000
+                },
+                "search": {
+                    "title": "Search",
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "page": {
+                    "title": "Page",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 1
+                },
+                "full": {
+                    "title": "Full",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },
@@ -134870,8 +135780,7 @@
                 },
                 "type": {
                     "title": "Type",
-                    "type": "string",
-                    "minLength": 1
+                    "type": "string"
                 },
                 "value": {
                     "title": "Value",
@@ -134895,7 +135804,13 @@
                 "status": {
                     "title": "Status",
                     "type": "string",
-                    "minLength": 1
+                    "enum": [
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out",
+                        "skipped"
+                    ]
                 }
             }
         },
@@ -134947,7 +135862,10 @@
                 "outcome",
                 "cost_breakdown_cents",
                 "evaluations",
-                "function_calls"
+                "function_calls",
+                "scoring_status",
+                "csat_status",
+                "csat_reason"
             ],
             "type": "object",
             "properties": {
@@ -135417,6 +136335,35 @@
                     "items": {
                         "$ref": "#/definitions/SimulateRunV3FunctionCall"
                     }
+                },
+                "scoring_status": {
+                    "title": "Scoring status",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out"
+                    ]
+                },
+                "csat_status": {
+                    "title": "Csat status",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out",
+                        "skipped"
+                    ]
+                },
+                "csat_reason": {
+                    "title": "Csat reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             }
         },
@@ -137358,6 +138305,90 @@
                 }
             }
         },
+        "SimulateRunV3ScoringCounts": {
+            "required": [
+                "not_applicable",
+                "pending",
+                "succeeded",
+                "failed",
+                "timed_out"
+            ],
+            "type": "object",
+            "properties": {
+                "not_applicable": {
+                    "title": "Not applicable",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "pending": {
+                    "title": "Pending",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "succeeded": {
+                    "title": "Succeeded",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "failed": {
+                    "title": "Failed",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "timed_out": {
+                    "title": "Timed out",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "SimulateRunV3CallsSummary": {
+            "required": [
+                "total",
+                "outcomes",
+                "measured",
+                "pass_rate",
+                "duration",
+                "latency",
+                "tokens",
+                "cost_cents",
+                "scoring"
+            ],
+            "type": "object",
+            "properties": {
+                "total": {
+                    "title": "Total",
+                    "type": "integer"
+                },
+                "outcomes": {
+                    "$ref": "#/definitions/OutcomeCounts"
+                },
+                "measured": {
+                    "title": "Measured",
+                    "type": "integer"
+                },
+                "pass_rate": {
+                    "title": "Pass rate",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "duration": {
+                    "$ref": "#/definitions/MetricStats"
+                },
+                "latency": {
+                    "$ref": "#/definitions/MetricStats"
+                },
+                "tokens": {
+                    "$ref": "#/definitions/TotalMetricStats"
+                },
+                "cost_cents": {
+                    "$ref": "#/definitions/TotalMetricStats"
+                },
+                "scoring": {
+                    "$ref": "#/definitions/SimulateRunV3ScoringCounts"
+                }
+            }
+        },
         "RunCall": {
             "required": [
                 "id",
@@ -137390,7 +138421,10 @@
                 "csat",
                 "ended_reason",
                 "error_message",
-                "evaluations"
+                "evaluations",
+                "scoring_status",
+                "csat_status",
+                "csat_reason"
             ],
             "type": "object",
             "properties": {
@@ -137567,6 +138601,35 @@
                     "items": {
                         "$ref": "#/definitions/SimulateRunV3EvaluationResult"
                     }
+                },
+                "scoring_status": {
+                    "title": "Scoring status",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out"
+                    ]
+                },
+                "csat_status": {
+                    "title": "Csat status",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out",
+                        "skipped"
+                    ]
+                },
+                "csat_reason": {
+                    "title": "Csat reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             }
         },
@@ -137781,7 +138844,7 @@
                     "$ref": "#/definitions/RunExecution"
                 },
                 "summary": {
-                    "$ref": "#/definitions/RunSummary"
+                    "$ref": "#/definitions/SimulateRunV3CallsSummary"
                 },
                 "count": {
                     "title": "Count",
@@ -138111,6 +139174,585 @@
                     "title": "Instance secret",
                     "type": "string",
                     "minLength": 1
+                }
+            }
+        },
+        "AlertItem": {
+            "required": [
+                "id",
+                "kind",
+                "name",
+                "enabled"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "metric",
+                        "error_feed"
+                    ]
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "enabled": {
+                    "title": "Enabled",
+                    "type": "boolean"
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "trigger_type": {
+                    "title": "Trigger type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "severity_threshold": {
+                    "title": "Severity threshold",
+                    "type": "string",
+                    "enum": [
+                        "low",
+                        "medium",
+                        "high",
+                        "critical"
+                    ]
+                },
+                "occurrence_threshold": {
+                    "title": "Occurrence threshold",
+                    "type": "integer"
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "object"
+                },
+                "slack_connection_id": {
+                    "title": "Slack connection id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "slack_channel_id": {
+                    "title": "Slack channel id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "slack_channel_name": {
+                    "title": "Slack channel name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "cooldown_seconds": {
+                    "title": "Cooldown seconds",
+                    "type": "integer"
+                },
+                "last_triggered_at": {
+                    "title": "Last triggered at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "health": {
+                    "title": "Health",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "failure_reason": {
+                    "title": "Failure reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "project": {
+                    "title": "Project",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "organization": {
+                    "title": "Organization",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "workspace": {
+                    "title": "Workspace",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "created_by": {
+                    "title": "Created by",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "metric_type": {
+                    "title": "Metric type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "metric": {
+                    "title": "Metric",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "metric_name": {
+                    "title": "Metric name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "threshold_type": {
+                    "title": "Threshold type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "threshold_operator": {
+                    "title": "Threshold operator",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "threshold_metric_value": {
+                    "title": "Threshold metric value",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "critical_threshold_value": {
+                    "title": "Critical threshold value",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "warning_threshold_value": {
+                    "title": "Warning threshold value",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "alert_frequency": {
+                    "title": "Alert frequency",
+                    "type": "integer"
+                },
+                "auto_threshold_time_window": {
+                    "title": "Auto threshold time window",
+                    "type": "integer"
+                },
+                "last_checked_at": {
+                    "title": "Last checked at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "slack_webhook_url": {
+                    "title": "Slack webhook url",
+                    "type": "string",
+                    "format": "uri",
+                    "x-nullable": true
+                },
+                "slack_notes": {
+                    "title": "Slack notes",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "is_mute": {
+                    "title": "Is mute",
+                    "type": "boolean"
+                },
+                "deleted": {
+                    "title": "Deleted",
+                    "type": "boolean"
+                },
+                "deleted_at": {
+                    "title": "Deleted at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "logs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "x-nullable": true
+                },
+                "notification_emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "email",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "AlertListResult": {
+            "required": [
+                "alerts"
+            ],
+            "type": "object",
+            "properties": {
+                "alerts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AlertItem"
+                    }
+                }
+            }
+        },
+        "AlertListResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AlertListResult"
+                }
+            }
+        },
+        "AlertWriteRequest": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "metric",
+                        "error_feed"
+                    ]
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "enabled": {
+                    "title": "Enabled",
+                    "type": "boolean"
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "trigger_type": {
+                    "title": "Trigger type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "severity_threshold": {
+                    "title": "Severity threshold",
+                    "type": "string",
+                    "enum": [
+                        "low",
+                        "medium",
+                        "high",
+                        "critical"
+                    ]
+                },
+                "occurrence_threshold": {
+                    "title": "Occurrence threshold",
+                    "type": "integer",
+                    "maximum": 1000000,
+                    "minimum": 1
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "object"
+                },
+                "slack_connection_id": {
+                    "title": "Slack connection id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "slack_channel_id": {
+                    "title": "Slack channel id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "cooldown_seconds": {
+                    "title": "Cooldown seconds",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "project": {
+                    "title": "Project",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "metric_type": {
+                    "title": "Metric type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "metric": {
+                    "title": "Metric",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "threshold_type": {
+                    "title": "Threshold type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "threshold_operator": {
+                    "title": "Threshold operator",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "threshold_metric_value": {
+                    "title": "Threshold metric value",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "critical_threshold_value": {
+                    "title": "Critical threshold value",
+                    "type": "number"
+                },
+                "warning_threshold_value": {
+                    "title": "Warning threshold value",
+                    "type": "number"
+                },
+                "alert_frequency": {
+                    "title": "Alert frequency",
+                    "type": "integer"
+                },
+                "auto_threshold_time_window": {
+                    "title": "Auto threshold time window",
+                    "type": "integer"
+                },
+                "slack_webhook_url": {
+                    "title": "Slack webhook url",
+                    "type": "string",
+                    "format": "uri",
+                    "x-nullable": true
+                },
+                "slack_notes": {
+                    "title": "Slack notes",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "is_mute": {
+                    "title": "Is mute",
+                    "type": "boolean"
+                },
+                "notification_emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "email",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "AlertItemResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AlertItem"
+                }
+            }
+        },
+        "AlertTestRequest": {
+            "type": "object",
+            "properties": {}
+        },
+        "AlertTestResult": {
+            "required": [
+                "sent",
+                "slack_ts"
+            ],
+            "type": "object",
+            "properties": {
+                "sent": {
+                    "title": "Sent",
+                    "type": "boolean"
+                },
+                "slack_ts": {
+                    "title": "Slack ts",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "AlertTestResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AlertTestResult"
+                }
+            }
+        },
+        "AlertOption": {
+            "required": [
+                "value",
+                "label"
+            ],
+            "type": "object",
+            "properties": {
+                "value": {
+                    "title": "Value",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "AlertProjectOption": {
+            "required": [
+                "id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "AlertOptionsResult": {
+            "required": [
+                "triggers",
+                "severities",
+                "statuses",
+                "sources",
+                "projects"
+            ],
+            "type": "object",
+            "properties": {
+                "triggers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AlertOption"
+                    }
+                },
+                "severities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "statuses": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "sources": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "projects": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AlertProjectOption"
+                    }
+                }
+            }
+        },
+        "AlertOptionsResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AlertOptionsResult"
+                }
+            }
+        },
+        "AlertDeletedResult": {
+            "required": [
+                "id",
+                "deleted"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "deleted": {
+                    "title": "Deleted",
+                    "type": "boolean"
+                }
+            }
+        },
+        "AlertDeletedResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/AlertDeletedResult"
                 }
             }
         },

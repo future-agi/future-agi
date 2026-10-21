@@ -11,6 +11,12 @@ server:
   shutdown_timeout: 30s
   max_request_body_size: 10485760 # 10MB
   default_request_timeout: 60s
+  # The one ceiling on a request, over any x-agentcc-timeout header or
+  # per-model timeout. Unset, it becomes write_timeout, where the response
+  # write fails anyway; at that value the write deadline cuts the connection
+  # a moment before the timeout answers. Read at startup, like the rest of
+  # this block.
+  max_request_timeout: 300s
 
 providers:
   openai:
@@ -175,6 +181,20 @@ providers:
   #     api-version: "2024-10-21"
   #   models:
   #     - gpt-4o
+
+  # Speech vendors, relayed over their own streaming WebSocket APIs at /deepgram/... and
+  # /cartesia/... (point the vendor SDK's base URL there and use a gateway key as its key).
+  # Only internal keys may use them, since they run on the platform's vendor credentials.
+  # deepgram:
+  #   base_url: "https://api.deepgram.com"
+  #   api_key: "${DEEPGRAM_API_KEY}"
+  #   api_format: "deepgram"
+  #   auto_discover: false
+  # cartesia:
+  #   base_url: "https://api.cartesia.ai"
+  #   api_key: "${CARTESIA_API_KEY}"
+  #   api_format: "cartesia"
+  #   auto_discover: false
 
   # groq:
   #   api_key: "${GROQ_API_KEY}"
@@ -623,9 +643,9 @@ logging:
 #       provider: "openai"
 #       max_input_tokens: 128000
 #       max_output_tokens: 16384
-#       pricing:
-#         input_per_mtok: 2.50
-#         output_per_mtok: 10.00
+#       pricing:                             # USD per TOKEN (not per million)
+#         input_per_token: 0.0000025         # = $2.50 / 1M tokens
+#         output_per_token: 0.00001          # = $10.00 / 1M tokens
 #       deprecation_date: "2026-12-31"
 #       regions: ["us-east-1", "us-west-2"]
 
@@ -723,8 +743,6 @@ logging:
 # OpenAI-compatible Assistants API proxy.
 # assistants:
 #   enabled: true
-#   run_timeout: 5m
-#   stream_read_timeout: 60s
 
 # Model Context Protocol — expose tools from registered MCP servers to models.
 # mcp:

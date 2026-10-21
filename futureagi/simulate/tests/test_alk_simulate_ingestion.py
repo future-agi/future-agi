@@ -163,6 +163,42 @@ def _start_and_batch(auth_client, run_test):
     return test_execution_id, call_ids
 
 
+def _start_paged_run(auth_client, run_test):
+    """Start an SDK run with two scenarios; returns its id and a function that
+    asks for the next one-call page."""
+    second_scenario = Scenarios.objects.create(
+        name="Second ALK Chat Scenario",
+        description="Second page of an SDK run",
+        source="test",
+        scenario_type=Scenarios.ScenarioTypes.DATASET,
+        organization=run_test.organization,
+        workspace=run_test.workspace,
+        agent_definition=run_test.agent_definition,
+        simulator_agent=run_test.simulator_agent,
+        status=StatusType.COMPLETED.value,
+    )
+    run_test.scenarios.add(second_scenario)
+    start = auth_client.post(
+        f"{ALK_BASE}/run-tests/{run_test.id}/test-executions/",
+        {},
+        format="json",
+    )
+    assert start.status_code == 200, start.content
+    test_execution_id = start.json()["result"]["test_execution_id"]
+
+    def _next_page():
+        resp = auth_client.post(
+            f"{ALK_BASE}/test-executions/{test_execution_id}/batch/",
+            {"count": 1},
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+        (call_id,) = resp.json()["result"]["call_execution_ids"]
+        return call_id
+
+    return test_execution_id, _next_page
+
+
 # ---------------------------------------------------------------------------
 # provision (SDK-first RunTest + scenario-of-record)
 # ---------------------------------------------------------------------------
@@ -484,9 +520,7 @@ class TestProvisionRunTest:
         assert resp.status_code == 400, resp.content
         assert not RunTest.objects.filter(enable_tool_evaluation=True).exists()
 
-    def test_a_bad_scenario_id_is_reported_before_the_voice_refusal(
-        self, auth_client
-    ):
+    def test_a_bad_scenario_id_is_reported_before_the_voice_refusal(self, auth_client):
         """Error precedence: an unknown scenario id is what a request with both
         faults hears about, not the tool-evaluation refusal -- the scenario
         lookup runs before the agent definition is resolved."""
@@ -945,11 +979,174 @@ class TestResultIngest:
             "kind": "checkpoint",
             "platform_template": "",
         }
-        assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
-        assert execution.completed_at is not None
+        # Transport is done: the roll-up moves the run to EVALUATING and hands
+        # it to the settle after commit, which a test transaction never runs.
+        # Whether CSAT holds the run is pinned elsewhere; here the settle
+        # completes it once CSAT lands.
+        assert execution.status == SimTestExecution.ExecutionStatus.EVALUATING
+        assert execution.completed_at is None
         assert execution.total_calls == 1
         assert execution.completed_calls == 1
         assert execution.failed_calls == 0
+
+        from simulate.services.test_executor import TestExecutor
+        from simulate.tasks.alk_sim import _set_csat_state
+
+        _set_csat_state(call, "completed")
+        TestExecutor(
+            initialize_voice_service=False
+        )._check_and_update_test_execution_completion(test_execution_id)
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
+        assert execution.completed_at is not None
+
+    def test_a_later_batch_reopens_a_settled_run_until_its_calls_finish(
+        self, auth_client, text_run_test
+    ):
+        """An SDK that pages its calls can see its first page settle the run
+        before it asks for the next one; the next page puts the run back in
+        transport, so the roll-up and the settle count every page."""
+        from simulate.services.scoring_status import settle_run
+        from simulate.tasks.alk_sim import _set_csat_state
+
+        test_execution_id, _next_page = _start_paged_run(auth_client, text_run_test)
+        first_call_id = _next_page()
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{first_call_id}/result/",
+            {
+                "status": "completed",
+                "transcript": _transcript_payload(),
+                "call_metadata": {
+                    "harness_evaluations": [{"name": "ride_booked", "passed": True}]
+                },
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+        _set_csat_state(CallExecution.objects.get(id=first_call_id), "completed")
+        settle_run(test_execution_id)
+        execution = SimTestExecution.objects.get(id=test_execution_id)
+        assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
+        first_completed_at = execution.completed_at
+        assert first_completed_at is not None
+
+        second_call_id = _next_page()
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.RUNNING
+        assert execution.completed_at == first_completed_at
+        assert execution.total_calls == 2
+
+        # Nothing finishes the run while the new page is still in transport.
+        settle_run(test_execution_id)
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.RUNNING
+
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{second_call_id}/result/",
+            {"status": "failed", "transcript": _transcript_payload()},
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.EVALUATING
+        settle_run(test_execution_id)
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
+        assert execution.completed_at > first_completed_at
+        assert (
+            execution.total_calls,
+            execution.completed_calls,
+            execution.failed_calls,
+        ) == (2, 1, 1)
+
+    def test_a_later_batch_revives_a_run_whose_first_page_all_failed(
+        self, auth_client, text_run_test
+    ):
+        """A first page whose calls all failed fails the run on what it has
+        seen so far; the next page puts it back in transport, and the final
+        roll-up and settle count both pages."""
+        from simulate.services.scoring_status import settle_run
+        from simulate.tasks.alk_sim import _set_csat_state
+
+        test_execution_id, _next_page = _start_paged_run(auth_client, text_run_test)
+        first_call_id = _next_page()
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{first_call_id}/result/",
+            {"status": "failed", "transcript": _transcript_payload()},
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+        execution = SimTestExecution.objects.get(id=test_execution_id)
+        assert execution.status == SimTestExecution.ExecutionStatus.FAILED
+        failed_at = execution.completed_at
+        assert failed_at is not None
+
+        second_call_id = _next_page()
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.RUNNING
+        assert execution.completed_at == failed_at
+        assert execution.total_calls == 2
+
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{second_call_id}/result/",
+            {
+                "status": "completed",
+                "transcript": _transcript_payload(),
+                "call_metadata": {
+                    "harness_evaluations": [{"name": "ride_booked", "passed": True}]
+                },
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.EVALUATING
+        _set_csat_state(CallExecution.objects.get(id=second_call_id), "completed")
+        settle_run(test_execution_id)
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
+        assert execution.completed_at > failed_at
+        assert (
+            execution.total_calls,
+            execution.completed_calls,
+            execution.failed_calls,
+        ) == (2, 1, 1)
+
+    @pytest.mark.parametrize(
+        ("status", "precreated", "expected"),
+        [
+            pytest.param("evaluating", False, "running", id="evaluating-reopens"),
+            pytest.param("completed", True, "running", id="adopted-rows-reopen"),
+            pytest.param("failed", False, "running", id="failed-reopens"),
+            pytest.param("running", False, "running", id="running-stays"),
+            pytest.param("cancelling", False, "cancelling", id="cancelling-stays"),
+            pytest.param("cancelled", False, "cancelled", id="cancelled-stays"),
+        ],
+    )
+    def test_a_batch_reopens_only_a_settled_or_failed_run(
+        self, auth_client, text_run_test, status, precreated, expected
+    ):
+        """A new page reopens a run an earlier page settled or failed, whether
+        it creates its rows or adopts pre-created ones; a stopped run stays
+        stopped, and completed_at is left for the next settle."""
+        from django.utils import timezone
+
+        from simulate.services.alk_simulate_ingestion import (
+            precreate_alk_sim_call_executions,
+        )
+
+        test_execution_id, _next_page = _start_paged_run(auth_client, text_run_test)
+        if precreated:
+            precreate_alk_sim_call_executions(
+                SimTestExecution.objects.get(id=test_execution_id)
+            )
+        stamp = timezone.now()
+        SimTestExecution.objects.filter(id=test_execution_id).update(
+            status=status, completed_at=stamp
+        )
+        _next_page()
+        execution = SimTestExecution.objects.get(id=test_execution_id)
+        assert (execution.status, execution.completed_at) == (expected, stamp)
 
     def test_a_harness_receipt_with_the_switch_off_still_short_circuits(
         self, auth_client, run_test
@@ -1046,9 +1243,7 @@ class TestResultIngest:
         assert call.call_metadata["eval_started"] is True
         assert "eval_completed" not in call.call_metadata
 
-    @patch(
-        "model_hub.tasks.user_evaluation.trigger_error_localization_for_simulate"
-    )
+    @patch("model_hub.tasks.user_evaluation.trigger_error_localization_for_simulate")
     def test_platform_judgement_is_linked_to_run_eval_config_and_output(
         self, trigger_localizer, auth_client, run_test
     ):
@@ -3133,8 +3328,9 @@ class TestHostedRunnerActivityHelpers:
         }
         _inject_did_slot(outbound, slot)
         # sip_outbound dials the target directly; never consumes a leased DID.
-        assert "dispatch_rule_name" not in (
-            outbound["voice"]["agent_definition"]["transport"]
+        assert (
+            "dispatch_rule_name"
+            not in (outbound["voice"]["agent_definition"]["transport"])
         )
 
     def test_inject_did_slot_pins_multi_row_originator_job(self):
@@ -3577,9 +3773,9 @@ class TestHostedRunnerActivityHelpers:
         assert build_idx is not None, "build_runner_job call not found"
         assert run_idx is not None, "run_hosted_sdk_job call not found"
         assert finalize_idx is not None, "finalize_hosted_execution call not found"
-        assert (
-            build_idx < run_idx < finalize_idx
-        ), "run() must call build, then run, then finalize in that order"
+        assert build_idx < run_idx < finalize_idx, (
+            "run() must call build, then run, then finalize in that order"
+        )
 
         calls_before_finalize = [
             name
@@ -3605,9 +3801,9 @@ class TestHostedRunnerActivityHelpers:
         raises = [
             n for stmt in between for n in ast.walk(stmt) if isinstance(n, ast.Raise)
         ]
-        assert (
-            raises == []
-        ), "no Raise may sit between build_runner_job and run_hosted_sdk_job"
+        assert raises == [], (
+            "no Raise may sit between build_runner_job and run_hosted_sdk_job"
+        )
 
         run_seconds_ifs = [
             n
@@ -3661,9 +3857,9 @@ class TestHostedRunnerActivityHelpers:
             kw for kw in call.keywords if kw.arg == "start_to_close_timeout"
         )
         expr = timeout_kw.value
-        assert isinstance(
-            expr, ast.Name
-        ), "start_to_close_timeout must be fed by a local, not inlined"
+        assert isinstance(expr, ast.Name), (
+            "start_to_close_timeout must be fed by a local, not inlined"
+        )
         timeout_name = expr.id
 
         def is_build_call(node):
@@ -3724,9 +3920,9 @@ class TestHostedRunnerActivityHelpers:
         # The non-chat arm is a single nested If (an elif in source form):
         # a positive-budget branch and a placeholder branch, never a flat
         # unconditional assignment.
-        assert len(other_top) == 1 and isinstance(
-            other_top[0], ast.If
-        ), "the non-chat arm must be a single nested If on run_seconds"
+        assert len(other_top) == 1 and isinstance(other_top[0], ast.If), (
+            "the non-chat arm must be a single nested If on run_seconds"
+        )
         inner_if = other_top[0]
 
         def assigns_to(stmts, name):
@@ -3740,15 +3936,15 @@ class TestHostedRunnerActivityHelpers:
         chat_assigns = assigns_to(chat_arm, timeout_name)
         positive_assigns = assigns_to(inner_if.body, timeout_name)
         placeholder_assigns = assigns_to(inner_if.orelse, timeout_name)
-        assert (
-            len(chat_assigns) == 1
-        ), f"chat arm must assign {timeout_name} exactly once"
-        assert (
-            len(positive_assigns) == 1
-        ), f"the positive-budget branch must assign {timeout_name} once"
-        assert (
-            len(placeholder_assigns) == 1
-        ), f"the placeholder branch must assign {timeout_name} exactly once"
+        assert len(chat_assigns) == 1, (
+            f"chat arm must assign {timeout_name} exactly once"
+        )
+        assert len(positive_assigns) == 1, (
+            f"the positive-budget branch must assign {timeout_name} once"
+        )
+        assert len(placeholder_assigns) == 1, (
+            f"the placeholder branch must assign {timeout_name} exactly once"
+        )
 
         def normalized_dump(node):
             # ast.dump ignores position info by default; re-parsing an
@@ -3807,9 +4003,9 @@ class TestHostedRunnerActivityHelpers:
                 isinstance(t, ast.Name) and t.id == timeout_name for t in stmt.targets
             )
         ]
-        assert (
-            len(all_assigns) == 3
-        ), f"{timeout_name} must be assigned exactly once per branch and nowhere else"
+        assert len(all_assigns) == 3, (
+            f"{timeout_name} must be assigned exactly once per branch and nowhere else"
+        )
 
         def names_and_attrs(t):
             names = {n.id for n in ast.walk(t) if isinstance(n, ast.Name)}
@@ -3840,15 +4036,15 @@ class TestHostedRunnerActivityHelpers:
             kw for kw in input_call.keywords if kw.arg == "run_seconds"
         )
         expected_run_seconds = expr_dump("job.run_seconds")
-        assert (
-            normalized_dump(run_seconds_kw.value) == expected_run_seconds
-        ), "run_seconds must be job.run_seconds verbatim"
+        assert normalized_dump(run_seconds_kw.value) == expected_run_seconds, (
+            "run_seconds must be job.run_seconds verbatim"
+        )
 
         heartbeat_kw = next(kw for kw in call.keywords if kw.arg == "heartbeat_timeout")
         expected_heartbeat = expr_dump("timedelta(seconds=60)")
-        assert (
-            normalized_dump(heartbeat_kw.value) == expected_heartbeat
-        ), "heartbeat_timeout must be exactly timedelta(seconds=60)"
+        assert normalized_dump(heartbeat_kw.value) == expected_heartbeat, (
+            "heartbeat_timeout must be exactly timedelta(seconds=60)"
+        )
 
     def test_child_environment_maps_internal_sink_secret(self, monkeypatch):
         from simulate.temporal.activities.hosted_runner import _child_environment
@@ -5652,6 +5848,44 @@ class TestAlkVoiceCsatScoring:
         assert call.call_metadata["csat_status"] == "failed"
         assert "returned no result" in call.call_metadata["csat_error"]
         assert not (call.conversation_metrics_data or {}).get("csat_score")
+
+    def test_csat_no_evidence_is_skipped(self, auth_client, run_test):
+        """A call with neither a recording nor a transcript has nothing to
+        score: CSAT is skipped with that reason, the scorer never runs, and the
+        run settles."""
+        from structlog.testing import capture_logs
+
+        from simulate.services.scoring_status import REASON_CSAT_NO_EVIDENCE
+        from simulate.tasks import alk_sim
+
+        call = self._completed_voice_call(auth_client, run_test)
+        call.recording_url = None
+        call.call_metadata = {
+            **(call.call_metadata or {}),
+            "eval_started": True,
+            "eval_completed": True,
+            "csat_status": "pending",
+        }
+        call.save(update_fields=["recording_url", "call_metadata"])
+        SimTestExecution.objects.filter(id=call.test_execution_id).update(
+            status=SimTestExecution.ExecutionStatus.EVALUATING
+        )
+
+        with (
+            patch("simulate.tasks.alk_sim.close_old_connections"),
+            patch.object(alk_sim, "_run_agent_csat") as scorer,
+            capture_logs() as logs,
+        ):
+            alk_sim.calculate_alk_voice_csat_score._original_func(str(call.id))
+
+        scorer.assert_not_called()
+        call.refresh_from_db()
+        assert call.call_metadata["csat_status"] == "skipped"
+        assert call.call_metadata["csat_error"] == REASON_CSAT_NO_EVIDENCE
+        execution = SimTestExecution.objects.get(id=call.test_execution_id)
+        assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
+        events = [line["event"] for line in logs]
+        assert events.count("alk_csat_skipped_no_evidence") == 1
 
     def test_text_call_falls_back_to_call_transcript(self, auth_client, run_test):
         from simulate.tasks import alk_sim

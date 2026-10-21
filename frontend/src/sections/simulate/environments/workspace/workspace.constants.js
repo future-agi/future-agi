@@ -10,11 +10,33 @@
 // component/folder keep the OverviewPanel name.
 export const WORKSPACE_TABS = [
   { id: "overview", label: "Overview", icon: "solar:widget-5-linear" },
-  { id: "contract", label: "Contract", icon: "solar:document-text-linear" },
-  { id: "scenarios", label: "Scenarios", icon: "solar:layers-minimalistic-linear", badge: "scenarios" },
-  { id: "evals", label: "Evaluations", icon: "solar:shield-check-linear", badge: "evals" },
+  {
+    id: "contract",
+    label: "Contract",
+    icon: "solar:document-text-linear",
+    hint: "What this environment is made of: the world runs execute against, the code behind every tool call and grader, and how each run ends.",
+  },
+  {
+    id: "scenarios",
+    label: "Scenarios",
+    icon: "solar:layers-minimalistic-linear",
+    badge: "scenarios",
+    hint: "Each scenario is one task your agent has to complete, and carries its own persona.",
+  },
+  {
+    id: "evals",
+    label: "Evaluations",
+    icon: "solar:shield-check-linear",
+    badge: "evals",
+    hint: "These decide whether each task passed. Pick them from the library and map their inputs onto what the run produces.",
+  },
   { id: "runs", label: "Runs", icon: "solar:play-circle-linear", badge: "runs" },
-  { id: "settings", label: "Settings", icon: "solar:settings-linear" },
+  {
+    id: "settings",
+    label: "Settings",
+    icon: "solar:settings-linear",
+    hint: "How this environment was built. Everything here is fixed at build time. Only the name can be changed.",
+  },
 ];
 
 // Setup-gap areas map onto the tab that owns the underlying answer, so a

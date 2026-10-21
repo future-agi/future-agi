@@ -26,25 +26,20 @@ func RequestTimeoutHeader(r *http.Request) (time.Duration, bool) {
 	return 0, false
 }
 
-// Timeout creates a context.WithTimeout for each request.
-// Uses the request's timeout header if set (see RequestTimeoutHeader), otherwise the default.
-// Paths listed in skipPaths are excluded because they manage their own timeouts
-// (e.g. /v1/chat/completions uses per-model timeouts).
-func Timeout(defaultTimeout time.Duration, skipPaths ...string) func(http.Handler) http.Handler {
-	skip := make(map[string]struct{}, len(skipPaths))
-	for _, p := range skipPaths {
-		skip[p] = struct{}{}
-	}
-
+// Timeout bounds every request at maxTimeout, the one ceiling the gateway
+// enforces, and at the client's own header when that asks for less.
+//
+// It deliberately does not use the server default: a handler that knows the
+// model resolves its own timeout within this envelope (see
+// Handlers.resolveTimeout), and that timeout is already clamped to the same
+// maximum. An envelope at the default would silently truncate a longer
+// per-model timeout, which is what it used to do on every route except
+// /v1/chat/completions.
+func Timeout(maxTimeout time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if _, ok := skip[r.URL.Path]; ok {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			timeout := defaultTimeout
-			if d, ok := RequestTimeoutHeader(r); ok {
+			timeout := maxTimeout
+			if d, ok := RequestTimeoutHeader(r); ok && d < timeout {
 				timeout = d
 			}
 

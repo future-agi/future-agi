@@ -46,6 +46,13 @@ TRACER_SCHEDULES: list[ScheduleConfig] = [
         description="Check and process alert monitors",
     ),
     ScheduleConfig(
+        schedule_id="drain-feed-alerts",
+        activity_name="drain_feed_alerts",
+        interval_seconds=30,
+        queue="tasks_s",
+        description="Dispatch committed Error Feed alerts to Slack",
+    ),
+    ScheduleConfig(
         schedule_id="run-evals-on-spans",
         activity_name="run_evals_on_spans",
         interval_seconds=10,

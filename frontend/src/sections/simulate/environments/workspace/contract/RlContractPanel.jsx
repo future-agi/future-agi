@@ -9,7 +9,6 @@ import SectionCard from "../../components/SectionCard";
 // import ActorsPanel from "./ActorsPanel";
 import CapabilityGraph from "../overview/CapabilityGraph";
 import WorldInternalsSection from "./WorldInternalsSection";
-import { CONTRACT_COPY } from "./contract.constants";
 
 // Map the real §6 `end_conditions` onto the episode-card shape. Returns null when
 // the environment carries no real end conditions, so the caller falls back to the
@@ -68,15 +67,6 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
 
   return (
     <Box sx={{ p: 2 }}>
-      <Box sx={{ mb: 2 }}>
-        <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
-          {CONTRACT_COPY.heading}
-        </Typography>
-        <Typography sx={{ typography: "s2", color: "text.secondary", maxWidth: 780 }}>
-          What this environment is made of: the world runs execute against, the code
-          behind every tool call and grader, and how each run ends.
-        </Typography>
-      </Box>
 
       {/* ── the world ─────────────────────────────────────────────────── */}
       {hasWorld && (

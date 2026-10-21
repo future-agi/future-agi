@@ -195,59 +195,6 @@ export default function EvalsStep({
 
   return (
     <Box sx={{ p: 2 }}>
-      <Stack
-        direction={{ xs: "column", sm: "row" }}
-        alignItems={{ sm: "flex-end" }}
-        spacing={2}
-        sx={{ mb: 3 }}
-      >
-        <Box flex={1}>
-          <Typography
-            sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}
-          >
-            {EVALS_COPY.heading}
-          </Typography>
-          <Typography
-            sx={{ typography: "s1", color: "text.secondary", maxWidth: 720 }}
-          >
-            {EVALS_COPY.intro}
-          </Typography>
-        </Box>
-        {/*
-          The header CTA only appears once Added has something in it. While it's
-          empty the empty-state card below already offers a prominent Add button
-          — two CTAs for one action read as noise.
-        */}
-        {appliedEvals.length > 0 && (
-          <Tooltip
-            arrow
-            title={
-              locked
-                ? LOCK_TOOLTIP
-                : needsScenarios
-                  ? EVALS_COPY.needsScenariosHint
-                  : ""
-            }
-          >
-            <span>
-              <Button
-                variant="contained"
-                color="primary"
-                size="small"
-                disabled={needsScenarios || locked}
-                onClick={() => setPickerOpen(true)}
-                startIcon={
-                  <Iconify icon="solar:add-circle-linear" width={15} />
-                }
-                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
-              >
-                {EVALS_COPY.add}
-              </Button>
-            </span>
-          </Tooltip>
-        )}
-      </Stack>
-
       {/* Tool-call evaluation. Gated on a connected agent — tool calls are read
           from it during the run. */}
       <Stack
@@ -334,6 +281,39 @@ export default function EvalsStep({
           !detailUnknown && appliedEvals.length
             ? EVALS_COPY.addedSubtitle
             : undefined
+        }
+        action={
+          // Only once Added has something in it — while it's empty the
+          // empty-state card already offers a prominent Add button, and two
+          // CTAs for one action read as noise.
+          appliedEvals.length > 0 ? (
+            <Tooltip
+              arrow
+              title={
+                locked
+                  ? LOCK_TOOLTIP
+                  : needsScenarios
+                    ? EVALS_COPY.needsScenariosHint
+                    : ""
+              }
+            >
+              <span>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="small"
+                  disabled={needsScenarios || locked}
+                  onClick={() => setPickerOpen(true)}
+                  startIcon={
+                    <Iconify icon="solar:add-circle-linear" width={15} />
+                  }
+                  sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
+                >
+                  {EVALS_COPY.add}
+                </Button>
+              </span>
+            </Tooltip>
+          ) : undefined
         }
       >
         {detailUnknown ? (

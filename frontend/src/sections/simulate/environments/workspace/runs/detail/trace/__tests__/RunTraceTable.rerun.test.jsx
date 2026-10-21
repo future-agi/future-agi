@@ -123,6 +123,22 @@ const mockGroups = (groups) =>
   });
 
 describe("RunTraceTable — selecting calls to re-run", () => {
+  it("keeps every checkbox pinned to the left edge while the table scrolls sideways", async () => {
+    const user = userEvent.setup();
+    renderTable();
+    await openRows(user);
+
+    const cells = [
+      pageBox(),
+      groupBox("Refunds"),
+      rowBox("refund · Trial 1"),
+    ].map((box) => box.closest("th, td"));
+    cells.forEach((cell) => {
+      expect(getComputedStyle(cell).position).toBe("sticky");
+      expect(getComputedStyle(cell).left).toBe("0px");
+    });
+  });
+
   it("ticks a call without opening it", async () => {
     const user = userEvent.setup();
     const { onOpenCall } = renderTable();

@@ -12,11 +12,12 @@ import {
 import Iconify from "src/components/iconify";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
+import { SCORING_STATUS } from "../../runs.constants";
 import {
   HEAD_ROW_PX,
-  PENDING_EVAL_STATUS,
   isBad,
   neutralCheckboxSx,
+  pinnedLeftSx,
 } from "./traceTable.constants";
 import { CellSkeleton } from "./traceCells";
 
@@ -190,7 +191,16 @@ export default function TraceGroupHeaderRow({
     <TableRow onClick={onToggle}>
       {/* Keeps the grid aligned under the call rows' checkbox column. */}
       {leadingCell && (
-        <TableCell sx={{ ...cellSx, px: 1, width: 44, textAlign: "center" }}>
+        <TableCell
+          sx={{
+            ...cellSx,
+            ...pinnedLeftSx,
+            zIndex: 3,
+            px: 1,
+            width: 44,
+            textAlign: "center",
+          }}
+        >
           {checkbox?.selectable && (
             <Checkbox
               size="small"
@@ -238,7 +248,7 @@ export default function TraceGroupHeaderRow({
             // A finished call can still be waiting on this eval's grade.
             const grading = group.rows.some((t) =>
               t.evalResults?.some(
-                (r) => r.id === e.id && r.status === PENDING_EVAL_STATUS,
+                (r) => r.id === e.id && r.status === SCORING_STATUS.PENDING,
               ),
             );
             return (

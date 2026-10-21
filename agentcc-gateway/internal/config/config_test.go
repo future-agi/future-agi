@@ -67,6 +67,16 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "max request timeout below the server default",
+			modify:  func(c *Config) { c.Server.MaxRequestTimeout = 30 * time.Second },
+			wantErr: true,
+		},
+		{
+			name:    "max request timeout unset leaves it to Load",
+			modify:  func(c *Config) { c.Server.MaxRequestTimeout = 0 },
+			wantErr: false,
+		},
+		{
 			name: "provider missing base_url",
 			modify: func(c *Config) {
 				c.Providers["test"] = ProviderConfig{APIFormat: "openai"}
@@ -497,5 +507,83 @@ func TestLoadFromEnvDoesNotClobberExplicitInternalKey(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("got %d entries for the key, want 1 (env seed must not duplicate an explicit config key)", n)
+	}
+}
+
+// A config file that states the server block without max_request_timeout gets
+// the write timeout, the point past which no response can be written anyway.
+func TestLoad_MaxRequestTimeoutDefaultsToWriteTimeout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := "server:\n  write_timeout: 200s\n  default_request_timeout: 60s\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.MaxRequestTimeout != 200*time.Second {
+		t.Errorf("max_request_timeout = %v, want 200s (the write timeout)", cfg.Server.MaxRequestTimeout)
+	}
+}
+
+// A ceiling above the write timeout is one no response can reach, so Load
+// lowers it rather than refusing to start.
+func TestLoad_MaxRequestTimeoutIsHeldAtTheWriteTimeout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := "server:\n  write_timeout: 300s\n  max_request_timeout: 600s\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.MaxRequestTimeout != 300*time.Second {
+		t.Errorf("max_request_timeout = %v, want 300s (the write timeout)", cfg.Server.MaxRequestTimeout)
+	}
+}
+
+// A default request timeout above the ceiling is not something to normalize:
+// the gateway could never serve it.
+func TestLoad_DefaultAboveTheCeilingFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := "server:\n  write_timeout: 120s\n  default_request_timeout: 600s\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load accepted a default request timeout above the write timeout")
+	}
+}
+
+// A duration environment variable without a unit used to be dropped in
+// silence, which reads as "the environment does not override the file".
+func TestLoadFromEnv_DurationWithoutAUnitKeepsTheConfiguredValue(t *testing.T) {
+	tests := []struct {
+		value string
+		want  time.Duration
+	}{
+		{"180", 90 * time.Second},
+		{"180000", 90 * time.Second},
+		{"", 90 * time.Second},
+		{"180s", 180 * time.Second},
+		{"3m", 3 * time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run("AGENTCC_DEFAULT_REQUEST_TIMEOUT="+tt.value, func(t *testing.T) {
+			t.Setenv("AGENTCC_DEFAULT_REQUEST_TIMEOUT", tt.value)
+
+			cfg := DefaultConfig()
+			cfg.Server.DefaultRequestTimeout = 90 * time.Second
+			loadFromEnv(cfg)
+
+			if cfg.Server.DefaultRequestTimeout != tt.want {
+				t.Errorf("default_request_timeout = %v, want %v", cfg.Server.DefaultRequestTimeout, tt.want)
+			}
+		})
 	}
 }

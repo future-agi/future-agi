@@ -6,9 +6,6 @@
 import PropTypes from "prop-types";
 
 export const EVALS_COPY = {
-  heading: "Evaluations",
-  intro:
-    "These decide whether each task passed. Pick them from the library and map their inputs onto what the run produces.",
   add: "Add evaluations",
   addScenarios: "Add scenarios",
   toolCall: {

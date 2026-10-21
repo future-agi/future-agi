@@ -32,12 +32,19 @@ import {
   runOutcome,
   CLOSED_GROUP_VIEW,
   neutralCheckboxSx,
+  pinnedLeftSx,
 } from "./traceTable.constants";
 import {
   SubTasksCell,
   TruncTooltip,
 } from "../../../scenarios/ScenarioTableCells";
-import { MetricValue, Score, Field, UnscoredEval } from "./traceCells";
+import {
+  CsatValue,
+  MetricValue,
+  Score,
+  Field,
+  UnscoredEval,
+} from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
 
 // The theme hides every border on a table's last row, which here is the head
@@ -83,6 +90,8 @@ const textCellSx = (width) => ({
 // The narrow first column that holds a call's tick when rows can be selected.
 const checkboxCellSx = {
   ...bodyCellSx,
+  ...pinnedLeftSx,
+  zIndex: 1,
   width: 44,
   minWidth: 44,
   px: 1,
@@ -236,7 +245,16 @@ export default function TraceTable({
         {selection && (
           // The tick is its own control: this cell has no open-the-call click,
           // and a row click elsewhere opens the call without touching it.
-          <TableCell sx={checkboxCellSx}>
+          <TableCell
+            sx={{
+              ...checkboxCellSx,
+              // The row's open-call tint, layered over the opaque base.
+              ...(active && {
+                backgroundImage: (th) =>
+                  `linear-gradient(${th.palette.action.selected}, ${th.palette.action.selected})`,
+              }),
+            }}
+          >
             {selection.canSelect(t) && (
               <Checkbox
                 size="small"
@@ -450,7 +468,12 @@ export default function TraceTable({
 
         {show("csat") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="csat" value={t.csat} loading={callLive} />
+            <CsatValue
+              value={t.csat}
+              status={t.csatStatus}
+              reason={t.csatReason}
+              callLive={callLive}
+            />
           </TableCell>
         )}
         {show("turns") && (
@@ -526,7 +549,11 @@ export default function TraceTable({
           <TableHead>
             {bandSegments.length > 0 && (
               <TableRow>
-                {selection && <TableCell sx={bandCellSx} />}
+                {selection && (
+                  <TableCell
+                    sx={{ ...bandCellSx, ...pinnedLeftSx, zIndex: 4 }}
+                  />
+                )}
                 {bandSegments.map((segment) => (
                   <TableCell
                     key={segment.name}
@@ -540,7 +567,14 @@ export default function TraceTable({
             )}
             <TableRow>
               {selection && (
-                <TableCell sx={{ ...headSx, ...checkboxHeadSx }}>
+                <TableCell
+                  sx={{
+                    ...headSx,
+                    ...checkboxHeadSx,
+                    ...pinnedLeftSx,
+                    zIndex: 4,
+                  }}
+                >
                   <Checkbox
                     size="small"
                     checked={selection.pageChecked}

@@ -221,3 +221,40 @@ func TestRequestTimeoutHeader(t *testing.T) {
 		})
 	}
 }
+
+func TestTimeout_MaximumHoldsOverTheHeader(t *testing.T) {
+	const maxTimeout = 30 * time.Second
+
+	tests := []struct {
+		name   string
+		header map[string]string
+		want   time.Duration
+	}{
+		{"no header leaves the maximum", nil, maxTimeout},
+		{"a shorter header applies", map[string]string{"x-agentcc-timeout": "5s"}, 5 * time.Second},
+		{"a longer duration header is held at the maximum", map[string]string{"x-agentcc-timeout": "10m"}, maxTimeout},
+		{"a longer milliseconds header is held at the maximum", map[string]string{"x-agentcc-request-timeout": "600000"}, maxTimeout},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var remaining time.Duration
+			handler := Timeout(maxTimeout)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				deadline, ok := r.Context().Deadline()
+				if !ok {
+					t.Fatal("the request reached the handler with no deadline")
+				}
+				remaining = time.Until(deadline)
+			}))
+
+			req := httptest.NewRequest("POST", "/v1/embeddings", nil)
+			for k, v := range tt.header {
+				req.Header.Set(k, v)
+			}
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+
+			if remaining > tt.want || remaining < tt.want-time.Second {
+				t.Errorf("deadline in %v, want about %v", remaining, tt.want)
+			}
+		})
+	}
+}

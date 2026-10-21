@@ -6537,9 +6537,11 @@ export const AgentccOrgConfigsActiveResponse = zod.object({
 
 /**
  * Bulk endpoint for gateway startup sync.
-Returns all active org configs keyed by org ID.
+Returns all active org configs keyed by org ID, plus the ids of orgs whose
+payload could not be built, so the gateway keeps their last good config.
 Authenticated by admin token (not user JWT).
  */
+
 export const AgentccOrgConfigsBulkListResponse = zod.object({
   status: zod.boolean(),
   result: zod.record(
@@ -6563,6 +6565,11 @@ export const AgentccOrgConfigsBulkListResponse = zod.object({
       model_map: zod.object({}).passthrough(),
     }),
   ),
+  unbuilt_org_ids: zod
+    .array(zod.string().min(1))
+    .describe(
+      "Orgs with an active config that could not be built. The gateway keeps their last good config instead of dropping them.",
+    ),
 });
 
 /**
@@ -10784,6 +10791,7 @@ export const IntegrationsConnectionsListResponse = zod.object({
           "cloud_storage",
           "message_queue",
           "linear",
+          "slack",
         ]),
         display_name: zod
           .string()
@@ -10887,6 +10895,7 @@ export const IntegrationsConnectionsCreateBody = zod.object({
     "cloud_storage",
     "message_queue",
     "linear",
+    "slack",
   ]),
   host_url: zod
     .string()
@@ -10970,6 +10979,7 @@ export const IntegrationsConnectionsValidateCredentialsBody = zod.object({
     "cloud_storage",
     "message_queue",
     "linear",
+    "slack",
   ]),
   host_url: zod
     .string()
@@ -11033,6 +11043,34 @@ export const IntegrationsConnectionsValidateCredentialsResponse = zod.object({
   }),
 });
 
+export const IntegrationsConnectionsSlackChannelsListParams = zod.object({
+  connection_id: zod.string(),
+});
+
+export const integrationsConnectionsSlackChannelsListQueryCursorMax = 512;
+
+export const IntegrationsConnectionsSlackChannelsListQueryParams = zod.object({
+  cursor: zod
+    .string()
+    .max(integrationsConnectionsSlackChannelsListQueryCursorMax)
+    .optional(),
+});
+
+export const IntegrationsConnectionsSlackChannelsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    channels: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        is_private: zod.boolean(),
+        is_member: zod.boolean(),
+      }),
+    ),
+    next_cursor: zod.string().min(1),
+  }),
+});
+
 /**
  * API endpoints for managing integration connections.
  */
@@ -11069,6 +11107,7 @@ export const IntegrationsConnectionsReadResponse = zod.object({
     "cloud_storage",
     "message_queue",
     "linear",
+    "slack",
   ]),
   display_name: zod
     .string()
@@ -11204,6 +11243,7 @@ export const IntegrationsConnectionsUpdateResponse = zod.object({
       "cloud_storage",
       "message_queue",
       "linear",
+      "slack",
     ]),
     display_name: zod
       .string()
@@ -11340,6 +11380,7 @@ export const IntegrationsConnectionsPartialUpdateResponse = zod.object({
       "cloud_storage",
       "message_queue",
       "linear",
+      "slack",
     ]),
     display_name: zod
       .string()
@@ -11462,6 +11503,7 @@ export const IntegrationsConnectionsPauseResponse = zod.object({
       "cloud_storage",
       "message_queue",
       "linear",
+      "slack",
     ]),
     display_name: zod
       .string()
@@ -11559,6 +11601,7 @@ export const IntegrationsConnectionsResumeResponse = zod.object({
       "cloud_storage",
       "message_queue",
       "linear",
+      "slack",
     ]),
     display_name: zod
       .string()
@@ -11630,6 +11673,17 @@ export const IntegrationsConnectionsSyncNowResponse = zod.object({
     .default(integrationsConnectionsSyncNowResponseStatusDefault),
   result: zod.object({
     message: zod.string().min(1),
+  }),
+});
+
+export const IntegrationsSlackInstallCreateBody = zod.object({
+  connection_id: zod.string().uuid().optional(),
+});
+
+export const IntegrationsSlackInstallCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    authorization_url: zod.string().url().min(1),
   }),
 });
 
@@ -37342,6 +37396,8 @@ export const SimulateApiHarnessJobsAdjustBody = zod.object({
     .min(1)
     .max(simulateApiHarnessJobsAdjustBodyClientRequestIdMax)
     .optional(),
+  target_stage: zod.enum(["understand", "environment", "scenarios"]).optional(),
+  scenario_delta: zod.number().min(1).optional(),
 });
 
 /**
@@ -38293,6 +38349,8 @@ export const SimulateApiHarnessConversationsAdjustBody = zod.object({
     .min(1)
     .max(simulateApiHarnessConversationsAdjustBodyClientRequestIdMax)
     .optional(),
+  target_stage: zod.enum(["understand", "environment", "scenarios"]).optional(),
+  scenario_delta: zod.number().min(1).optional(),
 });
 
 export const SimulateApiHarnessConversationsAdjustResponse = zod.object({
@@ -38403,6 +38461,37 @@ export const SimulateApiHarnessConversationsEventsResponse = zod.object({
     .min(simulateApiHarnessConversationsEventsResponseAckedThroughSequenceMin),
 });
 
+export const SimulateApiHarnessConversationsOverviewParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessConversationsOverviewBody = zod
+  .object({})
+  .passthrough();
+
+export const SimulateApiHarnessConversationsOverviewResponse = zod.object({
+  environment: zod.record(zod.string(), zod.string()),
+  scenario_count: zod.number(),
+  use_cases: zod.array(zod.record(zod.string(), zod.string())),
+  coverage: zod.record(zod.string(), zod.string()),
+  recent_runs: zod.array(zod.record(zod.string(), zod.string())),
+  build_changes: zod.array(zod.record(zod.string(), zod.string())),
+  earlier_messages: zod.array(zod.record(zod.string(), zod.string())),
+});
+
+export const SimulateApiHarnessConversationsPublishParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessConversationsPublishBodyDigestMax = 128;
+
+export const SimulateApiHarnessConversationsPublishBody = zod.object({
+  digest: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessConversationsPublishBodyDigestMax),
+});
+
 export const SimulateApiHarnessConversationsRerunParams = zod.object({
   id: zod.string(),
 });
@@ -38435,6 +38524,124 @@ export const SimulateApiHarnessConversationsRunStatusResponse = zod.object({
     .number()
     .min(simulateApiHarnessConversationsRunStatusResponseTotalScenariosMin),
   receipts: zod.object({}).passthrough(),
+});
+
+export const SimulateApiHarnessConversationsRunsParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessConversationsRunsBodyRunIdMax = 64;
+
+export const simulateApiHarnessConversationsRunsBodyLimitMax = 50;
+
+export const SimulateApiHarnessConversationsRunsBody = zod.object({
+  run_id: zod
+    .string()
+    .max(simulateApiHarnessConversationsRunsBodyRunIdMax)
+    .optional(),
+  limit: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessConversationsRunsBodyLimitMax)
+    .optional(),
+});
+
+export const SimulateApiHarnessConversationsRunsStartRunParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessConversationsRunsStartRunBodyNumbersMax = 5000;
+
+export const simulateApiHarnessConversationsRunsStartRunBodyRangesMax = 100;
+
+export const simulateApiHarnessConversationsRunsStartRunBodyTrialsDefault = 1;
+export const simulateApiHarnessConversationsRunsStartRunBodyTrialsMax = 20;
+
+export const simulateApiHarnessConversationsRunsStartRunBodyOperationIdMax = 64;
+
+export const SimulateApiHarnessConversationsRunsStartRunBody = zod.object({
+  numbers: zod
+    .array(zod.number().min(1))
+    .max(simulateApiHarnessConversationsRunsStartRunBodyNumbersMax)
+    .optional(),
+  ranges: zod
+    .array(zod.record(zod.string(), zod.number().min(1)))
+    .max(simulateApiHarnessConversationsRunsStartRunBodyRangesMax)
+    .optional(),
+  trials: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessConversationsRunsStartRunBodyTrialsMax)
+    .default(simulateApiHarnessConversationsRunsStartRunBodyTrialsDefault),
+  operation_id: zod
+    .string()
+    .max(simulateApiHarnessConversationsRunsStartRunBodyOperationIdMax)
+    .optional(),
+});
+
+export const SimulateApiHarnessConversationsScenariosParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessConversationsScenariosBodyNumbersMax = 5000;
+
+export const simulateApiHarnessConversationsScenariosBodyRangesMax = 100;
+
+export const simulateApiHarnessConversationsScenariosBodyNamesItemMax = 255;
+
+export const simulateApiHarnessConversationsScenariosBodyNamesMax = 500;
+
+export const simulateApiHarnessConversationsScenariosBodyIdsItemMax = 64;
+
+export const simulateApiHarnessConversationsScenariosBodyIdsMax = 1000;
+
+export const simulateApiHarnessConversationsScenariosBodySearchMax = 500;
+
+export const simulateApiHarnessConversationsScenariosBodyPageSizeMax = 100;
+
+export const simulateApiHarnessConversationsScenariosBodyFullDefault = false;
+
+export const SimulateApiHarnessConversationsScenariosBody = zod.object({
+  numbers: zod
+    .array(zod.number().min(1))
+    .max(simulateApiHarnessConversationsScenariosBodyNumbersMax)
+    .optional(),
+  ranges: zod
+    .array(zod.record(zod.string(), zod.number().min(1)))
+    .max(simulateApiHarnessConversationsScenariosBodyRangesMax)
+    .optional(),
+  names: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessConversationsScenariosBodyNamesItemMax),
+    )
+    .max(simulateApiHarnessConversationsScenariosBodyNamesMax)
+    .optional(),
+  ids: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessConversationsScenariosBodyIdsItemMax),
+    )
+    .max(simulateApiHarnessConversationsScenariosBodyIdsMax)
+    .optional(),
+  search: zod
+    .string()
+    .max(simulateApiHarnessConversationsScenariosBodySearchMax)
+    .optional(),
+  filters: zod.record(zod.string(), zod.string()).optional(),
+  page: zod.number().min(1).optional(),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessConversationsScenariosBodyPageSizeMax)
+    .optional(),
+  full: zod
+    .boolean()
+    .default(simulateApiHarnessConversationsScenariosBodyFullDefault),
 });
 
 export const SimulateApiHarnessConversationsSessionStoreParams = zod.object({
@@ -47081,12 +47288,18 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     zod.object({
       id: zod.string().min(1),
       name: zod.string().min(1),
-      type: zod.string().min(1),
+      type: zod.string(),
       value: zod.object({}).passthrough(),
       score: zod.number(),
       passed: zod.boolean(),
       reason: zod.string(),
-      status: zod.string().min(1),
+      status: zod.enum([
+        "pending",
+        "succeeded",
+        "failed",
+        "timed_out",
+        "skipped",
+      ]),
     }),
   ),
   function_calls: zod.array(
@@ -47100,6 +47313,22 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       start_time_ms: zod.number().optional(),
     }),
   ),
+  scoring_status: zod.enum([
+    "not_applicable",
+    "pending",
+    "succeeded",
+    "failed",
+    "timed_out",
+  ]),
+  csat_status: zod.enum([
+    "not_applicable",
+    "pending",
+    "succeeded",
+    "failed",
+    "timed_out",
+    "skipped",
+  ]),
+  csat_reason: zod.string().min(1),
 });
 
 export const SimulateV3TestExecutionAnalyticsParams = zod.object({
@@ -47828,6 +48057,16 @@ export const simulateV3TestExecutionCallsResponseExecutionSelectedScenarioKeysDe
   [];
 export const simulateV3TestExecutionCallsResponseExecutionTrialsDefault = 1;
 
+export const simulateV3TestExecutionCallsResponseSummaryScoringNotApplicableMin = 0;
+
+export const simulateV3TestExecutionCallsResponseSummaryScoringPendingMin = 0;
+
+export const simulateV3TestExecutionCallsResponseSummaryScoringSucceededMin = 0;
+
+export const simulateV3TestExecutionCallsResponseSummaryScoringFailedMin = 0;
+
+export const simulateV3TestExecutionCallsResponseSummaryScoringTimedOutMin = 0;
+
 export const SimulateV3TestExecutionCallsResponse = zod.object({
   execution: zod.object({
     id: zod.string().uuid(),
@@ -47958,6 +48197,25 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       total: zod.number(),
       total_value: zod.number(),
     }),
+    scoring: zod.object({
+      not_applicable: zod
+        .number()
+        .min(
+          simulateV3TestExecutionCallsResponseSummaryScoringNotApplicableMin,
+        ),
+      pending: zod
+        .number()
+        .min(simulateV3TestExecutionCallsResponseSummaryScoringPendingMin),
+      succeeded: zod
+        .number()
+        .min(simulateV3TestExecutionCallsResponseSummaryScoringSucceededMin),
+      failed: zod
+        .number()
+        .min(simulateV3TestExecutionCallsResponseSummaryScoringFailedMin),
+      timed_out: zod
+        .number()
+        .min(simulateV3TestExecutionCallsResponseSummaryScoringTimedOutMin),
+    }),
   }),
   count: zod.number(),
   page: zod.number(),
@@ -48027,14 +48285,36 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         zod.object({
           id: zod.string().min(1),
           name: zod.string().min(1),
-          type: zod.string().min(1),
+          type: zod.string(),
           value: zod.object({}).passthrough(),
           score: zod.number(),
           passed: zod.boolean(),
           reason: zod.string(),
-          status: zod.string().min(1),
+          status: zod.enum([
+            "pending",
+            "succeeded",
+            "failed",
+            "timed_out",
+            "skipped",
+          ]),
         }),
       ),
+      scoring_status: zod.enum([
+        "not_applicable",
+        "pending",
+        "succeeded",
+        "failed",
+        "timed_out",
+      ]),
+      csat_status: zod.enum([
+        "not_applicable",
+        "pending",
+        "succeeded",
+        "failed",
+        "timed_out",
+        "skipped",
+      ]),
+      csat_reason: zod.string().min(1),
     }),
   ),
   groups: zod.array(
@@ -48342,6 +48622,302 @@ export const TelemetryRegisterCreateBody = zod.object({
 export const TelemetryRegisterCreateResponse = zod.object({
   status: zod.enum(["ok"]),
   instance_secret: zod.string().min(1),
+});
+
+export const TracerAlertsListQueryParams = zod.object({
+  kind: zod.enum(["metric", "error_feed"]).optional(),
+});
+
+export const TracerAlertsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    alerts: zod.array(
+      zod.object({
+        id: zod.string().uuid(),
+        kind: zod.enum(["metric", "error_feed"]),
+        name: zod.string().min(1),
+        enabled: zod.boolean(),
+        project_id: zod.string().uuid().optional(),
+        trigger_type: zod.string().min(1).optional(),
+        severity_threshold: zod
+          .enum(["low", "medium", "high", "critical"])
+          .optional(),
+        occurrence_threshold: zod.number().optional(),
+        filters: zod.object({}).passthrough().optional(),
+        slack_connection_id: zod.string().uuid().optional(),
+        slack_channel_id: zod.string().min(1).optional(),
+        slack_channel_name: zod.string().min(1).optional(),
+        cooldown_seconds: zod.number().optional(),
+        last_triggered_at: zod.string().datetime({ offset: true }).optional(),
+        health: zod.string().min(1).optional(),
+        failure_reason: zod.string().min(1).optional(),
+        created_at: zod.string().datetime({ offset: true }).optional(),
+        updated_at: zod.string().datetime({ offset: true }).optional(),
+        project: zod.string().uuid().optional(),
+        organization: zod.string().uuid().optional(),
+        workspace: zod.string().uuid().optional(),
+        created_by: zod.string().uuid().optional(),
+        metric_type: zod.string().min(1).optional(),
+        metric: zod.string().optional(),
+        metric_name: zod.string().min(1).optional(),
+        threshold_type: zod.string().min(1).optional(),
+        threshold_operator: zod.string().min(1).optional(),
+        threshold_metric_value: zod.string().optional(),
+        critical_threshold_value: zod.number().optional(),
+        warning_threshold_value: zod.number().optional(),
+        alert_frequency: zod.number().optional(),
+        auto_threshold_time_window: zod.number().optional(),
+        last_checked_at: zod.string().datetime({ offset: true }).optional(),
+        slack_webhook_url: zod.string().url().optional(),
+        slack_notes: zod.string().optional(),
+        is_mute: zod.boolean().optional(),
+        deleted: zod.boolean().optional(),
+        deleted_at: zod.string().datetime({ offset: true }).optional(),
+        logs: zod.array(zod.object({}).passthrough()).optional(),
+        notification_emails: zod.array(zod.string().email().min(1)).optional(),
+      }),
+    ),
+  }),
+});
+
+export const tracerAlertsCreateBodyOccurrenceThresholdMax = 1000000;
+
+export const tracerAlertsCreateBodyCooldownSecondsMin = 0;
+
+export const TracerAlertsCreateBody = zod.object({
+  kind: zod.enum(["metric", "error_feed"]).optional(),
+  name: zod.string().min(1).optional(),
+  enabled: zod.boolean().optional(),
+  project_id: zod.string().uuid().optional(),
+  trigger_type: zod.string().min(1).optional(),
+  severity_threshold: zod
+    .enum(["low", "medium", "high", "critical"])
+    .optional(),
+  occurrence_threshold: zod
+    .number()
+    .min(1)
+    .max(tracerAlertsCreateBodyOccurrenceThresholdMax)
+    .optional(),
+  filters: zod.object({}).passthrough().optional(),
+  slack_connection_id: zod.string().uuid().optional(),
+  slack_channel_id: zod.string().min(1).optional(),
+  cooldown_seconds: zod
+    .number()
+    .min(tracerAlertsCreateBodyCooldownSecondsMin)
+    .optional(),
+  project: zod.string().uuid().optional(),
+  metric_type: zod.string().min(1).optional(),
+  metric: zod.string().optional(),
+  threshold_type: zod.string().min(1).optional(),
+  threshold_operator: zod.string().min(1).optional(),
+  threshold_metric_value: zod.string().optional(),
+  critical_threshold_value: zod.number().optional(),
+  warning_threshold_value: zod.number().optional(),
+  alert_frequency: zod.number().optional(),
+  auto_threshold_time_window: zod.number().optional(),
+  slack_webhook_url: zod.string().url().optional(),
+  slack_notes: zod.string().optional(),
+  is_mute: zod.boolean().optional(),
+  notification_emails: zod.array(zod.string().email().min(1)).optional(),
+});
+
+export const TracerAlertsErrorFeedTestCreateParams = zod.object({
+  alert_id: zod.string(),
+});
+
+export const TracerAlertsErrorFeedTestCreateBody = zod.object({}).passthrough();
+
+export const TracerAlertsErrorFeedTestCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    sent: zod.boolean(),
+    slack_ts: zod.string().min(1),
+  }),
+});
+
+export const TracerAlertsOptionsListQueryParams = zod.object({
+  kind: zod.enum(["metric", "error_feed"]).optional(),
+});
+
+export const TracerAlertsOptionsListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    triggers: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        label: zod.string().min(1),
+      }),
+    ),
+    severities: zod.array(zod.string().min(1)),
+    statuses: zod.array(zod.string().min(1)),
+    sources: zod.array(zod.string().min(1)),
+    projects: zod.array(
+      zod.object({
+        id: zod.string().uuid(),
+        name: zod.string().min(1),
+      }),
+    ),
+  }),
+});
+
+export const TracerAlertsReadParams = zod.object({
+  kind: zod.string(),
+  alert_id: zod.string(),
+});
+
+export const TracerAlertsReadResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid(),
+    kind: zod.enum(["metric", "error_feed"]),
+    name: zod.string().min(1),
+    enabled: zod.boolean(),
+    project_id: zod.string().uuid().optional(),
+    trigger_type: zod.string().min(1).optional(),
+    severity_threshold: zod
+      .enum(["low", "medium", "high", "critical"])
+      .optional(),
+    occurrence_threshold: zod.number().optional(),
+    filters: zod.object({}).passthrough().optional(),
+    slack_connection_id: zod.string().uuid().optional(),
+    slack_channel_id: zod.string().min(1).optional(),
+    slack_channel_name: zod.string().min(1).optional(),
+    cooldown_seconds: zod.number().optional(),
+    last_triggered_at: zod.string().datetime({ offset: true }).optional(),
+    health: zod.string().min(1).optional(),
+    failure_reason: zod.string().min(1).optional(),
+    created_at: zod.string().datetime({ offset: true }).optional(),
+    updated_at: zod.string().datetime({ offset: true }).optional(),
+    project: zod.string().uuid().optional(),
+    organization: zod.string().uuid().optional(),
+    workspace: zod.string().uuid().optional(),
+    created_by: zod.string().uuid().optional(),
+    metric_type: zod.string().min(1).optional(),
+    metric: zod.string().optional(),
+    metric_name: zod.string().min(1).optional(),
+    threshold_type: zod.string().min(1).optional(),
+    threshold_operator: zod.string().min(1).optional(),
+    threshold_metric_value: zod.string().optional(),
+    critical_threshold_value: zod.number().optional(),
+    warning_threshold_value: zod.number().optional(),
+    alert_frequency: zod.number().optional(),
+    auto_threshold_time_window: zod.number().optional(),
+    last_checked_at: zod.string().datetime({ offset: true }).optional(),
+    slack_webhook_url: zod.string().url().optional(),
+    slack_notes: zod.string().optional(),
+    is_mute: zod.boolean().optional(),
+    deleted: zod.boolean().optional(),
+    deleted_at: zod.string().datetime({ offset: true }).optional(),
+    logs: zod.array(zod.object({}).passthrough()).optional(),
+    notification_emails: zod.array(zod.string().email().min(1)).optional(),
+  }),
+});
+
+export const TracerAlertsPartialUpdateParams = zod.object({
+  kind: zod.string(),
+  alert_id: zod.string(),
+});
+
+export const tracerAlertsPartialUpdateBodyOccurrenceThresholdMax = 1000000;
+
+export const tracerAlertsPartialUpdateBodyCooldownSecondsMin = 0;
+
+export const TracerAlertsPartialUpdateBody = zod.object({
+  kind: zod.enum(["metric", "error_feed"]).optional(),
+  name: zod.string().min(1).optional(),
+  enabled: zod.boolean().optional(),
+  project_id: zod.string().uuid().optional(),
+  trigger_type: zod.string().min(1).optional(),
+  severity_threshold: zod
+    .enum(["low", "medium", "high", "critical"])
+    .optional(),
+  occurrence_threshold: zod
+    .number()
+    .min(1)
+    .max(tracerAlertsPartialUpdateBodyOccurrenceThresholdMax)
+    .optional(),
+  filters: zod.object({}).passthrough().optional(),
+  slack_connection_id: zod.string().uuid().optional(),
+  slack_channel_id: zod.string().min(1).optional(),
+  cooldown_seconds: zod
+    .number()
+    .min(tracerAlertsPartialUpdateBodyCooldownSecondsMin)
+    .optional(),
+  project: zod.string().uuid().optional(),
+  metric_type: zod.string().min(1).optional(),
+  metric: zod.string().optional(),
+  threshold_type: zod.string().min(1).optional(),
+  threshold_operator: zod.string().min(1).optional(),
+  threshold_metric_value: zod.string().optional(),
+  critical_threshold_value: zod.number().optional(),
+  warning_threshold_value: zod.number().optional(),
+  alert_frequency: zod.number().optional(),
+  auto_threshold_time_window: zod.number().optional(),
+  slack_webhook_url: zod.string().url().optional(),
+  slack_notes: zod.string().optional(),
+  is_mute: zod.boolean().optional(),
+  notification_emails: zod.array(zod.string().email().min(1)).optional(),
+});
+
+export const TracerAlertsPartialUpdateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid(),
+    kind: zod.enum(["metric", "error_feed"]),
+    name: zod.string().min(1),
+    enabled: zod.boolean(),
+    project_id: zod.string().uuid().optional(),
+    trigger_type: zod.string().min(1).optional(),
+    severity_threshold: zod
+      .enum(["low", "medium", "high", "critical"])
+      .optional(),
+    occurrence_threshold: zod.number().optional(),
+    filters: zod.object({}).passthrough().optional(),
+    slack_connection_id: zod.string().uuid().optional(),
+    slack_channel_id: zod.string().min(1).optional(),
+    slack_channel_name: zod.string().min(1).optional(),
+    cooldown_seconds: zod.number().optional(),
+    last_triggered_at: zod.string().datetime({ offset: true }).optional(),
+    health: zod.string().min(1).optional(),
+    failure_reason: zod.string().min(1).optional(),
+    created_at: zod.string().datetime({ offset: true }).optional(),
+    updated_at: zod.string().datetime({ offset: true }).optional(),
+    project: zod.string().uuid().optional(),
+    organization: zod.string().uuid().optional(),
+    workspace: zod.string().uuid().optional(),
+    created_by: zod.string().uuid().optional(),
+    metric_type: zod.string().min(1).optional(),
+    metric: zod.string().optional(),
+    metric_name: zod.string().min(1).optional(),
+    threshold_type: zod.string().min(1).optional(),
+    threshold_operator: zod.string().min(1).optional(),
+    threshold_metric_value: zod.string().optional(),
+    critical_threshold_value: zod.number().optional(),
+    warning_threshold_value: zod.number().optional(),
+    alert_frequency: zod.number().optional(),
+    auto_threshold_time_window: zod.number().optional(),
+    last_checked_at: zod.string().datetime({ offset: true }).optional(),
+    slack_webhook_url: zod.string().url().optional(),
+    slack_notes: zod.string().optional(),
+    is_mute: zod.boolean().optional(),
+    deleted: zod.boolean().optional(),
+    deleted_at: zod.string().datetime({ offset: true }).optional(),
+    logs: zod.array(zod.object({}).passthrough()).optional(),
+    notification_emails: zod.array(zod.string().email().min(1)).optional(),
+  }),
+});
+
+export const TracerAlertsDeleteParams = zod.object({
+  kind: zod.string(),
+  alert_id: zod.string(),
+});
+
+export const TracerAlertsDeleteResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    id: zod.string().uuid(),
+    deleted: zod.boolean(),
+  }),
 });
 
 export const tracerBulkAnnotationCreateBodyRecordsItemAnnotationsDefault = [];
