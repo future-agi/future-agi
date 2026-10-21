@@ -539,3 +539,57 @@ def test_dimension_key_fix_resumes_prior_successful_receipts(topology, plan):
         assert apply_plan(client, topology, plan) == len(plan) - first_failed
         assert client.receipts[:first_failed] == prior
         assert apply_plan(client, topology, plan) == 0
+
+
+@pytest.mark.parametrize(
+    "principal,logical_privileges",
+    [
+        ("observed_catalog_reader", "SELECT"),
+        ("observed_catalog_writer", "SELECT, INSERT"),
+    ],
+)
+def test_catalog_roles_can_read_only_their_distributed_local_sources(
+    monkeypatch, topology, principal, logical_privileges
+):
+    from tracer.services.clickhouse.v2 import cluster_cdc
+
+    statements = []
+    client = SimpleNamespace(command=lambda sql, **kwargs: statements.append(sql))
+    monkeypatch.setattr(cluster_cdc.ClusterTopology, "from_env", lambda *args: topology)
+    monkeypatch.setattr(cluster_cdc, "verify_columns", lambda *args: None)
+    monkeypatch.setattr(cluster_cdc, "apply_plan", lambda *args: None)
+    cluster_cdc.apply_observed_catalog(
+        client,
+        database=topology.database,
+        writer_password="writer-secret",
+        reader_password="reader-secret",
+    )
+    grants = {
+        sql
+        for sql in statements
+        if sql.startswith("GRANT ") and sql.endswith(f"TO {principal}")
+    }
+    expected = {
+        f"GRANT ON CLUSTER 'test_cluster' {logical_privileges} ON test_cluster_v1.{table} TO {principal}"
+        for table in ("observed_attribute_keys", "observed_attribute_values")
+    } | {
+        f"GRANT ON CLUSTER 'test_cluster' SELECT ON test_cluster_v1.{table}_local TO {principal}"
+        for table in ("observed_attribute_keys", "observed_attribute_values")
+    }
+    if principal == "observed_catalog_writer":
+        expected |= {
+            f"GRANT ON CLUSTER 'test_cluster' SELECT ON {table} TO {principal}"
+            for table in ("system.tables", "system.replicas")
+        }
+    else:
+        assert any(
+            sql.startswith(f"ALTER USER {principal} ON CLUSTER 'test_cluster'")
+            and sql.endswith("SETTINGS readonly=2")
+            for sql in statements
+        )
+        assert not any("INSERT" in sql for sql in grants)
+    assert grants == expected
+    assert all(
+        "writer-secret" not in sql and "reader-secret" not in sql and "*" not in sql
+        for sql in statements
+    )

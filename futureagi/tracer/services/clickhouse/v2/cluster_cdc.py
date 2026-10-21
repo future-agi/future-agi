@@ -231,11 +231,13 @@ def apply_observed_catalog(client, *, database, writer_password, reader_password
                 f"GRANT {topology.on_cluster} {privileges} ON {database}.{table} TO {user}",
                 settings=DDL_SETTINGS,
             )
-            if not readonly:
-                client.command(
-                    f"GRANT {topology.on_cluster} SELECT ON {database}.{table}_local TO {user}",
-                    settings=DDL_SETTINGS,
-                )
+            # Distributed may execute its local replica under the initiating
+            # principal. Both roles need the same narrowly scoped source read;
+            # this never grants the reader INSERT or access to another dataset.
+            client.command(
+                f"GRANT {topology.on_cluster} SELECT ON {database}.{table}_local TO {user}",
+                settings=DDL_SETTINGS,
+            )
         if not readonly:
             for metadata in ("system.tables", "system.replicas"):
                 client.command(
