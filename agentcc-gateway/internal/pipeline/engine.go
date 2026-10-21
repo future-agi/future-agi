@@ -145,7 +145,10 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 // Exported so that streaming handlers can call it after the stream completes,
 // when rc.Response and usage data are populated.
 func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) {
-	isCacheHit := rc.Flags.ShortCircuited && rc.Metadata["cache_status"] == "hit_exact"
+	// CacheHit is set by every cache layer (exact, semantic, conditional);
+	// cache_status names which one answered, so matching a single value of
+	// it would bill the others as provider calls.
+	isCacheHit := rc.Flags.ShortCircuited && rc.Flags.CacheHit
 
 	// Phase 1: Sequential post-plugins (e.g., cost → credits dependency chain).
 	for _, p := range e.postSequential {

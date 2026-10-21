@@ -179,9 +179,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	// the cache, and no new tokens were spent. Charging it again exhausts the
 	// window on repeated identical requests and refuses the next real one.
 	//
-	// The flag is what to read, not the pipeline's SkipOnCacheHit interface:
-	// the engine only applies that to cache_status == "hit_exact", so a
-	// conditional or semantic hit would still be charged.
+	// The flag is set by every cache layer: exact, semantic and conditional.
 	if rc.Flags.CacheHit {
 		return pipeline.ResultContinue()
 	}
