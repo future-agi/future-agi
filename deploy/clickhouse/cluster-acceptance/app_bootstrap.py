@@ -10,6 +10,15 @@ import uuid
 from datetime import UTC, datetime
 
 
+def is_catalog_write_denial(error: Exception) -> bool:
+    """Accept privilege and readonly failures while rejecting silent writes."""
+    message = str(error).lower()
+    return any(
+        marker in message
+        for marker in ("readonly", "read-only", "not enough privileges", "access_denied")
+    )
+
+
 def prepare(fixture):
     from runtime_paths import enter_backend_root
 
@@ -131,10 +140,7 @@ def qualify(fixture):
                 "INSERT INTO observed_attribute_keys SELECT * FROM observed_attribute_keys LIMIT 1"
             )
         except Exception as error:
-            if (
-                "readonly" not in str(error).lower()
-                and "read-only" not in str(error).lower()
-            ):
+            if not is_catalog_write_denial(error):
                 raise
         else:
             raise AssertionError("catalog reader accepted a write")
