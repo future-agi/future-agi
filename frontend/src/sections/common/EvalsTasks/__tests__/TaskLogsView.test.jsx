@@ -62,6 +62,10 @@ describe("TaskLogsView totals", () => {
     expect(await statCardText("Total Spans")).toBe("1Total Spans");
     expect(await statCardText("Eval Runs")).toBe("2Eval Runs");
     expect(screen.getByText("2 / 2 passed")).toBeInTheDocument();
+    expect(
+      screen.getByText("All evaluations completed successfully"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Skipped")).not.toBeInTheDocument();
   });
 
   it("counts calls for a voice-call task", async () => {
@@ -90,5 +94,65 @@ describe("TaskLogsView totals", () => {
 
     expect(await statCardText("Total Spans")).toBe("3Total Spans");
     expect(screen.queryByText("Eval Runs")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { success_count: 0, skipped_count: 373, total_count: 373 },
+    { success_count: 0, skipped_count: 33, total_count: 33 },
+    { success_count: 2, skipped_count: 1, total_count: 3 },
+  ])(
+    "shows skipped runs without claiming all $total_count succeeded",
+    async (counts) => {
+      mocks.readEvalTaskLogs.mockResolvedValue(summary(counts));
+
+      renderView();
+
+      expect(await statCardText("Skipped")).toBe(
+        `${counts.skipped_count}Skipped`,
+      );
+      expect(await statCardText("Successful")).toBe(
+        `${counts.success_count}Successful`,
+      );
+      expect(screen.getByText("Completed")).toBeInTheDocument();
+      expect(
+        screen.getByText("Evaluation processing completed"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("All evaluations completed successfully"),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("does not claim success for errors without a returned error group", async () => {
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({ success_count: 0, errors_count: 2 }),
+    );
+
+    renderView();
+
+    expect(await statCardText("Errors")).toBe("2Errors");
+    expect(
+      screen.getByText("Evaluation processing completed"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("All evaluations completed successfully"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps an empty task distinct from a completed evaluation run", async () => {
+    mocks.readEvalTaskLogs.mockResolvedValue(
+      summary({ success_count: 0, total_count: 0, target_count: 0 }),
+    );
+
+    renderView();
+
+    expect(await screen.findByText("No data")).toBeInTheDocument();
+    expect(screen.queryByText("Skipped")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Evaluation processing completed"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("All evaluations completed successfully"),
+    ).not.toBeInTheDocument();
   });
 });
