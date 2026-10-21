@@ -29,11 +29,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      FIXTURE_DIR: ${{ runner.temp }}/clickhouse-3x2
       PYTHONUNBUFFERED: "1"
       UV_PYTHON: "3.11"
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
     steps:
+      # runner context is unavailable in job-level env; export the shell's
+      # allocated runner path before any step can need fixture cleanup.
+      - name: Set isolated fixture directory
+        run: printf 'FIXTURE_DIR=%s/clickhouse-3x2\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:

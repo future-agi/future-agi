@@ -86,8 +86,6 @@ def prepare(fixture):
 
 
 def qualify(fixture):
-    import clickhouse_connect
-
     from model_hub.models.prompt_label import PromptLabel
     from tfc.management.commands import bootstrap_install
     from tracer.services.clickhouse import oss_cdc_bootstrap as core
@@ -96,6 +94,9 @@ def qualify(fixture):
 
     bootstrap_install.clickhouse_native_schema(print, 180)
     bootstrap_install.property_catalog(print)
+
+    import clickhouse_connect
+
     writer = clickhouse_connect.get_client(
         host="127.0.0.1",
         port=fixture["port"],
