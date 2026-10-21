@@ -1,7 +1,7 @@
 import axios, { endpoints } from "src/utils/axios";
 import logger from "../../utils/logger";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useDebounce } from "src/hooks/use-debounce";
 
 /**
@@ -10,15 +10,19 @@ import { useDebounce } from "src/hooks/use-debounce";
  * Resets to page 1 whenever the debounced search term changes: the filtered
  * result set can have fewer pages than the current page, and requesting a
  * page that no longer exists makes the backend answer "Invalid page." (#1485)
+ * The reset happens during render, not in an effect, so a query keyed on the
+ * returned state never fires for the new term with the old page.
  */
 export function useSearchedPagination(delay = 500, pageSize = 10) {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, delay);
   const [pagination, setPagination] = useState({ page: 1, pageSize });
 
-  useEffect(() => {
+  const [pagedSearch, setPagedSearch] = useState(debouncedSearch);
+  if (debouncedSearch !== pagedSearch) {
+    setPagedSearch(debouncedSearch);
     setPagination((prev) => (prev.page === 1 ? prev : { ...prev, page: 1 }));
-  }, [debouncedSearch]);
+  }
 
   return { search, setSearch, debouncedSearch, pagination, setPagination };
 }
