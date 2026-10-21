@@ -26,3 +26,32 @@ export const countWords = (text) => {
   if (!text || typeof text !== "string") return 0;
   return text.trim().split(/\s+/).filter(Boolean).length;
 };
+
+const asToolCall = (call, results) => ({
+  id: call?.id,
+  name: call?.function?.name ?? call?.name,
+  arguments: call?.function?.arguments ?? call?.arguments,
+  ...(call?.id != null && results.has(call.id)
+    ? { result: results.get(call.id) }
+    : {}),
+});
+
+export const getChatToolCalls = (turn) => {
+  const messages = Array.isArray(turn?.content) ? turn.content : [];
+  const results = new Map(
+    messages
+      .filter((message) => message?.role === "tool" && message.tool_call_id)
+      .map((message) => [message.tool_call_id, message.content]),
+  );
+  const fromMessages = messages.flatMap((message) =>
+    Array.isArray(message?.tool_calls) ? message.tool_calls : [],
+  );
+  const calls = fromMessages.length
+    ? fromMessages
+    : Array.isArray(turn?.tool_calls)
+      ? turn.tool_calls
+      : [];
+  return calls
+    .map((call) => asToolCall(call, results))
+    .filter((call) => call.name);
+};
