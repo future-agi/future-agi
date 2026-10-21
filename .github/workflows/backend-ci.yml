@@ -182,7 +182,7 @@ jobs:
           cache-dependency-glob: futureagi/uv.lock
 
       - name: Install ffmpeg (pydub reads recordings through ffprobe, as in the runtime image)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg xmlsec1
 
       - name: Install dependencies (overlaps with service startup)
         run: uv sync --frozen --all-extras
@@ -247,6 +247,66 @@ jobs:
           cat /tmp/compose-up.log || true
           docker compose -f docker-compose.test.yml -p futureagi-test ps
           docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 200
+
+  saml-multiworker:
+    # The SAML race guarantees (one token per duplicated ACS post, no usable
+    # credential from any TX-B interleaving) need two real server processes
+    # sharing one database, so the shards deselect them. This job runs them
+    # against two Granian workers on the test database pytest creates.
+    name: SAML multiworker races
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: futureagi
+    env:
+      CH25_DATABASE: test_tfc
+      CH_DATABASE: test_tfc
+      PYTHONHASHSEED: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+
+      - name: Install xmlsec1 (pysaml2 signs and verifies with it)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends xmlsec1
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+
+      - name: Start test services
+        run: docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait --wait-timeout 180
+
+      - name: Create and migrate the test database
+        # Collecting the module needs the database; without SAML_MULTIWORKER
+        # every case skips, and --reuse-db (pytest.ini) keeps the database.
+        run: uv run pytest saml2_auth/tests/test_multiworker.py -m multiworker --create-db -q
+
+      - name: Run the races against two workers
+        run: |
+          for port in 38001 38002; do
+            DJANGO_SETTINGS_MODULE=tfc.settings.test PG_DB=test_tfc_test \
+            BASE_URL=http://127.0.0.1:38001 APP_URL=127.0.0.1:38001 \
+            SAML_TX_B_BARRIERS_ENABLED=1 \
+              uv run granian --interface asgi --host 127.0.0.1 --port "$port" \
+              --workers 1 tfc.asgi:application > "$RUNNER_TEMP/worker-$port.log" 2>&1 &
+          done
+          for port in 38001 38002; do
+            timeout 120 bash -c "until curl -s -o /dev/null http://127.0.0.1:$port/health/; do sleep 2; done"
+          done
+          SAML_MULTIWORKER=1 SAML_WORKER_URLS=http://127.0.0.1:38001,http://127.0.0.1:38002 \
+            uv run pytest saml2_auth/tests/test_multiworker.py -m multiworker -q -ra
+
+      - name: Dump worker and service logs on failure
+        if: failure()
+        run: |
+          tail -n 200 "$RUNNER_TEMP"/worker-*.log || true
+          docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 100
 
   slim-smoke:
     # The only leg that exercises the slim (base-only) environment the OSS
@@ -408,7 +468,15 @@ jobs:
 
   backend-tests:
     name: Backend Tests Pass # the ONLY required status check
-    needs: [changes, plan, test, slim-smoke, code-executor-base-pin]
+    needs:
+      [
+        changes,
+        plan,
+        test,
+        saml-multiworker,
+        slim-smoke,
+        code-executor-base-pin,
+      ]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

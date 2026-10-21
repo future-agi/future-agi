@@ -418,6 +418,7 @@ def first_admin(log: Callable[[str], None], env=None) -> None:
             email,
             (env.get("FAGI_ADMIN_NAME") or "").strip(),
             env.get("FAGI_ADMIN_PASSWORD") or "",
+            telemetry_source="helm",
         )
     except ValidationError as exc:
         raise BootstrapError(

@@ -118,7 +118,8 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !orgModelResolved {
-		provider, err = h.resolveProvider(ctx, rc, req.Model)
+		var upstreamModel string
+		provider, upstreamModel, err = h.resolveProvider(ctx, rc, req.Model)
 		if err != nil {
 			if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
 				if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
@@ -130,6 +131,11 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 			}
 			if err != nil {
 				models.WriteErrorFromError(w, err)
+				return
+			}
+		} else if upstreamModel != req.Model {
+			if body, err = rewriteRequestModel(body, upstreamModel); err != nil {
+				models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON in request body: "+err.Error()))
 				return
 			}
 		}

@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.50.0](https://github.com/future-agi/future-agi/compare/v1.49.0...v1.50.0) (2026-10-14)
+
+
+### Features
+
+* **falcon:** cut over in-app tools to the generated MCP catalog (TH-7893) ([53f6f14](https://github.com/future-agi/future-agi/commit/53f6f1482ae99f415815a146ba7bb0f50246b7be))
+* **gateway:** add Request Logs columns for declared custom properties [agent] ([362ba31](https://github.com/future-agi/future-agi/commit/362ba310a88269a3b85691d1f8041abd0bfd70d0))
+* **observe:** exact eval count tiles and per-span rollups ([28b805b](https://github.com/future-agi/future-agi/commit/28b805bc85842c38a7e5a02aa8b1d952f8c711a2))
+* **simulate:** edit an eval on environment runs and the Evaluations tab [TH-8340] ([4ea4e17](https://github.com/future-agi/future-agi/commit/4ea4e17ccecd32a1ca47627d69ab4e19b28a7122))
+* **telemetry:** add OSS customer journey analytics MVP ([ea35594](https://github.com/future-agi/future-agi/commit/ea35594eb0e0dcbc04b44ab5c8b88cfaa528c6e0))
+
+
+### Bug Fixes
+
+* **deps:** redo the dev merge's lockfile resolve incrementally, not from scratch ([5893418](https://github.com/future-agi/future-agi/commit/58934181dd5d3902e18b7b497da084e4493c7067))
+* **deps:** upgrade backend image dependencies to clear critical and high CVEs ([07e68e8](https://github.com/future-agi/future-agi/commit/07e68e86ff573637cbc91e42e39da45207ea2856))
+* **gateway:** bound metadata and header accessibility ([6c9e6ce](https://github.com/future-agi/future-agi/commit/6c9e6ce01a367c980dab812f01a8cf7f15bab74b))
+* **gateway:** retain request columns after refetch failures ([a6ecd1d](https://github.com/future-agi/future-agi/commit/a6ecd1dc9c3d0aca5f8c64296e646a42a506f2d1))
+* **observe:** align eval filters and rollups ([d820239](https://github.com/future-agi/future-agi/commit/d820239aa24f551103b646a0fcac39b4668ea882))
+* **observe:** name cut-off filter fields and chosen values in full on hover ([b76c610](https://github.com/future-agi/future-agi/commit/b76c610d410e1b2188344d1abbb90f2afce6970a))
+* **observe:** one filter-name tooltip, only when the name is cut off ([7e7bbb3](https://github.com/future-agi/future-agi/commit/7e7bbb381d2782ad239dda22cab49a83cde2325d))
+* **observe:** resolve eval tile review regressions ([aa4bdd6](https://github.com/future-agi/future-agi/commit/aa4bdd6dc2ffb68af7db84ad5beeb0eb6d0a39dc))
+* **observe:** reveal Save view for custom date bounds and compare-only edits (TH-4883) ([0d31dce](https://github.com/future-agi/future-agi/commit/0d31dce80128da47fa6442f1255e7987760ac946))
+* **observe:** show a cut-off filter value's full name on hover ([10f001c](https://github.com/future-agi/future-agi/commit/10f001caf1ead57c8937bfbfc8106ce219cc5975))
+* **observe:** show full filter names on hover (TH-8543) ([53147d9](https://github.com/future-agi/future-agi/commit/53147d97cdf37860409e2e3f6a3834f7a1ab1a01))
+* **telemetry:** isolate shared outboxes across instances ([ed5f1fb](https://github.com/future-agi/future-agi/commit/ed5f1fbecc6a741f6cfff022e8e8ddfe867b0f60))
+* **tests:** stop NLTK corpus test depending on preinstalled data, shrink body-limit test payload ([315c47b](https://github.com/future-agi/future-agi/commit/315c47b197b5434282faa7d438252cf293fd7986))
+
+
 ## [1.49.0](https://github.com/future-agi/future-agi/compare/v1.48.0...v1.49.0) (2026-10-12)
 
 

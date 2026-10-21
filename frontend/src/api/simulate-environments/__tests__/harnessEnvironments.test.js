@@ -17,6 +17,7 @@ import {
   runHarnessEnvironment,
   renameHarnessEnvironment,
   deleteAppliedEvaluation,
+  updateAppliedEvaluation,
   addRunEvaluation,
 } from "../harnessEnvironments";
 
@@ -103,6 +104,26 @@ describe("deleteAppliedEvaluation", () => {
     expect(axios.delete).toHaveBeenCalledWith(
       `${BASE}env-9/evaluations/cfg-1/`,
     );
+  });
+});
+
+describe("updateAppliedEvaluation", () => {
+  beforeEach(() => axios.patch.mockClear());
+
+  it("PATCHes the body as given to the eval config's path", async () => {
+    const body = { mapping: { conversation: "transcript" } };
+    await updateAppliedEvaluation("env-9", "cfg-1", body);
+    expect(axios.patch).toHaveBeenCalledWith(
+      `${BASE}env-9/evaluations/cfg-1/`,
+      body,
+    );
+  });
+
+  it("returns the updated eval from the response", async () => {
+    axios.patch.mockResolvedValueOnce({ data: { id: "cfg-1", name: "x" } });
+    await expect(
+      updateAppliedEvaluation("env-9", "cfg-1", { model: null }),
+    ).resolves.toEqual({ id: "cfg-1", name: "x" });
   });
 });
 

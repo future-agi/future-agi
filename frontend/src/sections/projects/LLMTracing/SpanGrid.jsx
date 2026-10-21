@@ -14,6 +14,7 @@ import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { getRandomId, safeParse } from "src/utils/utils";
 import { readQuery, endpoints } from "src/utils/axios";
 import { useParams } from "src/routes/hooks";
+import { useUrlState } from "src/routes/hooks/use-url-state";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 
 import {
@@ -266,6 +267,7 @@ const SpanGrid = React.forwardRef(
     );
     const agTheme = useAgThemeWith(gridThemeParams);
     const { observeId } = useParams();
+    const [, setEvalFocus, removeEvalFocus] = useUrlState("evalFocus", false);
     const { setSpanDetailDrawerOpen } = useLLMTracingStoreShallow((state) => ({
       setSpanDetailDrawerOpen: state.setSpanDetailDrawerOpen,
     }));
@@ -886,6 +888,8 @@ const SpanGrid = React.forwardRef(
           //discard clicks on empty rows
           return;
         }
+        // A regular click must not inherit a previous eval-cell focus.
+        removeEvalFocus();
         if (event?.column?.colId === "status") {
           return;
         }
@@ -927,6 +931,11 @@ const SpanGrid = React.forwardRef(
         }
         // Pin detail to the span's project (see TraceGrid's row click).
         const rowProjectId = event.data.project_id;
+        const sourceColumn =
+          event.column?.getColDef?.()?.context?.sourceColumn;
+        if (sourceColumn?.groupBy === "Evaluation Metrics") {
+          setEvalFocus(true);
+        }
         setSpanDetailDrawerOpen({
           trace_id: traceId,
           span_id: spanId,
@@ -937,7 +946,7 @@ const SpanGrid = React.forwardRef(
 
         trackEvent(Events.observeSpanidClicked);
       },
-      [filters, setSpanDetailDrawerOpen],
+      [filters, removeEvalFocus, setEvalFocus, setSpanDetailDrawerOpen],
     );
 
     useEffect(() => {

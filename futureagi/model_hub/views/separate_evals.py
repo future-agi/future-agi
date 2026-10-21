@@ -7607,6 +7607,9 @@ class EvalPlayGroundFeedbackAPIView(APIView):
 
             row_dict["feedback_comment"] = explanation
             row_dict["feedback_value"] = value
+            # Stable identity so a retune/delete tombstones the prior vector
+            # for this Feedback record instead of orphaning it.
+            row_dict["feedback_id"] = str(feedback.id)
 
             org_for_embedding = str(
                 (getattr(request, "organization", None) or request.user.organization).id

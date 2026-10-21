@@ -461,13 +461,10 @@ def test_conversation_runtime_lease_starts_once_and_reuses_warm_sandbox(
     monkeypatch.setattr(
         gateway_module,
         "_platform_simulator_material",
-        lambda: (
-            {
-                "ALK_HARNESS": "vertex-gemini",
-                "ALK_HARNESS_MODEL": "gemini-3.7-flash",
-            },
-            None,
-        ),
+        lambda: {
+            "ALK_HARNESS": "vertex-gemini",
+            "ALK_HARNESS_MODEL": "gemini-3.7-flash",
+        },
     )
     monkeypatch.setattr(
         gateway_module,

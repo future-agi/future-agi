@@ -28,7 +28,11 @@ PAGINATED_TOOLS = [
 def test_every_page_size_is_bounded(tool, field):
     schema = tool.input_schema["properties"][field]
     validator = Draft7Validator(schema)
-    maximum = 50 if tool.name == "get_dashboard_filter_values" else 100
+    maximum = (
+        50
+        if tool.name in {"get_dashboard_filter_values", "list_trace_properties"}
+        else 100
+    )
     assert schema["maximum"] == maximum
     assert validator.is_valid(maximum)
     assert not validator.is_valid(maximum + 1)

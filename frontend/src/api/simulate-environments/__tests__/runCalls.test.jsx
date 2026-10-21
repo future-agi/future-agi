@@ -149,10 +149,19 @@ describe("mapCallRow", () => {
   it("renders a live choices verdict by its label and inner score", () => {
     const row = {
       id: "c9",
-      evaluations: [{ id: "e-choice", name: "clarification", type: "choices", score: null,
-        value: { score: 1.0, choice: "always" } }],
+      evaluations: [
+        {
+          id: "e-choice",
+          name: "clarification",
+          type: "choices",
+          score: null,
+          value: { score: 1.0, choice: "always" },
+        },
+      ],
     };
-    const [cell] = mapCallRow(row, [{ id: "e-choice", name: "clarification" }]).evalResults;
+    const [cell] = mapCallRow(row, [
+      { id: "e-choice", name: "clarification" },
+    ]).evalResults;
     expect(cell.label).toBe("always");
     expect(cell.score).toBe(1);
   });
@@ -161,13 +170,27 @@ describe("mapCallRow", () => {
     const row = {
       id: "c9",
       evaluations: [
-        { id: "e-failed", status: "Failed", score: null, value: null, reason: "Timed out" },
-        { id: "e-skip", status: "skipped", score: null, value: null, reason: "No transcript data available" },
+        {
+          id: "e-failed",
+          status: "Failed",
+          score: null,
+          value: null,
+          reason: "Timed out",
+        },
+        {
+          id: "e-skip",
+          status: "skipped",
+          score: null,
+          value: null,
+          reason: "No transcript data available",
+        },
         { id: "e-ok", score: 1, value: "Passed" },
       ],
     };
     const [failed, skipped, ok] = mapCallRow(row, [
-      { id: "e-failed" }, { id: "e-skip" }, { id: "e-ok" },
+      { id: "e-failed" },
+      { id: "e-skip" },
+      { id: "e-ok" },
     ]).evalResults;
     expect(failed.status).toBe("failed");
     expect(failed.reason).toBe("Timed out");
@@ -179,11 +202,20 @@ describe("mapCallRow", () => {
     const row = {
       id: "c9",
       evaluations: [
-        { id: "e-choice", type: "choices", score: null, passed: true, value: { score: 1.0, choice: "always" } },
+        {
+          id: "e-choice",
+          type: "choices",
+          score: null,
+          passed: true,
+          value: { score: 1.0, choice: "always" },
+        },
         { id: "e-score", type: "score", score: null, value: { score: 0.4 } },
       ],
     };
-    const [choice, scored] = mapCallRow(row, [{ id: "e-choice" }, { id: "e-score" }]).evalResults;
+    const [choice, scored] = mapCallRow(row, [
+      { id: "e-choice" },
+      { id: "e-score" },
+    ]).evalResults;
     expect(choice.passed).toBe(true);
     expect(choice.label).toBe("always");
     expect(scored.score).toBe(0.4);
@@ -272,7 +304,12 @@ describe("mapCallRow", () => {
       id: "c4",
       status: "completed",
       eval_metrics: {
-        "cfg-gone": { name: "no_misselling", value: "Failed", type: "Pass/Fail", removed: true },
+        "cfg-gone": {
+          name: "no_misselling",
+          value: "Failed",
+          type: "Pass/Fail",
+          removed: true,
+        },
       },
     };
     const t = mapCallRow(row, [{ id: "cfg-gone", type: "evaluation" }]);
@@ -406,11 +443,33 @@ describe("useRunCalls", () => {
       count: 0,
       groups: [],
       facets: {},
+      statusCounts: {},
       summary: null,
       totalPages: 1,
       isLoading: true,
     });
     unmount();
+  });
+
+  it("carries the server's status counts for the status chips", async () => {
+    axios.get.mockResolvedValue({
+      data: { ...payload(), status_counts: { passed: 2, failed: 1 } },
+    });
+    const { result } = renderHook(() => useRunCalls("ex-counts"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.statusCounts).toEqual({ passed: 2, failed: 1 });
+  });
+
+  it("has no status counts when the response carries none", async () => {
+    const { result } = renderHook(() => useRunCalls("ex-no-counts"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.statusCounts).toEqual({});
   });
 
   it("carries the run's agent type from the execution", async () => {
@@ -507,21 +566,26 @@ describe("runCallsQueryOptions", () => {
       "goal",
     ]);
     await options.queryFn();
-    expect(axios.get).toHaveBeenCalledWith(endpoints.runResultsV3.calls("ex1"), {
-      params: {
-        page: 2,
-        page_size: 50,
-        search: "",
-        filters: JSON.stringify({ goal: ["Refunds"] }),
-        group_by: "goal",
+    expect(axios.get).toHaveBeenCalledWith(
+      endpoints.runResultsV3.calls("ex1"),
+      {
+        params: {
+          page: 2,
+          page_size: 50,
+          search: "",
+          filters: JSON.stringify({ goal: ["Refunds"] }),
+          group_by: "goal",
+        },
       },
-    });
+    );
   });
 
   it("leaves group_by off the request when no grouping is chosen", async () => {
     const options = runCallsQueryOptions("ex1", { groupBy: "" });
     await options.queryFn();
-    expect(axios.get.mock.calls.at(-1)[1].params).not.toHaveProperty("group_by");
+    expect(axios.get.mock.calls.at(-1)[1].params).not.toHaveProperty(
+      "group_by",
+    );
   });
 
   it("lets a reader switch the table hook off", () => {
@@ -531,7 +595,6 @@ describe("runCallsQueryOptions", () => {
     expect(axios.get).not.toHaveBeenCalled();
   });
 });
-
 
 describe("sub-goal verdicts", () => {
   it("preserves passed, failed and undecided sub-goals from the API", () => {

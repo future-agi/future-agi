@@ -1,8 +1,8 @@
 {
   "generated_from": "api_contracts/openapi/swagger.json",
   "summary": {
-    "paths": 1058,
-    "operations": 1431,
+    "paths": 1059,
+    "operations": 1432,
     "mutation_endpoints_without_body_schema": 0,
     "operations_without_response_schema": 0,
     "broad_success_response_schemas": 0,
@@ -110,8 +110,8 @@
       "broad_error_response_schemas": 0
     },
     "saml2_auth": {
-      "paths": 12,
-      "operations": 15,
+      "paths": 13,
+      "operations": 16,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,

@@ -431,6 +431,22 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             )
             track_mixpanel_event(MixpanelEvents.LOGIN_CLICK.value, properties)
 
+            # Self-hosted customer analytics uses the same explicit auth
+            # boundary as PostHog: queue a content-free journey event and
+            # never let telemetry affect login success.
+            try:
+                from tfc.deployment_telemetry.events import record_event
+
+                record_event(
+                    "user_logged_in",
+                    actor_type="human_user",
+                    actor_id=user.id,
+                    source="web",
+                    organization_id=_login_org.id,
+                )
+            except Exception:
+                logger.debug("deployment_telemetry_login_event_failed", exc_info=True)
+
             return response
 
         except LOGIN_INFRASTRUCTURE_ERRORS as exc:

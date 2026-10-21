@@ -628,6 +628,64 @@ describe("TraceTable — metric cells while the call runs", () => {
   });
 });
 
+describe("TraceTable — eval header action", () => {
+  const EVALS = [
+    { id: "e1", name: "Tone" },
+    { id: "e2", name: "Accuracy" },
+  ];
+  const evalHeader = (name) => screen.getByText(name).closest("th");
+
+  it("shows only the eval's name without a header action", () => {
+    render(table({ evals: EVALS }));
+    expect(within(evalHeader("Tone")).queryByRole("button")).toBeNull();
+  });
+
+  it("puts the host's action inside that eval's header", () => {
+    const renderEvalHeaderAction = vi.fn((e) => (
+      <button type="button">{`act-${e.id}`}</button>
+    ));
+    render(table({ evals: EVALS, renderEvalHeaderAction }));
+
+    expect(
+      within(evalHeader("Tone")).getByRole("button", { name: "act-e1" }),
+    ).toBeInTheDocument();
+    expect(
+      within(evalHeader("Accuracy")).getByRole("button", { name: "act-e2" }),
+    ).toBeInTheDocument();
+    expect(renderEvalHeaderAction).toHaveBeenCalledWith(EVALS[0]);
+  });
+
+  it("keeps an eval header with an action pinned", () => {
+    render(
+      table({
+        evals: EVALS,
+        renderEvalHeaderAction: () => <button type="button">act</button>,
+      }),
+    );
+    expect(window.getComputedStyle(evalHeader("Tone")).position).toBe("sticky");
+  });
+
+  it("gives a sub-goal column no action", () => {
+    const renderEvalHeaderAction = vi.fn(() => (
+      <button type="button">act</button>
+    ));
+    render(
+      table({
+        evals: EVALS,
+        columns: new Set(["callDetails", "subGoalEvals"]),
+        subGoalEvals: [{ id: "sg-1", name: "pin_verified" }],
+        renderEvalHeaderAction,
+      }),
+    );
+
+    expect(within(evalHeader("pin_verified")).queryByRole("button")).toBeNull();
+    expect(within(evalHeader("Tone")).getByRole("button")).toBeInTheDocument();
+    expect(renderEvalHeaderAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: "sg-1" }),
+    );
+  });
+});
+
 describe("TraceTable — persona cell", () => {
   it("shows a persona that has no name but has other fields", () => {
     render(

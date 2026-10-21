@@ -42,7 +42,7 @@ logger = structlog.get_logger(__name__)
 # Defaults
 DEFAULT_MAX_BODY_SIZE = 8192
 DEFAULT_MAX_ITEMS = 50
-SENSITIVE_BODY_PATH_PREFIXES = ("/telemetry/",)
+SENSITIVE_BODY_PATH_PREFIXES = ("/telemetry/", "/saml2_auth/")
 
 
 def _safe_json(value: Any, max_size: int = DEFAULT_MAX_BODY_SIZE) -> str:

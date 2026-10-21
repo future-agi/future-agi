@@ -9,7 +9,7 @@ from typing import Any, List
 import Levenshtein
 import numpy as np
 import requests
-from jinja2 import Environment
+from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core_evals.fi_evals.grounded.similarity import CosineSimilarity
 from agentic_eval.core_evals.fi_utils.exceptions import (
@@ -1843,7 +1843,7 @@ def _validate_llm_similarity(actual_value: str, expected_value: str, validation:
 
 def _get_messages(validation: dict, actual_value: Any, expected_value: Any) -> list:
     if validation.get("system_message") and validation.get("user_message"):
-        env = Environment(
+        env = SandboxedEnvironment(
             variable_start_string='{{',
             variable_end_string='}}',
             undefined=PreserveUndefined

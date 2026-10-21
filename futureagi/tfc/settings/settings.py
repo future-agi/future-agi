@@ -1002,22 +1002,14 @@ ALK_HOSTED_BASE_EGRESS_DOMAINS = [
     if domain.strip()
 ]
 # Hosted simulator credentials are platform configuration, not customer job input. Values are
-# resolved only while launching the sandbox and are never persisted on HostedHarnessJob.
+# resolved only while launching the sandbox and are never persisted on HostedHarnessJob. Model
+# calls go through AgentCC, so no model vendor's credential is listed here.
 ALK_HOSTED_SIMULATOR_SECRET_ENV = {
     "SIMULATOR_LIVEKIT_URL": "LIVEKIT_URL",
     "SIMULATOR_LIVEKIT_API_KEY": "LIVEKIT_API_KEY",
     "SIMULATOR_LIVEKIT_API_SECRET": "LIVEKIT_API_SECRET",
     "SIMULATOR_DEEPGRAM_API_KEY": "DEEPGRAM_API_KEY",
     "SIMULATOR_CARTESIA_API_KEY": "CARTESIA_API_KEY",
-    "SIMULATOR_GEMINI_API_KEY": "GEMINI_API_KEY",
-    "SIMULATOR_GOOGLE_API_KEY": "GOOGLE_API_KEY",
-    "SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS_JSON": (
-        "GOOGLE_APPLICATION_CREDENTIALS_JSON"
-    ),
-    "SIMULATOR_GOOGLE_CLOUD_PROJECT": "GOOGLE_CLOUD_PROJECT",
-    "SIMULATOR_GOOGLE_CLOUD_LOCATION": "GOOGLE_CLOUD_LOCATION",
-    "SIMULATOR_GOOGLE_GENAI_USE_VERTEXAI": "GOOGLE_GENAI_USE_VERTEXAI",
-    "SIMULATOR_OPENAI_API_KEY": "OPENAI_API_KEY",
     "SIMULATOR_LLM_PROVIDER": "SIMULATOR_LLM_PROVIDER",
     "SIMULATOR_LLM_MODEL": "SIMULATOR_LLM_MODEL",
     "SIMULATOR_STT_PROVIDER": "SIMULATOR_STT_PROVIDER",
@@ -1029,8 +1021,6 @@ ALK_HOSTED_SIMULATOR_SECRET_ENV = {
 # phone target. Platform configuration, never customer input, so an empty value means no phone
 # run can be started and preflight says so rather than the run failing after authoring is paid for.
 ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID = os.getenv("ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID", "")
-ALK_HOSTED_AUTHORING_CLAUDE_REGION = os.getenv("CLOUD_ML_REGION", "us-east5")
-ALK_HOSTED_AUTHORING_GEMINI_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 ALK_HOSTED_WEBRTC_EGRESS_CIDRS = [
     cidr.strip()
     for cidr in os.getenv("ALK_HOSTED_WEBRTC_EGRESS_CIDRS", "").split(",")
@@ -1278,6 +1268,73 @@ default_error_next_url = f"{APP_BASE_URL}/auth/jwt/login?denied=true"
 get_entity_id = f"{_ssl}{APP_URL}"
 
 get_name_id_format = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+
+
+def _saml_setting(name: str, default: int, *, maximum: int | None = None) -> int:
+    """Load a SAML boundary limit and fail closed on invalid configuration."""
+
+    from django.core.exceptions import ImproperlyConfigured
+
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError as exc:
+        raise ImproperlyConfigured(f"{name} must be an integer") from exc
+    if value < 1 or (maximum is not None and value > maximum):
+        detail = f"between 1 and {maximum}" if maximum else "positive"
+        raise ImproperlyConfigured(f"{name} must be {detail}")
+    return value
+
+
+def _saml_login_enabled() -> bool:
+    """Read the SAML kill switch: on unless explicitly switched off.
+
+    Organizations already using SAML keep it after an upgrade; ``false``
+    turns every SAML step off. Anything unreadable refuses to start rather
+    than guessing which way a typo was meant.
+    """
+
+    from django.core.exceptions import ImproperlyConfigured
+
+    value = os.getenv("SAML_LOGIN_ENABLED", "").strip().lower()
+    if value in {"", "1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ImproperlyConfigured("SAML_LOGIN_ENABLED must be true or false")
+
+
+SAML_LOGIN_ENABLED = _saml_login_enabled()
+SAML_ATTEMPT_TTL_SECONDS = _saml_setting("SAML_ATTEMPT_TTL_SECONDS", 600, maximum=600)
+SAML_CANDIDATE_TTL_SECONDS = _saml_setting(
+    "SAML_CANDIDATE_TTL_SECONDS", 60, maximum=120
+)
+SAML_MAX_RESPONSE_BYTES = _saml_setting(
+    "SAML_MAX_RESPONSE_BYTES", 65536, maximum=262144
+)
+SAML_MAX_ACS_BODY_BYTES = _saml_setting(
+    "SAML_MAX_ACS_BODY_BYTES", 131072, maximum=524288
+)
+SAML_MAX_METADATA_BYTES = _saml_setting(
+    "SAML_MAX_METADATA_BYTES", 262144, maximum=1048576
+)
+SAML_MAX_CANDIDATES_PER_ATTEMPT = _saml_setting("SAML_MAX_CANDIDATES_PER_ATTEMPT", 3)
+SAML_MAX_CANDIDATES_PER_ATTEMPT_LIFETIME = _saml_setting(
+    "SAML_MAX_CANDIDATES_PER_ATTEMPT_LIFETIME", 6
+)
+SAML_MAX_ATTEMPTS_PER_USER_PER_TTL = _saml_setting(
+    "SAML_MAX_ATTEMPTS_PER_USER_PER_TTL", 10
+)
+SAML_MAX_PENDING_COOKIES_PER_BROWSER = _saml_setting(
+    "SAML_MAX_PENDING_COOKIES_PER_BROWSER", 8
+)
+SAML_MAX_ATTEMPT_ROWS = _saml_setting("SAML_MAX_ATTEMPT_ROWS", 100000)
+SAML_MAX_CANDIDATE_ROWS = _saml_setting("SAML_MAX_CANDIDATE_ROWS", 2000)
+SAML_MAX_CANDIDATE_BYTES = _saml_setting("SAML_MAX_CANDIDATE_BYTES", 134217728)
+SAML_INLINE_CLEANUP_ROWS = _saml_setting("SAML_INLINE_CLEANUP_ROWS", 100)
+SAML_ATTEMPT_RETENTION_SECONDS = _saml_setting("SAML_ATTEMPT_RETENTION_SECONDS", 3600)
+SAML_SOCKET_REVALIDATE_SECONDS = _saml_setting(
+    "SAML_SOCKET_REVALIDATE_SECONDS", 30, maximum=120
+)
 AUTH0_DOMAIN = "accounts.google.com/o/oauth2"
 AUTH0_ALGORITHM = "RS256"
 GITHUB_API_ENDPOINT = "https://api.github.com"

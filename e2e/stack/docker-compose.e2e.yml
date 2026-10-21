@@ -15,7 +15,12 @@ services:
       SQL_VIS_MAX_IDLE_CONNS: "1"
   backend:
     restart: "no"
+    # The managed-mock attestation requires application containers to have no
+    # mounts. Telemetry is disabled for E2E, so remove the production outbox
+    # volume inherited from docker-compose.distributed.yml.
+    volumes: !reset []
     environment:
+      BASE_URL: http://localhost:8100
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       # Request logs reach Django over this shared secret; without it the
@@ -23,6 +28,8 @@ services:
       AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-e2e-agentcc-webhook-secret}
   worker:
     restart: "no"
+    # Keep the worker mount-free for the managed-mock attestation as well.
+    volumes: !reset []
     environment:
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"

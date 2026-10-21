@@ -82,10 +82,10 @@ def test_csat_helper_rejects_invalid_metrics_document(metrics):
 @pytest.mark.parametrize("metrics,provider_score,expected", CSAT_CASES)
 def test_sql_csat_requires_explicit_score(metrics, provider_score, expected):
     with patch(
-        "simulate.services.run_results_v3_queries.SimulateEvalConfig.objects.filter"
+        "simulate.services.run_results_v3_scoring.SimulateEvalConfig.objects.filter"
     ) as configs:
         configs.return_value.select_related.return_value = []
-        queryset = run_calls_queryset(SimpleNamespace(run_test=None), [])
+        queryset = run_calls_queryset(SimpleNamespace(run_test_id=None), [])
     query = queryset.query
     sql, params = query.get_compiler(connection=connection).compile(
         query.annotations["result_csat"]

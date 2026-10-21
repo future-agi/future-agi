@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import PropTypes from "prop-types";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   enrichTurns,
@@ -26,7 +26,9 @@ const {
   callTranscript,
   useCallDetail,
   useCallExecutionV3Detail,
+  useRunCalls,
 } = await import("../runDetail");
+const { runSummaryKey } = await import("../runCalls");
 const { RUN_COLORS } = await import(
   "src/sections/simulate/environments/workspace/runs/runs.constants"
 );
@@ -926,5 +928,344 @@ describe("useRunDetail", () => {
     });
     expect(query.options.refetchInterval(query)).toBe(false);
     unmount();
+  });
+});
+
+describe("useRunDetail fed by the calls table", () => {
+  const wholeRun = (status = "completed", passed = 9) => ({
+    id: "ex-new",
+    ordinal: 2,
+    agent_version: "v2",
+    agent_type: "VOICE",
+    status,
+    started_at: "2026-01-14T09:12:00.000Z",
+    selected_scenario_keys: ["scenario-a"],
+    trials: 2,
+    summary: {
+      total: 12,
+      measured: 12,
+      pass_rate: Math.round((passed / 12) * 100),
+      outcomes: { passed, failed: 12 - passed, error: 0, inconclusive: 0 },
+      duration: { average: 50 },
+      tokens: { total_value: 2000 },
+      cost_cents: { total_value: 120 },
+    },
+  });
+  // A table page: its top-level `summary` follows the filters, `execution`
+  // is always the whole run.
+  const tablePage = (execution, filteredTotal = 12) => ({
+    execution,
+    summary: { total: filteredTotal, outcomes: { passed: filteredTotal } },
+    results: [],
+    groups: [],
+    count: filteredTotal,
+    total_pages: 1,
+  });
+  const listQuery = (filters = {}) => ({
+    page: 1,
+    limit: 100,
+    search: "",
+    filters,
+    groupBy: "goal",
+  });
+  const isCallsRequest = ([url]) =>
+    url === endpoints.runResultsV3.calls("ex-new");
+  const callsRequests = () => axios.get.mock.calls.filter(isCallsRequest);
+  const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  // Requests held open until the test answers them, by `page_size`.
+  const heldRequests = () => {
+    const pending = {};
+    axios.get.mockImplementation(
+      (url, { params }) =>
+        new Promise((resolve) => {
+          pending[params.page_size] = (execution, extra = {}) =>
+            resolve({ data: { ...tablePage(execution), ...extra } });
+        }),
+    );
+    return pending;
+  };
+
+  const setup = (
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    }),
+  ) => {
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    return { queryClient, wrapper: Wrapper };
+  };
+
+  const fallbackHeader = async (execution) => {
+    axios.get.mockResolvedValueOnce({ data: { execution } });
+    const { result, unmount } = renderHook(
+      () => useRunDetail("rt1", "ex-new", { envName: "Env" }),
+      { wrapper: setup().wrapper },
+    );
+    await waitFor(() => expect(result.current.identity).not.toBeNull());
+    const { identity, stats } = result.current;
+    unmount();
+    return { identity, stats };
+  };
+
+  beforeEach(() => {
+    axios.get.mockReset();
+  });
+
+  it("sends one request with the table mounted and shows the same header", async () => {
+    const expected = await fallbackHeader(wholeRun());
+    axios.get.mockReset();
+    axios.get.mockResolvedValue({ data: tablePage(wholeRun()) });
+
+    const { result } = renderHook(
+      () => ({
+        header: useRunDetail("rt1", "ex-new", {
+          envName: "Env",
+          callsShown: true,
+        }),
+        table: useRunCalls("ex-new", listQuery()),
+      }),
+      { wrapper: setup().wrapper },
+    );
+
+    await waitFor(() => expect(result.current.header.identity).not.toBeNull());
+    expect(result.current.header.identity).toEqual(expected.identity);
+    expect(result.current.header.stats).toEqual(expected.stats);
+    expect(callsRequests()).toHaveLength(1);
+    expect(callsRequests()[0][1].params.page_size).toBe(100);
+  });
+
+  it("fetches on its own when the table isn't mounted", async () => {
+    axios.get.mockResolvedValue({ data: { execution: wholeRun() } });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-new"), {
+      wrapper: setup().wrapper,
+    });
+
+    await waitFor(() => expect(result.current.identity).not.toBeNull());
+    expect(callsRequests()).toEqual([
+      [
+        endpoints.runResultsV3.calls("ex-new"),
+        { params: { page: 1, page_size: 1 } },
+      ],
+    ]);
+  });
+
+  it("waits for the table instead of fetching while it is about to mount", () => {
+    renderHook(() => useRunDetail("rt1", "ex-new", { callsShown: true }), {
+      wrapper: setup().wrapper,
+    });
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+
+  it("keeps whole-run values whatever the table filters", async () => {
+    axios.get.mockImplementation((url, { params }) =>
+      Promise.resolve({
+        data: tablePage(wholeRun(), params.filters === "{}" ? 12 : 3),
+      }),
+    );
+    const { result, rerender } = renderHook(
+      ({ filters }) => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: true }),
+        table: useRunCalls("ex-new", listQuery(filters)),
+      }),
+      { wrapper: setup().wrapper, initialProps: { filters: {} } },
+    );
+    await waitFor(() => expect(result.current.header.identity).not.toBeNull());
+    const before = result.current.header;
+
+    rerender({ filters: { status: ["failed"] } });
+    await waitFor(() => expect(result.current.table.summary?.total).toBe(3));
+    expect(result.current.header.identity).toEqual(before.identity);
+    expect(result.current.header.stats).toEqual(before.stats);
+    expect(result.current.header.stats.total).toBe(12);
+    // Both requests are the table's own.
+    expect(callsRequests().every(([, c]) => c.params.page_size === 100)).toBe(
+      true,
+    );
+  });
+
+  it("updates from the table's polls while the run is active", async () => {
+    axios.get
+      .mockResolvedValueOnce({ data: tablePage(wholeRun("running", 4)) })
+      .mockResolvedValue({ data: tablePage(wholeRun("completed", 9)) });
+    const { result } = renderHook(
+      () => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: true }),
+        table: useRunCalls("ex-new", listQuery()),
+      }),
+      { wrapper: setup().wrapper },
+    );
+    await waitFor(() =>
+      expect(result.current.header.identity?.status).toBe("running"),
+    );
+    expect(result.current.header.stats.passed).toBe(4);
+
+    await waitFor(
+      () => expect(result.current.header.identity.status).toBe("passed"),
+      { timeout: 5000 },
+    );
+    expect(result.current.header.stats.passed).toBe(9);
+    expect(callsRequests().every(([, c]) => c.params.page_size === 100)).toBe(
+      true,
+    );
+  }, 10000);
+
+  it("doesn't let an older table page overwrite a fresher header", async () => {
+    const { queryClient, wrapper } = setup();
+    const tableKey = [
+      "simulation-run-results-v3",
+      "ex-new",
+      1,
+      100,
+      "",
+      {},
+      "goal",
+    ];
+    queryClient.setQueryData(
+      tableKey,
+      {
+        ...tablePage(wholeRun("running", 4)),
+        requestedAt: Date.now() - 10_000,
+      },
+      { updatedAt: Date.now() - 10_000 },
+    );
+    queryClient.setQueryData(
+      runSummaryKey("ex-new"),
+      { execution: wholeRun("completed", 9), requestedAt: Date.now() },
+      { updatedAt: Date.now() },
+    );
+    axios.get.mockImplementation(() => new Promise(() => {}));
+
+    const { result } = renderHook(
+      () => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: true }),
+        table: useRunCalls("ex-new", listQuery()),
+      }),
+      { wrapper },
+    );
+    expect(result.current.table.summary.total).toBe(12);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(
+      queryClient.getQueryData(runSummaryKey("ex-new")).execution.status,
+    ).toBe("completed");
+    expect(result.current.header.identity.status).toBe("passed");
+    expect(result.current.header.stats.passed).toBe(9);
+  });
+
+  it("drops a header response that lands after a newer table write", async () => {
+    let resolveHeader;
+    axios.get.mockImplementation((url, { params }) =>
+      params.page_size === 1
+        ? new Promise((resolve) => {
+            resolveHeader = resolve;
+          })
+        : Promise.resolve({ data: tablePage(wholeRun("completed", 9)) }),
+    );
+    const { result, rerender } = renderHook(
+      ({ shown }) => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: shown }),
+        table: useRunCalls("ex-new", { ...listQuery(), enabled: shown }),
+      }),
+      { wrapper: setup().wrapper, initialProps: { shown: false } },
+    );
+    await waitFor(() => expect(resolveHeader).toBeDefined());
+    await act(() => tick(5));
+
+    rerender({ shown: true });
+    await waitFor(() =>
+      expect(result.current.header.identity?.status).toBe("passed"),
+    );
+    await act(async () => {
+      resolveHeader({ data: { execution: wholeRun("running", 4) } });
+    });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+
+    expect(result.current.header.identity.status).toBe("passed");
+    expect(result.current.header.identity.stoppable).toBe(false);
+    expect(result.current.header.stats.passed).toBe(9);
+  });
+
+  it("keeps a newer header poll over an older request that resolves later", async () => {
+    const { queryClient, wrapper } = setup();
+    const held = heldRequests();
+    const { result, rerender } = renderHook(
+      ({ shown }) => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: shown }),
+        // The debug drawer's cited-calls read.
+        drawer: useRunCalls("ex-new", {
+          limit: 500,
+          filters: { call_execution_id: ["c1"] },
+        }),
+      }),
+      { wrapper, initialProps: { shown: true } },
+    );
+    await waitFor(() => expect(held[500]).toBeDefined());
+    await act(() => tick(5));
+    rerender({ shown: false });
+    await waitFor(() => expect(held[1]).toBeDefined());
+
+    // Re-grading started between the two requests.
+    await act(async () => held[1](wholeRun("evaluating", 9)));
+    await waitFor(() =>
+      expect(result.current.header.identity?.executionStatus).toBe(
+        "evaluating",
+      ),
+    );
+    await act(async () => held[500](wholeRun("completed", 9)));
+    await act(() => tick(20));
+
+    expect(result.current.header.identity.status).toBe("running");
+    const query = queryClient
+      .getQueryCache()
+      .find({ queryKey: runSummaryKey("ex-new") });
+    expect(query.options.refetchInterval(query)).toBe(3000);
+  });
+
+  it("orders a header response landing before the table's write", async () => {
+    const held = heldRequests();
+    const { result, rerender } = renderHook(
+      ({ shown }) => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: shown }),
+        table: useRunCalls("ex-new", { ...listQuery(), enabled: shown }),
+      }),
+      { wrapper: setup().wrapper, initialProps: { shown: false } },
+    );
+    await waitFor(() => expect(held[1]).toBeDefined());
+    await act(() => tick(5));
+    rerender({ shown: true });
+    await waitFor(() => expect(held[100]).toBeDefined());
+
+    // Both land before the table's write runs.
+    await act(async () => {
+      held[100](wholeRun("completed", 9));
+      held[1](wholeRun("running", 4));
+    });
+    await act(() => tick(20));
+
+    await waitFor(
+      () => expect(result.current.header.identity.status).toBe("passed"),
+      { timeout: 3000 },
+    );
+    expect(result.current.header.identity.status).toBe("passed");
+    expect(result.current.header.stats.passed).toBe(9);
+  });
+
+  it("keeps the header without a new request when the table unmounts", async () => {
+    axios.get.mockResolvedValue({ data: tablePage(wholeRun()) });
+    const { result, rerender } = renderHook(
+      ({ shown }) => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: shown }),
+        table: useRunCalls("ex-new", { ...listQuery(), enabled: shown }),
+      }),
+      { wrapper: setup().wrapper, initialProps: { shown: true } },
+    );
+    await waitFor(() => expect(result.current.header.identity).not.toBeNull());
+    const before = result.current.header;
+
+    rerender({ shown: false });
+    expect(result.current.header.identity).toEqual(before.identity);
+    expect(result.current.header.stats).toEqual(before.stats);
+    expect(callsRequests()).toHaveLength(1);
   });
 });

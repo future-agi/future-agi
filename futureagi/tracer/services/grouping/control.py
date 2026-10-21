@@ -597,7 +597,6 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                 reason = str(error)
                 if reason in {
                     "candidate context exceeds response bound",
-                    "candidate index exceeds bounded window",
                     "candidate constraint window exceeds bound",
                     "candidate hard-constraint window exceeds bound",
                 }:

@@ -326,6 +326,9 @@ class TraceObserveColumnConfigSerializer(serializers.Serializer):
     settings = JsonValueField(required=False, allow_null=True)
     choices_map = JsonValueField(required=False, allow_null=True)
     eval_template_id = serializers.CharField(required=False, allow_null=True)
+    target_type = serializers.ChoiceField(
+        choices=("span", "trace"), required=False, allow_null=True
+    )
     annotators = JsonValueField(required=False, allow_null=True)
     source_field = serializers.CharField(required=False, allow_null=True)
     parent_eval_id = serializers.CharField(required=False, allow_null=True)
@@ -338,7 +341,11 @@ class TraceObserveListResultSerializer(serializers.Serializer):
     metadata = TraceObserveListMetadataSerializer()
     # allow_null: real rows carry null cells (cost, latency on error traces).
     table = serializers.ListField(
-        child=serializers.DictField(child=JsonValueField(allow_null=True))
+        child=serializers.DictField(child=JsonValueField(allow_null=True)),
+        help_text=(
+            "Observe eval bool and choice cells are counts of completed attempts; "
+            "a detail eval_rollup separately selects the latest completed row per span."
+        ),
     )
     config = TraceObserveColumnConfigSerializer(many=True)
 
@@ -618,6 +625,48 @@ class TraceVoiceCallDetailQuerySerializer(StrictInputSerializer):
         return attrs
 
 
+class EvalRollupSpanSerializer(serializers.Serializer):
+    """One selected eval row for a physical span in a detail rollup."""
+
+    span_id = serializers.CharField()
+    span_name = serializers.CharField(required=False, allow_blank=True)
+    value = JsonValueField(required=False, allow_null=True)
+    explanation = serializers.CharField(required=False, allow_null=True)
+    error = serializers.BooleanField(required=False)
+    status = serializers.CharField(required=False, allow_null=True)
+    eval_config_id = serializers.CharField(required=False, allow_blank=True)
+
+
+class EvalRollupEvalSerializer(serializers.Serializer):
+    eval_config_id = serializers.CharField()
+    eval_name = serializers.CharField()
+    output_type = serializers.CharField(required=False, allow_null=True)
+    template_type = serializers.CharField(required=False, allow_null=True)
+    target_type = serializers.ChoiceField(
+        choices=("span", "trace"), required=False, allow_null=True
+    )
+    choices_map = JsonValueField(required=False, allow_null=True)
+    aggregate = JsonValueField()
+    spans = EvalRollupSpanSerializer(many=True)
+    error = serializers.BooleanField(required=False)
+
+
+class EvalRollupSerializer(serializers.Serializer):
+    """Additive detail view shared by trace and voice-call responses."""
+
+    scope = serializers.ChoiceField(choices=("trace", "span"))
+    evals = EvalRollupEvalSerializer(many=True)
+    error = serializers.BooleanField(required=False)
+
+
+class VoiceEvalRollupSerializer(EvalRollupSerializer):
+    # Inline only the wrapper: drf-yasg puts allow_null on the definition, not
+    # the reference. Sharing that nullable definition would also make the
+    # non-null trace rollup nullable depending on schema traversal order.
+    class Meta:
+        ref_name = None
+
+
 class TraceVoiceCallDetailResultSerializer(serializers.Serializer):
     """Stable voice-call detail shape shared by every provider adapter.
 
@@ -683,6 +732,7 @@ class TraceVoiceCallDetailResultSerializer(serializers.Serializer):
         child=serializers.DictField(child=JsonValueField(allow_null=True))
     )
     eval_outputs = JsonObjectField()
+    eval_rollup = VoiceEvalRollupSerializer(required=False, allow_null=True)
 
     call_execution_id = serializers.CharField(required=False, allow_null=True)
     test_execution_id = serializers.CharField(required=False, allow_null=True)
@@ -988,11 +1038,25 @@ class UserCodeExampleResponseSerializer(serializers.Serializer):
     result = serializers.CharField()
 
 
+class TraceDetailSpanSerializer(serializers.Serializer):
+    """Document the additive eval rollup without changing the span envelope."""
+
+    observation_span = serializers.JSONField()
+    children = serializers.ListField(child=serializers.JSONField(), required=False)
+    eval_scores = serializers.ListField(
+        child=serializers.JSONField(),
+        required=False,
+        help_text="Raw eval rows retained for backwards-compatible array consumers.",
+    )
+    eval_rollup = EvalRollupSerializer(required=False)
+    annotations = serializers.ListField(child=serializers.JSONField(), required=False)
+
+
 class TraceDetailResultSerializer(serializers.Serializer):
     """Envelope payload for the trace-detail endpoint (CH-assembled)."""
 
     trace = serializers.JSONField()
-    observation_spans = serializers.ListField(child=serializers.JSONField())
+    observation_spans = TraceDetailSpanSerializer(many=True)
     summary = serializers.JSONField()
     graph = serializers.JSONField()
 

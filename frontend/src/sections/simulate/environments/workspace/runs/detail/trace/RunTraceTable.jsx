@@ -13,6 +13,7 @@ import {
   Button,
   Chip,
   FormControlLabel,
+  IconButton,
   Pagination,
   Switch,
   Typography,
@@ -30,6 +31,7 @@ import { AGENT_TYPES } from "src/sections/agents/constants";
 
 import SectionCard from "../../../../components/SectionCard";
 import EmptyState from "../../../../components/EmptyState";
+import EvalColumnActions from "../EvalColumnActions";
 import useSelection from "../../../scenarios/useSelection";
 import TraceTable from "./TraceTable";
 import RerunSelectionBar from "./RerunSelectionBar";
@@ -73,13 +75,15 @@ export default function RunTraceTable({
   initialFilters = {},
   activeCallId = null,
   activePage = null,
+  evalActions = null,
   onRerunScenarios = null,
   runTrials = 1,
   rerunDisabledReason = null,
   onTickableChange,
 }) {
   const [groupBy, setGroupBy] = useState("goal");
-  const [statusChip, setStatusChip] = useState("all");
+  // The eval column whose ⋮ menu is open: { evalId, name, anchorEl } or null.
+  const [evalMenuFor, setEvalMenuFor] = useState(null);
   const [page, setPage] = useState(1);
   const [visibleColumns, setVisibleColumns] = useState(() =>
     defaultTraceColumns(),
@@ -136,12 +140,14 @@ export default function RunTraceTable({
     if (filters.callExecutionId?.length)
       next.call_execution_id = filters.callExecutionId;
     if (filters.goal?.length) next.goal = filters.goal;
+    if (filters.goal_not?.length) next.goal_not = filters.goal_not;
     if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
+    if (filters.subGoal_not?.length) next.sub_goal_not = filters.subGoal_not;
     if (filters.status?.length) next.status = filters.status;
+    if (filters.status_not?.length) next.status_not = filters.status_not;
     if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
-    if (statusChip !== "all") next.status = [statusChip];
     return next;
-  }, [filters, statusChip]);
+  }, [filters]);
 
   // A pager click opens the new page at its first row. Not on a drawer step:
   // there the open call's row scrolls itself into view. The table scrolls in
@@ -195,6 +201,7 @@ export default function RunTraceTable({
     count = 0,
     groups = [],
     facets = {},
+    statusCounts: serverStatusCounts = {},
     totalPages = 1,
     agentType = null,
     runActive = false,
@@ -378,13 +385,13 @@ export default function RunTraceTable({
     () => [
       {
         value: "goal",
-        label: "Goal",
+        label: "Use case",
         type: "enum",
         choices: goalOptions,
       },
       {
         value: "subGoal",
-        label: "Sub goal",
+        label: "Sub-goal",
         type: "enum",
         choices: subGoalOptions,
       },
@@ -406,15 +413,26 @@ export default function RunTraceTable({
     0,
   );
 
-  const statusCounts = useMemo(() => {
-    const byStatus = Object.fromEntries(
-      (facets.status ?? []).map((item) => [item.value, item.count]),
-    );
-    return {
-      all: Object.values(byStatus).reduce((sum, count) => sum + count, 0),
-      ...byStatus,
-    };
-  }, [facets.status]);
+  // Counted under every filter but status, so the chips don't empty each other.
+  const statusCounts = useMemo(
+    () => ({
+      all: Object.values(serverStatusCounts).reduce(
+        (sum, count) => sum + count,
+        0,
+      ),
+      ...serverStatusCounts,
+    }),
+    [serverStatusCounts],
+  );
+  // The chips and the panel's Status field edit the same filter; a chip lights
+  // up only when it alone describes it.
+  const statusChip = filters.status_not?.length
+    ? ""
+    : filters.status?.length === 1
+      ? filters.status[0]
+      : filters.status?.length
+        ? ""
+        : "all";
 
   // The panel edits its own fields; the affected-calls scope stays until its chip
   // is dismissed.
@@ -441,7 +459,6 @@ export default function RunTraceTable({
     } else {
       setFilters(keepScope(result));
     }
-    setStatusChip("all");
   };
 
   // Like a "select all" box: on only while every group on screen is open,
@@ -586,11 +603,13 @@ export default function RunTraceTable({
         value={statusChip}
         counts={statusCounts}
         onChange={(value) => {
-          setStatusChip(value);
           setFilters((current) => {
-            if (!current.status) return current;
-            const { status: _status, ...rest } = current;
-            return rest;
+            const {
+              status: _status,
+              status_not: _statusNot,
+              ...rest
+            } = current;
+            return value === "all" ? rest : { ...rest, status: [value] };
           });
           setPage(1);
         }}
@@ -700,6 +719,29 @@ export default function RunTraceTable({
               activeCallId={activeCallId}
               scrollRef={tableScrollRef}
               runActive={runActive}
+              renderEvalHeaderAction={
+                evalActions
+                  ? (e) => (
+                      <IconButton
+                        size="small"
+                        aria-label={`Actions for ${e.name}`}
+                        onClick={(event) =>
+                          setEvalMenuFor({
+                            evalId: e.id,
+                            name: e.name,
+                            anchorEl: event.currentTarget,
+                          })
+                        }
+                      >
+                        <Iconify
+                          icon="mdi:dots-vertical"
+                          width={16}
+                          sx={{ color: "text.subtitle" }}
+                        />
+                      </IconButton>
+                    )
+                  : null
+              }
               selection={tableSelection}
             />
           )}
@@ -758,6 +800,14 @@ export default function RunTraceTable({
         showAiFilter={false}
         placement="bottom-start"
       />
+
+      {evalActions && (
+        <EvalColumnActions
+          {...evalActions}
+          menuFor={evalMenuFor}
+          onClose={() => setEvalMenuFor(null)}
+        />
+      )}
     </>
   );
 }
@@ -768,6 +818,17 @@ RunTraceTable.propTypes = {
   initialFilters: PropTypes.object,
   activeCallId: PropTypes.string,
   activePage: PropTypes.number,
+  // Given, each eval column header gets a ⋮ menu to re-run or edit that eval.
+  // The run page answers `onRerun(configs)` and `onEdit(config)` with its one
+  // edit form and confirm dialog; `rerunPending` is that page's re-run.
+  evalActions: PropTypes.shape({
+    runTestId: PropTypes.string,
+    canRun: PropTypes.bool,
+    grading: PropTypes.bool,
+    rerunPending: PropTypes.bool,
+    onRerun: PropTypes.func,
+    onEdit: PropTypes.func,
+  }),
   // Given, calls can be ticked and re-run as a new simulation: called with the
   // scenario keys and the trials picked.
   onRerunScenarios: PropTypes.func,

@@ -36,6 +36,17 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   };
 });
 
+// The run's re-grade request, left hanging so a test can look at the page
+// while it is on its way.
+const runEvaluationsAgain = vi.fn();
+vi.mock(
+  "src/api/simulate-environments/harnessEnvironments",
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    runEvaluationsAgain: (...args) => runEvaluationsAgain(...args),
+  }),
+);
+
 // The table's current page, as `?rowId=` reads it to find an on-page row.
 const useRunCalls = vi.fn();
 vi.mock("src/api/simulate-environments/runCalls", async (importOriginal) => {
@@ -104,19 +115,28 @@ vi.mock("../../../evals/AddEvalsDrawer", () => ({
   default: AddEvalsDrawerStub,
 }));
 
+// An eval the drawer stub and the table stub both ask the run page about.
+const RERUN_EVAL = { id: "c1", name: "no_misselling", mapping: { a: "b" } };
+
 function AllEvaluationsDrawerStub({
   open,
   runTestId,
   executionId,
   canRun,
   grading,
+  rerunPending,
+  onRerun,
   onAddEvaluations,
 }) {
   return open ? (
     <div>
       {`all-evals-drawer:${runTestId}:${executionId}:${canRun}:${grading}`}
+      <span>{`drawer-rerun-pending:${rerunPending}`}</span>
       <button type="button" onClick={onAddEvaluations}>
         open add flow
+      </button>
+      <button type="button" onClick={() => onRerun([RERUN_EVAL])}>
+        drawer re-run
       </button>
     </div>
   ) : null;
@@ -127,6 +147,8 @@ AllEvaluationsDrawerStub.propTypes = {
   executionId: PropTypes.string,
   canRun: PropTypes.bool,
   grading: PropTypes.bool,
+  rerunPending: PropTypes.bool,
+  onRerun: PropTypes.func,
   onAddEvaluations: PropTypes.func,
 };
 vi.mock("../AllEvaluationsDrawer", () => ({
@@ -159,6 +181,7 @@ function RunTraceTableStub({
   activeCallId,
   activePage,
   initialFilters,
+  evalActions,
   rerunDisabledReason,
 }) {
   useEffect(() => {
@@ -172,6 +195,16 @@ function RunTraceTableStub({
     <div>
       run-trace-table:{JSON.stringify(initialFilters || {})}
       <span>{`active:${activeCallId ?? "-"}:${activePage ?? "-"}`}</span>
+      <span>
+        {evalActions
+          ? `eval-actions:${evalActions.runTestId}:${evalActions.canRun}:${evalActions.grading}:${evalActions.rerunPending}`
+          : "eval-actions:-"}
+      </span>
+      {evalActions && (
+        <button type="button" onClick={() => evalActions.onRerun([RERUN_EVAL])}>
+          column re-run
+        </button>
+      )}
       <span>{`rerun-off:${rerunDisabledReason ?? "-"}`}</span>
       <button
         type="button"
@@ -189,6 +222,7 @@ RunTraceTableStub.propTypes = {
   onQueryChange: PropTypes.func,
   activeCallId: PropTypes.string,
   activePage: PropTypes.number,
+  evalActions: PropTypes.object,
   rerunDisabledReason: PropTypes.string,
 };
 vi.mock("../trace/RunTraceTable", () => ({ default: RunTraceTableStub }));
@@ -392,6 +426,8 @@ const navArgs = () => callListNavigation.mock.calls.at(-1)[0];
 beforeEach(() => {
   useSelfImprovementOpen.mockReturnValue(true);
   enqueueSnackbar.mockReset();
+  runEvaluationsAgain.mockReset();
+  runEvaluationsAgain.mockReturnValue(new Promise(() => {}));
   useRunCalls.mockReset();
   useRunCalls.mockReturnValue({ tasks: [], groups: [], isLoading: false });
   useCallExecutionV3Detail.mockReset();
@@ -466,7 +502,9 @@ describe("RunDetail", () => {
     renderDetail();
     expect(screen.getByText("Queued")).toBeInTheDocument();
     expect(screen.queryByText("Running")).toBeNull();
-    expect(screen.getByRole("button", { name: /Debug failures/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Debug failures/ }),
+    ).toBeDisabled();
   });
 
   it("does not show a Failed verdict while the run is still loading", () => {
@@ -482,7 +520,12 @@ describe("RunDetail", () => {
 
   it("offers Stop simulation in the header only while the run can be stopped", () => {
     useRunDetail.mockReturnValue({
-      identity: { ...IDENTITY, runState: "running", status: "running", stoppable: true },
+      identity: {
+        ...IDENTITY,
+        runState: "running",
+        status: "running",
+        stoppable: true,
+      },
       stats: STATS,
       isLoading: false,
     });
@@ -505,7 +548,12 @@ describe("RunDetail", () => {
 
   it("shows Cancelling in the header while a stopped run winds down", () => {
     useRunDetail.mockReturnValue({
-      identity: { ...IDENTITY, runState: "cancelling", status: "cancelling", stoppable: false },
+      identity: {
+        ...IDENTITY,
+        runState: "cancelling",
+        status: "cancelling",
+        stoppable: false,
+      },
       stats: STATS,
       isLoading: false,
     });
@@ -522,7 +570,12 @@ describe("RunDetail", () => {
     "disables the header actions while the run is %s",
     (status) => {
       useRunDetail.mockReturnValue({
-        identity: { ...IDENTITY, runState: status, status, stoppable: status === "running" },
+        identity: {
+          ...IDENTITY,
+          runState: status,
+          status,
+          stoppable: status === "running",
+        },
         stats: STATS,
         isLoading: false,
       });
@@ -603,6 +656,78 @@ describe("RunDetail", () => {
     expect(screen.getByText("add-evals-drawer:ex1")).toBeInTheDocument();
   });
 
+  it("gives the table's eval column menus this run's gating", () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, executionStatus: "completed" },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+    expect(
+      screen.getByText("eval-actions:rt1:true:false:false"),
+    ).toBeInTheDocument();
+  });
+
+  it("holds the column menus' re-runs while the run is being graded", () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, executionStatus: "evaluating" },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+    expect(
+      screen.getByText("eval-actions:rt1:false:true:false"),
+    ).toBeInTheDocument();
+  });
+
+  it("holds the column menus' re-runs while one sent from the drawer is on its way", async () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, executionStatus: "completed" },
+      stats: STATS,
+      isLoading: false,
+    });
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Run evals" }));
+    expect(screen.getByText("drawer-rerun-pending:false")).toBeInTheDocument();
+    expect(
+      screen.getByText("eval-actions:rt1:true:false:false"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "drawer re-run" }));
+    await user.click(screen.getByText("Run Evaluations"));
+
+    expect(runEvaluationsAgain).toHaveBeenCalledTimes(1);
+    expect(runEvaluationsAgain).toHaveBeenCalledWith("env-1", "ex1", ["c1"]);
+    expect(
+      await screen.findByText("eval-actions:rt1:true:false:true"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("drawer-rerun-pending:true")).toBeInTheDocument();
+  });
+
+  it("holds the drawer's re-runs while one sent from a column menu is on its way", async () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, executionStatus: "completed" },
+      stats: STATS,
+      isLoading: false,
+    });
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Run evals" }));
+    await user.click(screen.getByRole("button", { name: "column re-run" }));
+    await user.click(screen.getByText("Run Evaluations"));
+
+    expect(runEvaluationsAgain).toHaveBeenCalledWith("env-1", "ex1", ["c1"]);
+    expect(
+      await screen.findByText("drawer-rerun-pending:true"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("eval-actions:rt1:true:false:true"),
+    ).toBeInTheDocument();
+  });
+
   it("lets the drawer grade only once the run has finished", async () => {
     useRunDetail.mockReturnValue({
       identity: {
@@ -681,6 +806,7 @@ describe("RunDetail", () => {
     });
     const user = userEvent.setup();
     renderDetail({ backed: false, envState: { evals: ["preset-eval"] } });
+    expect(screen.getByText("eval-actions:-")).toBeInTheDocument();
 
     expect(screen.queryByText(/^add-evals-drawer:/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "Add evals" }));
@@ -1055,13 +1181,35 @@ describe("RunDetail", () => {
   it("tells the navigation a live run is live", async () => {
     const user = userEvent.setup();
     useRunDetail.mockReturnValue({
-      identity: { ...IDENTITY, runState: "running", status: "running", stoppable: true },
+      identity: {
+        ...IDENTITY,
+        runState: "running",
+        status: "running",
+        stoppable: true,
+      },
       stats: STATS,
       isLoading: false,
     });
     renderDetail();
     await user.click(screen.getByRole("button", { name: "open c1" }));
     expect(navArgs().live).toBe(true);
+  });
+
+  it("lets the calls table feed the header only while it is shown", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+    expect(useRunDetail).toHaveBeenLastCalledWith(
+      "rt1",
+      "ex1",
+      expect.objectContaining({ callsShown: true }),
+    );
+
+    await user.click(screen.getByRole("tab", { name: "Analytics" }));
+    expect(useRunDetail).toHaveBeenLastCalledWith(
+      "rt1",
+      "ex1",
+      expect.objectContaining({ callsShown: false }),
+    );
   });
 
   it("marks a call opened from Analytics as not from the table", async () => {

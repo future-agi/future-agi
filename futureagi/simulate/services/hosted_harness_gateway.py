@@ -135,7 +135,6 @@ _SCENARIO_DIRECTORY_COUNT_COMMAND = (
 _ADJUSTMENTS_PATH = "/run/futureagi/adjustments.jsonl"
 _ADJUSTMENT_STATUS_PATH = "/run/futureagi/adjustment-status.jsonl"
 _SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
-_SIMULATOR_VERTEX_CREDENTIALS_PATH = "/run/futureagi/simulator-vertex-sa.json"
 _PROVIDER_POLL_TIMEOUT_SECONDS = 15
 _DIAGNOSTICS_POLL_INTERVAL_SECONDS = 15
 _PROGRESS_FILE_TIMEOUT_SECONDS = 5
@@ -187,13 +186,6 @@ def _execution_ttl_seconds(
     )
 
 
-def _claude_code_use_vertex(gateway_ready: bool) -> str:
-    """Must be an explicit "0" behind the gateway: the CLI treats an empty value as set."""
-    if gateway_ready:
-        return "0"
-    return str(os.environ.get("CLAUDE_CODE_USE_VERTEX") or "1")
-
-
 _BACKGROUND_SOUNDS = (
     Path(__file__).resolve().parents[1] / "data" / "background_sounds.json"
 )
@@ -224,37 +216,23 @@ def _noise_catalogue_setting() -> str:
     return configured or _background_noise_catalogue()
 
 
-def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
-    """Return control-process-only simulator config and optional Vertex ADC bytes.
+def _platform_simulator_material() -> dict[str, str]:
+    """Return control-process-only simulator config.
 
     These values come from platform deployment configuration, never the customer request.  The
     returned map is uploaded on its own channel and consumed by ALK's hosted entrypoint; it is not
     added to ``secrets.json`` and therefore cannot acquire the ``target_provider`` purpose or be
     injected into an untrusted agent process.
-    """
-    source_path = str(
-        os.environ.get("ALK_HOSTED_SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS")
-        or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-        or ""
-    ).strip()
-    credential_bytes: bytes | None = None
-    project = str(os.environ.get("GOOGLE_CLOUD_PROJECT") or "").strip()
-    if source_path:
-        try:
-            credential_bytes = Path(source_path).read_bytes()
-            document = json.loads(credential_bytes)
-            if not project and isinstance(document, dict):
-                project = str(document.get("project_id") or "").strip()
-        except (OSError, ValueError, TypeError) as exc:
-            raise HostedHarnessError(
-                "simulator_credentials_invalid",
-                "the platform simulator Vertex credential could not be loaded",
-                status_code=503,
-            ) from exc
 
+    Every model call in a hosted run (harness, simulated caller, judge) goes through AgentCC on
+    its key, so no model vendor's credential is placed in a sandbox. Speech still calls its vendor
+    directly, which is why only Deepgram and Cartesia are accepted until it moves to AgentCC too.
+    """
     provider = str(os.environ.get("SIMULATOR_LLM_PROVIDER") or "vertex").strip()
-    model = str(os.environ.get("SIMULATOR_LLM_MODEL") or "gemini-3.8-flash").strip()
-    location = str(os.environ.get("GOOGLE_CLOUD_LOCATION") or "global").strip()
+    # Gateway model names carry the serving provider: a bare Gemini name is the Gemini API.
+    model = str(
+        os.environ.get("SIMULATOR_LLM_MODEL") or "vertex_ai/gemini-3.8-flash"
+    ).strip()
     backend = str(os.environ.get("ALK_HARNESS") or "claude").strip()
     agentcc_url = str(
         os.environ.get("ALK_HOSTED_AGENTCC_BASE_URL")
@@ -271,56 +249,54 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     agentcc_model = str(
         os.environ.get("ALK_HOSTED_AGENTCC_MODEL") or "vertex_ai/gemini-3.7-flash"
     ).strip()
-    agentcc_ready = bool(agentcc_url and agentcc_key)
+    if not (agentcc_url and agentcc_key):
+        raise HostedHarnessError(
+            "agentcc_not_configured",
+            "hosted runs reach every model through AgentCC; configure a sandbox-reachable "
+            "AgentCC URL and a platform-owned harness or internal API key",
+            status_code=503,
+        )
+    unsupported_speech = sorted(
+        {
+            str(os.environ.get(name) or "").strip().lower()
+            for name in ("SIMULATOR_STT_PROVIDER", "SIMULATOR_TTS_PROVIDER")
+        }
+        - {"", "deepgram", "cartesia"}
+    )
+    if unsupported_speech:
+        raise HostedHarnessError(
+            "simulator_speech_provider_unsupported",
+            "hosted runs speak through deepgram or cartesia, not "
+            + ", ".join(unsupported_speech),
+            status_code=503,
+        )
+
     default_authoring_model = (
         model
         if backend.lower()
         in {"gemini", "vertex-gemini", "vertex_gemini", "vertexai-gemini"}
         else agentcc_model
-        if agentcc_ready
-        else "claude-sonnet-4-6"
     )
     authoring_model = str(
         os.environ.get("ALK_HARNESS_MODEL") or default_authoring_model
     ).strip()
-    if (
-        backend.lower() in {"claude", "claude-code"}
-        and ("gemini" in authoring_model.lower() or agentcc_url or agentcc_key)
-        and not agentcc_ready
-    ):
-        raise HostedHarnessError(
-            "authoring_gateway_not_configured",
-            "Claude gateway authoring requires a sandbox-reachable AgentCC URL "
-            "and a platform-owned harness or internal API key",
-            status_code=503,
-        )
-    claude_region = str(
-        os.environ.get("CLOUD_ML_REGION")
-        or getattr(settings, "ALK_HOSTED_AUTHORING_CLAUDE_REGION", "us-east5")
-    ).strip()
     values = {
         "ALK_HARNESS": backend,
         "ALK_HARNESS_MODEL": authoring_model,
-        "CLAUDE_CODE_USE_VERTEX": _claude_code_use_vertex(agentcc_ready),
-        "CLOUD_ML_REGION": claude_region,
-        "ALK_VERTEX_LOCATION": location,
-        "GOOGLE_CLOUD_LOCATION": location,
-        "GOOGLE_GENAI_USE_VERTEXAI": str(
-            os.environ.get("GOOGLE_GENAI_USE_VERTEXAI") or "True"
-        ),
+        # Explicit "0": Claude Code treats an empty value as set.
+        "CLAUDE_CODE_USE_VERTEX": "0",
         "SIMULATOR_LLM_PROVIDER": provider,
         "SIMULATOR_LLM_MODEL": model,
+        "ALK_CLAUDE_GATEWAY_URL": agentcc_url.rstrip("/"),
+        "ALK_CLAUDE_GATEWAY_API_KEY": agentcc_key,
+        "AGENTCC_BASE_URL": agentcc_url.rstrip("/"),
+        "AGENTCC_API_KEY": agentcc_key,
     }
     # Unset keeps ALK's per-model least deliberation; set it to go lower where a model allows
     # (e.g. "minimal" on gemini-3.5-flash-lite, which gemini-3.7-flash refuses).
     thinking = str(os.environ.get("SIMULATOR_LLM_THINKING") or "").strip()
     if thinking:
         values["SIMULATOR_LLM_THINKING"] = thinking
-    if agentcc_ready:
-        values["ALK_CLAUDE_GATEWAY_URL"] = agentcc_url.rstrip("/")
-        values["ALK_CLAUDE_GATEWAY_API_KEY"] = agentcc_key
-        values["AGENTCC_BASE_URL"] = agentcc_url.rstrip("/")
-        values["AGENTCC_API_KEY"] = agentcc_key
     from simulate.services.phone_telephony import platform_phone_telephony
 
     values.update(
@@ -329,9 +305,8 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     for name in (
         "CARTESIA_API_KEY",
         "DEEPGRAM_API_KEY",
-        "GEMINI_API_KEY",
-        "GOOGLE_API_KEY",
-        "OPENAI_API_KEY",
+        # Models the simulated caller tries in turn when the chosen one fails.
+        "SIMULATOR_LLM_FALLBACK_MODELS",
         "SIMULATOR_STT_MODEL",
         "SIMULATOR_STT_PROVIDER",
         "SIMULATOR_TTS_MODEL",
@@ -371,12 +346,7 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     ).strip()
     if collector:
         values["FI_BASE_URL"] = collector
-    if project:
-        values["GOOGLE_CLOUD_PROJECT"] = project
-        values["ANTHROPIC_VERTEX_PROJECT_ID"] = project
-    if credential_bytes is not None:
-        values["GOOGLE_APPLICATION_CREDENTIALS"] = _SIMULATOR_VERTEX_CREDENTIALS_PATH
-    return values, credential_bytes
+    return values
 
 
 def _add_scoped_guest_pin_policy(values: dict[str, str], job: HostedHarnessJob) -> bool:
@@ -1410,21 +1380,13 @@ def _resolved_egress_domains(
 
 
 _KNOWN_SIMULATOR_SECRET_ALIASES = (
-    "GOOGLE_APPLICATION_CREDENTIALS_JSON",
-    "GOOGLE_APPLICATION_CREDENTIALS",
-    "GEMINI_API_KEY",
-    "GOOGLE_API_KEY",
     "DEEPGRAM_API_KEY",
     "CARTESIA_API_KEY",
-    "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
 )
 _KNOWN_SIMULATOR_CONFIG_NAMES = (
     "SIMULATOR_LLM_PROVIDER",
     "SIMULATOR_STT_PROVIDER",
     "SIMULATOR_TTS_PROVIDER",
-    "GOOGLE_CLOUD_LOCATION",
-    "CLOUD_ML_REGION",
 )
 
 
@@ -1644,11 +1606,10 @@ class HostedHarnessGateway:
 
         # Authoring reaches only the model provider and the source host - never the target
         # (LiveKit/Deepgram) media secrets, which belong to the execution sandbox alone.
-        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
+        simulator_env = _platform_simulator_material()
         guest_pin_policy_released = _add_scoped_guest_pin_policy(simulator_env, job)
-        project_id = str(simulator_env.get("GOOGLE_CLOUD_PROJECT") or "")
 
-        # Authoring reaches the source host, the authoring model provider (Vertex/Claude), and
+        # Authoring reaches the source host, AgentCC (which serves every authoring model), and
         # package indexes needed when real-runtime validation builds the generated environment.
         # Daytona caps the domain allow list at 20 entries, so this stays focused and excludes
         # call-time media domains (LiveKit/Deepgram) that only the execution sandbox needs.
@@ -1660,13 +1621,6 @@ class HostedHarnessGateway:
             "raw.githubusercontent.com",
             "pypi.org",
             "files.pythonhosted.org",
-            "oauth2.googleapis.com",
-            "www.googleapis.com",
-            "sts.googleapis.com",
-            "accounts.google.com",
-            "aiplatform.googleapis.com",
-            "us-east5-aiplatform.googleapis.com",
-            "us-central1-aiplatform.googleapis.com",
         ]
         gateway_host = _hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))
         if gateway_host and gateway_host not in default_authoring_egress:
@@ -1692,26 +1646,10 @@ class HostedHarnessGateway:
             allowed_domains, max_domains=self.client.max_egress_domains
         )
         authoring_env = {
-            **{
-                name: value
-                for name, value in simulator_env.items()
-                if name not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
-            },
-            "CLAUDE_CODE_USE_VERTEX": _claude_code_use_vertex(
-                bool(simulator_env.get("ALK_CLAUDE_GATEWAY_URL"))
-            ),
-            "GOOGLE_GENAI_USE_VERTEXAI": "True",
-            "CLOUD_ML_REGION": getattr(
-                settings, "ALK_HOSTED_AUTHORING_CLAUDE_REGION", "us-east5"
-            ),
-            "GOOGLE_CLOUD_LOCATION": getattr(
-                settings, "ALK_HOSTED_AUTHORING_GEMINI_LOCATION", "us-central1"
-            ),
-            "GOOGLE_APPLICATION_CREDENTIALS": _SIMULATOR_VERTEX_CREDENTIALS_PATH,
+            name: value
+            for name, value in simulator_env.items()
+            if name not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
         }
-        if project_id:
-            authoring_env["GOOGLE_CLOUD_PROJECT"] = project_id
-            authoring_env["ANTHROPIC_VERTEX_PROJECT_ID"] = project_id
 
         ttl_seconds = _authoring_ttl_seconds(self.client.name)
         sandbox = None
@@ -1737,11 +1675,6 @@ class HostedHarnessGateway:
                 json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
                 "/work/job.json",
             )
-            if simulator_vertex_credentials is not None:
-                sandbox.fs.upload_file(
-                    simulator_vertex_credentials,
-                    _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-                )
             authoring_secrets_arg = ""
             if authoring_target_secrets:
                 authoring_secrets_path = "/run/futureagi/authoring-target-secrets.json"
@@ -1907,7 +1840,7 @@ class HostedHarnessGateway:
             # Resolve cached authoring created before connector resolution shipped as well as
             # newly-authored jobs. This must happen before network policy and job.json are built.
             payload = resolve_authored_connector(payload, authoring_archive)
-        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
+        simulator_env = _platform_simulator_material()
         guest_pin_policy_released = _add_scoped_guest_pin_policy(simulator_env, job)
         # A chat-driven "add N scenarios" request replays the frozen world but re-runs
         # scenario-gen (extend) against it. The marker persists across infra retries and is
@@ -1992,13 +1925,7 @@ class HostedHarnessGateway:
         dispatch_runtime["memory_mb"] = capacity.memory_mb
         dispatch_payload["runtime"] = dispatch_runtime
         cache_attempt_redaction_values(
-            attempt.id,
-            redaction_values(
-                {**secrets_map, **simulator_env},
-                extra=(simulator_vertex_credentials.decode("utf-8", errors="replace"),)
-                if simulator_vertex_credentials
-                else (),
-            ),
+            attempt.id, redaction_values({**secrets_map, **simulator_env})
         )
         # Record provenance digests on the attempt.
         if commit_sha:
@@ -2079,11 +2006,6 @@ class HostedHarnessGateway:
                 ).encode(),
                 _SIMULATOR_SECRETS_PATH,
             )
-            if simulator_vertex_credentials is not None:
-                sandbox.fs.upload_file(
-                    simulator_vertex_credentials,
-                    _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-                )
             # Provider creation and uploads can consume much of the initial lease. Re-arm
             # providers with mutable leases before exposing a full-duration capability.
             self.client.renew_ttl(sandbox, ttl_seconds)
@@ -2127,13 +2049,7 @@ class HostedHarnessGateway:
                 "/run/futureagi/capabilities.json "
                 f"{_CHAT_POLICY_PATH} "
                 f"{_SIMULATOR_SECRETS_PATH} "
-                + (authoring_secrets_path if authoring_target_secrets else "")
-                + " "
-                + (
-                    _SIMULATOR_VERTEX_CREDENTIALS_PATH
-                    if simulator_vertex_credentials is not None
-                    else ""
-                ),
+                + (authoring_secrets_path if authoring_target_secrets else ""),
                 timeout=120,
             )
             if prepared.exit_code:
@@ -2156,16 +2072,13 @@ class HostedHarnessGateway:
                     "ALK_SIMULATOR_FUNDING",
                     "ALK_HARNESS_MODEL",
                     "ALK_HARNESS_WORKERS_AT_ONCE",
+                    "AGENTCC_BASE_URL",
+                    "AGENTCC_API_KEY",
                     "ALK_CLAUDE_GATEWAY_URL",
                     "ALK_CLAUDE_GATEWAY_API_KEY",
-                    "ALK_VERTEX_LOCATION",
                     "ALK_VOICEMAIL_SCENARIOS",
                     "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
                     "ALK_CAB_GUEST_POC_PIN",
-                    "GOOGLE_APPLICATION_CREDENTIALS",
-                    "GOOGLE_CLOUD_LOCATION",
-                    "GOOGLE_CLOUD_PROJECT",
-                    "GOOGLE_GENAI_USE_VERTEXAI",
                 }
             }
             authoring_exports["PATH"] = _CHAT_RUNTIME_PATH
@@ -2309,7 +2222,7 @@ class HostedHarnessGateway:
         endpoint_base_url: str,
     ) -> HostedHarnessConversationLease:
         """Start the conversation process beside the job's existing harness process."""
-        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
+        simulator_env = _platform_simulator_material()
         _add_scoped_guest_pin_policy(simulator_env, job)
         capability = issue_conversation_capability(
             conversation,
@@ -2330,11 +2243,6 @@ class HostedHarnessGateway:
             _CHAT_CAPABILITIES_PATH,
         )
         sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
-        if simulator_vertex_credentials is not None:
-            sandbox.fs.upload_file(
-                simulator_vertex_credentials,
-                _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-            )
         environment = job.environment or job
         basis = str(
             ((environment.payload or {}).get("metadata") or {}).get(
@@ -2372,18 +2280,13 @@ class HostedHarnessGateway:
             in {
                 "ALK_HARNESS",
                 "ALK_HARNESS_MODEL",
-                "ALK_VERTEX_LOCATION",
+                "AGENTCC_BASE_URL",
+                "AGENTCC_API_KEY",
                 "ALK_CLAUDE_GATEWAY_URL",
                 "ALK_CLAUDE_GATEWAY_API_KEY",
                 "CLAUDE_CODE_USE_VERTEX",
                 "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
                 "ALK_CAB_GUEST_POC_PIN",
-                "CLOUD_ML_REGION",
-                "GOOGLE_APPLICATION_CREDENTIALS",
-                "GOOGLE_CLOUD_LOCATION",
-                "GOOGLE_CLOUD_PROJECT",
-                "ANTHROPIC_VERTEX_PROJECT_ID",
-                "GOOGLE_GENAI_USE_VERTEXAI",
             }
         }
         chat_exports["PATH"] = _CHAT_RUNTIME_PATH
@@ -2613,7 +2516,7 @@ class HostedHarnessGateway:
         if workspace_archive is None:
             workspace_archive = _empty_workspace_archive()
         source_archive, _commit_sha = HostedSourceAcquirer().acquire(job)
-        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
+        simulator_env = _platform_simulator_material()
         _add_scoped_guest_pin_policy(simulator_env, job)
         platform_host = _hostname_from_url(endpoint_base_url)
         allowed_domains = _resolved_egress_domains(
@@ -2668,11 +2571,6 @@ class HostedHarnessGateway:
                 _CHAT_CAPABILITIES_PATH,
             )
             sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
-            if simulator_vertex_credentials is not None:
-                sandbox.fs.upload_file(
-                    simulator_vertex_credentials,
-                    _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-                )
             prepared = sandbox.process.exec(
                 "mkdir -p /work/authoring && "
                 "tar -xzf /work/conversation.tar.gz -C /work/authoring && "
@@ -2700,18 +2598,13 @@ class HostedHarnessGateway:
                 in {
                     "ALK_HARNESS",
                     "ALK_HARNESS_MODEL",
-                    "ALK_VERTEX_LOCATION",
+                    "AGENTCC_BASE_URL",
+                    "AGENTCC_API_KEY",
                     "ALK_CLAUDE_GATEWAY_URL",
                     "ALK_CLAUDE_GATEWAY_API_KEY",
                     "CLAUDE_CODE_USE_VERTEX",
                     "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
                     "ALK_CAB_GUEST_POC_PIN",
-                    "CLOUD_ML_REGION",
-                    "GOOGLE_APPLICATION_CREDENTIALS",
-                    "GOOGLE_CLOUD_LOCATION",
-                    "GOOGLE_CLOUD_PROJECT",
-                    "ANTHROPIC_VERTEX_PROJECT_ID",
-                    "GOOGLE_GENAI_USE_VERTEXAI",
                 }
             }
             chat_exports["PATH"] = _CHAT_RUNTIME_PATH

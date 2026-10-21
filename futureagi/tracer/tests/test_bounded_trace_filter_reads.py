@@ -5437,7 +5437,7 @@ def test_page_500_slow_candidate_admits_every_exact_enrichment_wave():
         ),
         mock.patch(
             "tracer.views.trace.update_column_config_based_on_eval_config",
-            side_effect=lambda config, _evals: config,
+            side_effect=lambda config, _evals, **_kwargs: config,
         ),
         mock.patch(
             "tracer.views.trace.update_span_column_config_based_on_annotations",

@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import { TRACE_COLUMNS } from "src/sections/simulate/environments/workspace/runs/detail/trace/traceTable.constants";
@@ -199,6 +199,31 @@ export function buildTraceColumns(columnOrder = []) {
 }
 
 /**
+ * The run header's read. Every calls page carries the same whole-run
+ * `execution`, so the table feeds it and the header only fetches without one.
+ * @param {string} executionId
+ */
+export const runSummaryKey = (executionId) => [
+  "simulation-run-results-v3",
+  executionId,
+  "summary",
+];
+
+/**
+ * One calls-list request, stamped with when it was sent. Writes to the header
+ * entry are ordered by that stamp, so an older snapshot never replaces a newer
+ * one however the responses arrive.
+ * @param {string} executionId
+ * @param {Object} params
+ */
+export function fetchRunCalls(executionId, params) {
+  const requestedAt = Date.now();
+  return axios
+    .get(endpoints.runResultsV3.calls(executionId), { params })
+    .then((response) => ({ ...response.data, requestedAt }));
+}
+
+/**
  * The calls-list request for one page, as react-query options. The table hook
  * and the call drawer's page-crossing fetch both build it here, so they always
  * share one cache entry per page.
@@ -224,17 +249,13 @@ export function runCallsQueryOptions(executionId, opts = {}) {
       groupBy,
     ],
     queryFn: () =>
-      axios
-        .get(endpoints.runResultsV3.calls(executionId), {
-          params: {
-            page,
-            page_size: limit,
-            search,
-            filters: JSON.stringify(filters),
-            ...(groupBy ? { group_by: groupBy } : {}),
-          },
-        })
-        .then((response) => response.data),
+      fetchRunCalls(executionId, {
+        page,
+        page_size: limit,
+        search,
+        filters: JSON.stringify(filters),
+        ...(groupBy ? { group_by: groupBy } : {}),
+      }),
     staleTime: 1000 * 60,
   };
 }
@@ -260,6 +281,20 @@ export function useRunCalls(executionId, opts = {}) {
   });
 
   const data = query.data;
+  const { dataUpdatedAt } = query;
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!data?.execution || data.requestedAt == null) return;
+    const key = runSummaryKey(executionId);
+    const current = queryClient.getQueryData(key)?.requestedAt;
+    // Only a snapshot requested later than the header's replaces it.
+    if (current != null && current >= data.requestedAt) return;
+    queryClient.setQueryData(
+      key,
+      { execution: data.execution, requestedAt: data.requestedAt },
+      { updatedAt: dataUpdatedAt },
+    );
+  }, [data, dataUpdatedAt, executionId, queryClient]);
   const { tasks, columns, count, groups, facets, summary, totalPages } =
     useMemo(() => {
       if (!data) {
@@ -318,6 +353,7 @@ export function useRunCalls(executionId, opts = {}) {
         totalPages: data.total_pages ?? 1,
       };
     }, [data]);
+  const statusCounts = useMemo(() => data?.status_counts ?? {}, [data]);
 
   return {
     tasks,
@@ -325,6 +361,7 @@ export function useRunCalls(executionId, opts = {}) {
     count,
     groups,
     facets,
+    statusCounts,
     summary,
     totalPages,
     agentType: data?.execution?.agent_type ?? null,

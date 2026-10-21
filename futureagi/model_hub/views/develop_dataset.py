@@ -5619,16 +5619,18 @@ class DeleteDatasetView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=DatasetDeleteSerializer,
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+    )
     def delete(self, request, dataset_id=None, *args, **kwargs):
         try:
-            # Handle bulk deletion
-            serializer = DatasetDeleteSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(parse_serialized_errors(serializer))
-
             # Get datasets and verify they exist and belong to user's organization
             datasets = Dataset.objects.filter(
-                id__in=serializer.validated_data["dataset_ids"],
+                id__in=request.validated_data["dataset_ids"],
                 deleted=False,
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
@@ -5636,7 +5638,7 @@ class DeleteDatasetView(APIView):
 
             # Check if all requested datasets were found
             found_ids = {str(d.id) for d in datasets}
-            requested_ids = {str(d) for d in serializer.validated_data["dataset_ids"]}
+            requested_ids = {str(d) for d in request.validated_data["dataset_ids"]}
             missing_ids = requested_ids - found_ids
 
             if missing_ids:
@@ -12072,6 +12074,7 @@ class FeedbackViewSet(viewsets.ModelViewSet):
             # Add feedback information
             row_dict["feedback_comment"] = feedback.explanation
             row_dict["feedback_value"] = feedback.value
+            row_dict["feedback_id"] = str(feedback.id)
             futureagi_eval = (
                 True
                 if user_eval_metric.template.config.get("eval_type_id")
