@@ -1209,7 +1209,7 @@ def test_ui_default_100k_trace_task_accepts_a_complete_sparse_population(
                 ]
                 return QueryResult(rows, len(rows), "clickhouse", 1.0)
 
-            assert "id AS root_span_id" in query
+            assert "SELECT trace_id, start_time" in query
             assert "parent_span_id IS NULL" in query
             assert "max_rows_to_read" not in settings
             assert settings["max_block_size"] == 8_192
@@ -1217,7 +1217,6 @@ def test_ui_default_100k_trace_task_accepts_a_complete_sparse_population(
             rows = [
                 {
                     "trace_id": row["trace_id"],
-                    "root_span_id": row["root_span_id"],
                     "start_time": row["start_time"],
                 }
                 for row in source_rows.values()
