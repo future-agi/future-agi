@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1078,
+  endpointCount: 1089,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -34510,6 +34510,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/eval-task/sampling_preview/": {
+      post: {
+        operationId: "tracer_eval-task_sampling_preview",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SamplingPreviewRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SamplingPreviewResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/eval-task/unpause_eval_task/": {
       post: {
         operationId: "tracer_eval-task_unpause_eval_task",
@@ -38140,15 +38165,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/project/update_project_name/": {
       post: {
         operationId: "tracer_project_update_project_name",
-        runtimeRequestValidation: false,
+        runtimeRequestValidation: true,
         runtimeResponseValidation: false,
         requestBody: {
-          $ref: "#/definitions/Project",
+          $ref: "#/definitions/ProjectNameUpdate",
         },
         queryParameters: {},
         responses: {
           201: {
-            $ref: "#/definitions/Project",
+            $ref: "#/definitions/ProjectNameUpdate",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -38343,6 +38368,138 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           201: {
             $ref: "#/definitions/GenerateScenario",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/saved-sql-query/": {
+      get: {
+        operationId: "tracer_saved-sql-query_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              maximum: 10000,
+              default: 0,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLSavedList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_saved-sql-query_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLSave",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/SQLSaved",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/saved-sql-query/{id}/": {
+      get: {
+        operationId: "tracer_saved-sql-query_read",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLSaved",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      patch: {
+        operationId: "tracer_saved-sql-query_partial_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLSave",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLSaved",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      delete: {
+        operationId: "tracer_saved-sql-query_delete",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/saved-sql-query/{id}/add-widget/": {
+      post: {
+        operationId: "tracer_saved-sql-query_add_widget",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLWidget",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/SQLWidgetResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -38688,6 +38845,179 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           410: {
             $ref: "#/definitions/SharedLinkResolveError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/": {
+      get: {
+        operationId: "tracer_sql-query_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          offset: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 0,
+              maximum: 10000,
+              default: 0,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLHistory",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/catalog/": {
+      get: {
+        operationId: "tracer_sql-query_catalog",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLCatalog",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/run-saved/": {
+      post: {
+        operationId: "tracer_sql-query_run_saved",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLRunSaved",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/SQLExecution",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/run/": {
+      post: {
+        operationId: "tracer_sql-query_run",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLRun",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/SQLExecution",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/{id}/": {
+      get: {
+        operationId: "tracer_sql-query_read",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLExecution",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/{id}/cancel/": {
+      post: {
+        operationId: "tracer_sql-query_cancel",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLProject",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLExecution",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/sql-query/{id}/download/": {
+      get: {
+        operationId: "tracer_sql-query_download",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          file_format: {
+            required: true,
+            schema: {
+              type: "string",
+              enum: ["csv", "parquet"],
+            },
+          },
+        },
+        responses: {
+          200: {
+            type: "file",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -59692,6 +60022,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maximum: 100,
           minimum: 1,
         },
+        sampling_policy: {
+          $ref: "#/definitions/SamplingPolicy",
+        },
         last_run: {
           title: "Last run",
           type: "string",
@@ -59823,6 +60156,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["edit_type", "eval_task_id"],
       type: "object",
       properties: {
+        sampling_policy: {
+          $ref: "#/definitions/SamplingPolicy",
+        },
         name: {
           title: "Name",
           type: "string",
@@ -71775,6 +72111,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-json-value": true,
           description: "Any valid JSON value.",
         },
+        sampling_contact_attribute: {
+          title: "Sampling contact attribute",
+          type: "string",
+          maxLength: 200,
+        },
         tags: {
           title: "Tags",
           type: "object",
@@ -71837,6 +72178,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/ProjectListResult",
+        },
+      },
+    },
+    ProjectNameUpdate: {
+      required: ["project_id", "name"],
+      type: "object",
+      properties: {
+        sampling_contact_attribute: {
+          title: "Sampling contact attribute",
+          type: "string",
+          maxLength: 200,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        sampling_rate: {
+          title: "Sampling rate",
+          type: "number",
+          maximum: 1,
+          minimum: 0,
         },
       },
     },
@@ -75609,6 +75977,580 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "email",
           maxLength: 255,
           minLength: 1,
+        },
+      },
+    },
+    SQLCatalog: {
+      required: [
+        "identity_semantics",
+        "version",
+        "datasets",
+        "max_rows",
+        "max_window_days",
+        "can_save",
+      ],
+      type: "object",
+      properties: {
+        identity_semantics: {
+          title: "Identity semantics",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+        },
+        datasets: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLDataset",
+          },
+        },
+        max_rows: {
+          title: "Max rows",
+          type: "integer",
+        },
+        max_window_days: {
+          title: "Max window days",
+          type: "integer",
+        },
+        can_save: {
+          title: "Can save",
+          type: "boolean",
+        },
+      },
+    },
+    SQLExecution: {
+      required: [
+        "id",
+        "project_id",
+        "sql",
+        "state",
+        "created_at",
+        "expires_at",
+        "error",
+        "result",
+        "expired",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          minLength: 1,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: ["queued", "running", "succeeded", "failed", "cancelled"],
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        result: {
+          $ref: "#/definitions/SQLResult",
+        },
+        expired: {
+          title: "Expired",
+          type: "boolean",
+        },
+      },
+    },
+    SQLHistory: {
+      required: ["items", "has_more"],
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLExecution",
+          },
+        },
+        has_more: {
+          title: "Has more",
+          type: "boolean",
+        },
+      },
+    },
+    SQLProject: {
+      required: ["project_id"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    SQLRun: {
+      required: ["project_id", "sql", "start", "end"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          maxLength: 32768,
+          minLength: 1,
+        },
+        start: {
+          title: "Start",
+          type: "string",
+          format: "date-time",
+        },
+        end: {
+          title: "End",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    SQLRunSaved: {
+      required: ["project_id", "saved_query_id"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        saved_query_id: {
+          title: "Saved query id",
+          type: "string",
+          format: "uuid",
+        },
+        start: {
+          title: "Start",
+          type: "string",
+          format: "date-time",
+        },
+        end: {
+          title: "End",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    SQLSave: {
+      required: ["project_id", "name", "sql"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 160,
+          minLength: 1,
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          maxLength: 32768,
+          minLength: 1,
+        },
+        visibility: {
+          title: "Visibility",
+          type: "string",
+          enum: ["private", "project"],
+          default: "private",
+        },
+        chart: {
+          $ref: "#/definitions/SQLChart",
+        },
+        window_hours: {
+          title: "Window hours",
+          type: "integer",
+          default: 24,
+          maximum: 744,
+          minimum: 1,
+        },
+      },
+    },
+    SQLSaved: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        visibility: {
+          title: "Visibility",
+          type: "string",
+          enum: ["private", "project"],
+          readOnly: true,
+        },
+        chart: {
+          title: "Chart",
+          type: "object",
+          readOnly: true,
+        },
+        window_hours: {
+          title: "Window hours",
+          type: "integer",
+          readOnly: true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        created_by_id: {
+          title: "Created by id",
+          type: "string",
+          readOnly: true,
+        },
+      },
+    },
+    SQLSavedList: {
+      required: ["items", "has_more"],
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLSaved",
+          },
+        },
+        has_more: {
+          title: "Has more",
+          type: "boolean",
+        },
+      },
+    },
+    SQLWidget: {
+      required: ["project_id", "dashboard_id"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        dashboard_id: {
+          title: "Dashboard id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    SQLWidgetResponse: {
+      required: ["id", "dashboard_id"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        dashboard_id: {
+          title: "Dashboard id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    SamplingPreviewRequest: {
+      required: ["project", "sampling_policy"],
+      type: "object",
+      properties: {
+        project: {
+          title: "Project",
+          type: "string",
+          format: "uuid",
+        },
+        row_type: {
+          title: "Row type",
+          type: "string",
+          enum: ["spans", "traces", "sessions"],
+          default: "spans",
+        },
+        filters: {
+          title: "Filters",
+          type: "object",
+          "x-nullable": true,
+          properties: {
+            project_id: {
+              type: "string",
+              "x-nullable": true,
+              description: "Project scope for the evaluation task.",
+            },
+            date_range: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              minItems: 2,
+              maxItems: 2,
+              description:
+                "Half-open [start, end) ISO timestamps, normalized to UTC.",
+            },
+            date_preset: {
+              type: "string",
+              enum: [
+                "30m",
+                "6h",
+                "today",
+                "yesterday",
+                "7d",
+                "30d",
+                "3m",
+                "6m",
+                "12m",
+                "custom",
+              ],
+              description:
+                "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.",
+            },
+            created_at: {
+              type: "string",
+              description:
+                "Exclusive lower-bound ISO timestamp for legacy task filters, normalized to UTC.",
+            },
+            session_id: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description: "Trace session id(s) to constrain the task.",
+            },
+            trace_id: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description: "Trace id(s) to constrain linked-source tasks.",
+            },
+            span_id: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description:
+                "Observation span id(s) to constrain linked-source tasks.",
+            },
+            observation_type: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description:
+                "Observation span type(s), for example llm, tool, or chain.",
+            },
+            filters: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  column_id: {
+                    type: "string",
+                    description: "Column or attribute id to filter on.",
+                  },
+                  property_id: {
+                    type: "string",
+                    description:
+                      "Optional stable namespaced Property Registry identity.",
+                  },
+                  display_name: {
+                    type: "string",
+                    description: "Optional UI label for chips and saved views.",
+                  },
+                  source: {
+                    type: "string",
+                    description:
+                      "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+                  },
+                  output_type: {
+                    type: "string",
+                    description:
+                      "Optional metric output type metadata used by eval and annotation filters.",
+                  },
+                  filter_config: {
+                    type: "object",
+                    properties: {
+                      filter_type: {
+                        type: "string",
+                        description:
+                          "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                      },
+                      filter_op: {
+                        type: "string",
+                        description:
+                          "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                      },
+                      filter_value: {
+                        description:
+                          "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                      },
+                      col_type: {
+                        type: "string",
+                        description:
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      },
+                      attribute_value_types: {
+                        type: "array",
+                        items: {
+                          type: "string",
+                          enum: ["string", "number", "boolean"],
+                          "x-nullable": true,
+                        },
+                        description:
+                          "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                      },
+                    },
+                    required: ["filter_type", "filter_op"],
+                    additionalProperties: false,
+                  },
+                },
+                required: ["column_id", "filter_config"],
+                additionalProperties: false,
+              },
+            },
+            span_attributes_filters: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  column_id: {
+                    type: "string",
+                    description: "Column or attribute id to filter on.",
+                  },
+                  property_id: {
+                    type: "string",
+                    description:
+                      "Optional stable namespaced Property Registry identity.",
+                  },
+                  display_name: {
+                    type: "string",
+                    description: "Optional UI label for chips and saved views.",
+                  },
+                  source: {
+                    type: "string",
+                    description:
+                      "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+                  },
+                  output_type: {
+                    type: "string",
+                    description:
+                      "Optional metric output type metadata used by eval and annotation filters.",
+                  },
+                  filter_config: {
+                    type: "object",
+                    properties: {
+                      filter_type: {
+                        type: "string",
+                        description:
+                          "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                      },
+                      filter_op: {
+                        type: "string",
+                        description:
+                          "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                      },
+                      filter_value: {
+                        description:
+                          "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                      },
+                      col_type: {
+                        type: "string",
+                        description:
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      },
+                      attribute_value_types: {
+                        type: "array",
+                        items: {
+                          type: "string",
+                          enum: ["string", "number", "boolean"],
+                          "x-nullable": true,
+                        },
+                        description:
+                          "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                      },
+                    },
+                    required: ["filter_type", "filter_op"],
+                    additionalProperties: false,
+                  },
+                },
+                required: ["column_id", "filter_config"],
+                additionalProperties: false,
+              },
+            },
+          },
+          additionalProperties: false,
+        },
+        sampling_policy: {
+          $ref: "#/definitions/SamplingPolicy",
+        },
+        evals: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          default: [],
+          maxItems: 50,
+        },
+      },
+    },
+    SamplingPreviewResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SamplingPreviewResult",
         },
       },
     },
@@ -91237,6 +92179,57 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SamplingPolicy: {
+      required: ["version", "sampling_unit", "window"],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "integer",
+          maximum: 1,
+          minimum: 1,
+        },
+        sampling_unit: {
+          title: "Sampling unit",
+          type: "string",
+          enum: ["span", "trace", "session", "user", "attribute"],
+        },
+        unit_attribute: {
+          $ref: "#/definitions/SamplingAttribute",
+        },
+        missing_id: {
+          title: "Missing id",
+          type: "string",
+          enum: ["exclude", "row"],
+          default: "exclude",
+        },
+        mode: {
+          title: "Mode",
+          type: "string",
+          enum: ["closed", "live"],
+          default: "closed",
+        },
+        window: {
+          $ref: "#/definitions/SamplingWindow",
+        },
+        strata: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SamplingRule",
+          },
+        },
+        group_by: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SamplingAttribute",
+          },
+        },
+        default: {
+          $ref: "#/definitions/SamplingRule",
+        },
+      },
+      "x-nullable": true,
+    },
     EvalTaskCreateResult: {
       required: ["id"],
       type: "object",
@@ -99019,6 +100012,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-json-value": true,
           description: "Any valid JSON value.",
         },
+        sampling_contact_attribute: {
+          title: "Sampling contact attribute",
+          type: "string",
+          maxLength: 200,
+        },
         tags: {
           title: "Tags",
           type: "object",
@@ -102601,6 +103599,186 @@ export const OPENAPI_CONTRACT = Object.freeze({
         result: {
           title: "Result",
           type: "object",
+        },
+      },
+    },
+    SQLDataset: {
+      required: [
+        "available",
+        "unavailable_reason",
+        "name",
+        "description",
+        "columns",
+      ],
+      type: "object",
+      properties: {
+        available: {
+          title: "Available",
+          type: "boolean",
+        },
+        unavailable_reason: {
+          title: "Unavailable reason",
+          type: "string",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          minLength: 1,
+        },
+        columns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLColumn",
+          },
+        },
+      },
+    },
+    SQLResult: {
+      type: "object",
+      properties: {
+        columns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLColumn",
+          },
+        },
+        rows: {
+          type: "array",
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+            },
+          },
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+        },
+        row_count: {
+          title: "Row count",
+          type: "integer",
+        },
+        result_bytes: {
+          title: "Result bytes",
+          type: "integer",
+        },
+        elapsed_ms: {
+          title: "Elapsed ms",
+          type: "integer",
+        },
+      },
+    },
+    SQLChart: {
+      type: "object",
+      properties: {
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["table", "bar"],
+          default: "table",
+        },
+        x: {
+          title: "X",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        y: {
+          title: "Y",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+      },
+      default: {
+        type: "table",
+      },
+    },
+    SamplingPreviewResult: {
+      required: [
+        "policy_version",
+        "sampling_unit",
+        "mode",
+        "window",
+        "preview_window",
+        "as_of",
+        "strata",
+        "evaluator_count",
+        "expected_evaluations",
+        "selected_evaluations",
+        "estimated_cost",
+        "cost_note",
+        "population_note",
+      ],
+      type: "object",
+      properties: {
+        policy_version: {
+          title: "Policy version",
+          type: "string",
+          minLength: 1,
+        },
+        sampling_unit: {
+          title: "Sampling unit",
+          type: "string",
+          minLength: 1,
+        },
+        mode: {
+          title: "Mode",
+          type: "string",
+          minLength: 1,
+        },
+        window: {
+          $ref: "#/definitions/SamplingWindow",
+        },
+        preview_window: {
+          $ref: "#/definitions/SamplingWindow",
+        },
+        as_of: {
+          title: "As of",
+          type: "string",
+          format: "date-time",
+        },
+        strata: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SamplingPreviewCell",
+          },
+        },
+        evaluator_count: {
+          title: "Evaluator count",
+          type: "integer",
+          minimum: 0,
+        },
+        expected_evaluations: {
+          title: "Expected evaluations",
+          type: "number",
+          "x-nullable": true,
+        },
+        selected_evaluations: {
+          title: "Selected evaluations",
+          type: "integer",
+          "x-nullable": true,
+        },
+        estimated_cost: {
+          title: "Estimated cost",
+          type: "number",
+          "x-nullable": true,
+        },
+        cost_note: {
+          title: "Cost note",
+          type: "string",
+          minLength: 1,
+        },
+        population_note: {
+          title: "Population note",
+          type: "string",
+          minLength: 1,
         },
       },
     },
@@ -109463,6 +110641,93 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SamplingAttribute: {
+      required: ["key"],
+      type: "object",
+      properties: {
+        source: {
+          title: "Source",
+          type: "string",
+          enum: ["span", "resource", "metadata"],
+          default: "span",
+        },
+        key: {
+          title: "Key",
+          type: "string",
+          maxLength: 200,
+          minLength: 1,
+        },
+      },
+    },
+    SamplingRule: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 80,
+          minLength: 1,
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SamplingPredicate",
+          },
+        },
+        rate: {
+          title: "Rate",
+          description:
+            "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+          type: "number",
+          maximum: 100,
+          minimum: 0,
+        },
+        target_n: {
+          title: "Target n",
+          type: "integer",
+          maximum: 1000000,
+          minimum: 0,
+        },
+        min_n: {
+          title: "Min n",
+          type: "integer",
+          maximum: 1000000,
+          minimum: 0,
+        },
+        max_n: {
+          title: "Max n",
+          type: "integer",
+          maximum: 1000000,
+          minimum: 0,
+        },
+        rare_below: {
+          title: "Rare below",
+          type: "integer",
+          maximum: 1000000,
+          minimum: 0,
+        },
+      },
+    },
+    SamplingWindow: {
+      required: ["start"],
+      type: "object",
+      properties: {
+        start: {
+          title: "Start",
+          description: "Inclusive ISO 8601 UTC event time.",
+          type: "string",
+          minLength: 1,
+        },
+        end: {
+          title: "End",
+          description:
+            "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     EvalTaskUsageAggregationMetadata: {
       required: [
         "query_complete",
@@ -115675,6 +116940,65 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SQLColumn: {
+      required: ["name", "type"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    SamplingPreviewCell: {
+      required: [
+        "stratum",
+        "eligible_units",
+        "eligible_rows",
+        "expected_units",
+        "expected_rows",
+        "selected_units",
+        "selected_rows",
+      ],
+      type: "object",
+      properties: {
+        stratum: {
+          title: "Stratum",
+          type: "string",
+          minLength: 1,
+        },
+        eligible_units: {
+          title: "Eligible units",
+          type: "integer",
+        },
+        eligible_rows: {
+          title: "Eligible rows",
+          type: "integer",
+        },
+        expected_units: {
+          title: "Expected units",
+          type: "number",
+        },
+        expected_rows: {
+          title: "Expected rows",
+          type: "number",
+        },
+        selected_units: {
+          title: "Selected units",
+          type: "integer",
+        },
+        selected_rows: {
+          title: "Selected rows",
+          type: "integer",
+        },
+      },
+    },
     SavedViewDefaultTab: {
       required: ["key", "label", "tab_type"],
       type: "object",
@@ -118681,6 +120005,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
         default: {
           title: "Default",
           type: "string",
+        },
+      },
+    },
+    SamplingPredicate: {
+      required: ["key"],
+      type: "object",
+      properties: {
+        source: {
+          title: "Source",
+          type: "string",
+          enum: ["span", "resource", "metadata"],
+          default: "span",
+        },
+        key: {
+          title: "Key",
+          type: "string",
+          maxLength: 200,
+          minLength: 1,
+        },
+        op: {
+          title: "Op",
+          type: "string",
+          enum: ["in", "not_in", "exists", "missing", "gt", "gte", "lt", "lte"],
+          default: "in",
+        },
+        values: {
+          type: "array",
+          items: {
+            type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+          maxItems: 100,
         },
       },
     },

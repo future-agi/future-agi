@@ -9,7 +9,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
     dependencies = [
         ("accounts", "0026_authtoken_scope"),
-        ("tracer", "0116_error_feed_alert_models"),
+        ("tracer", "0117_cohort_sampling"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
