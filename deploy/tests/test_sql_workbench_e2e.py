@@ -81,8 +81,13 @@ def test_fixture_normalizes_only_its_account_using_the_production_profile(existi
     assert bootstrap.FIXTURE_PASSWORD not in statements[0]
     assert "HOST ANY" not in statements[0]
     assert "HOST IP '172.23.0.0/16'" in statements[0]
-    for key in QUERY_SETTINGS:
-        assert f"{key} = " in statements[0]
+    for key, value in QUERY_SETTINGS.items():
+        expected = (
+            f"{key} = '{value}' READONLY"
+            if isinstance(value, str)
+            else f"{key} = {value} READONLY"
+        )
+        assert expected in statements[0]
     assert (
         len([sql for sql in statements if sql.startswith("GRANT SELECT ON test_sql.")])
         == 6

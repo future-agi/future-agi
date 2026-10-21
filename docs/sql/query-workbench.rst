@@ -47,12 +47,16 @@ and scalar subqueries. Row grain and window semantics are important:
 ``eval_results``
   Current scores created in the window. The physical score store has no project
   column, so both a current project-owned evaluation configuration AND an owned
-  typed span/trace/session target in the selected window are mandatory. Span
-  targets match the (span id, trace id) pair, not a globally assumed span id. Null or
+  typed project-owned span/trace/session target are mandatory. Candidate ids come
+  from windowed eval rows; historical ownership lookups do not filter target
+  timestamps or materialize every id in a project. Thus a recent backfill eval
+  of a sixty-day-old span/trace or long-lived session is retained. Span targets
+  match the (span id, trace id) pair, not a globally assumed span id. Null or
   foreign targets never grant access. At most 1,000 config ids are admitted.
   ``eval_task_id`` is the task key. ``run_id`` remains NULL until actual execution
   provenance is available; tasks are not runs. Typed nullable ``policy_version``,
-  ``sampling_unit``, ``sampling_unit_id``, ``stratum``, ``inclusion_probability``,
+  ``cohort_id``, ``cohort_frozen_at``, ``membership_mode``, ``sampling_unit``,
+  ``sampling_unit_id``, ``stratum``, ``inclusion_probability``,
   ``sampling_window_start/end`` and ``population_size`` read
   ``output_metadata._task_selection.sampling``. Legacy/absent/malformed metadata
   remains NULL, never probability 1. Invalid probabilities are NULL.
@@ -67,7 +71,8 @@ there is no user-readable system-schema discovery.
 ``derived_metrics`` is an optional seventh dataset over the committed-attempt view
 from the derived metrics feature. It preserves metric/run/result ids, version,
 rollup/group key, value/numerator/denominator, status, unit/valid/missing/invalid
-probability counts, UTC window/as-of and definition/source lineage. All three
+probability counts, UTC window/as-of, definition/source lineage and ``sampling_scope``
+(``cohort_id:policy_version``, empty when unavailable). All three
 org/workspace/project predicates apply. Only metric windows fully contained in
 the selected window are returned; no FINAL is applied to the view. Enable
 ``SQL_WORKBENCH_DERIVED_METRICS_ENABLED=true`` after its migration and invoke
@@ -84,6 +89,13 @@ session/user identities. The catalog and a persistent Query UI notice disclose
 this limitation. Joins/distinct counts across an identity merge can differ from
 Observe; canonical consolidation remains a release requirement, not a claimed
 capability.
+
+Each dataset keeps its documented event-time meaning. A join intersects those
+windows: recent ``eval_results`` retain old targets, while separately querying
+``spans`` by a recent start-time window or ``sessions`` by recent first-seen time
+still excludes old events. This is not used as an authorization shortcut.
+Sampling ``sampling_unit_id`` is the producer's identity (potentially canonical),
+not an alias for this catalog's raw session/user key.
 
 Example (join, one result row per locale)::
 
@@ -105,7 +117,8 @@ Security and lifecycle
   a closed AST-node set, explicit approved functions and unqualified virtual
   relations are accepted. Unknown future syntax/functions fail closed.
 * Every physical source is replaced by a server-owned SELECT with explicit columns
-  and scope predicates. Physical names are database-qualified so user CTE names
+  and scope predicates. Fact windows are distinct from candidate-target ownership
+  predicates. Physical names are database-qualified so user CTE names
   cannot shadow them. User identifiers must be simple ASCII SQL identifiers.
 * Writes, multiple statements, SETTINGS, FORMAT, OUTFILE, table functions,
   dictionaries, system/information_schema access, file/network functions, recursive
@@ -124,6 +137,7 @@ Security and lifecycle
   service-principal concurrency at two. No process-local-only semaphore.
 * Jobs expire in the queue after 90 seconds. Execution is capped at 30 seconds,
   10 million scanned rows, 1 GB scanned bytes, 256 MiB memory, 64 MiB join state,
+  one million/64 MiB candidate-set entries,
   two threads, 10,000 output rows and 8 MB output. Leaf-node limits apply as well.
   Native cancellation addresses the worker's own connection, never admin KILL SQL.
   SQL uses the existing Temporal ``exact_aggregation`` worker: 45-second activity,
@@ -184,7 +198,10 @@ Project-specific direct BI/notebook access (self-hosted operator only)::
 
 This emits a non-login ``HOST NONE`` definer, explicit per-source row policies, a
 ``sql_analyst_team`` database with six SQL SECURITY DEFINER views, and an invoker
-with SELECT on those views only. No wildcard, write, SOURCES or access-management
+with SELECT on those views only. Physical row policies use intrinsic ownership,
+not fact timestamps or recursive candidate queries. Eval policies restrict the
+project-owned config set; the immutable published eval view additionally enforces
+typed candidate-target ownership across history. No wildcard, write, SOURCES or access-management
 grants are issued. The password is represented only as a SHA-256 credential hash
 in emitted DDL; protect that output too. Restricted network CIDRs are mandatory.
 The views have a rolling bounded window. Evaluation configuration ids are frozen
@@ -281,3 +298,15 @@ this load on a shared developer database::
 
 Measured local checks are tiny fixtures, not this profile. No billion-span or
 24-hour result is represented by their unit/integration test timings.
+
+Cluster coordinator provisioning
+-------------------------------
+
+The provisioning commands print single-coordinator DDL. On a sharded/replicated
+installation, apply that same reviewed DDL on **every possible read-only
+coordinator**, including principals, profiles, grants, row policies and views.
+Use each node's operator client; these commands do not discover or mutate cluster
+topology. Sources must remain the logical Distributed tables, never ``*_local``.
+The cluster deployment owns immutable routing, consistent per-node schema and
+Keeper paths. A multi-node runtime qualification is still required; the local
+single-node checks do not establish it.

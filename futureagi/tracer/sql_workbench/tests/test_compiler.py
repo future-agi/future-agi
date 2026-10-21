@@ -150,7 +150,7 @@ def test_eval_requires_config_and_target_and_no_null_shortcut(scope):
         and "target_type = 'trace'" in sql
         and "target_type = 'session'" in sql
     )
-    assert "AND ((target_type" in sql
+    assert "WHERE ((target_type" in sql
     assert "tuple(observation_span_id, toString(trace_id)) IN" in sql
     assert "trace_id IS NOT NULL" in sql
     assert "OR project_id IS NULL" not in sql
@@ -230,3 +230,40 @@ def test_derived_metrics_uses_all_scope_keys_and_committed_view(scope):
     assert "analytics.derived_metrics" in sql
     assert "derived_metrics FINAL" not in sql
     assert "window_start >=" in sql and "window_end <=" in sql
+
+
+def test_recent_eval_ownership_is_candidate_bounded_not_target_time_bounded(scope):
+    sql = sources(scope)["eval_results"]
+    assert "created_at >=" in sql
+    assert "start_time >=" not in sql
+    assert "first_seen >=" not in sql
+    assert "AND id IN (SELECT observation_span_id FROM __sql_eval_candidates" in sql
+    compiled = compile_query("SELECT score FROM eval_results", scope)
+    assert "analytics.__sql_eval_candidates" not in compiled
+    assert "analytics.spans FINAL" in compiled
+
+
+def test_intrinsic_row_policies_do_not_recurse_or_apply_fact_windows(scope):
+    from tracer.sql_workbench.catalog import ownership_predicates
+
+    for predicate in ownership_predicates(scope).values():
+        assert "SELECT " not in predicate
+        assert (
+            "created_at" not in predicate
+            and "first_seen" not in predicate
+            and "start_time" not in predicate
+        )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "toUUID('11111111-1111-4111-8111-111111111111')",
+        "(SELECT id FROM traces LIMIT 1)",
+    ],
+)
+def test_scalar_with_alias_cannot_capture_scope_columns(scope, expression):
+    with pytest.raises(UnsafeQuery, match="scalar WITH"):
+        compile_query(
+            f"WITH {expression} AS project_id SELECT count() FROM traces", scope
+        )

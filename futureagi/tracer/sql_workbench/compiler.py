@@ -7,7 +7,7 @@ from sqlglot import exp
 from sqlglot.errors import ErrorLevel, SqlglotError
 from sqlglot.optimizer.scope import Scope as QueryScope, traverse_scope
 
-from .catalog import COLUMNS, CatalogUnavailable, Scope, sources
+from .catalog import COLUMNS, SOURCE_CTES, CatalogUnavailable, Scope, sources
 
 MAX_SQL_BYTES = 32_768
 MAX_AST_NODES = 1500
@@ -102,6 +102,13 @@ def validate(sql: str):
         ):
             raise UnsafeQuery(
                 "Settings, output formats, sampling and statement modifiers are not allowed."
+            )
+        if isinstance(node, exp.CTE) and (
+            node.args.get("scalar")
+            or not isinstance(node.this, (exp.Select, exp.Union))
+        ):
+            raise UnsafeQuery(
+                "Only SELECT/UNION relation CTEs are supported; scalar WITH aliases are not allowed."
             )
         if isinstance(node, exp.With) and node.args.get("recursive"):
             raise UnsafeQuery("Recursive CTEs are not supported.")
@@ -198,7 +205,8 @@ def compile_query(sql: str, scope: Scope) -> str:
         source = sqlglot.parse_one(scoped_sources[table.name], read="clickhouse")
         # Qualification prevents user CTE names from shadowing physical sources.
         for physical in source.find_all(exp.Table):
-            physical.set("db", exp.to_identifier(scope.database))
+            if physical.name not in SOURCE_CTES:
+                physical.set("db", exp.to_identifier(scope.database))
         replacement = exp.Subquery(this=source, alias=alias)
         table.replace(replacement)
     # The outer bound also covers UNION, user LIMIT/OFFSET, and aggregation.

@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from uuid import UUID
 
 CATALOG_VERSION = 1
+EVAL_CANDIDATES_CTE = "__sql_eval_candidates"
+SOURCE_CTES = frozenset({EVAL_CANDIDATES_CTE})
 IDENTITY_SEMANTICS = "Raw storage identifiers: merged session/user identities are not consolidated. Joins and distinct counts may differ from Observe after an identity merge."
 
 
@@ -112,6 +114,9 @@ COLUMNS = {
         "run_id": "Nullable(String)",
         "eval_task_id": "Nullable(String)",
         "policy_version": "Nullable(String)",
+        "cohort_id": "Nullable(String)",
+        "cohort_frozen_at": "Nullable(DateTime64)",
+        "membership_mode": "Nullable(String)",
         "sampling_unit": "Nullable(String)",
         "sampling_unit_id": "Nullable(String)",
         "stratum": "Nullable(String)",
@@ -157,6 +162,7 @@ COLUMNS["derived_metrics"] = {
     "as_of": "DateTime64",
     "source_run_id": "String",
     "definition_hash": "String",
+    "sampling_scope": "String",
 }
 
 DESCRIPTIONS = {
@@ -192,6 +198,33 @@ def catalog(
     ]
 
 
+def ownership_predicates(scope: Scope) -> dict[str, str]:
+    """Intrinsic ownership only, never event-time filters or recursive policies.
+
+    Eval rows carry a globally unique configuration FK, not a tenant key. Their
+    DB policy restricts that project-owned config set; the published view also
+    checks typed target ownership through bounded candidate lookups.
+    """
+    project = f"toUUID('{scope.project_id}')"
+    org = f"toUUID('{scope.organization_id}')"
+    workspace = f"toUUID('{scope.workspace_id}')"
+    configs = ", ".join(f"toUUID('{value}')" for value in scope.eval_config_ids)
+    config_scope = f"custom_eval_config_id IN ({configs})" if configs else "0"
+    live_eval = (
+        "is_deleted = 0"
+        if scope.eval_table.endswith("_v2")
+        else "deleted = 0 AND _peerdb_is_deleted = 0"
+    )
+    return {
+        "spans": f"project_id = {project} AND org_id = {org} AND is_deleted = 0",
+        "traces": f"project_id = {project} AND is_deleted = 0",
+        "trace_sessions": f"project_id = {project} AND is_deleted = 0",
+        "end_users": f"project_id = {project} AND organization_id = {org} AND is_deleted = 0",
+        scope.eval_table: f"{live_eval} AND {config_scope}",
+        "model_hub_score": f"organization_id = {org} AND workspace_id = {workspace} AND tracer_project_id = {project} AND deleted = 0 AND _peerdb_is_deleted = 0",
+    }
+
+
 def sources(scope: Scope) -> dict[str, str]:
     """Only canonical UUIDs and datetimes enter these server-authored templates."""
     from datetime import timezone
@@ -208,26 +241,23 @@ def sources(scope: Scope) -> dict[str, str]:
             f"{column} < toDateTime64('{end}', 6, 'UTC')"
         )
 
-    span_scope = f"project_id = {project} AND org_id = {org} AND is_deleted = 0 AND {window('start_time')}"
-    trace_scope = (
-        f"project_id = {project} AND is_deleted = 0 AND {window('created_at')}"
-    )
-    session_scope = (
-        f"project_id = {project} AND is_deleted = 0 AND {window('first_seen')}"
-    )
-    configs = ", ".join(f"toUUID('{value}')" for value in scope.eval_config_ids)
-    config_scope = f"custom_eval_config_id IN ({configs})" if configs else "0"
-    # The eval store has no project key. BOTH config ownership and a typed
-    # project-owned target are required. NULL keys never grant access.
+    ownership = ownership_predicates(scope)
+    span_scope = f"{ownership['spans']} AND {window('start_time')}"
+    trace_scope = f"{ownership['traces']} AND {window('created_at')}"
+    session_scope = f"{ownership['trace_sessions']} AND {window('first_seen')}"
+    # Materialize no unbounded project-wide id set. Candidate ids come only from
+    # live, config-owned evals CREATED in the selected window. Historical target
+    # lookup has ownership + candidate predicates, NOT the eval's time predicate.
+    candidate_columns = "id, trace_id, observation_span_id, trace_session_id, custom_eval_config_id, target_type, output_float, output_bool, output_str, error, created_at, eval_task_id, output_metadata"
+    eligible_evals = f"SELECT {candidate_columns} FROM {scope.eval_table} FINAL WHERE {ownership[scope.eval_table]} AND {window('created_at')}"
+    span_candidates = f"SELECT observation_span_id FROM {EVAL_CANDIDATES_CTE} WHERE target_type = 'span' AND observation_span_id IS NOT NULL"
+    span_trace_candidates = f"SELECT toString(trace_id) FROM {EVAL_CANDIDATES_CTE} WHERE target_type = 'span' AND trace_id IS NOT NULL"
+    trace_candidates = f"SELECT trace_id FROM {EVAL_CANDIDATES_CTE} WHERE target_type = 'trace' AND trace_id IS NOT NULL"
+    session_candidates = f"SELECT trace_session_id FROM {EVAL_CANDIDATES_CTE} WHERE target_type = 'session' AND trace_session_id IS NOT NULL"
     targets = (
-        f"((target_type = 'span' AND trace_id IS NOT NULL AND tuple(observation_span_id, toString(trace_id)) IN (SELECT id, trace_id FROM spans FINAL WHERE {span_scope})) "
-        f"OR (target_type = 'trace' AND trace_id IN (SELECT id FROM traces FINAL WHERE {trace_scope})) "
-        f"OR (target_type = 'session' AND trace_session_id IN (SELECT trace_session_id FROM trace_sessions FINAL WHERE {session_scope})))"
-    )
-    live_eval = (
-        "is_deleted = 0"
-        if scope.eval_table.endswith("_v2")
-        else "deleted = 0 AND _peerdb_is_deleted = 0"
+        f"((target_type = 'span' AND trace_id IS NOT NULL AND tuple(observation_span_id, toString(trace_id)) IN (SELECT id, trace_id FROM spans FINAL WHERE {ownership['spans']} AND id IN ({span_candidates}) AND trace_id IN ({span_trace_candidates}))) "
+        f"OR (target_type = 'trace' AND trace_id IN (SELECT id FROM traces FINAL WHERE {ownership['traces']} AND id IN ({trace_candidates}))) "
+        f"OR (target_type = 'session' AND trace_session_id IN (SELECT trace_session_id FROM trace_sessions FINAL WHERE {ownership['trace_sessions']} AND trace_session_id IN ({session_candidates}))))"
     )
 
     def sampling(key, data_type="String"):
@@ -238,6 +268,9 @@ def sources(scope: Scope) -> dict[str, str]:
     sampling_projection = ", ".join(
         [
             f"{sampling('policy_version')} AS policy_version",
+            f"{sampling('cohort_id')} AS cohort_id",
+            "parseDateTime64BestEffortOrNull(JSONExtractString(output_metadata, '_task_selection', 'sampling', 'cohort_frozen_at'), 6, 'UTC') AS cohort_frozen_at",
+            f"{sampling('membership_mode')} AS membership_mode",
             f"{sampling('sampling_unit')} AS sampling_unit",
             f"{sampling('sampling_unit_id')} AS sampling_unit_id",
             f"{sampling('stratum')} AS stratum",
@@ -252,7 +285,7 @@ def sources(scope: Scope) -> dict[str, str]:
         "traces": f"SELECT id, session_id, session_id AS raw_session_id, name, external_id, created_at, metadata FROM traces FINAL WHERE {trace_scope}",
         "sessions": f"SELECT s.trace_session_id AS id, s.trace_session_id AS raw_id, s.external_session_id AS external_id, s.first_seen, coalesce(l.locale, '') AS locale FROM (SELECT trace_session_id, external_session_id, first_seen FROM trace_sessions FINAL WHERE {session_scope}) AS s LEFT JOIN (SELECT trace_session_id, argMaxIf(attrs_string['locale'], tuple(start_time, id), mapContains(attrs_string, 'locale')) AS locale FROM spans FINAL WHERE {span_scope} AND trace_session_id IS NOT NULL GROUP BY trace_session_id) AS l ON s.trace_session_id = l.trace_session_id",
         "users": f"SELECT end_user_id AS id, end_user_id AS raw_id, user_id AS external_id, user_id_type, first_seen, metadata FROM end_users FINAL WHERE project_id = {project} AND organization_id = {org} AND is_deleted = 0 AND {window('first_seen')}",
-        "eval_results": f"SELECT id, trace_id, observation_span_id AS span_id, trace_session_id AS session_id, trace_session_id AS raw_session_id, custom_eval_config_id AS config_id, target_type, output_float AS score, output_bool AS passed, output_str AS label, error, created_at, CAST(NULL AS Nullable(String)) AS run_id, eval_task_id, {sampling_projection} FROM {scope.eval_table} FINAL WHERE {live_eval} AND {window('created_at')} AND {config_scope} AND {targets}",
+        "eval_results": f"WITH {EVAL_CANDIDATES_CTE} AS ({eligible_evals}) SELECT id, trace_id, observation_span_id AS span_id, trace_session_id AS session_id, trace_session_id AS raw_session_id, custom_eval_config_id AS config_id, target_type, output_float AS score, output_bool AS passed, output_str AS label, error, created_at, CAST(NULL AS Nullable(String)) AS run_id, eval_task_id, {sampling_projection} FROM {EVAL_CANDIDATES_CTE} WHERE {targets}",
         "annotations": f"SELECT id, trace_id, observation_span_id AS span_id, trace_session_id AS session_id, trace_session_id AS raw_session_id, label_id, value, notes, created_at, score_source FROM model_hub_score FINAL WHERE organization_id = {org} AND workspace_id = {workspace} AND tracer_project_id = {project} AND deleted = 0 AND _peerdb_is_deleted = 0 AND {window('created_at')}",
     }
 

@@ -294,6 +294,9 @@ def test_real_sampling_metadata_preserves_unknowns_and_task_run_distinction(
     task_id = str(uuid4())
     sampling = {
         "policy_version": "policy-v1",
+        "cohort_id": "cohort-1",
+        "cohort_frozen_at": scope.start.isoformat(),
+        "membership_mode": "frozen",
         "stratum": "locale-0",
         "inclusion_probability": 0.25,
         "sampling_unit": "session",
@@ -332,6 +335,13 @@ def test_real_sampling_metadata_preserves_unknowns_and_task_run_distinction(
             4,
         )
     ]
+    cohort = client.execute(
+        compile_query(
+            "SELECT cohort_id, cohort_frozen_at, membership_mode FROM eval_results",
+            scope,
+        )
+    )
+    assert cohort == [("cohort-1", scope.start, "frozen")]
     sampling["inclusion_probability"] = 2
     write(2)
     assert client.execute(query)[0][4] is None
@@ -398,7 +408,9 @@ def test_e2e_only_bootstrap_is_idempotent_on_real_clickhouse(scoped_clickhouse):
         client.execute(f"DROP USER IF EXISTS {bootstrap.ACCOUNT}")
 
 
-def test_direct_bi_views_and_row_policies_are_tenant_safe(scoped_clickhouse):
+def test_direct_bi_views_and_row_policies_are_tenant_safe(
+    scoped_clickhouse, record_property
+):
     import ipaddress
     import secrets
     from clickhouse_driver import Client
@@ -413,8 +425,35 @@ def test_direct_bi_views_and_row_policies_are_tenant_safe(scoped_clickhouse):
             "Direct BI test needs explicit permission for its separate ephemeral view database."
         )
     client, scope, ids = scoped_clickhouse
-    principal = f"sql_bi_{uuid4().hex[:12]}"
+    principal = (
+        os.environ.get("SQL_WORKBENCH_DIRECT_TEST_PRINCIPAL")
+        or f"sql_bi_{uuid4().hex[:12]}"
+    )
+    assert re.fullmatch(r"sql_bi_[0-9a-f]{12}", principal)
     view_database = f"sql_{principal}"
+    definer = f"sqld_{principal}"
+    assert (
+        client.execute(
+            "SELECT name FROM system.users WHERE name IN %(names)s",
+            {"names": (principal, definer)},
+        )
+        == []
+    )
+    assert (
+        client.execute(
+            "SELECT name FROM system.databases WHERE name=%(name)s",
+            {"name": view_database},
+        )
+        == []
+    )
+    record_property(
+        "sql_direct_objects",
+        {
+            "source_database": scope.database,
+            "view_database": view_database,
+            "principals": [principal, definer],
+        },
+    )
     password = secrets.token_urlsafe(32)
     address = ipaddress.ip_address(
         str(
@@ -453,16 +492,48 @@ def test_direct_bi_views_and_row_policies_are_tenant_safe(scoped_clickhouse):
         )
         assert reader.execute("SELECT name FROM spans") == [("tenant-0",)]
         assert reader.execute(
+            f"WITH toUUID('{scope.project_id}') AS project_id SELECT count() FROM traces"
+        ) == [(1,)]
+        assert reader.execute(
+            f"WITH toUUID('{scope.organization_id}') AS organization_id, toUUID('{scope.workspace_id}') AS workspace_id, toUUID('{scope.project_id}') AS tracer_project_id SELECT count() FROM annotations"
+        ) == [(1,)]
+
+        assert reader.execute(
             "SELECT s.locale, avg(e.score) FROM sessions s JOIN eval_results e ON s.id=e.session_id GROUP BY s.locale"
         ) == [("locale-0", 0.5)]
         assert reader.execute("SELECT id FROM annotations") == [(ids["annotation"],)]
+        other_project = client.execute(
+            f"SELECT DISTINCT project_id FROM {scope.database}.spans WHERE project_id != %(project)s",
+            {"project": scope.project_id},
+        )[0][0]
+        client.execute(
+            f"CREATE VIEW {view_database}.foreign_spans AS SELECT id FROM {scope.database}.spans WHERE project_id = %(project)s",
+            {"project": other_project},
+        )
+        assert client.execute("EXISTS TABLE system.query_log") == [(1,)]
         for forbidden in [
             f"SELECT count() FROM {scope.database}.spans",
-            "SET max_execution_time=0",
-            "SELECT count() FROM file('/etc/passwd', 'LineAsString')",
+            f"SELECT count() FROM {view_database}.foreign_spans",
+            "SELECT count() FROM system.query_log",
+            "SELECT count() FROM file('/does-not-exist-sql-probe', 'LineAsString')",
+            "SELECT count() FROM url('http://127.0.0.1:1/sql-probe', 'LineAsString')",
+            "SELECT count() FROM remote('127.0.0.1:1', 'default', 'sql_probe')",
         ]:
-            with pytest.raises(ServerException):
+            with pytest.raises(ServerException) as denied:
                 reader.execute(forbidden)
+            assert (
+                denied.value.code == 497
+            ), "Expected privilege denial, not syntax/network/source failure"
+        for forbidden in [
+            "SET max_execution_time=0",
+            "SET readonly=0",
+            "SET prefer_column_name_to_alias=0",
+            f"INSERT INTO {view_database}.spans (name) VALUES ('forbidden')",
+            f"GRANT SELECT ON {scope.database}.spans TO {principal}",
+        ]:
+            with pytest.raises(ServerException) as denied:
+                reader.execute(forbidden)
+            assert denied.value.code in {164, 497}
         # Default server policy behavior must not silently deny existing readers.
         assert client.execute(f"SELECT count() FROM {scope.database}.spans") == before
     finally:
@@ -497,3 +568,57 @@ def test_session_locale_uses_latest_present_attribute_not_missing_child(
     assert client.execute(compile_query("SELECT locale FROM sessions", scope)) == [
         ("locale-0",)
     ]
+
+
+def test_recent_backfill_evaluations_keep_old_owned_targets(scoped_clickhouse):
+    client, scope, ids = scoped_clickhouse
+    old = scope.start - timedelta(days=60)
+    now = scope.end - timedelta(minutes=1)
+    trace, session, span = uuid4(), uuid4(), "old-owned-span"
+    client.execute(
+        f"INSERT INTO {scope.database}.traces (project_id,id,session_id,name,created_at) VALUES",
+        [(scope.project_id, trace, session, "old-trace", old)],
+    )
+    client.execute(
+        f"INSERT INTO {scope.database}.trace_sessions (project_id,trace_session_id,external_session_id,first_seen) VALUES",
+        [(scope.project_id, session, "old-session", old)],
+    )
+    client.execute(
+        f"INSERT INTO {scope.database}.spans (project_id,org_id,id,trace_id,trace_session_id,name,start_time) VALUES",
+        [
+            (
+                scope.project_id,
+                scope.organization_id,
+                span,
+                str(trace),
+                session,
+                "old-span",
+                old,
+            )
+        ],
+    )
+    recent_ids = [uuid4(), uuid4(), uuid4()]
+    client.execute(
+        f"INSERT INTO {scope.database}.tracer_eval_logger_v2 (id,trace_id,observation_span_id,trace_session_id,custom_eval_config_id,target_type,created_at) VALUES",
+        [
+            (recent_ids[0], trace, span, None, scope.eval_config_ids[0], "span", now),
+            (recent_ids[1], trace, span, None, scope.eval_config_ids[0], "trace", now),
+            (
+                recent_ids[2],
+                None,
+                None,
+                session,
+                scope.eval_config_ids[0],
+                "session",
+                now,
+            ),
+        ],
+    )
+    returned = {
+        row[0]
+        for row in client.execute(compile_query("SELECT id FROM eval_results", scope))
+    }
+    assert returned == {ids["eval"], *recent_ids}
+    # User CTE names cannot shadow the server's internal ownership candidates.
+    shadow = "WITH __sql_eval_candidates AS (SELECT * FROM annotations) SELECT id FROM eval_results"
+    assert {row[0] for row in client.execute(compile_query(shadow, scope))} == returned

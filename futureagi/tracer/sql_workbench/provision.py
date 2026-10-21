@@ -7,7 +7,7 @@ from datetime import timezone
 import sqlglot
 from sqlglot import exp
 
-from .catalog import Scope, sources
+from .catalog import SOURCE_CTES, Scope, ownership_predicates, sources
 from .runner import QUERY_SETTINGS
 
 SAFE_NAME = re.compile(r"[a-z][a-z0-9_]{0,47}\Z")
@@ -77,25 +77,10 @@ def direct_access_ddl(scope: Scope, *, database, principal, password, cidr):
                 if replacement:
                     node.replace(sqlglot.parse_one(replacement, read="clickhouse"))
         templates[dataset] = tree.sql(dialect="clickhouse")
-    # Server-authored predicates are reused verbatim for row policies as defense
-    # in depth, in addition to the view WHERE clauses. Every physical table gets
-    # its OWN predicate; users receive no SELECT privilege on the base tables.
-    predicates = {}
-    for text in templates.values():
-        tree = sqlglot.parse_one(text, read="clickhouse")
-        for select in tree.find_all(exp.Select):
-            from_ = select.args.get("from_")
-            physical = from_.this if from_ else None
-            if isinstance(physical, exp.Final):
-                physical = physical.this
-            if isinstance(physical, exp.Table) and select.args.get("where"):
-                predicates.setdefault(physical.name, select.args["where"].this.copy())
-    for table, predicate in predicates.items():
-        # Row policies containing typed target subqueries are supported on the
-        # qualified CH25 deployment; grants remain limited to these tables.
-        for reference in predicate.find_all(exp.Table):
-            reference.set("db", exp.to_identifier(database))
-        condition = predicate.sql(dialect="clickhouse")
+    # Policies enforce intrinsic ownership, not fact timestamps. Reusing a
+    # view's candidate subqueries here would recursively apply the eval policy
+    # to itself and conflate old-target ownership with a recent fact window.
+    for table, condition in ownership_predicates(scope).items():
         statements.append(f"GRANT SELECT ON {database}.{name(table)} TO {definer}")
         statements.append(
             f"CREATE ROW POLICY {principal}_{name(table)} ON {database}.{name(table)} FOR SELECT USING {condition} TO {definer}"
@@ -103,7 +88,8 @@ def direct_access_ddl(scope: Scope, *, database, principal, password, cidr):
     for dataset, text in templates.items():
         tree = sqlglot.parse_one(text, read="clickhouse")
         for table in tree.find_all(exp.Table):
-            table.set("db", exp.to_identifier(database))
+            if table.name not in SOURCE_CTES:
+                table.set("db", exp.to_identifier(database))
         statements.append(
             f"CREATE VIEW {view_db}.{dataset} DEFINER = {definer} SQL SECURITY DEFINER AS {tree.sql(dialect='clickhouse')}"
         )
