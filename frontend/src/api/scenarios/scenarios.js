@@ -15,13 +15,16 @@ export const useGetScenarioDetail = (scenarioId, options = {}) => {
   });
 };
 
+export const MAX_PINNED_SCENARIOS = 100;
+
 export const useGetScenarioList = (
   search_text,
-  { simulationType, ...options } = {},
+  { simulationType, pinnedScenarioIds, ...options } = {},
 ) => {
+  const pinnedIds = (pinnedScenarioIds || []).slice(0, MAX_PINNED_SCENARIOS);
   return useInfiniteQuery({
     ...options,
-    queryKey: ["scenarios", search_text, simulationType],
+    queryKey: ["scenarios", search_text, simulationType, pinnedIds],
     queryFn: ({ pageParam }) => {
       return axios.get(endpoints.scenarios.list, {
         params: {
@@ -29,6 +32,9 @@ export const useGetScenarioList = (
           limit: 20,
           ...(search_text && { search: search_text }),
           ...(simulationType && { agent_type: simulationType }),
+          ...(pinnedIds.length && {
+            selected_scenarios: JSON.stringify(pinnedIds),
+          }),
         },
       });
     },
