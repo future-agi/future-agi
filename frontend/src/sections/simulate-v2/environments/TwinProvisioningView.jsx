@@ -7,7 +7,6 @@ import {
 import { useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
-import { SectionCard } from "../components/primitives";
 import AssistantConsole from "../assistant/AssistantConsole";
 import TwinLogo from "../components/TwinLogo";
 import { twinById } from "../_mock/twins";
@@ -235,13 +234,18 @@ export default function TwinProvisioningView({ env, envState, onDone }) {
         </Stack>
       </Stack>
 
-      {/* split body */}
+      {/* split body — one surface split by a single rule, like the review
+          screen and the workspace */}
       <Box sx={{
-        flex: 1, minHeight: 0, display: "grid", gap: 2, p: 2,
-        gridTemplateColumns: { xs: "1fr", lg: "minmax(360px, 400px) 1fr" },
+        flex: 1, minHeight: 0, display: "grid",
+        gridTemplateColumns: { xs: "1fr", lg: "minmax(340px, 400px) 1fr" },
       }}>
         {/* left — narrating chat */}
-        <SectionCard sx={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <Box sx={{
+          height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden",
+          borderStyle: "solid", borderWidth: 0, borderColor: "divider",
+          borderRightWidth: { xs: 0, lg: 1 }, borderBottomWidth: { xs: 1, lg: 0 },
+        }}>
           <AssistantConsole
             turns={turns}
             running={phaseIdx < PHASES.length}
@@ -251,17 +255,17 @@ export default function TwinProvisioningView({ env, envState, onDone }) {
             frozen
             frozenReason="The sandboxes are still being set up"
           />
-        </SectionCard>
+        </Box>
 
         {/* right — animation + step list */}
-        <SectionCard sx={{ minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", px: 2.5 }}>
+        <Box sx={{ minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", px: 2.5, bgcolor: "background.paper" }}>
           <Box sx={{ pt: 2, overflow: "auto" }}>
             <SandboxSpinup services={services} phaseIdx={phaseIdx} serviceProgress={serviceProgress} />
             <Box sx={{ mt: 2.5 }}>
               <PhaseTimeline phaseIdx={phaseIdx} services={services} />
             </Box>
           </Box>
-        </SectionCard>
+        </Box>
       </Box>
     </Box>
   );

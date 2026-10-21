@@ -48,14 +48,25 @@ export default function ConnectOnlyWorld({ env, sx }) {
     },
   ];
 
+  /* Built from a description and no agent yet: not a phone agent calling its
+     own systems — there's simply nothing to read until one is connected. */
+  const awaitingAgent = env?.builtFrom?.kind === "scratch" && !(env?.tools || []).length;
+  const shown = awaitingAgent ? [
+    { label: "Tools", value: "None yet — read from your agent when you connect it." },
+    { label: "Data", value: "None yet — seeded from what the agent's tools need, once it's connected." },
+    { label: "Proof", value: "Each scenario has a reference outcome and sub-goals; it's proved when the agent's tools are known." },
+  ] : rows;
+
   return (
     <SectionCard
-      title="No world to reset"
-      subtitle="This phone agent calls its own systems, so there is no seeded data to restore between scenarios"
+      title={awaitingAgent ? "No world yet" : "No world to reset"}
+      subtitle={awaitingAgent
+        ? "Built from your description — the world is set up when you connect your agent"
+        : "This phone agent calls its own systems, so there is no seeded data to restore between scenarios"}
       sx={sx}
     >
       <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-        {rows.map((r) => (
+        {shown.map((r) => (
           <Box
             key={r.label}
             sx={{ display: "grid", gridTemplateColumns: "120px minmax(0, 1fr)", columnGap: 2, px: 2.5, py: 1.25 }}
