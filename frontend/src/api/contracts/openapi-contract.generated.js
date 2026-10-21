@@ -99999,6 +99999,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "repeated",
         "flaky",
         "flip_rate",
+        "k",
+        "inconclusive",
+        "pass_hat_1",
+        "pass_hat_k",
+        "pass_hat_k_scenarios",
         "pass_rate_interval",
         "rows",
       ],
@@ -100032,6 +100037,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Flip rate",
           type: "number",
           "x-nullable": true,
+        },
+        k: {
+          title: "K",
+          type: "integer",
+          "x-nullable": true,
+        },
+        inconclusive: {
+          title: "Inconclusive",
+          type: "integer",
+        },
+        pass_hat_1: {
+          title: "Pass hat 1",
+          type: "number",
+          "x-nullable": true,
+        },
+        pass_hat_k: {
+          title: "Pass hat k",
+          type: "number",
+          "x-nullable": true,
+        },
+        pass_hat_k_scenarios: {
+          title: "Pass hat k scenarios",
+          type: "integer",
         },
         pass_rate_interval: {
           $ref: "#/definitions/ReliabilityInterval",
@@ -113674,7 +113702,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     ReliabilityInterval: {
-      required: ["low", "high", "effective_n", "evaluated", "clusters"],
+      required: ["low", "high", "scenarios", "evaluated", "resamples"],
       type: "object",
       properties: {
         low: {
@@ -113685,16 +113713,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "High",
           type: "number",
         },
-        effective_n: {
-          title: "Effective n",
-          type: "number",
+        scenarios: {
+          title: "Scenarios",
+          type: "integer",
         },
         evaluated: {
           title: "Evaluated",
           type: "integer",
         },
-        clusters: {
-          title: "Clusters",
+        resamples: {
+          title: "Resamples",
           type: "integer",
         },
       },
@@ -113714,6 +113742,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "evaluated",
         "pass_rate",
         "verdict",
+        "call_ids",
       ],
       type: "object",
       properties: {
@@ -113768,6 +113797,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Verdict",
           type: "string",
           enum: ["passed", "failed", "flaky", "not_evaluated"],
+        },
+        call_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },

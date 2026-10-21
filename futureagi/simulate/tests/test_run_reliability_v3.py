@@ -1,4 +1,4 @@
-"""Regression tests for scenario-clustered pass-rate intervals."""
+"""Regression tests for pass^1 / pass^k and the scenario-resampled interval."""
 
 from unittest.mock import MagicMock
 
@@ -6,67 +6,111 @@ import pytest
 
 from simulate.services.run_reliability_v3 import (
     build_reliability,
-    scenario_clustered_interval,
+    scenario_bootstrap_interval,
 )
 
 
-@pytest.mark.parametrize(
-    ("clusters", "expected_n"),
-    [
-        ([(10, 10), (10, 10), (10, 10)], 3),
-        ([(0, 10), (0, 10), (0, 10)], 3),
-        ([(5, 10)], 1),
-        ([(5, 10), (5, 10), (5, 10)], 3),
-    ],
-)
-def test_interval_fallback_uses_scenarios_not_trials(clusters, expected_n):
-    interval = scenario_clustered_interval(clusters)
-    assert interval is not None
-    assert interval["evaluated"] == sum(evaluated for _, evaluated in clusters)
-    assert interval["clusters"] == len(clusters)
-    assert interval["effective_n"] == expected_n
-    assert interval["low"] <= interval["high"]
+def _reliability(calls, trials):
+    queryset = MagicMock()
+    queryset.order_by.return_value.values_list.return_value.iterator.return_value = (
+        iter(
+            (f"call-{index}", key, label, outcome)
+            for index, (key, label, outcome) in enumerate(calls)
+        )
+    )
+    return build_reliability(queryset, trials=trials)
 
 
-def test_interval_uses_cluster_variance_when_available():
-    interval = scenario_clustered_interval([(5, 10), (8, 10), (2, 10)])
-    assert interval is not None
-    assert interval["effective_n"] > 3
-    assert interval["effective_n"] < 30
+def test_interval_is_withheld_below_ten_scenarios():
+    assert scenario_bootstrap_interval([(1, 3)] * 9) is None
+    assert scenario_bootstrap_interval([(1, 3)] * 9 + [(0, 0)]) is None
+    assert scenario_bootstrap_interval([(1, 3)] * 10) is not None
 
 
-def test_interval_with_no_evaluated_calls_is_unavailable():
-    assert scenario_clustered_interval([(0, 0)]) is None
+def test_interval_resamples_scenarios_not_trials():
+    # Same 60 verdicts and pooled rate, split across 20 vs 60 scenarios. Fewer,
+    # all-or-nothing scenarios carry less information, so their range is wider.
+    clustered = scenario_bootstrap_interval([(3, 3)] * 12 + [(0, 3)] * 8)
+    spread = scenario_bootstrap_interval([(1, 1)] * 36 + [(0, 1)] * 24)
+    assert clustered["low"] < 60.0 < clustered["high"]
+    assert spread["low"] < 60.0 < spread["high"]
+    assert clustered["high"] - clustered["low"] > spread["high"] - spread["low"]
+    assert clustered["scenarios"] == 20
+    assert clustered["evaluated"] == 60
 
 
-def test_reliability_tile_requires_every_trial_but_rows_use_evaluated_calls():
+def test_interval_is_repeatable_and_degenerate_when_every_scenario_agrees():
+    clusters = [(2, 3), (3, 3), (1, 3), (0, 3)] * 5
+    assert scenario_bootstrap_interval(clusters) == scenario_bootstrap_interval(
+        clusters
+    )
+    flat = scenario_bootstrap_interval([(3, 3)] * 12)
+    assert (flat["low"], flat["high"]) == (100.0, 100.0)
+
+
+def test_pass_hat_metrics_leave_inconclusive_trials_out():
     calls = [
         ("all-pass", "All pass", "passed"),
         ("all-pass", "All pass", "passed"),
+        ("all-pass", "All pass", "passed"),
+        ("two-of-three", "Two of three", "passed"),
+        ("two-of-three", "Two of three", "passed"),
+        ("two-of-three", "Two of three", "failed"),
+        ("pass-error", "Pass plus error", "passed"),
         ("pass-error", "Pass plus error", "passed"),
         ("pass-error", "Pass plus error", "error"),
-        ("pass-unmeasured", "Pass plus inconclusive", "passed"),
-        ("pass-unmeasured", "Pass plus inconclusive", "inconclusive"),
-        ("fail-error", "Fail plus error", "failed"),
-        ("fail-error", "Fail plus error", "error"),
         ("all-error", "All error", "error"),
+        ("all-error", "All error", "inconclusive"),
         ("all-error", "All error", "error"),
     ]
-    queryset = MagicMock()
-    queryset.order_by.return_value.values_list.return_value.iterator.return_value = (
-        iter(calls)
-    )
 
-    result = build_reliability(queryset, trials=2)
+    result = _reliability(calls, trials=3)
 
-    assert result["consistent_pass"] == 1
+    assert result["k"] == 3
+    assert result["inconclusive"] == 4
+    # (1 + 2/3 + 1) / 3 conclusive scenarios; all-error has no evaluated trial.
+    assert result["pass_hat_1"] == 88.89
+    # Only scenarios whose 3 trials were all conclusive can show 3 of 3 passing.
+    assert result["pass_hat_k_scenarios"] == 2
+    assert result["pass_hat_k"] == 50.0
+    assert result["pass_rate_interval"] is None
     rows = {row["scenario_key"]: row for row in result["rows"]}
-    assert rows["all-pass"]["verdict"] == "passed"
+    assert (rows["pass-error"]["passed"], rows["pass-error"]["evaluated"]) == (2, 2)
     assert rows["pass-error"]["verdict"] == "passed"
-    assert rows["pass-error"]["evaluated"] == 1
-    assert rows["pass-error"]["runs"] == 2
-    assert rows["pass-unmeasured"]["verdict"] == "passed"
-    assert rows["pass-unmeasured"]["evaluated"] == 1
-    assert rows["fail-error"]["verdict"] == "failed"
-    assert rows["fail-error"]["evaluated"] == 1
     assert rows["all-error"]["verdict"] == "not_evaluated"
+    assert sorted(rows["two-of-three"]["call_ids"]) == ["call-3", "call-4", "call-5"]
+
+
+@pytest.mark.parametrize(
+    ("calls", "trials"),
+    [
+        # k = 1: pass^k would only repeat pass^1.
+        ([("a", "A", "passed"), ("b", "B", "failed")], 1),
+        # Uneven trial counts: no single k to report.
+        (
+            [
+                ("a", "A", "passed"),
+                ("a", "A", "passed"),
+                ("b", "B", "passed"),
+            ],
+            2,
+        ),
+    ],
+)
+def test_pass_hat_k_needs_one_shared_k_above_one(calls, trials):
+    result = _reliability(calls, trials=trials)
+    assert result["pass_hat_k"] is None
+    assert result["pass_hat_1"] is not None
+
+
+def test_fifty_scenarios_at_k_three_report_an_interval():
+    calls = [
+        (f"s{index}", f"S{index}", "passed" if index % 4 or trial else "failed")
+        for index in range(50)
+        for trial in range(3)
+    ]
+    result = _reliability(calls, trials=3)
+    assert result["k"] == 3
+    interval = result["pass_rate_interval"]
+    assert interval["scenarios"] == 50
+    assert interval["low"] < result["pass_hat_1"] < interval["high"]

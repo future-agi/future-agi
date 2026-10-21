@@ -2504,11 +2504,14 @@ class TestRunResultsV3Views:
         by_key = {row["scenario"]: row for row in reliability["rows"]}
         assert by_key["flips"]["verdict"] == "flaky"
         assert by_key["fails-then-errors"]["error"] == 1
-        interval = reliability["pass_rate_interval"]
-        # Trials of one scenario are not independent, so the range must not claim more
-        # precision than the 3 scenarios behind these 5 verdicts.
-        assert interval["low"] < 60.0 < interval["high"]
-        assert 3 <= interval["effective_n"] <= 5
+        # The errored trial is out of every denominator: (1 + 1/2 + 0) / 3.
+        assert reliability["inconclusive"] == 1
+        assert reliability["pass_hat_1"] == 50.0
+        assert reliability["k"] == 2
+        assert reliability["pass_hat_k"] == 50.0
+        assert reliability["pass_hat_k_scenarios"] == 2
+        # Three scenarios are too few for a range worth acting on.
+        assert reliability["pass_rate_interval"] is None
         evaluation = next(
             row for row in body["evaluations"] if row["id"] == "policy-check"
         )

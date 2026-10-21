@@ -36,6 +36,7 @@ import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
 import BetaChip from "./fixmyagent/BetaChip";
 import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
+import ReliabilityHeadline from "./ReliabilityHeadline";
 import useCallListNavigation from "./useCallListNavigation";
 import useOpenCallParam from "./useOpenCallParam";
 
@@ -233,6 +234,11 @@ export default function RunDetail({
             {startedLabel ? ` · started ${startedLabel}` : ""}
           </Typography>
         </Box>
+
+        <ReliabilityHeadline
+          executionId={executionId}
+          enabled={!!identity && !live}
+        />
 
         {/* A backed run opens its evals, to grade again or add to; a
             client-only env keeps its store picker. */}

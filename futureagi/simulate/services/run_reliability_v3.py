@@ -2,61 +2,55 @@
 
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from typing import Any
 
+import numpy as np
 from django.db.models import QuerySet
 
 from simulate.services.run_results_v3 import OUTCOME_LABELS
 
-_Z = 1.96
+# Fewer scenarios than this give a range too wide to act on; show counts only.
+MIN_INTERVAL_SCENARIOS = 10
+_RESAMPLES = 2000
+# A fixed seed keeps a run's range stable across page loads.
+_SEED = 0
+# Bounds the (resamples x scenarios) index matrix drawn at once.
+_MAX_DRAW_CELLS = 1_000_000
 
 
-def _wilson(passed: float, n: float) -> tuple[float, float] | None:
-    if n <= 0:
-        return None
-    p = passed / n
-    denominator = 1 + _Z * _Z / n
-    centre = (p + _Z * _Z / (2 * n)) / denominator
-    half = _Z * math.sqrt(p * (1 - p) / n + _Z * _Z / (4 * n * n)) / denominator
-    return max(0.0, centre - half) * 100, min(1.0, centre + half) * 100
-
-
-def scenario_clustered_interval(
+def scenario_bootstrap_interval(
     clusters: list[tuple[int, int]],
 ) -> dict[str, Any] | None:
-    """95% range for passed/evaluated when verdicts come in correlated clusters.
+    """95% range for pass^1 by resampling scenarios with their trials nested inside.
 
     Trials of one scenario share its script, persona and world, so they are not
-    independent draws. The cluster-robust variance of the ratio estimate gives the
-    effective number of independent verdicts, which then feeds a Wilson interval.
-    ``clusters`` holds (passed, evaluated) per scenario.
+    independent draws: the bootstrap resamples whole scenarios, never single
+    trials. ``clusters`` holds (passed, evaluated) per scenario; scenarios with no
+    conclusive trial are left out.
     """
     clusters = [(passed, evaluated) for passed, evaluated in clusters if evaluated]
-    evaluated = sum(n for _, n in clusters)
-    if not evaluated:
+    scenarios = len(clusters)
+    if scenarios < MIN_INTERVAL_SCENARIOS:
         return None
-    passed = sum(k for k, _ in clusters)
-    p = passed / evaluated
-    effective_n = float(min(evaluated, len(clusters)))
-    if len(clusters) > 1 and 0 < p < 1:
-        m = len(clusters)
-        variance = (
-            m
-            / (m - 1)
-            * sum((k - p * n) ** 2 for k, n in clusters)
-            / (evaluated * evaluated)
-        )
-        if variance > 0:
-            effective_n = min(float(evaluated), max(1.0, p * (1 - p) / variance))
-    low, high = _wilson(p * effective_n, effective_n)
+    rates = np.array([passed / evaluated for passed, evaluated in clusters])
+    rng = np.random.default_rng(_SEED)
+    chunk = max(1, _MAX_DRAW_CELLS // scenarios)
+    means = np.concatenate(
+        [
+            rates[rng.integers(0, scenarios, size=(min(chunk, left), scenarios))].mean(
+                axis=1
+            )
+            for left in range(_RESAMPLES, 0, -chunk)
+        ]
+    )
+    low, high = np.percentile(means, [2.5, 97.5]) * 100
     return {
-        "low": round(low, 2),
-        "high": round(high, 2),
-        "effective_n": round(effective_n, 2),
-        "evaluated": evaluated,
-        "clusters": len(clusters),
+        "low": round(float(low), 2),
+        "high": round(float(high), 2),
+        "scenarios": scenarios,
+        "evaluated": sum(evaluated for _, evaluated in clusters),
+        "resamples": _RESAMPLES,
     }
 
 
@@ -66,14 +60,16 @@ def build_reliability(queryset: QuerySet, trials: int) -> dict[str, Any]:
         lambda: dict.fromkeys(OUTCOME_LABELS, 0)
     )
     labels: dict[str, str] = {}
-    for scenario_key, scenario_label, outcome in (
+    call_ids: dict[str, list[str]] = defaultdict(list)
+    for call_id, scenario_key, scenario_label, outcome in (
         queryset.order_by()
-        .values_list("result_scenario_key", "result_scenario", "result_outcome")
+        .values_list("id", "result_scenario_key", "result_scenario", "result_outcome")
         .iterator(chunk_size=2000)
     ):
         key = str(scenario_key)
         labels[key] = str(scenario_label or key)
         counts[key][outcome] += 1
+        call_ids[key].append(str(call_id))
 
     rows = []
     for scenario_key, outcome_counts in counts.items():
@@ -95,12 +91,20 @@ def build_reliability(queryset: QuerySet, trials: int) -> dict[str, Any]:
                 "evaluated": evaluated,
                 "pass_rate": round(passed * 100 / evaluated, 2) if evaluated else None,
                 "verdict": verdict,
+                "call_ids": call_ids[scenario_key],
             }
         )
     order = {"flaky": 0, "failed": 1, "not_evaluated": 2, "passed": 3}
     rows.sort(key=lambda row: (order[row["verdict"]], row["scenario"]))
     repeated = [row for row in rows if row["evaluated"] >= 2]
     flaky = sum(1 for row in repeated if row["verdict"] == "flaky")
+    conclusive = [row for row in rows if row["evaluated"]]
+    # pass^k needs one k shared by every scenario; at k = 1 it is pass^1 again.
+    run_counts = {row["runs"] for row in rows}
+    k = run_counts.pop() if len(run_counts) == 1 else None
+    pass_hat_k_shown = bool(k and k > 1)
+    # A scenario with an inconclusive trial cannot show k of k passing.
+    complete = [row for row in rows if pass_hat_k_shown and row["evaluated"] == k]
     return {
         "trials": trials,
         "scenarios": len(rows),
@@ -112,7 +116,27 @@ def build_reliability(queryset: QuerySet, trials: int) -> dict[str, Any]:
         "repeated": len(repeated),
         "flaky": flaky,
         "flip_rate": round(flaky * 100 / len(repeated), 2) if repeated else None,
-        "pass_rate_interval": scenario_clustered_interval(
+        "k": k,
+        # Infra, simulator and evidence failures say nothing about the agent, so
+        # they sit outside every denominator below.
+        "inconclusive": sum(row["error"] + row["inconclusive"] for row in rows),
+        "pass_hat_1": (
+            round(
+                sum(row["passed"] / row["evaluated"] for row in conclusive)
+                * 100
+                / len(conclusive),
+                2,
+            )
+            if conclusive
+            else None
+        ),
+        "pass_hat_k": (
+            round(sum(row["passed"] == k for row in complete) * 100 / len(complete), 2)
+            if complete
+            else None
+        ),
+        "pass_hat_k_scenarios": len(complete),
+        "pass_rate_interval": scenario_bootstrap_interval(
             [(row["passed"], row["evaluated"]) for row in rows]
         ),
         "rows": rows,

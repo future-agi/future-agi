@@ -184,9 +184,9 @@ const analytics = {
     pass_rate_interval: {
       low: 12.5,
       high: 95.1,
-      effective_n: 3,
+      scenarios: 2,
       evaluated: 3,
-      clusters: 2,
+      resamples: 2000,
     },
     rows: [
       {
@@ -412,7 +412,7 @@ describe("RunAnalytics", () => {
     ).toBeGreaterThan(0);
     expect(
       screen.getByText(
-        /2 scenarios × 2 trials · pass rate 95% range 12.5%–95.1%/,
+        /2 scenarios × 2 trials · pass\^1 95% range 12.5%–95.1%/,
       ),
     ).toBeInTheDocument();
   });
@@ -434,21 +434,29 @@ describe("RunAnalytics", () => {
     const data = structuredClone(analytics);
     data.reliability.scenarios = 5;
     data.reliability.consistent_pass = 1;
-    const row = (scenario, passed, evaluated, error, verdict) => ({
+    const row = (
+      scenario,
+      passed,
+      evaluated,
+      error,
+      inconclusive,
+      verdict,
+    ) => ({
       scenario_key: scenario,
       scenario,
       runs: 2,
       passed,
       evaluated,
       error,
+      inconclusive,
       verdict,
     });
     data.reliability.rows = [
-      row("All pass", 2, 2, 0, "passed"),
-      row("Pass plus error", 1, 1, 1, "passed"),
-      row("Pass plus inconclusive", 1, 1, 0, "passed"),
-      row("Fail plus error", 0, 1, 1, "failed"),
-      row("All error", 0, 0, 2, "not_evaluated"),
+      row("All pass", 2, 2, 0, 0, "passed"),
+      row("Pass plus error", 1, 1, 1, 0, "passed"),
+      row("Pass plus inconclusive", 1, 1, 0, 1, "passed"),
+      row("Fail plus error", 0, 1, 1, 0, "failed"),
+      row("All error", 0, 0, 2, 0, "not_evaluated"),
     ];
     useRunAnalytics.mockReturnValue({ data, isPending: false, isError: false });
 
@@ -470,16 +478,20 @@ describe("RunAnalytics", () => {
       expect(
         within(row).getByText("Passed all evaluated trials"),
       ).toBeInTheDocument();
-      expect(within(row).getByText("1 / 2")).toBeInTheDocument();
+      expect(within(row).getByText("1/1 trials passed")).toBeInTheDocument();
+      expect(within(row).getByText("1")).toBeInTheDocument();
     }
     const failed = within(panel).getByText("Fail plus error").closest("tr");
     expect(
       within(failed).getByText("Failed all evaluated trials"),
     ).toBeInTheDocument();
-    expect(within(failed).getByText("1 / 2")).toBeInTheDocument();
+    expect(within(failed).getByText("0/1 trials passed")).toBeInTheDocument();
     const allError = within(panel).getByText("All error").closest("tr");
     expect(within(allError).getByText("Not evaluated")).toBeInTheDocument();
-    expect(within(allError).getByText("0 / 2")).toBeInTheDocument();
+    expect(
+      within(allError).getByText("No conclusive trial"),
+    ).toBeInTheDocument();
+    expect(within(allError).getByText("2")).toBeInTheDocument();
   });
 
   it("hides provider-only charts when no provider reported them", () => {

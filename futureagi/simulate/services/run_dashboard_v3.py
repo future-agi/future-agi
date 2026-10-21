@@ -496,9 +496,9 @@ def build_run_dashboard(
         "percent",
         summary["measured"],
         (
-            f"Passed every eval, out of evaluated {noun}s. 95% range "
+            f"Passed every eval, out of evaluated {noun}s. pass^1 95% range "
             f"{interval['low']:.0f}–{interval['high']:.0f}% across "
-            f"{interval['clusters']} scenarios."
+            f"{interval['scenarios']} scenarios."
             if interval
             else f"Passed every eval, out of evaluated {noun}s. Errored {noun}s are excluded."
         ),

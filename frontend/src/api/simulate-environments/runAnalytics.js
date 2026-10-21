@@ -2,14 +2,14 @@ import { useQuery } from "@tanstack/react-query";
 
 import axios, { endpoints } from "src/utils/axios";
 
-export function useRunAnalytics(executionId) {
+export function useRunAnalytics(executionId, { enabled = true } = {}) {
   return useQuery({
     queryKey: ["simulation-run-analytics-v3", executionId],
     queryFn: () =>
       axios
         .get(endpoints.runResultsV3.analytics(executionId))
         .then((response) => response.data),
-    enabled: !!executionId,
+    enabled: !!executionId && enabled,
     staleTime: 1000 * 60 * 5,
   });
 }
