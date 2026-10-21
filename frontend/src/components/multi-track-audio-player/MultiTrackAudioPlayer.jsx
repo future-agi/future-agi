@@ -168,7 +168,15 @@ const MultiTrackAudioPlayer = ({
     // teardown — so `cancelled` is checked in every handler this chain can
     // still reach, not just here.
     multitrack.on("canplay", () => {
-      if (cancelled) return;
+      // wavesurfer-multitrack 0.4.12 cannot cancel its async audio init. If
+      // teardown wins the race, the first destroy() runs before its audio and
+      // WaveSurfer children exist. Destroy the late-created children when the
+      // stale canplay notification eventually arrives; otherwise their
+      // ResizeObservers and media listeners retain the closed drawer.
+      if (cancelled) {
+        multitrack.destroy();
+        return;
+      }
       playable.forEach((_, index) => {
         const currentWave = multitrack.wavesurfers?.[index];
         currentWave?.on("ready", () => {
@@ -189,6 +197,24 @@ const MultiTrackAudioPlayer = ({
         media.removeEventListener("error", mediaErrorHandlers[index]);
         media.removeEventListener("pause", onMediaPause);
       });
+
+      // If a media element is still waiting for loadedmetadata, the library
+      // has not assigned it to `multitrack.audios` yet, so destroy() cannot
+      // reach it. Clear the source and settle that private init promise so
+      // the stale canplay handler above gets a chance to destroy any children
+      // created after teardown. Without this, a refused or slow recording
+      // leaves the detached waveform tree retained by the pending init.
+      const audios = multitrack.audios;
+      if (!Array.isArray(audios) || audios.length === 0) {
+        medias.forEach((media) => {
+          try {
+            media.src = "";
+            media.dispatchEvent(new Event("loadedmetadata"));
+          } catch {
+            /* ignore media teardown errors */
+          }
+        });
+      }
       multitrack.destroy();
       mtRef.current = null;
     };
