@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -121,9 +122,23 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 	return p.runOrgGuardrails(ctx, rc, StagePost)
 }
 
+// orgCheck is one enabled org check resolved to its implementation.
+type orgCheck struct {
+	name  string
+	check *tenant.GuardrailCheck
+	g     Guardrail
+}
+
 // runOrgGuardrails runs guardrails defined in the org's tenant config.
 // This enables managed mode where guardrail rules come from the control plane
 // rather than from config.yaml.
+//
+// The org's pipeline settings are honoured:
+//   - fail_open decides what happens when a check errors or times out
+//     (falls back to the gateway-wide guardrails.fail_open when unset).
+//   - pipeline_mode "sequential" runs checks one after another and stops at
+//     the first block; anything else (the dashboard default, "parallel")
+//     runs them concurrently and stops waiting as soon as one blocks.
 func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.RequestContext, stage Stage) pipeline.PluginResult {
 	if p.tenantStore == nil {
 		return pipeline.ResultContinue()
@@ -138,11 +153,83 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 	if orgCfg == nil || orgCfg.Guardrails == nil || len(orgCfg.Guardrails.Checks) == 0 {
 		return pipeline.ResultContinue()
 	}
+	gcfg := orgCfg.Guardrails
+
+	checks := p.collectOrgChecks(orgID, gcfg, stage)
+	if len(checks) == 0 {
+		return pipeline.ResultContinue()
+	}
+
+	timeout := p.defaultTimeout
+	if gcfg.TimeoutMs > 0 {
+		timeout = time.Duration(gcfg.TimeoutMs) * time.Millisecond
+	}
+	failOpen := gcfg.ResolveFailOpen(p.failOpen)
+
+	input := &CheckInput{
+		Request:  rc.Request,
+		Metadata: rc.Metadata,
+	}
+	if stage == StagePost {
+		input.Response = rc.Response
+	}
+
+	var outcomes []*CheckResult
+	var blockIdx int
+	if gcfg.IsSequential() {
+		outcomes, blockIdx = p.runOrgChecksSequential(ctx, checks, input, timeout, failOpen)
+	} else {
+		outcomes, blockIdx = p.runOrgChecksParallel(ctx, checks, input, timeout, failOpen)
+	}
 
 	result := &PipelineResult{}
 
-	for name, check := range orgCfg.Guardrails.Checks {
-		if !check.Enabled {
+	// The blocking check goes first so block metadata and the error message
+	// name the check that actually blocked.
+	if blockIdx >= 0 {
+		p.recordOrgOutcome(result, orgID, checks[blockIdx], outcomes[blockIdx])
+	}
+	for i, c := range checks {
+		if i == blockIdx {
+			continue
+		}
+		p.recordOrgOutcome(result, orgID, c, outcomes[i])
+	}
+
+	if blockIdx >= 0 {
+		blocker := checks[blockIdx].name
+		result.Blocked = true
+		storeGuardrailResults(rc, result)
+		rc.Flags.GuardrailTriggered = true
+		rc.Metadata["guardrail_name"] = blocker
+		rc.Metadata["guardrail_action"] = "blocked"
+		return pipeline.ResultError(models.ErrGuardrailBlocked(
+			"content_blocked",
+			p.buildBlockMessage(result),
+		))
+	}
+
+	// Apply metadata for non-blocking triggers.
+	if len(result.Triggered) > 0 {
+		p.applyMetadata(rc, result)
+	}
+
+	return pipeline.ResultContinue()
+}
+
+// collectOrgChecks returns the org's enabled checks for this stage, sorted by
+// name so execution order (sequential) and result order are deterministic.
+func (p *GuardrailPlugin) collectOrgChecks(orgID string, gcfg *tenant.GuardrailConfig, stage Stage) []orgCheck {
+	names := make([]string, 0, len(gcfg.Checks))
+	for name := range gcfg.Checks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	checks := make([]orgCheck, 0, len(names))
+	for _, name := range names {
+		check := gcfg.Checks[name]
+		if check == nil || !check.Enabled {
 			continue
 		}
 
@@ -151,7 +238,6 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 			continue
 		}
 
-		// Get or create the guardrail implementation.
 		g := p.getGuardrail(orgID, name, check)
 		if g == nil {
 			slog.Debug("guardrail implementation not found",
@@ -161,80 +247,105 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 			continue
 		}
 
-		// Check stage matches.
 		if g.Stage() != stage {
 			continue
 		}
 
-		// Determine timeout.
-		timeout := p.defaultTimeout
-		if orgCfg.Guardrails.TimeoutMs > 0 {
-			timeout = time.Duration(orgCfg.Guardrails.TimeoutMs) * time.Millisecond
-		}
+		checks = append(checks, orgCheck{name: name, check: check, g: g})
+	}
+	return checks
+}
 
-		// Build input.
-		input := &CheckInput{
-			Request:  rc.Request,
-			Metadata: rc.Metadata,
-		}
-		if stage == StagePost {
-			input.Response = rc.Response
-		}
+// orgCheckBlocks reports whether a check outcome blocks the request.
+func orgCheckBlocks(c orgCheck, cr *CheckResult) bool {
+	return shouldTrigger(cr, c.check.ConfidenceThreshold) && parseAction(c.check.Action) == ActionBlock
+}
 
-		// Run with timeout and panic recovery.
-		cr := p.runGuardrailSafe(ctx, g, input, timeout)
-		if cr == nil {
-			continue
-		}
-
-		// Apply threshold.
-		threshold := check.ConfidenceThreshold
-		triggered := shouldTrigger(cr, threshold)
-		if !triggered {
-			continue
-		}
-
-		action := parseAction(check.Action)
-
-		tg := TriggeredGuardrail{
-			Name:      name,
-			Score:     cr.Score,
-			Threshold: threshold,
-			Action:    action,
-			Message:   cr.Message,
-		}
-		result.Triggered = append(result.Triggered, tg)
-
-		switch action {
-		case ActionBlock:
-			result.Blocked = true
-			storeGuardrailResults(rc, result)
-			rc.Flags.GuardrailTriggered = true
-			rc.Metadata["guardrail_name"] = name
-			rc.Metadata["guardrail_action"] = "blocked"
-			return pipeline.ResultError(models.ErrGuardrailBlocked(
-				"content_blocked",
-				p.buildBlockMessage(result),
-			))
-		case ActionWarn:
-			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", name, cr.Message))
-		case ActionLog:
-			slog.Info("guardrail triggered (log mode)",
-				"guardrail", name,
-				"org_id", orgID,
-				"score", cr.Score,
-				"threshold", threshold,
-				"message", cr.Message,
-			)
+// runOrgChecksSequential runs checks one at a time, stopping at the first
+// block. It returns per-check outcomes (nil = not run or passed) and the
+// index of the blocking check, or -1.
+func (p *GuardrailPlugin) runOrgChecksSequential(ctx context.Context, checks []orgCheck, input *CheckInput, timeout time.Duration, failOpen bool) ([]*CheckResult, int) {
+	outcomes := make([]*CheckResult, len(checks))
+	for i, c := range checks {
+		outcomes[i] = p.runGuardrailSafe(ctx, c.g, input, timeout, failOpen)
+		if orgCheckBlocks(c, outcomes[i]) {
+			return outcomes, i
 		}
 	}
+	return outcomes, -1
+}
 
-	// Apply metadata for non-blocking triggers.
-	if len(result.Triggered) > 0 {
-		p.applyMetadata(rc, result)
+// runOrgChecksParallel starts every check at once. As soon as one blocks,
+// the rest are cancelled and their outcomes discarded, so a request waits at
+// most one timeout rather than the sum of them.
+func (p *GuardrailPlugin) runOrgChecksParallel(ctx context.Context, checks []orgCheck, input *CheckInput, timeout time.Duration, failOpen bool) ([]*CheckResult, int) {
+	if len(checks) == 1 {
+		return p.runOrgChecksSequential(ctx, checks, input, timeout, failOpen)
 	}
 
-	return pipeline.ResultContinue()
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	type outcome struct {
+		idx int
+		cr  *CheckResult
+	}
+	// Buffered so goroutines never block after we stop reading.
+	ch := make(chan outcome, len(checks))
+	for i, c := range checks {
+		go func(i int, c orgCheck) {
+			ch <- outcome{idx: i, cr: p.runGuardrailSafe(runCtx, c.g, input, timeout, failOpen)}
+		}(i, c)
+	}
+
+	outcomes := make([]*CheckResult, len(checks))
+	for range checks {
+		o := <-ch
+		outcomes[o.idx] = o.cr
+		if orgCheckBlocks(checks[o.idx], o.cr) {
+			// Remaining checks are cancelled; anything they report now would
+			// be an artefact of the cancellation, so drop it.
+			cancel()
+			for j := range outcomes {
+				if j != o.idx {
+					outcomes[j] = nil
+				}
+			}
+			return outcomes, o.idx
+		}
+	}
+	return outcomes, -1
+}
+
+// recordOrgOutcome applies a check's threshold and action to the aggregate
+// result. Block decisions are made by the caller.
+func (p *GuardrailPlugin) recordOrgOutcome(result *PipelineResult, orgID string, c orgCheck, cr *CheckResult) {
+	threshold := c.check.ConfidenceThreshold
+	if !shouldTrigger(cr, threshold) {
+		return
+	}
+
+	action := parseAction(c.check.Action)
+	result.Triggered = append(result.Triggered, TriggeredGuardrail{
+		Name:      c.name,
+		Score:     cr.Score,
+		Threshold: threshold,
+		Action:    action,
+		Message:   cr.Message,
+	})
+
+	switch action {
+	case ActionWarn:
+		result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", c.name, cr.Message))
+	case ActionLog:
+		slog.Info("guardrail triggered (log mode)",
+			"guardrail", c.name,
+			"org_id", orgID,
+			"score", cr.Score,
+			"threshold", threshold,
+			"message", cr.Message,
+		)
+	}
 }
 
 // getGuardrail resolves a guardrail implementation by name.
@@ -318,7 +429,8 @@ func (p *GuardrailPlugin) createDynamicGuardrail(orgID, name string, cfg map[str
 }
 
 // runGuardrailSafe runs a guardrail check with timeout and panic recovery.
-func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, input *CheckInput, timeout time.Duration) *CheckResult {
+// failOpen decides whether an error or timeout passes (nil) or triggers.
+func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, input *CheckInput, timeout time.Duration, failOpen bool) *CheckResult {
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -348,9 +460,9 @@ func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, inp
 			slog.Error("dynamic guardrail error",
 				"guardrail", g.Name(),
 				"error", res.err,
-				"fail_open", p.failOpen,
+				"fail_open", failOpen,
 			)
-			if p.failOpen {
+			if failOpen {
 				return nil
 			}
 			return &CheckResult{
@@ -364,9 +476,9 @@ func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, inp
 		slog.Warn("dynamic guardrail timed out",
 			"guardrail", g.Name(),
 			"timeout", timeout,
-			"fail_open", p.failOpen,
+			"fail_open", failOpen,
 		)
-		if p.failOpen {
+		if failOpen {
 			return nil
 		}
 		return &CheckResult{

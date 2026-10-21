@@ -5,6 +5,8 @@
 // the org that owns the API key.
 package tenant
 
+import "strings"
+
 // OrgConfig holds the merged configuration for a single organization.
 type OrgConfig struct {
 	Providers    map[string]*ProviderConfig `json:"providers,omitempty"`
@@ -53,10 +55,35 @@ func (p *ProviderConfig) HasCredentials() bool {
 
 // GuardrailConfig holds per-org guardrail pipeline settings.
 type GuardrailConfig struct {
-	PipelineMode string                     `json:"pipeline_mode,omitempty"` // "parallel" or "sequential"
-	FailOpen     bool                       `json:"fail_open,omitempty"`
-	TimeoutMs    int                        `json:"timeout_ms,omitempty"`
-	Checks       map[string]*GuardrailCheck `json:"checks,omitempty"`
+	PipelineMode string `json:"pipeline_mode,omitempty"` // "parallel" (default) or "sequential"
+	// FailOpen decides whether a check that errors or times out lets the
+	// request through (true) or blocks it (false). nil means the org has not
+	// chosen, so the gateway-wide guardrails.fail_open applies.
+	FailOpen  *bool                      `json:"fail_open,omitempty"`
+	TimeoutMs int                        `json:"timeout_ms,omitempty"`
+	Checks    map[string]*GuardrailCheck `json:"checks,omitempty"`
+}
+
+// Guardrail pipeline modes accepted in GuardrailConfig.PipelineMode.
+const (
+	GuardrailPipelineParallel   = "parallel"
+	GuardrailPipelineSequential = "sequential"
+)
+
+// ResolveFailOpen returns the org's fail-open choice, or def when the org
+// has not set one.
+func (g *GuardrailConfig) ResolveFailOpen(def bool) bool {
+	if g == nil || g.FailOpen == nil {
+		return def
+	}
+	return *g.FailOpen
+}
+
+// IsSequential reports whether the org's checks should run one after
+// another. Anything other than "sequential" (including empty) runs in
+// parallel, matching the dashboard default.
+func (g *GuardrailConfig) IsSequential() bool {
+	return g != nil && strings.EqualFold(strings.TrimSpace(g.PipelineMode), GuardrailPipelineSequential)
 }
 
 // GuardrailCheck configures a single guardrail check for an org.
