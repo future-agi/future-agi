@@ -302,6 +302,7 @@ const TaskDetailPage = () => {
         ? { spans_limit: Number(src.spansLimit) }
         : {}),
       sampling_rate: src.samplingRate,
+      ...(src.samplingPolicy ? { sampling_policy: src.samplingPolicy } : {}),
       evals: src.evalsDetails?.map((item) => item.id || item) || [],
       filters: {
         ...wireFilters,
@@ -338,13 +339,16 @@ const TaskDetailPage = () => {
         project: data.project,
         run_type: data.runType,
         sampling_rate: data.samplingRate,
+        ...(data.samplingPolicy || taskDetails.sampling_policy
+          ? { sampling_policy: data.samplingPolicy ?? null }
+          : {}),
         spans_limit: data.spansLimit ? Number(data.spansLimit) : undefined,
         edit_type: editType,
       };
       updateTask({ payload: transformedData, mode: confirmMode });
       setConfirmMode(null);
     },
-    [formValues, updateTask, confirmMode],
+    [formValues, updateTask, confirmMode, taskDetails],
   );
 
   if (isLoading && !taskDetails) {

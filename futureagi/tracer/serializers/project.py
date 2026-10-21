@@ -33,6 +33,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             "config",
             "source",
             "session_config",
+            "sampling_contact_attribute",
             "tags",
         ]
         read_only_fields = ["organization", "workspace"]
@@ -149,6 +150,7 @@ class ProjectViewSetListQuerySerializer(ProjectListQuerySerializer):
 
 
 class ProjectNameUpdateSerializer(serializers.Serializer):
+    sampling_contact_attribute = serializers.CharField(max_length=200, allow_blank=True, required=False)
     project_id = serializers.UUIDField(required=True)
     name = serializers.CharField(required=True)
     sampling_rate = serializers.FloatField(required=False, min_value=0.0, max_value=1.0)

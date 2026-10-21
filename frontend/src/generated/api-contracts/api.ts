@@ -948,6 +948,7 @@ import type {
   ProjectGraphDataResponseApi,
   ProjectIdListResponseApi,
   ProjectListResponseApi,
+  ProjectNameUpdateApi,
   ProjectUserGraphDataRequestApi,
   ProjectUserGraphDataResponseApi,
   ProjectUserMetricsRequestApi,
@@ -1094,6 +1095,8 @@ import type {
   Saml2AuthMicrosoftCallbackListParams,
   Saml2AuthMicrosoftReadParams,
   Saml2AuthReadParams,
+  SamplingPreviewRequestApi,
+  SamplingPreviewResponseApi,
   SavedViewDetailResponseApi,
   SavedViewListApi,
   SavedViewListResponseApi,
@@ -71001,6 +71004,61 @@ export const tracerEvalTaskPauseEvalTask = async (
   );
 };
 
+export type tracerEvalTaskSamplingPreviewResponse200 = {
+  data: SamplingPreviewResponseApi;
+  status: 200;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerEvalTaskSamplingPreviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 503>;
+};
+
+export type tracerEvalTaskSamplingPreviewResponseSuccess =
+  tracerEvalTaskSamplingPreviewResponse200 & {
+    headers: Headers;
+  };
+export type tracerEvalTaskSamplingPreviewResponseError = (
+  | tracerEvalTaskSamplingPreviewResponse400
+  | tracerEvalTaskSamplingPreviewResponse503
+  | tracerEvalTaskSamplingPreviewResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse =
+  | tracerEvalTaskSamplingPreviewResponseSuccess
+  | tracerEvalTaskSamplingPreviewResponseError;
+
+export const getTracerEvalTaskSamplingPreviewUrl = () => {
+  return `/tracer/eval-task/sampling_preview/`;
+};
+
+export const tracerEvalTaskSamplingPreview = async (
+  samplingPreviewRequestApi: SamplingPreviewRequestApi,
+  options?: RequestInit,
+): Promise<tracerEvalTaskSamplingPreviewResponse> => {
+  return apiMutator<tracerEvalTaskSamplingPreviewResponse>(
+    getTracerEvalTaskSamplingPreviewUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(samplingPreviewRequestApi),
+    },
+  );
+};
+
 export type tracerEvalTaskUnpauseEvalTaskResponse200 = {
   data: EvalTaskMessageResponseApi;
   status: 200;
@@ -77506,7 +77564,7 @@ export const tracerProjectUpdateProjectConfig = async (
 };
 
 export type tracerProjectUpdateProjectNameResponse201 = {
-  data: ProjectApi;
+  data: ProjectNameUpdateApi;
   status: 201;
 };
 
@@ -77533,7 +77591,7 @@ export const getTracerProjectUpdateProjectNameUrl = () => {
 };
 
 export const tracerProjectUpdateProjectName = async (
-  projectApi: NonReadonly<ProjectApi>,
+  projectNameUpdateApi: ProjectNameUpdateApi,
   options?: RequestInit,
 ): Promise<tracerProjectUpdateProjectNameResponse> => {
   return apiMutator<tracerProjectUpdateProjectNameResponse>(
@@ -77542,7 +77600,7 @@ export const tracerProjectUpdateProjectName = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(projectApi),
+      body: JSON.stringify(projectNameUpdateApi),
     },
   );
 };

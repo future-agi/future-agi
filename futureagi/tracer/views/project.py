@@ -451,6 +451,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             )
 
     @action(detail=False, methods=["post"])
+    @validated_request(request_serializer=ProjectNameUpdateSerializer)
     def update_project_name(self, request, *args, **kwargs):
         try:
             serializer = ProjectNameUpdateSerializer(data=request.data)
@@ -467,7 +468,11 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
                 # Update project name
                 project.name = new_name
-                project.save(update_fields=["name"])
+                update_fields = ["name"]
+                if "sampling_contact_attribute" in validated_data:
+                    project.sampling_contact_attribute = validated_data["sampling_contact_attribute"]
+                    update_fields.append("sampling_contact_attribute")
+                project.save(update_fields=update_fields)
 
                 response_message = "Project name updated successfully"
                 response_data = {

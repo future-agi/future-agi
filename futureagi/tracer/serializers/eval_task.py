@@ -13,6 +13,11 @@ from tracer.models.eval_task import (
     RunType,
 )
 from tracer.models.project import Project
+from tracer.serializers.eval_sampling import SamplingPolicySerializer
+from tracer.services.eval_tasks.sampling.policy import (
+    InvalidSamplingPolicy,
+    validate_policy,
+)
 from tracer.serializers.filters import (
     SortParamListQueryParamField,
     StrictInputSerializer,
@@ -327,6 +332,7 @@ class EvalTaskSerializer(serializers.ModelSerializer):
     )
     name = serializers.CharField(min_length=1, max_length=255)
     sampling_rate = serializers.FloatField(min_value=1.0, max_value=100.0)
+    sampling_policy = SamplingPolicySerializer(required=False, allow_null=True)
     spans_limit = serializers.IntegerField(
         min_value=1, max_value=1000000, required=False, allow_null=True
     )
@@ -360,6 +366,7 @@ class EvalTaskSerializer(serializers.ModelSerializer):
             "name",
             "filters",
             "sampling_rate",
+            "sampling_policy",
             "last_run",
             "spans_limit",
             "run_type",
@@ -394,9 +401,34 @@ class EvalTaskSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
+        existing_policy = getattr(self.instance, "sampling_policy", None)
+        if "sampling_policy" in attrs or (
+            existing_policy is not None and any(key in attrs for key in ("row_type", "project"))
+        ):
+            project = attrs.get("project") or getattr(self.instance, "project", None)
+            try:
+                attrs["sampling_policy"] = validate_policy(
+                    attrs.get("sampling_policy", existing_policy),
+                    row_type=attrs.get(
+                        "row_type", getattr(self.instance, "row_type", RowType.SPANS)
+                    ),
+                    contact_attribute=getattr(project, "sampling_contact_attribute", ""),
+                )
+            except InvalidSamplingPolicy as exc:
+                raise serializers.ValidationError({"sampling_policy": str(exc)}) from exc
         run_type = attrs.get("run_type")
         spans_limit = attrs.get("spans_limit")
-        if run_type == RunType.HISTORICAL and not spans_limit:
+        has_policy = attrs.get(
+            "sampling_policy", getattr(self.instance, "sampling_policy", None)
+        )
+        if (
+            "sampling_policy" in attrs
+            and not has_policy
+            and getattr(self.instance, "run_type", None) == RunType.HISTORICAL
+            and not attrs.get("spans_limit", getattr(self.instance, "spans_limit", None))
+        ):
+            raise serializers.ValidationError({"spans_limit": "Set a row limit before disabling the sampling policy."})
+        if run_type == RunType.HISTORICAL and not spans_limit and not has_policy:
             raise serializers.ValidationError(
                 {"spans_limit": "spans_limit is required for historical runs."}
             )
@@ -416,6 +448,7 @@ class EvalTaskLoggerSerializer(serializers.ModelSerializer):
 
 
 class EditEvalTaskSerializer(serializers.Serializer):
+    sampling_policy = SamplingPolicySerializer(required=False, allow_null=True)
     name = serializers.CharField(
         required=False, allow_blank=False, min_length=1, max_length=255
     )

@@ -25105,6 +25105,154 @@ export type EvalTaskApiEvalsDetails = { [key: string]: unknown };
 
 export type EvalTaskApiFailedSpans = { [key: string]: unknown };
 
+export type SamplingPolicyApiSamplingUnit =
+  (typeof SamplingPolicyApiSamplingUnit)[keyof typeof SamplingPolicyApiSamplingUnit];
+
+export const SamplingPolicyApiSamplingUnit = {
+  span: "span",
+  trace: "trace",
+  session: "session",
+  user: "user",
+  attribute: "attribute",
+} as const;
+
+export type SamplingAttributeApiSource =
+  (typeof SamplingAttributeApiSource)[keyof typeof SamplingAttributeApiSource];
+
+export const SamplingAttributeApiSource = {
+  span: "span",
+  resource: "resource",
+  metadata: "metadata",
+} as const;
+
+export interface SamplingAttributeApi {
+  source?: SamplingAttributeApiSource;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  key: string;
+}
+
+export type SamplingPolicyApiMissingId =
+  (typeof SamplingPolicyApiMissingId)[keyof typeof SamplingPolicyApiMissingId];
+
+export const SamplingPolicyApiMissingId = {
+  exclude: "exclude",
+  row: "row",
+} as const;
+
+export type SamplingPolicyApiMode =
+  (typeof SamplingPolicyApiMode)[keyof typeof SamplingPolicyApiMode];
+
+export const SamplingPolicyApiMode = {
+  closed: "closed",
+  live: "live",
+} as const;
+
+export interface SamplingWindowApi {
+  /**
+   * Inclusive ISO 8601 UTC event time.
+   * @minLength 1
+   */
+  start: string;
+  /**
+   * Exclusive ISO 8601 UTC event time; maximum interval 31 days.
+   * @minLength 1
+   */
+  end: string;
+}
+
+export type SamplingPredicateApiSource =
+  (typeof SamplingPredicateApiSource)[keyof typeof SamplingPredicateApiSource];
+
+export const SamplingPredicateApiSource = {
+  span: "span",
+  resource: "resource",
+  metadata: "metadata",
+} as const;
+
+export type SamplingPredicateApiOp =
+  (typeof SamplingPredicateApiOp)[keyof typeof SamplingPredicateApiOp];
+
+export const SamplingPredicateApiOp = {
+  in: "in",
+  not_in: "not_in",
+  exists: "exists",
+  missing: "missing",
+  gt: "gt",
+  gte: "gte",
+  lt: "lt",
+  lte: "lte",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type SamplingPredicateApiValuesItem = { [key: string]: unknown };
+
+export interface SamplingPredicateApi {
+  source?: SamplingPredicateApiSource;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  key: string;
+  op?: SamplingPredicateApiOp;
+  /** @maxItems 100 */
+  values?: SamplingPredicateApiValuesItem[];
+}
+
+export interface SamplingRuleApi {
+  /**
+   * @minLength 1
+   * @maxLength 80
+   */
+  name?: string;
+  filters?: SamplingPredicateApi[];
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  rate?: number;
+  /**
+   * @minimum 0
+   * @maximum 1000000
+   */
+  target_n?: number;
+  /**
+   * @minimum 0
+   * @maximum 1000000
+   */
+  min_n?: number;
+  /**
+   * @minimum 0
+   * @maximum 1000000
+   */
+  max_n?: number;
+  /**
+   * @minimum 0
+   * @maximum 1000000
+   */
+  rare_below?: number;
+}
+
+export interface SamplingPolicyApi {
+  /**
+   * @minimum 1
+   * @maximum 1
+   */
+  version: number;
+  sampling_unit: SamplingPolicyApiSamplingUnit;
+  unit_attribute?: SamplingAttributeApi;
+  missing_id?: SamplingPolicyApiMissingId;
+  mode?: SamplingPolicyApiMode;
+  window: SamplingWindowApi;
+  strata?: SamplingRuleApi[];
+  group_by?: SamplingAttributeApi[];
+  default?: SamplingRuleApi;
+}
+
 export interface EvalTaskApi {
   readonly id?: string;
   project: string;
@@ -25119,6 +25267,7 @@ export interface EvalTaskApi {
    * @maximum 100
    */
   sampling_rate: number;
+  sampling_policy?: SamplingPolicyApi;
   last_run?: string;
   /**
    * @minimum 1
@@ -25415,6 +25564,180 @@ export interface EvalTaskMessageResponseApi {
   result: EvalTaskMessageResultApi;
 }
 
+export type SamplingPreviewRequestApiRowType =
+  (typeof SamplingPreviewRequestApiRowType)[keyof typeof SamplingPreviewRequestApiRowType];
+
+export const SamplingPreviewRequestApiRowType = {
+  spans: "spans",
+  traces: "traces",
+  sessions: "sessions",
+} as const;
+
+/**
+ * Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.
+ */
+export type SamplingPreviewRequestApiFiltersDatePreset =
+  (typeof SamplingPreviewRequestApiFiltersDatePreset)[keyof typeof SamplingPreviewRequestApiFiltersDatePreset];
+
+export const SamplingPreviewRequestApiFiltersDatePreset = {
+  "30m": "30m",
+  "6h": "6h",
+  today: "today",
+  yesterday: "yesterday",
+  "7d": "7d",
+  "30d": "30d",
+  "3m": "3m",
+  "6m": "6m",
+  "12m": "12m",
+  custom: "custom",
+} as const;
+
+export type SamplingPreviewRequestApiFiltersFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof SamplingPreviewRequestApiFiltersFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof SamplingPreviewRequestApiFiltersFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const SamplingPreviewRequestApiFiltersFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type SamplingPreviewRequestApiFiltersFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: SamplingPreviewRequestApiFiltersFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type SamplingPreviewRequestApiFiltersFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: SamplingPreviewRequestApiFiltersFiltersItemFilterConfig;
+};
+
+export type SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfig =
+  {
+    /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+    filter_type: string;
+    /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+    filter_op: string;
+    /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+    filter_value?: unknown;
+    /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+    col_type?: string;
+    /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+    attribute_value_types?: SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem[];
+  };
+
+export type SamplingPreviewRequestApiFiltersSpanAttributesFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfig;
+};
+
+export type SamplingPreviewRequestApiFilters = {
+  /** Project scope for the evaluation task. */
+  project_id?: string;
+  /**
+   * Half-open [start, end) ISO timestamps, normalized to UTC.
+   * @minItems 2
+   * @maxItems 2
+   */
+  date_range?: string[];
+  /** Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced. */
+  date_preset?: SamplingPreviewRequestApiFiltersDatePreset;
+  /** Exclusive lower-bound ISO timestamp for legacy task filters, normalized to UTC. */
+  created_at?: string;
+  /** Trace session id(s) to constrain the task. */
+  session_id?: string[];
+  /** Trace id(s) to constrain linked-source tasks. */
+  trace_id?: string[];
+  /** Observation span id(s) to constrain linked-source tasks. */
+  span_id?: string[];
+  /** Observation span type(s), for example llm, tool, or chain. */
+  observation_type?: string[];
+  filters?: SamplingPreviewRequestApiFiltersFiltersItem[];
+  span_attributes_filters?: SamplingPreviewRequestApiFiltersSpanAttributesFiltersItem[];
+};
+
+export interface SamplingPreviewRequestApi {
+  project: string;
+  row_type?: SamplingPreviewRequestApiRowType;
+  filters?: SamplingPreviewRequestApiFilters;
+  sampling_policy: SamplingPolicyApi;
+  /** @maxItems 50 */
+  evals?: string[];
+}
+
+export interface SamplingPreviewCellApi {
+  /** @minLength 1 */
+  stratum: string;
+  eligible_units: number;
+  eligible_rows: number;
+  expected_units: number;
+  expected_rows: number;
+  selected_units: number;
+  selected_rows: number;
+}
+
+export interface SamplingPreviewResultApi {
+  /** @minLength 1 */
+  policy_version: string;
+  /** @minLength 1 */
+  sampling_unit: string;
+  /** @minLength 1 */
+  mode: string;
+  window: SamplingWindowApi;
+  as_of: string;
+  strata: SamplingPreviewCellApi[];
+  /** @minimum 0 */
+  evaluator_count: number;
+  expected_evaluations: number;
+  selected_evaluations: number;
+  estimated_cost: number;
+  /** @minLength 1 */
+  cost_note: string;
+  /** @minLength 1 */
+  population_note: string;
+}
+
+export interface SamplingPreviewResponseApi {
+  status: boolean;
+  result: SamplingPreviewResultApi;
+}
+
 /**
  * Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.
  */
@@ -25573,6 +25896,7 @@ export const EvalTaskUpdateRequestApiEditType = {
 } as const;
 
 export interface EvalTaskUpdateRequestApi {
+  sampling_policy?: SamplingPolicyApi;
   /**
    * @minLength 1
    * @maxLength 255
@@ -28164,6 +28488,8 @@ export interface ProjectApi {
   source?: ProjectApiSource;
   /** Any valid JSON value. */
   session_config?: ProjectApiSessionConfig;
+  /** @maxLength 200 */
+  sampling_contact_attribute?: string;
   /** Any valid JSON value. */
   tags?: ProjectApiTags;
 }
@@ -28462,6 +28788,19 @@ export interface ProjectListResponseApi {
   result: ProjectListResultApi;
 }
 
+export interface ProjectNameUpdateApi {
+  /** @maxLength 200 */
+  sampling_contact_attribute?: string;
+  project_id: string;
+  /** @minLength 1 */
+  name: string;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  sampling_rate?: number;
+}
+
 export type ProjectDetailResultApiModelType =
   (typeof ProjectDetailResultApiModelType)[keyof typeof ProjectDetailResultApiModelType];
 
@@ -28534,6 +28873,8 @@ export interface ProjectDetailResultApi {
   source?: ProjectDetailResultApiSource;
   /** Any valid JSON value. */
   session_config?: ProjectDetailResultApiSessionConfig;
+  /** @maxLength 200 */
+  sampling_contact_attribute?: string;
   /** Any valid JSON value. */
   tags?: ProjectDetailResultApiTags;
   sampling_rate: number;

@@ -169,6 +169,7 @@ def materialize_pending(
     *,
     ceiling: datetime | None = None,
     trace_filter_witnesses: Iterable[TraceFilterWitness] = (),
+    sampling_metadata: dict[str, dict] | None = None,
 ) -> int:
     """Create one pending entry per (desired row, eval). Returns rows submitted.
 
@@ -197,7 +198,14 @@ def materialize_pending(
     reader = get_reader()
     try:
         batches = (
-            _iter_materialize_batches(resolved_row_ids)
+            _iter_materialize_batches(
+                resolved_row_ids,
+                batch_size=(
+                    max(1, _MATERIALIZE_BATCH // len(evals))
+                    if sampling_metadata is not None
+                    else _MATERIALIZE_BATCH
+                ),
+            )
             if resolved_row_ids is not None
             else iter_desired_rows(task, batch_size=_MATERIALIZE_BATCH, ceiling=ceiling)
         )
@@ -223,6 +231,11 @@ def materialize_pending(
                                 )
                             }
                         }
+                    if sampling_metadata and str(identity) in sampling_metadata:
+                        metadata = entry_fields.setdefault("output_metadata", {})
+                        metadata.setdefault("_task_selection", {})["sampling"] = (
+                            sampling_metadata[str(identity)]
+                        )
                     rows.append(
                         EvalLogger(
                             target_type=target_type,
@@ -311,13 +324,15 @@ def _refresh_waiting_trace_witnesses(
         EvalLogger.objects.bulk_update(updates, ["output_metadata"])
 
 
-def _iter_materialize_batches(row_ids: Iterable[str]) -> Iterator[list[str]]:
+def _iter_materialize_batches(
+    row_ids: Iterable[str], *, batch_size: int = _MATERIALIZE_BATCH
+) -> Iterator[list[str]]:
     """Batch a caller-provided, already-buffered desired row set."""
 
     batch: list[str] = []
     for row_id in row_ids:
         batch.append(str(row_id))
-        if len(batch) >= _MATERIALIZE_BATCH:
+        if len(batch) >= batch_size:
             yield batch
             batch = []
     if batch:
