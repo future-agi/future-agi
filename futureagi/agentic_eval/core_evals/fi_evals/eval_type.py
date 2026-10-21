@@ -9,6 +9,7 @@ class FutureAgiEvalTypeId(Enum):
 class LlmEvalTypeId(Enum):
     CUSTOM_PROMPT_EVAL = "CustomPromptEvaluator"
     GROUNDEDNESS = "Groundedness"
+    SRE_ROOT_CAUSE_ACCURACY = "SRERootCauseAccuracy"
 
 
 class FunctionEvalTypeId(Enum):
