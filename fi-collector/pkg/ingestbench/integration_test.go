@@ -253,25 +253,67 @@ func TestVerificationRejectsInvalidAndChangingResponses(t *testing.T) {
 	}
 }
 
+type probeRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f probeRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type probeCancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b probeCancelOnClose) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
+}
+
 func TestApplicationProbesDoNotTreatLoginAsSuccess(t *testing.T) {
-	for _, content := range []string{`{"results":[]}`, `<html>Login</html>`, `{"error":"unauthorized"}`} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("Authorization") != "Bearer fixture" {
-				t.Error("missing auth")
+	for _, tc := range []struct {
+		name, content string
+		success       bool
+	}{
+		{"success", `{"results":[]}`, true},
+		{"login", `<html>Login</html>`, false},
+		{"error", `{"error":"unauthorized"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer fixture" {
+					t.Error("missing auth")
+				}
+				fmt.Fprint(w, tc.content)
+			}))
+			defer srv.Close()
+			// The deadline is only a deadlock guard. End the load window AFTER
+			// the real response has been consumed, rather than racing HTTP with
+			// a 20ms timer on a contended race-test runner.
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			client := testConfig().client()
+			transport := client.Transport.(*http.Transport)
+			defer transport.CloseIdleConnections()
+			client.Transport = probeRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				resp, err := transport.RoundTrip(req)
+				if err != nil {
+					cancel()
+					return nil, err
+				}
+				resp.Body = probeCancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+				return resp, nil
+			})
+			p := ReadProbe{Name: "trace-list", URL: srv.URL, Method: "GET", ExpectStatus: 200, ExpectKey: "results", IntervalMS: 1000}
+			r := runReadProbe(ctx, client, p, http.Header{"Authorization": []string{"Bearer fixture"}})
+			if r.Censored != 0 || r.HTTPStatuses[http.StatusOK] != 1 {
+				t.Fatalf("expected exactly one fully consumed response: %+v", r)
 			}
-			fmt.Fprint(w, content)
-		}))
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-		p := ReadProbe{Name: "trace-list", URL: srv.URL, Method: "GET", ExpectStatus: 200, ExpectKey: "results", IntervalMS: 1000}
-		r := runReadProbe(ctx, testConfig().client(), p, http.Header{"Authorization": []string{"Bearer fixture"}})
-		cancel()
-		srv.Close()
-		if content == `{"results":[]}` {
-			if r.Successes != 1 || r.Errors != 0 {
+			if tc.success {
+				if r.Successes != 1 || r.Errors != 0 || r.Latency.Count != 1 {
+					t.Fatal(r)
+				}
+			} else if r.Successes != 0 || r.Errors != 1 || r.FailureLatency.Count != 1 {
 				t.Fatal(r)
 			}
-		} else if r.Successes != 0 || r.Errors != 1 {
-			t.Fatal(r)
-		}
+		})
 	}
 }
