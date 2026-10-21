@@ -1,0 +1,91 @@
+name: Omega worker CI
+
+# The worker used to run only prepare-image.test.mjs in its own repo's CI
+# (TH-8393). Now that it lives in this repo (futureagi/ee/workers/error-feed-node),
+# this runs its whole node:test suite -- the daemon, grouping, telemetry,
+# observability and the image-prep scripts -- whenever worker files change.
+
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "futureagi/ee/workers/error-feed-node/**"
+      - ".github/workflows/omega-worker-ci.yml"
+  push:
+    branches: [main, dev]
+    paths:
+      - "futureagi/ee/workers/error-feed-node/**"
+      - ".github/workflows/omega-worker-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  test:
+    name: node --test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: futureagi/ee/workers/error-feed-node
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install the telemetry package's own dependencies
+        working-directory: futureagi/ee/workers/error-feed-node/telemetry
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # observability.mjs resolves '@future-agi/error-feed-telemetry' by
+      # package name (not a relative path): pack telemetry/ the same way
+      # prepare-telemetry.mjs does for the Docker build, and install it
+      # under node_modules so plain `node --test` can find it too.
+      - name: Make the telemetry package resolvable for the tests
+        working-directory: futureagi/ee/workers/error-feed-node
+        run: |
+          set -eu
+          tarball=$(cd telemetry && npm pack --silent)
+          mkdir -p node_modules/@future-agi
+          tar -xzf "telemetry/$tarball" -C node_modules/@future-agi
+          rm "telemetry/$tarball"
+          mv node_modules/@future-agi/package node_modules/@future-agi/error-feed-telemetry
+          npm install --omit=dev --ignore-scripts --no-audit --no-fund \
+            --prefix node_modules/@future-agi/error-feed-telemetry
+
+      - name: Fetch the pinned @future-agi/omega-runtime package
+        id: fetch_runtime
+        env:
+          # Same fallback release-images.yml documents: GITHUB_TOKEN needs
+          # packages:read on the private omega-runtime package (published
+          # from the separate `omega` repo); if org policy can't grant that
+          # across repos, OMEGA_PACKAGES_READ_TOKEN carries a PAT/app token
+          # with read:packages instead.
+          GITHUB_TOKEN: ${{ secrets.OMEGA_PACKAGES_READ_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          if node fetch-runtime.mjs; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::omega-runtime fetch failed -- skipping the 4 test files that need it until OMEGA_PACKAGES_READ_TOKEN (or GITHUB_TOKEN packages:read) is set up"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+        continue-on-error: true
+
+      - name: Run the full test suite
+        if: steps.fetch_runtime.outputs.available == 'true'
+        run: node --test
+
+      - name: Run the test suite, excluding the 4 files that need omega-runtime
+        if: steps.fetch_runtime.outputs.available != 'true'
+        run: |
+          files=()
+          while IFS= read -r f; do files+=("$f"); done < <(find . -name '*.test.mjs' \
+            ! -name 'worker.test.mjs' \
+            ! -name 'investigation.test.mjs' \
+            ! -name 'audio-inspection.test.mjs' \
+            ! -name 'gateway-retry.test.mjs')
+          node --test "${files[@]}"

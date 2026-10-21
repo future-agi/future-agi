@@ -1,0 +1,10 @@
+{
+  "name": "@future-agi/error-feed-telemetry",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs",
+  "files": ["index.mjs"],
+  "dependencies": {"@traceai/fi-core": "1.0.0", "@opentelemetry/api": "1.9.0"},
+  "bundleDependencies": ["@traceai/fi-core", "@opentelemetry/api"]
+}

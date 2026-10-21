@@ -1639,11 +1639,11 @@ class Workflows(unittest.TestCase):
             if "always()" not in condition:
                 continue
             with self.subTest(job=name):
-                if name == "bump-deployment":
-                    self.assertIn("needs.release-worker.result == 'success'", condition)
-                else:
-                    self.assertIn(approved, condition)
-        self.assertIn(approved, " ".join(jobs["release-worker"]["if"].split()))
+                self.assertIn(approved, condition)
+        # release-worker is a normal component build now (like backend,
+        # code-executor): no always()-wrapped condition, no separate
+        # explicit approve re-check -- its own needs: [guard, approve] already
+        # does that implicitly, same as every other build job.
         # The image builds do not ask again.
         for name, job in jobs.items():
             if str(job.get("uses", "")).endswith("build-image-multiarch.yml"):
@@ -1702,14 +1702,16 @@ class Workflows(unittest.TestCase):
             "resolve-sdk": "simulation-runner",
             "simulation-runner": "simulation-runner",
             "dispatch-ee": "ee",
-            "release-worker": "bump",
+            "release-worker": "worker",
             "dispatch-docs": "docs",
             "helm-chart": "helm-chart",
         }
         for job, component in component_of.items():
             with self.subTest(job=job):
                 self.assertEqual(selected_by(jobs[job]["if"]), {component})
-        self.assertEqual(legs | set(component_of.values()), set(components))
+        # "bump" has no quoted-component gate: bump-deployment runs off the
+        # release event/success chain (below), not a contains(components, "x") check.
+        self.assertEqual(legs | set(component_of.values()) | {"bump"}, set(components))
         # A job that follows builds this run may not have asked for: a skipped
         # one does not stop it, a failed one does.
         for job in (
@@ -1724,15 +1726,17 @@ class Workflows(unittest.TestCase):
                 condition = " ".join(str(jobs[job]["if"]).split())
                 self.assertIn("!cancelled() && !failure()", condition)
                 self.assertNotIn("always()", condition)
+        # release-worker builds independently (like backend/code-executor): it
+        # does not wait on another image's build to finish.
         # A tag push pins only what it built: a failed build stops the bump.
-        worker = " ".join(jobs["release-worker"]["if"].split())
-        for built in ("build", "backend", "code-executor"):
-            with self.subTest(job="release-worker", built=built):
-                self.assertIn(f"needs.{built}.result == 'success'", worker)
         bump = " ".join(jobs["bump-deployment"]["if"].split())
-        for built in ("release-worker", "dispatch-ee", "simulation-runner"):
+        for built in ("dispatch-ee", "simulation-runner"):
             with self.subTest(job="bump-deployment", built=built):
                 self.assertIn(f"needs.{built}.result == 'success'", bump)
+        # The worker's digest is looked up by published tag in bump-deployment
+        # (alongside backend/collector), not threaded through as a job output --
+        # same reason there is no needs.backend.result check here either.
+        self.assertNotIn("needs.release-worker", bump)
         # The runner's base: the backend this run built, else the registry's.
         (digest,) = [
             s for s in jobs["resolve-sdk"]["steps"] if s.get("id") == "backend"
@@ -1798,7 +1802,7 @@ class Workflows(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(selected[0], "frontend")
         self.assertEqual(selected[-1], "bump")
-        self.assertEqual(len(selected), 14)
+        self.assertEqual(len(selected), 15)
         self.assertEqual(urls, [])
         # A dispatch without a list is the deployment bump retry, from any ref
         # and for any version.
