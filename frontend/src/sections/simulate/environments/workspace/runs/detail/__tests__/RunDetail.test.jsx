@@ -54,6 +54,12 @@ vi.mock("src/api/simulate-environments/runCalls", async (importOriginal) => {
   return { ...actual, useRunCalls: (...args) => useRunCalls(...args) };
 });
 
+const rerunCallEvals = vi.fn();
+vi.mock("src/api/simulate-environments/rerunScenarios", async (orig) => ({
+  ...(await orig()),
+  rerunCallEvals: (...args) => rerunCallEvals(...args),
+}));
+
 const enqueueSnackbar = vi.fn();
 vi.mock("notistack", async (importOriginal) => {
   const actual = await importOriginal();
@@ -183,6 +189,7 @@ function RunTraceTableStub({
   initialFilters,
   evalActions,
   rerunDisabledReason,
+  onRerunEvals,
 }) {
   useEffect(() => {
     onQueryChange?.(TABLE_QUERY);
@@ -208,6 +215,12 @@ function RunTraceTableStub({
       <span>{`rerun-off:${rerunDisabledReason ?? "-"}`}</span>
       <button
         type="button"
+        onClick={() => onRerunEvals(["c1", "c2"]).catch(() => {})}
+      >
+        rerun evals
+      </button>
+      <button
+        type="button"
         onClick={() => onOpenCall({ id: "c1", simulationCallType: "voice" })}
       >
         open c1
@@ -224,6 +237,7 @@ RunTraceTableStub.propTypes = {
   activePage: PropTypes.number,
   evalActions: PropTypes.object,
   rerunDisabledReason: PropTypes.string,
+  onRerunEvals: PropTypes.func,
 };
 vi.mock("../trace/RunTraceTable", () => ({ default: RunTraceTableStub }));
 vi.mock("../CallDrawer", () => ({
@@ -857,6 +871,67 @@ describe("RunDetail", () => {
     renderDetail({ onStartRun: vi.fn(), runStarting: true });
 
     expect(screen.getByText("rerun-off:Starting the run…")).toBeInTheDocument();
+  });
+
+  it("re-runs the ticked calls' evals on this run and refreshes it", async () => {
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
+    let accept;
+    rerunCallEvals.mockReset().mockReturnValue(
+      new Promise((resolve) => {
+        accept = resolve;
+      }),
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+    const user = userEvent.setup();
+    renderDetail({ client });
+
+    await user.click(screen.getByRole("button", { name: "rerun evals" }));
+    expect(rerunCallEvals).toHaveBeenCalledWith("ex1", ["c1", "c2"]);
+    expect(screen.getByText("rerun-off:Re-running evals…")).toBeInTheDocument();
+
+    accept({ success_count: 2 });
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Re-running evals on 2 calls",
+        { variant: "success" },
+      ),
+    );
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["simulation-run-results-v3", "ex1"],
+    });
+    expect(screen.getByText("rerun-off:-")).toBeInTheDocument();
+  });
+
+  it("says why when the eval re-run is refused", async () => {
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
+    // The axios client rejects with the error body itself.
+    rerunCallEvals.mockReset().mockRejectedValue({
+      detail: "No call executions found that can be rerun.",
+      statusCode: 400,
+    });
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "rerun evals" }));
+
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "No call executions found that can be rerun.",
+        { variant: "error" },
+      ),
+    );
+    expect(screen.getByText("rerun-off:-")).toBeInTheDocument();
   });
 
   it("has no Run again button when the table has calls to tick", () => {
