@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { fetchAllObserveProjects } from "src/api/project/observe-project-list";
 
 // Mirrors `DeepAnalysisResponse.status` on the backend
 // (futureagi/tracer/types/feed_types.py:DeepAnalysisResponse).
@@ -14,6 +15,7 @@ const KEYS = {
   list: (params) => ["errorFeed", "list", params],
   stats: (params) => ["errorFeed", "stats", params],
   detail: (clusterId) => ["errorFeed", "detail", clusterId],
+  redirect: (clusterId) => ["errorFeed", "redirect", clusterId],
   overview: (clusterId) => ["errorFeed", "overview", clusterId],
   traces: (clusterId, params) => ["errorFeed", "traces", clusterId, params],
   trends: (clusterId, params) => ["errorFeed", "trends", clusterId, params],
@@ -36,19 +38,11 @@ export const useObserveProjectList = (options = {}) => {
   return useQuery({
     ...options,
     queryKey: KEYS.projects,
-    queryFn: () =>
-      axios.get(endpoints.project.projectObserveList, {
-        params: {
-          project_type: "observe",
-          page_number: 0,
-          page_size: 200,
-        },
-      }),
-    select: (res) => {
-      const rows = res?.data?.result?.table ?? [];
-      return rows.map((p) => ({ value: p.id, label: p.name }));
-    },
+    queryFn: ({ signal }) => fetchAllObserveProjects({ signal }),
+    select: (rows) =>
+      rows.map((project) => ({ value: project.id, label: project.name })),
     staleTime: 5 * 60 * 1000,
+    retry: false,
   });
 };
 
@@ -94,6 +88,19 @@ export const useErrorFeedDetail = (clusterId, options = {}) => {
     queryFn: () => axios.get(endpoints.errorFeed.detail(clusterId)),
     select: (res) => res?.data?.result,
     enabled,
+  });
+};
+
+export const useErrorFeedRedirect = (clusterId, options = {}) => {
+  const enabled = !!clusterId && (options.enabled ?? true);
+
+  return useQuery({
+    ...options,
+    queryKey: KEYS.redirect(clusterId),
+    queryFn: () => axios.get(endpoints.errorFeed.redirect(clusterId)),
+    select: (res) => res?.data?.result,
+    enabled,
+    retry: false,
   });
 };
 

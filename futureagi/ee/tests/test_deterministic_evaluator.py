@@ -132,7 +132,7 @@ class TestDeterministicAgentInit:
         """Default initialization uses the direct multimodal model."""
         agent = DeterministicAgent()
         assert agent.llm is not None
-        assert agent.llm.model_name == ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name
+        assert agent.llm.model_name == ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
         assert agent.supports_audio == True
         assert agent.supports_pdf == True
 
@@ -204,7 +204,7 @@ class TestModalityValidation:
     def test_audio_with_turing_small_raises_error(self):
         """Audio input with a non-audio direct model raises before LLM calls."""
         agent = DeterministicAgent(
-            model_name=ModelConfigs.VERTEX_GEMINI_2_5_FLASH.model_name
+            model_name=ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE.model_name
         )
 
         assert agent.supports_audio == False
@@ -247,7 +247,7 @@ class TestModalityValidation:
     def test_pdf_with_direct_text_model_raises_error(self):
         """PDF input with a non-PDF direct model raises before LLM calls."""
         agent = DeterministicAgent(
-            model_name=ModelConfigs.VERTEX_GEMINI_2_5_FLASH.model_name
+            model_name=ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE.model_name
         )
 
         with pytest.raises(ValueError, match=agent.EMPTY_EVAL_RESPONSE_ERROR_MESSAGE):
@@ -315,7 +315,7 @@ class TestRealFileProcessing:
     def test_audio_url_processing(self):
         """Process real audio URL with TURING_LARGE."""
         agent = DeterministicAgent(
-            model_name=ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name
+            model_name=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
         )
 
         # Should process without errors
@@ -345,7 +345,7 @@ class TestRealFileProcessing:
     def test_pdf_url_processing(self):
         """Process real PDF URL with TURING_LARGE."""
         agent = DeterministicAgent(
-            model_name=ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name
+            model_name=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
         )
 
         # Should process without errors
@@ -381,7 +381,7 @@ class TestRealFileProcessing:
     def test_audio_with_turing_small_fails(self):
         """A non-audio direct model should reject audio before LLM calls."""
         agent = DeterministicAgent(
-            model_name=ModelConfigs.VERTEX_GEMINI_2_5_FLASH.model_name
+            model_name=ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE.model_name
         )
 
         with pytest.raises(ValueError, match=agent.EMPTY_EVAL_RESPONSE_ERROR_MESSAGE):
@@ -397,7 +397,7 @@ class TestRealFileProcessing:
     def test_pdf_with_turing_small_fails(self):
         """A non-PDF direct model should reject PDF before LLM calls."""
         agent = DeterministicAgent(
-            model_name=ModelConfigs.VERTEX_GEMINI_2_5_FLASH.model_name
+            model_name=ModelConfigs.VERTEX_GEMINI_3_5_FLASH_LITE.model_name
         )
 
         with pytest.raises(ValueError, match=agent.EMPTY_EVAL_RESPONSE_ERROR_MESSAGE):
@@ -746,7 +746,7 @@ class TestMultiModalCombinations:
     def test_text_plus_audio(self):
         """Text + Audio combination."""
         agent = DeterministicAgent(
-            model_name=ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name
+            model_name=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
         )
 
         payload = {
@@ -767,7 +767,7 @@ class TestMultiModalCombinations:
     def test_image_plus_pdf(self):
         """Image + PDF combination."""
         agent = DeterministicAgent(
-            model_name=ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name
+            model_name=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
         )
 
         payload = {
@@ -786,7 +786,7 @@ class TestMultiModalCombinations:
     def test_three_different_modalities(self):
         """Text + Image + Audio."""
         agent = DeterministicAgent(
-            model_name=ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name
+            model_name=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
         )
 
         payload = {
@@ -1159,7 +1159,7 @@ class TestProductionAudioURLBug:
     def test_audio_block_uses_audio_tags(self):
         """Audio URLs should be wrapped as audio content, not plain image tags."""
         agent = DeterministicAgent(
-            model_name=ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name
+            model_name=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
         )
 
         content = agent._build_content_block(self.PRODUCTION_AUDIO_URL, "audio", 0)
@@ -1191,7 +1191,7 @@ class TestProductionAudioURLBug:
         assert "data:audio/" in vertex_payload["image_url"]["url"]
 
         # Test fallback conversion
-        llm = LLM(model_name=ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name)
+        llm = LLM(model_name=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name)
         messages = [
             {
                 "role": "user",
@@ -1222,7 +1222,7 @@ class TestProductionAudioURLBug:
     def test_production_audio_url_end_to_end(self):
         """Integration test with production MP3 URL - tests full evaluation flow including auto-detection."""
         agent = DeterministicAgent(
-            model_name=ModelConfigs.VERTEX_GEMINI_2_5_PRO.model_name
+            model_name=ModelConfigs.VERTEX_GEMINI_3_7_FLASH.model_name
         )
 
         # Exact production scenario - NO input_type to test auto-detection

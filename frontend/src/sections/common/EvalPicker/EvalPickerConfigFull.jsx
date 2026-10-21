@@ -17,6 +17,7 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { LoadingButton } from "@mui/lab";
 import { enqueueSnackbar } from "notistack";
 import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
 import PropTypes from "prop-types";
 import React, {
@@ -71,6 +72,7 @@ import {
   extractVariablesFromMessages,
 } from "src/utils/utils";
 import { format } from "date-fns";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import {
   buildEvalTemplateConfig,
   buildCompositeSourceModeProps,
@@ -119,13 +121,22 @@ const SOURCE_NAME_SLUGS = {
 const getEvalPromptText = (evalData, config = {}) =>
   evalData?.instructions || config?.rule_prompt || "";
 
-const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
+const EvalPickerConfigFull = ({
+  evalData,
+  onBack,
+  onSave,
+  isSaving,
+  progress = null,
+  primaryLabel = null,
+  showClose = false,
+}) => {
   // Fail closed while capabilities load (both flags true) so gated controls
   // never flash as available before the fetch resolves.
   const { locked: fagiLocked, isLoading: capsLoading } = useFeatureLocked(
     CAPABILITY.TURING_MODELS,
   );
   const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  const errorLocalizerAvailable = useErrorLocalizationAvailable();
   // Confirmed denial (loaded AND not allowed) — seed the model default raw and
   // only strip it here, never off `locked` (true while loading), so entitled
   // users keep "turing_large" through the fetch.
@@ -142,6 +153,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     onFiltersChange,
     sourceTimeWindow,
     filterForm: localFilterForm,
+    onClose,
+    requireInputs,
   } = useEvalPickerContext();
   const normalizedEvalData = useMemo(
     () => normalizeEvalPickerEval(evalData),
@@ -191,7 +204,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
-  const errorLocalizerActive = errorLocalizerEnabled && !agentEvalLocked;
+  const errorLocalizerActive =
+    errorLocalizerEnabled && !agentEvalLocked && errorLocalizerAvailable;
   // Name for the UserEvalMetric — defaults to template name, user can customise
   const [evalName, setEvalName] = useState("");
   const [dataReady, setDataReady] = useState(false);
@@ -517,6 +531,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         evalData?.config?.run_config ||
         evalData?.config?.runConfig ||
         {};
+      const bindingConfig =
+        evalData?.bindingConfig || evalData?.binding_config || {};
 
       const normalizedRunConfig = {
         ...rawRunConfig,
@@ -572,8 +588,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           evalData?.config?.messages ??
           fullEval?.config?.messages,
       };
+      Object.keys(normalizedRunConfig).forEach((key) => {
+        if (normalizedRunConfig[key] === undefined)
+          delete normalizedRunConfig[key];
+      });
       const config = {
         ...(fullEval.config || {}),
+        ...bindingConfig,
         ...normalizedRunConfig,
       };
       const promptText = getEvalPromptText(fullEval, config);
@@ -603,6 +624,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       // ("small") for built-in templates while detail returns the full
       // canonical value, so we intentionally prefer `fullEval.model`
       // over `evalData.model` to avoid the chip rendering "small".
+      // Do NOT map `model` into `normalizedRunConfig` to "restore" the
+      // saved value: `config` is spread run-config-last, so an explicit
+      // `evalData.model` there lands in `config.model` and wins over
+      // `fullEval.model`, reintroducing the stripped-form bug. The saved
+      // model already arrives via `...rawRunConfig` once the backend
+      // stops filtering it out of `run_config` (see `build_run_config_view`).
       setModel(
         config?.model || fullEval?.model || evalData?.model || "turing_large",
       );
@@ -916,10 +943,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         setSelectedVersionId(newVersion.id);
       }
     } catch (err) {
-      const message =
-        err?.response?.data?.result || err?.message || "Failed to save version";
       enqueueSnackbar(
-        typeof message === "string" ? message : JSON.stringify(message),
+        getSafeActionErrorMessage(err, "Failed to save version"),
         { variant: "error" },
       );
     }
@@ -1023,7 +1048,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       evalData?.template_type;
 
     const resolvedConfig = buildEvalTemplateConfig({
-      baseConfig: fullEval?.config || evalData?.config || {},
+      baseConfig: {
+        ...(fullEval?.config || {}),
+        ...(isEditMode ? evalData?.bindingConfig || {} : {}),
+      },
       evalType,
       instructions,
       code,
@@ -1247,6 +1275,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           )}
         </Box>
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+          {/* Host-supplied progress (multi-eval queue walk). Built-in evals
+              hide the version controls, so a bar floating mid-header reads as
+              misplaced — it sits with the version controls instead. */}
+          {progress}
           {/* Save-as-new-version — user evals only. System evals are
               read-only by product policy (editing triggers Copy flow).
               Sits beside the existing version dropdown so the user can
@@ -1289,6 +1321,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 </MenuItem>
               ))}
             </Select>
+          )}
+          {showClose && (
+            <IconButton onClick={onClose} size="small" sx={{ p: 0.5 }}>
+              <Iconify icon="mingcute:close-line" width={20} />
+            </IconButton>
           )}
         </Box>
       </Box>
@@ -1724,47 +1761,48 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 />
               )}
 
-              {/* Error Localization (single-eval concern, LLM/Agent only).
-                  Code evals don't support error localization — the feature
-                  introspects model traces, which code evals don't produce. */}
-              {!isComposite && evalType !== "code" && (
-                <CustomTooltip
-                  show={agentEvalLocked}
-                  type=""
-                  arrow
-                  title={ERROR_LOCALIZER_LOCKED_TOOLTIP}
-                >
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={errorLocalizerActive}
-                        disabled={agentEvalLocked}
-                        onChange={(e) => {
-                          setErrorLocalizerEnabled(e.target.checked);
-                          setIsDirty(true);
-                        }}
-                        size="small"
-                      />
-                    }
-                    label={
-                      <Box>
-                        <Typography variant="body2" fontWeight={500}>
-                          Error Localization
-                        </Typography>
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ display: "block" }}
-                        >
-                          Pinpoints which parts of the input caused evaluation
-                          failures
-                        </Typography>
-                      </Box>
-                    }
-                    sx={{ alignItems: "flex-start" }}
-                  />
-                </CustomTooltip>
-              )}
+              {/* Single-eval concern, LLM/Agent only — code evals don't produce
+                  the model traces the feature introspects. */}
+              {errorLocalizerAvailable &&
+                !isComposite &&
+                evalType !== "code" && (
+                  <CustomTooltip
+                    show={agentEvalLocked}
+                    type=""
+                    arrow
+                    title={ERROR_LOCALIZER_LOCKED_TOOLTIP}
+                  >
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={errorLocalizerActive}
+                          disabled={agentEvalLocked}
+                          onChange={(e) => {
+                            setErrorLocalizerEnabled(e.target.checked);
+                            setIsDirty(true);
+                          }}
+                          size="small"
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2" fontWeight={500}>
+                            Error Localization
+                          </Typography>
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ display: "block" }}
+                          >
+                            Pinpoints which parts of the input caused evaluation
+                            failures
+                          </Typography>
+                        </Box>
+                      }
+                      sx={{ alignItems: "flex-start" }}
+                    />
+                  </CustomTooltip>
+                )}
             </Box>
           }
           rightPanel={
@@ -1833,7 +1871,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 </Box>
               )}
 
-              <Box sx={{ flex: 1, overflow: "auto", pb: 2 }}>
+              <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", pb: 2 }}>
                 {(source === "dataset" ||
                   source === "experiment" ||
                   source === "workbench" ||
@@ -2240,10 +2278,22 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             addDisabledReason = `Add instructions before ${actionLabel}.`;
           } else if (!hasVariables && !hasDataInjection) {
             addDisabled = true;
+            // A system eval's template can't be edited here (isSystemEval
+            // locks it read-only), so with requireInputs on, telling the
+            // user to add a {{variable}} to it is a dead end — say why the
+            // add is actually blocked instead.
             addDisabledReason =
-              templateFormat === "jinja"
-                ? `Your Jinja template has no variables. Reference an input with a {{ variable }} expression or a {% ... %} block (e.g. {{ input }}) before ${actionLabel}.`
-                : `Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) before ${actionLabel}.`;
+              requireInputs && isSystemEval
+                ? "This evaluation has no inputs to map, so it can't run in an environment."
+                : templateFormat === "jinja"
+                  ? `Your Jinja template has no variables. Reference an input with a {{ variable }} expression or a {% ... %} block (e.g. {{ input }}) before ${actionLabel}.`
+                  : `Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) before ${actionLabel}.`;
+          }
+
+          if (!addDisabled && requireInputs && variables.length === 0) {
+            addDisabled = true;
+            addDisabledReason =
+              "This evaluation has no inputs to map, so it can't run in an environment.";
           }
 
           if (
@@ -2273,11 +2323,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   disabled={addDisabled}
                   sx={{ textTransform: "none" }}
                 >
-                  {source === "composite"
-                    ? "Add to Composite"
-                    : isEditMode
-                      ? "Update Evaluation"
-                      : "Add Evaluation"}
+                  {primaryLabel ||
+                    (source === "composite"
+                      ? "Add to Composite"
+                      : isEditMode
+                        ? "Update Evaluation"
+                        : "Add Evaluation")}
                 </LoadingButton>
               </span>
             </CustomTooltip>
@@ -2293,6 +2344,9 @@ EvalPickerConfigFull.propTypes = {
   onBack: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
   isSaving: PropTypes.bool,
+  progress: PropTypes.node,
+  primaryLabel: PropTypes.string,
+  showClose: PropTypes.bool,
 };
 
 export default EvalPickerConfigFull;

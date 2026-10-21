@@ -61,3 +61,22 @@ DESIRED_STREAM_MAX_MEMORY = 512 * 2**20
 # reap = 2 UPDATEs, has_undrained_work = 1 EXISTS, finalize = fetch + EXISTS
 # + UPDATE (+ savepoint bookkeeping under the test transaction).
 REAP_PROGRESS_FINALIZE_MAX_PG_QUERIES = 8
+
+# ── property catalog: exact filtered trace list + graph reads ─────────────────
+# These gates exercise the production CH25 builders against both the ordinary
+# target project and the larger mixed/noise project.  Duration ceilings are
+# deliberately generous for shared CI; row volume, memory, and statement count
+# are the deterministic regression signals.
+EXACT_TRACE_LIST_MAX_CH_QUERIES = 16
+EXACT_TRACE_LIST_MAX_READ_ROWS_FACTOR = 16.0
+# At sub-CI scales ClickHouse still reads one 8,192-row granule for each of the
+# five bounded-list stages.  Keep the ordinary factor strict at the documented
+# 0.1 scale while allowing developers to calibrate with ``STRESS_SCALE=0.01``.
+EXACT_TRACE_LIST_READ_ROWS_GRANULE_FLOOR = 5 * 8_192
+EXACT_TRACE_LIST_MAX_MEMORY = 256 * 2**20
+EXACT_TRACE_LIST_MAX_QUERY_DURATION_MS = 3_000
+
+EXACT_TRACE_GRAPH_MAX_CH_QUERIES = 64
+EXACT_TRACE_GRAPH_MAX_READ_ROWS_FACTOR = 96.0
+EXACT_TRACE_GRAPH_MAX_MEMORY = 1536 * 2**20
+EXACT_TRACE_GRAPH_MAX_QUERY_DURATION_MS = 60_000

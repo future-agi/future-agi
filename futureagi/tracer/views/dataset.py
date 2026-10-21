@@ -2,6 +2,7 @@ import uuid
 
 import structlog
 from django.db.models import Q
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -9,6 +10,13 @@ from rest_framework.viewsets import ModelViewSet
 
 from model_hub.models.choices import DatasetSourceChoices, ModelTypes, SourceChoices
 from model_hub.models.develop_dataset import Column, Dataset
+from model_hub.views.utils.dataset_limit import (
+    DatasetLimitCheckFailed,
+    DatasetLimitReached,
+    dataset_limit_check_failed_response,
+)
+from tfc.utils.api_errors import ApiErrorCode
+from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -49,6 +57,7 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
         return queryset
 
+    @swagger_auto_schema(responses={503: DatasetLimitCheckFailedErrorSerializer})
     @action(detail=False, methods=["post"])
     def add_to_new_dataset(self, request, *args, **kwargs):
         try:
@@ -121,6 +130,17 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     "status": "processing",
                     "message": "Dataset creation started. Data is being processed in background.",
                 }
+            )
+
+        except DatasetLimitCheckFailed:
+            return dataset_limit_check_failed_response()
+
+        except DatasetLimitReached:
+            # 400, not the sibling routes' 429: the frontend shows a 429 only
+            # through the usage entry's upgrade alert, which this route does
+            # not send, so a 429 here would refuse without telling the user.
+            return self._gm.bad_request(
+                get_error_message("DATASET_CREATE_LIMIT_REACHED")
             )
 
         except (ValidationError, ValueError) as e:
@@ -430,11 +450,12 @@ def create_new_dataset(new_dataset_name, organization, workspace, user_id):
     ).exists():
         raise ValueError(get_error_message("DATASET_EXIST_IN_ORG"))
 
-    if (
-        check_if_dataset_creation_is_allowed is not None
-        and not check_if_dataset_creation_is_allowed(organization)
-    ):
-        raise ValueError(get_error_message("DATASET_CREATE_LIMIT_REACHED"))
+    if check_if_dataset_creation_is_allowed is not None:
+        allowed, detail = check_if_dataset_creation_is_allowed(organization)
+        if detail.get("error_code") == ApiErrorCode.DATASET_LIMIT_CHECK_FAILED:
+            raise DatasetLimitCheckFailed
+        if not allowed:
+            raise DatasetLimitReached
 
     return Dataset.no_workspace_objects.create(
         id=uuid.uuid4(),

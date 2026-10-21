@@ -7,6 +7,8 @@ Provider raw shape:
   VAPI     | inbound   | simulator       | tested agent
   VAPI     | outbound  | tested agent    | simulator
   LiveKit  | both      | tested agent    | simulator
+  Bland    | outbound  | tested agent    | simulator
+  Retell   | outbound  | tested agent    | simulator
 
 Direction is tested-agent-perspective: inbound = tested agent receives, outbound
 = tested agent dials out. LiveKit rows are pre-normalised at the agent worker.
@@ -83,6 +85,24 @@ class SpeakerRoleResolver:
         "customer": "simulator",
     }
 
+    # Retell is a customer-only outbound provider (inbound Retell flows through
+    # VAPI). Its own maps — same values as VAPI today, but independent so a
+    # Retell payload change is edited here directly, not through a shared alias.
+    _RETELL_INBOUND: dict[str, str] = {
+        "bot": "simulator",
+        "assistant": "simulator",
+        "agent": "simulator",
+        "user": "tested_agent",
+        "customer": "tested_agent",
+    }
+    _RETELL_OUTBOUND: dict[str, str] = {
+        "bot": "tested_agent",
+        "assistant": "tested_agent",
+        "agent": "tested_agent",
+        "user": "simulator",
+        "customer": "simulator",
+    }
+
     @staticmethod
     def detect_provider(
         provider_call_data: dict[str, Any] | None,
@@ -101,6 +121,8 @@ class SpeakerRoleResolver:
             return ProviderChoices.VAPI
         if provider_call_data.get(ProviderChoices.BLAND.value):
             return ProviderChoices.BLAND
+        if provider_call_data.get(ProviderChoices.RETELL.value):
+            return ProviderChoices.RETELL
         logger.error(
             "speaker_role_resolver_unknown_provider",
             provider_call_data_keys=list(provider_call_data.keys()),
@@ -145,6 +167,8 @@ class SpeakerRoleResolver:
             return cls._LIVEKIT_OUTBOUND if is_outbound else cls._LIVEKIT_INBOUND
         if provider == ProviderChoices.BLAND:
             return cls._BLAND_OUTBOUND if is_outbound else cls._BLAND_INBOUND
+        if provider == ProviderChoices.RETELL:
+            return cls._RETELL_OUTBOUND if is_outbound else cls._RETELL_INBOUND
         logger.error(
             "speaker_role_resolver_unsupported_provider",
             provider=str(provider),
@@ -173,6 +197,46 @@ class SpeakerRoleResolver:
     ) -> bool:
         role_map = cls._get_map(provider=provider, is_outbound=is_outbound)
         return role_map.get((role or "").lower()) == "simulator"
+
+    # Where our own recorder's stereo file is noted in call_metadata:
+    # (bucket, artifact kind, key holding its URL).
+    _OWN_STEREO_ARTIFACTS: tuple[tuple[str, str, str], ...] = (
+        ("hosted_harness_artifacts", "recording_stereo", "url"),
+        ("alk_recording_artifacts", "stereo", "recording_url"),
+    )
+
+    @classmethod
+    def stereo_channel_roles(
+        cls,
+        stereo_url: str,
+        call_metadata: dict[str, Any],
+        *,
+        provider: ProviderChoices,
+        is_outbound: bool,
+    ) -> dict[str, str]:
+        """Display role on each channel of the stereo recording at ``stereo_url``.
+
+        "customer" is the simulator and "assistant" the tested agent.
+        """
+        # Our recorder always writes simulator left, tested agent right. The URL
+        # must match: a rerun can leave an old artifact note beside a new
+        # provider recording.
+        own_recording = any(
+            cls._noted_url(call_metadata.get(bucket), kind, url_key) == stereo_url
+            for bucket, kind, url_key in cls._OWN_STEREO_ARTIFACTS
+        )
+        # A provider recording carries the provider's own "assistant" on the
+        # right, which is the simulator when the provider account is ours.
+        if not own_recording and cls.is_simulator(
+            "assistant", provider=provider, is_outbound=is_outbound
+        ):
+            return {"left": "assistant", "right": "customer"}
+        return {"left": "customer", "right": "assistant"}
+
+    @staticmethod
+    def _noted_url(artifacts: Any, kind: str, url_key: str) -> Any:
+        artifact = artifacts.get(kind) if isinstance(artifacts, dict) else None
+        return artifact.get(url_key) if isinstance(artifact, dict) else None
 
     @classmethod
     def align_transcript_rows(

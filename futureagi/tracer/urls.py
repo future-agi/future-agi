@@ -1,6 +1,12 @@
 from django.urls import path  # type: ignore
 from rest_framework.routers import DefaultRouter
 
+from tracer.views.alerts import (
+    AlertDetailView,
+    AlertOptionsView,
+    AlertView,
+    ErrorFeedAlertTestView,
+)
 from tracer.views.annotation import (
     BulkAnnotationView,
     GetAnnotationLabelsView,
@@ -11,8 +17,6 @@ from tracer.views.custom_eval_config import CustomEvalConfigView
 from tracer.views.dashboard import DashboardViewSet, DashboardWidgetViewSet
 from tracer.views.dataset import DatasetView
 from tracer.views.error_analysis import (
-    ErrorClusterDetailView,
-    ErrorClusterFeedView,
     TraceErrorAnalysisView,
     TraceErrorTaskView,
 )
@@ -23,6 +27,7 @@ from tracer.views.feed import (
     FeedDetailView,
     FeedListView,
     FeedOverviewView,
+    FeedRedirectView,
     FeedRootCauseView,
     FeedSidebarView,
     FeedStatsView,
@@ -32,10 +37,7 @@ from tracer.views.feed import (
 )
 from tracer.views.imagine_analysis import ImagineAnalysisView
 from tracer.views.monitor import UserAlertMonitorLogView, UserAlertMonitorView
-from tracer.views.observability_provider import (
-    ObservabilityProviderViewSet,
-    WebhookHandlerView,
-)
+from tracer.views.observability_provider import ObservabilityProviderViewSet
 from tracer.views.observation_span import ObservationSpanView
 from tracer.views.otlp import OTLPHealthView
 from tracer.views.project import ProjectView
@@ -44,7 +46,35 @@ from tracer.views.replay_session import ReplaySessionView
 from tracer.views.saved_view import SavedViewViewSet
 from tracer.views.shared_link import SharedLinkViewSet, resolve_shared_link
 from tracer.views.trace import GetUserCodeExampleView, TraceView, UsersView
+from tracer.views.trace_grouping import (
+    AcknowledgeGroupingOutboxView,
+    ClaimGroupingFeaturesView,
+    ClaimGroupingView,
+    CompleteGroupingFeatureView,
+    GroupingCheckpointView,
+    GroupingOutboxView,
+    PublishGroupingView,
+    RenewGroupingFeatureView,
+    ReserveGroupingCallView,
+    SettleGroupingCallView,
+    UpdateGroupingAttemptView,
+)
+from tracer.views.trace_investigation import (
+    ClaimInvestigationsView,
+    ConversationEvidenceView,
+    PublishInvestigationView,
+    RecordTraceNotificationsView,
+    SimulationEvidenceView,
+    UpdateInvestigationAttemptView,
+)
 from tracer.views.trace_session import TraceSessionView
+from tracer.views.trace_severity import (
+    ClaimSeverityView,
+    PublishSeverityView,
+    RenewSeverityView,
+    ReserveSeverityView,
+    SettleSeverityView,
+)
 
 router = DefaultRouter()
 
@@ -73,12 +103,134 @@ router.register(r"shared-links", SharedLinkViewSet, basename="shared-link")
 router.register(r"dashboard", DashboardViewSet, basename="dashboard")
 
 urlpatterns = [
+    path("alerts/", AlertView.as_view(), name="alerts"),
+    path("alerts/options/", AlertOptionsView.as_view(), name="alert-options"),
+    path(
+        "alerts/error_feed/<uuid:alert_id>/test/",
+        ErrorFeedAlertTestView.as_view(),
+        name="error-feed-alert-test",
+    ),
+    path(
+        "alerts/<str:kind>/<uuid:alert_id>/",
+        AlertDetailView.as_view(),
+        name="alert-detail",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/severity/claims/",
+        ClaimSeverityView.as_view(),
+        name="grouping-severity-claims",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/severity/attempts/<uuid:job_id>/",
+        RenewSeverityView.as_view(),
+        name="grouping-severity-renew",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/severity/attempts/<uuid:job_id>/reserve/",
+        ReserveSeverityView.as_view(),
+        name="grouping-severity-reserve",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/severity/attempts/<uuid:job_id>/settle/",
+        SettleSeverityView.as_view(),
+        name="grouping-severity-settle",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/severity/attempts/<uuid:job_id>/publish/",
+        PublishSeverityView.as_view(),
+        name="grouping-severity-publish",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/outbox/",
+        GroupingOutboxView.as_view(),
+        name="grouping-outbox",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/outbox/<uuid:event_id>/ack/",
+        AcknowledgeGroupingOutboxView.as_view(),
+        name="grouping-outbox-ack",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/feature-claims/",
+        ClaimGroupingFeaturesView.as_view(),
+        name="grouping-feature-claims",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/feature-attempts/<uuid:feature_job_id>/",
+        RenewGroupingFeatureView.as_view(),
+        name="grouping-feature-renew",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/feature-attempts/<uuid:feature_job_id>/complete/",
+        CompleteGroupingFeatureView.as_view(),
+        name="grouping-feature-complete",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/claims/",
+        ClaimGroupingView.as_view(),
+        name="grouping-claims",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/attempts/<uuid:attempt_id>/",
+        UpdateGroupingAttemptView.as_view(),
+        name="grouping-attempt",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/attempts/<uuid:attempt_id>/checkpoint/",
+        GroupingCheckpointView.as_view(),
+        name="grouping-checkpoint",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/attempts/<uuid:attempt_id>/reserve/",
+        ReserveGroupingCallView.as_view(),
+        name="grouping-call-reserve",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/attempts/<uuid:attempt_id>/settle/",
+        SettleGroupingCallView.as_view(),
+        name="grouping-call-settle",
+    ),
+    path(
+        "internal/error-feed-v2/grouping/attempts/<uuid:attempt_id>/publish/",
+        PublishGroupingView.as_view(),
+        name="grouping-publish",
+    ),
+    path(
+        "internal/error-feed-v2/notifications/",
+        RecordTraceNotificationsView.as_view(),
+        name="error-feed-v2-notifications",
+    ),
+    path(
+        "internal/error-feed-v2/claims/",
+        ClaimInvestigationsView.as_view(),
+        name="error-feed-v2-claims",
+    ),
+    path(
+        "internal/error-feed-v2/attempts/<uuid:attempt_id>/",
+        UpdateInvestigationAttemptView.as_view(),
+        name="error-feed-v2-attempt",
+    ),
+    path(
+        "internal/error-feed-v2/attempts/<uuid:attempt_id>/conversation-evidence/",
+        ConversationEvidenceView.as_view(),
+        name="error-feed-v2-conversation-evidence",
+    ),
+    path(
+        "internal/error-feed-v2/attempts/<uuid:attempt_id>/simulation-evidence/",
+        SimulationEvidenceView.as_view(),
+        name="error-feed-v2-simulation-evidence",
+    ),
+    path(
+        "internal/error-feed-v2/reports/",
+        PublishInvestigationView.as_view(),
+        name="error-feed-v2-reports",
+    ),
     # Imagine analysis — trigger + poll for dynamic analysis results
     path("imagine-analysis/", ImagineAnalysisView.as_view(), name="imagine-analysis"),
     # Agent graph — explicit path because @action doesn't register reliably with Granian reload
     path(
         "trace/agent_graph/",
-        TraceView.as_view({"get": "agent_graph"}),
+        TraceView.as_view({"get": "agent_graph", "post": "agent_graph"}),
         name="trace-agent-graph",
     ),
     # Legacy OTLP endpoints — fi-collector is the primary OTLP ingestion path (June 2026; root-level routes in tfc/urls.py also migrated)
@@ -126,6 +278,11 @@ urlpatterns = [
         name="feed-issue-detail",
     ),
     path(
+        "feed/issues/<str:cluster_id>/redirect/",
+        FeedRedirectView.as_view(),
+        name="feed-issue-redirect",
+    ),
+    path(
         "feed/issues/<str:cluster_id>/overview/",
         FeedOverviewView.as_view(),
         name="feed-issue-overview",
@@ -165,11 +322,6 @@ urlpatterns = [
         "feed/integrations/linear/teams/",
         LinearTeamsView.as_view(),
         name="feed-linear-teams",
-    ),
-    path(
-        "webhook/",
-        WebhookHandlerView.as_view(),
-        name="webhook-handler",
     ),
     # Dashboard widget nested routes
     path(

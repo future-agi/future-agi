@@ -35,13 +35,14 @@ class TestSeedDefaultPromptLabels:
         _seed_prompt_labels_after_migrate(sender=None)
         assert _global_system_labels().count() == len(DEFAULT_LABEL_NAMES)
 
-    def test_hook_is_connected_to_post_migrate(self):
+    def test_hook_is_not_connected_during_ordinary_app_startup(self):
         from django.db.models.signals import post_migrate
 
-        # receivers entries are (lookup_key, receiver, ...) where
-        # lookup_key is (dispatch_uid_or_id, sender_id)
+        # Application startup is mutation-free. The hook is connected only by
+        # an explicitly authorized ``manage.py migrate`` process; that
+        # operator-only branch is covered in test_clickhouse_cache_warm.py.
         receiver_ids = {entry[0][0] for entry in post_migrate.receivers}
-        assert "model_hub_seed_default_prompt_labels" in receiver_ids
+        assert "model_hub_seed_default_prompt_labels" not in receiver_ids
 
 
 @pytest.mark.integration

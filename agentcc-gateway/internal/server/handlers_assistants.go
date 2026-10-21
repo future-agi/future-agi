@@ -3,7 +3,6 @@ package server
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,20 +15,52 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Helper: resolve provider for Assistants endpoints
+// Helper: resolve provider for Assistants and Vector Stores endpoints
 // ---------------------------------------------------------------------------
 
-// resolveAssistantsProvider resolves the provider for an Assistants API request.
-// If modelName is non-empty, it resolves using that model; otherwise it uses "gpt-4o" as default.
-// Returns the AssistantsProvider and any error.
-func (h *Handlers) resolveAssistantsProvider(ctx context.Context, rc *models.RequestContext, modelName string) (providers.AssistantsProvider, error) {
-	if modelName == "" {
-		modelName = "gpt-4o"
+// openAIProviderID names the provider Assistants and Vector Stores requests go
+// to. Both are OpenAI APIs proxied path for path, so they need OpenAI itself;
+// any OpenAI-compatible provider has the same Go type but not these APIs, and
+// assistants, threads and stores live wherever they were created.
+const openAIProviderID = "openai"
+
+// resolveOpenAIProvider returns the org's own "openai" provider when it has
+// one configured, and otherwise the global one, which keys limited to their
+// org's providers may not use.
+func (h *Handlers) resolveOpenAIProvider(ctx context.Context, rc *models.RequestContext) (providers.Provider, error) {
+	orgID, orgCfg := h.resolveOrgConfig(rc)
+	if orgID != "" && orgCfg != nil && h.orgProviderCache != nil {
+		if pcfg := orgCfg.Providers[openAIProviderID]; pcfg != nil && pcfg.Enabled && pcfg.HasCredentials() {
+			p, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, openAIProviderID, pcfg.APIKey, pcfg)
+			if err != nil {
+				return nil, &models.APIError{
+					Status:  http.StatusBadGateway,
+					Type:    models.ErrTypeServer,
+					Code:    "provider_unavailable",
+					Message: "your organization's OpenAI provider could not be set up; check its configuration",
+				}
+			}
+			rc.Provider = openAIProviderID
+			return p, nil
+		}
 	}
 
-	orgID := rc.Metadata["org_id"]
-	_, orgCfg := h.resolveOrgConfig(rc)
-	provider, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, modelName)
+	p, ok := h.registry.GetProvider(openAIProviderID)
+	if !ok || h.orgProvidersOnly(ctx, rc) {
+		return nil, &models.APIError{
+			Status:  http.StatusNotImplemented,
+			Type:    models.ErrTypeServer,
+			Code:    "not_supported",
+			Message: fmt.Sprintf("this API is served by an OpenAI provider with id %q, and none is configured for this key", openAIProviderID),
+		}
+	}
+	rc.Provider = openAIProviderID
+	return p, nil
+}
+
+// resolveAssistantsProvider resolves the provider for an Assistants API request.
+func (h *Handlers) resolveAssistantsProvider(ctx context.Context, rc *models.RequestContext) (providers.AssistantsProvider, error) {
+	provider, err := h.resolveOpenAIProvider(ctx, rc)
 	if err != nil {
 		return nil, err
 	}
@@ -59,17 +90,8 @@ func (h *Handlers) setupAssistantsRC(r *http.Request, operation string) *models.
 	rc.Metadata["client_ip"] = extractClientIP(r)
 
 	setAuthMetadataFromRequest(rc, r)
-	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
-		var m map[string]string
-		if err := json.Unmarshal([]byte(meta), &m); err == nil {
-			for k, v := range m {
-				if isBlockedMetadataKey(k) {
-					continue
-				}
-				rc.Metadata[k] = v
-			}
-		}
-	}
+	// Caller dimensions, from the x-agentcc-metadata header.
+	applyCallerMetadata(rc, r, nil)
 
 	// Peek key org_id before resolving org config (same as ChatCompletion).
 	h.peekKeyOrgID(rc)
@@ -235,7 +257,7 @@ func (h *Handlers) CreateAssistant(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, modelName)
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -260,7 +282,7 @@ func (h *Handlers) ListAssistants(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -293,7 +315,7 @@ func (h *Handlers) GetAssistant(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -324,7 +346,7 @@ func (h *Handlers) UpdateAssistant(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, modelName)
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -355,7 +377,7 @@ func (h *Handlers) DeleteAssistant(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -382,7 +404,7 @@ func (h *Handlers) CreateThread(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -407,7 +429,7 @@ func (h *Handlers) GetThread(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -437,7 +459,7 @@ func (h *Handlers) UpdateThread(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -462,7 +484,7 @@ func (h *Handlers) DeleteThread(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -496,7 +518,7 @@ func (h *Handlers) CreateMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -521,7 +543,7 @@ func (h *Handlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -556,7 +578,7 @@ func (h *Handlers) GetMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -588,7 +610,7 @@ func (h *Handlers) UpdateMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -615,7 +637,7 @@ func (h *Handlers) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -653,7 +675,7 @@ func (h *Handlers) CreateRun(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, modelName)
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -697,7 +719,7 @@ func (h *Handlers) ListRuns(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -731,7 +753,7 @@ func (h *Handlers) GetRun(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -770,7 +792,7 @@ func (h *Handlers) UpdateRun(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -797,7 +819,7 @@ func (h *Handlers) CancelRun(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -828,7 +850,7 @@ func (h *Handlers) ListRunSteps(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -870,7 +892,7 @@ func (h *Handlers) GetRunStep(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -908,7 +930,7 @@ func (h *Handlers) CreateThreadAndRun(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, modelName)
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
@@ -959,7 +981,7 @@ func (h *Handlers) SubmitToolOutputs(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	ap, err := h.resolveAssistantsProvider(ctx, rc, "")
+	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return

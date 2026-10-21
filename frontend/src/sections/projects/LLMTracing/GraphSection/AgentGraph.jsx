@@ -33,6 +33,10 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { error as errorPalette, success } from "src/theme/palette";
 import FullscreenGraphDialog from "./FullscreenGraphDialog";
+import {
+  AGGREGATION_POLLING_PAUSED_MESSAGE,
+  GRAPH_LOADING_MESSAGE,
+} from "src/utils/queryReadState";
 
 // ---------------------------------------------------------------------------
 // Diff-overlay status (set by buildGraphDiff for the error-feed split view)
@@ -82,6 +86,11 @@ const TYPE_COLORS = {
     text: "#dc2626",
     icon: "mdi:shield-check-outline",
     label: "Guardrail",
+  },
+  aggregate: {
+    text: "#71717a",
+    icon: "mdi:dots-horizontal-circle-outline",
+    label: "Aggregate",
   },
   unknown: {
     text: "#6b7280",
@@ -556,29 +565,98 @@ const nodeTypes = { agentNode: AgentNode };
 // ---------------------------------------------------------------------------
 // Dagre layout — direction-aware (LR for trace list, TB for trace detail)
 // ---------------------------------------------------------------------------
+
+// Stop closes the drawing; its edges record no relation between spans. If
+// they took part in the layout, a leaf's distance to its parent and to Stop
+// would cost the same, so dagre sank leaf siblings onto the row above Stop
+// while siblings with nested work stayed one level below the parent:
+// parallel steps landed on different levels and read as a sequence
+// (TH-4321). Lay out the recorded graph alone, then put Stop one level past
+// its deepest node.
+const SENTINEL_WIDTH = 50;
+const SENTINEL_HEIGHT = 32;
+
+const isStopNode = (node) => node.data?.type === "end";
+
+// Read rankdir the way dagre does: case-insensitive, LR/RL lay ranks along
+// x, BT/RL reverse the rank axis, anything else is top-to-bottom.
+const rankAxis = (direction) => {
+  const dir = String(direction).toLowerCase();
+  return {
+    horizontal: dir === "lr" || dir === "rl",
+    reversed: dir === "bt" || dir === "rl",
+  };
+};
+
+const placeStop = (g, laidOutIds, direction, ranksep) => {
+  if (!laidOutIds.length) return { x: 0, y: 0 };
+  const boxes = laidOutIds.map((id) => g.node(id));
+  const min = (pick) => Math.min(...boxes.map(pick));
+  const max = (pick) => Math.max(...boxes.map(pick));
+  const { horizontal, reversed } = rankAxis(direction);
+  const [main, mainSize, stopSize, cross, crossSize] = horizontal
+    ? ["x", "width", SENTINEL_WIDTH, "y", "height"]
+    : ["y", "height", SENTINEL_HEIGHT, "x", "width"];
+  const stopMain = reversed
+    ? min((b) => b[main] - b[mainSize] / 2) - ranksep - stopSize / 2
+    : max((b) => b[main] + b[mainSize] / 2) + ranksep + stopSize / 2;
+  const stopCross =
+    (min((b) => b[cross] - b[crossSize] / 2) +
+      max((b) => b[cross] + b[crossSize] / 2)) /
+    2;
+  return { [main]: stopMain, [cross]: stopCross };
+};
+
+// A row means "runs after everything above it", so each node sits on the
+// first row after its deepest recorded parent. dagre's default ranker only
+// minimises total edge length, and whenever two rows cost the same it may
+// push a node down next to an unrelated deeper branch (for example when
+// every ChatOpenAI call is grouped into one node with parents on two
+// levels). Called on dagre's internal graph after its acyclic pass, so a
+// topological order exists; `minlen` already includes dagre's own spacing.
+const rankAtEarliestLevel = (g) => {
+  Dagre.graphlib.alg.topsort(g).forEach((v) => {
+    g.node(v).rank = g
+      .inEdges(v)
+      .reduce(
+        (rank, edge) =>
+          Math.max(rank, g.node(edge.v).rank + g.edge(edge).minlen),
+        0,
+      );
+  });
+};
+
 const layoutGraph = (nodes, edges, direction = "LR") => {
+  const ranksep = direction === "LR" ? 80 : 50;
   const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
   g.setGraph({
     rankdir: direction,
-    ranksep: direction === "LR" ? 80 : 50,
+    ranksep,
     nodesep: 25,
+    ranker: rankAtEarliestLevel,
   });
 
+  const stopIds = new Set(nodes.filter(isStopNode).map((node) => node.id));
+  const laidOutIds = [];
   nodes.forEach((node) => {
-    const isSentinel = node.data?.type === "start" || node.data?.type === "end";
+    if (stopIds.has(node.id)) return;
+    const isSentinel = node.data?.type === "start";
     g.setNode(node.id, {
-      width: isSentinel ? 50 : 140,
-      height: isSentinel ? 32 : 44,
+      width: isSentinel ? SENTINEL_WIDTH : 140,
+      height: isSentinel ? SENTINEL_HEIGHT : 44,
     });
+    laidOutIds.push(node.id);
   });
   edges.forEach((edge) => {
+    if (stopIds.has(edge.source) || stopIds.has(edge.target)) return;
     g.setEdge(edge.source, edge.target);
   });
 
   Dagre.layout(g);
+  const stop = placeStop(g, laidOutIds, direction, ranksep);
 
   return nodes.map((node) => {
-    const pos = g.node(node.id);
+    const pos = stopIds.has(node.id) ? stop : g.node(node.id);
     return { ...node, position: { x: pos.x - 70, y: pos.y - 22 } };
   });
 };
@@ -586,21 +664,109 @@ const layoutGraph = (nodes, edges, direction = "LR") => {
 // ---------------------------------------------------------------------------
 // Build React Flow nodes + edges from API data
 // ---------------------------------------------------------------------------
+const NODE_METRICS = [
+  "span_count",
+  "avg_latency_ms",
+  "total_tokens",
+  "total_cost",
+  "error_count",
+];
+const EDGE_METRICS = [
+  "transition_count",
+  "avg_latency_ms",
+  "total_tokens",
+  "total_cost",
+  "error_count",
+];
+
+const assertFiniteMetric = (record, key, label) => {
+  if (!Number.isFinite(record?.[key]) || record[key] < 0) {
+    throw new Error(`${label} is missing canonical ${key}`);
+  }
+};
+
+const assertTraceCount = (record, label) => {
+  if (
+    record?.trace_count_exact !== undefined &&
+    typeof record.trace_count_exact !== "boolean"
+  ) {
+    throw new Error(`${label} has malformed trace_count_exact`);
+  }
+  if (record?.trace_count === null) {
+    if (record.trace_count_exact !== false) {
+      throw new Error(`${label} has an inexact trace_count without disclosure`);
+    }
+    return;
+  }
+  assertFiniteMetric(record, "trace_count", label);
+};
+
+const assertCanonicalGraph = (graphData) => {
+  if (!graphData || typeof graphData !== "object") {
+    throw new Error("Agent Graph data is missing");
+  }
+  if (!Array.isArray(graphData.nodes) || !Array.isArray(graphData.edges)) {
+    throw new Error("Agent Graph data is missing nodes or edges");
+  }
+
+  graphData.nodes.forEach((node, index) => {
+    const label = `Agent Graph node #${index}`;
+    if (
+      typeof node?.id !== "string" ||
+      !node.id ||
+      typeof node.name !== "string" ||
+      !node.name ||
+      typeof node.type !== "string" ||
+      !node.type
+    ) {
+      throw new Error(`${label} is malformed`);
+    }
+    NODE_METRICS.forEach((key) => assertFiniteMetric(node, key, label));
+    assertTraceCount(node, label);
+  });
+
+  graphData.edges.forEach((edge, index) => {
+    const label = `Agent Graph edge #${index}`;
+    if (
+      typeof edge?.source !== "string" ||
+      !edge.source ||
+      typeof edge.target !== "string" ||
+      !edge.target ||
+      typeof edge.is_self_loop !== "boolean"
+    ) {
+      throw new Error(`${label} is malformed`);
+    }
+    EDGE_METRICS.forEach((key) => assertFiniteMetric(edge, key, label));
+    assertTraceCount(edge, label);
+  });
+};
+
 export const buildFlowData = (graphData, direction = "LR", theme = null) => {
-  if (!graphData?.nodes?.length) return { nodes: [], edges: [] };
+  assertCanonicalGraph(graphData);
+  if (!graphData.nodes.length) return { nodes: [], edges: [] };
 
   const nodeIdSet = new Set(graphData.nodes.map((n) => n.id));
+  if (nodeIdSet.size !== graphData.nodes.length) {
+    throw new Error("Agent Graph contains duplicate node ids");
+  }
+
+  // Agent Graph renders the producer's canonical aggregate projection.
+  // Agent Path consumes the separately recorded `path_edges` projection.
+  // Substituting one for the other changes the meaning of both views.
+  const graphEdges = graphData.edges;
+  graphEdges.forEach((edge) => {
+    if (!nodeIdSet.has(edge.source) || !nodeIdSet.has(edge.target)) {
+      throw new Error(
+        `Agent Graph edge references an unknown node: ${edge.source}->${edge.target}`,
+      );
+    }
+  });
 
   const flowNodes = graphData.nodes.map((node) => ({
     id: node.id,
     type: "agentNode",
     data: {
       ...node,
-      span_count: node.spanCount ?? 0,
-      avg_latency_ms: node.avgLatencyMs ?? 0,
-      total_tokens: node.totalTokens ?? 0,
-      total_cost: node.totalCost ?? 0,
-      error_count: node.errorCount ?? 0,
       _direction: direction,
     },
     position: { x: 0, y: 0 },
@@ -610,81 +776,79 @@ export const buildFlowData = (graphData, direction = "LR", theme = null) => {
   // Find max transition count for scaling edge thickness
   const maxTransitions = Math.max(
     1,
-    ...graphData.edges.map((e) => e.transition_count || 1),
+    ...graphEdges.map((edge) => edge.transition_count),
   );
 
-  const flowEdges = graphData.edges
-    .filter((edge) => nodeIdSet.has(edge.source) && nodeIdSet.has(edge.target))
-    .map((edge, idx) => {
-      const count = edge.transition_count || 1;
-      // Scale thickness: 0.75px min, 2px max — subtle, not overpowering
-      const thickness = 0.75 + (count / maxTransitions) * 1.25;
+  const flowEdges = graphEdges.map((edge, idx) => {
+    const count = edge.transition_count;
+    // Scale thickness: 0.75px min, 2px max — subtle, not overpowering
+    const thickness = 0.75 + (count / maxTransitions) * 1.25;
 
-      const edgeColor = theme ? theme.palette.text.disabled : "#94a3b8";
-      const strokeColor = theme ? theme.palette.divider : "#cbd5e1";
-      const labelBgColor = theme ? theme.palette.background.paper : "#ffffff";
+    const edgeColor = theme ? theme.palette.text.disabled : "#94a3b8";
+    const strokeColor = theme ? theme.palette.divider : "#cbd5e1";
+    const labelBgColor = theme ? theme.palette.background.paper : "#ffffff";
 
-      // Synthetic "skipped path" edges from the error-feed diff helper
-      // override the regular styling: dashed red stroke + a SKIPPED PATH
-      // pill so the divergence is unmistakable. Inert in the Observe view.
-      if (edge._skipped) {
-        const skippedColor = errorPalette.main;
-        return {
-          id: `e-skipped-${idx}`,
-          source: edge.source,
-          target: edge.target,
-          type: "default",
-          animated: false,
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            color: skippedColor,
-            width: 10,
-            height: 10,
-          },
-          style: {
-            stroke: skippedColor,
-            strokeWidth: 1.6,
-            strokeDasharray: "6 4",
-          },
-          label: "SKIPPED PATH",
-          labelStyle: {
-            fontSize: 9,
-            fill: "#fff",
-            fontWeight: 700,
-            letterSpacing: "0.04em",
-          },
-          labelBgStyle: { fill: skippedColor, fillOpacity: 0.95 },
-          labelBgPadding: [5, 3],
-          labelBgBorderRadius: 4,
-          zIndex: 5,
-        };
-      }
-
+    // Synthetic "skipped path" edges from the error-feed diff helper
+    // override the regular styling: dashed red stroke + a SKIPPED PATH
+    // pill so the divergence is unmistakable. Inert in the Observe view.
+    if (edge._skipped) {
+      const skippedColor = errorPalette.main;
       return {
-        id: `e-${idx}`,
+        id: `e-skipped-${idx}`,
         source: edge.source,
         target: edge.target,
         type: "default",
-        animated: edge.is_self_loop || false,
+        animated: false,
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: edgeColor,
-          width: 8,
-          height: 8,
+          color: skippedColor,
+          width: 10,
+          height: 10,
         },
         style: {
-          stroke: strokeColor,
-          strokeWidth: Math.round(thickness * 10) / 10,
+          stroke: skippedColor,
+          strokeWidth: 1.6,
+          strokeDasharray: "6 4",
         },
-        // Show transition count on edges with > 1 transition
-        ...(count > 1 && {
-          label: `×${count}`,
-          labelStyle: { fontSize: 9, fill: edgeColor, fontWeight: 500 },
-          labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
-          labelBgPadding: [3, 2],
-        }),
+        label: "SKIPPED PATH",
+        labelStyle: {
+          fontSize: 9,
+          fill: "#fff",
+          fontWeight: 700,
+          letterSpacing: "0.04em",
+        },
+        labelBgStyle: { fill: skippedColor, fillOpacity: 0.95 },
+        labelBgPadding: [5, 3],
+        labelBgBorderRadius: 4,
+        zIndex: 5,
       };
-    });
+    }
+
+    return {
+      id: `e-${idx}`,
+      source: edge.source,
+      target: edge.target,
+      type: "default",
+      animated: edge.is_self_loop,
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: edgeColor,
+        width: 8,
+        height: 8,
+      },
+      style: {
+        stroke: strokeColor,
+        strokeWidth: Math.round(thickness * 10) / 10,
+      },
+      // Show transition count on edges with > 1 transition
+      ...(count > 1 && {
+        label: `×${count}`,
+        labelStyle: { fontSize: 9, fill: edgeColor, fontWeight: 500 },
+        labelBgStyle: { fill: labelBgColor, fillOpacity: 0.9 },
+        labelBgPadding: [3, 2],
+      }),
+    };
+  });
 
   const layoutNodes = layoutGraph(flowNodes, flowEdges, direction);
   return { nodes: layoutNodes, edges: flowEdges };
@@ -768,6 +932,7 @@ const AgentGraphInner = ({
   data,
   isLoading,
   isError,
+  pollingPaused,
   direction = "LR",
   onNodeClick,
   isFullscreen = false,
@@ -776,8 +941,11 @@ const AgentGraphInner = ({
   const theme = useTheme();
   const [isHovering, setIsHovering] = useState(false);
   const { nodes: layoutNodes, edges: layoutEdges } = useMemo(
-    () => buildFlowData(data, direction, theme),
-    [data, direction, theme],
+    () =>
+      isLoading || isError || !data
+        ? { nodes: [], edges: [] }
+        : buildFlowData(data, direction, theme),
+    [data, direction, isError, isLoading, theme],
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutNodes);
@@ -795,10 +963,19 @@ const AgentGraphInner = ({
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
+          flexDirection: "column",
+          gap: 1,
           height: 80,
         }}
       >
         <CircularProgress size={20} />
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          sx={{ fontSize: 13 }}
+        >
+          {GRAPH_LOADING_MESSAGE}
+        </Typography>
       </Box>
     );
   }
@@ -815,7 +992,25 @@ const AgentGraphInner = ({
         }}
       >
         <Typography variant="body2" sx={{ fontSize: 13 }}>
-          Failed to load agent graph
+          We couldn&apos;t load the agent graph. Please retry in a moment.
+        </Typography>
+      </Box>
+    );
+  }
+
+  if (pollingPaused && !data) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: 80,
+          color: "text.disabled",
+        }}
+      >
+        <Typography role="status" variant="body2" sx={{ fontSize: 13 }}>
+          {AGGREGATION_POLLING_PAUSED_MESSAGE}
         </Typography>
       </Box>
     );
@@ -851,6 +1046,26 @@ const AgentGraphInner = ({
       onMouseEnter={() => setIsHovering(true)}
       onMouseLeave={() => setIsHovering(false)}
     >
+      {pollingPaused && (
+        <Typography
+          role="status"
+          variant="caption"
+          color="text.secondary"
+          sx={{
+            position: "absolute",
+            zIndex: 2,
+            top: 4,
+            left: "50%",
+            transform: "translateX(-50%)",
+            bgcolor: "background.paper",
+            px: 1,
+            borderRadius: 0.5,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {AGGREGATION_POLLING_PAUSED_MESSAGE}
+        </Typography>
+      )}
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -890,6 +1105,7 @@ AgentGraphInner.propTypes = {
   data: PropTypes.object,
   isLoading: PropTypes.bool,
   isError: PropTypes.bool,
+  pollingPaused: PropTypes.bool,
   direction: PropTypes.oneOf(["LR", "TB"]),
   onNodeClick: PropTypes.func,
   isFullscreen: PropTypes.bool,
@@ -916,6 +1132,7 @@ AgentGraph.propTypes = {
   data: PropTypes.object,
   isLoading: PropTypes.bool,
   isError: PropTypes.bool,
+  pollingPaused: PropTypes.bool,
   direction: PropTypes.oneOf(["LR", "TB"]),
   onNodeClick: PropTypes.func,
 };

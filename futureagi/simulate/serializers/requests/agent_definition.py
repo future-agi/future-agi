@@ -26,6 +26,7 @@ class AgentDefinitionCreateRequestSerializer(serializers.Serializer):
     )
     commit_message = serializers.CharField(required=True)
     inbound = serializers.BooleanField(required=False, default=True)
+    target_speaks_first = serializers.BooleanField(required=False, allow_null=True)
 
     # Optional fields
     description = serializers.CharField(required=False, allow_blank=True, default="")
@@ -104,7 +105,11 @@ class AgentDefinitionCreateRequestSerializer(serializers.Serializer):
         required=False, allow_null=True, default=None
     )
     livekit_max_concurrency = serializers.IntegerField(
-        required=False, allow_null=True, default=None, min_value=1
+        required=False,
+        allow_null=True,
+        default=None,
+        min_value=1,
+        max_value=DEFAULT_ORG_LIMIT,
     )
 
     # -- Field-level validators --
@@ -188,22 +193,17 @@ class AgentDefinitionCreateRequestSerializer(serializers.Serializer):
                         }
                     )
             else:
-                # Contact number is optional when api_key + assistant_id are
-                # provided (web bridge will be used instead of SIP/phone).
-                has_web_bridge_creds = bool(
-                    api_key
-                    and api_key.strip()
-                    and assistant_id
-                    and assistant_id.strip()
-                )
+                # Provider-backed targets can be registered by assistant ID
+                # before credentials are attached.
+                has_provider_identity = bool(assistant_id and assistant_id.strip())
                 if (
                     not contact_number or not contact_number.strip()
-                ) and not has_web_bridge_creds:
+                ) and not has_provider_identity:
                     raise serializers.ValidationError(
                         {
                             "contact_number": (
                                 "Contact number is required "
-                                "(or provide API Key and Assistant ID for web bridge)"
+                                "(or provide an Assistant ID for a provider target)"
                             )
                         }
                     )
@@ -319,6 +319,7 @@ class AgentDefinitionEditRequestSerializer(serializers.Serializer):
         required=False, allow_blank=True, allow_null=True
     )
     inbound = serializers.BooleanField(required=False)
+    target_speaks_first = serializers.BooleanField(required=False, allow_null=True)
     knowledge_base = serializers.UUIDField(required=False, allow_null=True)
     model = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     model_details = serializers.JSONField(required=False, allow_null=True)
@@ -345,7 +346,7 @@ class AgentDefinitionEditRequestSerializer(serializers.Serializer):
     )
     livekit_config_json = serializers.JSONField(required=False, allow_null=True)
     livekit_max_concurrency = serializers.IntegerField(
-        required=False, allow_null=True, min_value=1
+        required=False, allow_null=True, min_value=1, max_value=DEFAULT_ORG_LIMIT
     )
 
     def validate_agent_name(self, value):

@@ -94,9 +94,11 @@ export const useLLMTracingStore = create((set, get) => ({
   ...createUrlSyncedState("compareCollapsed", true)(set, get),
   // Display panel: visualization mode — "graph" | "agentGraph" | "agentPath"
   ...createUrlSyncedState("viewMode", "graph")(set, get),
-  // Visible trace IDs from the grid — used for prev/next navigation in drawer
-  visibleTraceIds: [],
-  setVisibleTraceIds: (ids) => set({ visibleTraceIds: ids }),
+  // Visible trace rows from the grid ({ traceId, projectId }) — used for
+  // prev/next navigation in the drawers. A trace id alone is not a row: the
+  // cross-project user page lists the same trace id once per project.
+  visibleTraces: [],
+  setVisibleTraces: (traces) => set({ visibleTraces: traces }),
   resetStates: () => {
     set({
       traceDetailDrawerOpen: null,
@@ -104,7 +106,7 @@ export const useLLMTracingStore = create((set, get) => ({
       primaryCollapsed: true,
       compareCollapsed: true,
       viewMode: "graph",
-      visibleTraceIds: [],
+      visibleTraces: [],
     });
   },
 }));
@@ -116,9 +118,16 @@ export const useTraceGridStore = create((set) => ({
   toggledNodes: [],
   selectAll: false,
   totalRowCount: 0,
+  totalRowCountLowerBound: null,
+  totalRowCountIsLowerBound: false,
   setToggledNodes: (value) => set(() => ({ toggledNodes: value })),
   setSelectAll: (value) => set(() => ({ selectAll: value })),
-  setTotalRowCount: (value) => set(() => ({ totalRowCount: value })),
+  setTotalRowCount: (value) =>
+    set({
+      totalRowCount: value,
+      totalRowCountLowerBound: null,
+      totalRowCountIsLowerBound: false,
+    }),
 }));
 
 export const resetTraceGridStore = () => {
@@ -126,6 +135,8 @@ export const resetTraceGridStore = () => {
     toggledNodes: [],
     selectAll: false,
     totalRowCount: 0,
+    totalRowCountLowerBound: null,
+    totalRowCountIsLowerBound: false,
   });
 };
 export const useTraceGridStoreShallow = (fun) =>
@@ -135,9 +146,16 @@ export const useSpanGridStore = create((set, get, store) => ({
   toggledNodes: [],
   selectAll: false,
   totalRowCount: 0,
+  totalRowCountLowerBound: null,
+  totalRowCountIsLowerBound: false,
   setToggledNodes: (value) => set(() => ({ toggledNodes: value })),
   setSelectAll: (value) => set(() => ({ selectAll: value })),
-  setTotalRowCount: (value) => set(() => ({ totalRowCount: value })),
+  setTotalRowCount: (value) =>
+    set({
+      totalRowCount: value,
+      totalRowCountLowerBound: null,
+      totalRowCountIsLowerBound: false,
+    }),
   reset: () => {
     set(store.getInitialState());
   },

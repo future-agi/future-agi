@@ -54,6 +54,16 @@ class BillingMethodChoices(models.TextChoices):
     GCP_MARKETPLACE = "gcp_marketplace", "GCP Marketplace"
 
 
+# Billed by the marketplace, not by us. Stripe must never charge these orgs:
+# the marketplace is the merchant of record and already bills the customer.
+MARKETPLACE_BILLING_METHODS = frozenset(
+    {
+        BillingMethodChoices.AWS_MARKETPLACE,
+        BillingMethodChoices.GCP_MARKETPLACE,
+    }
+)
+
+
 class TracingBillingModeChoices(models.TextChoices):
     """How tracing data is billed for this org.
 
@@ -287,6 +297,10 @@ class OrganizationSubscription(BaseModel):
             "metadata, then ``created_at``."
         ),
     )
+
+    @property
+    def is_marketplace_billed(self) -> bool:
+        return self.billing_method in MARKETPLACE_BILLING_METHODS
 
     def __str__(self):
         return f"{self.organization.display_name if self.organization.display_name else self.organization.name} - {self.subscription_tier.name}"

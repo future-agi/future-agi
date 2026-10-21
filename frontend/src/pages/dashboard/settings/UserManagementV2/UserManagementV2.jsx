@@ -14,7 +14,8 @@ import UserHeaders from "./UserHeaders";
 import GridTable from "./GridTable";
 import { getUserQueryOptions } from "./getUserQueryOptions";
 import { useQueryClient } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { fDateLocal } from "src/utils/format-time";
+import { LocalDateTime } from "src/components/date-time/LocalDateTime";
 import {
   ProcessingStatusCell,
   ActionRender,
@@ -118,8 +119,13 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
         headerName: "Start date",
         field: "created_at",
         flex: 1,
-        valueFormatter: (params) =>
-          params?.value ? format(new Date(params?.value), "dd/MM/yyyy") : "",
+        valueFormatter: (params) => fDateLocal(params.value),
+        cellRenderer: (params) => (
+          <LocalDateTime
+            value={params.value}
+            emptyText="No start date recorded"
+          />
+        ),
       },
       ...(useInviteLinks
         ? [

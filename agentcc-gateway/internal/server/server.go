@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -31,6 +32,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
 	"github.com/futureagi/agentcc-gateway/internal/realtime"
 	"github.com/futureagi/agentcc-gateway/internal/redisstate"
 	"github.com/futureagi/agentcc-gateway/internal/responses"
@@ -57,6 +59,7 @@ type Server struct {
 	TenantStore      *tenant.Store
 	OrgProviderCache *providers.OrgProviderCache
 	asyncWorker      *async.Worker
+	shadowFlusher    *routing.ShadowFlusher
 	ready            atomic.Bool
 }
 
@@ -81,12 +84,21 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	if cfg != nil && keyStore == nil {
 		keyStore = auth.NewKeyStore(cfg.Auth)
 	}
+	// Load settles this, but a Config built in code need not have been through
+	// it, and a server without a ceiling is one no request is bounded by.
+	if cfg != nil && cfg.Server.MaxRequestTimeout <= 0 {
+		cfg.Server.MaxRequestTimeout = cfg.Server.WriteTimeout
+	}
 	authKeyStore := keyStore
 	if !authEnabled {
 		authKeyStore = nil
 	}
 
-	orgProviderCache := providers.NewOrgProviderCache(cfg.Providers)
+	orgProviderCache := providers.NewOrgProviderCache(cfg.Providers, cfg.OrgProviders.AllowPrivateURLs)
+	if cfg.OrgProviders.AllowPrivateURLs {
+		slog.Warn("org provider base URLs may point at private/LAN addresses; do not enable this on a gateway shared by untrusted orgs",
+			"env", config.EnvAllowPrivateProviderURLs)
+	}
 
 	s := &Server{
 		cfg:              cfg,
@@ -184,8 +196,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 					flushInterval = 60 * time.Second
 				}
 				webhookURL := routing.FormatWebhookURL(cfg.ControlPlane.URL)
-				flusher := routing.NewShadowFlusher(shadowStore, webhookURL, cfg.ControlPlane.WebhookSecret, flushInterval)
-				go flusher.Run(context.Background())
+				s.shadowFlusher = routing.NewShadowFlusher(shadowStore, webhookURL, cfg.ControlPlane.WebhookSecret, flushInterval)
+				go s.shadowFlusher.Run(context.Background())
 				slog.Info("shadow result capture enabled",
 					"max_stored", maxStored,
 					"flush_interval", flushInterval.String(),
@@ -199,7 +211,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 	}
 
-	handlers := NewHandlers(registry, engine, cfg.Server.MaxRequestBodySize, cfg.Server.DefaultRequestTimeout, failover, modelFallbacks, condRouter, healthMonitor, cfg.Routing.ModelTimeouts, mirror, guardrailEngine, policyStore, cfg.Guardrails.Streaming, modelDBPtr, tenantStore, orgProviderCache, authKeyStore)
+	handlers := NewHandlers(registry, engine, cfg.Server.MaxRequestBodySize, cfg.Server.DefaultRequestTimeout, cfg.Server.MaxRequestTimeout, failover, modelFallbacks, condRouter, healthMonitor, cfg.Routing.ModelTimeouts, mirror, guardrailEngine, policyStore, cfg.Guardrails.Streaming, modelDBPtr, tenantStore, orgProviderCache, authKeyStore)
+	// A streamed completion exists nowhere else — it has to be assembled while
+	// the chunks go past, and only if something is going to record it.
+	handlers.SetCaptureStreamContent(cfg.Logging.RequestLogging.IncludeBodies || (cfg.OTel.Enabled && cfg.OTel.IncludeBodies))
 	s.handlers = handlers
 
 	// Set up Files API store.
@@ -441,6 +456,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Native Google GenAI API.
 	router.Handle("POST", "/v1beta/models/{model_action}", handlers.GenAIHandler)
+	router.Handle("POST", "/v1beta/models/{provider}/{model_action}", handlers.GenAIHandler)
 
 	// Search API.
 	router.Handle("POST", "/v1/search", handlers.Search)
@@ -460,6 +476,11 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		AllowedOrigins:     cfg.CORS.AllowedOrigins,
 	})
 	router.Handle("GET", "/v1/realtime", realtimeHandler.HandleRealtime)
+
+	// Speech vendors' own streaming APIs (Deepgram, Cartesia), each under the vendor's name.
+	for _, ep := range speech.Endpoints() {
+		router.Handle("GET", "/"+ep.Vendor+ep.Path, handlers.SpeechRelay(ep.Vendor, ep.Path))
+	}
 
 	// Video Generation API.
 	router.Handle("POST", "/v1/videos", handlers.SubmitVideo)
@@ -542,6 +563,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		s.keyHandlers = NewKeyHandlers(keyStore, cfg.Admin.Token)
 		router.Handle("GET", "/-/keys", s.keyHandlers.ListKeys)
 		router.Handle("POST", "/-/keys", s.keyHandlers.CreateKey)
+		router.Handle("POST", "/-/keys/sync", s.keyHandlers.ImportKeys)
 		router.Handle("GET", "/-/keys/{key_id}", s.keyHandlers.GetKey)
 		router.Handle("DELETE", "/-/keys/{key_id}", s.keyHandlers.RevokeKey)
 		router.Handle("PUT", "/-/keys/{key_id}", s.keyHandlers.UpdateKey)
@@ -807,7 +829,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 					if errResp.Error.Code != "" {
 						return nil, fmt.Errorf("%s: %s", errResp.Error.Code, errResp.Error.Message)
 					}
-					return nil, fmt.Errorf(errResp.Error.Message)
+					return nil, errors.New(errResp.Error.Message)
 				}
 				return nil, fmt.Errorf("chat completion failed with status %d", rec.Code)
 			}
@@ -864,7 +886,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Apply middleware: outermost wraps first.
 	var handler http.Handler = router
-	handler = middleware.Timeout(cfg.Server.DefaultRequestTimeout, "/v1/chat/completions")(handler)
+	handler = middleware.Timeout(cfg.Server.MaxRequestTimeout)(handler)
 	handler = middleware.KeyAuth(authKeyStore, authEnabled)(handler)
 	handler = middleware.LicenseAuth(cfg.LicenseAuth, redisstate.NewLicenseStore(redisClient))(handler)
 	handler = middleware.RequestID(handler)
@@ -874,11 +896,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	handler = middleware.Recovery(handler)
 
 	s.httpServer = &http.Server{
-		Addr:         cfg.Addr(),
-		Handler:      handler,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
-		IdleTimeout:  cfg.Server.IdleTimeout,
+		Addr:              cfg.Addr(),
+		Handler:           handler,
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
 	}
 
 	return s
@@ -921,7 +944,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.asyncWorker.Stop()
 	}
 
-	if err := s.httpServer.Shutdown(ctx); err != nil {
+	err := s.httpServer.Shutdown(ctx)
+	// Send the shadow results captured so far with what is left of ctx; if
+	// the requests used it all, this logs how many were not sent.
+	if s.shadowFlusher != nil {
+		s.shadowFlusher.Close(ctx)
+	}
+	if err != nil {
 		return fmt.Errorf("shutdown error: %w", err)
 	}
 
@@ -1255,6 +1284,8 @@ func ConvertModelOverrides(cfgOverrides map[string]config.ModelOverrideConfig) m
 				CachedInputPerToken: co.Pricing.CachedInputPerToken,
 				BatchInputPerToken:  co.Pricing.BatchInputPerToken,
 				BatchOutputPerToken: co.Pricing.BatchOutputPerToken,
+				InputPerSecond:      co.Pricing.InputPerSecond,
+				InputPerCharacter:   co.Pricing.InputPerCharacter,
 			}
 		}
 		if co.Capabilities != nil {

@@ -1,10 +1,14 @@
 package config
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -41,6 +45,7 @@ type Config struct {
 	Cluster       ClusterConfig             `yaml:"cluster" json:"cluster"`
 	Edge          EdgeConfig                `yaml:"edge" json:"edge"`
 	ControlPlane  ControlPlaneConfig        `yaml:"control_plane" json:"control_plane"`
+	OrgProviders  OrgProvidersConfig        `yaml:"org_providers" json:"org_providers"`
 	CORS          CORSConfig                `yaml:"cors" json:"cors"`
 	Assistants    AssistantsConfig          `yaml:"assistants" json:"assistants"`
 	MCP           MCPConfig                 `yaml:"mcp" json:"mcp"`
@@ -101,9 +106,7 @@ type A2ASkillConfig struct {
 
 // AssistantsConfig controls the Assistants API proxy.
 type AssistantsConfig struct {
-	Enabled           bool          `yaml:"enabled" json:"enabled"`
-	RunTimeout        time.Duration `yaml:"run_timeout" json:"run_timeout"`
-	StreamReadTimeout time.Duration `yaml:"stream_read_timeout" json:"stream_read_timeout"`
+	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
 // MCPConfig controls the MCP (Model Context Protocol) gateway.
@@ -238,6 +241,8 @@ type PricingOverrideConfig struct {
 	CachedInputPerToken *float64 `yaml:"cached_input_per_token" json:"cached_input_per_token"`
 	BatchInputPerToken  *float64 `yaml:"batch_input_per_token" json:"batch_input_per_token"`
 	BatchOutputPerToken *float64 `yaml:"batch_output_per_token" json:"batch_output_per_token"`
+	InputPerSecond      *float64 `yaml:"input_per_second" json:"input_per_second"`
+	InputPerCharacter   *float64 `yaml:"input_per_character" json:"input_per_character"`
 }
 
 // CapOverrideConfig allows overriding individual capability flags.
@@ -314,18 +319,34 @@ type KeyGuardrailOverride struct {
 type ServerConfig struct {
 	Port                  int           `yaml:"port" json:"port"`
 	Host                  string        `yaml:"host" json:"host"`
+	ReadHeaderTimeout     time.Duration `yaml:"read_header_timeout" json:"read_header_timeout"`
 	ReadTimeout           time.Duration `yaml:"read_timeout" json:"read_timeout"`
 	WriteTimeout          time.Duration `yaml:"write_timeout" json:"write_timeout"`
 	IdleTimeout           time.Duration `yaml:"idle_timeout" json:"idle_timeout"`
 	ShutdownTimeout       time.Duration `yaml:"shutdown_timeout" json:"shutdown_timeout"`
 	MaxRequestBodySize    int64         `yaml:"max_request_body_size" json:"max_request_body_size"`
 	DefaultRequestTimeout time.Duration `yaml:"default_request_timeout" json:"default_request_timeout"`
+
+	// MaxRequestTimeout is the longest a request may run, whatever a client
+	// asks for in x-agentcc-timeout or a per-model timeout states. Unset, it
+	// becomes WriteTimeout: the response write fails there regardless, so a
+	// larger ceiling would be one the gateway cannot honour.
+	MaxRequestTimeout time.Duration `yaml:"max_request_timeout" json:"max_request_timeout"`
 }
 
 type ProviderConfig struct {
-	BaseURL        string            `yaml:"base_url" json:"base_url"`
-	APIKey         string            `yaml:"api_key" json:"-"`
-	APIFormat      string            `yaml:"api_format" json:"api_format"`
+	BaseURL   string `yaml:"base_url" json:"base_url"`
+	APIKey    string `yaml:"api_key" json:"-"`
+	APIFormat string `yaml:"api_format" json:"api_format"`
+
+	// APIPathPrefix is the version segment placed between base_url and each
+	// endpoint — "/v1" unless the provider says otherwise. Set it to "" for an
+	// upstream that serves /chat/completions with no version (Perplexity's
+	// Sonar API), or to something else entirely (DeepInfra uses /v1/openai).
+	//
+	// nil takes the preset's value, or "/v1". A pointer because "" is a
+	// meaningful setting distinct from unset. openai-format providers only.
+	APIPathPrefix  *string           `yaml:"api_path_prefix" json:"api_path_prefix"`
 	DefaultTimeout time.Duration     `yaml:"default_timeout" json:"default_timeout"`
 	MaxConcurrent  int               `yaml:"max_concurrent" json:"max_concurrent"`
 	ConnPoolSize   int               `yaml:"conn_pool_size" json:"conn_pool_size"`
@@ -349,8 +370,14 @@ type ProviderConfig struct {
 	AWSRegion          string `yaml:"aws_region" json:"aws_region"`
 
 	// Google service account credentials file (for Vertex AI OAuth2 token generation).
-	CredentialsFile string `yaml:"credentials_file" json:"-"`
-	AWSSessionToken string `yaml:"aws_session_token" json:"-"`
+	CredentialsFile    string `yaml:"credentials_file" json:"-"`
+	ServiceAccountJSON string `yaml:"service_account_json" json:"-"`
+	AWSSessionToken    string `yaml:"aws_session_token" json:"-"`
+
+	// DialContext, when set, opens the provider's upstream connections in
+	// place of the default dialer. Set by the gateway, not in config.yaml: org
+	// providers use it to check every address they connect to.
+	DialContext func(ctx context.Context, network, addr string) (net.Conn, error) `yaml:"-" json:"-"`
 }
 
 type LoggingConfig struct {
@@ -757,9 +784,71 @@ type AuditSinkConfig struct {
 type OTelConfig struct {
 	Enabled     bool              `yaml:"enabled" json:"enabled"`
 	ServiceName string            `yaml:"service_name" json:"service_name"`
-	Exporter    string            `yaml:"exporter" json:"exporter"` // "stdout"
+	Exporter    string            `yaml:"exporter" json:"exporter"` // "stdout" | "otlp"
 	SampleRate  float64           `yaml:"sample_rate" json:"sample_rate"`
 	Attributes  map[string]string `yaml:"attributes" json:"attributes"`
+
+	// Endpoint is the OTLP collector base URL, e.g. "http://otel-collector:4318".
+	// Required when Exporter is "otlp". "/v1/traces" is appended when the URL
+	// carries no path of its own.
+	Endpoint string `yaml:"endpoint" json:"endpoint"`
+
+	// Protocol selects the OTLP transport. Only "http/protobuf" is supported;
+	// empty means "http/protobuf".
+	Protocol string `yaml:"protocol" json:"protocol"`
+
+	// Headers are sent on every OTLP request. Hosted collectors authenticate
+	// this way, so write credentials as ${VAR} and keep them in the
+	// environment rather than in this file.
+	Headers map[string]string `yaml:"headers" json:"-"`
+
+	// TracePropagation makes the gateway honour an inbound W3C `traceparent`
+	// header: its trace id is adopted and its span id becomes this span's
+	// parent, so the gateway span nests under the caller's span instead of
+	// standing alone as a second root.
+	//
+	// Off by default, and deliberately so. A trace whose root span lives in a
+	// different backend has no root here, and consumers that key a trace off
+	// its root span will not list it. Enable when the caller exports its spans
+	// to the same destination as this gateway.
+	TracePropagation bool `yaml:"trace_propagation" json:"trace_propagation"`
+
+	// IncludeBodies attaches the prompt and completion to each span. Off by
+	// default: it sends user content to the collector, and it is a separate
+	// decision from logging.request_logging.include_bodies because the two
+	// go to different places and are signed off separately. Content is
+	// redacted with the org's privacy config exactly as the request log is.
+	IncludeBodies bool `yaml:"include_bodies" json:"include_bodies"`
+
+	// MetadataAttributes additionally emits every caller-supplied metadata key
+	// as its own `agentcc.metadata.<key>` span attribute, next to the `metadata`
+	// JSON object that is always written. Flat attributes are what a trace
+	// backend can filter and group on; the JSON object is one opaque string.
+	// nil = default true.
+	MetadataAttributes *bool `yaml:"metadata_attributes" json:"metadata_attributes"`
+
+	// CaptureHeaders lists request headers to copy onto the span as
+	// `http.request.header.<name>`. Names are matched case-insensitively and a
+	// trailing `*` is a prefix wildcard, so "x-acme-*" takes a whole namespace.
+	//
+	// Empty by default, and an allowlist rather than a blocklist on purpose.
+	// Request headers carry credentials — the gateway itself copies x-api-key
+	// into Authorization before a span exists — and a trace goes somewhere
+	// wider than a log does. A blocklist is a list you can only be wrong about
+	// once. Credential headers stay denied even when a wildcard matches them.
+	CaptureHeaders []string `yaml:"capture_headers" json:"capture_headers"`
+
+	// BodyAttributes emits the request body's unknown top-level fields as
+	// `agentcc.body.<key>` — an SDK's extra_body, and every OpenAI parameter
+	// newer than the field list the request struct knows about
+	// (reasoning_effort, parallel_tool_calls, store...). On by default: those
+	// are ordinary request knobs, and a span that cannot be filtered by them is
+	// missing something the caller assumes is recorded.
+	//
+	// Scalars only, so a nested object — the shape credentials arrive in when
+	// someone passes service-account JSON through extra_body — is never
+	// exported. Values are redacted with the privacy config. nil = default true.
+	BodyAttributes *bool `yaml:"body_attributes" json:"body_attributes"`
 }
 
 // PrometheusConfig controls the Prometheus metrics endpoint.
@@ -839,6 +928,23 @@ type ControlPlaneConfig struct {
 	SyncInterval  time.Duration `yaml:"sync_interval" json:"sync_interval"`     // periodic re-sync (0 = disabled)
 }
 
+// EnvAllowPrivateProviderURLs names the env var behind
+// OrgProvidersConfig.AllowPrivateURLs. The Django backend reads the same name
+// for model discovery and saving providers, so one setting covers both.
+const EnvAllowPrivateProviderURLs = "AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS"
+
+// OrgProvidersConfig governs the providers orgs configure through the control
+// plane (not the ones in this file's providers section, which are trusted).
+type OrgProvidersConfig struct {
+	// AllowPrivateURLs lets an org provider's base_url point at private and
+	// LAN addresses (RFC 1918, 100.64.0.0/10, fc00::/7, and host names such
+	// as Docker service names that resolve to them): a local Ollama or vLLM.
+	// Off by default, since on a shared gateway it lets any org reach
+	// internal hosts. Loopback, link-local, cloud metadata, multicast and
+	// unspecified addresses stay refused regardless.
+	AllowPrivateURLs bool `yaml:"allow_private_urls" json:"allow_private_urls"`
+}
+
 // EdgeRegionConfig defines a backend region for edge routing.
 type EdgeRegionConfig struct {
 	Name    string `yaml:"name" json:"name"`
@@ -878,12 +984,15 @@ func DefaultConfig() *Config {
 		Server: ServerConfig{
 			Port:                  8080,
 			Host:                  "0.0.0.0",
-			ReadTimeout:           5 * time.Second,
+			ReadHeaderTimeout:     5 * time.Second,
+			ReadTimeout:           60 * time.Second,
 			WriteTimeout:          300 * time.Second,
 			IdleTimeout:           120 * time.Second,
 			ShutdownTimeout:       30 * time.Second,
 			MaxRequestBodySize:    50 * 1024 * 1024, // 50MB
 			DefaultRequestTimeout: 60 * time.Second,
+			// Unset: Load reads it as WriteTimeout, whatever that is set to.
+			MaxRequestTimeout: 0,
 		},
 		Providers: make(map[string]ProviderConfig),
 		ModelMap:  make(map[string]string),
@@ -916,9 +1025,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		Assistants: AssistantsConfig{
-			Enabled:           true,
-			RunTimeout:        300 * time.Second,
-			StreamReadTimeout: 60 * time.Second,
+			Enabled: true,
 		},
 		MCP: MCPConfig{
 			Enabled:         false,
@@ -951,6 +1058,26 @@ func Load(path string) (*Config, error) {
 
 	loadFromEnv(cfg)
 
+	// The control plane checks the gateway's calls against the same shared
+	// admin token (Django's AGENTCC_ADMIN_TOKEN), so a gateway told only the
+	// one token can still sync keys and org configs.
+	if cfg.ControlPlane.URL != "" && cfg.ControlPlane.AdminToken == "" {
+		cfg.ControlPlane.AdminToken = cfg.Admin.Token
+	}
+
+	// The response write fails at write_timeout, so a ceiling above it is one
+	// the gateway cannot keep. Unset, it is that value; above it, it becomes
+	// that value and the operator hears why.
+	switch {
+	case cfg.Server.MaxRequestTimeout <= 0:
+		cfg.Server.MaxRequestTimeout = cfg.Server.WriteTimeout
+	case cfg.Server.MaxRequestTimeout > cfg.Server.WriteTimeout:
+		slog.Warn("server.max_request_timeout is above server.write_timeout and was lowered to it",
+			"max_request_timeout", cfg.Server.MaxRequestTimeout.String(),
+			"write_timeout", cfg.Server.WriteTimeout.String())
+		cfg.Server.MaxRequestTimeout = cfg.Server.WriteTimeout
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("config validation: %w", err)
 	}
@@ -980,12 +1107,41 @@ func authKeyConfigured(keys []AuthKeyConfig, raw string) bool {
 	return false
 }
 
-func loadFromEnv(cfg *Config) {
-	if v := os.Getenv("AGENTCC_PORT"); v != "" {
-		if port, err := strconv.Atoi(v); err == nil {
-			cfg.Server.Port = port
-		}
+// envDuration applies a duration environment variable to dst. A value that
+// does not parse keeps the configured one and says so: a bare number is the
+// usual mistake, and silence reads as "the environment does not override the
+// file".
+func envDuration(name string, dst *time.Duration) {
+	v := os.Getenv(name)
+	if v == "" {
+		return
 	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		slog.Warn("ignoring environment variable: not a duration such as 60s or 3m",
+			"env", name, "value", v)
+		return
+	}
+	*dst = d
+}
+
+// envInt is envDuration for a plain integer.
+func envInt(name string, dst *int) {
+	v := os.Getenv(name)
+	if v == "" {
+		return
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		slog.Warn("ignoring environment variable: not a whole number",
+			"env", name, "value", v)
+		return
+	}
+	*dst = n
+}
+
+func loadFromEnv(cfg *Config) {
+	envInt("AGENTCC_PORT", &cfg.Server.Port)
 	if v := os.Getenv("AGENTCC_HOST"); v != "" {
 		cfg.Server.Host = v
 	}
@@ -995,16 +1151,9 @@ func loadFromEnv(cfg *Config) {
 	if v := os.Getenv("AGENTCC_ADMIN_TOKEN"); v != "" {
 		cfg.Admin.Token = v
 	}
-	if v := os.Getenv("AGENTCC_DEFAULT_REQUEST_TIMEOUT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			cfg.Server.DefaultRequestTimeout = d
-		}
-	}
-	if v := os.Getenv("AGENTCC_SHUTDOWN_TIMEOUT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			cfg.Server.ShutdownTimeout = d
-		}
-	}
+	envDuration("AGENTCC_DEFAULT_REQUEST_TIMEOUT", &cfg.Server.DefaultRequestTimeout)
+	envDuration("AGENTCC_MAX_REQUEST_TIMEOUT", &cfg.Server.MaxRequestTimeout)
+	envDuration("AGENTCC_SHUTDOWN_TIMEOUT", &cfg.Server.ShutdownTimeout)
 
 	// Control plane env overrides.
 	if v := os.Getenv("AGENTCC_CONTROL_PLANE_URL"); v != "" {
@@ -1016,8 +1165,18 @@ func loadFromEnv(cfg *Config) {
 	if v := os.Getenv("AGENTCC_SYNC_ON_STARTUP"); v != "" {
 		cfg.ControlPlane.SyncOnStartup = v == "true" || v == "1"
 	}
+	envDuration("AGENTCC_SYNC_INTERVAL", &cfg.ControlPlane.SyncInterval)
 	if v := os.Getenv("AGENTCC_WEBHOOK_SECRET"); v != "" {
 		cfg.ControlPlane.WebhookSecret = v
+	}
+	if v := os.Getenv(EnvAllowPrivateProviderURLs); v != "" {
+		// Read as the backend reads it, so " true" or "TRUE" opts in both.
+		if allow, err := strconv.ParseBool(strings.ToLower(strings.TrimSpace(v))); err == nil {
+			cfg.OrgProviders.AllowPrivateURLs = allow
+		} else {
+			slog.Warn("ignoring unrecognised value; expected true or false",
+				"env", EnvAllowPrivateProviderURLs, "value", v)
+		}
 	}
 
 	// Auth env overrides. Evaluate the explicit toggle first, then let a present
@@ -1027,6 +1186,9 @@ func loadFromEnv(cfg *Config) {
 	if v := os.Getenv("AGENTCC_AUTH_ENABLED"); v != "" {
 		if enabled, err := strconv.ParseBool(v); err == nil {
 			cfg.Auth.Enabled = enabled
+		} else {
+			slog.Warn("ignoring environment variable: not true or false",
+				"env", "AGENTCC_AUTH_ENABLED", "value", v)
 		}
 	}
 	if v := os.Getenv("AGENTCC_INTERNAL_API_KEY"); v != "" {
@@ -1040,10 +1202,11 @@ func loadFromEnv(cfg *Config) {
 		// — and could re-type — an operator's explicit entry.
 		if !authKeyConfigured(cfg.Auth.Keys, v) {
 			cfg.Auth.Keys = append(cfg.Auth.Keys, AuthKeyConfig{
-				Name:    "internal-backend",
-				Key:     v,
-				Owner:   "futureagi-backend",
-				KeyType: "internal",
+				Name:     "internal-backend",
+				Key:      v,
+				Owner:    "futureagi-backend",
+				KeyType:  "internal",
+				Metadata: map[string]string{"access_groups": "internal"},
 			})
 		}
 	}
@@ -1056,11 +1219,7 @@ func loadFromEnv(cfg *Config) {
 	if v := os.Getenv("AGENTCC_REDIS_PASSWORD"); v != "" {
 		cfg.Redis.Password = v
 	}
-	if v := os.Getenv("AGENTCC_REDIS_DB"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			cfg.Redis.DB = n
-		}
-	}
+	envInt("AGENTCC_REDIS_DB", &cfg.Redis.DB)
 }
 
 // Validate checks that the config is valid.
@@ -1071,11 +1230,20 @@ func (c *Config) Validate() error {
 	if c.Server.ReadTimeout <= 0 {
 		return fmt.Errorf("server.read_timeout must be positive")
 	}
+	if c.Server.ReadHeaderTimeout <= 0 {
+		return fmt.Errorf("server.read_header_timeout must be positive")
+	}
 	if c.Server.WriteTimeout <= 0 {
 		return fmt.Errorf("server.write_timeout must be positive")
 	}
 	if c.Server.DefaultRequestTimeout <= 0 {
 		return fmt.Errorf("server.default_request_timeout must be positive")
+	}
+	// Load lowers the ceiling to write_timeout, so a default above it here is
+	// a request the gateway could never serve, not something to normalize.
+	if c.Server.MaxRequestTimeout > 0 && c.Server.MaxRequestTimeout < c.Server.DefaultRequestTimeout {
+		return fmt.Errorf("server.default_request_timeout (%s) is above the ceiling server.max_request_timeout (%s)",
+			c.Server.DefaultRequestTimeout, c.Server.MaxRequestTimeout)
 	}
 
 	for name, p := range c.Providers {
@@ -1096,7 +1264,52 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("logging.level must be one of debug, info, warn, error; got %q", c.Logging.Level)
 	}
 
+	if err := c.validateOTel(); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// validateOTel checks the OTLP exporter settings. Misconfiguration here is
+// caught at startup rather than silently degrading to stdout, because a
+// collector that never receives spans looks identical to a quiet gateway.
+func (c *Config) validateOTel() error {
+	if !c.OTel.Enabled {
+		return nil
+	}
+	if strings.ToLower(c.OTel.Exporter) != "otlp" {
+		return nil
+	}
+	if c.OTel.Endpoint == "" {
+		return fmt.Errorf("otel.endpoint is required when otel.exporter is %q", "otlp")
+	}
+	u, err := url.Parse(c.OTel.Endpoint)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("otel.endpoint must be an absolute http(s) URL, got %q", c.OTel.Endpoint)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("otel.endpoint scheme must be http or https, got %q", u.Scheme)
+	}
+	// An empty header value is almost always an unset ${VAR}. Sending it
+	// blindly means the collector 401s and every span is silently discarded,
+	// which is indistinguishable from a gateway with no traffic.
+	for k, v := range c.OTel.Headers {
+		if k == "" {
+			return fmt.Errorf("otel.headers has an entry with an empty name")
+		}
+		if v == "" {
+			return fmt.Errorf("otel.headers[%q] is empty; if it references an environment variable, that variable is not set", k)
+		}
+	}
+	switch strings.ToLower(c.OTel.Protocol) {
+	case "", "http/protobuf":
+		return nil
+	case "grpc", "http/json":
+		return fmt.Errorf("otel.protocol %q is not supported; use \"http/protobuf\"", c.OTel.Protocol)
+	default:
+		return fmt.Errorf("otel.protocol must be \"http/protobuf\", got %q", c.OTel.Protocol)
+	}
 }
 
 func (c *Config) validateLicenseAuth() error {
@@ -1165,4 +1378,68 @@ func validateLicenseRSAPublicKey(raw string) error {
 // Addr returns the listen address.
 func (c *Config) Addr() string {
 	return fmt.Sprintf("%s:%d", c.Server.Host, c.Server.Port)
+}
+
+// DefaultAPIPathPrefix is the version segment assumed for an OpenAI-format
+// provider that does not state one.
+const DefaultAPIPathPrefix = "/v1"
+
+// EffectiveAPIPathPrefix returns the version segment for this provider,
+// normalised to a leading slash and no trailing one.
+func (c *ProviderConfig) EffectiveAPIPathPrefix() string {
+	if c.APIPathPrefix == nil {
+		return DefaultAPIPathPrefix
+	}
+	return normalizePathPrefix(*c.APIPathPrefix)
+}
+
+// EndpointURL builds an upstream URL for a versioned path such as
+// "/v1/chat/completions", replacing the caller's assumed "/v1" with whatever
+// this provider actually uses.
+//
+// A base_url that already ends in the prefix keeps it rather than repeating it:
+// "https://api.cohere.ai/compatibility/v1" resolves to ".../compatibility/v1/
+// chat/completions", not ".../v1/v1/...".
+func (c *ProviderConfig) EndpointURL(path string) string {
+	return JoinEndpoint(c.BaseURL, c.EffectiveAPIPathPrefix(), path)
+}
+
+// JoinEndpoint is EndpointURL for callers holding a base URL rather than a
+// config — the registry builds probe URLs before any provider exists.
+func JoinEndpoint(baseURL, prefix, path string) string {
+	base := strings.TrimRight(baseURL, "/")
+	path = trimDefaultPrefix(path)
+	if prefix == "" {
+		return base + path
+	}
+	if strings.HasSuffix(base, prefix) {
+		return base + path
+	}
+	return base + prefix + path
+}
+
+// trimDefaultPrefix removes the "/v1" the call sites hardcode, but only when it
+// is a whole path segment. A blind TrimPrefix eats the "/v1" out of "/v10/models"
+// and "/v1beta/models", leaving "0/models" to be re-prefixed into "/v20/models".
+// Only the proxy endpoints take a caller-supplied path, so that is where a
+// non-"/v1" version segment can actually arrive.
+func trimDefaultPrefix(path string) string {
+	if path == DefaultAPIPathPrefix {
+		return ""
+	}
+	if strings.HasPrefix(path, DefaultAPIPathPrefix+"/") {
+		return strings.TrimPrefix(path, DefaultAPIPathPrefix)
+	}
+	return path
+}
+
+func normalizePathPrefix(prefix string) string {
+	prefix = strings.TrimRight(strings.TrimSpace(prefix), "/")
+	if prefix == "" {
+		return ""
+	}
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+	return prefix
 }

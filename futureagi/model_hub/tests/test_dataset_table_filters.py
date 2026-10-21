@@ -6,9 +6,9 @@ from rest_framework import status
 from model_hub.models.choices import DataTypeChoices, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.serializers.contracts import (
-    DatasetUpdateCellValueRequestSerializer,
     DatasetRowDataRequestSerializer,
     DatasetTableQuerySerializer,
+    DatasetUpdateCellValueRequestSerializer,
 )
 from model_hub.utils.annotation_queue_helpers import _filter_dataset_cells
 from model_hub.views.develop_dataset import GetDatasetTableView
@@ -189,6 +189,102 @@ def test_dataset_table_api_rejects_legacy_query_aliases(
     assert response.status_code == status.HTTP_400_BAD_REQUEST
 
 
+@pytest.mark.django_db(transaction=True)
+def test_dataset_table_exact_continuation_keeps_same_timestamp_columns_ordered(
+    auth_client, dataset_filter_seed
+):
+    dataset, rows, text_col, bool_col = dataset_filter_seed
+    # Equal timestamps used to leave the inherited ``-created_at`` ordering
+    # nondeterministic, so page two could report a different column inventory.
+    Column.all_objects.filter(id__in=[text_col.id, bool_col.id]).update(
+        created_at=text_col.created_at
+    )
+    expected_column_ids = sorted([str(text_col.id), str(bool_col.id)])
+
+    first = auth_client.get(
+        f"/model-hub/develops/{dataset.id}/get-dataset-table/",
+        {
+            "page_size": 2,
+            "current_page_index": 0,
+            "exact_snapshot": True,
+        },
+    )
+    assert first.status_code == status.HTTP_200_OK
+    first_result = first.json()["result"]
+    assert [row["row_id"] for row in first_result["table"]] == [
+        str(row.id) for row in rows[:2]
+    ]
+    assert first_result["metadata"]["total_rows"] == 3
+    assert first_result["metadata"]["total_pages"] == 2
+    assert first_result["metadata"]["page_size"] == 2
+    assert first_result["metadata"]["current_page_index"] == 0
+    assert first_result["metadata"]["has_more"] is True
+    assert first_result["metadata"]["next_page_index"] == 1
+    assert first_result["metadata"]["next_cursor"]
+    assert first_result["metadata"]["is_exact"] is True
+    assert first_result["metadata"]["snapshot_bound"] is True
+    assert [column["id"] for column in first_result["column_config"]] == (
+        expected_column_ids
+    )
+
+    second = auth_client.get(
+        f"/model-hub/develops/{dataset.id}/get-dataset-table/",
+        {
+            "page_size": 2,
+            "current_page_index": 1,
+            "exact_snapshot": True,
+            "cursor": first_result["metadata"]["next_cursor"],
+        },
+    )
+    assert second.status_code == status.HTTP_200_OK
+    second_result = second.json()["result"]
+    assert [row["row_id"] for row in second_result["table"]] == [str(rows[2].id)]
+    assert second_result["metadata"]["has_more"] is False
+    assert second_result["metadata"]["next_page_index"] is None
+    assert second_result["metadata"]["next_cursor"] is None
+    assert second_result["metadata"]["is_exact"] is True
+    assert [column["id"] for column in second_result["column_config"]] == (
+        expected_column_ids
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_dataset_table_exact_continuation_rejects_mutation_between_pages(
+    auth_client, dataset_filter_seed
+):
+    dataset, rows, text_col, _bool_col = dataset_filter_seed
+    url = f"/model-hub/develops/{dataset.id}/get-dataset-table/"
+
+    first = auth_client.get(
+        url,
+        {
+            "page_size": 2,
+            "current_page_index": 0,
+            "exact_snapshot": True,
+        },
+    )
+    assert first.status_code == status.HTTP_200_OK
+    cursor = first.json()["result"]["metadata"]["next_cursor"]
+    assert cursor
+
+    # QuerySet.update deliberately bypasses auto_now. The MVCC binding must
+    # still detect the changed tuple version; updated_at-based fingerprints do
+    # not cover this real write path.
+    Cell.objects.filter(row=rows[0], column=text_col).update(value="changed")
+
+    changed = auth_client.get(
+        url,
+        {
+            "page_size": 2,
+            "current_page_index": 1,
+            "exact_snapshot": True,
+            "cursor": cursor,
+        },
+    )
+    assert changed.status_code == status.HTTP_409_CONFLICT
+    assert changed.json()["code"] == "dataset_snapshot_changed"
+
+
 def test_update_cell_value_api_rejects_legacy_payload_aliases(
     auth_client, dataset_filter_seed
 ):
@@ -278,15 +374,21 @@ def array_col_seed(organization, workspace):
         Row.objects.create(dataset=dataset, order=3),
     ]
     Cell.objects.create(
-        dataset=dataset, row=rows[0], column=arr_col,
+        dataset=dataset,
+        row=rows[0],
+        column=arr_col,
         value=json.dumps(["CIRCULAR NO. 123 dated 2024"]),
     )
     Cell.objects.create(
-        dataset=dataset, row=rows[1], column=arr_col,
+        dataset=dataset,
+        row=rows[1],
+        column=arr_col,
         value=json.dumps(["internal memo, no reference"]),
     )
     Cell.objects.create(
-        dataset=dataset, row=rows[2], column=arr_col,
+        dataset=dataset,
+        row=rows[2],
+        column=arr_col,
         value=json.dumps(["see CIRCULAR appendix"]),
     )
     return dataset, rows, arr_col

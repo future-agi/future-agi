@@ -1,0 +1,39 @@
+{{- $c := .Values.fiCollector -}}
+{{- $ctx := dict "root" . "component" "fi-collector" -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  {{- with $c.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $c.service.type }}
+  selector:
+    {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: otlp-grpc
+      port: {{ $c.service.grpcPort }}
+      targetPort: otlp-grpc
+      protocol: TCP
+      appProtocol: grpc
+    - name: otlp-http
+      port: {{ $c.service.httpPort }}
+      targetPort: otlp-http
+      protocol: TCP
+    - name: admin
+      port: 9464
+      targetPort: admin
+      protocol: TCP
+{{- if $c.autoscaling.enabled }}
+---
+{{ include "futureagi.hpa" (dict "root" . "component" "fi-collector" "name" (include "futureagi.component" $ctx) "autoscaling" $c.autoscaling) }}
+{{- end }}
+{{- if $c.pdb.enabled }}
+---
+{{ include "futureagi.pdb" (dict "root" . "component" "fi-collector" "name" (include "futureagi.component" $ctx) "pdb" $c.pdb) }}
+{{- end }}

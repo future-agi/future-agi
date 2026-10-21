@@ -93,6 +93,9 @@ class TrendPointSerializer(serializers.Serializer):
 
 
 class FeedListRowSerializer(serializers.Serializer):
+    severity_assessment_status = serializers.CharField(required=False)
+    severity_source = serializers.CharField(required=False)
+    severity_reason = serializers.CharField(allow_blank=True, required=False)
     cluster_id = serializers.CharField()
     source = serializers.CharField()
     modality = serializers.CharField()
@@ -192,6 +195,16 @@ class FeedDetailCoreSerializer(serializers.Serializer):
 class FeedDetailApiResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = FeedDetailCoreSerializer()
+
+
+class FeedRedirectSerializer(serializers.Serializer):
+    requested_cluster_id = serializers.CharField()
+    resolved_cluster_id = serializers.CharField()
+
+
+class FeedRedirectApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = FeedRedirectSerializer()
 
 
 # ---------------------------------------------------------------------------

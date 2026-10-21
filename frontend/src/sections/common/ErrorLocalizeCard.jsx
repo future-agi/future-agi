@@ -280,12 +280,14 @@ const ImageWithOverlay = ({ imageUrl, value, boxWidth, boxHeight }) => {
         onMouseLeave={handleMouseLeave}
       />
 
-      <CustomTooltipImage
-        show={Boolean(hoveredData)}
-        title={hoveredData}
-        x={tooltipPosition.x}
-        y={tooltipPosition.y}
-      />
+      {hoveredData && (
+        <CustomTooltipImage
+          show
+          title={hoveredData}
+          x={tooltipPosition.x}
+          y={tooltipPosition.y}
+        />
+      )}
     </Box>
   );
 };
@@ -495,6 +497,7 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
                       value.map((i, index) => (
                         <React.Fragment key={i.unitKey || i.unit_key || index}>
                           <Typography
+                            component="div"
                             sx={{ marginY: theme.spacing(1.5), ...sx }}
                             variant="body2"
                           >
@@ -544,6 +547,7 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
                             key={item.unitKey || item.unit_key || index}
                           >
                             <Typography
+                              component="div"
                               sx={{ marginY: theme.spacing(1.5), ...sx }}
                               variant="s2"
                             >
@@ -716,10 +720,6 @@ ErrorLocalizeCard.propTypes = {
 
 ImageWithOverlay.propTypes = {
   imageUrl: PropTypes.string.isRequired,
-  coordinates: PropTypes.shape({
-    topLeft: PropTypes.arrayOf(PropTypes.number).isRequired,
-    bottomRight: PropTypes.arrayOf(PropTypes.number).isRequired,
-  }).isRequired,
   value: PropTypes.array,
   boxWidth: PropTypes.number,
   boxHeight: PropTypes.number,

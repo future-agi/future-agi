@@ -22,7 +22,7 @@ import DrawerRight from "./drawer-right";
 import DrawerBottom from "./drawer-bottom";
 import PropTypes from "prop-types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import axios, { readQuery, endpoints } from "src/utils/axios";
 import { useParams } from "react-router";
 import { ShowComponent } from "../show";
 import { useSelectedNode } from "./useSelectedNode";
@@ -157,10 +157,19 @@ const TraceDetailDrawerChild = ({
     });
   };
 
+  // Pin the trace and span reads to the page's project: the same ids can
+  // exist in several projects.
+  const projectParams = projectIdToUse
+    ? { params: { project_id: projectIdToUse } }
+    : undefined;
+
   const { data: traceDetail, isLoading } = useQuery({
-    queryKey: ["trace-detail", traceData.trace_id],
+    queryKey: ["trace-detail", traceData.trace_id, projectIdToUse],
     queryFn: () => {
-      return axios.get(endpoints.project.getTrace(traceData.trace_id));
+      return axios.get(
+        endpoints.project.getTrace(traceData.trace_id),
+        projectParams,
+      );
     },
     select: (data) => data.data?.result,
   });
@@ -176,7 +185,7 @@ const TraceDetailDrawerChild = ({
   const { data: previousNextTraceDataPrototype } = useQuery({
     queryKey: ["trace-id-by-index", traceData.trace_id, traceData?.filters],
     queryFn: () => {
-      return axios.get(endpoints.project.getTraceIdByIndex(), {
+      return readQuery(endpoints.project.getTraceIdByIndex(), {
         params: {
           project_version_id: runId,
           trace_id: traceData?.trace_id,
@@ -196,7 +205,7 @@ const TraceDetailDrawerChild = ({
       traceData?.filters,
     ],
     queryFn: () => {
-      return axios.get(endpoints.project.getTraceIdByIndexObserve(observeId), {
+      return readQuery(endpoints.project.getTraceIdByIndexObserve(observeId), {
         params: {
           trace_id: traceData.trace_id,
           // only trace filters can be applied to this
@@ -212,7 +221,7 @@ const TraceDetailDrawerChild = ({
   const { data: previousNextSpanDataPrototype } = useQuery({
     queryKey: ["span-id-by-index", traceData?.span_id, traceData?.filters],
     queryFn: () => {
-      return axios.get(endpoints.project.getTraceIdByIndexSpansAsBase(), {
+      return readQuery(endpoints.project.getTraceIdByIndexSpansAsBase(), {
         params: {
           span_id: traceData?.span_id,
           project_version_id: runId,
@@ -232,7 +241,7 @@ const TraceDetailDrawerChild = ({
       traceData?.filters,
     ],
     queryFn: () => {
-      return axios.get(
+      return readQuery(
         endpoints.project.getTraceIdByIndexSpansAsObserve(observeId),
         {
           params: {
@@ -267,10 +276,13 @@ const TraceDetailDrawerChild = ({
     data: observationSpanWithoutLoadingState,
     isLoading: isLoadingObservationSpan,
   } = useQuery({
-    queryKey: ["observationSpan", selectedNode?.id, fetch],
+    queryKey: ["observationSpan", selectedNode?.id, projectIdToUse, fetch],
     enabled: Boolean(selectedNode?.id) && !showEvalLoadingStates && fetch,
     queryFn: () =>
-      axios.get(endpoints.project.getObservationSpan(selectedNode?.id)),
+      axios.get(
+        endpoints.project.getObservationSpan(selectedNode?.id),
+        projectParams,
+      ),
     select: (data) => data?.data?.result,
   });
 
@@ -278,10 +290,18 @@ const TraceDetailDrawerChild = ({
     data: observationSpanWithLoadingState,
     isLoading: isLoadingDetailedObservationSpan,
   } = useQuery({
-    queryKey: ["observationSpan-loading", selectedNode?.id, fetch],
+    queryKey: [
+      "observationSpan-loading",
+      selectedNode?.id,
+      projectIdToUse,
+      fetch,
+    ],
     enabled: Boolean(selectedNode?.id) && showEvalLoadingStates && fetch,
     queryFn: () =>
-      axios.get(endpoints.project.getObservationSpan(selectedNode?.id)),
+      axios.get(
+        endpoints.project.getObservationSpan(selectedNode?.id),
+        projectParams,
+      ),
     select: (data) => data?.data?.result,
     refetchInterval: (data) => {
       const evalsMetrics = data?.state?.data?.data?.result?.evals_metrics;
@@ -626,6 +646,7 @@ const TraceDetailDrawerChild = ({
                     showAnnotation={showAnnotation}
                     observationSpan={observationSpan}
                     observationSpanLoading={observationSpanLoading}
+                    projectId={projectIdToUse}
                   />
                 </Box>
               </Box>
@@ -731,6 +752,7 @@ const TraceDetailDrawerChild = ({
                   showAnnotation={showAnnotation}
                   observationSpan={observationSpan}
                   observationSpanLoading={observationSpanLoading}
+                  projectId={projectIdToUse}
                 />
               </Box>
             </Grid>
@@ -768,6 +790,7 @@ const TraceDetailDrawerChild = ({
               traceId: traceData?.trace_id,
               spanId: selectedNode?.id || rootSpanId,
               sessionId: traceDetail?.trace?.session,
+              projectId: projectIdToUse,
             })}
             onClose={() => setAnnotationSidebarOpen(false)}
             onAddLabel={() => setAddLabelDrawerOpen(true)}

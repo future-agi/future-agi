@@ -167,3 +167,94 @@ func TestTimeout_InvalidHeaderUsesDefault(t *testing.T) {
 		t.Error("expected context to have a deadline with default timeout")
 	}
 }
+
+func TestTimeout_DurationHeaderOverride(t *testing.T) {
+	var deadline time.Time
+
+	handler := Timeout(60 * time.Second)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deadline, _ = r.Context().Deadline()
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("x-agentcc-timeout", "2s")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	remaining := time.Until(deadline)
+	if remaining < 1*time.Second || remaining > 3*time.Second {
+		t.Errorf("expected deadline ~2s from now, got %v", remaining)
+	}
+}
+
+func TestRequestTimeoutHeader(t *testing.T) {
+	tests := []struct {
+		name     string
+		duration string // x-agentcc-timeout
+		millis   string // x-agentcc-request-timeout
+		want     time.Duration
+		wantOK   bool
+	}{
+		{"duration header", "30s", "", 30 * time.Second, true},
+		{"milliseconds header", "", "2500", 2500 * time.Millisecond, true},
+		{"duration wins when both are valid", "45s", "2000", 45 * time.Second, true},
+		{"a bare number is not a duration, so milliseconds applies", "30", "2000", 2 * time.Second, true},
+		{"a bare number alone is ignored", "30", "", 0, false},
+		{"milliseconds must be a number", "", "soon", 0, false},
+		{"zero and negative values are ignored", "0s", "-5", 0, false},
+		{"no header", "", "", 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest("GET", "/test", nil)
+			if tt.duration != "" {
+				r.Header.Set("x-agentcc-timeout", tt.duration)
+			}
+			if tt.millis != "" {
+				r.Header.Set("x-agentcc-request-timeout", tt.millis)
+			}
+
+			got, ok := RequestTimeoutHeader(r)
+			if got != tt.want || ok != tt.wantOK {
+				t.Errorf("RequestTimeoutHeader = (%v, %v), want (%v, %v)", got, ok, tt.want, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestTimeout_MaximumHoldsOverTheHeader(t *testing.T) {
+	const maxTimeout = 30 * time.Second
+
+	tests := []struct {
+		name   string
+		header map[string]string
+		want   time.Duration
+	}{
+		{"no header leaves the maximum", nil, maxTimeout},
+		{"a shorter header applies", map[string]string{"x-agentcc-timeout": "5s"}, 5 * time.Second},
+		{"a longer duration header is held at the maximum", map[string]string{"x-agentcc-timeout": "10m"}, maxTimeout},
+		{"a longer milliseconds header is held at the maximum", map[string]string{"x-agentcc-request-timeout": "600000"}, maxTimeout},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var remaining time.Duration
+			handler := Timeout(maxTimeout)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				deadline, ok := r.Context().Deadline()
+				if !ok {
+					t.Fatal("the request reached the handler with no deadline")
+				}
+				remaining = time.Until(deadline)
+			}))
+
+			req := httptest.NewRequest("POST", "/v1/embeddings", nil)
+			for k, v := range tt.header {
+				req.Header.Set(k, v)
+			}
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+
+			if remaining > tt.want || remaining < tt.want-time.Second {
+				t.Errorf("deadline in %v, want about %v", remaining, tt.want)
+			}
+		})
+	}
+}

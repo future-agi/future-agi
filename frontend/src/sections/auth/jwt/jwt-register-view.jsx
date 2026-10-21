@@ -32,19 +32,25 @@ import RegionSelect from "src/components/RegionSelect";
 import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
 import { getSignupFieldErrors } from "src/utils/errorUtils";
+import { isWorkEmail } from "src/utils/workEmail";
 import {
   useDeploymentMode,
   usePostLoginPath,
 } from "src/hooks/useDeploymentMode";
 
 export default function JwtRegisterView() {
-  const { register, login, awsRegister } = useAuthContext();
+  const { register, login, marketplaceRegister } = useAuthContext();
   const [errorMsg, setErrorMsg] = useState("");
   const [registerSuccess, setRegisterSuccess] = useState(false);
   // Confirmed read only: the hook falls back to "oss" when deployment-info
   // errors, and a cloud user must never be shown the password fields.
-  const { isOSS: ossMode, isSuccess: modeConfirmed } = useDeploymentMode();
+  const {
+    isOSS: ossMode,
+    isCloud: cloudMode,
+    isSuccess: modeConfirmed,
+  } = useDeploymentMode();
   const isOSS = modeConfirmed && ossMode;
+  const requireWorkEmail = modeConfirmed && cloudMode;
   const postLoginPath = usePostLoginPath();
   const password = useBoolean();
   const confirmPassword = useBoolean();
@@ -53,13 +59,19 @@ export default function JwtRegisterView() {
   const [loading, setLoading] = useState(false);
   const queryParams = new URLSearchParams(location.search);
   const onboarding_token = queryParams.get("onboarding_token");
+  const onboarding_gcp_token = queryParams.get("onboarding_gcp_token");
 
   const RegisterSchema = Yup.object().shape({
     fullName: Yup.string().required("Full name required"),
     email: Yup.string()
       .transform((value) => (typeof value === "string" ? value.trim() : value))
       .required("Email is required")
-      .email("Email must be a valid email address"),
+      .email("Email must be a valid email address")
+      .test(
+        "work-email",
+        "Please sign up with your work email address",
+        (value) => !requireWorkEmail || isWorkEmail(value),
+      ),
     // OSS sets the password here at sign-up (name → email → password →
     // confirm, one screen). Cloud still sets it via an emailed link.
     password: isOSS
@@ -168,11 +180,21 @@ export default function JwtRegisterView() {
         ...(isOSS ? { password: data?.password } : {}),
       };
       let response;
-      if (onboarding_token) {
-        response = await awsRegister({
-          ...payload,
-          onboarding_token: onboarding_token,
-        });
+      const marketplaceToken = onboarding_gcp_token || onboarding_token;
+      if (marketplaceToken) {
+        response = await marketplaceRegister(
+          onboarding_gcp_token
+            ? endpoints.auth.gcpSignUp
+            : endpoints.auth.awsSignUp,
+          // Both marketplace endpoints reject unknown fields, so send only the
+          // three they declare. company_name, recaptcha and allow_email are
+          // meaningless here: the onboarding token is the proof of purchase.
+          {
+            onboarding_token: marketplaceToken,
+            email: payload.email,
+            full_name: payload.full_name,
+          },
+        );
       } else {
         response = await register(payload);
       }
@@ -346,7 +368,9 @@ export default function JwtRegisterView() {
   const handleServiceProvider = async (provider) => {
     persistReturnTo();
     try {
-      const response = await axios.get(endpoints.auth.service(provider));
+      const response = await axios.get(
+        endpoints.auth.service(provider, onboarding_gcp_token),
+      );
       logger.debug("Service provider response:", {
         provider,
         response: response.data,
@@ -422,7 +446,7 @@ export default function JwtRegisterView() {
         placeholder="Enter Email address"
         size="small"
         name="email"
-        label={isOSS ? "Email ID" : "Business Email ID"}
+        label={requireWorkEmail ? "Business Email ID" : "Email ID"}
       />
       {isOSS && (
         <>
@@ -624,30 +648,32 @@ export default function JwtRegisterView() {
                 Continue with Github
               </Typography>
             </Button>
-            <Button
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 0.5,
+            {!onboarding_gcp_token && (
+              <Button
+                sx={{
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 0.5,
 
-                height: 44,
-                color: "text.primary",
-              }}
-              onClick={handleSsoLogin}
-              startIcon={
-                <SvgColor
-                  sx={{ marginLeft: 2 }}
-                  src="/assets/icons/ic_sso_saml.svg"
-                />
-              }
-            >
-              <Typography
-                fontWeight={"fontWeightMedium"}
-                sx={{ fontSize: "15px", marginRight: -1.5 }}
+                  height: 44,
+                  color: "text.primary",
+                }}
+                onClick={handleSsoLogin}
+                startIcon={
+                  <SvgColor
+                    sx={{ marginLeft: 2 }}
+                    src="/assets/icons/ic_sso_saml.svg"
+                  />
+                }
               >
-                Continue with SSO/SAML
-              </Typography>
-            </Button>
+                <Typography
+                  fontWeight={"fontWeightMedium"}
+                  sx={{ fontSize: "15px", marginRight: -1.5 }}
+                >
+                  Continue with SSO/SAML
+                </Typography>
+              </Button>
+            )}
           </>
         )}
 

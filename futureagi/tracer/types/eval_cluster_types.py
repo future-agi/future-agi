@@ -42,6 +42,15 @@ class EvalClusteringSummary:
     clustered: int = 0
     new_clusters: int = 0
     assigned: int = 0
+    # Rows fetched this batch (before clustering). The task-level drain loop keys
+    # termination on this rather than on ``clustered``, and stops only when it
+    # reaches zero — a short batch means "nothing more RIGHT NOW", and triggers
+    # that arrive mid-run are coalesced away, so the loop has to look again.
+    # Terminating on empty is safe because every clustered row leaves a junction
+    # row carrying its ``eval_logger_id`` — including the provenance-only row
+    # written when a session is already a member — so the fetchable set strictly
+    # shrinks.
+    fetched: int = 0
 
 
 @dataclass

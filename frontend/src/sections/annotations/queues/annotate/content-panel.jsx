@@ -101,26 +101,37 @@ export default function ContentPanel({ item }) {
   }
 
   // For trace / observation_span, show the full trace view inline
-  // Voice traces (from simulator projects) get the voice-specific UI
+  // Voice traces (conversation root span) get the voice-specific UI
   if (sourceType === "trace" || sourceType === "observation_span") {
     const traceId = content?.trace_id;
-    const isVoiceProject = content?.project_source === "simulator";
+    const isVoiceTrace =
+      content?.observation_type === "conversation" ||
+      content?.project_source === "simulator";
     const spanId =
       sourceType === "observation_span" ? content?.span_id : undefined;
+    // The same trace id can live in several projects; the content above was
+    // read from the queue item's copy, so pin the detail reads to it.
+    const projectId = content?.project_id || undefined;
 
-    if (traceId && sourceType === "trace" && isVoiceProject) {
+    if (traceId && sourceType === "trace" && isVoiceTrace) {
       // Voice calls mount the embedded drawer which manages its own
       // scroll; skip the padding/overflow wrapper the other sources use
       // so the drawer can fill the full content panel height.
       return (
         <Box sx={{ height: "100%", minHeight: 0, display: "flex" }}>
-          <VoiceCallContent traceId={traceId} />
+          <VoiceCallContent traceId={traceId} projectId={projectId} />
         </Box>
       );
     }
 
     if (traceId) {
-      return <InlineTraceView traceId={traceId} spanId={spanId} />;
+      return (
+        <InlineTraceView
+          traceId={traceId}
+          spanId={spanId}
+          projectId={projectId}
+        />
+      );
     }
     // Fallback to simple view if no trace_id
   }
@@ -172,10 +183,12 @@ function findEntryBySpanId(entries, spanId) {
 
 const READ_ONLY_TAB_TOOLTIP = "Open trace project to edit the view";
 
-function InlineTraceView({ traceId, spanId }) {
+function InlineTraceView({ traceId, spanId, projectId: pinnedProjectId }) {
   const queryClient = useQueryClient();
-  const { data, isLoading } = useGetTraceDetail(traceId);
-  const projectId = data?.trace?.project;
+  const { data, isLoading } = useGetTraceDetail(traceId, {
+    projectId: pinnedProjectId,
+  });
+  const projectId = data?.trace?.project || pinnedProjectId;
   const sessionId = data?.trace?.session;
   const [showSession, setShowSession] = useState(false);
 
@@ -538,6 +551,7 @@ function InlineTraceView({ traceId, spanId }) {
                   }
                   isRootSpan={selectedSpanId === rootSpanId}
                   traceTags={data?.trace?.tags || []}
+                  projectId={projectId}
                   onSelectSpan={handleSelectSpan}
                 />
               </Box>
@@ -575,6 +589,7 @@ function InlineTraceView({ traceId, spanId }) {
                   }
                   isRootSpan={selectedSpanId === rootSpanId}
                   traceTags={data?.trace?.tags || []}
+                  projectId={projectId}
                   onSelectSpan={handleSelectSpan}
                 />
               ) : (
@@ -634,6 +649,7 @@ function InlineTraceView({ traceId, spanId }) {
 InlineTraceView.propTypes = {
   traceId: PropTypes.string,
   spanId: PropTypes.string,
+  projectId: PropTypes.string,
 };
 
 // ---------------------------------------------------------------------------
@@ -643,8 +659,11 @@ InlineTraceView.propTypes = {
 // time we shipped a feature. Mounting the drawer directly keeps the
 // annotate view and the main simulate/observe drawers in lockstep.
 // ---------------------------------------------------------------------------
-function VoiceCallContent({ traceId }) {
-  const { data: callData, isLoading } = useVoiceCallDetail(traceId, true);
+function VoiceCallContent({ traceId, projectId }) {
+  const { data: callData, isLoading } = useVoiceCallDetail(traceId, {
+    enabled: true,
+    projectId,
+  });
 
   if (isLoading) {
     return (
@@ -655,11 +674,7 @@ function VoiceCallContent({ traceId }) {
   }
 
   if (!callData) {
-    return (
-      <Typography color="text.secondary">
-        Voice call data not available.
-      </Typography>
-    );
+    return <InlineTraceView traceId={traceId} projectId={projectId} />;
   }
 
   const drawerData = {
@@ -762,6 +777,7 @@ function VoiceCallContent({ traceId }) {
 
 VoiceCallContent.propTypes = {
   traceId: PropTypes.string,
+  projectId: PropTypes.string,
 };
 
 // ---------------------------------------------------------------------------

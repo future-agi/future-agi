@@ -8,7 +8,29 @@ from .call_log_entry import CallLogEntry
 from .chat_message import ChatMessageModel
 from .chat_simulator import ChatSimulatorAssistant, ChatSimulatorSession
 from .component_evaluation import ComponentEvaluation
+from .harness_environment_credentials import (
+    HarnessCredentialFile,
+    HarnessEnvironmentCredentials,
+)
 from .eval_config import SimulateEvalConfig
+from .hosted_harness import (
+    HostedHarnessArtifact,
+    HostedHarnessAttempt,
+    HostedHarnessCleanupReceipt,
+    HostedHarnessConversation,
+    HostedHarnessConversationEvent,
+    HostedHarnessConversationLease,
+    HostedHarnessConversationMessage,
+    HostedHarnessConversationTranscript,
+    HostedHarnessEvent,
+    HostedHarnessJob,
+    HostedHarnessManifest,
+    HostedHarnessExecution,
+    HostedHarnessReceipt,
+    HostedHarnessScenario,
+    HostedHarnessSecret,
+    HostedHarnessStageOutput,
+)
 from .persona import Persona
 from .prompt_trial import PromptTrial
 from .run_test import RunTest
@@ -34,6 +56,8 @@ __all__ = [
     "AgentPromptOptimiserRunStep",
     "AgentVersion",
     "ComponentEvaluation",
+    "HarnessCredentialFile",
+    "HarnessEnvironmentCredentials",
     "PromptTrial",
     "SimulatorAgent",
     "RunTest",
@@ -51,4 +75,20 @@ __all__ = [
     "ChatSimulatorAssistant",
     "ChatSimulatorSession",
     "TrialItemResult",
+    "HostedHarnessArtifact",
+    "HostedHarnessAttempt",
+    "HostedHarnessCleanupReceipt",
+    "HostedHarnessConversation",
+    "HostedHarnessConversationEvent",
+    "HostedHarnessConversationLease",
+    "HostedHarnessConversationMessage",
+    "HostedHarnessConversationTranscript",
+    "HostedHarnessEvent",
+    "HostedHarnessJob",
+    "HostedHarnessExecution",
+    "HostedHarnessManifest",
+    "HostedHarnessReceipt",
+    "HostedHarnessSecret",
+    "HostedHarnessScenario",
+    "HostedHarnessStageOutput",
 ]

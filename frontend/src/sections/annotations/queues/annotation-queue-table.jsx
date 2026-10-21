@@ -28,6 +28,7 @@ import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import { paths } from "src/routes/paths";
 import "src/styles/clean-data-table.css";
 import { QUEUE_ROLES, hasQueueRole, queueRoleList } from "./constants";
+import { SS_KEY_USER_ID } from "src/utils/sessionKeys";
 
 // Skeleton cell renderer shown during loading
 const SkeletonCell = () => (
@@ -543,7 +544,7 @@ export default function AnnotationQueueTable({
   const currentUserId =
     user?.id ||
     (typeof window !== "undefined"
-      ? window.sessionStorage.getItem("currentUserId")
+      ? window.sessionStorage.getItem(SS_KEY_USER_ID)
       : "");
   const canWrite = RolePermission.DATASETS[PERMISSIONS.CREATE][role];
   const gridRef = useRef(null);

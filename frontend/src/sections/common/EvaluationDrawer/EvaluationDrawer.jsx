@@ -21,6 +21,7 @@ import { LoadingButton } from "@mui/lab";
 import EvaluationsSelectionGrid from "./EvaluationsSelectionGrid";
 import { useEvalsList, getUserEvalListKey } from "./getEvalsList";
 import SavedEvalsList from "./SavedEvalsList";
+import usePendingEvalSelections from "./usePendingEvalSelections";
 import SavedEvalsSkeleton from "./SavedEvalsSkeleton";
 import DeleteEval from "./DeleteEval";
 import RunEvals from "./RunEvals";
@@ -51,6 +52,8 @@ const EvaluationDrawerChild = ({
   setFormIsDirty,
   existingEvals = [],
   requiredColumnIds = "",
+  onColumnSearchChange,
+  columnInventoryControls,
 }) => {
   const theme = useTheme();
   const { experimentId } = useParams();
@@ -75,6 +78,8 @@ const EvaluationDrawerChild = ({
   const [confirmRunEvaluationsOpen, setConfirmRunEvaluationsOpen] =
     useState(false);
   const [evalPickerOpen, setEvalPickerOpen] = useState(false);
+  const { autoSelectRequests, requestAutoSelect, acknowledgeAutoSelect } =
+    usePendingEvalSelections();
   // When editing an existing eval, pre-select it so the picker opens at config step
   const [editingEval, setEditingEval] = useState(null);
 
@@ -120,6 +125,7 @@ const EvaluationDrawerChild = ({
             ? { error_localizer_enabled: evalItem.error_localizer }
             : {}),
         },
+        bindingConfig: evalItem.config?.config || {},
         mapping: evalItem.mapping || {},
         outputType: evalItem.output_type,
         // Existing UserEvalMetric id — handleAdd routes via editEval
@@ -127,7 +133,8 @@ const EvaluationDrawerChild = ({
         // The column-menu path matches via user_eval_id/userEvalId, so
         // evalItem.id may not be the user-eval id — normalize here.
         userEvalId: evalItem.user_eval_id ?? evalItem.userEvalId ?? evalItem.id,
-        pinned_version_id: evalItem.pinned_version_id ?? evalItem.pinnedVersionId ?? null,
+        pinned_version_id:
+          evalItem.pinned_version_id ?? evalItem.pinnedVersionId ?? null,
       });
       setEvalPickerOpen(true);
     },
@@ -364,6 +371,8 @@ const EvaluationDrawerChild = ({
                     evals={SavedEvals}
                     allColumns={allColumns}
                     onClose={onClose}
+                    autoSelectRequests={autoSelectRequests}
+                    onAutoSelectApplied={acknowledgeAutoSelect}
                     disableDelete={
                       module === "experiment" &&
                       Array.isArray(SavedEvals) &&
@@ -515,6 +524,8 @@ const EvaluationDrawerChild = ({
             fullWidth={module === "task"}
             existingEvalsProp={existingEvals}
             requiredColumnIds={requiredColumnIds}
+            onColumnSearchChange={onColumnSearchChange}
+            columnInventoryControls={columnInventoryControls}
           />
         </Collapse>
         <Collapse
@@ -567,6 +578,8 @@ const EvaluationDrawerChild = ({
         source={module || "dataset"}
         sourceId={id || ""}
         sourceColumns={allColumns || []}
+        onSourceColumnSearchChange={onColumnSearchChange}
+        sourceColumnInventoryControls={columnInventoryControls}
         // Experiment evals reference two values that don't exist as real
         // dataset cells — the prompt/agent output and the full prompt chain.
         // Surface them as virtual columns in the variable-mapping dropdown
@@ -752,6 +765,7 @@ const EvaluationDrawerChild = ({
                 });
               }
               refreshGrid?.(null, true);
+              requestAutoSelect(evalConfig.name);
               setEvalPickerOpen(false);
               setVisibleSection("list");
             } catch (err) {
@@ -769,7 +783,9 @@ const EvaluationDrawerChild = ({
           }
           // await so errors propagate to EvalPickerDrawer's handleSaveEval
           // catch block — keeps the drawer open on failure.
+          const addedName = payload.name;
           await handleRun(payload, () => {
+            requestAutoSelect(addedName);
             setEvalPickerOpen(false);
             setVisibleSection("list");
           });
@@ -795,6 +811,8 @@ EvaluationDrawerChild.propTypes = {
   openDrawer: PropTypes.bool,
   existingEvals: PropTypes.array,
   requiredColumnIds: PropTypes.string,
+  onColumnSearchChange: PropTypes.func,
+  columnInventoryControls: PropTypes.node,
 };
 
 const ContextConsumer = ({
@@ -866,6 +884,8 @@ const EvaluationDrawer = ({
   handleTest = (_data) => {},
   existingEvals = [],
   requiredColumnIds = "",
+  onColumnSearchChange,
+  columnInventoryControls,
 }) => {
   const { experimentId } = useParams();
   const setVisibleSectionRef = useRef(null);
@@ -1049,6 +1069,8 @@ const EvaluationDrawer = ({
           listComponent={listComponent}
           existingEvals={existingEvals}
           requiredColumnIds={requiredColumnIds}
+          onColumnSearchChange={onColumnSearchChange}
+          columnInventoryControls={columnInventoryControls}
         />
         <ConfirmDialog
           open={openConfirmDialog}
@@ -1101,6 +1123,8 @@ EvaluationDrawer.propTypes = {
   handleSaveAndRun: PropTypes.func,
   existingEvals: PropTypes.array,
   requiredColumnIds: PropTypes.string,
+  onColumnSearchChange: PropTypes.func,
+  columnInventoryControls: PropTypes.node,
 };
 
 export default EvaluationDrawer;
