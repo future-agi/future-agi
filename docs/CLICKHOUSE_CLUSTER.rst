@@ -284,7 +284,14 @@ Hosted bounded acceptance
 hosted runner, on relevant PR paths or manual dispatch. It has a 40-minute hard
 limit and a 90-span fixture, not a load benchmark. Application mode adds a 256 MiB
 PostgreSQL and 128 MiB Redis to the 3x2 topology (5.625 GiB total container limits).
-It installs OSS dependencies before services start, runs actual Django migrations,
+It installs OSS dependencies before services start. A subprocess preflight poisons
+ambient connection variables and a dotenv file, loads the real Django settings,
+and verifies the default/pooler, direct and replica database aliases plus legacy/
+v2/catalog/CDC ClickHouse and Redis/cache/channel targets. All aliases are pinned
+to the generated loopback endpoints; stale cached settings fail before networking
+or migration. Dotenv loading and incidental remote model-metadata fetching are
+disabled in this fixture. The runtime repeats the resolved-settings checks before
+and after Django startup, then runs actual Django migrations,
 replays the native bootstrap, creates every inspected CDC mirror/dependent view,
 and proves captured insert/update/delete through the real outbox installer/drain.
 It then applies a later additive table/MV/column migration without replacing the
