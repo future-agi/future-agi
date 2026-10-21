@@ -60,6 +60,39 @@ describe("SQL execution lifecycle", () => {
     expect(sqlApi.result.mock.calls[0][0]).toBe("project");
     expect(result.current.job.result.rows).toEqual([[1]]);
   });
+  it("keeps polling when active-job cancellation fails", async () => {
+    let resolveResult;
+    sqlApi.run.mockResolvedValue({ id: "job", state: "running" });
+    sqlApi.result.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveResult = resolve;
+        }),
+    );
+    sqlApi.cancel.mockRejectedValue(new Error("temporary cancellation failure"));
+    const { result } = renderHook(() => useSQLExecution("project"));
+
+    await act(async () => {
+      await result.current.run({ sql: "SELECT count() FROM spans" });
+    });
+    await waitFor(() => expect(sqlApi.result).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await result.current.cancel();
+    });
+    expect(result.current.error).toBe("temporary cancellation failure");
+
+    await act(async () => {
+      resolveResult({
+        id: "job",
+        state: "succeeded",
+        result: { rows: [[1]] },
+      });
+    });
+    await waitFor(() => expect(result.current.job.state).toBe("succeeded"));
+    expect(result.current.busy).toBe(false);
+  });
+
   it("surfaces a submission failure without fabricating rows", async () => {
     sqlApi.run.mockRejectedValue(new Error("Project not available"));
     const { result } = renderHook(() => useSQLExecution("project"));

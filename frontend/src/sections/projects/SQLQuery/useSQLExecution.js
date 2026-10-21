@@ -157,16 +157,22 @@ export default function useSQLExecution(
   );
 
   const cancel = useCallback(async () => {
-    const current = ++generation.current;
     submission.current?.abort("cancelled");
     setSubmitting(false);
     setWaitingForAdmission(false);
     const target = activeJob.current;
-    if (!target) return;
+    if (!target) {
+      // Invalidate a submission that has not produced a cancellable job yet.
+      generation.current += 1;
+      return;
+    }
+    const current = generation.current;
     try {
       const result = await sqlApi.cancel(target.projectId, target.id);
       if (generation.current === current) updateJob(result);
     } catch (e) {
+      // Keep the polling generation alive when cancellation fails transiently.
+      // The job may still complete, and its result must not leave the UI busy.
       if (generation.current === current) setError(errorMessage(e));
     }
   }, [updateJob]);
