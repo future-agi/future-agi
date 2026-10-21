@@ -45,6 +45,8 @@ for index, key in enumerate(sorted(ABSENT_LIBPQ_ENV)):
     os.environ[key] = "" if index % 2 else "ambient_override"
 os.environ["PGSERVICEFILE"] = ""
 configure(fixture)
+from runtime_paths import enter_backend_root
+enter_backend_root()
 assert not ABSENT_LIBPQ_ENV.intersection(os.environ)
 from dotenv import load_dotenv
 assert load_dotenv(sys.argv[4], override=True) is False

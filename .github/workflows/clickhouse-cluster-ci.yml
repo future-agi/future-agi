@@ -47,8 +47,14 @@ jobs:
         working-directory: futureagi
         timeout-minutes: 12
         run: uv sync --frozen --no-dev
-      - name: Verify resolved fixture settings before any service starts
-        run: futureagi/.venv/bin/python deploy/clickhouse/cluster-acceptance/test_fixture_connections.py
+      - name: Verify paths and resolved settings before any service starts
+        run: |
+          python3 deploy/clickhouse/cluster-acceptance/test_runtime_paths.py
+          test -f futureagi/accounts/demo_dataset/table_data.json
+          test -f futureagi/accounts/demo_dataset/run_prompt_config.json
+          test -f futureagi/accounts/demo_dataset/experiment.json
+          test -f futureagi/accounts/demo_dataset/img_dataset_data.json
+          futureagi/.venv/bin/python deploy/clickhouse/cluster-acceptance/test_fixture_connections.py
       - name: Generate this job's isolated 3x2 and application dependencies
         run: |
           python3 deploy/clickhouse/cluster-acceptance/test_generate.py

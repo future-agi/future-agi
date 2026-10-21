@@ -11,6 +11,9 @@ from datetime import UTC, datetime
 
 
 def prepare(fixture):
+    from runtime_paths import enter_backend_root
+
+    enter_backend_root()
     from fixture_connections import (
         configure,
         probe_django_postgres,

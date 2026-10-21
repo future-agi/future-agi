@@ -10,18 +10,25 @@ import argparse
 import json
 import shutil
 import subprocess
-import sys
 import time
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 
 
 def run(directory, allow_faults, application=False):
+    from runtime_paths import initialize_runtime
+
+    directory = initialize_runtime(directory)
+    fixture = json.loads((directory / "fixture.json").read_text())
+    if not fixture["project"].startswith("fagi-cluster-"):
+        raise ValueError("not an isolated acceptance fixture")
+    if application:
+        from fixture_connections import configure
+
+        # Match the backend image: environment precedes application imports.
+        configure(fixture)
     import clickhouse_connect
 
-    root = Path(__file__).resolve().parents[3]
-    sys.path.insert(0, str(root / "futureagi"))
     from tracer.services.clickhouse.v2.cluster_apply import apply_plan
     from tracer.services.clickhouse.v2.cluster_cdc import verify_columns
     from tracer.services.clickhouse.v2.cluster_schema import (
@@ -31,10 +38,6 @@ def run(directory, allow_faults, application=False):
         native_plan,
     )
 
-    directory = Path(directory).resolve()
-    fixture = json.loads((directory / "fixture.json").read_text())
-    if not fixture["project"].startswith("fagi-cluster-"):
-        raise ValueError("not an isolated acceptance fixture")
     compose = (
         [shutil.which("docker-compose")]
         if shutil.which("docker-compose")

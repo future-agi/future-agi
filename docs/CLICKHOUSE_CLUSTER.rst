@@ -284,7 +284,13 @@ Hosted bounded acceptance
 hosted runner, on relevant PR paths or manual dispatch. It has a 40-minute hard
 limit and a 90-span fixture, not a load benchmark. Application mode adds a 256 MiB
 PostgreSQL and 128 MiB Redis to the 3x2 topology (5.625 GiB total container limits).
-It installs OSS dependencies before services start. A subprocess preflight poisons
+It installs OSS dependencies before services start. The runner resolves the
+caller-relative fixture directory before switching its working directory and
+import root to ``futureagi/``, matching the backend image and Standalone bootstrap.
+Regression subprocesses import the real demo-data loader and all four packaged
+JSON assets from both repository-root and unrelated launch directories; no data
+is substituted and migrations remain enabled. Fixture environment configuration
+also precedes backend imports. A subprocess preflight poisons
 ambient connection variables and a dotenv file, loads the real Django settings,
 and verifies the default/pooler, direct and replica database aliases plus legacy/
 v2/catalog/CDC ClickHouse and Redis/cache/channel targets. All aliases are pinned
