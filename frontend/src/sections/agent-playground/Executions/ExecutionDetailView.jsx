@@ -1,10 +1,13 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { Box, CircularProgress, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import { useQueryClient } from "@tanstack/react-query";
 import { AgentGraph } from "src/components/AgentGraph";
 import { START_ID, END_ID } from "src/components/AgentGraph/layoutUtils";
 import NodeOutputDetail from "../AgentBuilder/RunAgentPanel/NodeOutputDetail";
+import NodeOutputListView from "../AgentBuilder/RunAgentPanel/NodeOutputListView";
+import { mapExecutionNodesToTree } from "../AgentBuilder/RunAgentPanel/common";
+import PanelErrorBoundary from "../components/PanelErrorBoundary";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import { useGetExecutionDetail } from "src/api/agent-playground/agent-playground";
 import useResolvedExecution from "../hooks/useResolvedExecution";
@@ -19,6 +22,11 @@ export default function ExecutionDetailView({ graphId, executionId }) {
   } = useGetExecutionDetail(graphId, executionId);
 
   const [selectedNodeId, setSelectedNodeId] = useState(null);
+
+  const treeNodes = useMemo(
+    () => mapExecutionNodesToTree(executionData),
+    [executionData],
+  );
 
   // Invalidate executions list and node details when polling reaches terminal status
   const prevStatusRef = useRef(null);
@@ -171,15 +179,37 @@ export default function ExecutionDetailView({ graphId, executionId }) {
 
   return (
     <ResizablePanels
-      initialLeftWidth={50}
-      minLeftWidth={15}
+      initialLeftWidth={60}
+      minLeftWidth={20}
       maxLeftWidth={80}
       leftPanel={
-        <AgentGraph
-          executionData={executionData}
-          onNodeClick={handleGraphNodeClick}
-          selectedNodeId={selectedNodeId}
-        />
+        <Box sx={{ display: "flex", height: "100%", width: "100%", overflow: "hidden" }}>
+          <PanelErrorBoundary
+            name="NodeOutputListView"
+            onRetry={() => setSelectedNodeId(null)}
+          >
+            <NodeOutputListView
+              nodes={treeNodes}
+              selectedNodeId={selectedNodeId}
+              onNodeSelect={setSelectedNodeId}
+            />
+          </PanelErrorBoundary>
+          <Box
+            sx={{
+              flex: 1,
+              height: "100%",
+              minWidth: 0,
+              borderLeft: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <AgentGraph
+              executionData={executionData}
+              onNodeClick={handleGraphNodeClick}
+              selectedNodeId={selectedNodeId}
+            />
+          </Box>
+        </Box>
       }
       rightPanel={
         isPending ? (
