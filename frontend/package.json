@@ -1,8 +1,9 @@
 {
-  "name": "@minimal-kit/starter-vite-js",
-  "author": "Minimals",
-  "version": "5.6.0",
-  "description": "Vite Starter & JavaScript",
+  "name": "@future-agi/frontend",
+  "author": "Future AGI, Inc.",
+  "version": "0.0.0",
+  "description": "Future AGI platform web frontend (React + Vite)",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "engines": {
