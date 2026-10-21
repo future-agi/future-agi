@@ -16,6 +16,7 @@ from tracer.views.charts import ChartsView
 from tracer.views.custom_eval_config import CustomEvalConfigView
 from tracer.views.dashboard import DashboardViewSet, DashboardWidgetViewSet
 from tracer.views.dataset import DatasetView
+from tracer.views.derived_metric import DerivedMetricRunViewSet, DerivedMetricViewSet
 from tracer.views.error_analysis import (
     TraceErrorAnalysisView,
     TraceErrorTaskView,
@@ -101,6 +102,10 @@ router.register(r"replay-session", ReplaySessionView, basename="replay-session")
 router.register(r"saved-views", SavedViewViewSet, basename="saved-view")
 router.register(r"shared-links", SharedLinkViewSet, basename="shared-link")
 router.register(r"dashboard", DashboardViewSet, basename="dashboard")
+router.register(r"derived-metrics", DerivedMetricViewSet, basename="derived-metric")
+router.register(
+    r"derived-metric-runs", DerivedMetricRunViewSet, basename="derived-metric-run"
+)
 
 urlpatterns = [
     path("alerts/", AlertView.as_view(), name="alerts"),

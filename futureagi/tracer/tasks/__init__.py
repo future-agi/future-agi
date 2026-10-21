@@ -15,6 +15,9 @@ from tracer.tasks.dataset import (
     process_spans_chunk_task,
 )
 
+# Derived metric jobs
+from tracer.tasks.derived_metric import compute_derived_metric
+
 # Error Analysis Tasks
 from tracer.tasks.error_analysis import (
     analyze_single_trace,
@@ -48,4 +51,5 @@ __all__ = [
     "process_spans_chunk_task",
     "CHUNK_SIZE",
     "refresh_exact_aggregation_snapshot",
+    "compute_derived_metric",
 ]

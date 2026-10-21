@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1070,
+  endpointCount: 1078,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -33040,6 +33040,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "annotation_metric",
                 "custom_attribute",
                 "custom_column",
+                "derived_metric",
               ],
               default: "",
             },
@@ -33676,6 +33677,273 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metric-runs/{id}/": {
+      get: {
+        operationId: "tracer_derived-metric-runs_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricRun",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metric-runs/{id}/recompute/": {
+      post: {
+        operationId: "tracer_derived-metric-runs_recompute",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DerivedMetricRecompute",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/DerivedMetricRun",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metric-runs/{id}/results/": {
+      get: {
+        operationId: "tracer_derived-metric-runs_results",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          rollup: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["overall", "session", "user", "cohort", "day"],
+              default: "overall",
+            },
+          },
+          after: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 4096,
+              default: "",
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 50,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricResultPage",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/": {
+      get: {
+        operationId: "tracer_derived-metrics_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 30,
+            },
+          },
+          before: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_derived-metrics_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DerivedMetricWrite",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/DerivedMetric",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/validate/": {
+      post: {
+        operationId: "tracer_derived-metrics_validate_formula",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DerivedMetricWrite",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricValidation",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/": {
+      get: {
+        operationId: "tracer_derived-metrics_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetric",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      put: {
+        operationId: "tracer_derived-metrics_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DerivedMetricWrite",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetric",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/preview/": {
+      post: {
+        operationId: "tracer_derived-metrics_preview",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DerivedMetricRunRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricResultPage",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/runs/": {
+      get: {
+        operationId: "tracer_derived-metrics_runs_read",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 30,
+            },
+          },
+          before: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricRuns",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_derived-metrics_runs_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DerivedMetricRunRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/DerivedMetricRun",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -55930,6 +56198,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "annotation_metric",
             "custom_attribute",
             "custom_column",
+            "derived_metric",
           ],
           default: "",
         },
@@ -57512,6 +57781,353 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Instance secret",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    DerivedMetric: {
+      required: ["name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 160,
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        current_version: {
+          title: "Current version",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: 0,
+        },
+        definition: {
+          $ref: "#/definitions/DerivedMetricVersion",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+      },
+    },
+    DerivedMetricList: {
+      required: ["results", "next_cursor"],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetric",
+          },
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    DerivedMetricRecompute: {
+      type: "object",
+      properties: {
+        confirm: {
+          title: "Confirm",
+          type: "boolean",
+          default: true,
+        },
+      },
+    },
+    DerivedMetricResultPage: {
+      required: ["results", "next_cursor"],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricResult",
+          },
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          "x-nullable": true,
+        },
+      },
+    },
+    DerivedMetricRun: {
+      required: [
+        "metric_id",
+        "metric_version",
+        "window_start",
+        "window_end",
+        "as_of",
+        "filters",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        metric_id: {
+          title: "Metric id",
+          type: "string",
+          format: "uuid",
+        },
+        metric_version: {
+          title: "Metric version",
+          type: "integer",
+        },
+        window_start: {
+          title: "Window start",
+          type: "string",
+          format: "date-time",
+        },
+        window_end: {
+          title: "Window end",
+          type: "string",
+          format: "date-time",
+        },
+        as_of: {
+          title: "As of",
+          type: "string",
+          format: "date-time",
+        },
+        source_run_id: {
+          title: "Source run id",
+          type: "string",
+          maxLength: 255,
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+        },
+        snapshot_id: {
+          title: "Snapshot id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        result_id: {
+          title: "Result id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        lease_expires_at: {
+          title: "Lease expires at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        source_manifest: {
+          $ref: "#/definitions/DerivedMetricManifest",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["queued", "running", "complete", "failed"],
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          maxLength: 300,
+        },
+        row_count: {
+          title: "Row count",
+          type: "integer",
+          maximum: 9223372036854776000,
+          minimum: 0,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        completed_at: {
+          title: "Completed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+    },
+    DerivedMetricRunRequest: {
+      required: ["window_start", "window_end", "idempotency_key"],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "integer",
+          minimum: 1,
+        },
+        window_start: {
+          title: "Window start",
+          type: "string",
+          format: "date-time",
+        },
+        window_end: {
+          title: "Window end",
+          type: "string",
+          format: "date-time",
+        },
+        source_run_id: {
+          title: "Source run id",
+          description:
+            "Persisted evaluation-task ID (the source eval_task_id), not an execution ID; snapshot and sampling_scope pin the observed evidence.",
+          type: "string",
+          format: "uuid",
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+          default: [],
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 100,
+          minLength: 1,
+        },
+      },
+    },
+    DerivedMetricRuns: {
+      required: ["results", "next_cursor"],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricRun",
+          },
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    DerivedMetricValidation: {
+      required: ["valid", "kind", "required_inputs", "semantics"],
+      type: "object",
+      properties: {
+        valid: {
+          title: "Valid",
+          type: "boolean",
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        required_inputs: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        semantics: {
+          title: "Semantics",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    DerivedMetricWrite: {
+      required: ["project_id", "name", "formula", "inputs"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 160,
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          default: "",
+          maxLength: 2000,
+        },
+        formula: {
+          title: "Formula",
+          type: "string",
+          maxLength: 2048,
+          minLength: 1,
+        },
+        inputs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricInput",
+          },
+        },
+        selection_unit: {
+          title: "Selection unit",
+          type: "string",
+          enum: ["span", "session", "user"],
+          default: "session",
+        },
+        weighting: {
+          title: "Weighting",
+          type: "string",
+          enum: ["none", "inverse_probability"],
+          default: "none",
+        },
+        cohort_key: {
+          title: "Cohort key",
+          type: "string",
+          default: "",
+          maxLength: 160,
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+          default: [],
+        },
+        expected_version: {
+          title: "Expected version",
+          type: "integer",
+          minimum: 1,
         },
       },
     },
@@ -81585,6 +82201,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
         },
+        notification_emails: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "email",
+            minLength: 1,
+          },
+        },
         created_at: {
           title: "Created at",
           type: "string",
@@ -81624,6 +82248,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "daily_tokens_spent",
             "monthly_tokens_spent",
             "evaluation_metrics",
+            "derived_metric",
           ],
         },
         metric: {
@@ -81688,15 +82313,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
           "x-nullable": true,
         },
-        notification_emails: {
-          type: "array",
-          items: {
-            title: "Notification emails",
-            type: "string",
-            format: "email",
-            maxLength: 254,
-            minLength: 1,
-          },
+        last_derived_run_id: {
+          title: "Last derived run id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
         },
         slack_webhook_url: {
           title: "Slack webhook url",
@@ -82210,6 +82832,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
         },
+        notification_emails: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "email",
+            minLength: 1,
+          },
+        },
         created_at: {
           title: "Created at",
           type: "string",
@@ -82249,6 +82879,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "daily_tokens_spent",
             "monthly_tokens_spent",
             "evaluation_metrics",
+            "derived_metric",
           ],
         },
         metric: {
@@ -82313,15 +82944,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
           "x-nullable": true,
         },
-        notification_emails: {
-          type: "array",
-          items: {
-            title: "Notification emails",
-            type: "string",
-            format: "email",
-            maxLength: 254,
-            minLength: 1,
-          },
+        last_derived_run_id: {
+          title: "Last derived run id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
         },
         slack_webhook_url: {
           title: "Slack webhook url",
@@ -88487,13 +89115,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "annotation_metric",
             "custom_attribute",
             "custom_column",
+            "derived_metric",
           ],
           default: "system_metric",
         },
         source: {
           title: "Source",
           type: "string",
-          enum: ["traces", "datasets", "simulation", "both", "all"],
+          enum: [
+            "traces",
+            "datasets",
+            "simulation",
+            "both",
+            "all",
+            "derived_metrics",
+          ],
           default: "traces",
         },
         output_type: {
@@ -88584,12 +89220,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "annotation_metric",
             "custom_attribute",
             "custom_column",
+            "derived_metric",
           ],
         },
         source: {
           title: "Source",
           type: "string",
-          enum: ["traces", "datasets", "simulation", "both", "all"],
+          enum: [
+            "traces",
+            "datasets",
+            "simulation",
+            "both",
+            "all",
+            "derived_metrics",
+          ],
           default: "traces",
         },
         aggregation: {
@@ -88632,6 +89276,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         config_id: {
           title: "Config id",
           type: "string",
+        },
+        derived_run_id: {
+          title: "Derived run id",
+          type: "string",
+          format: "uuid",
         },
         label_id: {
           title: "Label id",
@@ -89638,6 +90287,256 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 253,
           minLength: 1,
+        },
+      },
+    },
+    DerivedMetricVersion: {
+      required: [
+        "version",
+        "formula",
+        "inputs",
+        "selection_unit",
+        "weighting",
+        "filters",
+        "definition_hash",
+      ],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: 0,
+        },
+        formula: {
+          title: "Formula",
+          type: "string",
+          maxLength: 2048,
+          minLength: 1,
+        },
+        inputs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricInput",
+          },
+        },
+        selection_unit: {
+          title: "Selection unit",
+          type: "string",
+          maxLength: 16,
+          minLength: 1,
+        },
+        weighting: {
+          title: "Weighting",
+          type: "string",
+          maxLength: 32,
+          minLength: 1,
+        },
+        cohort_key: {
+          title: "Cohort key",
+          type: "string",
+          maxLength: 160,
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+        },
+        definition_hash: {
+          title: "Definition hash",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+      },
+    },
+    DerivedMetricResult: {
+      required: [
+        "group_key",
+        "value",
+        "numerator",
+        "denominator",
+        "status",
+        "unit_count",
+        "valid_count",
+        "missing_count",
+        "invalid_probability_count",
+      ],
+      type: "object",
+      properties: {
+        group_key: {
+          title: "Group key",
+          type: "string",
+        },
+        value: {
+          title: "Value",
+          type: "number",
+          "x-nullable": true,
+        },
+        numerator: {
+          title: "Numerator",
+          type: "number",
+          "x-nullable": true,
+        },
+        denominator: {
+          title: "Denominator",
+          type: "number",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "ok",
+            "no_data",
+            "missing_inputs",
+            "invalid_probability",
+            "zero_denominator",
+            "non_finite",
+          ],
+        },
+        unit_count: {
+          title: "Unit count",
+          type: "integer",
+          minimum: 0,
+        },
+        valid_count: {
+          title: "Valid count",
+          type: "integer",
+          minimum: 0,
+        },
+        missing_count: {
+          title: "Missing count",
+          type: "integer",
+          minimum: 0,
+        },
+        invalid_probability_count: {
+          title: "Invalid probability count",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    DerivedMetricFilter: {
+      required: ["field", "value"],
+      type: "object",
+      properties: {
+        field: {
+          title: "Field",
+          type: "string",
+          enum: ["model", "provider", "status", "name", "service_name"],
+        },
+        value: {
+          title: "Value",
+          type: "string",
+          maxLength: 255,
+        },
+      },
+    },
+    DerivedMetricManifest: {
+      required: [
+        "sampling_scope",
+        "schema_version",
+        "compiler_version",
+        "evaluator_table",
+        "definition_hash",
+        "captured_at",
+        "semantics",
+      ],
+      type: "object",
+      properties: {
+        sampling_scope: {
+          title: "Sampling scope",
+          type: "string",
+        },
+        schema_version: {
+          title: "Schema version",
+          type: "integer",
+        },
+        compiler_version: {
+          title: "Compiler version",
+          type: "integer",
+        },
+        evaluator_table: {
+          title: "Evaluator table",
+          type: "string",
+          minLength: 1,
+        },
+        definition_hash: {
+          title: "Definition hash",
+          type: "string",
+          minLength: 1,
+        },
+        captured_at: {
+          title: "Captured at",
+          type: "string",
+          format: "date-time",
+        },
+        semantics: {
+          title: "Semantics",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    DerivedMetricInput: {
+      required: ["alias", "source"],
+      type: "object",
+      properties: {
+        alias: {
+          title: "Alias",
+          type: "string",
+          pattern: "^[a-z][a-z0-9_]{0,39}$",
+          minLength: 1,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          enum: ["eval", "span"],
+        },
+        config_id: {
+          title: "Config id",
+          type: "string",
+          format: "uuid",
+        },
+        config_hash: {
+          title: "Config hash",
+          type: "string",
+          pattern: "^(?:[a-f0-9]{64})?$",
+          default: "",
+        },
+        field: {
+          title: "Field",
+          type: "string",
+          enum: [
+            "latency_ms",
+            "cost",
+            "total_tokens",
+            "prompt_tokens",
+            "completion_tokens",
+            "attribute_number",
+            "attribute_bool",
+          ],
+        },
+        attribute_key: {
+          title: "Attribute key",
+          type: "string",
+          default: "",
+          maxLength: 160,
+        },
+        reducer: {
+          title: "Reducer",
+          type: "string",
+          enum: ["mean", "min", "max", "latest"],
+          default: "latest",
         },
       },
     },

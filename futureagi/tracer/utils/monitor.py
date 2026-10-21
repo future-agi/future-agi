@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from tracer.services.clickhouse.query_builders.monitor_metrics import (
@@ -14,7 +14,6 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from slack_sdk.webhook import WebhookClient
 
-logger = structlog.get_logger(__name__)
 from tfc.temporal import temporal_activity
 from tfc.utils.email import email_helper
 from tfc.utils.error_codes import get_error_message
@@ -28,6 +27,8 @@ from tracer.models.monitor import (
     UserAlertMonitorLog,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+logger = structlog.get_logger(__name__)
 
 # Pruned monitor queries scale with the window, not table size; 30s covers the
 # historical window crossing the hot/cold TTL boundary.
@@ -70,6 +71,13 @@ def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryB
     # monitor reports this cause, not a missing eval config.
     if monitor.project_id is None:
         raise MonitorConfigError(get_error_message("MONITOR_PROJECT_REQUIRED"))
+
+    if monitor.metric_type == MonitorMetricTypeChoices.DERIVED_METRIC:
+        from tracer.services.derived_metrics.integrations import (
+            DerivedMonitorQueryBuilder,
+        )
+
+        return DerivedMonitorQueryBuilder(monitor)
 
     eval_config_id = None
     eval_output_type = None
@@ -193,8 +201,8 @@ def _handle_alert_trigger(
     monitor: UserAlertMonitor,
     message: str,
     alert_type: str,
-    time_window_start: Optional[datetime] = None,
-    now: Optional[datetime] = None,
+    time_window_start: datetime | None = None,
+    now: datetime | None = None,
 ) -> None:
     """Handles the actions when an alert is triggered."""
     UserAlertMonitorLog.objects.create(
@@ -290,6 +298,11 @@ def process_monitor_task(monitor_id: str, now_iso: str) -> None:
 
 def _process_monitor(monitor: UserAlertMonitor, now: datetime) -> None:
     """Processes a single monitor."""
+    if monitor.metric_type == MonitorMetricTypeChoices.DERIVED_METRIC:
+        from tracer.services.derived_metrics.integrations import process_derived_monitor
+
+        return process_derived_monitor(monitor, now)
+
     time_window_start = now - timedelta(minutes=monitor.alert_frequency)
 
     # Build once: value + historical share the builder (avoids a second eval
@@ -313,7 +326,7 @@ def _get_metric_value(
     start_time: datetime,
     end_time: datetime,
     builder: Optional["MonitorMetricsQueryBuilder"] = None,
-) -> Optional[float]:
+) -> float | None:
     """Metric value for the time window, from ClickHouse. Raises on CH errors."""
     analytics = AnalyticsQueryService()
     builder = builder or build_monitor_ch_builder(monitor)
@@ -343,7 +356,7 @@ def _get_historical_stats(
     start_time: datetime,
     end_time: datetime,
     builder: Optional["MonitorMetricsQueryBuilder"] = None,
-) -> Tuple[Optional[float], Optional[float]]:
+) -> tuple[float | None, float | None]:
     """Historical (mean, stddev) for the window, from ClickHouse. Raises on CH errors."""
     analytics = AnalyticsQueryService()
     builder = builder or build_monitor_ch_builder(monitor)

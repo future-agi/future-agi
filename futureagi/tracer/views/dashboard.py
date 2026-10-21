@@ -6175,6 +6175,14 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             )
         query_config["allow_sampled"] = False
 
+        if all(
+            metric.get("source") == "derived_metrics"
+            for metric in query_config["metrics"]
+        ):
+            from tracer.services.derived_metrics.integrations import dashboard_result
+
+            return self._gm.success_response(dashboard_result(query_config, workspace))
+
         query_config["metrics"] = self._normalize_metric_sources(
             query_config["metrics"]
         )

@@ -445,6 +445,10 @@ const AnnotateWorkspacePage = lazyWithRetry(
   () => import("src/pages/dashboard/annotations/annotate-workspace"),
 );
 
+const DerivedMetricsView = lazyWithRetry(
+  () => import("src/sections/derived-metrics/DerivedMetricsView"),
+);
+
 const DashboardsListView = lazyWithRetry(
   () => import("src/sections/dashboards/DashboardsListView"),
 );
@@ -1564,6 +1568,10 @@ export const dashboardRoutes = (
           ],
         },
       ],
+    },
+    {
+      path: "derived-metrics",
+      element: <DerivedMetricsView />,
     },
     {
       path: "dashboards",

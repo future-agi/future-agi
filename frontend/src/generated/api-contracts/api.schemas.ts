@@ -24319,6 +24319,7 @@ export const DashboardMetricsCatalogQueryApiCategory = {
   annotation_metric: "annotation_metric",
   custom_attribute: "custom_attribute",
   custom_column: "custom_column",
+  derived_metric: "derived_metric",
 } as const;
 
 export type DashboardMetricsCatalogQueryApiRole =
@@ -24457,6 +24458,7 @@ export const DashboardMetricApiType = {
   annotation_metric: "annotation_metric",
   custom_attribute: "custom_attribute",
   custom_column: "custom_column",
+  derived_metric: "derived_metric",
 } as const;
 
 export type DashboardMetricApiSource =
@@ -24468,6 +24470,7 @@ export const DashboardMetricApiSource = {
   simulation: "simulation",
   both: "both",
   all: "all",
+  derived_metrics: "derived_metrics",
 } as const;
 
 export type DashboardMetricApiAggregation =
@@ -24573,6 +24576,7 @@ export interface DashboardMetricApi {
   output_type?: string;
   eval_key?: string;
   config_id?: string;
+  derived_run_id?: string;
   label_id?: string;
   attribute_key?: string;
   attribute_type?: DashboardMetricApiAttributeType;
@@ -24590,6 +24594,7 @@ export const DashboardBreakdownApiType = {
   annotation_metric: "annotation_metric",
   custom_attribute: "custom_attribute",
   custom_column: "custom_column",
+  derived_metric: "derived_metric",
 } as const;
 
 export type DashboardBreakdownApiSource =
@@ -24601,6 +24606,7 @@ export const DashboardBreakdownApiSource = {
   simulation: "simulation",
   both: "both",
   all: "all",
+  derived_metrics: "derived_metrics",
 } as const;
 
 export type DashboardBreakdownApiAttributeType =
@@ -24951,6 +24957,283 @@ export interface ObserveDatasetApi {
   model_type?: ObserveDatasetApiModelType;
   source?: ObserveDatasetApiSource;
   readonly user?: string;
+}
+
+export type DerivedMetricRunApiStatus =
+  (typeof DerivedMetricRunApiStatus)[keyof typeof DerivedMetricRunApiStatus];
+
+export const DerivedMetricRunApiStatus = {
+  queued: "queued",
+  running: "running",
+  complete: "complete",
+  failed: "failed",
+} as const;
+
+export type DerivedMetricFilterApiField =
+  (typeof DerivedMetricFilterApiField)[keyof typeof DerivedMetricFilterApiField];
+
+export const DerivedMetricFilterApiField = {
+  model: "model",
+  provider: "provider",
+  status: "status",
+  name: "name",
+  service_name: "service_name",
+} as const;
+
+export interface DerivedMetricFilterApi {
+  field: DerivedMetricFilterApiField;
+  /** @maxLength 255 */
+  value: string;
+}
+
+export interface DerivedMetricManifestApi {
+  sampling_scope: string;
+  schema_version: number;
+  compiler_version: number;
+  /** @minLength 1 */
+  evaluator_table: string;
+  /** @minLength 1 */
+  definition_hash: string;
+  captured_at: string;
+  /** @minLength 1 */
+  semantics: string;
+}
+
+export interface DerivedMetricRunApi {
+  readonly id?: string;
+  metric_id: string;
+  metric_version: number;
+  window_start: string;
+  window_end: string;
+  as_of: string;
+  /** @maxLength 255 */
+  source_run_id?: string;
+  filters: DerivedMetricFilterApi[];
+  snapshot_id?: string;
+  result_id?: string;
+  lease_expires_at?: string;
+  source_manifest?: DerivedMetricManifestApi;
+  status?: DerivedMetricRunApiStatus;
+  /** @maxLength 300 */
+  error?: string;
+  /**
+   * @minimum 0
+   * @maximum 9223372036854776000
+   */
+  row_count?: number;
+  readonly created_at?: string;
+  completed_at?: string;
+}
+
+export interface DerivedMetricRecomputeApi {
+  confirm?: boolean;
+}
+
+export type DerivedMetricResultApiStatus =
+  (typeof DerivedMetricResultApiStatus)[keyof typeof DerivedMetricResultApiStatus];
+
+export const DerivedMetricResultApiStatus = {
+  ok: "ok",
+  no_data: "no_data",
+  missing_inputs: "missing_inputs",
+  invalid_probability: "invalid_probability",
+  zero_denominator: "zero_denominator",
+  non_finite: "non_finite",
+} as const;
+
+export interface DerivedMetricResultApi {
+  group_key: string;
+  value: number;
+  numerator: number;
+  denominator: number;
+  status: DerivedMetricResultApiStatus;
+  /** @minimum 0 */
+  unit_count: number;
+  /** @minimum 0 */
+  valid_count: number;
+  /** @minimum 0 */
+  missing_count: number;
+  /** @minimum 0 */
+  invalid_probability_count: number;
+}
+
+export interface DerivedMetricResultPageApi {
+  results: DerivedMetricResultApi[];
+  next_cursor: string;
+}
+
+export type DerivedMetricInputApiSource =
+  (typeof DerivedMetricInputApiSource)[keyof typeof DerivedMetricInputApiSource];
+
+export const DerivedMetricInputApiSource = {
+  eval: "eval",
+  span: "span",
+} as const;
+
+export type DerivedMetricInputApiField =
+  (typeof DerivedMetricInputApiField)[keyof typeof DerivedMetricInputApiField];
+
+export const DerivedMetricInputApiField = {
+  latency_ms: "latency_ms",
+  cost: "cost",
+  total_tokens: "total_tokens",
+  prompt_tokens: "prompt_tokens",
+  completion_tokens: "completion_tokens",
+  attribute_number: "attribute_number",
+  attribute_bool: "attribute_bool",
+} as const;
+
+export type DerivedMetricInputApiReducer =
+  (typeof DerivedMetricInputApiReducer)[keyof typeof DerivedMetricInputApiReducer];
+
+export const DerivedMetricInputApiReducer = {
+  mean: "mean",
+  min: "min",
+  max: "max",
+  latest: "latest",
+} as const;
+
+export interface DerivedMetricInputApi {
+  /**
+   * @minLength 1
+   * @pattern ^[a-z][a-z0-9_]{0,39}$
+   */
+  alias: string;
+  source: DerivedMetricInputApiSource;
+  config_id?: string;
+  /** @pattern ^(?:[a-f0-9]{64})?$ */
+  config_hash?: string;
+  field?: DerivedMetricInputApiField;
+  /** @maxLength 160 */
+  attribute_key?: string;
+  reducer?: DerivedMetricInputApiReducer;
+}
+
+export interface DerivedMetricVersionApi {
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  version: number;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  formula: string;
+  inputs: DerivedMetricInputApi[];
+  /**
+   * @minLength 1
+   * @maxLength 16
+   */
+  selection_unit: string;
+  /**
+   * @minLength 1
+   * @maxLength 32
+   */
+  weighting: string;
+  /** @maxLength 160 */
+  cohort_key?: string;
+  filters: DerivedMetricFilterApi[];
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  definition_hash: string;
+  readonly created_at?: string;
+}
+
+export interface DerivedMetricApi {
+  readonly id?: string;
+  readonly project_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 160
+   */
+  name: string;
+  description?: string;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  current_version?: number;
+  definition?: DerivedMetricVersionApi;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+export interface DerivedMetricListApi {
+  results: DerivedMetricApi[];
+  next_cursor: string;
+}
+
+export type DerivedMetricWriteApiSelectionUnit =
+  (typeof DerivedMetricWriteApiSelectionUnit)[keyof typeof DerivedMetricWriteApiSelectionUnit];
+
+export const DerivedMetricWriteApiSelectionUnit = {
+  span: "span",
+  session: "session",
+  user: "user",
+} as const;
+
+export type DerivedMetricWriteApiWeighting =
+  (typeof DerivedMetricWriteApiWeighting)[keyof typeof DerivedMetricWriteApiWeighting];
+
+export const DerivedMetricWriteApiWeighting = {
+  none: "none",
+  inverse_probability: "inverse_probability",
+} as const;
+
+export interface DerivedMetricWriteApi {
+  project_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 160
+   */
+  name: string;
+  /** @maxLength 2000 */
+  description?: string;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  formula: string;
+  inputs: DerivedMetricInputApi[];
+  selection_unit?: DerivedMetricWriteApiSelectionUnit;
+  weighting?: DerivedMetricWriteApiWeighting;
+  /** @maxLength 160 */
+  cohort_key?: string;
+  filters?: DerivedMetricFilterApi[];
+  /** @minimum 1 */
+  expected_version?: number;
+}
+
+export interface DerivedMetricValidationApi {
+  valid: boolean;
+  /** @minLength 1 */
+  kind: string;
+  required_inputs: string[];
+  /** @minLength 1 */
+  semantics: string;
+}
+
+export interface DerivedMetricRunRequestApi {
+  /** @minimum 1 */
+  version?: number;
+  window_start: string;
+  window_end: string;
+  /** Persisted evaluation-task ID (the source eval_task_id), not an execution ID; snapshot and sampling_scope pin the observed evidence. */
+  source_run_id?: string;
+  filters?: DerivedMetricFilterApi[];
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  idempotency_key: string;
+}
+
+export interface DerivedMetricRunsApi {
+  results: DerivedMetricRunApi[];
+  next_cursor: string;
 }
 
 /**
@@ -30586,6 +30869,7 @@ export const UserAlertMonitorApiMetricType = {
   daily_tokens_spent: "daily_tokens_spent",
   monthly_tokens_spent: "monthly_tokens_spent",
   evaluation_metrics: "evaluation_metrics",
+  derived_metric: "derived_metric",
 } as const;
 
 export type UserAlertMonitorApiThresholdOperator =
@@ -30617,6 +30901,7 @@ export interface UserAlertMonitorApi {
   /** @minLength 1 */
   name: string;
   readonly metric_name?: string;
+  notification_emails?: string[];
   readonly created_at?: string;
   readonly updated_at?: string;
   readonly deleted?: boolean;
@@ -30653,7 +30938,7 @@ export interface UserAlertMonitorApi {
   auto_threshold_time_window?: number;
   /** The last time the monitor was checked for alerts. */
   readonly last_checked_at?: string;
-  notification_emails?: string[];
+  readonly last_derived_run_id?: string;
   /** @maxLength 200 */
   slack_webhook_url?: string;
   slack_notes?: string;
@@ -30781,6 +31066,7 @@ export const UserAlertMonitorPreviewGraphApiMetricType = {
   daily_tokens_spent: "daily_tokens_spent",
   monthly_tokens_spent: "monthly_tokens_spent",
   evaluation_metrics: "evaluation_metrics",
+  derived_metric: "derived_metric",
 } as const;
 
 export type UserAlertMonitorPreviewGraphApiThresholdOperator =
@@ -30813,6 +31099,7 @@ export interface UserAlertMonitorPreviewGraphApi {
   project: string;
   name?: string;
   readonly metric_name?: string;
+  notification_emails?: string[];
   readonly created_at?: string;
   readonly updated_at?: string;
   readonly deleted?: boolean;
@@ -30849,7 +31136,7 @@ export interface UserAlertMonitorPreviewGraphApi {
   auto_threshold_time_window?: number;
   /** The last time the monitor was checked for alerts. */
   readonly last_checked_at?: string;
-  notification_emails?: string[];
+  readonly last_derived_run_id?: string;
   /** @maxLength 200 */
   slack_webhook_url?: string;
   slack_notes?: string;
@@ -35755,6 +36042,7 @@ export const TracerDashboardMetricsCategory = {
   annotation_metric: "annotation_metric",
   custom_attribute: "custom_attribute",
   custom_column: "custom_column",
+  derived_metric: "derived_metric",
 } as const;
 
 export type TracerDashboardMetricsRole =
@@ -35827,6 +36115,50 @@ export type TracerDatasetList200 = {
   next?: string;
   previous?: string;
   results: ObserveDatasetApi[];
+};
+
+export type TracerDerivedMetricRunsResultsParams = {
+  rollup?: TracerDerivedMetricRunsResultsRollup;
+  /**
+   * @maxLength 4096
+   */
+  after?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type TracerDerivedMetricRunsResultsRollup =
+  (typeof TracerDerivedMetricRunsResultsRollup)[keyof typeof TracerDerivedMetricRunsResultsRollup];
+
+export const TracerDerivedMetricRunsResultsRollup = {
+  overall: "overall",
+  session: "session",
+  user: "user",
+  cohort: "cohort",
+  day: "day",
+} as const;
+
+export type TracerDerivedMetricsListParams = {
+  project_id?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  before?: string;
+};
+
+export type TracerDerivedMetricsRunsReadParams = {
+  project_id?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  before?: string;
 };
 
 export type TracerEvalTaskListParams = {

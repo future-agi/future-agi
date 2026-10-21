@@ -59658,7 +59658,8 @@
                             "eval_metric",
                             "annotation_metric",
                             "custom_attribute",
-                            "custom_column"
+                            "custom_column",
+                            "derived_metric"
                         ],
                         "default": ""
                     },
@@ -60744,6 +60745,468 @@
                 "tags": [
                     "tracer"
                 ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/derived-metric-runs/{id}/": {
+            "get": {
+                "operationId": "tracer_derived-metric-runs_read",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricRun"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/derived-metric-runs/{id}/recompute/": {
+            "post": {
+                "operationId": "tracer_derived-metric-runs_recompute",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricRecompute"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricRun"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/derived-metric-runs/{id}/results/": {
+            "get": {
+                "operationId": "tracer_derived-metric-runs_results",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "rollup",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "overall",
+                            "session",
+                            "user",
+                            "cohort",
+                            "day"
+                        ],
+                        "default": "overall"
+                    },
+                    {
+                        "name": "after",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 4096
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 50,
+                        "maximum": 100,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricResultPage"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/derived-metrics/": {
+            "get": {
+                "operationId": "tracer_derived-metrics_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 30,
+                        "maximum": 100,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "before",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_derived-metrics_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricWrite"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetric"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/derived-metrics/validate/": {
+            "post": {
+                "operationId": "tracer_derived-metrics_validate_formula",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricWrite"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricValidation"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/derived-metrics/{id}/": {
+            "get": {
+                "operationId": "tracer_derived-metrics_read",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetric"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "put": {
+                "operationId": "tracer_derived-metrics_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricWrite"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetric"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/derived-metrics/{id}/preview/": {
+            "post": {
+                "operationId": "tracer_derived-metrics_preview",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricRunRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricResultPage"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/derived-metrics/{id}/runs/": {
+            "get": {
+                "operationId": "tracer_derived-metrics_runs_read",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 30,
+                        "maximum": 100,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "before",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricRuns"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_derived-metrics_runs_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricRunRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricRun"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -141115,7 +141578,8 @@
                         "eval_metric",
                         "annotation_metric",
                         "custom_attribute",
-                        "custom_column"
+                        "custom_column",
+                        "derived_metric"
                     ],
                     "default": ""
                 },
@@ -141234,7 +141698,8 @@
                         "eval_metric",
                         "annotation_metric",
                         "custom_attribute",
-                        "custom_column"
+                        "custom_column",
+                        "derived_metric"
                     ]
                 },
                 "source": {
@@ -141245,7 +141710,8 @@
                         "datasets",
                         "simulation",
                         "both",
-                        "all"
+                        "all",
+                        "derived_metrics"
                     ],
                     "default": "traces"
                 },
@@ -141289,6 +141755,11 @@
                 "config_id": {
                     "title": "Config id",
                     "type": "string"
+                },
+                "derived_run_id": {
+                    "title": "Derived run id",
+                    "type": "string",
+                    "format": "uuid"
                 },
                 "label_id": {
                     "title": "Label id",
@@ -141434,7 +141905,8 @@
                         "eval_metric",
                         "annotation_metric",
                         "custom_attribute",
-                        "custom_column"
+                        "custom_column",
+                        "derived_metric"
                     ],
                     "default": "system_metric"
                 },
@@ -141446,7 +141918,8 @@
                         "datasets",
                         "simulation",
                         "both",
-                        "all"
+                        "all",
+                        "derived_metrics"
                     ],
                     "default": "traces"
                 },
@@ -142178,6 +142651,659 @@
                     "type": "string",
                     "format": "uuid",
                     "readOnly": true
+                }
+            }
+        },
+        "DerivedMetricFilter": {
+            "required": [
+                "field",
+                "value"
+            ],
+            "type": "object",
+            "properties": {
+                "field": {
+                    "title": "Field",
+                    "type": "string",
+                    "enum": [
+                        "model",
+                        "provider",
+                        "status",
+                        "name",
+                        "service_name"
+                    ]
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "string",
+                    "maxLength": 255
+                }
+            }
+        },
+        "DerivedMetricManifest": {
+            "required": [
+                "sampling_scope",
+                "schema_version",
+                "compiler_version",
+                "evaluator_table",
+                "definition_hash",
+                "captured_at",
+                "semantics"
+            ],
+            "type": "object",
+            "properties": {
+                "sampling_scope": {
+                    "title": "Sampling scope",
+                    "type": "string"
+                },
+                "schema_version": {
+                    "title": "Schema version",
+                    "type": "integer"
+                },
+                "compiler_version": {
+                    "title": "Compiler version",
+                    "type": "integer"
+                },
+                "evaluator_table": {
+                    "title": "Evaluator table",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "definition_hash": {
+                    "title": "Definition hash",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "captured_at": {
+                    "title": "Captured at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "semantics": {
+                    "title": "Semantics",
+                    "type": "string",
+                    "minLength": 1
+                }
+            },
+            "x-nullable": true
+        },
+        "DerivedMetricRun": {
+            "required": [
+                "metric_id",
+                "metric_version",
+                "window_start",
+                "window_end",
+                "as_of",
+                "filters"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "metric_id": {
+                    "title": "Metric id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "metric_version": {
+                    "title": "Metric version",
+                    "type": "integer"
+                },
+                "window_start": {
+                    "title": "Window start",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "window_end": {
+                    "title": "Window end",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "as_of": {
+                    "title": "As of",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "source_run_id": {
+                    "title": "Source run id",
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricFilter"
+                    }
+                },
+                "snapshot_id": {
+                    "title": "Snapshot id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "result_id": {
+                    "title": "Result id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "lease_expires_at": {
+                    "title": "Lease expires at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "source_manifest": {
+                    "$ref": "#/definitions/DerivedMetricManifest"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "running",
+                        "complete",
+                        "failed"
+                    ]
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "maxLength": 300
+                },
+                "row_count": {
+                    "title": "Row count",
+                    "type": "integer",
+                    "maximum": 9223372036854775807,
+                    "minimum": 0
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "completed_at": {
+                    "title": "Completed at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                }
+            }
+        },
+        "DerivedMetricRecompute": {
+            "type": "object",
+            "properties": {
+                "confirm": {
+                    "title": "Confirm",
+                    "type": "boolean",
+                    "default": true
+                }
+            }
+        },
+        "DerivedMetricResult": {
+            "required": [
+                "group_key",
+                "value",
+                "numerator",
+                "denominator",
+                "status",
+                "unit_count",
+                "valid_count",
+                "missing_count",
+                "invalid_probability_count"
+            ],
+            "type": "object",
+            "properties": {
+                "group_key": {
+                    "title": "Group key",
+                    "type": "string"
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "numerator": {
+                    "title": "Numerator",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "denominator": {
+                    "title": "Denominator",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "no_data",
+                        "missing_inputs",
+                        "invalid_probability",
+                        "zero_denominator",
+                        "non_finite"
+                    ]
+                },
+                "unit_count": {
+                    "title": "Unit count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "valid_count": {
+                    "title": "Valid count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "missing_count": {
+                    "title": "Missing count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "invalid_probability_count": {
+                    "title": "Invalid probability count",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "DerivedMetricResultPage": {
+            "required": [
+                "results",
+                "next_cursor"
+            ],
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricResult"
+                    }
+                },
+                "next_cursor": {
+                    "title": "Next cursor",
+                    "type": "string",
+                    "x-nullable": true
+                }
+            }
+        },
+        "DerivedMetricInput": {
+            "required": [
+                "alias",
+                "source"
+            ],
+            "type": "object",
+            "properties": {
+                "alias": {
+                    "title": "Alias",
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{0,39}$",
+                    "minLength": 1
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "eval",
+                        "span"
+                    ]
+                },
+                "config_id": {
+                    "title": "Config id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "config_hash": {
+                    "title": "Config hash",
+                    "type": "string",
+                    "pattern": "^(?:[a-f0-9]{64})?$",
+                    "default": ""
+                },
+                "field": {
+                    "title": "Field",
+                    "type": "string",
+                    "enum": [
+                        "latency_ms",
+                        "cost",
+                        "total_tokens",
+                        "prompt_tokens",
+                        "completion_tokens",
+                        "attribute_number",
+                        "attribute_bool"
+                    ]
+                },
+                "attribute_key": {
+                    "title": "Attribute key",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 160
+                },
+                "reducer": {
+                    "title": "Reducer",
+                    "type": "string",
+                    "enum": [
+                        "mean",
+                        "min",
+                        "max",
+                        "latest"
+                    ],
+                    "default": "latest"
+                }
+            }
+        },
+        "DerivedMetricVersion": {
+            "required": [
+                "version",
+                "formula",
+                "inputs",
+                "selection_unit",
+                "weighting",
+                "filters",
+                "definition_hash"
+            ],
+            "type": "object",
+            "properties": {
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "maximum": 2147483647,
+                    "minimum": 0
+                },
+                "formula": {
+                    "title": "Formula",
+                    "type": "string",
+                    "maxLength": 2048,
+                    "minLength": 1
+                },
+                "inputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricInput"
+                    }
+                },
+                "selection_unit": {
+                    "title": "Selection unit",
+                    "type": "string",
+                    "maxLength": 16,
+                    "minLength": 1
+                },
+                "weighting": {
+                    "title": "Weighting",
+                    "type": "string",
+                    "maxLength": 32,
+                    "minLength": 1
+                },
+                "cohort_key": {
+                    "title": "Cohort key",
+                    "type": "string",
+                    "maxLength": 160
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricFilter"
+                    }
+                },
+                "definition_hash": {
+                    "title": "Definition hash",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                }
+            }
+        },
+        "DerivedMetric": {
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 160,
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "current_version": {
+                    "title": "Current version",
+                    "type": "integer",
+                    "maximum": 2147483647,
+                    "minimum": 0
+                },
+                "definition": {
+                    "$ref": "#/definitions/DerivedMetricVersion"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                }
+            }
+        },
+        "DerivedMetricList": {
+            "required": [
+                "results",
+                "next_cursor"
+            ],
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetric"
+                    }
+                },
+                "next_cursor": {
+                    "title": "Next cursor",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "DerivedMetricWrite": {
+            "required": [
+                "project_id",
+                "name",
+                "formula",
+                "inputs"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 160,
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 2000
+                },
+                "formula": {
+                    "title": "Formula",
+                    "type": "string",
+                    "maxLength": 2048,
+                    "minLength": 1
+                },
+                "inputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricInput"
+                    }
+                },
+                "selection_unit": {
+                    "title": "Selection unit",
+                    "type": "string",
+                    "enum": [
+                        "span",
+                        "session",
+                        "user"
+                    ],
+                    "default": "session"
+                },
+                "weighting": {
+                    "title": "Weighting",
+                    "type": "string",
+                    "enum": [
+                        "none",
+                        "inverse_probability"
+                    ],
+                    "default": "none"
+                },
+                "cohort_key": {
+                    "title": "Cohort key",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 160
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricFilter"
+                    },
+                    "default": []
+                },
+                "expected_version": {
+                    "title": "Expected version",
+                    "type": "integer",
+                    "minimum": 1
+                }
+            }
+        },
+        "DerivedMetricValidation": {
+            "required": [
+                "valid",
+                "kind",
+                "required_inputs",
+                "semantics"
+            ],
+            "type": "object",
+            "properties": {
+                "valid": {
+                    "title": "Valid",
+                    "type": "boolean"
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "required_inputs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "semantics": {
+                    "title": "Semantics",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "DerivedMetricRunRequest": {
+            "required": [
+                "window_start",
+                "window_end",
+                "idempotency_key"
+            ],
+            "type": "object",
+            "properties": {
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "window_start": {
+                    "title": "Window start",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "window_end": {
+                    "title": "Window end",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "source_run_id": {
+                    "title": "Source run id",
+                    "description": "Persisted evaluation-task ID (the source eval_task_id), not an execution ID; snapshot and sampling_scope pin the observed evidence.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricFilter"
+                    },
+                    "default": []
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1
+                }
+            }
+        },
+        "DerivedMetricRuns": {
+            "required": [
+                "results",
+                "next_cursor"
+            ],
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricRun"
+                    }
+                },
+                "next_cursor": {
+                    "title": "Next cursor",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
                 }
             }
         },
@@ -154933,6 +156059,14 @@
                     "type": "string",
                     "readOnly": true
                 },
+                "notification_emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "email",
+                        "minLength": 1
+                    }
+                },
                 "created_at": {
                     "title": "Created at",
                     "type": "string",
@@ -154971,7 +156105,8 @@
                         "token_usage",
                         "daily_tokens_spent",
                         "monthly_tokens_spent",
-                        "evaluation_metrics"
+                        "evaluation_metrics",
+                        "derived_metric"
                     ]
                 },
                 "metric": {
@@ -155039,15 +156174,12 @@
                     "readOnly": true,
                     "x-nullable": true
                 },
-                "notification_emails": {
-                    "type": "array",
-                    "items": {
-                        "title": "Notification emails",
-                        "type": "string",
-                        "format": "email",
-                        "maxLength": 254,
-                        "minLength": 1
-                    }
+                "last_derived_run_id": {
+                    "title": "Last derived run id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
                 },
                 "slack_webhook_url": {
                     "title": "Slack webhook url",
@@ -155438,6 +156570,14 @@
                     "type": "string",
                     "readOnly": true
                 },
+                "notification_emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "email",
+                        "minLength": 1
+                    }
+                },
                 "created_at": {
                     "title": "Created at",
                     "type": "string",
@@ -155476,7 +156616,8 @@
                         "token_usage",
                         "daily_tokens_spent",
                         "monthly_tokens_spent",
-                        "evaluation_metrics"
+                        "evaluation_metrics",
+                        "derived_metric"
                     ]
                 },
                 "metric": {
@@ -155544,15 +156685,12 @@
                     "readOnly": true,
                     "x-nullable": true
                 },
-                "notification_emails": {
-                    "type": "array",
-                    "items": {
-                        "title": "Notification emails",
-                        "type": "string",
-                        "format": "email",
-                        "maxLength": 254,
-                        "minLength": 1
-                    }
+                "last_derived_run_id": {
+                    "title": "Last derived run id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
                 },
                 "slack_webhook_url": {
                     "title": "Slack webhook url",

@@ -48,6 +48,7 @@ class MonitorMetricTypeChoices(models.TextChoices):
 
     # Other metrics
     EVALUATION_METRICS = "evaluation_metrics", "Evaluation metrics"
+    DERIVED_METRIC = "derived_metric", "Derived metric"
     # RATE_LIMIT_ALERT = "rate_limit_alert", "Rate limit alert" # we don't have this data in the db yet, removed for now
 
 
@@ -128,6 +129,8 @@ class UserAlertMonitor(BaseModel):
         blank=True,
         help_text="The last time the monitor was checked for alerts.",
     )
+
+    last_derived_run_id = models.UUIDField(null=True, blank=True, editable=False)
 
     # Notification settings
     notification_emails: ArrayField = ArrayField(models.EmailField(), default=list)
