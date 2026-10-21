@@ -68,6 +68,7 @@ class SamplingQuery:
         self._counter = 0
         self.live_floor = None
         self.proof_row_ids = None
+        self.proof_unit_ids = None
         self.current_state = False
 
     def bind(self, value: object) -> str:
@@ -233,6 +234,22 @@ class SamplingQuery:
             # identity that has a change in this delta. Never push an upper
             # bound, tombstone or mutable attribute below latest-state replay.
             scope += " AND _version >= %(sp_arrival_floor_ns)s"
+        if self.proof_unit_ids is not None:
+            from tracer.services.eval_tasks.sampling.unit_scope import (
+                physical_unit_scope,
+            )
+
+            attribute_value = None
+            if unit == "attribute":
+                exists, value = self.attribute(self.policy["unit_attribute"])
+                attribute_value = f"if({exists}, {value}, '')".replace("s.", "")
+            scope, unit_params = physical_unit_scope(
+                unit_ids=self.proof_unit_ids,
+                sampling_unit=unit,
+                row_type=row_type,
+                attribute_value_sql=attribute_value,
+            )
+            self.params.update(unit_params)
         if self.proof_row_ids is not None:
             self.params["sp_current_ids"] = self.proof_row_ids
             if row_type == "spans":
@@ -399,6 +416,39 @@ class SamplingQuery:
             ctes
             + f""" SELECT r.row_id, r.unit_id, c.stratum, c.inclusion_probability, c.selected
             FROM rows AS r INNER JOIN classified AS c ON r.unit_id = c.unit_id {predicate}""",
+            self.params,
+        )
+
+    def live_member_decisions(self, unit_ids: list[str]) -> tuple[str, dict]:
+        """Classify only new candidate units across their full eligible snapshot.
+
+        Event-day discovery never determines a unit's final stratum. Candidate
+        identities and parameter bytes are finite; unit aggregation, earliest
+        group witness and hash selection remain entirely inside ClickHouse.
+        """
+        from tracer.services.eval_tasks.sampling.unit_scope import unit_batches
+
+        identities = list(dict.fromkeys(unit_ids))
+        if (
+            self.policy["mode"] != "live"
+            or not identities
+            or len(identities) > BATCH_SIZE
+            or len(list(unit_batches(identities))) != 1
+        ):
+            raise ValueError("Live decisions require one bounded candidate-unit page.")
+        self.proof_unit_ids = identities
+        self.live_floor = None
+        self.scan_window = {
+            "start": self.policy["window"]["start"],
+            "end": self.params["sp_snapshot"].isoformat(),
+        }
+        self.params["sp_start"] = parse_time(self.scan_window["start"])
+        self.params["sp_end"] = self.params["sp_snapshot"]
+        self.params["sp_new_units"] = tuple(identities)
+        source = self._classified()
+        return (
+            source
+            + " SELECT unit_id, stratum, inclusion_probability, selected FROM classified WHERE unit_id IN %(sp_new_units)s",
             self.params,
         )
 

@@ -630,3 +630,112 @@ def test_pending_trace_refreshes_filter_witness_when_only_children_change(
         entry.output_metadata["_task_selection"]["filter_witnesses"][0]["span_id"]
         == second.id
     )
+
+
+@pytest.mark.parametrize("unit", ["session", "user", "attribute"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_live_cross_day_first_admission_uses_snapshot_priority_and_earliest_group(
+    project, custom_eval_config, ch_seed, monkeypatch, unit, reverse
+):
+    import json
+
+    from tracer.services.eval_tasks.sampling.query import live_scan_windows
+
+    now = sampling_clock()
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    ordinary_at = midnight - timedelta(days=2) + timedelta(hours=12)
+    rare_at = midnight - timedelta(days=1) + timedelta(hours=2)
+    session = TraceSession.objects.create(project=project, name="cross-midnight")
+    other = TraceSession.objects.create(project=project, name="unselected-control")
+    user_id, other_user = uuid.uuid4(), uuid.uuid4()
+    ordinary = seed_contact(
+        project,
+        session,
+        {"positive": False, "locale": "ordinary", "contact_id": "one-contact"},
+        traces=1,
+        seed=False,
+    )
+    rare = seed_contact(
+        project,
+        session,
+        {"positive": True, "locale": "z-earliest", "contact_id": "one-contact"},
+        traces=1,
+        seed=False,
+    )
+    later = seed_contact(
+        project,
+        session,
+        {"positive": True, "locale": "a-later", "contact_id": "one-contact"},
+        traces=1,
+        seed=False,
+    )
+    control = seed_contact(
+        project,
+        other,
+        {"positive": False, "locale": "control", "contact_id": "other-contact"},
+        traces=1,
+        seed=False,
+    )
+    for spans, event_at in (
+        (ordinary, ordinary_at),
+        (rare, rare_at),
+        (later, rare_at + timedelta(hours=1)),
+        (control, rare_at),
+    ):
+        for span in spans:
+            span.start_time = event_at
+            span.end_user_id = user_id if spans is not control else other_user
+    seed_ch_spans([*ordinary, *rare, *later, *control])
+    policy = {
+        "version": 1,
+        "mode": "live",
+        "sampling_unit": unit,
+        "window": {
+            "start": (ordinary_at - timedelta(hours=1)).isoformat(),
+            "end": None,
+        },
+        "strata": [
+            {
+                "name": "rare-positive",
+                "filters": [{"key": "positive", "op": "in", "values": [True]}],
+                "rate": 100,
+            }
+        ],
+        "group_by": [{"key": "locale"}],
+        "default": {"rate": 0},
+    }
+    if unit == "attribute":
+        policy["unit_attribute"] = {"key": "contact_id"}
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        sampling_policy=policy,
+        filters={},
+    )
+    task.evals.add(custom_eval_config)
+    if reverse:
+        monkeypatch.setattr(
+            "tracer.services.eval_tasks.sampling.service.live_scan_windows",
+            lambda *args: iter(reversed(list(live_scan_windows(*args)))),
+        )
+    reconcile(task)
+    entries = list(EvalLogger.objects.filter(eval_task_id=str(task.id)))
+    assert {entry.observation_span_id for entry in entries} == {
+        span.id for span in [*ordinary, *rare, *later]
+    }
+    members = list(EvalSamplingMember.objects.filter(cohort__task=task))
+    assert len(members) == 2
+    chosen = next(member for member in members if member.selected)
+    assert chosen.inclusion_probability == 1
+    name, groups = json.loads(chosen.stratum)
+    assert name == "rare-positive"
+    assert json.loads(groups[0]) == [1, "z-earliest"]
+    assert {
+        entry.output_metadata["_task_selection"]["sampling"]["stratum"]
+        for entry in entries
+    } == {chosen.stratum}
+    assert (
+        next(member for member in members if not member.selected).inclusion_probability
+        == 0
+    )

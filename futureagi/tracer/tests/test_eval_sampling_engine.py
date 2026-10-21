@@ -77,6 +77,15 @@ def make_task(project, config, *, mode="closed"):
     return task
 
 
+def live_stream(rows, params):
+    if "sp_new_units" in params:
+        current = {
+            row[1]: (row[1], row[2], row[3], row[4]) for block in rows for row in block
+        }
+        return iter([[current[unit] for unit in params["sp_new_units"]]])
+    return iter(rows)
+
+
 def stub_materialization(monkeypatch, task):
     trace = Trace.objects.create(project=task.project, name="sampled")
     cfg = task.evals.first()
@@ -198,7 +207,7 @@ def test_live_decision_never_flips_on_late_stratum_change(
     ]
     monkeypatch.setattr(
         "tracer.services.eval_tasks.sampling.service.stream_query",
-        lambda *_: iter(rows),
+        lambda _sql, params: live_stream(rows, params),
     )
     reconcile(task)
     rows[:] = [
@@ -642,7 +651,7 @@ def test_live_policy_admits_new_contacts_in_future_windows(
     rows = [[("first", "session:first", "control", 0.5, True)]]
     monkeypatch.setattr(
         "tracer.services.eval_tasks.sampling.service.stream_query",
-        lambda *_: iter(rows),
+        lambda _sql, params: live_stream(rows, params),
     )
     with patch(
         "tracer.services.eval_tasks.sampling.service.sampling_clock", return_value=first
@@ -874,3 +883,50 @@ def test_pending_proof_lock_prevents_claiming_a_proven_negative(
     assert errors == []
     assert claim_pending_batch(task, 1) == []
     assert EvalLogger.all_objects.get(eval_task_id=str(task.id)).deleted
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_live_first_admission_classifies_all_changed_days_before_freezing_priority(
+    project, custom_eval_config, monkeypatch, reverse
+):
+    task = make_task(project, custom_eval_config, mode="live")
+    task.sampling_policy = {
+        **task.sampling_policy,
+        "strata": [{"name": "rare-positive", "filters": [], "rate": 100}],
+        "default": {"rate": 0},
+    }
+    task.save(update_fields=["sampling_policy"])
+    stub_materialization(monkeypatch, task)
+    windows = [
+        {"start": "2026-10-19T00:00:00Z", "end": "2026-10-20T00:00:00Z"},
+        {"start": "2026-10-20T00:00:00Z", "end": "2026-10-21T00:00:00Z"},
+    ]
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.live_scan_windows",
+        lambda *_: iter(windows[::-1] if reverse else windows),
+    )
+    proofs = []
+
+    def stream(sql, params):
+        if "sp_new_units" in params:
+            proofs.append(params["sp_new_units"])
+            assert "sp_arrival_floor_ns" not in params
+            assert "sp_new_session_ids" in params
+            yield [("session:new", '["rare-positive",[]]', 1.0, True)]
+        elif params["sp_start"].day == 19:
+            yield [("ordinary-span", "session:new", '["default",[]]', 0.0, False)]
+        else:
+            yield [("rare-span", "session:new", '["rare-positive",[]]', 1.0, True)]
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.stream_query", stream
+    )
+    reconcile(task)
+    member = EvalSamplingMember.objects.get(cohort__task=task)
+    assert member.stratum == '["rare-positive",[]]'
+    assert member.selected is True
+    assert proofs == [("session:new",)]
+    assert {
+        entry.observation_span_id
+        for entry in EvalLogger.objects.filter(eval_task_id=str(task.id))
+    } == {"ordinary-span", "rare-span"}

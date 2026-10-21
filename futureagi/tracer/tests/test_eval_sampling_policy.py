@@ -488,3 +488,61 @@ def test_pending_proof_is_point_scoped_and_not_limited_to_live_preview_tail():
     assert "_version >= %(sp_arrival_floor_ns)s" not in sql
     with pytest.raises(ValueError, match="1–1000"):
         query.current_rows([str(index) for index in range(1001)])
+
+
+@pytest.mark.parametrize("unit", ["session", "user", "attribute", "trace", "span"])
+def test_live_new_member_proof_has_cross_day_scope_and_bounded_identity_seed(unit):
+    from datetime import timedelta
+
+    from tracer.services.eval_tasks.sampling.query import SamplingQuery
+
+    task = SimpleNamespace(
+        project_id="ba052ed0-921f-4aa9-972d-7bbbc79e5d30", row_type="spans", filters={}
+    )
+    value = validate_policy(
+        policy(mode="live", default={"rate": 50}, sampling_unit=unit),
+        now=NOW,
+        contact_attribute="contact_id",
+    )
+    snapshot = NOW + timedelta(days=40)
+    query = SamplingQuery(task, value, "v", snapshot)
+    sql, params = query.live_member_decisions(
+        [f"{unit}:ba052ed0-921f-4aa9-972d-7bbbc79e5d30"]
+    )
+    assert params["sp_start"].isoformat() == value["window"]["start"]
+    assert params["sp_end"] == snapshot
+    assert "sp_arrival_floor_ns" not in params
+    assert (
+        "project_id = %(sp_project)s AND (observation_type, service_name, toStartOfHour(start_time), trace_id, id) IN"
+        in sql
+    )
+    assert f"sp_new_{unit}_ids" in params
+    assert params["sp_new_units"] == (f"{unit}:ba052ed0-921f-4aa9-972d-7bbbc79e5d30",)
+    assert (
+        "SELECT unit_id, stratum, inclusion_probability, selected FROM classified WHERE unit_id IN %(sp_new_units)s"
+        in sql
+    )
+    if unit in ("session", "user"):
+        assert "GROUP BY new_id" in sql
+
+
+def test_live_first_admission_parameters_are_count_and_byte_bounded():
+    from tracer.services.eval_tasks.sampling.query import SamplingQuery
+    from tracer.services.eval_tasks.sampling.unit_scope import unit_batches
+
+    units = [f"attribute:{index}:" + "x" * 2000 for index in range(1100)]
+    batches = list(unit_batches(units))
+    assert [unit for batch in batches for unit in batch] == units
+    assert all(
+        len(batch) <= 1000
+        and sum(len(unit.encode()) * 2 + 8 for unit in batch) <= 65536
+        for batch in batches
+    )
+    task = SimpleNamespace(
+        project_id="ba052ed0-921f-4aa9-972d-7bbbc79e5d30", row_type="spans", filters={}
+    )
+    value = validate_policy(policy(mode="live", default={"rate": 50}), now=NOW)
+    with pytest.raises(ValueError, match="bounded candidate"):
+        SamplingQuery(task, value, "v", NOW).live_member_decisions(
+            [f"session:{index}" for index in range(1001)]
+        )

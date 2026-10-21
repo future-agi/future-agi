@@ -139,6 +139,70 @@ def preview_policy(
     }
 
 
+def prepare_live_members(
+    task: EvalTask,
+    policy: dict,
+    version: str,
+    cohort: EvalSamplingCohort,
+    now: datetime,
+    floor: datetime | None,
+) -> list[dict]:
+    """Freeze new-unit decisions from full snapshots, not first-day witnesses.
+
+    Discovery streams physical-arrival days. Each finite page of unseen unit
+    IDs is classified across every already-eligible row of those units before
+    any decision is persisted. Thus later day/page discovery cannot introduce
+    a different priority or group witness. Earlier polls' decisions stay fixed.
+    """
+    from tracer.services.eval_tasks.sampling.unit_scope import unit_batches
+
+    windows = list(live_scan_windows(task, policy, now, floor))
+    for window in windows:
+        for block in stream_query(
+            *SamplingQuery(task, policy, version, now, scan_window=window).rows(
+                arrival_floor=floor
+            )
+        ):
+            for units in unit_batches(row[1] for row in block):
+                existing = set(
+                    EvalSamplingMember.objects.filter(
+                        cohort=cohort, unit_key__in=[unit_key(unit) for unit in units]
+                    ).values_list("unit_id", flat=True)
+                )
+                unseen = [unit for unit in units if unit not in existing]
+                if not unseen:
+                    continue
+                decisions = {}
+                for proof in stream_query(
+                    *SamplingQuery(task, policy, version, now).live_member_decisions(
+                        unseen
+                    )
+                ):
+                    for unit, stratum, probability, selected in proof:
+                        unit = str(unit)
+                        if unit not in unseen or unit in decisions:
+                            raise ValueError(
+                                "Live unit decision escaped or duplicated its candidate scope."
+                            )
+                        decisions[unit] = EvalSamplingMember(
+                            cohort=cohort,
+                            unit_key=unit_key(unit),
+                            unit_id=unit,
+                            stratum=str(stratum),
+                            selected=bool(selected),
+                            inclusion_probability=float(probability),
+                            population_size=None,
+                        )
+                if set(decisions) != set(unseen):
+                    raise ValueError(
+                        "Live unit snapshot changed during first admission. Retry the bounded proof."
+                    )
+                EvalSamplingMember.objects.bulk_create(
+                    list(decisions.values()), batch_size=1000
+                )
+    return windows
+
+
 def iter_selected_row_blocks(
     task: EvalTask,
     policy: dict,
@@ -146,9 +210,11 @@ def iter_selected_row_blocks(
     cohort: EvalSamplingCohort,
     now: datetime,
     floor: datetime | None,
+    *,
+    live_windows: list[dict] | None = None,
 ) -> Iterator[list[tuple]]:
     if policy["mode"] == "live":
-        for window in live_scan_windows(task, policy, now, floor):
+        for window in live_windows or []:
             yield from stream_query(
                 *SamplingQuery(task, policy, version, now, scan_window=window).rows(
                     arrival_floor=floor
@@ -270,29 +336,14 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
         )
         result = ReconcileResult(dropped=stale.update(deleted=True, deleted_at=now))
         witnesses = TraceWitnessReader(task)
+        live_windows = (
+            prepare_live_members(task, policy, version, cohort, now, floor)
+            if policy["mode"] == "live"
+            else None
+        )
         for block in iter_selected_row_blocks(
-            task, policy, version, cohort, now, floor
+            task, policy, version, cohort, now, floor, live_windows=live_windows
         ):
-            if policy["mode"] == "live":
-                # Persist rejected decisions too. A late span with a different
-                # category must not turn an already-skipped contact into a sample.
-                by_unit = {str(row[1]): row for row in block}
-                EvalSamplingMember.objects.bulk_create(
-                    [
-                        EvalSamplingMember(
-                            cohort=cohort,
-                            unit_key=unit_key(unit),
-                            unit_id=unit,
-                            stratum=str(row[2]),
-                            selected=bool(row[4]),
-                            inclusion_probability=float(row[3]),
-                            population_size=None,
-                        )
-                        for unit, row in by_unit.items()
-                    ],
-                    batch_size=1000,
-                    ignore_conflicts=True,
-                )
             keys = [unit_key(str(row[1])) for row in block]
             members = {
                 member.unit_id: member
