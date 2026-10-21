@@ -51,6 +51,21 @@ pytestmark = pytest.mark.django_db
 BASE = "/simulate/api/harness-environments"
 GUEST = "/simulate/api/harness/conversations"
 REFUND = {"agent": "support", "tools": [{"name": "refund_order"}]}
+UNCHECKED = json.dumps(
+    {"sub_goals": [{"name": "refunded", "what": "a refund was issued"}]}
+)
+# The default sub-goal, checking the tool REFUND adds.
+CHECKED = json.dumps(
+    {
+        "sub_goals": [
+            {
+                "name": "refunded",
+                "what": "a refund was issued",
+                "judged": "Pass when refund_order succeeded.",
+            }
+        ]
+    }
+)
 
 
 @pytest.fixture(autouse=True)
@@ -158,6 +173,8 @@ def _turn(
         files[".futureagi-nudge-result.json"] = (
             _result(nudge) if result is ... else result
         )
+    if nudge.target == "environment" and contract is not None:
+        files.setdefault("sub_goals.json", CHECKED)
     from simulate.services.hosted_harness_gateway import (
         with_authoring_basis,
         with_draft_basis,
@@ -917,6 +934,66 @@ class TestLanding:
 
         assert nudge.state == "applied", (nudge.error, nudge.summary)
 
+    @pytest.mark.parametrize(
+        ("base", "contract", "sub_goals", "state"),
+        [
+            ([], REFUND, None, "failed"),
+            ([], REFUND, CHECKED, "applied"),
+            (
+                REFUND["tools"],
+                {"agent": "support", "tools": [{"name": "issue_refund"}]},
+                CHECKED.replace("refund_order", "issue_refund"),
+                "applied",
+            ),
+            (REFUND["tools"], {"agent": "support", "tools": []}, CHECKED, "applied"),
+        ],
+        ids=["unchecked", "checked", "renamed", "removed"],
+    )
+    def test_a_tool_the_rebuild_added_needs_a_sub_goal_checking_it(
+        self,
+        base,
+        contract,
+        sub_goals,
+        state,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            f"r-untested-{state}-{len(base)}",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        e1 = environment.environment_version
+        HarnessEnvironmentVersion.all_objects.filter(id=e1.id).update(
+            documents={
+                **(e1.documents or {}),
+                "contract": {"agent": "support", "tools": base},
+            }
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            nudge = _turn(
+                environment,
+                nudge,
+                storage,
+                contract=contract,
+                **{"sub_goals.json": sub_goals or UNCHECKED},
+            )
+
+        assert nudge.state == state, (nudge.error, nudge.summary)
+        if state == "failed":
+            assert nudge.error["code"] == "checks_failed"
+            assert [(one["item"], one["kind"]) for one in nudge.error["problems"]] == [
+                ("refund_order", "tool")
+            ]
+
     def test_changes_reported_but_never_saved_fail(
         self,
         user,
@@ -1508,7 +1585,10 @@ class TestGuestTurn:
             with_authoring_basis(
                 _authoring(
                     contract=REFUND,
-                    **{".futureagi-nudge-result.json": _result(nudge)},
+                    **{
+                        ".futureagi-nudge-result.json": _result(nudge),
+                        "sub_goals.json": CHECKED,
+                    },
                 ),
                 command.payload["_environment_revision"],
             ),

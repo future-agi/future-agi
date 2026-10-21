@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import tarfile
 from collections.abc import Mapping
 from datetime import timedelta
@@ -1488,6 +1489,29 @@ def _uncovered_sub_goals(nudge: HarnessNudge, result: Any) -> list[dict[str, str
     ]
 
 
+def _untested_tools(
+    nudge: HarnessNudge, update: Mapping[str, Any] | None, result: Any
+) -> list[dict[str, str]]:
+    """Tools the environment rebuild added that no sub-goal checks."""
+    if nudge.target != Target.ENVIRONMENT:
+        return []
+    added = (((update or {}).get("contract") or {}).get("tools") or {}).get("added")
+    texts = [
+        f"{one.get('check') or ''}\n{one.get('judged') or ''}"
+        for one in (result.documents or {}).get("sub_goals") or []
+        if isinstance(one, Mapping)
+    ]
+    return [
+        {
+            "item": name,
+            "kind": "tool",
+            "message": "added in this rebuild; no sub-goal checks it",
+        }
+        for name in added or []
+        if not any(re.search(rf"\b{re.escape(name)}\b", text) for text in texts)
+    ]
+
+
 def _added_sub_goals(nudge: HarnessNudge) -> list[str]:
     diff = (nudge.facts or {}).get("environment_diff") or {}
     return sorted((diff.get("sub_goals") or {}).get("added") or [])
@@ -1544,8 +1568,10 @@ def land_nudge_result(
         if not report["passed"]:
             return fail(report["problems"])
         snapshot = (nudge.draft_snapshot or {}).get("piece") or {}
-        if problems := _unhandled_tools(nudge, locked, result) or (
-            _uncovered_sub_goals(nudge, result)
+        if problems := (
+            _unhandled_tools(nudge, locked, result)
+            or _uncovered_sub_goals(nudge, result)
+            or _untested_tools(nudge, changes["update"], result)
         ):
             return fail(problems)
         if (
