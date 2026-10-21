@@ -16,6 +16,7 @@ criteria: "You are evaluating whether the agent effectively handles customer obj
 eval_tags:
 - Agents
 - Conversation
+- Sales
 visible_ui: true
 permissions:
   allow_edit: false

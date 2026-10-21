@@ -68,9 +68,9 @@ from tfc.permissions.rbac import IsOrganizationAdmin
 from tfc.permissions.utils import get_org_membership
 from tfc.settings.settings import RECAPTCHA_ENABLED, RECAPTCHA_SECRET_KEY, ssl
 from tfc.utils.api_contracts import validated_api_request
-from tfc.utils.email import email_helper
+from tfc.utils.email import email_delivery_configured, email_helper
 from tfc.utils.general_methods import GeneralMethods
-
+from tfc.utils.install_setup import manage_py_command
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -82,14 +82,19 @@ except ImportError:
 logger = structlog.get_logger(__name__)
 _gm = GeneralMethods()
 
-OSS_RESET_UNAVAILABLE = (
-    "Email delivery is not configured on this deployment, so the reset link "
-    "cannot be sent. An administrator can set a new password from the host with "
-    "`docker exec -it futureagi-backend-1 python manage.py reset_password "
-    "--email <address>`, or set OSS_RETURN_PASSWORD_RESET_LINK=true to receive "
-    "reset links in the browser — only on a network where every caller is "
-    "already trusted, since the link takes over the account it names."
-)
+
+def oss_reset_unavailable_message() -> str:
+    """What a self-hosted install without email delivery answers a reset
+    request with: the recovery command for the setup it runs in."""
+    command = manage_py_command("reset_password --email <address>")
+    return (
+        "Email delivery is not configured on this deployment, so the reset link "
+        "cannot be sent. An administrator can set a new password from the host "
+        f"with `{command}`, or configure email (MAILGUN_API_KEY). Setting "
+        "OSS_RETURN_PASSWORD_RESET_LINK=true returns reset links in the browser "
+        "instead — only on a network where every caller is already trusted, "
+        "since the link takes over the account it names."
+    )
 
 
 def oss_reset_link_in_response() -> bool:
@@ -113,15 +118,22 @@ account_activation_token = AccountActivationTokenGenerator()
 
 
 def verify_recaptcha(token):
-    """Verify the reCAPTCHA token with Google"""
+    """Verify the reCAPTCHA token with Google.
+
+    Disabled (the self-hosted default unless RECAPTCHA_SECRET_KEY is set) it
+    passes without a network call. Enabled without a secret it fails closed:
+    RECAPTCHA_ENABLED=true was asked for explicitly, so a missing key is a
+    misconfiguration rather than a reason to skip the check.
+    """
     if not RECAPTCHA_ENABLED:
-        logger.info("recaptcha verification skipped (disabled)")
+        logger.debug("recaptcha verification skipped (disabled)")
         return True
 
     secret_key = RECAPTCHA_SECRET_KEY
     if not secret_key:
         logger.error(
-            "recaptcha enabled but RECAPTCHA_SECRET_KEY is missing",
+            "recaptcha enabled but RECAPTCHA_SECRET_KEY is missing; set the key "
+            "or RECAPTCHA_ENABLED=false",
         )
         return False
     if not token:
@@ -213,7 +225,7 @@ def user_signup(request):
         is_local = os.getenv("ENV_TYPE") == "local"
 
         if is_local or is_oss():
-            logger.info(
+            logger.debug(
                 "recaptcha verification skipped",
                 reason="local environment" if is_local else "oss deployment",
             )
@@ -248,6 +260,18 @@ def user_signup(request):
 
         if is_oss():
             logger.info("signup_auto_login", email=email, user_id=str(user.id))
+            try:
+                from tfc.deployment_telemetry.events import record_event
+
+                record_event(
+                    "user_logged_in",
+                    actor_type="human_user",
+                    actor_id=user.id,
+                    source="web",
+                    organization_id=user.organization_id,
+                )
+            except Exception:
+                logger.debug("deployment_telemetry_signup_login_event_failed", exc_info=True)
             return _gm.success_response(_login_payload(user), status=status.HTTP_200_OK)
 
         return _gm.success_response(
@@ -450,8 +474,17 @@ def initiate_password_reset(request):
                 properties = get_mixpanel_properties(user=user)
                 track_mixpanel_event(MixpanelEvents.RESET_PASS.value, properties)
 
-                if is_oss() and not oss_reset_link_in_response():
-                    return _gm.success_response({"message": OSS_RESET_UNAVAILABLE})
+                # A self-hosted install mails the link like Cloud does once
+                # email delivery is configured; without it there is no way to
+                # hand the link over short of the opt-in below.
+                if (
+                    is_oss()
+                    and not oss_reset_link_in_response()
+                    and not email_delivery_configured()
+                ):
+                    return _gm.success_response(
+                        {"message": oss_reset_unavailable_message()}
+                    )
 
                 # Send reset password email
                 # Generate a token
@@ -472,7 +505,7 @@ def initiate_password_reset(request):
 
                 if settings.DEBUG:
                     logger.info(f"Password reset link {reset_link}")
-                if is_oss():
+                if is_oss() and oss_reset_link_in_response():
                     return _gm.success_response(
                         {
                             "message": "Use the link below to reset your password.",
@@ -503,9 +536,12 @@ def initiate_password_reset(request):
                 # answer. With the link withheld the response is identical for
                 # every address, so the endpoint tells an anonymous caller
                 # nothing about who has an account here.
-                if not oss_reset_link_in_response():
-                    return _gm.success_response({"message": OSS_RESET_UNAVAILABLE})
-                return _gm.bad_request(f"No account found for {email}.")
+                if oss_reset_link_in_response():
+                    return _gm.bad_request(f"No account found for {email}.")
+                if not email_delivery_configured():
+                    return _gm.success_response(
+                        {"message": oss_reset_unavailable_message()}
+                    )
             # Don't disclose that the user doesn't exist ,we just send a sucess response
             return _gm.success_response(
                 {
@@ -532,9 +568,6 @@ def reset_password_confirm(request, uidb64, token):
     new_password = request.validated_data.get("new_password")
     repeat_password = request.validated_data.get("repeat_password")
 
-    if new_password != repeat_password:
-        return _gm.bad_request("Passwords do not match.")
-
     try:
         # Decode the uidb64 to the user ID
         uid = force_str(urlsafe_base64_decode(uidb64))
@@ -554,6 +587,12 @@ def reset_password_confirm(request, uidb64, token):
             )
         except AuthToken.DoesNotExist:
             return _gm.forbidden_response("Invalid token id.")
+
+        if auth_token_obj.auth_origin == "saml":
+            return _gm.forbidden_response("Invalid token.")
+
+        if new_password != repeat_password:
+            return _gm.bad_request("Passwords do not match.")
 
         if (
             not auth_token_obj.is_active

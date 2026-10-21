@@ -70,8 +70,9 @@ const CallLogSideDrawerChild = ({ data }) => {
         rootSpanId: rootObsSpan?.id,
         module: data?.module,
         callExecutionId: data?.id,
+        projectId: data?.project_id,
       }),
-    [traceId, rootObsSpan?.id, data?.module, data?.id],
+    [traceId, rootObsSpan?.id, data?.module, data?.id, data?.project_id],
   );
 
   return (

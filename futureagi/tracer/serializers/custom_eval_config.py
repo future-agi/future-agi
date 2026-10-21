@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from model_hub.models.evals_metric import EvalTemplate
+from model_hub.utils.eval_mapping import non_path_mapping_keys
 from model_hub.utils.function_eval_params import normalize_eval_runtime_config
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
@@ -44,6 +45,19 @@ class CustomEvalConfigSerializer(serializers.ModelSerializer):
         if obj.eval_group:
             return obj.eval_group.name
         return None
+
+    def validate_mapping(self, value):
+        if value is None:
+            return value
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Mapping must be an object.")
+        bad = non_path_mapping_keys(value)
+        if bad:
+            raise serializers.ValidationError(
+                "Mapping values must be attribute path strings. "
+                f"Non-string values for: {', '.join(bad)}."
+            )
+        return value
 
     def validate(self, attrs):
         eval_template = attrs.get("eval_template") or getattr(

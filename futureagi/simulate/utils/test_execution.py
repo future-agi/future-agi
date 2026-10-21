@@ -215,9 +215,9 @@ DEFAULT_VOICE_SIM_COL = [
         "visible": True,
     },
     {
-        "column_name": "Overall Score",
+        "column_name": "CSAT",
         "id": "overall_score",
-        "visible": False,
+        "visible": True,
     },
     {
         "column_name": "Agent interruption",
@@ -255,9 +255,9 @@ DEFAULT_CHAT_SIM_COL = [
         "visible": True,
     },
     {
-        "column_name": "Overall Score",
+        "column_name": "CSAT",
         "id": "overall_score",
-        "visible": False,
+        "visible": True,
     },
     {
         "column_name": "Total Tokens",

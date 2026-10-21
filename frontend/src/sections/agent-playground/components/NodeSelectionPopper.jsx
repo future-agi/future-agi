@@ -2,15 +2,13 @@ import { Paper, Popper, ClickAwayListener, Stack } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { AGENT_NODE, NODE_TYPES } from "../utils/constants";
-import {
-  useGetNodeTemplates,
-  useGetReferenceableGraphs,
-} from "src/api/agent-playground/agent-playground";
-import { useAgentPlaygroundStoreShallow } from "../store";
+import { useGetNodeTemplates } from "src/api/agent-playground/agent-playground";
 import NodeCard from "./NodeCard";
 import PromptNodePopper from "./PromptNodePopper";
+import AgentNodeSetupDialog from "./AgentNodeSetupDialog";
 import { enqueueSnackbar } from "notistack";
 import useAddNodeOptimistic from "../AgentBuilder/hooks/useAddNodeOptimistic";
+import useAgentNodeInsertGuard from "../hooks/useAgentNodeInsertGuard";
 
 export default function NodeSelectionPopper({
   open,
@@ -22,21 +20,14 @@ export default function NodeSelectionPopper({
   const promptAnchorRef = useRef(null);
 
   const { addNode } = useAddNodeOptimistic();
+  const { guardNodeInsert, setupDialogProps } = useAgentNodeInsertGuard();
 
-  const { currentAgent } = useAgentPlaygroundStoreShallow((state) => ({
-    currentAgent: state.currentAgent,
-  }));
-  const { data: referenceableGraphs = [] } = useGetReferenceableGraphs(
-    currentAgent?.id,
-  );
-
+  // The Agent node is always listed (TH-4549). Whether it can be inserted
+  // right now is decided per click by useAgentNodeInsertGuard.
   const { data: templateNodes = [] } = useGetNodeTemplates();
   const nodesList = useMemo(
-    () =>
-      referenceableGraphs.length > 0
-        ? [...templateNodes, AGENT_NODE]
-        : [...templateNodes],
-    [templateNodes, referenceableGraphs],
+    () => [...templateNodes, AGENT_NODE],
+    [templateNodes],
   );
 
   const handlePromptExpandClick = useCallback((e) => {
@@ -53,23 +44,50 @@ export default function NodeSelectionPopper({
     onClose();
   }, [onClose]);
 
+  const insertNode = useCallback(
+    (nodeId, nodeTemplateId) => {
+      if (onNodeSelect) {
+        return onNodeSelect(nodeId, nodeTemplateId);
+      }
+      return addNode({
+        type: nodeId,
+        position: undefined,
+        node_template_id: nodeTemplateId,
+      });
+    },
+    [addNode, onNodeSelect],
+  );
+
+  // Always points at the newest insertNode so a *deferred* Agent insert (made
+  // later from the setup dialog) runs the parent's current onNodeSelect — which
+  // re-reads running/read-only state and the source node at that moment —
+  // instead of a closure frozen at click time (TH-4549, PRD R-13). Whether the
+  // original target still exists is the caller's call (it owns the source node
+  // id); the "+" anchor is hover chrome on edges and says nothing about it.
+  const latestInsertRef = useRef(insertNode);
+  latestInsertRef.current = insertNode;
+
+  const deferredInsert = useCallback(
+    (nodeId, nodeTemplateId) => latestInsertRef.current(nodeId, nodeTemplateId),
+    [],
+  );
+
   const handleNodeClick = useCallback(
     (nodeId, nodeTemplateId) => {
       if (nodeId === NODE_TYPES.LLM_PROMPT) {
         return;
       }
-      if (onNodeSelect) {
-        onNodeSelect(nodeId, nodeTemplateId);
-      } else {
-        addNode({
-          type: nodeId,
-          position: undefined,
-          node_template_id: nodeTemplateId,
-        });
-      }
+      // Eligible agents: inserts immediately, exactly as before. Otherwise the
+      // insert is deferred to the setup dialog, which outlives the closed menu
+      // and re-validates the target when the user finally adds.
+      guardNodeInsert(
+        nodeId,
+        () => insertNode(nodeId, nodeTemplateId),
+        () => deferredInsert(nodeId, nodeTemplateId),
+      );
       handleMainClose();
     },
-    [addNode, handleMainClose, onNodeSelect],
+    [guardNodeInsert, handleMainClose, insertNode, deferredInsert],
   );
 
   return (
@@ -141,6 +159,8 @@ export default function NodeSelectionPopper({
               }
         }
       />
+
+      <AgentNodeSetupDialog {...setupDialogProps} />
     </>
   );
 }

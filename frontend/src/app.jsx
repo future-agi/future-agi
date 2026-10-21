@@ -1,7 +1,11 @@
 import React, { useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import "src/global.css";
-import { isChunkError } from "src/utils/lazyWithRetry";
+import {
+  clearChunkReloadAttempt,
+  isChunkError,
+  requestChunkReload,
+} from "src/utils/lazyWithRetry";
 
 // ----------------------------------------------------------------------
 
@@ -19,7 +23,7 @@ import { AuthProvider } from "src/auth/context/jwt";
 import { WorkspaceProvider } from "src/contexts/WorkspaceContext";
 import { OrganizationProvider } from "src/contexts/OrganizationContext";
 import { LocalizationProvider } from "./locales";
-import { enqueueSnackbar, SnackbarProvider } from "./components/snackbar";
+import { SnackbarProvider } from "./components/snackbar";
 import {
   MutationCache,
   QueryCache,
@@ -28,7 +32,7 @@ import {
 } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { BrowserAgent } from "@newrelic/browser-agent/loaders/browser-agent";
-import { devTracing, prodTracing } from "./newrelic";
+import { newRelicTracing } from "./newrelic";
 import {
   CURRENT_ENVIRONMENT,
   REACT_QUERY_DEVTOOLS_ENABLED,
@@ -37,48 +41,16 @@ import { ErrorBoundary } from "react-error-boundary";
 import ErrorFallback from "./pages/ErrorFallback";
 import UploadLimitNotification from "./components/rate-limit-modal/RateLimitModal";
 import { WebSocketProvider } from "./components/websocket/use-socket";
-import { RESPONSE_CODES } from "./utils/constants";
 import { registerGlobalCleanup } from "./utils/memory-management";
 import * as Sentry from "@sentry/react";
 import logger from "./utils/logger";
 import { useGoogleReCaptcha } from "react-google-recaptcha-v3";
 import { setRecaptchaExecutor } from "./utils/recaptchaService";
 import { AudioPlaybackProvider } from "./components/custom-audio/context-provider/AudioPlaybackContext";
+import { handleError } from "./utils/queryErrorHandler";
+import { syncMixpanelSessionReplay } from "./utils/Mixpanel";
 
 // ----------------------------------------------------------------------
-const _extractParts = (result) => {
-  if (result == null || result === "") return "";
-  if (typeof result === "string") return result;
-  if (Array.isArray(result)) {
-    return [...new Set(result.map(_extractParts).filter(Boolean))].join(", ");
-  }
-  if (typeof result === "object") {
-    if (result.details && typeof result.details === "object") {
-      return _extractParts(result.details);
-    }
-    return [
-      ...new Set(Object.values(result).map(_extractParts).filter(Boolean)),
-    ].join(", ");
-  }
-  return String(result);
-};
-
-const extractErrorMessage = (result) =>
-  _extractParts(result) || "Something went wrong";
-
-const handleError = (error, variable, context, mutation) => {
-  if (error?.statusCode == RESPONSE_CODES.LIMIT_REACHED) return;
-  if (
-    mutation?.options?.meta?.errorHandled ||
-    variable?.options?.meta?.errorHandled
-  )
-    return;
-  if (error?.result) {
-    enqueueSnackbar(extractErrorMessage(error.result), {
-      variant: "error",
-    });
-  }
-};
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: handleError,
@@ -103,12 +75,9 @@ const queryClient = new QueryClient({
   },
 });
 
-// Clear chunk reload flag on successful app load
-sessionStorage.removeItem("chunk_reload_attempted");
-
-// Initialize the BrowserAgent
-if (CURRENT_ENVIRONMENT === "production") new BrowserAgent(prodTracing);
-if (CURRENT_ENVIRONMENT === "dev") new BrowserAgent(devTracing);
+// Initialize the BrowserAgent, only in a build with New Relic keys.
+const newRelic = newRelicTracing(CURRENT_ENVIRONMENT);
+if (newRelic) new BrowserAgent(newRelic);
 
 export default function App() {
   useScrollToTop();
@@ -123,23 +92,12 @@ export default function App() {
     if (window.Appcues) {
       window.Appcues.page();
     }
+    syncMixpanelSessionReplay(location.pathname);
   }, [location.pathname]);
-
-  // Clear chunk reload flag on successful mount so future deploys can trigger a reload
-  useEffect(() => {
-    sessionStorage.removeItem("chunk_reload_attempted");
-  }, []);
 
   const logError = (error, info) => {
     // Chunk errors after a deploy — silently reload once instead of showing error page
-    if (
-      isChunkError(error) &&
-      !sessionStorage.getItem("chunk_reload_attempted")
-    ) {
-      sessionStorage.setItem("chunk_reload_attempted", "1");
-      window.location.reload();
-      return;
-    }
+    if (isChunkError(error) && requestChunkReload()) return;
 
     Sentry.captureException(error, {
       contexts: {
@@ -188,16 +146,12 @@ export default function App() {
                               error,
                               resetErrorBoundary,
                             }) => {
-                              // Chunk errors trigger a silent reload in onError —
-                              // render nothing while the page reloads
-                              if (isChunkError(error)) {
-                                return null;
-                              }
                               return (
                                 <ErrorFallback
                                   error={error}
                                   resetErrorBoundary={() => {
                                     resetErrorBoundary();
+                                    clearChunkReloadAttempt();
                                     window.location.reload();
                                   }}
                                 />

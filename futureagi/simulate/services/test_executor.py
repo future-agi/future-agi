@@ -1,14 +1,13 @@
+# ruff: noqa: E402 -- imports follow the try/except stub blocks that define their fallbacks
 import gc
 import json
 import os
 import re
 import traceback
-from datetime import datetime, timedelta
 from decimal import Decimal
-from difflib import SequenceMatcher
 from itertools import chain
-from typing import Any, Dict, Optional
-from uuid import uuid4
+from typing import Any
+from uuid import UUID, uuid4
 
 import structlog
 
@@ -20,7 +19,8 @@ except ImportError:
     ToolEvalAgent = _ee_stub("ToolEvalAgent")
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import close_old_connections, transaction
-from django.db.models import Q, Sum
+from django.db.models import DateTimeField, F, Sum, Value
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from simulate.models.call_log_entry import CallLogEntry
@@ -32,19 +32,50 @@ try:
 except ImportError:
     FAGICallData = None
     VoiceServiceManager = None
+from tfc.utils.storage_client import server_reachable_url
 from tracer.models.observability_provider import ProviderChoices
 
 logger = structlog.get_logger(__name__)
 
 
 def build_eval_configs_map(call_execution) -> dict[str, "SimulateEvalConfig"]:
-    eval_config_ids = list((call_execution.eval_outputs or {}).keys())
+    """The configs behind this call's verdicts, removed ones included.
+
+    Uses ``all_objects`` (not ``objects``) so a verdict produced by an eval
+    later removed from the environment stays visible in call details, marked
+    ``"removed": true``. ``select_related("eval_template")`` avoids a
+    per-config FK fetch in ``get_eval_metrics``'s ``template_type`` lookup.
+
+    ``eval_config_ids`` is filtered to well-formed UUIDs first (``_is_uuid``):
+    a raw ``eval_outputs`` key that isn't a UUID would otherwise raise
+    ``ValidationError`` out of ``id__in``. A key that fails the check is
+    simply absent from the returned map, same as any id with no matching
+    config.
+    """
+    eval_config_ids = [
+        eval_config_id
+        for eval_config_id in (call_execution.eval_outputs or {}).keys()
+        if _is_uuid(eval_config_id)
+    ]
     if not eval_config_ids:
         return {}
     return {
         str(c.id): c
-        for c in SimulateEvalConfig.objects.filter(id__in=eval_config_ids)
+        for c in SimulateEvalConfig.all_objects.filter(
+            id__in=eval_config_ids
+        ).select_related("eval_template")
     }
+
+
+def _is_uuid(value) -> bool:
+    """True when ``value`` parses as a UUID -- keeps a malformed
+    ``eval_outputs`` key out of ``id__in`` filters instead of raising
+    ``ValidationError``."""
+    try:
+        UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
 
 
 def _empty_call_log_summary(reason: str) -> dict:
@@ -80,6 +111,7 @@ from simulate.constants.persona_prompt_guides import (
     VOICE_COMMUNICATION_STYLE_GUIDES,
     VOICE_PERSONALITY_GUIDES,
 )
+
 try:
     from ee.voice.constants.voice_mapper import (
         select_voice_id,
@@ -102,6 +134,8 @@ from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.pydantic_schemas.chat import SimulationCallType
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
+from simulate.services.harness_evals import is_harness_run_test, regrade_mapping
+
 try:
     from ee.voice.services.conversation_metrics import ConversationMetricsCalculator
     from ee.voice.services.phone_number_service import PhoneNumberService
@@ -124,16 +158,18 @@ from simulate.utils.processing_outcomes import (
     set_processing_skip_metadata,
 )
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
+from simulate.utils.verdicts import has_stored_verdict
+from tfc.constants.api_calls import APICallStatusChoices
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.temporal.drop_in import temporal_activity
 
 # Note: run_eval_summary_task imported lazily to avoid circular imports
 from tfc.utils.error_codes import get_specific_error_message
-from tfc.constants.api_calls import APICallStatusChoices
 
 try:
     from ee.usage.models.usage import APICallType
 except ImportError:
+
     class APICallType:
         class objects:
             @classmethod
@@ -141,16 +177,25 @@ except ImportError:
                 from types import SimpleNamespace
 
                 return SimpleNamespace(id=f"oss-noop-{name or 'unspecified'}"), False
+
+
 try:
     from ee.usage.services.metering import check_usage
 except ImportError:
+
     def check_usage(*args, **kwargs):
         from types import SimpleNamespace
 
         return SimpleNamespace(allowed=True, reason=None)
+
+
 try:
-    from ee.usage.utils.usage_entries import deduct_cost_for_request, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        deduct_cost_for_request,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
+
     def deduct_cost_for_request(*args, **kwargs):
         return None
 
@@ -887,9 +932,9 @@ class TestExecutor:
 
     def _format_persona_voice_text(
         self,
-        persona_data: Dict[str, Any],
+        persona_data: dict[str, Any],
         agent_version: AgentVersion | None,
-        row_data: Dict[str, Any] = None,
+        row_data: dict[str, Any] = None,
         call_type: str = "inbound",
     ) -> str:
         """
@@ -1028,7 +1073,7 @@ class TestExecutor:
                 # Personality-specific guidance
                 guidance = VOICE_PERSONALITY_GUIDES.get(
                     personality_lower,
-                    f"Let this personality trait guide your reactions, responses, and overall demeanor.",
+                    "Let this personality trait guide your reactions, responses, and overall demeanor.",
                 )
                 personality_section += f"{guidance}\n\n"
 
@@ -1047,7 +1092,7 @@ class TestExecutor:
                 # Communication style-specific guidance
                 guidance = VOICE_COMMUNICATION_STYLE_GUIDES.get(
                     comm_style_lower,
-                    f"Let this style guide how you express yourself throughout the conversation.",
+                    "Let this style guide how you express yourself throughout the conversation.",
                 )
                 personality_section += f"{guidance}\n\n"
 
@@ -1083,7 +1128,7 @@ class TestExecutor:
                     else [language_data]
                 )
                 lang_str = (
-                    ", ".join(str(l) for l in langs)
+                    ", ".join(str(lang) for lang in langs)
                     if isinstance(langs, list)
                     else str(language_data)
                 )
@@ -1092,7 +1137,7 @@ class TestExecutor:
 
                 # Special handling for multilingual contexts
                 if persona_data.get("multilingual"):
-                    language_section += f"You are multilingual. Switch languages naturally based on context while maintaining your persona traits in all languages.\n"
+                    language_section += "You are multilingual. Switch languages naturally based on context while maintaining your persona traits in all languages.\n"
 
                 # Special handling for Hinglish speakers
                 # if (accent and "indian" in accent.lower()) or any("hindi" in str(l).lower() for l in langs): # operator precedence
@@ -1113,7 +1158,7 @@ class TestExecutor:
                         else [language_data]
                     )
                     lang_str_check = (
-                        ", ".join(str(l) for l in langs)
+                        ", ".join(str(lang) for lang in langs)
                         if isinstance(langs, list)
                         else str(language_data)
                     )
@@ -1250,9 +1295,9 @@ class TestExecutor:
 
     def _format_persona_chat_text(
         self,
-        persona_data: Dict[str, Any],
+        persona_data: dict[str, Any],
         agent_version: AgentVersion | None,
-        row_data: Dict[str, Any] = None,
+        row_data: dict[str, Any] = None,
         call_type: str = "inbound",
     ) -> str:
         """
@@ -1382,7 +1427,7 @@ class TestExecutor:
                 # Personality-specific guidance
                 guidance = CHAT_PERSONALITY_GUIDES.get(
                     personality_lower,
-                    f"Let this personality trait guide your reactions, responses, and overall messaging style.",
+                    "Let this personality trait guide your reactions, responses, and overall messaging style.",
                 )
                 personality_section += f"{guidance}\n\n"
 
@@ -1401,7 +1446,7 @@ class TestExecutor:
                 # Communication style-specific guidance
                 guidance = CHAT_COMMUNICATION_STYLE_GUIDES.get(
                     comm_style_lower,
-                    f"Let this style guide how you express yourself throughout the chat conversation.",
+                    "Let this style guide how you express yourself throughout the chat conversation.",
                 )
                 personality_section += f"{guidance}\n\n"
 
@@ -1620,7 +1665,7 @@ class TestExecutor:
                 language_data if isinstance(language_data, list) else [language_data]
             )
             lang_str = (
-                ", ".join(str(l) for l in langs)
+                ", ".join(str(lang) for lang in langs)
                 if isinstance(langs, list)
                 else str(language_data)
             )
@@ -1630,7 +1675,7 @@ class TestExecutor:
 
             # Special handling for multilingual contexts
             if persona_data.get("multilingual"):
-                language_section += f"You are multilingual. Switch languages naturally based on context while maintaining your persona traits in all languages.\n"
+                language_section += "You are multilingual. Switch languages naturally based on context while maintaining your persona traits in all languages.\n"
 
             language_section += "\n"
             sections.append(language_section)
@@ -1736,7 +1781,7 @@ class TestExecutor:
     def _generate_dynamic_prompt(
         self,
         prompt_template: str,
-        row_data: Dict[str, Any],
+        row_data: dict[str, Any],
         agent_version: AgentVersion | None,
         call_type: str | None = None,
     ) -> str:
@@ -1996,7 +2041,7 @@ class TestExecutor:
     def _check_call_balance(
         self,
         organization,
-        call_type: Optional[str] = SimulationCallType.VOICE,
+        call_type: str | None = SimulationCallType.VOICE,
     ):
         """Check whether an organization is allowed to run a simulation call.
 
@@ -2033,9 +2078,7 @@ class TestExecutor:
         """
         try:
             event_type = (
-                "text_call"
-                if call_type == SimulationCallType.TEXT
-                else "voice_call"
+                "text_call" if call_type == SimulationCallType.TEXT else "voice_call"
             )
             result = check_usage(str(organization.id), event_type)
 
@@ -2162,11 +2205,11 @@ class TestExecutor:
         self,
         run_test: RunTest,
         scenario: Scenarios,
-        call_data: Dict[str, Any],
+        call_data: dict[str, Any],
         test_execution_record: TestExecution,
         user_id: str,
         simulator_id=None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Execute an inbound call where simulation agent calls user's agent (existing logic)
 
@@ -3130,7 +3173,7 @@ class TestExecutor:
                                     time_window_seconds=10,
                                 )
                             )
-                        except Exception as e:
+                        except Exception:
                             logger.warning("Unable to locate matching customer call ID")
 
                     if customer_call_id:
@@ -3138,7 +3181,7 @@ class TestExecutor:
                             customer_call_data = voice_service_manager.get_call(
                                 customer_call_id, True
                             )
-                        except Exception as e:
+                        except Exception:
                             logger.warning("Failed to fetch customer call data")
 
                 if customer_call_data:
@@ -3906,8 +3949,10 @@ class TestExecutor:
             if not run_test:
                 run_test = call_execution.test_execution.run_test
 
-            # Get expected eval configs - either specific ones or all for the run test
-            if eval_config_ids:
+            # Get expected eval configs - either specific ones or all for the run test.
+            # `is not None`: an explicitly-empty `eval_config_ids=[]` must not
+            # widen to "every config on the run test".
+            if eval_config_ids is not None:
                 expected_eval_configs = SimulateEvalConfig.objects.filter(
                     id__in=eval_config_ids, deleted=False
                 )
@@ -3959,6 +4004,14 @@ class TestExecutor:
 
             # Only update eval_completed if all configs are done and it's not already set
             if all_configs_completed:
+                from simulate.services.harness_evals import live_eval_config_ids
+                from simulate.services.scoring_status import pending_eval_ids
+
+                # A placeholder or dispatch stamp for another live config (a
+                # second job on this call) must hold the call open, whether
+                # or not that config has a mapping of its own; a config
+                # removed since it was stamped must not.
+                live = live_eval_config_ids(run_test.id)
                 if not call_execution.call_metadata:
                     call_execution.call_metadata = {}
 
@@ -3996,7 +4049,11 @@ class TestExecutor:
                                     all_configs_still_completed = False
                                     break
 
-                            if all_configs_still_completed:
+                            if all_configs_still_completed and not pending_eval_ids(
+                                call_execution_locked.call_metadata,
+                                eval_outputs_locked,
+                                live_ids=live,
+                            ):
                                 call_execution_locked.call_metadata[
                                     "eval_completed"
                                 ] = True
@@ -4022,6 +4079,10 @@ class TestExecutor:
                                     self._check_and_update_test_execution_completion(
                                         call_execution_locked.test_execution_id
                                     )
+                        else:
+                            self._rebuild_summary_after_late_verdict(
+                                call_execution_locked.test_execution_id
+                            )
                 except Exception as e:
                     # If select_for_update fails (e.g., outside transaction), fall back to regular update
                     # This can happen in some Celery task contexts
@@ -4040,7 +4101,11 @@ class TestExecutor:
                             and eval_outputs_final.get(str(ec.id)) is not None
                             for ec in expected_eval_configs
                         )
-                        if all_still_completed:
+                        if all_still_completed and not pending_eval_ids(
+                            call_execution.call_metadata,
+                            eval_outputs_final,
+                            live_ids=live,
+                        ):
                             call_execution.call_metadata["eval_completed"] = True
                             # Also mark call as COMPLETED if it's still in ANALYZING state
                             update_fields = ["call_metadata"]
@@ -4062,6 +4127,10 @@ class TestExecutor:
                                 self._check_and_update_test_execution_completion(
                                     call_execution.test_execution_id
                                 )
+                    else:
+                        self._rebuild_summary_after_late_verdict(
+                            call_execution.test_execution_id
+                        )
             else:
                 logger.debug(
                     f"Not all eval configs completed for call {call_execution.id}. "
@@ -4075,18 +4144,34 @@ class TestExecutor:
             )
             traceback.print_exc()
 
-    def _check_and_update_test_execution_completion(self, test_execution_id):
+    def _check_and_update_test_execution_completion(
+        self, test_execution_id, *, strict=False
+    ):
         """
         Mark an execution completed once all calls are terminal and every
-        successful call has finished evaluation.
+        successful call has finished scoring: its evaluations and its CSAT.
 
         Failed and cancelled calls do not run evaluations, so requiring an
         ``eval_completed`` flag on them leaves mixed-result executions stuck in
-        EVALUATING forever.
+        EVALUATING forever. A ``cancelling`` run ends ``cancelled`` here once
+        its open scoring is closed. A ``failed``, ``cancelled`` or already
+        ``completed`` run is never moved, and its ``completed_at`` never
+        re-stamped.
+
+        Returns whether this call moved the run. An error is logged and reads
+        as not moved, so a caller that has already written its own state is
+        not failed by this check; ``strict`` raises it instead, for the one
+        caller that counts what it settled and what failed.
 
         Args:
             test_execution_id: TestExecution ID to check
+            strict: raise an error instead of logging it
         """
+        from simulate.services.scoring_status import (
+            CALL_SCORING_OPEN_Q,
+            SETTLE_FROM_STATUSES,
+        )
+
         try:
             calls = CallExecution.objects.filter(
                 test_execution_id=test_execution_id, deleted=False
@@ -4101,10 +4186,28 @@ class TestExecutor:
             completed_calls = calls.filter(status=CallExecution.CallStatus.COMPLETED)
             has_completed_calls = completed_calls.exists()
             has_incomplete_evaluations = completed_calls.filter(
-                Q(call_metadata__isnull=True)
-                | Q(call_metadata__eval_completed__isnull=True)
-                | Q(call_metadata__eval_completed=False)
+                CALL_SCORING_OPEN_Q
             ).exists()
+
+            if not has_non_terminal_calls and not has_incomplete_evaluations:
+                # Nothing else finishes a run stopped mid-scoring once its
+                # scoring is closed; a completed_at it already has is kept.
+                cancelled = TestExecution.objects.filter(
+                    id=test_execution_id,
+                    status=TestExecution.ExecutionStatus.CANCELLING,
+                ).update(
+                    status=TestExecution.ExecutionStatus.CANCELLED,
+                    completed_at=Coalesce(
+                        F("completed_at"),
+                        Value(timezone.now(), output_field=DateTimeField()),
+                    ),
+                )
+                if cancelled:
+                    logger.info(
+                        "simulate_run_cancel_settled",
+                        test_execution_id=str(test_execution_id),
+                    )
+                    return True
 
             if (
                 not has_non_terminal_calls
@@ -4116,22 +4219,150 @@ class TestExecutor:
                 failed_call_count = calls.filter(
                     status=CallExecution.CallStatus.FAILED
                 ).count()
-                updated = TestExecution.objects.filter(id=test_execution_id).update(
+                updated = TestExecution.objects.filter(
+                    id=test_execution_id, status__in=SETTLE_FROM_STATUSES
+                ).update(
                     status=TestExecution.ExecutionStatus.COMPLETED,
                     completed_at=timezone.now(),
                     total_calls=total_call_count,
                     completed_calls=completed_call_count,
                     failed_calls=failed_call_count,
+                    eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING,
                 )
                 if updated:
                     logger.info(
                         f"Test execution {test_execution_id} marked as completed - all evaluations done"
                     )
+
+                    # After commit, so the summary reads the completed run.
+                    def _after_completion():
+                        self._after_run_completed(test_execution_id)
+
+                    transaction.on_commit(_after_completion, robust=True)
+                    return True
+            return False
         except Exception as e:
+            if strict:
+                raise
             logger.error(
                 f"Error checking test execution completion for {test_execution_id}: {str(e)}"
             )
             traceback.print_exc()
+            return False
+
+    def _after_run_completed(self, test_execution_id):
+        """Summary and live update for a run the settle just completed."""
+        try:
+            from simulate.tasks.eval_summary_tasks import run_eval_summary_task
+
+            run_eval_summary_task.apply_async(args=(str(test_execution_id),))
+        except Exception:
+            logger.exception(
+                "simulate_run_completed_hooks_failed",
+                test_execution_id=str(test_execution_id),
+                hook="summary",
+            )
+        try:
+            from simulate.utils.websocket_notifications import (
+                notify_simulation_update,
+            )
+
+            execution = TestExecution.objects.select_related("run_test").get(
+                id=test_execution_id
+            )
+            notify_simulation_update(
+                organization_id=execution.run_test.organization_id,
+                run_test_id=str(execution.run_test_id),
+                test_execution_id=str(execution.id),
+            )
+        except Exception:
+            logger.exception(
+                "simulate_run_completed_hooks_failed",
+                test_execution_id=str(test_execution_id),
+                hook="notify",
+            )
+
+    def _rebuild_summary_after_late_verdict(self, test_execution_id):
+        """Schedule one rebuild of a completed run's summary after a late verdict.
+
+        A grading job that outlives the scoring clock writes its verdict on a
+        call the sweeper already closed, after the run completed and its
+        summary was built without that verdict. The run stays completed and
+        keeps its ``completed_at``, and nothing is written to the summary
+        here. One summary job is scheduled to start after a delay, and a
+        marker in the cache says so for a little less than that delay: every
+        further late verdict of the run that finds the marker schedules
+        nothing, and the job, starting after all of them, reads them all.
+        """
+        from datetime import timedelta
+
+        from django.core.cache import cache
+
+        from simulate.services.scoring_status import (
+            SUMMARY_REBUILD_DELAY_SECONDS,
+            SUMMARY_REBUILD_MARKER_SECONDS,
+            summary_rebuild_marker_key,
+        )
+        from simulate.tasks.eval_summary_tasks import run_eval_summary_task
+
+        if not TestExecution.objects.filter(
+            id=test_execution_id, status=TestExecution.ExecutionStatus.COMPLETED
+        ).exists():
+            # A run still scoring gets its summary from the settle; a failed
+            # or stopped run has none to rebuild.
+            return
+        run_id = str(test_execution_id)
+        key = summary_rebuild_marker_key(run_id)
+        try:
+            scheduled_already = not cache.add(
+                key, "1", timeout=SUMMARY_REBUILD_MARKER_SECONDS
+            )
+        except Exception:
+            # Without the cache nothing says whether a rebuild is scheduled.
+            # One job too many costs less than a summary left without the
+            # verdict, so this one is scheduled.
+            logger.warning(
+                "simulate_summary_rebuild_marker_failed",
+                test_execution_id=run_id,
+                step="set",
+                exc_info=True,
+            )
+            scheduled_already = False
+        if scheduled_already:
+            return
+
+        def _schedule():
+            try:
+                run_eval_summary_task.apply_async(
+                    args=(run_id,),
+                    start_delay=timedelta(seconds=SUMMARY_REBUILD_DELAY_SECONDS),
+                )
+            except Exception:
+                logger.exception(
+                    "simulate_summary_rebuild_handoff_failed",
+                    test_execution_id=run_id,
+                )
+                # No job is coming, so the marker must not make the next late
+                # verdict wait out a window with nothing in it.
+                try:
+                    cache.delete(key)
+                except Exception:
+                    logger.warning(
+                        "simulate_summary_rebuild_marker_failed",
+                        test_execution_id=run_id,
+                        step="clear",
+                        exc_info=True,
+                    )
+                return
+            logger.info(
+                "simulate_summary_rebuild_scheduled",
+                test_execution_id=run_id,
+                delay_seconds=SUMMARY_REBUILD_DELAY_SECONDS,
+            )
+
+        # After commit: nothing is scheduled for a transaction that rolls
+        # back, and the job is not handed over while a row lock is held.
+        transaction.on_commit(_schedule, robust=True)
 
     def _run_simulate_evaluations(
         self,
@@ -4149,6 +4380,13 @@ class TestExecutor:
             skip_existing: If True, skip evaluations that already exist for this call execution
             skip_status_update: If True, do not transition status to COMPLETED. Used when
                 the caller (e.g. Temporal workflow) manages the status transition itself.
+
+        Known gap: the ``skip_existing`` guard reads ``eval_outputs`` from the
+        in-memory snapshot taken by ``call_execution.refresh_from_db()``
+        above, and every save writes the whole ``eval_outputs`` column, so a
+        verdict landed by another worker between that read and this task's
+        save is silently lost; a row lock or merge-before-save is a
+        follow-up, not fixed here.
         """
         try:
             close_old_connections()
@@ -4163,12 +4401,25 @@ class TestExecutor:
                 call_execution.call_metadata = {}
             call_execution.call_metadata["eval_started"] = True
             call_execution.save(update_fields=["call_metadata"])
+            from simulate.services.scoring_status import (
+                locked_call_metadata_update,
+                mark_eval_progress,
+            )
+
+            # The job clock runs from the last step this job started, so the
+            # start and every long step below refresh it.
+            mark_eval_progress(call_execution)
             logger.info(f"Starting evaluations for call {call_execution.id}")
 
-            # Get eval configs - either specific ones or all for the run test
-            if eval_config_ids:
+            # Get eval configs - either specific ones or all for the run test.
+            # An explicitly-empty selection must stay empty, never widen to
+            # "every config".
+            if eval_config_ids is not None:
                 eval_configs = SimulateEvalConfig.objects.filter(
                     id__in=eval_config_ids, deleted=False
+                )
+                self._drop_placeholders_of_removed_evals(
+                    call_execution, eval_config_ids, eval_configs
                 )
             else:
                 eval_configs = SimulateEvalConfig.objects.filter(
@@ -4177,17 +4428,39 @@ class TestExecutor:
 
             if not eval_configs.exists():
                 logger.info(f"No evaluation configs found for run test {run_test.id}")
-                if not call_execution.call_metadata:
-                    call_execution.call_metadata = {}
-                call_execution.call_metadata["eval_completed"] = True
-                update_fields = ["call_metadata"]
-                if (
-                    not skip_status_update
-                    and call_execution.status == CallExecution.CallStatus.ANALYZING
-                ):
-                    call_execution.status = CallExecution.CallStatus.COMPLETED
-                    update_fields.append("status")
-                call_execution.save(update_fields=update_fields)
+                # The tool-call judge switch is independent of the eval
+                # catalogue, so zero SimulateEvalConfig rows must still reach
+                # the judge when enable_tool_evaluation is on -- but only for
+                # an explicit (harness) dispatch, not a native run test's
+                # undispatched call.
+                if run_test.enable_tool_evaluation and eval_config_ids is not None:
+                    try:
+                        mark_eval_progress(call_execution)
+                        self._run_tool_evaluation(
+                            call_execution, call_execution.test_execution
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Error running tool evaluation for call {call_execution.id}: {str(e)}"
+                        )
+                        traceback.print_exc()
+
+                def _close_eval_side(metadata):
+                    metadata["eval_completed"] = True
+
+                # Under the row lock, not from this job's copy: the tool judge
+                # above can run for minutes, and saving the copy whole would
+                # put back the CSAT state it held before a CSAT attempt ended.
+                with transaction.atomic():
+                    call_execution.call_metadata = locked_call_metadata_update(
+                        call_execution.id, _close_eval_side
+                    )
+                    if (
+                        not skip_status_update
+                        and call_execution.status == CallExecution.CallStatus.ANALYZING
+                    ):
+                        call_execution.status = CallExecution.CallStatus.COMPLETED
+                        call_execution.save(update_fields=["status"])
                 if not skip_status_update:
                     self._check_and_update_test_execution_completion(
                         call_execution.test_execution_id
@@ -4213,6 +4486,7 @@ class TestExecutor:
                     eval_configs=eval_configs,
                     reason=skip_decision.processing_skip_reason,
                     skip_status_update=skip_status_update,
+                    skip_existing=skip_existing,
                 )
                 return
 
@@ -4229,6 +4503,7 @@ class TestExecutor:
                     eval_configs=eval_configs,
                     reason="Call transcript is unavailable, so processing was skipped.",
                     skip_status_update=skip_status_update,
+                    skip_existing=skip_existing,
                 )
                 return
 
@@ -4239,15 +4514,26 @@ class TestExecutor:
             test_execution = call_execution.test_execution
             test_execution.refresh_from_db(fields=["status"])
 
+            # Only a harness run holds result columns with no mapping of their
+            # own, so the lookup is made once per call and only when one is
+            # among the configs.
+            harness_run = any(
+                not eval_config.mapping for eval_config in eval_configs
+            ) and is_harness_run_test(run_test.id)
+
             # Run each evaluation
             for eval_config in eval_configs:
                 try:
-                    # # Skip if evaluation already exists and skip_existing is True
-                    # if skip_existing and call_execution.eval_outputs and str(eval_config.id) in call_execution.eval_outputs:
-                    #     logger.info(
-                    #         f"Skipping evaluation {eval_config.id} for call {call_execution.id} - already exists"
-                    #     )
-                    #     continue
+                    # A stored verdict is sealed: with skip-existing on, this
+                    # eval is not re-graded and nothing is written for it.
+                    if skip_existing and has_stored_verdict(
+                        call_execution, eval_config.id
+                    ):
+                        logger.info(
+                            f"Skipping evaluation {eval_config.id} for call "
+                            f"{call_execution.id} - already exists"
+                        )
+                        continue
 
                     # Log if we're overwriting an existing evaluation
                     if (
@@ -4263,8 +4549,15 @@ class TestExecutor:
                         TestExecution.ExecutionStatus.CANCELLED,
                         TestExecution.ExecutionStatus.CANCELLING,
                     ]:
+                        if harness_run and regrade_mapping(eval_config) is None:
+                            self._mark_eval_left_to_the_harness(
+                                call_execution, eval_config
+                            )
+                            continue
+                        extra = {"harness_run": True} if harness_run else {}
+                        mark_eval_progress(call_execution)
                         self._run_single_simulate_evaluation(
-                            eval_config, call_execution, transcript_data
+                            eval_config, call_execution, transcript_data, **extra
                         )
                         logger.info(
                             f"Successfully ran evaluation {eval_config.name} ({eval_config.id}) "
@@ -4277,6 +4570,7 @@ class TestExecutor:
             # Run tool evaluation before marking as completed (only if enabled)
             if test_execution.run_test.enable_tool_evaluation:
                 try:
+                    mark_eval_progress(call_execution)
                     self._run_tool_evaluation(call_execution, test_execution)
                 except Exception as e:
                     logger.error(
@@ -4310,14 +4604,110 @@ class TestExecutor:
             logger.error(f"Error in _run_simulate_evaluations: {str(e)}")
             traceback.print_exc()
 
+    def _drop_placeholders_of_removed_evals(
+        self, call_execution, eval_config_ids, eval_configs
+    ) -> None:
+        """Drop the pending placeholder of a requested eval removed before it ran.
+
+        Its grader never runs. The completion check skips a removed eval, but
+        ``bind_eval_config`` brings the eval back under the same id, and with
+        it a cell still pending that no grader will fill, which keeps the
+        call, and with it the run, from rolling up again.
+        """
+        outputs = call_execution.eval_outputs or {}
+        pending = {
+            str(config_id)
+            for config_id in eval_config_ids
+            if isinstance(outputs.get(str(config_id)), dict)
+            and outputs[str(config_id)].get("status") == "pending"
+        }
+        if not pending:
+            return
+        live = {
+            str(config_id) for config_id in eval_configs.values_list("id", flat=True)
+        }
+        removed = pending - live
+        if not removed:
+            return
+        for config_id in removed:
+            outputs.pop(config_id, None)
+        call_execution.eval_outputs = outputs
+        call_execution.save(update_fields=["eval_outputs"])
+
+    def _settle_grading_that_never_ran(
+        self, call_execution, eval_config_ids, eval_configs
+    ) -> None:
+        """Close the requested evals of a call whose grader was never started.
+
+        The run stays EVALUATING until every completed call has finished its
+        evaluations, so each placeholder left here must become a verdict.
+        """
+        self._drop_placeholders_of_removed_evals(
+            call_execution, eval_config_ids, eval_configs
+        )
+        outputs = call_execution.eval_outputs or {}
+        failed = False
+        for eval_config in eval_configs.select_related("eval_template"):
+            key = str(eval_config.id)
+            if not (
+                isinstance(outputs.get(key), dict)
+                and outputs[key].get("status") == "pending"
+            ):
+                continue
+            outputs[key] = {
+                "reason": "Grading could not be started.",
+                "error": "error",
+                "name": eval_config.name,
+                "timestamp": timezone.now().isoformat(),
+                "output": None,
+                "output_type": derive_kpi_output_type(eval_config.eval_template),
+                "status": StatusType.FAILED.value,
+            }
+            failed = True
+        if failed:
+            call_execution.eval_outputs = outputs
+            call_execution.save(update_fields=["eval_outputs"])
+        self._check_and_update_eval_completion(
+            call_execution, eval_config_ids=eval_config_ids
+        )
+
+    def _mark_eval_left_to_the_harness(self, call_execution, eval_config) -> None:
+        """Mark a harness result column the platform can't grade as skipped."""
+        call_execution.eval_outputs = call_execution.eval_outputs or {}
+        call_execution.eval_outputs[str(eval_config.id)] = (
+            build_skipped_eval_output_payload(
+                eval_name=eval_config.name,
+                reason=(
+                    "The harness scores this evaluation during the call. "
+                    "Only rerunning the call refreshes it."
+                ),
+            )
+        )
+        call_execution.save(update_fields=["eval_outputs"])
+
     def _mark_processing_skipped_for_eval_rerun(
         self,
         call_execution: CallExecution,
         eval_configs,
         reason: str,
         skip_status_update: bool,
+        skip_existing: bool = False,
     ) -> None:
-        """Persist skipped processing outcomes for eval-only reruns."""
+        """Persist skipped processing outcomes for eval-only reruns.
+
+        With ``skip_existing`` on, a config that already holds a verdict on
+        this call keeps it: the "skipped" payload is written only for configs
+        whose row is empty. With it off, behaviour is unchanged -- every
+        config in the batch gets the payload.
+
+        The guard matters because the inputs to the skip decision aren't
+        immutable: a receipt re-ingest can delete and recreate the transcript
+        rows, so a call that once earned a real verdict can later be judged
+        "too short". The call-level bookkeeping (``processing_skipped``,
+        ``processing_skip_reason``, ``eval_started``, ``eval_completed``) is
+        written either way; only the per-config ``eval_outputs`` rows are
+        sealed.
+        """
         call_execution.call_metadata = call_execution.call_metadata or {}
 
         call_execution.call_metadata = set_processing_skip_metadata(
@@ -4332,6 +4722,12 @@ class TestExecutor:
             call_execution.eval_outputs = {}
 
         for eval_config in eval_configs:
+            if skip_existing and has_stored_verdict(call_execution, eval_config.id):
+                logger.info(
+                    f"Keeping the stored verdict for {eval_config.id} on call "
+                    f"{call_execution.id} - skipped payload not written"
+                )
+                continue
             call_execution.eval_outputs[str(eval_config.id)] = (
                 build_skipped_eval_output_payload(
                     eval_name=eval_config.name,
@@ -4363,15 +4759,9 @@ class TestExecutor:
         has_agent_message = False
         has_customer_message = False
 
-        call_metadata = call_execution.call_metadata or {}
-        call_direction = str(call_metadata.get("call_direction") or "").strip().lower()
+        from simulate.utils.speaker_roles import SpeakerRoleResolver
 
-        call_type_lower = str(call_execution.call_type or "").strip().lower()
-        is_outbound = call_direction == "outbound"
-        if call_direction not in {"inbound", "outbound"}:
-            is_outbound = (
-                "outbound" in call_type_lower and "inbound" not in call_type_lower
-            )
+        is_outbound = SpeakerRoleResolver.detect_is_outbound(call_execution)
 
         if call_execution.simulation_call_type == CallExecution.SimulationCallType.TEXT:
             agent_roles = frozenset({ChatMessageModel.RoleChoices.ASSISTANT})
@@ -4390,8 +4780,6 @@ class TestExecutor:
                     if has_content and role_lower in customer_roles:
                         has_customer_message = True
         else:
-            from simulate.utils.speaker_roles import SpeakerRoleResolver
-
             provider = SpeakerRoleResolver.detect_provider(
                 call_execution.provider_call_data
             )
@@ -4426,12 +4814,15 @@ class TestExecutor:
         Returns:
             dict: Transcript and voice recording data
         """
+        # Addressed for a server-side fetch; an unreachable URL is sniffed as text.
         transcript_data = {
             "transcript": "",
-            "voice_recording": call_execution.recording_url or "",
+            "voice_recording": server_reachable_url(call_execution.recording_url or ""),
             "assistant_recording": "",
             "customer_recording": "",
-            "stereo_recording": call_execution.stereo_recording_url or "",
+            "stereo_recording": server_reachable_url(
+                call_execution.stereo_recording_url or ""
+            ),
             "user_chat_transcript": "",
             "assistant_chat_transcript": "",
         }
@@ -4521,11 +4912,8 @@ class TestExecutor:
                         eval_provider = SpeakerRoleResolver.detect_provider(
                             call_execution.provider_call_data
                         )
-                        eval_dir = (call_execution.call_metadata or {}).get(
-                            "call_direction", ""
-                        )
-                        eval_is_outbound = (
-                            str(eval_dir).strip().lower() == "outbound"
+                        eval_is_outbound = SpeakerRoleResolver.detect_is_outbound(
+                            call_execution
                         )
                         conversational_roles = (
                             SpeakerRoleResolver.get_conversational_roles()
@@ -4540,9 +4928,7 @@ class TestExecutor:
                                 provider=eval_provider,
                                 is_outbound=eval_is_outbound,
                             )
-                            transcript_text.append(
-                                f"{eval_role}: {transcript.content}"
-                            )
+                            transcript_text.append(f"{eval_role}: {transcript.content}")
                     transcript_data["transcript"] = "\n".join(transcript_text)
                     transcript_data["user_chat_transcript"] = "\n".join(
                         user_chat_transcript_text
@@ -4612,9 +4998,23 @@ class TestExecutor:
                     ):
                         transcript_data[transcript_key] = normalized_recording[key]
 
-            recording_urls = self.voice_service_manager.get_recording_urls(
-                provider_payload
-            )
+            # Hosted/ALK ingestion persists recording URLs directly on the call
+            # row (and may also provide normalized recording entries above).
+            # Evaluation must not require a provider client merely to consume
+            # those already-persisted artifacts.  Provider lookup is only an
+            # optional enrichment path for legacy calls that still carry a
+            # provider payload.
+            recording_urls = {}
+            if self.voice_service_manager is not None and provider_payload:
+                recording_urls = self.voice_service_manager.get_recording_urls(
+                    provider_payload
+                )
+            elif provider_payload:
+                logger.info(
+                    "Skipping provider recording lookup for call %s because "
+                    "the voice service manager is not initialized",
+                    call_execution.id,
+                )
             if recording_urls:
                 recording_object = {}
 
@@ -4659,7 +5059,7 @@ class TestExecutor:
                         call_execution.stereo_recording_url = s3_url
                         needs_save = True
                         fields_to_update.append("stereo_recording_url")
-                    transcript_data["stereo_recording"] = s3_url
+                    transcript_data["stereo_recording"] = server_reachable_url(s3_url)
                     recording_object["stereo"] = s3_url
 
                 # Convert and save main recording URL (combined)
@@ -4676,7 +5076,7 @@ class TestExecutor:
                         call_execution.recording_url = s3_url
                         needs_save = True
                         fields_to_update.append("recording_url")
-                    transcript_data["voice_recording"] = s3_url
+                    transcript_data["voice_recording"] = server_reachable_url(s3_url)
                     recording_object["combined"] = s3_url
 
             # Save the call_execution if any URLs were converted
@@ -4698,7 +5098,11 @@ class TestExecutor:
         return transcript_data
 
     def _run_single_simulate_evaluation(
-        self, eval_config, call_execution: CallExecution, transcript_data
+        self,
+        eval_config,
+        call_execution: CallExecution,
+        transcript_data,
+        harness_run=False,
     ):
         """
         Run a single SimulateEvalConfig evaluation
@@ -4707,6 +5111,9 @@ class TestExecutor:
             eval_config: SimulateEvalConfig instance
             call_execution: CallExecution instance
             transcript_data: dict with transcript and voice_recording data
+            harness_run: Whether a harness environment owns the run test; a
+                result column the harness fills is then graded with the
+                inputs the harness gives it, and the config is not changed.
         """
         try:
             close_old_connections()
@@ -4715,7 +5122,10 @@ class TestExecutor:
             eval_template = eval_config.eval_template
 
             # Prepare mapping with transcript and voice_recording data
-            mapping = eval_config.mapping.copy() if eval_config.mapping else {}
+            if harness_run:
+                mapping = regrade_mapping(eval_config) or {}
+            else:
+                mapping = eval_config.mapping.copy() if eval_config.mapping else {}
 
             # Replace mapping values with actual data
             updated_mapping = {}
@@ -4907,9 +5317,9 @@ class TestExecutor:
                             "output_type": derive_kpi_output_type(eval_template),
                         }
                         call_execution.eval_outputs[str(eval_config.id)] = error_result
-                        call_execution.eval_outputs[str(eval_config.id)][
-                            "status"
-                        ] = StatusType.FAILED.value
+                        call_execution.eval_outputs[str(eval_config.id)]["status"] = (
+                            StatusType.FAILED.value
+                        )
                         call_execution.save(update_fields=["eval_outputs"])
                         raise ValueError(error_message)
 
@@ -4945,15 +5355,21 @@ class TestExecutor:
                     "call_type": call_execution.call_type,
                     "simulation_call_type": call_execution.simulation_call_type,
                     "phone_number": call_execution.phone_number,
-                    "started_at": str(call_execution.started_at) if call_execution.started_at else None,
-                    "ended_at": str(call_execution.ended_at) if call_execution.ended_at else None,
+                    "started_at": str(call_execution.started_at)
+                    if call_execution.started_at
+                    else None,
+                    "ended_at": str(call_execution.ended_at)
+                    if call_execution.ended_at
+                    else None,
                     "duration_seconds": call_execution.duration_seconds,
                     "recording_url": call_execution.recording_url,
                     "call_summary": call_execution.call_summary,
                     "ended_reason": call_execution.ended_reason,
                     "error_message": call_execution.error_message,
                     "message_count": call_execution.message_count,
-                    "overall_score": float(call_execution.overall_score) if call_execution.overall_score is not None else None,
+                    "overall_score": float(call_execution.overall_score)
+                    if call_execution.overall_score is not None
+                    else None,
                 }
 
             # Run the evaluation
@@ -5026,11 +5442,34 @@ class TestExecutor:
                         )
 
                 eval_config.status = StatusType.COMPLETED.value
-                eval_config.save()
+                # Only the status: this instance was loaded before grading
+                # began, so a full save would write back a removal or rename
+                # made while the eval was running.
+                eval_config.save(update_fields=["status", "updated_at"])
 
                 logger.info(f"Successfully completed evaluation {eval_config.id}")
             else:
-                logger.info(f"Evaluation {eval_config.id} returned no result")
+                from simulate.services.scoring_status import REASON_EVAL_NO_RESULT
+
+                # No result is a failed grading, not a missing one: the call
+                # must still close, and the person must see why.
+                if not call_execution.eval_outputs:
+                    call_execution.eval_outputs = {}
+                call_execution.eval_outputs[str(eval_config.id)] = {
+                    "reason": REASON_EVAL_NO_RESULT,
+                    "error": "error",
+                    "name": eval_config.name,
+                    "timestamp": timezone.now().isoformat(),
+                    "output": None,
+                    "output_type": derive_kpi_output_type(eval_template),
+                    "status": StatusType.FAILED.value,
+                }
+                call_execution.save(update_fields=["eval_outputs"])
+                logger.warning(
+                    "simulate_eval_no_result",
+                    call_execution_id=str(call_execution.id),
+                    eval_config_id=str(eval_config.id),
+                )
 
         except Exception as e:
             logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
@@ -5048,13 +5487,13 @@ class TestExecutor:
                 "output_type": derive_kpi_output_type(eval_config.eval_template),
             }
             call_execution.eval_outputs[str(eval_config.id)] = error_result
-            call_execution.eval_outputs[str(eval_config.id)][
-                "status"
-            ] = StatusType.FAILED.value
+            call_execution.eval_outputs[str(eval_config.id)]["status"] = (
+                StatusType.FAILED.value
+            )
             call_execution.save(update_fields=["eval_outputs"])
 
             eval_config.status = StatusType.FAILED.value
-            eval_config.save()
+            eval_config.save(update_fields=["status", "updated_at"])
             raise
 
     def _aggregate_tool_columns_to_test_execution(self, test_execution):
@@ -5256,7 +5695,10 @@ class TestExecutor:
             else:
                 agent_version = agent_definition.get_version(selected_version.id)
 
-            snapshot = agent_version.configuration_snapshot
+            # A harness `AgentDefinition` has no `AgentVersion`, so
+            # `latest_version` is None. Only the voice branch reads
+            # `snapshot`, and it already treats `{}` as absent.
+            snapshot = agent_version.configuration_snapshot if agent_version else {}
             # Check if this is a TEXT (chat) agent
             agent_type = agent_definition.agent_type
             is_text_agent = agent_type == AgentDefinition.AgentTypeChoices.TEXT
@@ -5275,6 +5717,13 @@ class TestExecutor:
                 # Extract tool calls from chat messages
                 tool_calls_data = agent._extract_tool_calls(call_data)
             else:
+                if not snapshot:
+                    logger.info(
+                        f"Skipping tool evaluation for voice call {call_execution.id} - "
+                        "agent definition has no version snapshot"
+                    )
+                    return
+
                 customer_api_key = (
                     snapshot.get("api_key")
                     if snapshot and snapshot.get("api_key")
@@ -5396,9 +5845,7 @@ class TestExecutor:
             call_column_order = []
             tool_eval_ids_map = {}  # Map idx to tool_eval_id for the second phase
             columns_updated = False
-            tool_name_counts = (
-                {}
-            )  # tool_name -> occurrence count (per-call) for stable column naming
+            tool_name_counts = {}  # tool_name -> occurrence count (per-call) for stable column naming
 
             for idx, tool_call in enumerate(tool_calls_data):
                 try:
@@ -5487,6 +5934,8 @@ class TestExecutor:
             call_execution.save(update_fields=["tool_outputs", "evaluation_data"])
 
             # PHASE 2: Now run the evaluations and update status to "completed" or "error"
+            from simulate.services.scoring_status import mark_eval_progress
+
             for idx, tool_eval_info in tool_eval_ids_map.items():
                 try:
                     tool_eval_id = tool_eval_info["tool_eval_id"]
@@ -5554,6 +6003,11 @@ class TestExecutor:
                         }
                         continue
 
+                    # Each tool call is its own slow model call, so the job
+                    # clock is refreshed before every one of them: a call with
+                    # many tool calls must not read as silent while the judge
+                    # is still working through them.
+                    mark_eval_progress(call_execution)
                     # Now run the evaluation for this specific tool call
                     evaluation = agent._evaluate_single_tool_call(
                         tool_call=tool_call,
@@ -5638,7 +6092,11 @@ def _run_simulate_evaluations_task(
             "test_execution__run_test",
         ).get(id=call_execution_id)
 
-        test_executor = TestExecutor()
+        # Evaluation only needs transcript/eval helpers. Initializing the
+        # configured voice provider here makes otherwise provider-neutral
+        # evaluations fail when, for example, Vapi credentials are absent for
+        # a LiveKit, Retell, chat, or connect-only run.
+        test_executor = TestExecutor(initialize_voice_service=False)
         test_executor._run_simulate_evaluations(
             call_execution, eval_config_ids=eval_config_ids, skip_existing=skip_existing
         )
@@ -5651,6 +6109,19 @@ def _run_simulate_evaluations_task(
         return False
     finally:
         close_old_connections()
+
+
+def _settle_grading_that_never_ran(call_execution, eval_config_ids, eval_configs):
+    try:
+        TestExecutor(initialize_voice_service=False)._settle_grading_that_never_ran(
+            call_execution, eval_config_ids, eval_configs
+        )
+    except Exception:
+        logger.exception(
+            "run_new_evals_settle_failed",
+            call_execution_id=str(call_execution.id),
+            eval_config_count=len(eval_config_ids),
+        )
 
 
 @temporal_activity(
@@ -5693,6 +6164,12 @@ def run_new_evals_on_call_executions_task(call_execution_ids, eval_config_ids):
 
         if not eval_configs.exists():
             logger.error(f"No eval configs found for IDs: {eval_config_ids}")
+            # The evals were removed after the request wrote their
+            # placeholders; with no grader to come, the calls settle here.
+            for call_execution in call_executions:
+                _settle_grading_that_never_ran(
+                    call_execution, eval_config_ids, eval_configs
+                )
             return results
 
         # Note: eval_started flag should be updated in bulk before calling this task (in the view)
@@ -5719,6 +6196,9 @@ def run_new_evals_on_call_executions_task(call_execution_ids, eval_config_ids):
                     f"Error dispatching task for call execution {call_execution.id}: {str(e)}"
                 )
                 traceback.print_exc()
+                _settle_grading_that_never_ran(
+                    call_execution, eval_config_ids, eval_configs
+                )
 
         logger.info(
             f"Dispatched {len(results['dispatched_tasks'])} evaluation tasks for "

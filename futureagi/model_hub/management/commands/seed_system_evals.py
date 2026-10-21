@@ -13,19 +13,25 @@ Usage:
 YAML files are in: model_hub/system_evals/{function,agent,specialty}/*.yaml
 """
 
-import os
 from pathlib import Path
 
 import structlog
 import yaml
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from django.utils import timezone
 
 logger = structlog.get_logger(__name__)
 
 # Bump this when system evals change. Seeder skips if DB is already at this version.
-SYSTEM_EVALS_VERSION = 16
+# 19: dev's voice-agent evals (18) plus this branch's MODEL_SERVING_URL-aware
+# embedding evals (17), so a database seeded at either one re-seeds.
+# 21: conversation-evidence criteria for task, field intake, queries, and hallucination.
+# 23: word_info_preserved counts hits from the alignment, so insertions lower the score.
+# 24: ndcg_at_k no longer counts duplicate retrievals, so it stays within 1.0.
+# 25: matthews_correlation computes multiclass MCC instead of rescaled accuracy.
+# 26: the 24 ndcg_at_k fix landed after 25, so it ships as 26.
+# 27: spearman_correlation uses Pearson over midranks and scores constant input as undefined.
+SYSTEM_EVALS_VERSION = 27
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any
@@ -99,7 +105,6 @@ def seed_evals(dry_run=False, force=False, verbose=False):
     from django.core.cache import cache
     from django.db import connection
 
-    from model_hub.models.choices import OwnerChoices
     from model_hub.models.evals_metric import EvalTemplate
 
     with transaction.atomic():

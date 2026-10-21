@@ -5,12 +5,15 @@ import math
 import os
 import re
 import traceback
+from contextlib import ExitStack, contextmanager
 from datetime import timedelta
+from functools import wraps
+from types import SimpleNamespace
 from urllib.parse import urlencode
 
 import structlog
-from django.db import connection, models, transaction
-from django.db.models import Avg, Count, Max, Prefetch, Q
+from django.db import DatabaseError, connection, models, transaction
+from django.db.models import Avg, Count, Max, OuterRef, Prefetch, Q, Subquery
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -34,6 +37,8 @@ from simulate.models import (
     CallExecution,
     CallLogEntry,
     ChatMessageModel,
+    HostedHarnessJob,
+    HostedHarnessReceipt,
     RunTest,
     Scenarios,
     SimulateEvalConfig,
@@ -102,7 +107,9 @@ from simulate.serializers.response.test_execution import (
     RerunCallsResponseSerializer,
 )
 from simulate.serializers.run_test import (
+    RunTestListSummarySerializer,
     RunTestSerializer,
+    harness_run_tests_context,
 )
 from simulate.serializers.test_execution import (
     AllActiveTestsSerializer,
@@ -123,6 +130,7 @@ from simulate.serializers.test_execution import (
     TestExecutionColumnOrderResponseSerializer,
     TestExecutionColumnOrderSerializer,
     TestExecutionDetailResponseSerializer,
+    TestExecutionListQuerySerializer,
     TestExecutionRerunResponseSerializer,
     TestExecutionRerunSerializer,
     TestExecutionSerializer,
@@ -131,6 +139,28 @@ from simulate.serializers.test_execution import (
 
 # Import Temporal activities (using @temporal_activity drop-in decorator)
 from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.eval_config_edit import (
+    EvalConfigEditRefused,
+    update_eval_config,
+    visible_eval_template_query,
+)
+from simulate.services.harness_evals import (
+    is_harness_run_test,
+    is_regrading_a_finished_harness_run,
+    runnable_eval_config_ids,
+)
+from simulate.services.harness_run_evals import stamp_eval_queued
+from simulate.services.run_regrade import (
+    RegradeAlreadyRunning,
+    RegradeDispatchFailed,
+    RegradeEvalNotFound,
+    RegradeNoCalls,
+    RegradeNoCompletedCall,
+    RegradeRefused,
+    RegradeStillFinishing,
+    regrade_run_evals,
+    regrade_still_finishing,
+)
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
@@ -174,7 +204,6 @@ from tfc.ee_gates import strip_turing_from_config_options
 from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.utils.api_contracts import validated_request
-from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import (
     ApiTextErrorResponseSerializer,
     EmptyRequestSerializer,
@@ -184,12 +213,261 @@ from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.replay_session import ReplaySession, ReplaySessionStep
 from tracer.models.trace import Trace
+from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.clickhouse.span_attribute_lookups import (
     spans_by_eval_attribute_call_execution_ids,
 )
 
 logger = structlog.get_logger(__name__)
 _gm = GeneralMethods()
+
+_RUN_TEST_LIST_WALL_MS = app_settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+_RUN_TEST_READ_MAX_RESPONSE_UNITS = (
+    app_settings.INTERACTIVE_READ_DEFAULT_MAX_RESPONSE_UNITS
+)
+
+
+class RunTestReadLimitExceeded(RuntimeError):
+    """A finite simulation response is still too large to render interactively."""
+
+
+class RunTestReadUnavailable(RuntimeError):
+    """An inner compatibility view converted a read failure to HTTP 500."""
+
+
+def _ensure_run_test_response_bounded(value):
+    """Conservatively cap response-renderer work without encoding a second copy."""
+
+    remaining = _RUN_TEST_READ_MAX_RESPONSE_UNITS
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if item is None or isinstance(item, bool):
+            remaining -= 4
+        elif isinstance(item, str):
+            remaining -= 4 * len(item) + 2
+        elif isinstance(item, int | float):
+            remaining -= 32
+        elif isinstance(item, dict):
+            remaining -= 2 + 2 * len(item)
+            for key, child in item.items():
+                remaining -= 4 * len(str(key)) + 2
+                stack.append(child)
+        elif isinstance(item, list | tuple):
+            remaining -= 2 + len(item)
+            stack.extend(item)
+        else:
+            remaining -= 4 * len(str(item)) + 2
+        if remaining < 0:
+            raise RunTestReadLimitExceeded
+
+
+def _run_test_read_queryset(queryset):
+    """Attach every relation used by ``RunTestSerializer`` in bounded batches.
+
+    The nested scenario serializer otherwise performs a row count, column
+    lookup, and active-graph lookup for every scenario.  The nested agent
+    serializer also asks for active/latest versions repeatedly.  A list page
+    or one wide detail row must not turn those helpers into an N+1 request.
+    """
+
+    row_count_subquery = (
+        Row.objects.filter(dataset=OuterRef("dataset"), deleted=False)
+        .values("dataset")
+        .annotate(count=Count("id"))
+        .values("count")
+    )
+    scenario_queryset = (
+        Scenarios.objects.select_related(
+            "dataset",
+            "simulator_agent",
+            "agent_definition",
+            "prompt_template",
+            "prompt_version",
+        )
+        .annotate(_dataset_row_count=Subquery(row_count_subquery))
+        .prefetch_related(
+            Prefetch(
+                "graphs",
+                queryset=ScenarioGraph.objects.filter(is_active=True).order_by(
+                    "-created_at"
+                ),
+                to_attr="_active_graphs",
+            ),
+            Prefetch(
+                "dataset__column_set",
+                queryset=Column.objects.filter(deleted=False).only(
+                    "id", "dataset_id", "name", "data_type"
+                ),
+                to_attr="_run_test_columns",
+            ),
+        )
+    )
+    version_queryset = AgentVersion.objects.select_related("credentials").order_by(
+        "-version_number"
+    )
+    eval_config_queryset = SimulateEvalConfig.objects.select_related(
+        "eval_group", "eval_template"
+    )
+    return queryset.select_related(
+        "agent_definition",
+        "agent_version",
+        "agent_version__credentials",
+        "simulator_agent",
+        "prompt_template",
+        "prompt_version",
+    ).prefetch_related(
+        Prefetch("scenarios", queryset=scenario_queryset),
+        Prefetch("simulate_eval_configs", queryset=eval_config_queryset),
+        Prefetch(
+            "agent_definition__versions",
+            queryset=version_queryset,
+            to_attr="_prefetched_versions",
+        ),
+    )
+
+
+def _run_test_response_data(run_test):
+    """A run test this request just wrote, serialized the way detail GET reads it.
+
+    Reloaded through ``_run_test_read_queryset`` so each eval's template comes
+    in with the rest instead of one query per eval per field that shows it.
+    The request has already found or created this row, so the reload is by id
+    alone.
+    """
+    return RunTestSerializer(
+        _run_test_read_queryset(RunTest.no_workspace_objects).get(id=run_test.id)
+    ).data
+
+
+def _run_test_summary_queryset(queryset):
+    """Load only relations and columns rendered by run-test list cards."""
+
+    row_count_subquery = (
+        Row.objects.filter(dataset=OuterRef("dataset"), deleted=False)
+        .values("dataset")
+        .annotate(count=Count("id"))
+        .values("count")
+    )
+    scenario_queryset = Scenarios.objects.annotate(
+        _dataset_row_count=Subquery(row_count_subquery)
+    ).only(
+        "id",
+        "name",
+        "description",
+        "scenario_type",
+        "dataset_id",
+    )
+    eval_config_queryset = SimulateEvalConfig.objects.select_related("eval_group").only(
+        "id",
+        "run_test_id",
+        "name",
+        "model",
+        "status",
+        "eval_group_id",
+        "eval_group__name",
+    )
+    return (
+        queryset.select_related("agent_definition")
+        .only(
+            "id",
+            "name",
+            "source_type",
+            "agent_definition_id",
+            "created_at",
+            "agent_definition__id",
+            "agent_definition__agent_name",
+            "agent_definition__agent_type",
+            "agent_definition__provider",
+            "agent_definition__contact_number",
+        )
+        .prefetch_related(
+            Prefetch("scenarios", queryset=scenario_queryset),
+            Prefetch("simulate_eval_configs", queryset=eval_config_queryset),
+        )
+    )
+
+
+def _execute_run_test_list_query_with_deadline(
+    deadline, execute, sql, params, many, context
+):
+    """Execute one PostgreSQL query under the shrinking request wall."""
+
+    remaining_ms = deadline.remaining_ms(floor_ms=1)
+    context["cursor"].cursor.execute(
+        "SELECT set_config('statement_timeout', %s, true)",
+        (f"{remaining_ms}ms",),
+    )
+    result = execute(sql, params, many, context)
+    deadline.remaining_ms(floor_ms=1)
+    return result
+
+
+@contextmanager
+def _bounded_run_test_list_transaction(deadline):
+    """Apply one wall deadline to pagination, prefetch, and serialization."""
+
+    transaction_started = False
+
+    def execute_with_remaining_timeout(execute, sql, params, many, context):
+        nonlocal transaction_started
+        if not connection.in_atomic_block and not transaction_started:
+            stack.enter_context(transaction.atomic())
+            transaction_started = True
+        return _execute_run_test_list_query_with_deadline(
+            deadline, execute, sql, params, many, context
+        )
+
+    if connection.vendor != "postgresql":
+        yield
+        deadline.remaining_ms(floor_ms=1)
+        return
+
+    # Keep validation-only failures connection-free. The first real ORM query
+    # opens the transaction, then every statement gets a shrinking SET LOCAL
+    # timeout from the same action-owned deadline.
+    with ExitStack() as stack:
+        stack.enter_context(connection.execute_wrapper(execute_with_remaining_timeout))
+        yield
+        deadline.remaining_ms(floor_ms=1)
+
+
+def _bounded_run_test_list_read(view_method):
+    """Bound an entire run-test list action, including tenant scope reads."""
+
+    @wraps(view_method)
+    def wrapped(view, request, *args, **kwargs):
+        deadline = ReadDeadline.start(_RUN_TEST_LIST_WALL_MS)
+        try:
+            with _bounded_run_test_list_transaction(deadline):
+                response = view_method(view, request, *args, **kwargs)
+                response_status = getattr(response, "status_code", 500)
+                if response_status >= 500:
+                    # Several retained views catch broad exceptions internally.
+                    # Never let a swallowed PostgreSQL timeout or its private
+                    # diagnostic escape as an untyped 500 from a bounded read.
+                    raise RunTestReadUnavailable
+                if response_status < 400:
+                    _ensure_run_test_response_bounded(response.data)
+            deadline.remaining_ms(floor_ms=1)
+            return response
+        except (
+            ReadDeadlineExceeded,
+            DatabaseError,
+            RunTestReadLimitExceeded,
+            RunTestReadUnavailable,
+        ) as exc:
+            logger.warning(
+                "simulation.run_test_list_unavailable",
+                error_type=type(exc).__name__,
+            )
+            return _gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Simulations are temporarily unavailable. Please retry.",
+                code="simulation_list_unavailable",
+            )
+
+    return wrapped
 
 
 def _empty_call_log_summary(reason: str) -> dict:
@@ -202,7 +480,7 @@ def _empty_call_log_summary(reason: str) -> dict:
     }
 
 
-def _voice_sim_gate_response(user_organization, gm):
+def _voice_sim_gate_response(user_organization, _gm):
     """Return a Response blocking voice simulation if it's not available in
     this deployment for this org, else None.
 
@@ -210,60 +488,9 @@ def _voice_sim_gate_response(user_organization, gm):
       1. OSS gate (402, upgrade_required) — via tfc.ee_gates.
       2. Cloud/EE plan entitlement (`has_voice_sim`) — 403 on denial.
     """
-    from tfc.ee_gates import voice_sim_oss_gate_response
+    from tfc.ee_gates import voice_sim_gate_response
 
-    oss_gate = voice_sim_oss_gate_response()
-    if oss_gate is not None:
-        return oss_gate
-
-    try:
-        from ee.usage.services.entitlements import Entitlements
-    except ImportError:
-        # ee.usage.deployment exists but entitlements is missing — partial
-        # EE install. Fail closed.
-        message = (
-            "Voice simulation is not available on this deployment. "
-            "Upgrade to cloud or enterprise to run voice calls."
-        )
-        return Response(
-            build_error_envelope(
-                message,
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                code="payment_required",
-                extra={"upgrade_required": True, "feature": "voice_sim"},
-            ),
-            status=status.HTTP_402_PAYMENT_REQUIRED,
-        )
-
-    from ee.usage.deployment import DeploymentMode
-
-    if not DeploymentMode.is_cloud():
-        # Voice sim is open on self-hosted (voice_sim is not in the
-        # oss_locked set), and plan entitlements are a cloud-only concept.
-        # Nothing to gate off-cloud.
-        return None
-
-    feat_check = Entitlements.check_feature(str(user_organization.id), "has_voice_sim")
-    if not feat_check.allowed:
-        return gm.forbidden_response(feat_check.reason)
-    return None
-
-
-def _visible_eval_template_query(user_organization, workspace):
-    """Templates available from the active workspace plus global system templates."""
-    template_query = Q(organization__isnull=True)
-    if workspace is None:
-        return template_query | Q(organization=user_organization)
-
-    workspace_query = Q(organization=user_organization, workspace=workspace)
-    if getattr(workspace, "is_default", False):
-        workspace_query |= Q(
-            organization=user_organization,
-            workspace__is_default=True,
-            workspace__organization_id=user_organization.id,
-        ) | Q(organization=user_organization, workspace__isnull=True)
-
-    return template_query | workspace_query
+    return voice_sim_gate_response(user_organization)
 
 
 def _soft_delete_run_test_eval_configs(run_test):
@@ -284,10 +511,12 @@ class RunTestListView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @_bounded_run_test_list_read
     @validated_request(
         query_serializer=RunTestFilterSerializer,
         responses={
             200: RunTestListPaginatedResponseSerializer,
+            503: RunTestErrorResponseSerializer,
             500: RunTestErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -303,6 +532,7 @@ class RunTestListView(APIView):
             'agent_definition' or 'prompt')
         - prompt_template_id: filter by prompt template ID (used when
             simulation_type is 'prompt')
+        - summary: return the bounded list-card representation
         """
         try:
             # Get the organization of the logged-in user
@@ -317,41 +547,19 @@ class RunTestListView(APIView):
             search_query = query_data.get("search", "").strip()
             simulation_type = query_data.get("simulation_type", "").strip()
             prompt_template_id = query_data.get("prompt_template_id")
+            summary = query_data.get("summary", False)
 
             # Filter run tests by organization (only non-deleted)
             # Prefetch simulate_eval_configs to avoid N+1 in serializer's to_representation
             # Prefetch agent_definition__versions for latest_version lookup (ordered by version_number desc)
-            latest_version_prefetch = Prefetch(
-                "agent_definition__versions",
-                queryset=AgentVersion.objects.order_by("-version_number"),
-                to_attr="_prefetched_versions",
-            )
-            # Prefetch scenarios with their FK relations so the nested
-            # ScenarioResponseSerializer's get_dataset_* / get_agent / get_agent_type
-            # do not issue per-scenario FK lookups (model_hub_dataset, simulator_agents,
-            # simulate_agent_definition). Fixes CORE-BACKEND-Z49.
-            scenarios_prefetch = Prefetch(
-                "scenarios",
-                queryset=Scenarios.objects.select_related(
-                    "dataset",
-                    "simulator_agent",
-                    "agent_definition",
-                    "prompt_template",
-                    "prompt_version",
-                ),
+            run_tests = RunTest.objects.filter(
+                organization=user_organization,
+                deleted=False,
             )
             run_tests = (
-                RunTest.objects.filter(organization=user_organization, deleted=False)
-                .prefetch_related(
-                    scenarios_prefetch, "simulate_eval_configs", latest_version_prefetch
-                )
-                .select_related(
-                    "agent_definition",
-                    "agent_version",
-                    "simulator_agent",
-                    "prompt_template",
-                    "prompt_version",
-                )
+                _run_test_summary_queryset(run_tests)
+                if summary
+                else _run_test_read_queryset(run_tests)
             )
 
             # Apply simulation_type filter using RunTest.SourceTypes enum
@@ -385,11 +593,20 @@ class RunTestListView(APIView):
             result_page = paginator.paginate_queryset(run_tests, request)
 
             # Serialize the data
-            serializer = RunTestSerializer(result_page, many=True)
+            if summary:
+                serializer = RunTestListSummarySerializer(result_page, many=True)
+            else:
+                serializer = RunTestSerializer(
+                    result_page,
+                    many=True,
+                    context=harness_run_tests_context(result_page),
+                )
 
             # Return paginated response
             return paginator.get_paginated_response(serializer.data)
 
+        except (ReadDeadlineExceeded, DatabaseError):
+            raise
         except Exception as e:
             return self.gm.internal_server_error_response(
                 f"Failed to retrieve run tests: {str(e)}"
@@ -431,27 +648,50 @@ class CreateRunTestView(APIView):
             if not user_organization:
                 return self.gm.not_found("Organization not found for the user.")
 
-            # Resolve the agent definition up-front so we can gate on its
-            # type. Only voice simulations are entitlement-gated; chat
-            # (text) simulations are available on every plan.
+            # Resolve the agent definition (and the version the new run test
+            # will be pinned to, if one was requested) up-front so we can gate
+            # on the pinned agent_type. Only voice simulations are
+            # entitlement-gated; chat (text) simulations are available on
+            # every plan.
             agent_definition = AgentDefinition.objects.get(
                 id=validated_data["agent_definition_id"],
                 organization=user_organization,
             )
+            agent_version = validated_data.get("agent_version")
+            if agent_version:
+                # Pin only a version that belongs to the selected definition —
+                # a same-org version from another agent would let a text agent's
+                # snapshot answer the voice gate and hand the run a foreign
+                # snapshot/credentials.
+                try:
+                    agent_version = AgentVersion.objects.get(
+                        id=agent_version,
+                        deleted=False,
+                        organization=user_organization,
+                        agent_definition=agent_definition,
+                    )
+                except AgentVersion.DoesNotExist:
+                    return self.gm.not_found(
+                        "Agent version not found for the selected agent definition."
+                    )
 
-            if agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE:
+            from simulate.services.hosted_runner import agent_field_for_version
+
+            # No RunTest row exists yet, so read the exact version this call
+            # will pin directly — no unsaved ORM instance needed.
+            agent_type = agent_field_for_version(
+                agent_definition,
+                agent_version,
+                "agent_type",
+                agent_definition.agent_type,
+            )
+            if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
                 forbidden = _voice_sim_gate_response(user_organization, self.gm)
                 if forbidden is not None:
                     return forbidden
 
             # Create the RunTest
             with transaction.atomic():
-                agent_version = validated_data.get("agent_version")
-                if agent_version:
-                    agent_version = AgentVersion.objects.get(
-                        id=agent_version, deleted=False, organization=user_organization
-                    )
-
                 # simulator_agent = SimulatorAgent.objects.get(
                 #     id=validated_data['simulator_agent_id'],
                 #     organization=user_organization
@@ -539,9 +779,8 @@ class CreateRunTestView(APIView):
                     )
 
                 # Serialize and return the created run test
-                response_serializer = RunTestSerializer(run_test)
                 return Response(
-                    response_serializer.data, status=status.HTTP_201_CREATED
+                    _run_test_response_data(run_test), status=status.HTTP_201_CREATED
                 )
         except ReplaySession.DoesNotExist:
             return self.gm.not_found(get_error_message("REPLAY_SESSION_NOT_FOUND"))
@@ -567,9 +806,11 @@ class RunTestDetailView(APIView):
         responses={
             200: RunTestResponseSerializer,
             404: RunTestErrorResponseSerializer,
+            503: RunTestErrorResponseSerializer,
             500: RunTestErrorResponseSerializer,
         },
     )
+    @_bounded_run_test_list_read
     def get(self, request, run_test_id, *args, **kwargs):
         """Retrieve a specific RunTest"""
         try:
@@ -578,7 +819,10 @@ class RunTestDetailView(APIView):
             )
 
             run_test = get_object_or_404(
-                RunTest, id=run_test_id, organization=user_organization, deleted=False
+                _run_test_read_queryset(RunTest.objects),
+                id=run_test_id,
+                organization=user_organization,
+                deleted=False,
             )
 
             serializer = RunTestSerializer(run_test)
@@ -661,8 +905,9 @@ class RunTestDetailView(APIView):
                 run_test.save()
 
                 # Serialize and return the updated run test
-                response_serializer = RunTestSerializer(run_test)
-                return Response(response_serializer.data, status=status.HTTP_200_OK)
+                return Response(
+                    _run_test_response_data(run_test), status=status.HTTP_200_OK
+                )
 
         except (Http404, RunTest.DoesNotExist):
             return self.gm.not_found("Run test not found")
@@ -754,14 +999,19 @@ class RunTestExecutionView(APIView):
                 deleted=False,
             )
 
-            if (
-                run_test.agent_definition
-                and run_test.agent_definition.agent_type
-                == AgentDefinition.AgentTypeChoices.VOICE
-            ):
-                forbidden = _voice_sim_gate_response(user_organization, self.gm)
-                if forbidden is not None:
-                    return forbidden
+            if run_test.agent_definition:
+                from simulate.services.hosted_runner import agent_field_for_run
+
+                # Read the pinned version's agent_type, not the column, so
+                # this gate cannot disagree with what the eligibility check
+                # and the builder resolve for the same run.
+                agent_type = agent_field_for_run(
+                    run_test, "agent_type", run_test.agent_definition.agent_type
+                )
+                if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
+                    forbidden = _voice_sim_gate_response(user_organization, self.gm)
+                    if forbidden is not None:
+                        return forbidden
 
             # Get parameters from the runtime-validated request contract.
             scenario_ids = request.validated_data.get("scenario_ids", [])
@@ -789,6 +1039,37 @@ class RunTestExecutionView(APIView):
             gate_response = check_scenarios_incomplete(final_scenario_ids, run_test)
             if gate_response is not None:
                 return gate_response
+
+            # A repository-backed ALK run owns its complete environment lifecycle. Running it
+            # again from the simulation header must therefore return to the saved harness job;
+            # the generic hosted runner can execute calls, but cannot recreate/reset that job's
+            # Compose/process environment or seeded world.
+            repository_execution = _latest_repository_harness_execution(run_test)
+            if repository_execution is not None:
+                if set(map(str, final_scenario_ids)) != set(
+                    map(str, repository_execution.scenario_ids or [])
+                ):
+                    return self.gm.bad_request(
+                        "Repository harness reruns currently require the complete saved scenario "
+                        "suite so the recreated environment and seeded worlds remain aligned."
+                    )
+                queued = _dispatch_repository_harness_rerun(
+                    repository_execution, environment_values={}
+                )
+                return Response(
+                    {
+                        "message": (
+                            "Saved harness environment restart and full simulation rerun queued"
+                        ),
+                        "execution_id": str(repository_execution.id),
+                        "run_test_id": str(run_test.id),
+                        "status": queued.get("status", {}).get("stage", "queued"),
+                        "total_scenarios": len(final_scenario_ids),
+                        "total_calls": 0,
+                        "scenario_ids": [str(value) for value in final_scenario_ids],
+                    },
+                    status=status.HTTP_200_OK,
+                )
 
             # Route to the hosted runner (released SDK) when enabled and the run
             # is eligible; otherwise fall through to the native Temporal/Celery
@@ -911,18 +1192,36 @@ class RunTestExecutionView(APIView):
     def _hosted_runner_eligible(self, run_test: RunTest) -> bool:
         """Chat (TEXT) always routes to the hosted runner. Voice routes only
         when HOSTED_RUNNER_VOICE_ENABLED is on (default off ⇒ voice stays on
-        the native path, no regression)."""
+        the native path, no regression).
+
+        ``agent_type`` is read via ``agent_field_for_run`` (pinned version's
+        snapshot first, same as the builder) rather than the bare
+        ``AgentDefinition.agent_type`` column, so this gate cannot disagree
+        with what ``build_start_runner_job`` resolves for the same run.
+        This call has no ``TestExecution`` yet (dispatched before one is
+        created), so it can only resolve ``run_test.agent_version`` /
+        ``latest_version`` — the fresh-run case, where the created execution's
+        pin always matches the RunTest's."""
         agent_definition = run_test.agent_definition
         if agent_definition is None:
             return False
-        if agent_definition.agent_type == AgentDefinition.AgentTypeChoices.TEXT:
+        from simulate.services.hosted_runner import agent_field_for_run
+
+        agent_type = agent_field_for_run(
+            run_test, "agent_type", agent_definition.agent_type
+        )
+        if agent_type == AgentDefinition.AgentTypeChoices.TEXT:
             return True
         return _hosted_execution_eligible(run_test)
 
-    def _hosted_runner_mode(self, run_test: RunTest) -> str:
-        from simulate.services.hosted_runner import resolve_runner_mode
+    def _hosted_runner_mode(self, run_test: RunTest, test_execution=None) -> str:
+        from simulate.services.hosted_runner import (
+            resolve_run_agent_version,
+            resolve_runner_mode,
+        )
 
-        return resolve_runner_mode(run_test.agent_definition)
+        agent_version = resolve_run_agent_version(run_test, test_execution)
+        return resolve_runner_mode(run_test.agent_definition, agent_version)
 
     def _execute_with_hosted_runner(
         self, run_test: RunTest, scenario_ids: list[str], simulator_id: str | None
@@ -965,7 +1264,7 @@ class RunTestExecutionView(APIView):
                 run_test_id=str(run_test.id),
                 org_id=str(run_test.organization_id),
                 scenario_ids=[str(sid) for sid in scenario_ids],
-                mode=self._hosted_runner_mode(run_test),
+                mode=self._hosted_runner_mode(run_test, test_execution),
                 simulator_id=str(simulator_id) if simulator_id else None,
             )
 
@@ -1054,6 +1353,7 @@ class TestExecutionCancelView(APIView):
             200: CancelTestExecutionResponseSerializer,
             400: ErrorResponseSerializer,
             404: ErrorResponseSerializer,
+            409: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -1093,6 +1393,12 @@ class TestExecutionCancelView(APIView):
             else:
                 return self.gm.bad_request(
                     "Either run_test_id or test_execution_id must be provided"
+                )
+
+            if is_regrading_a_finished_harness_run(test_execution):
+                return self.gm.custom_error_response(
+                    status.HTTP_409_CONFLICT,
+                    "Grading can't be stopped. It finishes on its own.",
                 )
 
             test_execution.status = TestExecution.ExecutionStatus.CANCELLING
@@ -1141,13 +1447,41 @@ class TestExecutionCancelView(APIView):
         Tries the native TestExecutionWorkflow, hosted
         SimulationRunnerWorkflow, and any active RerunCoordinatorWorkflow.
         """
+        from simulate.models import HostedHarnessJob
+        from simulate.services.hosted_harness import request_cancellation
         from simulate.temporal.client import (
+            cancel_hosted_harness_gateway_workflow,
             cancel_simulation_runner_workflow,
             cancel_test_execution,
             cancel_workflow,
         )
 
         test_execution_id = str(test_execution.id)
+
+        hosted_job = HostedHarnessJob.no_workspace_objects.filter(
+            test_execution_id=test_execution.id
+        ).first()
+        if hosted_job is not None:
+            reason = "user_canceled"
+            request_cancellation(hosted_job, reason)
+            try:
+                cancel_hosted_harness_gateway_workflow(str(hosted_job.id))
+            except Exception:
+                logger.exception(
+                    "hosted simulation workflow cancellation signal failed job=%s",
+                    hosted_job.id,
+                )
+                from simulate.services.hosted_harness_gateway import (
+                    HostedHarnessGateway,
+                )
+
+                HostedHarnessGateway().cancel(hosted_job, reason=reason)
+            return {
+                "success": True,
+                "message": "Cancellation signal sent to hosted simulation",
+                "test_execution_id": test_execution_id,
+            }
+
         any_cancelled = False
 
         try:
@@ -1265,11 +1599,13 @@ class RunTestAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @_bounded_run_test_list_read
     @validated_request(
         query_serializer=RunTestFilterSerializer,
         responses={
             200: RunTestResponseSerializer(many=True),
             404: RunTestErrorResponseSerializer,
+            503: RunTestErrorResponseSerializer,
             500: RunTestErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -1281,6 +1617,7 @@ class RunTestAPIView(APIView):
         - search: search string to filter run tests by name
         - limit: number of items per page (default: 10)
         - page: page number (default: 1)
+        - summary: return the bounded list-card representation
         """
         try:
             # Get the organization of the logged-in user
@@ -1291,16 +1628,19 @@ class RunTestAPIView(APIView):
             if not user_organization:
                 return _gm.not_found("Organization not found for the user.")
 
-            search_query = request.validated_query_data.get("search", "").strip()
+            query_data = request.validated_query_data
+            search_query = query_data.get("search", "").strip()
+            summary = query_data.get("summary", False)
 
             # Filter run tests by organization (only non-deleted)
+            run_tests = RunTest.objects.filter(
+                organization=user_organization,
+                deleted=False,
+            )
             run_tests = (
-                RunTest.objects.filter(organization=user_organization, deleted=False)
-                .prefetch_related("scenarios")
-                .select_related(
-                    "agent_definition",
-                    "simulator_agent",
-                )
+                _run_test_summary_queryset(run_tests)
+                if summary
+                else _run_test_read_queryset(run_tests)
             )
 
             # Apply search filter if search query is provided
@@ -1312,6 +1652,11 @@ class RunTestAPIView(APIView):
                     | models.Q(agent_definition__agent_name__regex=pattern)
                 )
 
+            if summary:
+                run_tests = run_tests.annotate(
+                    last_run_at=Max("executions__created_at")
+                )
+
             # Order by creation date (newest first)
             run_tests = run_tests.order_by("-created_at")
 
@@ -1320,12 +1665,21 @@ class RunTestAPIView(APIView):
             result_page = paginator.paginate_queryset(run_tests, request)
 
             # Serialize the data
-            serializer = RunTestSerializer(result_page, many=True)
+            if summary:
+                serializer = RunTestListSummarySerializer(result_page, many=True)
+            else:
+                serializer = RunTestSerializer(
+                    result_page,
+                    many=True,
+                    context=harness_run_tests_context(result_page),
+                )
 
             # Return paginated response
             return paginator.get_paginated_response(serializer.data)
 
         except NotFound:
+            raise
+        except (ReadDeadlineExceeded, DatabaseError):
             raise
         except Exception as e:
             return _gm.internal_server_error_response(
@@ -1340,7 +1694,8 @@ class TestExecutionAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
+        query_serializer=TestExecutionListQuerySerializer,
         responses={
             200: TestExecutionSerializer(many=True),
             404: RunTestErrorResponseSerializer,
@@ -1366,8 +1721,8 @@ class TestExecutionAPIView(APIView):
                 return _gm.not_found("Organization not found for the user.")
 
             # Get query parameters
-            search_query = request.query_params.get("search", "").strip()
-            status_filter = request.query_params.get("status", "").strip()
+            search_query = request.validated_query_data["search"]
+            status_filter = request.validated_query_data["status"]
 
             # Filter test executions by organization and workspace
             test_executions = TestExecution.objects.filter(
@@ -1747,6 +2102,21 @@ class RunTestKPIsView(APIView):
             # Prepare response
             kpi_data = {
                 "total_calls": total_calls,
+                # The run's COMPLETED-status call count, for both modalities.
+                # `connected_calls` above is not a stand-in: on a chat run it is
+                # this same column, but on a voice run it is
+                # `connected_voice_calls` (`duration_seconds > 0`) -- a
+                # different filter. `total_calls` counts every status and is a
+                # different number too.
+                #
+                # Known limit: this query has no `deleted = false` clause, so
+                # this count, unlike every other KPI here, counts a
+                # soft-deleted call -- while the run-level add's own 202
+                # (`harness_run_evals.py::queue_eval_for_finished_calls`)
+                # selects through `CallExecution.objects`, which is filtered to
+                # live rows, so the two can disagree by exactly a run's
+                # soft-deleted calls.
+                "completed_calls": metrics.get("completed_calls", 0) or 0,
                 "avg_score": avg_score,
                 "avg_response": avg_response,
                 "calls_attempted": calls_attempted,
@@ -1946,6 +2316,21 @@ class RunTestCallExecutionsView(APIView):
                 for snapshot in snapshots:
                     snapshots_dict[str(snapshot.id)] = snapshot
 
+            # One config map for the whole page, not one query per row: union
+            # every eval id this page's call-execution and snapshot rows
+            # reference into a single ``build_eval_configs_map`` call, then
+            # reuse the result below. ``build_eval_configs_map`` only reads
+            # ``call_execution.eval_outputs``, so a duck-typed
+            # ``SimpleNamespace`` holding the union is enough.
+            merged_eval_outputs = {}
+            for call_exec in call_executions_dict.values():
+                merged_eval_outputs.update(call_exec.eval_outputs or {})
+            for snapshot in snapshots_dict.values():
+                merged_eval_outputs.update(snapshot.eval_outputs or {})
+            page_eval_configs_map = build_eval_configs_map(
+                SimpleNamespace(eval_outputs=merged_eval_outputs)
+            )
+
             # Process items in original order
             for item in paginated_items:
                 (
@@ -1960,7 +2345,18 @@ class RunTestCallExecutionsView(APIView):
                 if item_type == "call_execution":
                     call_exec = call_executions_dict.get(str(item_id))
                     if call_exec:
-                        serializer = CallExecutionDetailSerializer(call_exec)
+                        # Same map the call-details view builds, so a removed
+                        # eval's verdict gets the "removed" key here too.
+                        # ``mark_removed_only`` keeps every other effect of
+                        # passing ``eval_configs`` switched off, so this
+                        # surface's shape stays unchanged except for that key.
+                        serializer = CallExecutionDetailSerializer(
+                            call_exec,
+                            context={
+                                "eval_configs": page_eval_configs_map,
+                                "mark_removed_only": True,
+                            },
+                        )
                         call_data = serializer.data
                         call_data["is_snapshot"] = False
                         # Remove rerun_snapshots since we're flattening
@@ -1971,7 +2367,13 @@ class RunTestCallExecutionsView(APIView):
                 else:  # snapshot
                     snapshot = snapshots_dict.get(str(item_id))
                     if snapshot:
-                        # Get the original call execution for context
+                        # Get the original call execution for the non-eval
+                        # keys _convert_snapshot_to_call_execution reads
+                        # (scenario, customer_name, ...). No eval_configs
+                        # context here: this serializer call's own
+                        # eval_outputs/eval_metrics are discarded below --
+                        # the snapshot's own eval_outputs is marked
+                        # separately, from the page-level map above.
                         original_call_exec = snapshot.call_execution
                         serializer = CallExecutionDetailSerializer(original_call_exec)
                         original_data = serializer.data
@@ -1980,6 +2382,7 @@ class RunTestCallExecutionsView(APIView):
                         snapshot_data = self._convert_snapshot_to_call_execution(
                             CallExecutionSnapshotSerializer(snapshot).data,
                             original_data,
+                            page_eval_configs_map,
                         )
                         results.append(snapshot_data)
 
@@ -2032,8 +2435,17 @@ class RunTestCallExecutionsView(APIView):
                 f"Failed to retrieve call executions: {str(e)}"
             )
 
-    def _convert_snapshot_to_call_execution(self, snapshot, original_call_exec):
-        """Convert a snapshot to call execution format for API response"""
+    def _convert_snapshot_to_call_execution(
+        self, snapshot, original_call_exec, eval_configs_map
+    ):
+        """Convert a snapshot to call execution format for API response.
+
+        ``eval_configs_map`` is the page-level map built once in ``get`` --
+        a snapshot has no dedicated serializer method for ``eval_outputs``,
+        so the removed marker is stamped here, directly on the snapshot's own
+        raw stored shape (not the same shape ``CallExecutionDetailSerializer``
+        returns for a live call execution's ``eval_outputs`` -- pre-existing).
+        """
         # Create a call execution object from snapshot data
         snapshot_as_call_exec = {
             # Use snapshot ID as the call execution ID
@@ -2049,7 +2461,9 @@ class RunTestCallExecutionsView(APIView):
             "audio_url": snapshot.get("recording_url"),
             "customer_name": snapshot.get("customer_number")
             or original_call_exec["customer_name"],
-            "eval_outputs": snapshot.get("eval_outputs", {}),
+            "eval_outputs": self._mark_removed_evals(
+                snapshot.get("eval_outputs", {}), eval_configs_map
+            ),
             "eval_metrics": {},  # Will be populated by serializer
             "scenario_columns": original_call_exec["scenario_columns"],
             "error_localizer_tasks": [],  # Snapshots don't have error localizer tasks
@@ -2087,6 +2501,29 @@ class RunTestCallExecutionsView(APIView):
         }
 
         return snapshot_as_call_exec
+
+    @staticmethod
+    def _mark_removed_evals(eval_outputs, eval_configs_map):
+        """Copy of ``eval_outputs`` with ``"removed": True`` stamped on any
+        row whose config was soft-deleted. Never mutates the stored dict --
+        mirrors ``CallExecutionDetailSerializer.get_eval_outputs``'s marker,
+        applied here because a snapshot row has no serializer method of its
+        own for this field.
+
+        Each row is deep-copied, not shallow-copied: a shallow ``dict(...)``
+        would share any nested dict/list with the caller's stored object, so
+        a later in-place edit of the returned row could reach back into it.
+        """
+        if not eval_outputs:
+            return eval_outputs
+        marked = {}
+        for eval_id, eval_data in eval_outputs.items():
+            if isinstance(eval_data, dict):
+                eval_data = copy.deepcopy(eval_data)
+                if getattr(eval_configs_map.get(eval_id), "deleted", False):
+                    eval_data["removed"] = True
+            marked[eval_id] = eval_data
+        return marked
 
 
 class TestExecutionDetailView(APIView):
@@ -2157,10 +2594,23 @@ class TestExecutionDetailView(APIView):
                 .prefetch_related("transcripts", "snapshots", "chat_messages")
             ).order_by("created_at")
 
-            # Get eval configs for filtering
-            eval_configs = SimulateEvalConfig.objects.filter(
-                run_test=test_execution.run_test, deleted=False
+            # ``all_objects``: an eval removed from the environment keeps its
+            # stored verdicts and its column on this surface, marked rather
+            # than hidden. ``select_related`` covers the template reads in
+            # ``build_eval_column`` and in the row serializer's
+            # ``template_type`` lookup.
+            all_eval_configs = list(
+                SimulateEvalConfig.all_objects.filter(
+                    run_test=test_execution.run_test
+                ).select_related("eval_template")
             )
+            all_eval_configs_map = {
+                str(config.id): config for config in all_eval_configs
+            }
+            # The live-only view. The list builds a fresh column order; the map
+            # is only what grouping is handed, an argument it accepts and never
+            # reads. Filters deliberately resolve against every config instead.
+            eval_configs = [config for config in all_eval_configs if not config.deleted]
             eval_configs_map = {str(config.id): config for config in eval_configs}
 
             # Get scenarios for dynamic columns
@@ -2256,15 +2706,25 @@ class TestExecutionDetailView(APIView):
                 test_execution.save(update_fields=["execution_metadata"])
 
             evaluated_eval_ids = set()
+            harness_eval_outputs = {}
             for eo in CallExecution.objects.filter(
                 test_execution=test_execution
             ).values_list("eval_outputs", flat=True):
                 if isinstance(eo, dict):
                     evaluated_eval_ids.update(eo.keys())
+                    for eval_id, eval_output in eo.items():
+                        if (
+                            isinstance(eval_output, dict)
+                            and eval_output.get("source") == "harness"
+                        ):
+                            harness_eval_outputs.setdefault(str(eval_id), eval_output)
+            # Reconciled against every config the run test has ever had, so a
+            # removed eval keeps its column and the table can draw it marked.
             column_order, eval_columns_changed = reconcile_eval_column_order(
                 column_order=column_order,
-                eval_configs=eval_configs,
+                eval_configs=all_eval_configs,
                 evaluated_eval_ids=evaluated_eval_ids,
+                harness_eval_outputs=harness_eval_outputs,
             )
             if eval_columns_changed:
                 test_execution.execution_metadata["column_order"] = column_order
@@ -2312,6 +2772,24 @@ class TestExecutionDetailView(APIView):
                     # Update test_execution's column_order with the missing columns
                     test_execution.execution_metadata["column_order"] = column_order
                     test_execution.save(update_fields=["execution_metadata"])
+
+            # CSAT is the user-facing meaning of overall_score for simulation
+            # calls.  Older executions persisted this column as hidden and
+            # labelled "Overall Score", which made completed hosted CSAT look
+            # absent even though the value was present on every call.
+            csat_column_changed = False
+            for col in column_order:
+                if not isinstance(col, dict) or col.get("id") != "overall_score":
+                    continue
+                if col.get("column_name") != "CSAT":
+                    col["column_name"] = "CSAT"
+                    csat_column_changed = True
+                if col.get("visible") is not True:
+                    col["visible"] = True
+                    csat_column_changed = True
+            if csat_column_changed:
+                test_execution.execution_metadata["column_order"] = column_order
+                test_execution.save(update_fields=["execution_metadata"])
 
             # Ensure voice executions always expose per-call system metric columns.
             if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
@@ -2373,13 +2851,15 @@ class TestExecutionDetailView(APIView):
             # Apply search
             call_executions = self.utils._apply_search(call_executions, search_query)
 
-            # Apply filters
+            # Apply filters. Resolved against every config the run test has
+            # ever had, so a removed eval's column filters like a live one
+            # instead of matching nothing.
             if filters:
                 call_executions = self.utils._apply_filters(
                     call_executions,
                     filters,
                     error_messages,
-                    eval_configs_map,
+                    all_eval_configs_map,
                     column_order=column_order,
                 )
 
@@ -2545,7 +3025,12 @@ class TestExecutionDetailView(APIView):
                 paginated_calls,
                 many=True,
                 context={
-                    "eval_configs": eval_configs_map,
+                    # Includes removed configs, so the serializer's own marker
+                    # stamps their verdicts instead of dropping the rows.
+                    # Deliberately no ``mark_removed_only``: this surface
+                    # already resolves ``template_type``, the config-name
+                    # fallback and the error-localizer flag for live evals.
+                    "eval_configs": all_eval_configs_map,
                     "scenarios": scenarios_map,
                     "row_session_id_map": row_session_id_map,
                     "rows_map": rows_map,
@@ -2561,15 +3046,17 @@ class TestExecutionDetailView(APIView):
                 call_executions_serializer.data
             )
 
-            # Add column order and metadata to response. Drop evaluation
-            # columns whose config was soft-deleted from the run test —
-            # column_order is persisted and is not pruned on eval delete.
+            # Add column order and metadata to response. An evaluation column
+            # survives while its config still exists, removed or not, or while
+            # a harness row carries it; one whose config is gone entirely is
+            # dropped, since column_order is persisted and pruned nowhere else.
             response_data = paginated_response.data
             response_data["column_order"] = [
                 col
                 for col in column_order
                 if col.get("type") != "evaluation"
-                or str(col.get("id")) in eval_configs_map
+                or str(col.get("id")) in all_eval_configs_map
+                or str(col.get("id")) in harness_eval_outputs
             ]
             response_data["error_messages"] = error_messages
             response_data["status"] = test_execution.status
@@ -4153,15 +4640,26 @@ class RunTestComponentsUpdateView(APIView):
 
                 if "version" in data:
                     version_id = data["version"]
+                    # Constrain the version to the run's (possibly just-updated)
+                    # definition — a same-org version from another agent must
+                    # not be pinnable here. A definition-less run has no gate to
+                    # bypass, so it keeps the org-only lookup.
+                    version_filters = {
+                        "id": version_id,
+                        "organization": user_organization,
+                        "deleted": False,
+                    }
+                    if run_test.agent_definition_id is not None:
+                        version_filters["agent_definition"] = run_test.agent_definition
                     try:
-                        version = AgentVersion.objects.get(
-                            id=version_id, organization=user_organization, deleted=False
-                        )
+                        version = AgentVersion.objects.get(**version_filters)
                         run_test.agent_version = version
                         new_agent_version = version
                         agent_version_changed = True
                     except AgentVersion.DoesNotExist:
-                        return self.gm.not_found("Agent version not found")
+                        return self.gm.not_found(
+                            "Agent version not found for the selected agent definition."
+                        )
 
                 # Update SimulatorAgent if provided
                 if "simulator_agent_id" in data:
@@ -4217,7 +4715,19 @@ class RunTestComponentsUpdateView(APIView):
                     )
 
                     if agent_version_to_check and run_test.agent_definition:
-                        agent_type = run_test.agent_definition.agent_type
+                        from simulate.services.hosted_runner import (
+                            agent_field_for_run,
+                        )
+
+                        # Check the exact version this update is about to pin
+                        # (may not be run_test.agent_version yet), not the
+                        # definition column.
+                        agent_type = agent_field_for_run(
+                            run_test,
+                            "agent_type",
+                            run_test.agent_definition.agent_type,
+                            agent_version=agent_version_to_check,
+                        )
                         if (
                             not agent_type
                             or agent_type == AgentDefinition.AgentTypeChoices.VOICE
@@ -4266,8 +4776,9 @@ class RunTestComponentsUpdateView(APIView):
                 run_test.save()
 
                 # Serialize and return the updated run test
-                response_serializer = RunTestSerializer(run_test)
-                return Response(response_serializer.data, status=status.HTTP_200_OK)
+                return Response(
+                    _run_test_response_data(run_test), status=status.HTTP_200_OK
+                )
 
         except (Http404, RunTest.DoesNotExist):
             traceback.print_exc()
@@ -4511,7 +5022,7 @@ class AddEvalConfigView(APIView):
                     # Get EvalTemplate by ID
                     try:
                         eval_template = EvalTemplate.no_workspace_objects.get(
-                            _visible_eval_template_query(
+                            visible_eval_template_query(
                                 user_organization,
                                 getattr(request, "workspace", None),
                             ),
@@ -4853,117 +5364,15 @@ class UpdateEvalConfigView(APIView):
 
             run = validated.get("run", False)
 
-            # Resolve new template if provided so config normalization uses the
-            # right template schema.
-            new_template = None
-            if "template_id" in validated:
-                template_id = validated.get("template_id")
-                try:
-                    new_template = EvalTemplate.no_workspace_objects.get(
-                        _visible_eval_template_query(
-                            user_organization,
-                            getattr(request, "workspace", None),
-                        ),
-                        id=template_id,
-                    )
-                except EvalTemplate.DoesNotExist:
-                    return self._gm.bad_request("Evaluation template not found")
-
-            # Update config if provided (similar to EditAndRunUserEvalView)
-            new_config = validated.get("config")
-            if new_config:
-                template_config = (
-                    new_template.config
-                    if new_template
-                    else eval_config.eval_template.config
+            try:
+                update_eval_config(
+                    eval_config,
+                    validated,
+                    organization=user_organization,
+                    workspace=getattr(request, "workspace", None),
                 )
-                try:
-                    eval_config.config = normalize_eval_runtime_config(
-                        template_config, new_config
-                    )
-                except ValueError as e:
-                    return self._gm.bad_request(str(e))
-            elif new_template:
-                # Template changed without new config: re-normalize existing config
-                # against the new template's schema so it stays valid after the switch.
-                try:
-                    eval_config.config = normalize_eval_runtime_config(
-                        new_template.config, eval_config.config
-                    )
-                except ValueError as e:
-                    return self._gm.bad_request(
-                        f"Cannot switch template: existing config is incompatible with new template. {str(e)}"
-                    )
-
-            # Update mapping if provided at top level
-            if "mapping" in validated:
-                eval_config.mapping = validated.get("mapping")
-
-            # Update filters if provided
-            if "filters" in validated:
-                eval_config.filters = validated.get("filters") or []
-
-            # Update other fields if provided
-            if "name" in validated:
-                new_name = validated.get("name")
-                if (
-                    SimulateEvalConfig.objects.filter(
-                        run_test=run_test,
-                        name=new_name,
-                        deleted=False,
-                    )
-                    .exclude(id=eval_config.id)
-                    .exists()
-                ):
-                    return self._gm.bad_request(
-                        f"An evaluation config with the name '{new_name}' already exists in this run test. Please use a different name."
-                    )
-                eval_config.name = new_name
-            if "model" in validated:
-                eval_config.model = validated.get("model")
-            if "error_localizer" in validated:
-                eval_config.error_localizer = validated.get("error_localizer")
-            if "kb_id" in validated:
-                kb_id = validated.get("kb_id")
-                if kb_id:
-                    from model_hub.models.develop_dataset import KnowledgeBaseFile
-
-                    try:
-                        eval_config.kb_id = KnowledgeBaseFile.objects.get(
-                            id=kb_id, organization=user_organization
-                        )
-                    except KnowledgeBaseFile.DoesNotExist:
-                        return self._gm.bad_request("Knowledge base not found")
-                else:
-                    eval_config.kb_id = None
-
-            # Re-validate mapping against the new template's input variables.
-            # When template switches without an explicit mapping, the old
-            # mapping keys can diverge from what the new template expects.
-            if new_template and "mapping" not in validated and eval_config.mapping:
-                template_config = new_template.config or {}
-                required_keys = template_config.get("required_keys", []) or []
-                optional_keys = template_config.get("optional_keys", []) or []
-                valid_keys = set(required_keys) | set(optional_keys)
-                invalid_keys = set(eval_config.mapping.keys()) - valid_keys
-                if invalid_keys:
-                    return self._gm.bad_request(
-                        f"Keys {sorted(invalid_keys)} are not valid input variables for the selected template. Valid keys: {sorted(valid_keys)}"
-                    )
-
-            # Re-validate kb_id: clear it on template switch when not
-            # explicitly provided, since the new template may not be
-            # compatible with the old knowledge base.
-            if new_template and "kb_id" not in validated:
-                eval_config.kb_id = None
-
-            # Switch template after config normalization so the existing config
-            # is validated against the new template's schema.
-            if new_template:
-                eval_config.eval_template = new_template
-
-            # Save the eval config
-            eval_config.save()
+            except EvalConfigEditRefused as refused:
+                return self._gm.bad_request(str(refused))
 
             # If run is True, trigger rerun on the specified test execution
             # (Phase 0.2: test_execution_id required check moved to EvalConfigUpdateRequestSerializer.validate())
@@ -5013,11 +5422,19 @@ class UpdateEvalConfigView(APIView):
                     id__in=call_execution_ids
                 )
                 call_executions_list = []
+                stamped_at = timezone.now()
                 for call_execution in call_executions_to_update:
                     # Provider-agnostic eval flags live in call_metadata
                     call_execution.call_metadata = call_execution.call_metadata or {}
                     call_execution.call_metadata["eval_started"] = True
                     call_execution.call_metadata["eval_completed"] = False
+                    # The placeholder's scoring clock starts at this dispatch,
+                    # not at the call's own, possibly old, completion.
+                    stamp_eval_queued(
+                        call_execution.call_metadata,
+                        eval_config_ids_str,
+                        now=stamped_at,
+                    )
 
                     # Initialize eval_outputs for the updated eval config
                     if not call_execution.eval_outputs:
@@ -5087,6 +5504,23 @@ class UpdateEvalConfigView(APIView):
             )
 
 
+def _covered_scenario_count(run_test) -> int:
+    """How many distinct scenarios the run test's executions have covered, over every execution.
+
+    A harness run keeps its scenarios as ``selected_scenario_keys``: its
+    ``scenario_ids`` all point at the one dataset row the environment maps to,
+    so they would count as a single scenario. Runs without keys are native
+    runs, where each entry in ``scenario_ids`` is a scenario of its own.
+    """
+    covered: set[str] = set()
+    rows = TestExecution.objects.filter(run_test=run_test, deleted=False).values_list(
+        "scenario_ids", "execution_metadata__selected_scenario_keys"
+    )
+    for scenario_ids, keys in rows:
+        covered.update(str(item) for item in (keys or scenario_ids or []))
+    return len(covered)
+
+
 class RunTestExecutionsView(APIView):
     """
     API View to get test execution data for a specific run test with search and pagination
@@ -5134,6 +5568,9 @@ class RunTestExecutionsView(APIView):
 
             # Get test executions for this run test with annotations to avoid N+1 queries
             # Use annotations to calculate call metrics in a single query
+            # A join over "calls" does not go through the model manager, so
+            # every aggregate has to leave soft-deleted calls out itself.
+            visible_calls = models.Q(calls__deleted=False)
             test_executions = (
                 TestExecution.objects.filter(run_test=run_test, deleted=False)
                 .select_related(
@@ -5142,28 +5579,39 @@ class RunTestExecutionsView(APIView):
                 )
                 .prefetch_related("calls")
                 .annotate(
-                    _total_calls=Count("calls"),
+                    _total_calls=Count("calls", filter=visible_calls),
                     _completed_calls=Count(
                         "calls",
-                        filter=models.Q(
-                            calls__status=CallExecution.CallStatus.COMPLETED
-                        ),
+                        filter=visible_calls
+                        & models.Q(calls__status=CallExecution.CallStatus.COMPLETED),
                     ),
                     _pending_calls=Count(
                         "calls",
-                        filter=models.Q(calls__status=CallExecution.CallStatus.PENDING),
+                        filter=visible_calls
+                        & models.Q(calls__status=CallExecution.CallStatus.PENDING),
                     ),
                     _queued_calls=Count(
                         "calls",
-                        filter=models.Q(
-                            calls__status=CallExecution.CallStatus.REGISTERED
+                        filter=visible_calls
+                        & models.Q(calls__status=CallExecution.CallStatus.REGISTERED),
+                    ),
+                    _failed_calls=Count(
+                        "calls",
+                        filter=visible_calls
+                        & models.Q(
+                            calls__status__in=(
+                                CallExecution.CallStatus.FAILED,
+                                CallExecution.CallStatus.CANCELLED,
+                            )
                         ),
                     ),
                     _connected_calls=Count(
                         "calls",
-                        filter=models.Q(calls__duration_seconds__gt=0),
+                        filter=visible_calls & models.Q(calls__duration_seconds__gt=0),
                     ),
-                    _avg_response_time_ms=Avg("calls__response_time_ms"),
+                    _avg_response_time_ms=Avg(
+                        "calls__response_time_ms", filter=visible_calls
+                    ),
                 )
             )
 
@@ -5228,12 +5676,41 @@ class RunTestExecutionsView(APIView):
 
             # Batch fetch agent turn counts for all executions in one query
             execution_ids = [te.id for te in result_page]
+            hosted_jobs = {
+                job.test_execution_id: job.id
+                for job in HostedHarnessJob.no_workspace_objects.filter(
+                    test_execution_id__in=execution_ids
+                ).only("id", "test_execution_id")
+            }
+            outcome_counts = {}
+            if hosted_jobs:
+                # A receipt belongs to a call through its execution, or, for a
+                # scenario-level receipt, through the scenario registration.
+                # Receipts of soft-deleted calls stay in the table and must
+                # not be counted.
+                receipt_of_deleted_call = models.Q(
+                    execution__call_execution__deleted=True
+                ) | models.Q(
+                    execution__isnull=True, scenario__call_execution__deleted=True
+                )
+                for row in (
+                    HostedHarnessReceipt.no_workspace_objects.filter(
+                        job_id__in=hosted_jobs.values()
+                    )
+                    .exclude(receipt_of_deleted_call)
+                    .values("job_id", "status")
+                    .annotate(count=Count("id"))
+                ):
+                    outcome_counts.setdefault(row["job_id"], {})[row["status"]] = row[
+                        "count"
+                    ]
             agent_turn_counts = {}
             chat_duration_map = {}
             if execution_ids:
                 turn_counts_qs = (
                     ChatMessageModel.objects.filter(
                         call_execution__test_execution_id__in=execution_ids,
+                        call_execution__deleted=False,
                         role=ChatMessageModel.RoleChoices.USER,
                     )
                     .values("call_execution__test_execution_id")
@@ -5251,6 +5728,7 @@ class RunTestExecutionsView(APIView):
                     chat_times_qs = (
                         ChatMessageModel.objects.filter(
                             call_execution__test_execution_id__in=execution_ids,
+                            call_execution__deleted=False,
                         )
                         .values("call_execution__test_execution_id")
                         .annotate(
@@ -5282,6 +5760,7 @@ class RunTestExecutionsView(APIView):
                 total_calls = test_execution._total_calls or 0
                 completed_calls = test_execution._completed_calls or 0
                 pending_calls = test_execution._pending_calls or 0
+                failed_calls = test_execution._failed_calls or 0
                 queued_calls = test_execution._queued_calls or 0
                 connected_calls = test_execution._connected_calls or 0
                 avg_response_time_ms = test_execution._avg_response_time_ms
@@ -5409,7 +5888,7 @@ class RunTestExecutionsView(APIView):
                         "error_reason": test_execution.error_reason,
                         "success_rate": round(success_rate, 2),
                         "avg_response_time": round(avg_response_time, 3),
-                        "calls": test_execution.total_calls,
+                        "calls": total_calls,
                         "calls_attempted": execution_calls_attempted,
                         "connected_calls": connected_calls,
                         "agent_version": agent_version_name,
@@ -5419,6 +5898,49 @@ class RunTestExecutionsView(APIView):
                         "agent_type": agent_type,
                         "total_number_of_fagi_agent_turns": total_number_of_fagi_agent_turns,
                         "source_type": run_test.source_type,
+                        "scenario_keys": list(
+                            (test_execution.execution_metadata or {}).get(
+                                "selected_scenario_keys"
+                            )
+                            or []
+                        ),
+                        "selected_scenarios": test_execution.total_scenarios,
+                        "trials": test_execution.trials,
+                        "total_calls": total_calls,
+                        "completed_calls": completed_calls,
+                        "failed_calls": failed_calls,
+                        "pending_calls": max(
+                            total_calls - completed_calls - failed_calls, 0
+                        ),
+                        "completed_at": (
+                            test_execution.completed_at.isoformat()
+                            if test_execution.completed_at
+                            else None
+                        ),
+                        "outcome_passed": (
+                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
+                                "passed", 0
+                            )
+                            if test_execution.id in hosted_jobs
+                            else None
+                        ),
+                        "outcome_failed": (
+                            sum(
+                                outcome_counts.get(
+                                    hosted_jobs[test_execution.id], {}
+                                ).get(status, 0)
+                                for status in ("failed", "errored")
+                            )
+                            if test_execution.id in hosted_jobs
+                            else None
+                        ),
+                        "outcome_skipped": (
+                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
+                                "skipped", 0
+                            )
+                            if test_execution.id in hosted_jobs
+                            else None
+                        ),
                     }
                 )
 
@@ -5426,7 +5948,11 @@ class RunTestExecutionsView(APIView):
             execution_serializer = TestExecutionItemResponseSerializer(
                 execution_data, many=True
             )
-            return paginator.get_paginated_response(execution_serializer.data)
+            response = paginator.get_paginated_response(execution_serializer.data)
+            # Over every execution, not the page, so the runs summary header can
+            # say how many scenarios all runs together have covered.
+            response.data["covered_scenario_count"] = _covered_scenario_count(run_test)
+            return response
 
         except Http404:
             return _gm.not_found("Run test not found.")
@@ -6340,24 +6866,105 @@ def _rerun_call_executions(call_executions, rerun_type):
     return successful_reruns, failed_reruns, has_pending_calls, has_pending_evals
 
 
-def _hosted_execution_eligible(run_test) -> bool:
+def _hosted_execution_eligible(
+    run_test, test_execution=None, *, agent_version=None
+) -> bool:
     """Whether a run's execution routes to the hosted simulation runner — the
     same predicate the execute view uses. Rerun must mirror it so hosted
     executions re-dispatch through the runner instead of the native
     CallExecutionWorkflow (which would try to place a real provider call with no
-    phone number and fail with "activity task failed")."""
+    phone number and fail with "activity task failed").
+
+    ``test_execution``, when the caller already has one (a rerun), is passed
+    through the shared ``resolve_run_agent_version`` ladder so this agrees
+    with the version the builder resolves for the same execution rather than
+    only ever looking at ``run_test.agent_version``. ``agent_version``, when
+    the caller already resolved it (the bulk rerun loop does, once per
+    execution), is reused instead of resolving the ladder a second time here.
+    """
     agent_definition = run_test.agent_definition
     if agent_definition is None:
         return False
-    if agent_definition.agent_type == AgentDefinition.AgentTypeChoices.TEXT:
+    from simulate.services.hosted_runner import agent_field_for_run
+
+    if agent_version is None:
+        from simulate.services.hosted_runner import resolve_run_agent_version
+
+        agent_version = resolve_run_agent_version(run_test, test_execution)
+
+    agent_type = agent_field_for_run(
+        run_test,
+        "agent_type",
+        agent_definition.agent_type,
+        agent_version=agent_version,
+    )
+    if agent_type == AgentDefinition.AgentTypeChoices.TEXT:
         return True
-    if agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE:
+    if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
         if not bool(getattr(app_settings, "HOSTED_RUNNER_VOICE_ENABLED", False)):
             return False
         from simulate.services.hosted_runner import hosted_runner_supports
 
-        return hosted_runner_supports(agent_definition)
+        return hosted_runner_supports(agent_definition, agent_version)
     return False
+
+
+def _repository_harness_job_id(test_execution) -> str | None:
+    """Return the ALK job owning this repository-backed execution, if any.
+
+    The HostedHarnessJob relation is authoritative. Metadata is retained for
+    detached/read-model compatibility, and the strict name fallback keeps
+    already-created development runs rerunnable without redirecting native or
+    provider-only simulations.
+    """
+
+    from simulate.models import HostedHarnessJob
+
+    related_job_id = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            test_execution_id=test_execution.id
+        )
+        .values_list("id", flat=True)
+        .first()
+    )
+    if related_job_id:
+        return str(related_job_id)
+
+    metadata = test_execution.execution_metadata or {}
+    explicit = str(metadata.get("harness_job_id") or "").strip()
+    if re.fullmatch(r"[0-9a-fA-F-]{36}", explicit):
+        return explicit
+    match = re.fullmatch(
+        r"harness-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+        r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})",
+        str(test_execution.run_test.name or ""),
+    )
+    return match.group(1) if match else None
+
+
+def _latest_repository_harness_execution(run_test):
+    """Return the newest execution belonging to a saved repository harness job."""
+
+    for execution in run_test.executions.order_by("-started_at"):
+        if _repository_harness_job_id(execution):
+            return execution
+    return None
+
+
+def _dispatch_repository_harness_rerun(
+    test_execution, *, environment_values: dict[str, str]
+) -> dict:
+    from simulate.services.harness_provider import get_harness_provider
+
+    job_id = _repository_harness_job_id(test_execution)
+    if not job_id:
+        raise ValueError("execution has no saved repository harness job")
+    return get_harness_provider().rerun_saved(
+        job_id,
+        organization=test_execution.run_test.organization,
+        workspace=test_execution.run_test.workspace,
+        environment_values=environment_values,
+    )
 
 
 def _dispatch_hosted_rerun(test_execution, call_execution_ids=None) -> str:
@@ -6368,18 +6975,28 @@ def _dispatch_hosted_rerun(test_execution, call_execution_ids=None) -> str:
 
     ``call_execution_ids`` scopes the rebuilt job to only those calls (a partial
     or single-call rerun); the runner builds exactly their cases so the SDK's
-    positional case→row mapping matches the rows ``/batch`` re-adopts."""
-    from simulate.services.hosted_runner import resolve_runner_mode
+    positional case→row mapping matches the rows ``/batch`` re-adopts.
+
+    The mode is resolved through ``resolve_run_agent_version`` (run_test pin →
+    this execution's pin → latest_version) — the same ladder
+    ``build_start_runner_job`` uses for the rebuilt job, so this dispatch's
+    mode cannot disagree with the transport the builder derives for it.
+    """
+    from simulate.services.hosted_runner import (
+        resolve_run_agent_version,
+        resolve_runner_mode,
+    )
     from simulate.temporal.client import start_simulation_runner_workflow
 
     run_test = test_execution.run_test
     scenario_ids = [str(sid) for sid in (test_execution.scenario_ids or [])]
+    agent_version = resolve_run_agent_version(run_test, test_execution)
     return start_simulation_runner_workflow(
         test_execution_id=str(test_execution.id),
         run_test_id=str(run_test.id),
         org_id=str(run_test.organization_id),
         scenario_ids=scenario_ids,
-        mode=resolve_runner_mode(run_test.agent_definition),
+        mode=resolve_runner_mode(run_test.agent_definition, agent_version),
         simulator_id=(
             str(test_execution.simulator_agent_id)
             if test_execution.simulator_agent_id
@@ -6404,6 +7021,7 @@ class CallExecutionRerunView(APIView):
         request_serializer=CallExecutionRerunSerializer,
         responses={
             200: RerunCallsResponseSerializer,
+            202: RerunCallsResponseSerializer,
             400: ErrorResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
@@ -6452,12 +7070,32 @@ class CallExecutionRerunView(APIView):
 
             # Hosted executions re-run through the simulation runner, not the
             # native CallExecutionWorkflow (call_and_eval only; eval_only reruns
-            # just re-score existing transcripts).
-            is_hosted = _hosted_execution_eligible(test_execution.run_test)
+            # just re-score existing transcripts). Pass this execution so the
+            # eligibility check resolves the same pinned version the rerun
+            # dispatch/builder will.
+            is_hosted = _hosted_execution_eligible(
+                test_execution.run_test, test_execution
+            )
 
-            # Validate CHAT/TEXT agents can only use eval_only rerun type
-            if rerun_type != "eval_only" and test_execution.run_test.agent_definition:
-                agent_type = test_execution.run_test.agent_definition.agent_type
+            repository_job_id = _repository_harness_job_id(test_execution)
+
+            # Validate native CHAT/TEXT agents can only use eval_only rerun type.
+            if (
+                rerun_type != "eval_only"
+                and not repository_job_id
+                and test_execution.run_test.agent_definition
+            ):
+                from simulate.services.hosted_runner import agent_field_for_run
+
+                # Same pinned version is_hosted just resolved, not the column,
+                # so this guard cannot classify the run differently than the
+                # eligibility check above did.
+                agent_type = agent_field_for_run(
+                    test_execution.run_test,
+                    "agent_type",
+                    test_execution.run_test.agent_definition.agent_type,
+                    test_execution=test_execution,
+                )
                 if agent_type == AgentDefinition.AgentTypeChoices.TEXT:
                     return self._gm.bad_request(
                         "Text/Chat agents only support 'eval_only' rerun type."
@@ -6505,12 +7143,63 @@ class CallExecutionRerunView(APIView):
                     "No call executions found that can be rerun."
                 )
 
+            # A repository-backed ALK execution owns the target environment lifecycle. Its rerun
+            # must go back through that saved session so Compose/processes, seed/reset, agent,
+            # calls, grading and cleanup happen together. The generic hosted voice path below is
+            # intentionally retained for native/connect-only/Vapi/Retell runs.
+            if rerun_type == "call_and_eval" and repository_job_id:
+                if not select_all or call_execution_ids:
+                    return self._gm.bad_request(
+                        "Repository harness reruns currently require select_all=true so the "
+                        "saved scenario suite and isolated environment remain aligned."
+                    )
+                try:
+                    queued = _dispatch_repository_harness_rerun(
+                        test_execution,
+                        environment_values=request.validated_data.get(
+                            "environment_values", {}
+                        ),
+                    )
+                except Exception as dispatch_error:
+                    logger.exception(
+                        "repository_harness_rerun_dispatch_failed",
+                        test_execution_id=str(test_execution.id),
+                        harness_job_id=repository_job_id,
+                    )
+                    return self._gm.bad_request(
+                        f"Saved harness environment could not be restarted: {dispatch_error}"
+                    )
+                return Response(
+                    {
+                        "message": (
+                            "Saved harness environment restart and full simulation rerun queued"
+                        ),
+                        "test_execution_id": str(test_execution.id),
+                        "rerun_type": rerun_type,
+                        "total_processed": 0,
+                        "harness_job_id": repository_job_id,
+                        "harness_status": queued.get("status", {}),
+                        "successful_reruns": [],
+                        "failed_reruns": [],
+                        "success_count": 0,
+                        "failure_count": 0,
+                        "dispatch_error": None,
+                    },
+                    status=status.HTTP_202_ACCEPTED,
+                )
+
             # Process each call execution
             successful_reruns = []
             failed_reruns = []
             has_pending_calls = False
             has_pending_evals = False
             pre_rerun_status = test_execution.status
+            # An eval-only child grades every runnable config of the run.
+            rerun_eval_ids = (
+                runnable_eval_config_ids(test_execution.run_test_id)
+                if rerun_type == "eval_only"
+                else []
+            )
 
             for call_execution in call_executions:
                 try:
@@ -6526,6 +7215,13 @@ class CallExecutionRerunView(APIView):
                         )
                         call_execution.call_metadata["eval_started"] = False
                         call_execution.call_metadata["eval_completed"] = False
+                        # Its scoring clock starts here, not at the call's old
+                        # completion, so the coordinator's wait is not a timeout.
+                        stamp_eval_queued(
+                            call_execution.call_metadata,
+                            rerun_eval_ids,
+                            now=timezone.now(),
+                        )
                         call_execution.save()
 
                         # Evals will be handled by RerunCoordinatorWorkflow below
@@ -6881,6 +7577,8 @@ class TestExecutionRerunView(APIView):
         call_ids_to_delete_transcripts = []
 
         # First pass: prepare all objects in memory
+        rerun_eval_ids = {}
+        stamped_at = timezone.now()
         for call_execution in call_executions:
             try:
                 if rerun_type == "eval_only":
@@ -6896,10 +7594,23 @@ class TestExecutionRerunView(APIView):
                         )
                     )
                     # Prepare call execution updates
+                    if call_execution.test_execution_id not in rerun_eval_ids:
+                        rerun_eval_ids[call_execution.test_execution_id] = (
+                            runnable_eval_config_ids(
+                                call_execution.test_execution.run_test_id
+                            )
+                        )
                     call_execution.eval_outputs = {}
                     call_execution.call_metadata = call_execution.call_metadata or {}
                     call_execution.call_metadata["eval_started"] = False
                     call_execution.call_metadata["eval_completed"] = False
+                    # The rerun child grades every runnable config; its scoring
+                    # clock starts here, not at the call's old completion.
+                    stamp_eval_queued(
+                        call_execution.call_metadata,
+                        rerun_eval_ids[call_execution.test_execution_id],
+                        now=stamped_at,
+                    )
                     call_executions_to_update.append(call_execution)
                 else:
                     # call_and_eval: Capture transcript data before we delete them
@@ -7051,13 +7762,22 @@ class TestExecutionRerunView(APIView):
             select_all = request.validated_data.get("select_all", False)
             test_execution_ids = request.validated_data.get("test_execution_ids", [])
 
-            # Hosted executions re-run through the simulation runner (call_and_eval
-            # only); native ones keep the RerunCoordinatorWorkflow path.
-            is_hosted = _hosted_execution_eligible(run_test)
+            # Repository-uploaded agents carry their authoritative modality in
+            # the saved ALK contract. Do not apply the native AgentDefinition
+            # TEXT guard to that durable harness execution.
+            repository_execution = _latest_repository_harness_execution(run_test)
 
-            # Validate CHAT/TEXT agents can only use eval_only rerun type
-            if rerun_type != "eval_only" and run_test.agent_definition:
-                agent_type = run_test.agent_definition.agent_type
+            # Validate native CHAT/TEXT agents can only use eval_only rerun type.
+            if (
+                rerun_type != "eval_only"
+                and repository_execution is None
+                and run_test.agent_definition
+            ):
+                from simulate.services.hosted_runner import agent_field_for_run
+
+                agent_type = agent_field_for_run(
+                    run_test, "agent_type", run_test.agent_definition.agent_type
+                )
                 if agent_type == AgentDefinition.AgentTypeChoices.TEXT:
                     return self._gm.bad_request(
                         "Text/Chat agents only support 'eval_only' rerun type."
@@ -7073,22 +7793,83 @@ class TestExecutionRerunView(APIView):
                 TestExecution.ExecutionStatus.RUNNING,
                 TestExecution.ExecutionStatus.CANCELLING,
             ]
+            # select_related: each execution's own pin resolution (below) reads
+            # both FKs, so this avoids two extra queries per execution.
             if select_all:
-                test_executions = TestExecution.objects.filter(
-                    run_test=run_test
-                ).exclude(status__in=non_rerunnable_statuses)
+                test_executions = (
+                    TestExecution.objects.filter(run_test=run_test)
+                    .select_related("agent_version", "run_test__agent_version")
+                    .exclude(status__in=non_rerunnable_statuses)
+                )
                 if test_execution_ids:
                     test_executions = test_executions.exclude(id__in=test_execution_ids)
             else:
-                test_executions = TestExecution.objects.filter(
-                    id__in=test_execution_ids, run_test=run_test
-                ).exclude(status__in=non_rerunnable_statuses)
+                test_executions = (
+                    TestExecution.objects.filter(
+                        id__in=test_execution_ids, run_test=run_test
+                    )
+                    .select_related("agent_version", "run_test__agent_version")
+                    .exclude(status__in=non_rerunnable_statuses)
+                )
 
             if not test_executions.exists():
                 return self._gm.bad_request(
                     "No test executions found that can be rerun. "
                     "Executions in pending, running, or cancelling status cannot be rerun."
                 )
+
+            # The simulation-grid rerun action is a second UI route to the same operation as
+            # "Run test" above. Keep repository jobs on their saved ALK lifecycle instead of
+            # clearing their rows and dispatching the connector-only Temporal workflow.
+            if rerun_type == "call_and_eval":
+                repository_executions = [
+                    execution
+                    for execution in test_executions.order_by("-started_at")
+                    if _repository_harness_job_id(execution)
+                ]
+                if repository_executions:
+                    source_execution = repository_executions[0]
+                    try:
+                        queued = _dispatch_repository_harness_rerun(
+                            source_execution, environment_values={}
+                        )
+                    except Exception as dispatch_error:
+                        logger.exception(
+                            "repository_harness_bulk_rerun_dispatch_failed",
+                            test_execution_id=str(source_execution.id),
+                            harness_job_id=_repository_harness_job_id(source_execution),
+                        )
+                        return self._gm.bad_request(
+                            "Saved harness environment could not be restarted: "
+                            f"{dispatch_error}"
+                        )
+                    execution_ids = [
+                        str(execution.id) for execution in repository_executions
+                    ]
+                    return Response(
+                        {
+                            "message": (
+                                "Saved harness environment restart and full simulation rerun queued"
+                            ),
+                            "run_test_id": str(run_test_id),
+                            "rerun_type": rerun_type,
+                            "total_test_executions": len(execution_ids),
+                            "results": [
+                                {
+                                    "test_execution_id": str(source_execution.id),
+                                    "success_count": len(execution_ids),
+                                    "failure_count": 0,
+                                    "successful_reruns": execution_ids,
+                                    "failed_reruns": [],
+                                    "dispatch_error": None,
+                                    "harness_status": queued.get("status", {}),
+                                }
+                            ],
+                            "overall_success_count": len(execution_ids),
+                            "overall_failure_count": 0,
+                        },
+                        status=status.HTTP_200_OK,
+                    )
 
             from simulate.temporal.client import rerun_call_executions
 
@@ -7101,6 +7882,19 @@ class TestExecutionRerunView(APIView):
                 pre_rerun_status = test_execution.status
                 call_executions = CallExecution.objects.filter(
                     test_execution=test_execution
+                )
+
+                # Resolved per execution (not once for the whole batch): each
+                # execution can be pinned to a different version than
+                # run_test's. Resolved once here and passed in so the
+                # eligibility check below doesn't resolve the ladder again.
+                from simulate.services.hosted_runner import (
+                    resolve_run_agent_version,
+                )
+
+                resolved_version = resolve_run_agent_version(run_test, test_execution)
+                is_hosted = _hosted_execution_eligible(
+                    run_test, test_execution, agent_version=resolved_version
                 )
 
                 if not call_executions.exists():
@@ -7328,6 +8122,7 @@ class RunNewEvalsOnTestExecutionView(APIView):
             400: EvalErrorResponseSerializer,
             401: "Unauthorized",
             404: EvalErrorResponseSerializer,
+            409: EvalErrorResponseSerializer,
             500: EvalErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -7361,14 +8156,6 @@ class RunNewEvalsOnTestExecutionView(APIView):
                 "enable_tool_evaluation"
             )
 
-            # Update run_test.enable_tool_evaluation if provided
-            if enable_tool_evaluation is not None:
-                run_test.enable_tool_evaluation = enable_tool_evaluation
-                run_test.save(update_fields=["enable_tool_evaluation"])
-                logger.info(
-                    f"Updated enable_tool_evaluation to {enable_tool_evaluation} for run test {run_test.id}"
-                )
-
             # Get test executions to run evaluations on
             if select_all:
                 # Get all test executions for this run test
@@ -7382,235 +8169,95 @@ class RunNewEvalsOnTestExecutionView(APIView):
                     id__in=test_execution_ids, run_test=run_test
                 )
 
-            if not test_executions.exists():
+            # Every check and write below reads these ids, so a run started
+            # while this request is answered is neither refused for, moved to
+            # EVALUATING, nor counted against the claim.
+            execution_ids = [
+                str(execution_id)
+                for execution_id in test_executions.values_list("id", flat=True)
+            ]
+            if not execution_ids:
                 return self._gm.bad_request(
                     "No test executions found to run evaluations on."
                 )
 
-            # Validate that all test executions have COMPLETED status
-            non_completed_executions = test_executions.exclude(
-                status=TestExecution.ExecutionStatus.COMPLETED
-            )
+            harness_run = is_harness_run_test(run_test.id)
+            # The execution turns COMPLETED at the last call's ingest, but
+            # teardown later writes the job's end state onto it, which would
+            # overwrite EVALUATING mid-grade. Teardown commits the job and the
+            # run together, so asking this before the status check means the
+            # status read sees whatever teardown wrote.
+            try:
+                regrade_still_finishing(execution_ids, harness_run=harness_run)
+            except RegradeStillFinishing as still_finishing:
+                return self._gm.custom_error_response(
+                    status.HTTP_409_CONFLICT, str(still_finishing)
+                )
 
-            if non_completed_executions.exists():
+            # Read after the job check above, for the teardown reason it gives.
+            previous_test_execution_statuses = {
+                str(execution_id): execution_status
+                for execution_id, execution_status in TestExecution.objects.filter(
+                    id__in=execution_ids
+                ).values_list("id", "status")
+            }
+            execution_ids = list(previous_test_execution_statuses)
+            if any(
+                execution_status != TestExecution.ExecutionStatus.COMPLETED
+                for execution_status in previous_test_execution_statuses.values()
+            ):
                 return self._gm.bad_request(
                     "Only test executions with COMPLETED status can have new evaluations run on them."
                 )
 
-            # Validate eval configs exist and belong to the same run test
+            # Validate eval configs exist and belong to the same run test.
+            # The service checks this again; both answer with this sentence.
+            eval_config_not_found = (
+                "One or more eval configs not found or do not belong to this run test."
+            )
             eval_configs = SimulateEvalConfig.objects.filter(
                 id__in=eval_config_ids, run_test=run_test
             )
 
             if eval_configs.count() != len(eval_config_ids):
-                return self._gm.bad_request(
-                    "One or more eval configs not found or do not belong to this run test."
+                return self._gm.bad_request(eval_config_not_found)
+
+            try:
+                call_execution_count = regrade_run_evals(
+                    run_test,
+                    execution_ids,
+                    previous_test_execution_statuses,
+                    eval_config_ids,
+                    harness_run=harness_run,
+                    enable_tool_evaluation=enable_tool_evaluation,
                 )
-
-            # Collect all call execution IDs from the selected test executions
-            # Also update test execution status and column order.
-            #
-            # Memory-bounded rewrite: stream test executions with
-            # ``.iterator(chunk_size=100)`` so the queryset is not fully
-            # materialized, fetch call-execution ids in one bulk query
-            # (joined via ``test_execution_id__in``) instead of per-row,
-            # and flush ``bulk_update`` in batches of 100 so the buffer
-            # itself stays bounded for large runs.
-            BATCH_SIZE = 100
-            call_execution_ids = []
-            test_execution_count = 0
-            updated_test_executions = []
-            previous_test_execution_statuses = {}
-            test_executions_to_update = []
-
-            # Precompute the eval-config columns once; they are identical
-            # for every test_execution so recomputing inside the loop is
-            # pure overhead.
-            eval_column_entries = [
-                {
-                    "column_name": eval_config.name,
-                    "id": str(eval_config.id),
-                    "eval_config": eval_config.eval_template.config,
-                    "visible": True,
-                    "type": "evaluation",
-                }
-                for eval_config in eval_configs
-            ]
-
-            def _flush_bulk_update(buffer):
-                if buffer:
-                    TestExecution.objects.bulk_update(
-                        buffer,
-                        [
-                            "status",
-                            "execution_metadata",
-                            "picked_up_by_executor",
-                        ],
-                    )
-                    buffer.clear()
-
-            # Bulk-fetch all matching CallExecution ids in a single query
-            # (subquery against test_executions) rather than one query per
-            # test execution (N+1). Using ``.values_list("id")`` as a
-            # subquery keeps the id materialization server-side.
-            ce_rows = CallExecution.objects.filter(
-                test_execution_id__in=test_executions.values_list("id", flat=True)
-            ).values_list("id", flat=True)
-            for ce_id in ce_rows.iterator(chunk_size=1000):
-                call_execution_ids.append(str(ce_id))
-
-            for test_execution in test_executions.iterator(chunk_size=BATCH_SIZE):
-                test_execution_count += 1
-                previous_test_execution_statuses[str(test_execution.id)] = (
-                    test_execution.status
-                )
-
-                # Update test execution status to EVALUATING
-                test_execution.status = TestExecution.ExecutionStatus.EVALUATING
-
-                # Update column_order to include new eval configs
-                if not test_execution.execution_metadata:
-                    test_execution.execution_metadata = {}
-                test_execution.execution_metadata.pop("eval_dispatch_failed", None)
-
-                column_order = test_execution.execution_metadata.get("column_order", [])
-                if not column_order:
-                    column_order = []
-
-                # Normalize legacy camelCase keys in stored column_order entries.
-                for _col in column_order:
-                    if (
-                        isinstance(_col, dict)
-                        and "columnName" in _col
-                        and "column_name" not in _col
-                    ):
-                        _col["column_name"] = _col.pop("columnName")
-
-                # Get existing eval config IDs in column order
-                existing_eval_ids = set()
-                for col in column_order:
-                    if col.get("type") == "evaluation":
-                        existing_eval_ids.add(col.get("id"))
-
-                # Add new eval configs to column order if they don't exist
-                for entry in eval_column_entries:
-                    if entry["id"] not in existing_eval_ids:
-                        column_order.append(dict(entry))
-                        logger.info(
-                            f"Added eval config {entry['column_name']} to column order "
-                            f"for test execution {test_execution.id}"
-                        )
-
-                test_execution.execution_metadata["column_order"] = column_order
-                test_execution.picked_up_by_executor = False
-                test_executions_to_update.append(test_execution)
-                updated_test_executions.append(str(test_execution.id))
-
-                if len(test_executions_to_update) >= BATCH_SIZE:
-                    _flush_bulk_update(test_executions_to_update)
-
-            # Flush remainder
-            _flush_bulk_update(test_executions_to_update)
-
-            if not call_execution_ids:
+            except RegradeEvalNotFound:
+                return self._gm.bad_request(eval_config_not_found)
+            except (RegradeRefused, RegradeNoCompletedCall) as refused:
+                return self._gm.bad_request(str(refused))
+            except RegradeNoCalls:
                 return self._gm.bad_request(
                     "No call executions found in the selected test executions."
                 )
-
-            # Convert eval_config_ids to strings
-            eval_config_ids_str = [str(ec_id) for ec_id in eval_config_ids]
-
-            # Bulk update eval_started flag and initialize eval_outputs for all call executions before triggering tasks
-            call_executions_to_update = CallExecution.objects.filter(
-                id__in=call_execution_ids
-            )
-            call_executions_list = []
-            for call_execution in call_executions_to_update:
-                # Provider-agnostic eval flags live in call_metadata
-                call_execution.call_metadata = call_execution.call_metadata or {}
-                call_execution.call_metadata["eval_started"] = True
-                call_execution.call_metadata["eval_completed"] = False
-
-                # Initialize eval_outputs for the new eval configs
-                if not call_execution.eval_outputs:
-                    call_execution.eval_outputs = {}
-
-                # Set placeholder values for each eval config that will be run
-                for eval_config in eval_configs:
-                    call_execution.eval_outputs[str(eval_config.id)] = {
-                        "status": "pending"
-                    }
-
-                call_executions_list.append(call_execution)
-
-            if call_executions_list:
-                CallExecution.objects.bulk_update(
-                    call_executions_list, ["call_metadata", "eval_outputs"]
+            except RegradeAlreadyRunning:
+                return self._gm.custom_error_response(
+                    status.HTTP_409_CONFLICT,
+                    "Grading is already running on this run.",
                 )
-                logger.info(
-                    f"Bulk updated eval_started flag and initialized eval_outputs for "
-                    f"{len(call_executions_list)} call executions with {len(eval_configs)} eval configs"
+            except RegradeDispatchFailed as dispatch_failed:
+                # The runs and calls are back as they were, so the page can
+                # offer a retry instead of an error.
+                call_execution_count = dispatch_failed.call_execution_count
+                dispatched = False
+                message = (
+                    "New evaluations may not have started; async dispatch failed "
+                    "and can be retried."
                 )
-
-            # Trigger the async task to run evaluations. If the local async
-            # backend is unavailable, keep the persisted pending state and let
-            # the caller retry instead of failing the API request after mutation.
-            try:
-                task = run_new_evals_on_call_executions_task.apply_async(
-                    args=(call_execution_ids, eval_config_ids_str),
-                )
-                task_id = task.id
+            else:
+                dispatched = True
                 message = (
                     "New evaluations dispatched successfully. "
                     "Individual tasks will run in parallel."
-                )
-
-                logger.info(
-                    f"Triggered new evaluations task {task_id} for {len(call_execution_ids)} call executions "
-                    f"across {test_execution_count} test executions with {len(eval_config_ids)} eval configs. "
-                    f"Updated {len(updated_test_executions)} test executions to EVALUATING status. "
-                    f"Individual tasks will be spawned for parallel processing."
-                )
-            except Exception as dispatch_error:
-                for call_execution in call_executions_list:
-                    call_execution.call_metadata = call_execution.call_metadata or {}
-                    call_execution.call_metadata["eval_started"] = False
-                    call_execution.call_metadata["eval_dispatch_failed"] = str(
-                        dispatch_error
-                    )
-                if call_executions_list:
-                    CallExecution.objects.bulk_update(
-                        call_executions_list, ["call_metadata"]
-                    )
-                failed_test_executions = list(
-                    TestExecution.objects.filter(id__in=updated_test_executions)
-                )
-                for test_execution in failed_test_executions:
-                    test_execution.status = previous_test_execution_statuses.get(
-                        str(test_execution.id), test_execution.status
-                    )
-                    test_execution.picked_up_by_executor = False
-                    test_execution.execution_metadata = (
-                        test_execution.execution_metadata or {}
-                    )
-                    test_execution.execution_metadata["eval_dispatch_failed"] = str(
-                        dispatch_error
-                    )
-                if failed_test_executions:
-                    TestExecution.objects.bulk_update(
-                        failed_test_executions,
-                        ["status", "picked_up_by_executor", "execution_metadata"],
-                    )
-                message = (
-                    "New evaluations marked pending; async dispatch failed "
-                    "and can be retried."
-                )
-                logger.exception(
-                    "run_new_evals_dispatch_failed",
-                    run_test_id=str(run_test_id),
-                    call_execution_count=len(call_execution_ids),
-                    eval_config_count=len(eval_config_ids),
-                    error=str(dispatch_error),
                 )
 
             return Response(
@@ -7618,7 +8265,8 @@ class RunNewEvalsOnTestExecutionView(APIView):
                     {
                         "message": message,
                         "run_test_id": str(run_test_id),
-                        "call_execution_count": len(call_execution_ids),
+                        "call_execution_count": call_execution_count,
+                        "dispatched": dispatched,
                     }
                 ).data,
                 status=status.HTTP_200_OK,

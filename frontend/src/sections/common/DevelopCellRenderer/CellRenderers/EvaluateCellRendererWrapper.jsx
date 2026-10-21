@@ -5,7 +5,7 @@ import { alpha } from "@mui/material/styles";
 import EvaluateCell from "../EvaluateCellRenderer/EvaluateCell";
 import CustomTooltip from "src/components/tooltip";
 import Iconify from "src/components/iconify";
-import { PARTIAL_INPUT_WARNING_TYPE } from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
+import { PARTIAL_INPUT_WARNING_TYPE } from "src/sections/common/EvalsTasks/warningTypes";
 import { tooltipSlotProp } from "./cellRendererHelper";
 
 const PartialInputWarningBadge = ({ warnings }) => {

@@ -578,6 +578,19 @@ def create_synthetic_dataset(
         raise e
 
 
+def _file_metadata_with_error(metadata, error):
+    """Return a file's metadata with ``error`` set, as the JSON string the files view reads."""
+    meta = metadata or {}
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except ValueError:
+            meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    return json.dumps({**meta, "error": error[:10000]})
+
+
 def remove_from_kb(deleted_files, kb_file_id, org_id):
     try:
         futures = []
@@ -677,7 +690,7 @@ def ingest_files_to_s3(files, kb_id, org):
     try:
         ingest_futures = []
         docs = []
-        error_files = []
+        file_errors = {}
         latest_error = None
         kb_file = KnowledgeBaseFile.objects.get(id=kb_id)
         kb_file.status = StatusType.PROCESSING.value
@@ -715,7 +728,7 @@ def ingest_files_to_s3(files, kb_id, org):
                     result = future.result()
                     if result and "file_id" in result:
                         if result.get("error"):
-                            error_files.append(result["file_id"])
+                            file_errors[str(result["file_id"])] = result["error"]
                             latest_error = result["error"]
                         else:
                             docs.append(result["file_id"])
@@ -730,9 +743,13 @@ def ingest_files_to_s3(files, kb_id, org):
 
         if docs:
             Files.objects.filter(id__in=docs).update(status=StatusType.COMPLETED.value)
-        if error_files:
-            Files.objects.filter(id__in=error_files).update(
-                status=StatusType.FAILED.value
+        # Keep each file's own error so the files table can show why it failed.
+        for failed_file in Files.objects.filter(id__in=list(file_errors)):
+            Files.objects.filter(id=failed_file.id).update(
+                status=StatusType.FAILED.value,
+                metadata=_file_metadata_with_error(
+                    failed_file.metadata, file_errors[str(failed_file.id)]
+                ),
             )
 
         kb_file.refresh_from_db()
@@ -831,10 +848,10 @@ def remove_kb_files(files, org, kb_id):
                 try:
                     file_instance = Files.objects.filter(id=res["file_id"]).first()
                     if file_instance:
-                        meta = json.loads(file_instance.metadata)
                         if res.get("error", None):
-                            meta.update({"error": res["error"]})
-                        file_instance.metadata = json.dumps(meta)
+                            file_instance.metadata = _file_metadata_with_error(
+                                file_instance.metadata, res["error"]
+                            )
                         file_instance.status = res["status"]
                         file_instance.deleted = (
                             True

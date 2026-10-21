@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { serializeEvalConfig } from "./serializeEvalConfig";
+import {
+  sanitizeEvalMapping,
+  serializeEvalConfig,
+} from "./serializeEvalConfig";
 
 describe("serializeEvalConfig", () => {
   it("emits runtime overrides only inside config.run_config", () => {
@@ -78,5 +81,21 @@ describe("serializeEvalConfig", () => {
         filters,
       }).filters,
     ).toBe(filters);
+  });
+});
+
+describe("sanitizeEvalMapping", () => {
+  it("drops cleared fields and keeps real attribute paths", () => {
+    expect(
+      sanitizeEvalMapping({ a: "output.value", b: "", c: null, d: "   " }),
+    ).toEqual({ a: "output.value" });
+  });
+
+  it("forwards a non-string value so the API rejects it by name", () => {
+    // Dropping it here would silently delete the variable from the saved
+    // config; the write gate answers it with a message instead.
+    expect(sanitizeEvalMapping({ a: { value: "output.value" } })).toEqual({
+      a: { value: "output.value" },
+    });
   });
 });

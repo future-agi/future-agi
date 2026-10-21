@@ -30,6 +30,14 @@ export const CreditExhaustionBanner = ({
   if (!error || !isCloud) return null;
 
   const ctaText = error.upgradeCta?.text || "Upgrade your plan";
+  const title =
+    error.errorCode === "BUDGET_PAUSED"
+      ? "Usage paused by budget"
+      : error.errorCode === "PAYMENT_REQUIRED"
+        ? "Payment required"
+        : error.dimension === "ai_credits"
+          ? "AI Credits exhausted"
+          : "Usage limit reached";
 
   return (
     <Alert
@@ -63,11 +71,9 @@ export const CreditExhaustionBanner = ({
         ...sx,
       })}
     >
-      <AlertTitle sx={{ fontWeight: 600, mb: 0.25 }}>
-        AI Credits exhausted
-      </AlertTitle>
+      <AlertTitle sx={{ fontWeight: 600, mb: 0.25 }}>{title}</AlertTitle>
       <Typography variant="body2" color="text.secondary">
-        {error.result || "You've used all your free AI credits this month."}
+        {error.result || "This action exceeds your current usage allowance."}
       </Typography>
     </Alert>
   );

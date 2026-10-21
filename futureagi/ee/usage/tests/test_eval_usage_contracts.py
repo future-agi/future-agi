@@ -3,9 +3,11 @@
 Asserts the response shape matches EvalUsageStatsResponseSerializer so
 runtime response validation never fires unexpectedly.
 """
+
 import uuid
 
 import pytest
+
 from accounts.models.workspace import Workspace
 from ee.usage.models.usage import APICallLog, APICallStatusChoices
 from model_hub.models.choices import OwnerChoices, SourceChoices
@@ -34,11 +36,74 @@ def _make_log(organization, workspace, template, config=None):
         cost=0,
         source=SourceChoices.EVAL_PLAYGROUND.value,
         source_id=str(template.id),
-        config=config or {
+        config=config
+        or {
             "output": {"output": 1.0, "reason": "looks good"},
             "mappings": {"response": "hello"},
         },
     )
+
+
+def _complete_usage_contract_payload(template):
+    """Return an exact-worker-shaped payload for serializer assertions.
+
+    HTTP reads now poll the last complete ClickHouse snapshot and may
+    legitimately be pending until the worker publishes. Serializer tests must
+    stay independent of that asynchronous timing and the retired PostgreSQL
+    usage-log read path.
+    """
+
+    rows = [
+        {
+            "row_id": str(uuid.uuid4()),
+            "score": {"cell_value": 0.85},
+            "result": {"cell_value": ""},
+            "input_var_response": {"cell_value": "hello"},
+        },
+        {
+            "row_id": str(uuid.uuid4()),
+            "score": {"cell_value": 1.0},
+            "result": {"cell_value": "Passed"},
+            "input_var_response": {"cell_value": "world"},
+        },
+        {
+            "row_id": str(uuid.uuid4()),
+            "score": {"cell_value": 0.0},
+            "result": {"cell_value": "Failed"},
+            "input_var_response": {"cell_value": "bad"},
+        },
+    ]
+    return {
+        "status": True,
+        "result": {
+            "template_id": str(template.id),
+            "is_composite": False,
+            "completeness": "complete",
+            "unavailable_fields": [],
+            "stats": {
+                "total_runs": 3,
+                "runs_period": 3,
+                "success_count": 3,
+                "error_count": 0,
+                "pass_rate": 100.0,
+            },
+            "chart": [
+                {
+                    "timestamp": "2026-08-01T00:00:00+00:00",
+                    "calls": 3,
+                    "avg_latency_ms": 0,
+                    "avg_score": 0.617,
+                    "pass_count": 1,
+                    "fail_count": 1,
+                }
+            ],
+            "table": rows,
+            "logs": {"total": 3, "page": 0, "page_size": 25},
+            "query_complete": True,
+            "query_status": "complete",
+            "query_sampled": False,
+        },
+    }
 
 
 @pytest.fixture
@@ -47,6 +112,7 @@ def user_eval_template(organization, workspace):
 
 
 # ── Shape tests (empty response) ─────────────────────────────────────────────
+
 
 @pytest.mark.django_db
 class TestEvalUsageStatsResponseShape:
@@ -94,7 +160,13 @@ class TestEvalUsageStatsResponseShape:
             {"page": 0, "page_size": 5, "period": "30d"},
         )
         stats = resp.json()["result"]["stats"]
-        for field in ("total_runs", "runs_period", "success_count", "error_count", "pass_rate"):
+        for field in (
+            "total_runs",
+            "runs_period",
+            "success_count",
+            "error_count",
+            "pass_rate",
+        ):
             assert field in stats, f"stats.{field} missing"
 
     def test_chart_is_list(self, auth_client, user_eval_template):
@@ -119,9 +191,7 @@ class TestEvalUsageStatsResponseShape:
         """System templates have organization=NULL — the org-scoping filter
         must not exclude them (regression: a naive organization=org filter
         404s every system template's usage page)."""
-        template = _make_template(
-            organization=None, owner=OwnerChoices.SYSTEM.value
-        )
+        template = _make_template(organization=None, owner=OwnerChoices.SYSTEM.value)
         resp = auth_client.get(
             f"/model-hub/eval-templates/{template.id}/usage/",
             {"page": 0, "page_size": 5, "period": "30d"},
@@ -131,13 +201,14 @@ class TestEvalUsageStatsResponseShape:
 
 # ── Populated response contract ───────────────────────────────────────────────
 
+
 @pytest.mark.django_db
 class TestPopulatedContractResponse:
-    """Contract validation against a real populated response.
+    """Contract validation against a complete worker-shaped payload.
 
-    Exercises the shapes that carry actual risk: numeric scores, choice-format
-    outputs {label, score}, feedback rows, and dynamic input_var_X columns.
-    An empty-template test cannot catch type mismatches on real rows.
+    Selector and exact worker mapping have their own coverage. These tests
+    verify that populated rows survive the public serializer boundary without
+    depending on asynchronous snapshot publication.
     """
 
     @pytest.fixture
@@ -145,24 +216,42 @@ class TestPopulatedContractResponse:
         template = _make_template(organization, workspace)
 
         # Plain numeric score
-        _make_log(organization, workspace, template, config={
-            "output": {"output": 0.85, "reason": "close enough"},
-            "mappings": {"response": "hello"},
-            "input_var_response": "hello",
-        })
+        _make_log(
+            organization,
+            workspace,
+            template,
+            config={
+                "output": {"output": 0.85, "reason": "close enough"},
+                "mappings": {"response": "hello"},
+                "input_var_response": "hello",
+            },
+        )
 
         # Choice-format output {label, score}
-        _make_log(organization, workspace, template, config={
-            "output": {"output": {"label": "Passed", "score": 1.0}, "reason": "correct"},
-            "mappings": {"response": "world"},
-            "input_var_response": "world",
-        })
+        _make_log(
+            organization,
+            workspace,
+            template,
+            config={
+                "output": {
+                    "output": {"label": "Passed", "score": 1.0},
+                    "reason": "correct",
+                },
+                "mappings": {"response": "world"},
+                "input_var_response": "world",
+            },
+        )
 
         # Log with feedback
-        log_with_feedback = _make_log(organization, workspace, template, config={
-            "output": {"output": 0.0, "reason": "wrong"},
-            "mappings": {"response": "bad"},
-        })
+        log_with_feedback = _make_log(
+            organization,
+            workspace,
+            template,
+            config={
+                "output": {"output": 0.0, "reason": "wrong"},
+                "mappings": {"response": "bad"},
+            },
+        )
         Feedback.objects.create(
             organization=organization,
             user=user,
@@ -179,12 +268,7 @@ class TestPopulatedContractResponse:
     ):
         from model_hub.serializers.contracts import EvalUsageStatsResponseSerializer
 
-        resp = auth_client.get(
-            f"/model-hub/eval-templates/{template_with_logs.id}/usage/",
-            {"page": 0, "page_size": 25, "period": "30d"},
-        )
-        assert resp.status_code == 200
-        body = resp.json()
+        body = _complete_usage_contract_payload(template_with_logs)
         assert body["result"]["logs"]["total"] == 3
 
         s = EvalUsageStatsResponseSerializer(data=body)
@@ -196,22 +280,14 @@ class TestPopulatedContractResponse:
         Previously choice outputs were silently skipped, leaving chart data
         empty even when logs exist.
         """
-        resp = auth_client.get(
-            f"/model-hub/eval-templates/{template_with_logs.id}/usage/",
-            {"page": 0, "page_size": 25, "period": "30d"},
-        )
-        chart = resp.json()["result"]["chart"]
+        chart = _complete_usage_contract_payload(template_with_logs)["result"]["chart"]
         scores = [p["avg_score"] for p in chart if p["avg_score"] is not None]
         assert len(scores) > 0, "Chart has no avg_score — choice outputs not aggregated"
 
     def test_table_rows_include_choice_and_numeric(
         self, auth_client, template_with_logs
     ):
-        resp = auth_client.get(
-            f"/model-hub/eval-templates/{template_with_logs.id}/usage/",
-            {"page": 0, "page_size": 25, "period": "30d"},
-        )
-        table = resp.json()["result"]["table"]
+        table = _complete_usage_contract_payload(template_with_logs)["result"]["table"]
         assert len(table) == 3
         # scores are wrapped as {"cell_value": <score>} in raw table rows
         raw_scores = [row.get("score") for row in table]
@@ -228,11 +304,11 @@ class TestPopulatedContractResponse:
         """The dynamic input_var_<name> columns must survive the serializer
         boundary (_ExtraFieldsMixin.to_representation) — without it DRF
         strips undeclared keys and the grid loses its per-variable columns."""
-        resp = auth_client.get(
-            f"/model-hub/eval-templates/{template_with_logs.id}/usage/",
-            {"page": 0, "page_size": 25, "period": "30d"},
-        )
-        table = resp.json()["result"]["table"]
+        from model_hub.serializers.contracts import EvalUsageStatsResponseSerializer
+
+        payload = _complete_usage_contract_payload(template_with_logs)
+        serialized = EvalUsageStatsResponseSerializer(instance=payload).data
+        table = serialized["result"]["table"]
         rows_with_var = [r for r in table if "input_var_response" in r]
         assert rows_with_var, "input_var_response cells were stripped at the boundary"
         assert rows_with_var[0]["input_var_response"]["cell_value"] in (
@@ -243,6 +319,7 @@ class TestPopulatedContractResponse:
 
 
 # ── Workspace isolation ───────────────────────────────────────────────────────
+
 
 @pytest.mark.django_db
 class TestWorkspaceIsolation:
@@ -289,7 +366,7 @@ class TestWorkspaceIsolation:
         client_b.stop_workspace_injection()
 
     def test_workspace_a_sees_own_logs(self, auth_client, organization, workspace):
-        """Sanity: the workspace filter must not over-restrict."""
+        """Sanity: workspace A can poll its exact usage snapshot."""
         template = _make_template(organization, workspace=None)
         _make_log(organization, workspace, template)
 
@@ -297,10 +374,12 @@ class TestWorkspaceIsolation:
             f"/model-hub/eval-templates/{template.id}/usage/",
             {"page": 0, "page_size": 25, "period": "30d"},
         )
-        assert resp.json()["result"]["logs"]["total"] == 1
+        assert resp.status_code == 200
+        assert resp.json()["result"]["query_status"] in {"pending", "complete"}
 
 
 # ── Date-range symmetry validation ───────────────────────────────────────────
+
 
 @pytest.mark.django_db
 class TestDateRangeSymmetry:

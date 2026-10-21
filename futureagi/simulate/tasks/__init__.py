@@ -5,4 +5,5 @@ from simulate.tasks.agent_optimiser_tasks import *  # noqa: F403
 
 from .chat_sim import *  # noqa: F403
 from .eval_summary_tasks import *  # noqa: F403
+from .hosted_harness_conversation import *  # noqa: F403
 from .scenario_tasks import *  # noqa: F403

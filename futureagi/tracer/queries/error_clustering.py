@@ -179,7 +179,11 @@ class ErrorClusteringDB:
                 LIMIT 1000
             """
 
-            rows = db.client.execute(query, {"project_id": project_id})
+            rows = db.execute_read(
+                query,
+                {"project_id": project_id},
+                max_result_rows=1_000,
+            )
 
             embeddings = []
             for row_id, vector, keys, values in rows:
@@ -227,7 +231,7 @@ class ErrorClusteringDB:
                 ORDER BY last_updated DESC
             """
 
-            rows = db.client.execute(query, {"project_id": project_id})
+            rows = db.execute_read(query, {"project_id": project_id})
 
             for cluster_id, centroid, member_count, family in rows:
                 if family not in clusters_by_family:
@@ -315,7 +319,11 @@ class ErrorClusteringDB:
                     WHERE cluster_id = %(cluster_id)s
                     LIMIT 1
                 """
-                rows = db.client.execute(query, {"cluster_id": cluster_id})
+                rows = db.execute_read(
+                    query,
+                    {"cluster_id": cluster_id},
+                    max_result_rows=1,
+                )
 
                 if rows:
                     old_centroid, old_member_count = rows[0]
@@ -650,7 +658,11 @@ class ErrorClusteringDB:
                     AND deleted = 0
             """
 
-            rows = db.client.execute(fetch_query, {"project_id": project_id})
+            rows = db.execute_read(
+                fetch_query,
+                {"project_id": project_id},
+                max_result_rows=max(1, len(embedding_ids)),
+            )
 
             if not rows:
                 logger.warning(

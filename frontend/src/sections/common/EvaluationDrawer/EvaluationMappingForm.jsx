@@ -1036,6 +1036,8 @@ const EvaluationMappingFormChild = ({
     saveGroup: rest?.saveGroup,
     removedEvals,
     formState,
+    onColumnSearchChange: rest?.onColumnSearchChange,
+    columnInventoryControls: rest?.columnInventoryControls,
   };
   return (
     <form
@@ -1083,6 +1085,8 @@ EvaluationMappingFormChild.propTypes = {
   isEditMode: PropTypes.bool,
   existingEvalsProp: PropTypes.array,
   preserveName: PropTypes.bool,
+  onColumnSearchChange: PropTypes.func,
+  columnInventoryControls: PropTypes.node,
 };
 
 const EvaluationMappingForm = ({
@@ -1240,4 +1244,6 @@ EvaluationMappingForm.propTypes = {
   selectedEvalItem: PropTypes.object,
   existingEvalsProp: PropTypes.array,
   preserveName: PropTypes.bool,
+  onColumnSearchChange: PropTypes.func,
+  columnInventoryControls: PropTypes.node,
 };

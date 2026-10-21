@@ -22,7 +22,7 @@ import { useGetTraceDetail } from "src/api/project/trace-detail";
 import { useErrorFeedOverview } from "src/api/errorFeed/error-feed";
 import EvalIOPanel from "./EvalIOPanel";
 import VoiceEvalPanel from "./VoiceEvalPanel";
-import { buildGraphDiff } from "./buildGraphDiff";
+import { buildGraphDiff, comparisonGraphForMode } from "./buildGraphDiff";
 import { useErrorFeedStore } from "../store";
 import { TOKEN_PRICE_USD, TRACE_STATUS } from "../constants";
 
@@ -805,8 +805,10 @@ PatternSummary.propTypes = {
 };
 
 // ── Agent flow from real span tree ────────────────────────────────────────────
-function TraceGraphView({ traceId, mode }) {
-  const { data, isLoading } = useGetTraceDetail(traceId);
+export function TraceGraphView({ traceId, mode, projectId }) {
+  const { data, isLoading, isError } = useGetTraceDetail(traceId, {
+    projectId,
+  });
   const spanTree = data?.observation_spans || data?.observationSpans;
 
   const graphData = useMemo(() => {
@@ -819,6 +821,18 @@ function TraceGraphView({ traceId, mode }) {
       <Box sx={{ height: 340 }}>
         <GraphSkeleton />
       </Box>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Typography
+        fontSize="12px"
+        color="error.main"
+        sx={{ py: 2, textAlign: "center" }}
+      >
+        Could not load trace spans. Please retry.
+      </Typography>
     );
   }
 
@@ -855,10 +869,10 @@ function TraceGraphView({ traceId, mode }) {
 TraceGraphView.propTypes = {
   traceId: PropTypes.string,
   mode: PropTypes.oneOf(["graph", "path"]),
+  projectId: PropTypes.string,
 };
 
 // ── Split-with-working graph compare ─────────────────────────────────────────
-// Diff cues only land on graph mode — AgentPath nodes are too compressed for colored rings.
 function CompareLegend({ summary }) {
   const items = [
     summary.failed > 0 && {
@@ -1032,9 +1046,14 @@ CompareColumn.propTypes = {
   children: PropTypes.node,
 };
 
-function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
-  const failQ = useGetTraceDetail(failingTraceId);
-  const passQ = useGetTraceDetail(workingTraceId);
+function TraceGraphCompare({
+  failingTraceId,
+  workingTraceId,
+  mode,
+  projectId,
+}) {
+  const failQ = useGetTraceDetail(failingTraceId, { projectId });
+  const passQ = useGetTraceDetail(workingTraceId, { projectId });
 
   const failGraph = useMemo(() => {
     const tree = failQ.data?.observation_spans || failQ.data?.observationSpans;
@@ -1061,6 +1080,16 @@ function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
 
   const failLoading = !!failingTraceId && failQ.isLoading && !failQ.data;
   const passLoading = !!workingTraceId && passQ.isLoading && !passQ.data;
+  const failRenderGraph = comparisonGraphForMode(
+    mode,
+    failGraph,
+    failAnnotated,
+  );
+  const passRenderGraph = comparisonGraphForMode(
+    mode,
+    passGraph,
+    passAnnotated,
+  );
 
   const NoWorkingNotice = !workingTraceId && (
     <Box
@@ -1080,12 +1109,25 @@ function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
     </Box>
   );
 
-  const renderSide = (graph, loading, label) => {
+  const renderSide = (graph, loading, failed, label) => {
     if (loading) {
       return (
         <Box sx={{ height: 360 }}>
           <GraphSkeleton />
         </Box>
+      );
+    }
+    if (failed) {
+      return (
+        <Stack
+          alignItems="center"
+          justifyContent="center"
+          sx={{ height: 360, p: 2 }}
+        >
+          <Typography fontSize="12px" color="error.main" textAlign="center">
+            Could not load {label} spans. Please retry.
+          </Typography>
+        </Stack>
       );
     }
     if (!graph) {
@@ -1143,14 +1185,24 @@ function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
           accentColor="#DB2F2D"
           traceShortId={failingTraceId ? failingTraceId.slice(0, 8) : null}
         >
-          {renderSide(failAnnotated, failLoading, "failing trace")}
+          {renderSide(
+            failRenderGraph,
+            failLoading,
+            failQ.isError,
+            "failing trace",
+          )}
         </CompareColumn>
         <CompareColumn
           title="Working trace"
           accentColor="#5ACE6D"
           traceShortId={workingTraceId ? workingTraceId.slice(0, 8) : null}
         >
-          {renderSide(passAnnotated, passLoading, "working trace")}
+          {renderSide(
+            passRenderGraph,
+            passLoading,
+            passQ.isError,
+            "working trace",
+          )}
         </CompareColumn>
       </Box>
     </Stack>
@@ -1160,6 +1212,7 @@ TraceGraphCompare.propTypes = {
   failingTraceId: PropTypes.string,
   workingTraceId: PropTypes.string,
   mode: PropTypes.oneOf(["graph", "path"]),
+  projectId: PropTypes.string,
 };
 
 // ── Trace evidence reel (fail / pass tabs) ───────────────────────────────────
@@ -1379,46 +1432,50 @@ function ReelStep({ step, isFailReel, isLast }) {
           )}
         </Box>
       ) : (
-        <>
-          {header}
-          {raw && (
-            <Box
-              onClick={() => setShowRaw((v) => !v)}
-              sx={{
-                fontSize: "10.5px",
-                color: "text.disabled",
-                mt: 0.4,
-                cursor: "pointer",
-                userSelect: "none",
-                "&:hover": { color: "text.secondary" },
-              }}
-            >
-              {showRaw ? "− raw JSON" : "+ raw JSON ▾"}
-            </Box>
-          )}
-          {raw && showRaw && (
-            <Box
-              component="pre"
-              sx={{
-                m: 0,
-                mt: 0.5,
-                p: 1,
-                borderRadius: "6px",
-                bgcolor: isDark ? alpha("#fff", 0.03) : alpha("#000", 0.03),
-                fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                fontSize: "11px",
-                lineHeight: 1.5,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                color: "text.secondary",
-                maxHeight: 200,
-                overflow: "auto",
-              }}
-            >
-              {typeof raw === "string" ? raw : JSON.stringify(raw, null, 2)}
-            </Box>
-          )}
-        </>
+        header
+      )}
+      {raw && (
+        <Box
+          component="button"
+          type="button"
+          aria-expanded={showRaw}
+          onClick={() => setShowRaw((v) => !v)}
+          sx={{
+            border: 0,
+            p: 0,
+            bgcolor: "transparent",
+            fontSize: "10.5px",
+            color: "text.disabled",
+            mt: 0.4,
+            cursor: "pointer",
+            "&:hover": { color: "text.secondary" },
+          }}
+        >
+          {showRaw ? "Hide cited excerpt" : "Show cited excerpt"}
+        </Box>
+      )}
+      {raw && showRaw && (
+        <Box
+          component="pre"
+          sx={{
+            m: 0,
+            mt: 0.5,
+            p: 1,
+            borderRadius: "6px",
+            bgcolor: isDark ? alpha("#fff", 0.03) : alpha("#000", 0.03),
+            fontFamily: "ui-monospace, SFMono-Regular, monospace",
+            fontSize: "11px",
+            lineHeight: 1.5,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            color: "text.secondary",
+            maxHeight: 200,
+            overflow: "auto",
+          }}
+        >
+          {step.evidence_id && `Evidence ${step.evidence_id}\n`}
+          {typeof raw === "string" ? raw : JSON.stringify(raw, null, 2)}
+        </Box>
       )}
     </Box>
   );
@@ -1722,7 +1779,13 @@ ReelTabs.propTypes = {
   onChange: PropTypes.func.isRequired,
 };
 
-function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
+function TraceEvidence({
+  evidence,
+  trace,
+  traceId,
+  workingTraceId,
+  projectId,
+}) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const [viewMode, setViewMode] = useState("breadcrumb");
@@ -1800,7 +1863,9 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
             color="text.secondary"
             sx={{ textTransform: "uppercase", letterSpacing: "0.06em" }}
           >
-            Trace Evidence
+            {failReel.some((step) => step.label === "RECEIPT")
+              ? "Investigation Evidence"
+              : "Trace Evidence"}
           </Typography>
         </Stack>
 
@@ -1919,7 +1984,7 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
 
       {/* ── Body ── */}
       <Box sx={{ p: 1.75 }}>
-        {/* Agent Graph / Agent Path — single trace, OR split with working. */}
+        {/* Agent Graph / Agent Path — single trace, or split with a working trace. */}
         {isGraphMode &&
           (traceId ? (
             splitView ? (
@@ -1927,11 +1992,13 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
                 failingTraceId={traceId}
                 workingTraceId={workingTraceId}
                 mode={viewMode === "agentpath" ? "path" : "graph"}
+                projectId={projectId}
               />
             ) : (
               <TraceGraphView
                 traceId={traceId}
                 mode={viewMode === "agentpath" ? "path" : "graph"}
+                projectId={projectId}
               />
             )
           ) : (
@@ -1983,6 +2050,7 @@ TraceEvidence.propTypes = {
   trace: PropTypes.object,
   traceId: PropTypes.string,
   workingTraceId: PropTypes.string,
+  projectId: PropTypes.string,
 };
 
 // ── Co-occurring issues ───────────────────────────────────────────────────────
@@ -2764,6 +2832,7 @@ export default function OverviewTab({ _error: currentError }) {
                       trace={trace}
                       evalScore={trace?.eval_score}
                       successTraceId={currentError?.success_trace?.trace_id}
+                      projectId={currentError?.project_id}
                     />
                   ) : (
                     <EvalIOPanel trace={trace} evalScore={trace?.eval_score} />
@@ -2775,6 +2844,7 @@ export default function OverviewTab({ _error: currentError }) {
                   trace={trace}
                   traceId={trace.id}
                   workingTraceId={currentError?.success_trace?.trace_id}
+                  projectId={currentError?.project_id}
                 />
               )}
             </Stack>
@@ -2788,6 +2858,7 @@ export default function OverviewTab({ _error: currentError }) {
 OverviewTab.propTypes = {
   _error: PropTypes.shape({
     cluster_id: PropTypes.string,
+    project_id: PropTypes.string,
     source: PropTypes.string,
     modality: PropTypes.string,
     success_trace: PropTypes.shape({

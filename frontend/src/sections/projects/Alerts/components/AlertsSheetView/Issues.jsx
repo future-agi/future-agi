@@ -24,7 +24,11 @@ import ColumnDropdown from "src/components/ColumnDropdown/ColumnDropdown";
 import FilterPanel from "src/components/filter-panel/FilterPanel";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
-import { ISSUE_FILTER_FIELDS, issueColumns } from "../../common";
+import {
+  ISSUE_FILTER_FIELDS,
+  issueColumns,
+  normalizeAlertDetail,
+} from "../../common";
 import { camelCase } from "lodash";
 import { useAlertStore } from "../../store/useAlertStore";
 import { useAlertSheetView } from "../../store/useAlertSheetView";
@@ -384,21 +388,7 @@ export default function Issues() {
 
           //for column filtering and rearranging;
           setColumns(issueColumns);
-          setAlertRuleDetails({
-            ...data.result,
-            name: data?.result?.name,
-            createdBy: data?.result?.created_by?.name,
-            createdAt: data.result?.created_at,
-            lastTriggered:
-              data?.result?.last_triggered_at ?? data?.result?.last_checked_at,
-            metricType: data?.result?.metric_type,
-            metricName: data?.result?.metric_name,
-            thresholdOperator: data?.result?.threshold_operator,
-            criticalThresholdValue: data?.result?.critical_threshold_value,
-            warningThresholdValue: data?.result?.warning_threshold_value,
-            notificationEmails: data?.result?.notification_emails,
-            isMute: data?.result?.is_mute,
-          });
+          setAlertRuleDetails(normalizeAlertDetail(data?.result));
 
           if (data?.result?.project) {
             handleProjectChange(data.result.project);

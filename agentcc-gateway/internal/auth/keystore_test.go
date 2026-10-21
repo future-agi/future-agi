@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
+	gatewayadmin "github.com/futureagi/agentcc-gateway/internal/contracts/generated"
 )
 
 // helper to build a minimal AuthConfig with the given key configs.
@@ -436,20 +437,31 @@ func syncKeyStore() *KeyStore {
 	return NewKeyStore(authCfg())
 }
 
+// fromWire decodes a key as the control plane sends it and converts it the way
+// both sync paths do.
+func fromWire(t *testing.T, payload string) SyncedKey {
+	t.Helper()
+	var wire gatewayadmin.SyncedKey
+	if err := json.Unmarshal([]byte(payload), &wire); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	sk, err := SyncedKeyFromContract(&wire)
+	if err != nil {
+		t.Fatalf("SyncedKeyFromContract: %v", err)
+	}
+	return sk
+}
+
 // Decoding the wire payload is where the original bug lived (the field was
 // dropped); DRF emits RFC3339 with offset + fractional seconds.
 func TestSyncedKey_DecodesExpiresAt(t *testing.T) {
-	const payload = `{
+	hash := HashKey("sk-agentcc-contractor")
+	sk := fromWire(t, `{
 		"id": "ck_1",
 		"name": "contractor",
-		"key_hash": "abc123",
+		"key_hash": "`+hash+`",
 		"expires_at": "2030-06-15T12:30:45.123456Z"
-	}`
-
-	var sk SyncedKey
-	if err := json.Unmarshal([]byte(payload), &sk); err != nil {
-		t.Fatalf("unmarshal failed: %v", err)
-	}
+	}`)
 	if sk.ExpiresAt == nil {
 		t.Fatal("expected ExpiresAt to decode from the wire, got nil")
 	}
@@ -459,10 +471,7 @@ func TestSyncedKey_DecodesExpiresAt(t *testing.T) {
 	}
 
 	// Null expiry must decode to nil (never-expiring keys).
-	var nullSk SyncedKey
-	if err := json.Unmarshal([]byte(`{"key_hash":"h","expires_at":null}`), &nullSk); err != nil {
-		t.Fatalf("unmarshal null failed: %v", err)
-	}
+	nullSk := fromWire(t, `{"id":"ck_2","key_hash":"`+hash+`","expires_at":null}`)
 	if nullSk.ExpiresAt != nil {
 		t.Errorf("expected nil ExpiresAt for null wire value, got %v", *nullSk.ExpiresAt)
 	}
@@ -471,13 +480,8 @@ func TestSyncedKey_DecodesExpiresAt(t *testing.T) {
 // Real wire payload with a past expiry, decoded then synced, must be rejected.
 func TestSyncedExpiredKey_DecodeToReject(t *testing.T) {
 	const rawKey = "sk-agentcc-synced-expired"
-	payload := `{"id":"ck_exp","name":"c","key_hash":"` + HashKey(rawKey) +
-		`","expires_at":"2000-01-01T00:00:00Z"}`
-
-	var sk SyncedKey
-	if err := json.Unmarshal([]byte(payload), &sk); err != nil {
-		t.Fatalf("unmarshal failed: %v", err)
-	}
+	sk := fromWire(t, `{"id":"ck_exp","name":"c","key_hash":"`+HashKey(rawKey)+
+		`","expires_at":"2000-01-01T00:00:00Z"}`)
 
 	ks := syncKeyStore()
 	ks.SyncFromHashes([]SyncedKey{sk})
@@ -558,6 +562,94 @@ func TestLoadFromHashes_PropagatesExpiry(t *testing.T) {
 
 	if got := ks.Authenticate(rawKey); got != nil {
 		t.Fatal("expected expired key loaded via LoadFromHashes to be rejected")
+	}
+}
+
+// ---------- Key IDs across restarts ----------
+
+// A restarted gateway must not reissue an ID the control plane already stores
+// for another key: Django keys its rows by this ID.
+func TestCreate_IDsDoNotRepeatAcrossRestarts(t *testing.T) {
+	cfg := authCfg(config.AuthKeyConfig{Name: "internal", Key: "sk-agentcc-internal", KeyType: "internal"})
+
+	seen := make(map[string]bool)
+	for restart := 0; restart < 3; restart++ {
+		ks := NewKeyStore(cfg)
+		for i := 0; i < 50; i++ {
+			key, _ := ks.Create("k", "", nil, nil, nil)
+			if seen[key.ID] {
+				t.Fatalf("restart %d: ID %s issued twice", restart, key.ID)
+			}
+			if key.ID == "key_1" || key.ID == "key_2" {
+				t.Fatalf("restart %d: minted key got counter ID %s", restart, key.ID)
+			}
+			seen[key.ID] = true
+		}
+	}
+}
+
+// Keys synced back after a restart keep their IDs, so the control plane can
+// still revoke and update them, and a key minted afterwards gets a fresh ID.
+func TestSyncFromHashes_RestoresIDsAndCreateAvoidsThem(t *testing.T) {
+	ks := syncKeyStore()
+	ks.SyncFromHashes([]SyncedKey{
+		{ID: "key_2", Name: "old-a", KeyHash: HashKey("sk-agentcc-old-a"), KeyPrefix: "sk-agentcc-o..."},
+		{ID: "key_3", Name: "old-b", KeyHash: HashKey("sk-agentcc-old-b")},
+	})
+
+	if k := ks.Authenticate("sk-agentcc-old-a"); k == nil || k.ID != "key_2" {
+		t.Fatalf("synced key authenticated as %+v, want ID key_2", k)
+	}
+	if got := ks.Get("key_2").KeyPrefix; got != "sk-agentcc-o..." {
+		t.Errorf("KeyPrefix = %q, want the synced prefix", got)
+	}
+
+	created, raw := ks.Create("new", "", nil, nil, nil)
+	if created.ID == "key_2" || created.ID == "key_3" {
+		t.Fatalf("Create reused synced ID %s", created.ID)
+	}
+	if k := ks.Authenticate("sk-agentcc-old-a"); k == nil || k.ID != "key_2" {
+		t.Fatal("creating a key displaced a synced one")
+	}
+	if k := ks.Authenticate(raw); k == nil || k.ID != created.ID {
+		t.Fatal("new key does not authenticate under its own ID")
+	}
+}
+
+// A synced key whose ID belongs to a different key is skipped, not loaded over
+// it: the displaced key would vanish from the admin API, and revoking the
+// synced ID would revoke the wrong key.
+func TestSync_SkipsKeyWhoseIDBelongsToAnotherKey(t *testing.T) {
+	cfg := authCfg(config.AuthKeyConfig{Name: "config-key", Key: "sk-agentcc-config-key"})
+
+	for name, load := range map[string]func(*KeyStore, []SyncedKey) int{
+		"SyncFromHashes": (*KeyStore).SyncFromHashes,
+		"LoadFromHashes": (*KeyStore).LoadFromHashes,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ks := NewKeyStore(cfg) // the config key is key_1
+			loaded := load(ks, []SyncedKey{
+				{ID: "key_1", Name: "clashing", KeyHash: HashKey("sk-agentcc-clashing")},
+				{ID: "key_9", Name: "fine", KeyHash: HashKey("sk-agentcc-fine")},
+				{ID: "key_9", Name: "dup-in-set", KeyHash: HashKey("sk-agentcc-dup")},
+			})
+
+			if loaded != 1 {
+				t.Errorf("loaded = %d, want 1", loaded)
+			}
+			if k := ks.Get("key_1"); k == nil || k.Name != "config-key" {
+				t.Errorf("key_1 = %+v, want the config key untouched", k)
+			}
+			if ks.Authenticate("sk-agentcc-clashing") != nil || ks.Authenticate("sk-agentcc-dup") != nil {
+				t.Error("a key with a clashing ID was loaded")
+			}
+			if k := ks.Authenticate("sk-agentcc-fine"); k == nil || k.ID != "key_9" {
+				t.Error("the non-clashing key was not loaded")
+			}
+			if ks.Count() != 2 {
+				t.Errorf("Count() = %d, want 2", ks.Count())
+			}
+		})
 	}
 }
 

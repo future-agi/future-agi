@@ -1,0 +1,186 @@
+# Admission gate for outside pull requests.
+#
+# Deterministic checks (no LLM) that enforce CONTRIBUTION_POLICY.md before any human or
+# AI reviewer spends time on a PR. Members/owners and the bypass list are skipped.
+#
+# Outcome: one sticky comment listing what's missing, plus a label:
+#   admitted           all checks passed
+#   needs-admission    template/issue/branch/hygiene problems — fix and push, it re-runs
+#   evidence-mismatch  body claims don't match the diff — a maintainer decides
+#
+# It never closes a PR. Humans close PRs.
+#
+# Uses pull_request_target so it can comment on fork PRs. It checks out the *base* ref for
+# repo-wide lookups (eval_id uniqueness) and only reads the PR diff via the API; it never
+# executes PR code.
+name: admission
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+
+concurrency:
+  group: admission-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout base (for repo-wide lookups only)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
+
+      - name: Run admission checks
+        id: gate
+        uses: actions/github-script@v7
+        env:
+          # Outside contributors with >= 2 merged PRs. Keep in sync with the GitHub PR-limit bypass list.
+          BYPASS: "definitelynotchirag,SuhaniNagpal7,zimingttkx,deepak0x"
+          SMALL_FIX_MAX_LINES: "50"
+          SMALL_FIX_MAX_FILES: "3"
+          LARGE_PR_LINES: "800"
+          # PRs opened before the policy landed aren't held to the new template lines.
+          POLICY_SINCE: "2026-09-04T00:00:00Z"
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const pr = context.payload.pull_request;
+            const { owner, repo } = context.repo;
+            const assoc = pr.author_association;
+            const author = pr.user.login;
+            const bypass = process.env.BYPASS.split(',').map(s => s.trim()).filter(Boolean);
+
+            if (['MEMBER', 'OWNER', 'COLLABORATOR'].includes(assoc) || bypass.includes(author) || author.endsWith('[bot]')) {
+              core.info(`skip: ${author} (${assoc})`);
+              core.setOutput('verdict', 'skip');
+              return;
+            }
+
+            const body = pr.body || '';
+            const title = pr.title || '';
+            const flags = [];       // needs-admission
+            const evidence = [];    // evidence-mismatch
+            const isAgent = /\[agent\]\s*$/i.test(title);
+
+            // ---- files & diff ----
+            const files = await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number: pr.number, per_page: 100 });
+            const added = files.reduce((n, f) => n + f.additions, 0);
+            const nFiles = files.length;
+            const smallFix = !isAgent && added <= +process.env.SMALL_FIX_MAX_LINES && nFiles <= +process.env.SMALL_FIX_MAX_FILES && /^(fix|docs|chore|test)(\(|:)/.test(title);
+
+            // ---- 1. linked accepted issue ----
+            const refs = [...body.matchAll(/\b(closes|fixes|resolves)\s+#(\d+)/gi)].map(m => +m[2]);
+            const issueUrl = `https://github.com/${owner}/${repo}/issues/new/choose`;
+            if (refs.length === 0) {
+              if (!smallFix) flags.push(`**No linked issue.** Anything bigger than a small fix needs an issue a maintainer has labelled \`accepted\` before the PR (policy rule 1). Add \`Closes #N\` to the body, or [open one](${issueUrl}) and wait for the label.`);
+            } else {
+              let anyAccepted = false;
+              for (const n of refs) {
+                try {
+                  const { data: issue } = await github.rest.issues.get({ owner, repo, issue_number: n });
+                  if (issue.pull_request) continue;
+                  const labels = issue.labels.map(l => l.name);
+                  if (labels.includes('accepted') || labels.includes('good first issue')) anyAccepted = true;
+                } catch (e) { flags.push(`Linked issue #${n} does not exist.`); }
+              }
+              if (!anyAccepted && !smallFix) flags.push(`Linked issue is not labelled \`accepted\` yet. A maintainer needs to accept the issue before the PR is reviewed (policy rule 1). Comment on the issue if it's been quiet.`);
+              // duplicates
+              for (const n of refs) {
+                const q = `repo:${owner}/${repo} is:pr is:open "#${n}" -is:draft`;
+                const { data: res } = await github.rest.search.issuesAndPullRequests({ q, per_page: 10 });
+                const dups = res.items.filter(i => i.number !== pr.number && new RegExp(`\\b(closes|fixes|resolves)\\s+#${n}\\b`, 'i').test(i.body || ''));
+                if (dups.length) flags.push(`Other open PRs already reference #${n}: ${dups.map(d => `#${d.number}`).join(', ')}. If yours supersedes them say so; otherwise comment there instead of opening a parallel PR.`);
+              }
+            }
+
+            // ---- 2. template fields (only for PRs opened after the policy landed) ----
+            const postPolicy = new Date(pr.created_at) >= new Date(process.env.POLICY_SINCE);
+            const aiLine = body.match(/^\s*AI use:\s*(.*)$/mi);
+            if (postPolicy && (!aiLine || !aiLine[1].trim())) flags.push('**`AI use:` line is empty.** Say which tool and how much of the change it produced, or `none` (policy rule 3).');
+            const e2e = body.match(/^\s*E2E:\s*(.*)$/mi);
+            if (postPolicy && (!e2e || !e2e[1].trim())) flags.push('**`E2E:` line is empty.** `yarn coverage` from `e2e/` tells you which marker to use.');
+            const prose = body.replace(/<!--[\s\S]*?-->/g, '').replace(/^#+ .*$/gm, '').replace(/\[[ x]\]/g, '').replace(/^\s*(Closes #|Linear:|E2E:|AI use:).*$/gm, '').trim();
+            if (prose.length < 80) flags.push('**PR body is empty or just the template.** A few sentences on what changes and why.');
+
+            // ---- 3. branches ----
+            if (pr.base.ref !== 'dev') flags.push(`**Targets \`${pr.base.ref}\`.** Outside PRs go to \`dev\` (CONTRIBUTING step 3). Edit the PR and change the base branch.`);
+            if (!/^(feat|fix|chore|docs|refactor|test|perf)\//.test(pr.head.ref)) flags.push(`Branch name \`${pr.head.ref}\` should be \`type/short-description\`.`);
+
+            // ---- 4. diff hygiene ----
+            const paths = files.map(f => f.filename);
+            const verifyScripts = paths.filter(p => /^scripts\/(verify|demo)_[^/]+\.py$/.test(p));
+            if (verifyScripts.length) flags.push(`Throwaway verification scripts committed: ${verifyScripts.map(p => `\`${p}\``).join(', ')}. Run the real suite instead (\`bin/test\`); paste its output in the PR.`);
+            const newDocs = files.filter(f => f.status === 'added' && /^docs\/[^/]+\.md$/.test(f.filename));
+            if (newDocs.length) flags.push(`New file(s) under \`docs/\`: ${newDocs.map(f => `\`${f.filename}\``).join(', ')}. Evaluator/user docs live in the docs repo; the PR body is not documentation (policy rule 3).`);
+            const mocked = files.filter(f => !/(^|\/)tests?\//.test(f.filename) && /\+.*sys\.modules\[[^\]]+\]\s*=\s*MagicMock/.test(f.patch || ''));
+            if (mocked.length) flags.push(`\`sys.modules[...] = MagicMock()\` outside tests in ${mocked.map(f => `\`${f.filename}\``).join(', ')}. That fakes imports instead of running the code.`);
+            if (/shields\.io\/badge/.test(body) || /<div align="center">/.test(body)) flags.push('PR body contains badges / centered HTML. Plain text, please; the template sections are enough.');
+
+            // ---- 5. claims vs diff ----
+            const claimed = [...body.matchAll(/\b(\d+)\s+(?:tests?\s+)?(?:passed|passing)\b/gi)].map(m => +m[1]);
+            if (claimed.length) {
+              const defs = files.filter(f => /test/.test(f.filename)).reduce((n, f) => n + ((f.patch || '').match(/^\+\s*(async\s+)?def test_/gm) || []).length, 0);
+              const maxClaim = Math.max(...claimed);
+              if (defs > 0 && maxClaim !== defs && Math.abs(maxClaim - defs) > 0) evidence.push(`Body says **${maxClaim} passed**, but the diff adds **${defs}** \`def test_\` methods. If other suites were run, paste their output; the numbers should be traceable.`);
+            }
+            const benchTable = /\|[^\n]*(\b\d+(\.\d+)?\s*(ms|%)|\$\s*\d)[^\n]*\|/i.test(body);
+            if (benchTable && !paths.some(p => /bench/i.test(p))) evidence.push('Body has a benchmark/latency/cost table but the diff ships no benchmark harness or dataset. Numbers we can\'t reproduce can\'t be merged on.');
+            if (/no test suite|ships no tests|does not have tests/i.test(body)) evidence.push('Body claims the repo has no test suite. It does (`bin/test`, `TESTING.md`).');
+
+            // ---- 6. size ----
+            if (added > +process.env.LARGE_PR_LINES && !refs.length) flags.push(`**+${added} lines with no accepted issue.** Large changes need design agreement first (policy rule 1).`);
+
+            // ---- 8. system-evals: eval_id uniqueness + version bump ----
+            const evalYamls = files.filter(f => f.status === 'added' && /^futureagi\/model_hub\/system_evals\/.*\.ya?ml$/.test(f.filename));
+            if (evalYamls.length) {
+              const existing = new Map();
+              const walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (/\.ya?ml$/.test(e.name)) { const m = fs.readFileSync(p, 'utf8').match(/^eval_id:\s*(\d+)/m); if (m) existing.set(+m[1], path.relative('futureagi/model_hub/system_evals', p)); } } };
+              if (fs.existsSync('futureagi/model_hub/system_evals')) walk('futureagi/model_hub/system_evals');
+              for (const f of evalYamls) {
+                const m = (f.patch || '').match(/^\+eval_id:\s*(\d+)/m);
+                if (m && existing.has(+m[1])) flags.push(`\`${f.filename}\` uses \`eval_id: ${m[1]}\`, already taken by \`${existing.get(+m[1])}\`. The seeder keys on eval_id globally; this would overwrite it. Free ids start at ${Math.max(...existing.keys()) + 1}.`);
+              }
+              const seeder = files.find(f => f.filename.endsWith('seed_system_evals.py'));
+              if (!seeder || !/^\+SYSTEM_EVALS_VERSION\s*=/m.test(seeder.patch || '')) flags.push('New system-eval YAML without bumping `SYSTEM_EVALS_VERSION` in `seed_system_evals.py`. Existing deploys will never seed it.');
+            }
+
+            // ---- agent lane ----
+            if (isAgent && !aiLine) flags.push('Title says `[agent]` but `AI use:` is empty.');
+
+            // ---- comment + labels ----
+            const marker = '<!-- admission-gate -->';
+            let verdict, text;
+            if (!flags.length && !evidence.length) {
+              verdict = 'admitted';
+              text = `${marker}\n✅ **Admission check passed.** This PR is in the review queue. Expect a first response within 3 business days; the review follows [CONTRIBUTION_POLICY.md](https://github.com/${owner}/${repo}/blob/dev/CONTRIBUTION_POLICY.md#how-review-works-here).`;
+            } else {
+              verdict = evidence.length ? 'evidence-mismatch' : 'needs-admission';
+              text = `${marker}\nThanks for the PR. Before a reviewer picks it up, a few things from [CONTRIBUTION_POLICY.md](https://github.com/${owner}/${repo}/blob/dev/CONTRIBUTION_POLICY.md) need fixing. This check re-runs on every push and edit.\n`;
+              if (flags.length) text += `\n**To fix:**\n${flags.map(f => `- ${f}`).join('\n')}\n`;
+              if (evidence.length) text += `\n**Claims that don't match the diff** (a maintainer will look at these):\n${evidence.map(f => `- ${f}`).join('\n')}\n`;
+              text += `\nIf you think a check is wrong, say so here and a maintainer will override it.`;
+            }
+
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number: pr.number, per_page: 100 });
+            const mine = comments.find(c => c.body && c.body.startsWith(marker));
+            if (mine) await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body: text });
+            else await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body: text });
+
+            const all = ['admitted', 'needs-admission', 'evidence-mismatch'];
+            const current = pr.labels.map(l => l.name);
+            for (const l of all) if (current.includes(l) && l !== verdict) await github.rest.issues.removeLabel({ owner, repo, issue_number: pr.number, name: l }).catch(() => {});
+            await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: [verdict] });
+
+            core.setOutput('verdict', verdict);
+            core.summary.addHeading(`Admission: ${verdict}`).addRaw(text).write();
+            if (verdict !== 'admitted') core.setFailed(`admission: ${verdict}`);

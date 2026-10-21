@@ -81,7 +81,11 @@ test('OBS-E2E-001: SDK trace appears in Observe with coherent backend state', {
 
   await test.step('UI: trace table shows the root span; trace detail opens', async () => {
     await page.getByText(projectName).click();
-    const traceNames = page.locator('.ag-row [col-id="trace_name"]');
+    // Primary and compare grids stay mounted to preserve view state. Ignore
+    // the hidden disabled grid and assert against the grid the user can see.
+    const traceNames = page.locator(
+      '.clean-data-table:visible .ag-row [col-id="trace_name"]',
+    );
     await expect(traceNames).toHaveText([ROOT_SPAN], { timeout: UI_READY });
 
     await traceNames.first().click();

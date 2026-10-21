@@ -4,10 +4,7 @@ import { alpha } from "@mui/material/styles";
 
 import Iconify from "src/components/iconify";
 
-export const PARTIAL_INPUT_WARNING_TYPE = "partial_input";
-
-const DEFAULT_MESSAGE =
-  "Eval ran with some inputs empty. Result may be less reliable. Ignore if this is intentional.";
+import { PARTIAL_INPUT_WARNING_TYPE, warningMessage } from "./warningTypes";
 
 const PartialInputWarningDetails = ({ warnings }) => {
   const partial = warnings?.find(
@@ -65,7 +62,7 @@ const PartialInputWarningDetails = ({ warnings }) => {
         variant="body2"
         sx={{ fontSize: "12px", color: "text.secondary", lineHeight: 1.5 }}
       >
-        {partial.message || DEFAULT_MESSAGE}
+        {warningMessage(partial)}
       </Typography>
       {emptyKeys.length > 0 && (
         <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", mt: 1 }}>

@@ -1,4 +1,5 @@
 import {
+  Alert,
   Box,
   Button,
   Divider,
@@ -26,6 +27,12 @@ import { getDefaultAlertConfigValues } from "./validation";
 import { useAlertSheetView } from "../store/useAlertSheetView";
 import { useAlertStore } from "../store/useAlertStore";
 import _ from "lodash";
+import {
+  keepPreviousMonitorGraphData,
+  MONITOR_GRAPH_ERROR_MESSAGE,
+  monitorGraphDisplayState,
+  monitorGraphRequestConfig,
+} from "../../monitor_graph_read";
 const AlertSettingsForm = lazy(() => import("./AlertSettingsForm"));
 
 export default function AlertConfiguration({ dateFilter, setDateFilter }) {
@@ -43,44 +50,59 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
   const [isFormDirty, setFormIsDirty] = useState(false);
   const [queryPayload, setQueryPayload] = useState(null);
   const [isQueryEnabled, setIsQueryEnabled] = useState(false);
+  const [previewAwaitingLabel, setPreviewAwaitingLabel] = useState(false);
   const thresholdTimeoutRef = useRef(null);
+  const retainedGraphDataRef = useRef();
 
-  const handlePayloadChange = useCallback((payload, enabled) => {
+  const handlePayloadChange = useCallback((payload, enabled, awaitingLabel) => {
     setQueryPayload(payload);
     setIsQueryEnabled(enabled);
+    setPreviewAwaitingLabel(Boolean(awaitingLabel));
   }, []);
 
-  const { data: queryData, refetch: refetchQuery } = useQuery({
+  const savedGraphQuery = useQuery({
     queryKey: ["alert-graph", openSheetView, dateFilter],
-    queryFn: () =>
-      axiosInstance.get(endpoints.project.getAlertGraph(openSheetView), {
-        params: {
-          start_date: dateFilter?.dateFilter?.[0],
-          end_date: dateFilter?.dateFilter?.[1],
-        },
-      }),
+    queryFn: ({ signal }) =>
+      axiosInstance.get(
+        endpoints.project.getAlertGraph(openSheetView),
+        monitorGraphRequestConfig({ signal, dateFilter }),
+      ),
     enabled: Boolean(openSheetView && !isFormDirty),
+    placeholderData: keepPreviousMonitorGraphData,
+    retry: false,
   });
 
-  const { data: mutationData, refetch: refetchPreviewData } = useQuery({
+  const previewGraphQuery = useQuery({
     queryKey: ["preview-graph", queryPayload, dateFilter],
-    queryFn: () =>
-      axiosInstance.post(endpoints.project.getAlertGraphPreview, queryPayload, {
-        params: {
-          start_date: dateFilter?.dateFilter?.[0],
-          end_date: dateFilter?.dateFilter?.[1],
-        },
-      }),
+    queryFn: ({ signal }) =>
+      axiosInstance.post(
+        endpoints.project.getAlertGraphPreview,
+        queryPayload,
+        monitorGraphRequestConfig({ signal, dateFilter }),
+      ),
     enabled: Boolean(isQueryEnabled && Boolean(queryPayload)),
+    placeholderData: keepPreviousMonitorGraphData,
+    retry: false,
   });
 
-  const fetchedData = useMemo(() => {
-    if (openSheetView && queryData?.data && !isFormDirty) {
-      return queryData;
-    } else if ((!openSheetView || isFormDirty) && mutationData) {
-      return mutationData;
+  const useSavedGraph = Boolean(openSheetView && !isFormDirty);
+  // The saved graph already has its label; only a preview can be waiting.
+  const showAwaitingLabel = !useSavedGraph && previewAwaitingLabel;
+  const activeGraphQuery = useSavedGraph ? savedGraphQuery : previewGraphQuery;
+  const latestFetchedData = activeGraphQuery.data;
+
+  useEffect(() => {
+    if (latestFetchedData !== undefined) {
+      retainedGraphDataRef.current = latestFetchedData;
     }
-  }, [queryData, mutationData, openSheetView, isFormDirty]);
+  }, [latestFetchedData]);
+
+  const graphState = monitorGraphDisplayState({
+    latestData: latestFetchedData,
+    retainedData: retainedGraphDataRef.current,
+    isError: activeGraphQuery.isError,
+  });
+  const fetchedData = graphState.data;
 
   // Handle threshold type change with proper cleanup
   const handleThresholdTypeChange = useCallback(
@@ -226,7 +248,7 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
         }}
       />
     );
-  }, [chartKey, openSheetView, options, selectedThresHoldType, series]);
+  }, [chartKey, isDark, openSheetView, options, selectedThresHoldType, series]);
 
   useEffect(() => {
     return () => {
@@ -266,9 +288,9 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
           startIcon={<SvgColor src={"/assets/icons/ic_reload.svg"} />}
           onClick={() => {
             if (openSheetView && !isFormDirty) {
-              refetchQuery();
+              savedGraphQuery.refetch();
             } else if (isQueryEnabled && Boolean(queryPayload)) {
-              refetchPreviewData();
+              previewGraphQuery.refetch();
             }
           }}
         >
@@ -281,7 +303,30 @@ export default function AlertConfiguration({ dateFilter, setDateFilter }) {
           </Typography>
         </Button>
       </Stack>
-      {renderChart()}
+      {showAwaitingLabel && (
+        <Alert severity="info" sx={{ mb: 2 }} data-testid="preview-awaiting-label">
+          Pick a label to preview this alert.
+        </Alert>
+      )}
+      {!showAwaitingLabel && graphState.showError && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              disabled={activeGraphQuery.isFetching}
+              onClick={() => activeGraphQuery.refetch()}
+            >
+              {activeGraphQuery.isFetching ? "Retrying…" : "Retry"}
+            </Button>
+          }
+        >
+          {MONITOR_GRAPH_ERROR_MESSAGE}
+        </Alert>
+      )}
+      {!showAwaitingLabel && graphState.showGraph && renderChart()}
       <Divider />
       <Box
         sx={{

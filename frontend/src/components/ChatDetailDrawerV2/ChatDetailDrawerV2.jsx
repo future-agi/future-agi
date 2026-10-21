@@ -21,6 +21,7 @@ import {
 } from "src/api/project/saved-views";
 
 import VoiceDrawerHeader from "src/components/VoiceDetailDrawerV2/VoiceDrawerHeader";
+import { shareResourceFor } from "src/components/VoiceDetailDrawerV2/shareResource";
 import ChatLeftPanel from "./ChatLeftPanel";
 import ChatRightPanel from "./ChatRightPanel";
 import ChatCompareView from "./Compare/ChatCompareView";
@@ -55,6 +56,7 @@ const ChatDetailDrawerV2 = ({
   const queryClient = useQueryClient();
   const { observeId } = useParams();
   const projectId = observeId || data?.project_id;
+  const shareResource = shareResourceFor(data);
 
   const [leftPanelWidth, setLeftPanelWidth] = useState(50);
   const [isFullscreen, setIsFullscreen] = useState(initialFullscreen);
@@ -324,11 +326,7 @@ const ChatDetailDrawerV2 = ({
             }
             isFullscreen={isFullscreen}
             onDownload={handleDownload}
-            onShare={
-              data?.trace_id || data?.id
-                ? () => setShareDialogOpen(true)
-                : undefined
-            }
+            onShare={shareResource ? () => setShareDialogOpen(true) : undefined}
             // No chat full-page route exists yet — omit `onOpenNewTab`
             // entirely so the header button hides. Wire this up once a
             // route lands.
@@ -484,15 +482,15 @@ const ChatDetailDrawerV2 = ({
         )}
       </Box>
 
-      {/* Share dialog — chat shares by trace_id (same backend as
-          voice). Fallback URL is omitted because there's no chat
-          full-page route yet. */}
-      {(data?.trace_id || data?.id) && (
+      {/* Share dialog — simulation chats share their CallExecution, others
+          their trace. No chat full-page route exists, so the fallback is
+          the current page URL. */}
+      {shareResource && (
         <ShareDialog
           open={shareDialogOpen}
           onClose={() => setShareDialogOpen(false)}
-          resourceType="trace"
-          resourceId={data?.trace_id || data?.id}
+          resourceType={shareResource.resourceType}
+          resourceId={shareResource.resourceId}
         />
       )}
 

@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "catalog": "node scripts/flow-catalog.mjs",
     "catalog:check": "node scripts/flow-catalog.mjs --check",
+    "coverage": "node scripts/e2e-coverage.mjs",
     "selftest": "node --test 'scripts/**/*.test.mjs'"
   },
   "devDependencies": {
@@ -19,6 +20,7 @@
     "@types/node": "^22.10.0",
     "@types/pg": "^8.11.0",
     "pg": "^8.13.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "yaml": "2.8.1"
   }
 }

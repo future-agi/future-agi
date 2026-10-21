@@ -6,6 +6,16 @@ import { isCancelledError } from "@tanstack/react-query";
 
 import logger from "./logger";
 
+export const isExpectedRequestCancellation = (error) => {
+  const name = error?.name;
+  return (
+    isCancelledError(error) ||
+    name === "CanceledError" ||
+    name === "AbortError" ||
+    error?.code === "ERR_CANCELED"
+  );
+};
+
 // invalidate/refetch return Promises that reject with a cancellation error
 // whenever react-query supersedes an in-flight fetch for the same key. These
 // callers are intentionally fire-and-forget, so we drop those rejections on
@@ -16,13 +26,7 @@ import logger from "./logger";
 // by the minifier — only `isCancelledError` (instanceof check) is reliable.
 // Axios sets `name = "CanceledError"` itself so the name check works there.
 const swallowCancellations = (label) => (error) => {
-  const name = error?.name;
-  const isCancelled =
-    isCancelledError(error) ||
-    name === "CanceledError" ||
-    name === "AbortError" ||
-    error?.code === "ERR_CANCELED";
-  if (isCancelled) return;
+  if (isExpectedRequestCancellation(error)) return;
   logger.error(label, error);
 };
 

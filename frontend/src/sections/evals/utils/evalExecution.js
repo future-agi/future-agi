@@ -4,6 +4,8 @@
 // composite-vs-single decision lives in one place.
 
 import axios, { endpoints } from "src/utils/axios";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
+import { verifySpanReadResponse } from "src/sections/projects/LLMTracing/spanReadReference";
 
 import { resolvePath } from "./rowPathWalker";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
@@ -25,16 +27,20 @@ export const normalizeRowType = (value) => {
   return "Span";
 };
 
-// Single-eval ctx: just IDs — the BE resolves {{span}}/{{trace}}/{{session}}.
-export const buildAutoCtx = ({ rowType, currentRow }) => {
+// A selected physical span is already authorized and verified by its detail
+// GET. Re-resolving a bare ID could evaluate a different service/hour/version.
+// Other row types retain their existing separate context contracts.
+export const buildAutoCtx = ({ rowType, currentRow, spanDetail }) => {
   const ctx = {};
   if (!currentRow) return ctx;
   const t = normalizeRowType(rowType);
-  const spanId = currentRow.span_id || currentRow.spanId;
+  if (t === "Span")
+    return {
+      span_context: verifySpanReadResponse(currentRow, spanDetail),
+    };
   const traceId = currentRow.trace_id || currentRow.traceId;
   const sessionId = currentRow.session_id || currentRow.sessionId;
-  if (t === "Span" && spanId) ctx.span_id = spanId;
-  if ((t === "Span" || t === "Trace") && traceId) ctx.trace_id = traceId;
+  if (t === "Trace" && traceId) ctx.trace_id = traceId;
   if (t === "Session" && sessionId) ctx.session_id = sessionId;
   if (t === "VoiceCall" && traceId) ctx.trace_id = traceId;
   return ctx;
@@ -44,7 +50,8 @@ export const buildAutoCtx = ({ rowType, currentRow }) => {
 export const buildCompositeCtx = ({ rowType, currentRow, spanDetail }) => {
   const ctx = {};
   const t = normalizeRowType(rowType);
-  if (t === "Span" && spanDetail) ctx.span_context = spanDetail;
+  if (t === "Span")
+    ctx.span_context = verifySpanReadResponse(currentRow, spanDetail);
   if (t === "Trace" && currentRow) ctx.trace_context = currentRow;
   if (t === "Session" && currentRow) ctx.session_context = currentRow;
   if (t === "VoiceCall" && currentRow) ctx.trace_context = currentRow;
@@ -94,8 +101,7 @@ export const executeEvalForRow = async ({
   const templateId = evalItem?.template_id ?? evalItem?.templateId;
   const model = evalItem?.model || "turing_large";
   const templateType = evalItem?.template_type ?? evalItem?.templateType;
-  const isComposite =
-    templateType === "composite" || !!compositeAdhocConfig;
+  const isComposite = templateType === "composite" || !!compositeAdhocConfig;
   const t = normalizeRowType(rowType);
   const isSession = t === "Session";
 
@@ -134,7 +140,7 @@ export const executeEvalForRow = async ({
         return {
           ok: false,
           isComposite: true,
-          errorMessage: data?.result || "Evaluation failed",
+          errorMessage: "Evaluation failed. Please retry.",
           raw: data,
         };
       }
@@ -154,7 +160,7 @@ export const executeEvalForRow = async ({
 
     // Single-eval: sessions send `mapping_paths` (BE resolves against the
     // real DB); other row types send the locally-resolved `mapping`.
-    const autoCtx = buildAutoCtx({ rowType: t, currentRow });
+    const autoCtx = buildAutoCtx({ rowType: t, currentRow, spanDetail });
     const singleConfig = { ...singleEvalConfigExtras };
     if (!isSession) singleConfig.mapping = resolvedMapping;
     if (codeParams && Object.keys(codeParams).length > 0) {
@@ -176,7 +182,9 @@ export const executeEvalForRow = async ({
       return {
         ok: false,
         isComposite: false,
-        errorMessage: data?.result || "Evaluation failed",
+        // A 2xx transport response can still wrap provider/query failures in
+        // `result`. That payload is not a user-safe error channel.
+        errorMessage: "Evaluation failed. Please retry.",
         raw: data,
       };
     }
@@ -191,12 +199,10 @@ export const executeEvalForRow = async ({
     return {
       ok: false,
       isComposite,
-      errorMessage:
-        err?.response?.data?.result ||
-        err?.result ||
-        err?.detail ||
-        err?.message ||
-        "Failed to run evaluation",
+      errorMessage: getSafeActionErrorMessage(
+        err,
+        "Failed to run evaluation. Please retry.",
+      ),
       raw: err,
     };
   }

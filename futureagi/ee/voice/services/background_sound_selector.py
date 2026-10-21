@@ -49,11 +49,11 @@ Replace BG_XX with the actual ID from the list above. Include nothing else in yo
 
 def _extract_bg_id(response: str) -> Optional[str]:
     """Extract BG_XX ID from LLM response using pattern matching."""
-    match = re.search(r"SELECTED:\s*(BG_\d+)", response, re.IGNORECASE)
+    match = re.search(r"SELECTED:\s*(BG_[A-Z0-9]+(?:_[A-Z0-9]+)*)", response, re.IGNORECASE)
     if match:
         return match.group(1).upper()
 
-    match = re.search(r"\b(BG_\d+)\b", response, re.IGNORECASE)
+    match = re.search(r"\b(BG_[A-Z0-9]+(?:_[A-Z0-9]+)*)\b", response, re.IGNORECASE)
     if match:
         return match.group(1).upper()
 
@@ -122,7 +122,7 @@ def select_background_sound(situation: str) -> Dict[str, Any]:
     logger.info(f"[BG] Built background sound prompt: {prompt}")
 
     llm = LLM(
-        model_name="gemini-2.5-flash",
+        model_name="gemini-3.5-flash-lite",
         temperature=0.2,
         provider="vertex_ai",
         api_key=None,

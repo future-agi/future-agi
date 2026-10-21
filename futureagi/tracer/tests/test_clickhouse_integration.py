@@ -25,6 +25,7 @@ import os
 import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -34,6 +35,16 @@ import pytest
 
 _TEST_DATABASE = "test_futureagi"
 _EVAL_TABLE = f"{_TEST_DATABASE}.usage_apicalllog"
+_EVAL_TRACE_TABLE = f"{_TEST_DATABASE}.eval_score_test_traces"
+
+
+def _rewrite_eval_dashboard_tables(sql: str) -> str:
+    """Point an eval dashboard query at this suite's isolated CH fixtures."""
+    return sql.replace("usage_apicalllog", _EVAL_TABLE).replace(
+        "FROM traces AS trace_project_scan",
+        f"FROM {_EVAL_TRACE_TABLE} AS trace_project_scan",
+    )
+
 
 # (label, config payload, the eval_score it must materialize, holds a real number)
 EVAL_OUTPUT_SHAPES: tuple[tuple[str, dict, float, bool], ...] = (
@@ -166,11 +177,15 @@ def _bench_output_fragment(label: str) -> str:
 
 
 def _bench_reason_sql() -> str:
-    pool = "multiIf(" + ", ".join(
-        f"modulo(number, {len(BENCH_REASON_SENTENCES)}) = {i}, "
-        f"{_bench_sql_literal(sentence)}"
-        for i, sentence in enumerate(BENCH_REASON_SENTENCES[:-1])
-    ) + f", {_bench_sql_literal(BENCH_REASON_SENTENCES[-1])})"
+    pool = (
+        "multiIf("
+        + ", ".join(
+            f"modulo(number, {len(BENCH_REASON_SENTENCES)}) = {i}, "
+            f"{_bench_sql_literal(sentence)}"
+            for i, sentence in enumerate(BENCH_REASON_SENTENCES[:-1])
+        )
+        + f", {_bench_sql_literal(BENCH_REASON_SENTENCES[-1])})"
+    )
     return (
         f"concat(repeat(concat({pool}, ' '), {BENCH_REASON_REPEATS}), "
         f"hex(randomString({BENCH_REASON_RANDOM_BYTES})))"
@@ -346,6 +361,7 @@ def ch_schema(ch_client):
             err_msg = str(exc)
             if "already exists" not in err_msg.lower():
                 import warnings
+
                 warnings.warn(f"CH schema DDL failed for {name}: {err_msg[:200]}")
 
     db_client.close()
@@ -458,12 +474,15 @@ def ch_eval_output_rows(ch_schema):
         CDC_USAGE_APICALLLOG,
         _to_single_node_engine,
     )
+    from tracer.services.clickhouse.v2.apply_schema_rewriter import split_statements
 
     client = ch_schema
     organization_id = str(uuid.uuid4())
     workspace_id = str(uuid.uuid4())
+    project_id = str(uuid.uuid4())
     all_shapes_source_id = str(uuid.uuid4())
     scored_shapes_source_id = str(uuid.uuid4())
+    trace_ids = {label: str(uuid.uuid4()) for label, *_unused in EVAL_OUTPUT_SHAPES}
 
     ddl = _to_single_node_engine(CDC_USAGE_APICALLLOG).replace(
         "CREATE TABLE IF NOT EXISTS usage_apicalllog",
@@ -471,6 +490,28 @@ def ch_eval_output_rows(ch_schema):
     )
     client.command(f"DROP TABLE IF EXISTS {_EVAL_TABLE}")
     client.command(ddl)
+    client.command(f"DROP TABLE IF EXISTS {_EVAL_TRACE_TABLE}")
+    trace_schema_path = (
+        Path(__file__).resolve().parents[1]
+        / "services/clickhouse/v2/schema/015_traces_and_trace_dict.sql"
+    )
+    trace_ddl = next(
+        statement
+        for statement in split_statements(trace_schema_path.read_text())
+        if "CREATE TABLE IF NOT EXISTS traces" in statement
+    ).replace(
+        "CREATE TABLE IF NOT EXISTS traces",
+        f"CREATE TABLE {_EVAL_TRACE_TABLE}",
+    )
+    client.command(trace_ddl)
+    trace_values = ", ".join(
+        f"(toUUID('{trace_id}'), toUUID('{project_id}'), now64(6), 0, {offset + 1})"
+        for offset, trace_id in enumerate(trace_ids.values())
+    )
+    client.command(
+        f"INSERT INTO {_EVAL_TRACE_TABLE} "
+        f"(id, project_id, created_at, is_deleted, _version) VALUES {trace_values}"
+    )
 
     # Backdated so clock skew against the CH container can't push rows past "now".
     seeded_at = "now64(6) - toIntervalHour(1)"
@@ -479,7 +520,7 @@ def ch_eval_output_rows(ch_schema):
         for offset, (label, payload, _score, _has_number) in enumerate(shapes):
             # trace_id: eval filters select on eval_trace_id, so it names the row.
             # config is double-encoded (a JSON string holding JSON) in CH.
-            config = dict(payload, trace_id=label)
+            config = dict(payload, trace_id=trace_ids[label])
             literal = json.dumps(config).replace("\\", "\\\\").replace("'", "\\'")
             client.command(
                 f"""
@@ -503,12 +544,15 @@ def ch_eval_output_rows(ch_schema):
         "client": client,
         "organization_id": organization_id,
         "workspace_id": workspace_id,
+        "project_id": project_id,
+        "trace_ids": trace_ids,
         "all_shapes_source_id": all_shapes_source_id,
         "scored_shapes_source_id": scored_shapes_source_id,
     }
 
     try:
         client.command(f"TRUNCATE TABLE {_EVAL_TABLE}")
+        client.command(f"DROP TABLE IF EXISTS {_EVAL_TRACE_TABLE}")
     except Exception:
         pass
 
@@ -809,6 +853,7 @@ class TestEvalScoreMaterialization:
         config = {
             "organization_id": ch_eval_output_rows["organization_id"],
             "workspace_id": ch_eval_output_rows["workspace_id"],
+            "project_ids": [ch_eval_output_rows["project_id"]],
             "granularity": "day",
             "time_range": {"preset": "7D"},
             "metrics": [
@@ -822,7 +867,7 @@ class TestEvalScoreMaterialization:
             ],
         }
         sql, params, _ = DashboardQueryBuilder(config).build_all_queries()[0]
-        sql_test = sql.replace("usage_apicalllog", _EVAL_TABLE)
+        sql_test = _rewrite_eval_dashboard_tables(sql)
 
         result = ch_eval_output_rows["client"].query(sql_test, parameters=params)
 
@@ -849,6 +894,7 @@ class TestEvalScoreMaterialization:
         config = {
             "organization_id": ch_eval_output_rows["organization_id"],
             "workspace_id": ch_eval_output_rows["workspace_id"],
+            "project_ids": [ch_eval_output_rows["project_id"]],
             "granularity": "day",
             "time_range": {"preset": "7D"},
             "metrics": [metric],
@@ -857,7 +903,7 @@ class TestEvalScoreMaterialization:
 
         def _run(sql, params=None):
             return client.query(
-                sql.replace("usage_apicalllog", _EVAL_TABLE), parameters=params
+                _rewrite_eval_dashboard_tables(sql), parameters=params
             ).result_rows
 
         builder = DashboardQueryBuilder(config)
@@ -872,7 +918,7 @@ class TestEvalScoreMaterialization:
                 f"SELECT reference_id, {label_expr} FROM usage_apicalllog AS ev0 "
                 f"WHERE source_id = '{source_id}'"
             )
-            if verdict == "Pass"
+            if verdict == "Passed"
         }
 
         clauses, filter_params = builder._build_subquery_filters(
@@ -889,7 +935,14 @@ class TestEvalScoreMaterialization:
             "f_",
         )
         subquery = clauses[0][clauses[0].index("(") + 1 : clauses[0].rindex(")")]
-        filter_passes = {row[0] for row in _run(subquery, filter_params)}
+        label_by_trace_id = {
+            trace_id: label
+            for label, trace_id in ch_eval_output_rows["trace_ids"].items()
+        }
+        filter_passes = {
+            label_by_trace_id[row[0]]
+            for row in _run(subquery, {**params, **filter_params})
+        }
 
         assert breakdown_passes == filter_passes == set(EVAL_PASSING_SHAPES), (
             "the breakdown label and the eval filter disagree on which rows "

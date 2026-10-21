@@ -65,11 +65,21 @@ def _run(select_rows):
     client = _RecordingClient(select_rows)
     db = MagicMock()
     db.client = client
-    with patch("tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db), \
-         patch("tracer.queries.scan_clustering.ensure_centroid_table"), \
-         patch("tracer.queries.scan_clustering.TraceErrorGroup") as group, \
-         patch("tracer.queries.scan_clustering.TraceScanIssue"), \
-         patch("tracer.queries.scan_clustering.ErrorClusterTraces"):
+
+    def execute_read(sql, params=None, **_kwargs):
+        client.statements.append((sql, params or {}))
+        return select_rows
+
+    db.execute_read.side_effect = execute_read
+
+    with (
+        patch("tracer.queries.scan_clustering.ClickHouseVectorDB", return_value=db),
+        patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+        patch("tracer.queries.scan_clustering.TraceErrorGroup") as group,
+        patch("tracer.queries.scan_clustering.TraceScanIssue"),
+        patch("tracer.queries.scan_clustering.ErrorClusterTraces"),
+        patch("tracer.services.feed_alerts.events.record_issue_event"),
+    ):
         group.objects.get.return_value = MagicMock(error_count=0, total_events=0)
         assign_to_cluster(_CLUSTER, _PROJECT, _issue(), [1.0, 0.0, 0.0])
     return client

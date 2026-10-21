@@ -43,6 +43,12 @@ export default function DataTable({
         muiCol.valueGetter = (params) => params.row[dataKey];
       }
 
+      // Opt-in custom header node. `headerName` stays a string (aria-label /
+      // sort tooltip); a column that needs a rich header supplies renderHeader.
+      if (col.renderHeader) {
+        muiCol.renderHeader = col.renderHeader;
+      }
+
       // Width
       if (col.meta?.flex) {
         muiCol.flex = col.meta.flex;
