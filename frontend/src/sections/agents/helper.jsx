@@ -822,7 +822,8 @@ export const getCallLogsColumnDefs = (
       headerName: voiceColumnLabel("gen_ai.usage.total_tokens"),
       field: "gen_ai.usage.total_tokens",
       flex: 0,
-      minWidth: 220,
+      // Fit input, output, total, and icons without clipping leading digits.
+      minWidth: 300,
       cellRenderer: VoiceTokenCell,
     },
     {
@@ -1083,8 +1084,7 @@ export const useCallLogs = ({
         }
       : {
           retry: (failureCount, queryError) =>
-            !isListCursorContinuationLimitError(queryError) &&
-            failureCount < 1,
+            !isListCursorContinuationLimitError(queryError) && failureCount < 1,
         }),
   });
   return { queryKey, data, isLoading, error };
