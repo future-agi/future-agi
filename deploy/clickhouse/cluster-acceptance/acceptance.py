@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 
 def run(directory, allow_faults, application=False):
@@ -129,6 +129,43 @@ def run(directory, allow_faults, application=False):
     project, session, user = [str(uuid.uuid4()) for _ in range(3)]
     ids = [str(uuid.uuid4()) for _ in range(90)]
     stamp = datetime(2026, 10, 1, 1, tzinfo=UTC)
+    # Curated dimensions use named identities, not an `id` column. Updates
+    # must route with the same project/entity key and collapse under FINAL.
+    organization = str(uuid.uuid4())
+    for offset, label in enumerate(("before", "after")):
+        version = stamp + timedelta(seconds=offset)
+        admin.insert(
+            "acceptance_v1.end_users",
+            [[project, user, organization, label, stamp, version]],
+            column_names=[
+                "project_id",
+                "end_user_id",
+                "organization_id",
+                "user_id",
+                "first_seen",
+                "version",
+            ],
+        )
+        admin.insert(
+            "acceptance_v1.trace_sessions",
+            [[project, session, label, stamp, version]],
+            column_names=[
+                "project_id",
+                "trace_session_id",
+                "external_session_id",
+                "first_seen",
+                "version",
+            ],
+        )
+    assert admin.query(
+        "SELECT user_id FROM acceptance_v1.end_users FINAL WHERE project_id = %(project)s AND end_user_id = %(entity)s",
+        parameters={"project": project, "entity": user},
+    ).result_rows == [("after",)]
+    assert admin.query(
+        "SELECT external_session_id FROM acceptance_v1.trace_sessions FINAL WHERE project_id = %(project)s AND trace_session_id = %(entity)s",
+        parameters={"project": project, "entity": session},
+    ).result_rows == [("after",)]
+    evidence["curated_dimension_updates"] = True
     rows = [
         [str(uuid.uuid4()), project, trace, session, user, stamp, 1, stamp, stamp]
         for trace in ids

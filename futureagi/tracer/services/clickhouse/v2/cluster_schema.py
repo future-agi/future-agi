@@ -32,8 +32,8 @@ _TOKEN = re.compile(
 SHARD_KEYS = {
     "spans": "cityHash64(project_id, trace_id)",
     "traces": "cityHash64(project_id, toString(id))",
-    "end_users": "cityHash64(id)",
-    "trace_sessions": "cityHash64(id)",
+    "end_users": "cityHash64(project_id, end_user_id)",
+    "trace_sessions": "cityHash64(project_id, trace_session_id)",
     "end_user_id_remap": "cityHash64(old_id)",
     "trace_session_id_remap": "cityHash64(old_id)",
     "tracer_eval_logger_v2": "cityHash64(id)",
@@ -213,6 +213,40 @@ def engine_signature(sql):
     raise ClusterSchemaError("unbalanced engine constructor")
 
 
+def _validate_shard_key(sql, table, key):
+    """Check the reviewed key against actual CREATE columns before any DDL."""
+    argument = r"(?:[A-Za-z_][A-Za-z_0-9]*|toString\([A-Za-z_][A-Za-z_0-9]*\))"
+    if not re.fullmatch(rf"cityHash64\(\s*{argument}(?:\s*,\s*{argument})*\s*\)", key):
+        raise ClusterSchemaError(
+            f"{table}: shard key must hash explicit immutable columns"
+        )
+    tokens = [m[0] for m in _TOKEN.finditer(sql[_CREATE.match(sql).end() :])]
+    if not tokens or tokens[0] != "(":
+        raise ClusterSchemaError(f"{table}: explicit CREATE columns required")
+    columns, entry, depth = set(), [], 1
+    for token in tokens[1:]:
+        if (token == "," and depth == 1) or (token == ")" and depth == 1):
+            if entry and entry[0].upper() not in {"INDEX", "PROJECTION", "CONSTRAINT"}:
+                columns.add(entry[0].strip("`"))
+            entry = []
+            if token == ")":
+                break
+            continue
+        depth += (token in {"(", "["}) - (token in {")", "]"})
+        entry.append(token)
+    else:
+        raise ClusterSchemaError(f"{table}: unterminated CREATE columns")
+    references = {m[0] for m in _TOKEN.finditer(key) if _IDENTIFIER.fullmatch(m[0])} - {
+        "cityHash64",
+        "toString",
+    }
+    missing = references - columns
+    if missing:
+        raise ClusterSchemaError(
+            f"{table}: shard key references missing columns: {', '.join(sorted(missing))}"
+        )
+
+
 def compile_definitions(
     definitions, topology, *, version, shard_keys=None, known_tables=()
 ):
@@ -257,6 +291,7 @@ def compile_definitions(
                 raise ClusterSchemaError(
                     f"explicit immutable shard key required for {name}"
                 )
+            _validate_shard_key(sql, name, key)
             alias = (
                 f"{header} {topology.on_cluster} AS {topology.database}.{physical} "
                 f"ENGINE = Distributed('{topology.cluster}', '{topology.database}', '{physical}', {key})"

@@ -484,3 +484,58 @@ def test_regular_future_views_are_database_qualified_but_remain_distributed(topo
     assert "FROM test_cluster_v1.metric_results" in steps[0].sql
     assert "FROM test_cluster_v1.metric_commits FINAL" in steps[0].sql
     assert "_local" not in steps[0].sql
+
+
+@pytest.mark.parametrize(
+    "table,column",
+    [("end_users", "end_user_id"), ("trace_sessions", "trace_session_id")],
+)
+def test_curated_dimensions_route_by_their_real_immutable_identity(plan, table, column):
+    logical = next(step for step in plan if step.name == table)
+    assert f"cityHash64(project_id, {column})" in logical.sql
+    assert "cityHash64(id)" not in logical.sql
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "cityHash64(id)",
+        "cityHash64(project_id, toString(id))",
+        "cityHash64(idx_missing)",
+    ],
+)
+def test_missing_key_columns_fail_during_plan_compilation(topology, key):
+    with pytest.raises(
+        ClusterSchemaError, match="shard key references missing columns"
+    ):
+        compile_definitions(
+            [
+                "CREATE TABLE IF NOT EXISTS end_users (project_id UUID, end_user_id UUID, metadata Map(String, String), INDEX idx_missing end_user_id TYPE bloom_filter GRANULARITY 1) ENGINE=ReplacingMergeTree ORDER BY (project_id, end_user_id)"
+            ],
+            topology,
+            version="test",
+            shard_keys={"end_users": key},
+        )
+
+
+def test_validated_shard_key_accepts_actual_quoted_columns_and_nested_types(topology):
+    steps = compile_definitions(
+        [
+            "CREATE TABLE IF NOT EXISTS sample (`project_id` UUID, `id` UUID, values Map(String, Tuple(String, UInt64))) ENGINE=MergeTree ORDER BY (project_id, id)"
+        ],
+        topology,
+        version="test",
+        shard_keys={"sample": "cityHash64(project_id, toString(id))"},
+    )
+    assert steps[-1].engine == "Distributed"
+
+
+def test_dimension_key_fix_resumes_prior_successful_receipts(topology, plan):
+    first_failed = next(i for i, step in enumerate(plan) if step.name == "end_users")
+    client = FakeCluster(topology, plan)
+    with patch("tracer.services.clickhouse.v2.cluster_apply.preflight"):
+        assert apply_plan(client, topology, plan[:first_failed]) == first_failed
+        prior = list(client.receipts)
+        assert apply_plan(client, topology, plan) == len(plan) - first_failed
+        assert client.receipts[:first_failed] == prior
+        assert apply_plan(client, topology, plan) == 0

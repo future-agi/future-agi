@@ -91,7 +91,7 @@ jobs:
           from pathlib import Path
           evidence = json.loads((Path(os.environ['FIXTURE_DIR']) / 'evidence.json').read_text())
           required = ('schema_replay', 'capture_update_delete', 'observed_catalog_bootstrap', 'post_bootstrap_additive_upgrade',
-                      'local_mv_fanout', 'eval_insert', 'rmt_update', 'global_membership',
+                      'local_mv_fanout', 'eval_insert', 'rmt_update', 'curated_dimension_updates', 'global_membership',
                       'replica_loss', 'strict_quorum_refused_unsafe_ack', 'explicit_availability_mode')
           assert all(evidence.get(key) is True for key in required), evidence
           assert evidence['acknowledged_rows_survived'] == 90 and evidence['shard_count'] == 3, evidence

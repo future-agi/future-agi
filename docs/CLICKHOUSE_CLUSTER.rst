@@ -102,7 +102,11 @@ The query profile therefore forces coordinator aggregation, one replica per
 shard, all-shard availability, and GLOBAL semantics for distributed IN/JOIN
 subqueries. It disables shard-skipping assumptions. Session/user rollup readers
 must merge aggregate states **across shards**, never concatenate local answers.
-Mutable RMT identities use stable IDs (remaps use ``old_id``); FINAL works per
+Mutable RMT identities use stable IDs (remaps use ``old_id``). Curated users
+route by ``cityHash64(project_id, end_user_id)`` and curated sessions by
+``cityHash64(project_id, trace_session_id)``; neither schema has an ``id`` column.
+The compiler validates every routing column against its CREATE declaration
+before any DDL is sent. FINAL works per
 shard because every version of an identity returns to the same shard. These
 settings preserve correctness, not arbitrary join efficiency: GLOBAL sets can
 consume network/memory. Keep tenant/project/time restrictions and bounded
@@ -188,6 +192,11 @@ Migration, backfill, cutover and rollback
    ``CH_CLUSTER_SHARDS``, ``CH_CLUSTER_REPLICAS`` and
    ``CH_CLUSTER_INSERT_QUORUM`` with the existing CH connection/database config.
    Historical ``ch25_apply_schema --force`` is **not** a conversion procedure.
+   A failed CREATE has no success receipt: a pre-release correction to an invalid
+   alias expression can resume after the previously successful steps. Existing
+   success receipts are never bypassed or rewritten; if a different routing
+   expression was actually installed, stop and use a separately reviewed
+   migration/new database rather than forcing a changed checksum.
    ``CH_CLUSTER_ENABLED=true`` selects this path; keep the legacy
    ``CH_USE_REPLICATED_ENGINES=false`` as Helm does. The latter controls the old
    local/hosted bootstrap and is deliberately not the new topology switch.
