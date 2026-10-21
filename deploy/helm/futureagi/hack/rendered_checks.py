@@ -750,6 +750,17 @@ def check_render(name: str, docs: list[dict]) -> list[str]:
                         f"{name}: gateway containerPort {port} differs from server.port"
                     )
 
+    # Without guardrails.enabled the gateway skips the guardrails set up in the
+    # dashboard, which still shows them as on.
+    for config_map in (d for d in docs if d["kind"] == "ConfigMap"):
+        if component(config_map) == "agentcc-gateway":
+            config = yaml.safe_load(config_map["data"]["config.yaml"])
+            if (config.get("guardrails") or {}).get("enabled") is not True:
+                failed.append(
+                    f"{name}: the gateway config leaves guardrails off, so the "
+                    "guardrails set up in the dashboard never run"
+                )
+
     # The collector writes observed attributes (property suggestions) into the
     # index the bootstrap job provisions: its database, as its writer.
     by_component = {component(d): pod_spec(d)["containers"][0] for d in workloads}
@@ -809,6 +820,24 @@ def check_render(name: str, docs: list[dict]) -> list[str]:
         failed.append(
             f"{name}: gateway and backend disagree on AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS"
         )
+    # The Python processes push a Future AGI Eval guardrail at Future AGI
+    # Cloud's URL to the gateway with this URL and the org's own API key: it
+    # must be the backend Service.
+    backend_urls = {
+        f"http://{d['metadata']['name']}:{port['port']}"
+        for d in docs
+        if d["kind"] == "Service" and component(d) == "backend"
+        for port in d["spec"]["ports"]
+        if port["name"] == "http"
+    }
+    for doc in workloads:
+        for container in containers(doc):
+            url = env_values(container).get("AGENTCC_GATEWAY_FI_BASE_URL")
+            if url is not None and url not in backend_urls:
+                failed.append(
+                    f"{name}: {doc['metadata']['name']}/{container['name']} sets "
+                    f"AGENTCC_GATEWAY_FI_BASE_URL={url!r}, not the backend Service"
+                )
     secret_keys = {
         (d["metadata"]["name"], key)
         for d in docs

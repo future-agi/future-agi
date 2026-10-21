@@ -569,6 +569,39 @@ grep -qF "Argo CD runs it in PreSync wave 0, not after ConfigMap futureagi-click
 }
 rm -rf "$out/broken" "$out/broken.txt"
 echo "ok   a bootstrap job Argo CD runs before the bundled datastores is caught"
+# ... and a gateway config that leaves guardrails off, so the guardrails set up
+# in the dashboard never run. The check looks the ConfigMap up by its component
+# label and passes a render without one, so that fails here instead.
+mkdir -p "$out/broken"
+"$python" - "$out/bundled.yaml" >"$out/broken/bundled.yaml" <<'EOF' || fail "bundled.yaml has no gateway ConfigMap: update this check and rendered_checks.py"
+import sys
+
+import yaml
+
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+gateway = [
+    d
+    for d in docs
+    if d["kind"] == "ConfigMap"
+    and d["metadata"]["labels"].get("app.kubernetes.io/component") == "agentcc-gateway"
+]
+if not gateway:
+    sys.exit("no ConfigMap of component agentcc-gateway")
+for doc in gateway:
+    config = yaml.safe_load(doc["data"]["config.yaml"])
+    config["guardrails"] = {"enabled": False}
+    doc["data"]["config.yaml"] = yaml.safe_dump(config)
+yaml.safe_dump_all(docs, sys.stdout)
+EOF
+if "$python" "$chart/hack/rendered_checks.py" "$out/broken" >"$out/broken.txt" 2>&1; then
+  fail "rendered_checks.py passes a gateway config with guardrails off"
+fi
+grep -qF "bundled: the gateway config leaves guardrails off" "$out/broken.txt" || {
+  cat "$out/broken.txt" >&2
+  fail "rendered_checks.py does not say the gateway config leaves guardrails off"
+}
+rm -rf "$out/broken" "$out/broken.txt"
+echo "ok   a gateway config with guardrails off is caught"
 
 echo "== values, schema and README"
 "$python" "$chart/hack/values_docs.py" --check

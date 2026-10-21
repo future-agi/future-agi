@@ -697,3 +697,83 @@ func TestFutureAGI_RequestPayload(t *testing.T) {
 		t.Errorf("config call_type = %q", cfg.CallType)
 	}
 }
+
+// --- Test: FI_BASE_URL replaces Future AGI Cloud's URL, and only it ---
+
+// Self-hosted gateways set FI_BASE_URL to their install's API, so a check at
+// the dashboard's default Base URL (Future AGI Cloud's) calls that API instead
+// of posting the prompts it checks to Cloud.
+func TestFutureAGI_CloudBaseURLCallsFIBaseURL(t *testing.T) {
+	var method, path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"result": []map[string]interface{}{
+				{"evaluations": []map[string]interface{}{
+					{"name": "toxicity", "output": "Passed", "reason": "ok", "runtime": 100.0, "evalId": "15"},
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("FI_BASE_URL", srv.URL)
+
+	g := New("test", map[string]interface{}{
+		"provider": "futureagi", "eval_id": "15",
+		"api_key": "k", "secret_key": "s", "base_url": "https://api.futureagi.com",
+	})
+	// Before calling: one that kept Cloud's URL would post to Cloud.
+	if g.baseURL != srv.URL {
+		t.Fatalf("baseURL = %q, want FI_BASE_URL's %q", g.baseURL, srv.URL)
+	}
+
+	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
+	if !result.Pass {
+		t.Fatalf("expected pass, got fail: %s", result.Message)
+	}
+	if method != http.MethodPost || path != "/sdk/api/v1/eval/" {
+		t.Errorf("FI_BASE_URL got %q %q, want POST /sdk/api/v1/eval/", method, path)
+	}
+}
+
+// Any other Base URL is called as given, Cloud's with a trailing slash too,
+// so it reaches Cloud.
+func TestFutureAGI_OtherBaseURLIgnoresFIBaseURL(t *testing.T) {
+	decoy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("FI_BASE_URL got %s %s for a custom base_url", r.Method, r.URL.Path)
+	}))
+	defer decoy.Close()
+	t.Setenv("FI_BASE_URL", decoy.URL)
+
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"result": []map[string]interface{}{
+				{"evaluations": []map[string]interface{}{
+					{"name": "toxicity", "output": "Passed", "reason": "ok", "runtime": 100.0, "evalId": "15"},
+				}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	g := New("test", map[string]interface{}{
+		"provider": "futureagi", "eval_id": "15",
+		"api_key": "k", "secret_key": "s", "base_url": srv.URL,
+	})
+
+	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
+	if !result.Pass {
+		t.Fatalf("expected pass, got fail: %s", result.Message)
+	}
+	if path != "/sdk/api/v1/eval/" {
+		t.Errorf("custom base_url got %q, want /sdk/api/v1/eval/", path)
+	}
+
+	// Not called: it would reach Cloud.
+	g = New("test", map[string]interface{}{"base_url": "https://api.futureagi.com/"})
+	if g.baseURL != "https://api.futureagi.com/" {
+		t.Errorf("baseURL = %q, want Cloud's URL with its trailing slash", g.baseURL)
+	}
+}
