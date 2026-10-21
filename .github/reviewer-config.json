@@ -1,11 +1,13 @@
 {
-  "_comment": "Config for .github/workflows/reviewer-assigner.yml. Path globs use ** and * (labeler-style). Overlaps are resolved by longest-literal-prefix-wins.",
-  "fallback_lead": "atharva-bhange",
+  "_comment": "Config for .github/workflows/reviewer-assigner.yml. Path globs use ** and * (labeler-style). Overlaps are resolved by longest-literal-prefix-wins. Routing: files under frontend/ route to the owning team's frontend_lead; all other files route to backend_lead. A PR touching both gets both. Each *_lead falls back to lead if unset. A PR that matches no team goes to fallback_leads.",
+  "fallback_leads": ["abhijaisrivastava15", "khushalsonawat"],
   "teams": {
     "morpheus": {
       "display_name": "Morpheus",
       "ownership": "Simulation + Simulation SDK + Annotation queues",
       "lead": "khushalsonawat",
+      "backend_lead": "khushalsonawat",
+      "frontend_lead": "cdileep23",
       "members": ["khushalsonawat", "definitelynotchirag", "cdileep23", "KarthikAvinashFI", "hadarishav"],
       "paths": [
         "futureagi/simulate/**",
@@ -20,6 +22,8 @@
       "display_name": "heimdall",
       "ownership": "Observe + Tracing SDK + Dashboard",
       "lead": "atharva-bhange",
+      "backend_lead": "JayaSurya-27",
+      "frontend_lead": "commitPirate",
       "members": ["atharva-bhange", "JayaSurya-27", "commitPirate", "sarthakFuture"],
       "paths": [
         "futureagi/tracer/**",
@@ -36,6 +40,8 @@
       "display_name": "Turing",
       "ownership": "Platform Evals + Evals SDK + Falcon",
       "lead": "hadarishav",
+      "backend_lead": "KarthikAvinashFI",
+      "frontend_lead": "cdileep23",
       "members": ["hadarishav", "KarthikAvinashFI", "cdileep23", "azain-commits"],
       "paths": [
         "futureagi/evaluations/**",
@@ -51,6 +57,8 @@
       "display_name": "n11n",
       "ownership": "Agent + Prompt playground",
       "lead": "JayaSurya-27",
+      "backend_lead": "JayaSurya-27",
+      "frontend_lead": "commitPirate",
       "members": ["JayaSurya-27", "commitPirate", "Tanmaycode1"],
       "paths": [
         "futureagi/ee/prompts/**",
@@ -67,6 +75,8 @@
       "display_name": "quest",
       "ownership": "Experiments",
       "lead": "atharva-bhange",
+      "backend_lead": "KarthikAvinashFI",
+      "frontend_lead": "cdileep23",
       "members": ["atharva-bhange", "cdileep23", "Tanmaycode1"],
       "paths": [
         "futureagi/ee/experiments/**",
@@ -80,6 +90,8 @@
       "display_name": "Adam",
       "ownership": "Platform Optimization + Opt. SDK + Gateway",
       "lead": "NVJKKartik",
+      "backend_lead": "NVJKKartik",
+      "frontend_lead": "commitPirate",
       "members": ["NVJKKartik", "azain-commits", "hadarishav"],
       "paths": [
         "agentcc-gateway/**",
@@ -95,6 +107,8 @@
       "display_name": "Beacon",
       "ownership": "Error Feed",
       "lead": "hadarishav",
+      "backend_lead": "NVJKKartik",
+      "frontend_lead": "commitPirate",
       "members": ["hadarishav", "NVJKKartik"],
       "paths": [
         "futureagi/tracer/views/feed/**",
@@ -106,6 +120,8 @@
       "display_name": "Frame",
       "ownership": "Datasets + Future AGI + RBAC + Pricing & billing",
       "lead": "khushalsonawat",
+      "backend_lead": "sarthakFuture",
+      "frontend_lead": "cdileep23",
       "members": ["khushalsonawat", "sarthakFuture", "azain-commits", "cdileep23", "Tanmaycode1"],
       "paths": [
         "futureagi/accounts/**",
@@ -139,6 +155,7 @@
     "sarthakFuture":       { "slack_id": "U07V82HJ17H", "display_name": "Sarthak" },
     "azain-commits":       { "slack_id": "U09GEEBEATS", "display_name": "Azain" },
     "NVJKKartik":          { "slack_id": "U0851KZFTV4", "display_name": "Kartik" },
-    "Tanmaycode1":         { "slack_id": "U0ARCAND0R1", "display_name": "Tanmay" }
+    "Tanmaycode1":         { "slack_id": "U0ARCAND0R1", "display_name": "Tanmay" },
+    "abhijaisrivastava15": { "slack_id": "U0B100TRNAK", "display_name": "Abhijai" }
   }
 }
