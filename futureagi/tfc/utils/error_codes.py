@@ -104,6 +104,9 @@ err_dict = {
     "FILTER_VALUE_INVENTORY_TOO_BROAD": [
         "Too many values to browse exactly. Enter a more specific search."
     ],
+    "FILTER_VALUES_UNAVAILABLE": [
+        "Filter values are temporarily unavailable. Please retry."
+    ],
     "DATASET_LIMIT_CHECK_FAILED": [
         "Could not verify your plan's dataset limit. Please try again in a moment."
     ],

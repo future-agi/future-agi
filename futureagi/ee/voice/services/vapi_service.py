@@ -57,6 +57,7 @@ from ee.voice.services.voice_engine import VoiceServiceBlueprint
 from tfc.utils.slack import send_critical_slack_notification
 from tfc.utils.storage import download_audio_from_url, upload_audio_to_s3
 from tracer.models.observability_provider import ProviderChoices
+from tracer.utils.attribute_accessor import vapi_customer
 
 logger = structlog.get_logger(__name__)
 
@@ -1848,9 +1849,7 @@ class VapiService(VoiceServiceBlueprint):
             system_phone_number = str(
                 (call_data.get("phoneNumber") or {}).get("twilioPhoneNumber") or ""
             )
-            customer_phone_number = str(
-                (call_data.get("customer") or {}).get("number") or ""
-            )
+            customer_phone_number = str(vapi_customer(call_data).get("number") or "")
 
             return FAGICallData(
                 call_id=str(call_data.get("id") or ""),
@@ -2262,7 +2261,7 @@ class VapiService(VoiceServiceBlueprint):
                     if isinstance(call_phone_obj, dict)
                     else ""
                 )
-                call_customer_number = call.get("customer", {}).get("number", "")
+                call_customer_number = vapi_customer(call).get("number", "")
 
                 phone_match = False
                 if (

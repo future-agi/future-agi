@@ -8,6 +8,9 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
+// The app's own global query/mutation error handler, so these tests exercise
+// the same double-toast surface that prod users hit.
+import { handleError } from "src/utils/queryErrorHandler";
 
 const mockGet = vi.fn();
 const mockPost = vi.fn();
@@ -35,15 +38,6 @@ vi.mock("src/utils/axios", () => ({
 vi.mock("notistack", () => ({
   enqueueSnackbar: vi.fn(),
 }));
-
-// Mirror app.jsx's global mutation error handler so these tests exercise the
-// same double-toast surface that prod users hit.
-const handleError = (error, variable, context, mutation) => {
-  if (mutation?.options?.meta?.errorHandled) return;
-  if (error?.result) {
-    enqueueSnackbar(`${error.result}`, { variant: "error" });
-  }
-};
 
 function renderWithQuery(ui) {
   const qc = new QueryClient({
