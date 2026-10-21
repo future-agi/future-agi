@@ -75,11 +75,25 @@ Optional credentials: ``OTLPBENCH_LIVE_CH_USER`` and
 ``OTLPBENCH_LIVE_CH_PASSWORD``. Remote URLs fail closed in this fixture. A passing
 20-span test is functional integration evidence, NOT a capacity benchmark.
 
+The ``otlp-benchmark-smoke`` job in ``.github/workflows/fi-collector-ci.yml``
+provisions one disposable, pinned ClickHouse 25.3.14.14 container on the hosted CI
+runner (2 CPUs/2 GiB). It applies the actual canonical spans SQL and the existing
+curated-table DDL, runs the 20-span real collector-to-ClickHouse test, requires an
+explicit test PASS rather than a skip, and uploads its JSON/log artifacts. The
+job deletes only its uniquely named CI Compose project. It never runs the
+sustained/burst profiles or touches a shared developer stack. Adding this job is
+not evidence that it has passed; inspect the PR's actual run before claiming that.
+
+
 Authenticated external-collector smoke
 -------------------------------------
 
 Use a provisioned test project, the real collector's API-key authentication, a
-separate ClickHouse read-only credential and the same schema the deployment uses.
+separate ClickHouse read credential and the same schema the deployment uses.
+Verification requests enforce ``readonly=2``, a 30s server query limit and a
+1 GiB query memory limit in addition to the client timeout. The read account must
+permit these bounded per-query settings; a stricter profile rejecting them fails
+the preflight before load (there is no silent unsafe fallback).
 The production collector binary requires PostgreSQL auth; merely running the old
 standalone Compose example does not supply a valid auth deployment.
 
@@ -242,7 +256,11 @@ to the first successful query observing that ID. Reported p50/p95/p99 include
 poll/query delay and are **upper bounds**, not insertion commit timestamps.
 Unseen samples and query failures remain visible. Histograms have bounded memory:
 1ms upper-edge buckets to 10s, 1s above. Failed application requests have separate
-latencies; they are not silently discarded to improve p99.
+latencies; they are not silently discarded to improve p99. A request interrupted
+by normal load-window completion is explicitly counted in
+``window_censored_requests`` (``measured-with-censoring``), not as a server error
+or a successful latency sample. An HTTP failure or a client timeout while the
+load window remains open is still an error.
 
 Application read workload
 -------------------------

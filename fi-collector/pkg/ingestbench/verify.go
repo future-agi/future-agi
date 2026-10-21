@@ -49,8 +49,11 @@ func (ch clickHouse) query(ctx context.Context, query string, params map[string]
 
 func readBounded(r io.Reader, max int64) ([]byte, error) {
 	b, err := io.ReadAll(io.LimitReader(r, max+1))
-	if err != nil || int64(len(b)) > max {
-		return nil, fmt.Errorf("unreadable or oversized response")
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if int64(len(b)) > max {
+		return nil, fmt.Errorf("oversized response")
 	}
 	return b, nil
 }
@@ -90,7 +93,7 @@ func (ch clickHouse) count(ctx context.Context) (uint64, error) {
 }
 
 const sequenceExpr = "toUInt64OrDefault(attrs_string['benchmark.seq'], toUInt64(18446744073709551615))"
-const identityExpr = "(id = lower(hex(seq + toUInt64(1))) AND replaceAll(trace_id, '-', '') = concat({run:String}, lower(hex(intDiv(seq, {spt:UInt64}) + toUInt64(1)))))"
+const identityExpr = "(id = leftPad(lower(hex(seq + toUInt64(1))), 16, '0') AND replaceAll(trace_id, '-', '') = concat({run:String}, leftPad(lower(hex(intDiv(seq, {spt:UInt64}) + toUInt64(1))), 16, '0')))"
 
 // Verification keeps exact distinct state bounded by chunk size. It validates
 // BOTH deterministic IDs, not just a row count or an untrusted sequence tag.

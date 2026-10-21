@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -87,15 +88,24 @@ func runReadProbe(ctx context.Context, client *http.Client, p ReadProbe, headers
 		}
 		resp, err := client.Do(req)
 		success := false
+		requestErr := err
 		if err == nil {
 			r.HTTPStatuses[resp.StatusCode]++
 			body, readErr := readBounded(resp.Body, 8<<20)
+			requestErr = readErr
 			resp.Body.Close()
 			r.ResponseBytes += int64(len(body))
 			var payload map[string]json.RawMessage
 			if readErr == nil && resp.StatusCode == p.ExpectStatus && json.Unmarshal(body, &payload) == nil {
 				_, success = payload[p.ExpectKey]
 			}
+		}
+		// The normal load-window deadline censors an in-flight read; it is not
+		// a server failure. A client timeout while the window is still open,
+		// or an actual HTTP/error payload, remains an error.
+		if ctx.Err() != nil && (errors.Is(requestErr, context.Canceled) || errors.Is(requestErr, context.DeadlineExceeded)) {
+			r.Censored++
+			break
 		}
 		if success {
 			r.Successes++
@@ -110,10 +120,13 @@ func runReadProbe(ctx context.Context, client *http.Client, p ReadProbe, headers
 		}
 	}
 	r.Latency, r.FailureLatency = good.summary(), bad.summary()
+	if r.Censored > 0 {
+		r.Status = "measured-with-censoring"
+	}
 	if r.Errors > 0 {
 		r.Status = "errors"
 	}
-	if r.Successes+r.Errors == 0 {
+	if r.Successes+r.Errors+r.Censored == 0 {
 		r.Status = "not-executed"
 	}
 	return r

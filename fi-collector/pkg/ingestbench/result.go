@@ -95,6 +95,7 @@ type ProbeResult struct {
 	Kind           string        `json:"kind"`
 	Status         string        `json:"status"`
 	Successes      int64         `json:"successes"`
+	Censored       int64         `json:"window_censored_requests"`
 	Errors         int64         `json:"errors"`
 	HTTPStatuses   map[int]int64 `json:"http_statuses"`
 	Latency        Percentiles   `json:"successful_response_latency"`
@@ -177,10 +178,10 @@ func Report(w io.Writer, r Result) error {
 	sort.Slice(reads, func(i, j int) bool { return reads[i].Name < reads[j].Name })
 	for _, p := range reads {
 		if p.Latency.Count == 0 {
-			fmt.Fprintf(w, "App %s: %s; successes/errors %d/%d; successful latency not measured\n", p.Name, p.Status, p.Successes, p.Errors)
+			fmt.Fprintf(w, "App %s: %s; successes/errors/censored %d/%d/%d; successful latency not measured\n", p.Name, p.Status, p.Successes, p.Errors, p.Censored)
 			continue
 		}
-		fmt.Fprintf(w, "App %s: %s; successes/errors %d/%d; successful p50/p95/p99 %.3f/%.3f/%.3f ms\n", p.Name, p.Status, p.Successes, p.Errors, p.Latency.P50, p.Latency.P95, p.Latency.P99)
+		fmt.Fprintf(w, "App %s: %s; successes/errors/censored %d/%d/%d; successful p50/p95/p99 %.3f/%.3f/%.3f ms\n", p.Name, p.Status, p.Successes, p.Errors, p.Censored, p.Latency.P50, p.Latency.P95, p.Latency.P99)
 	}
 	fmt.Fprintln(w, "Full-scale 15,000 spans/s x 24h = 1,296,000,000 spans; 60,000 spans/s x 60s = 3,600,000 spans. Neither is certified by a smoke/mock run.")
 	for _, note := range r.Limitations {
