@@ -419,6 +419,7 @@ const TaskSchedulingSection = ({ control, isEdit = false }) => {
   });
 
   const runType = useWatch({ control, name: "runType" });
+  const policy = useWatch({ control, name: "samplingPolicy" });
   const { field: datePresetField } = useController({
     control,
     name: "datePreset",
@@ -501,12 +502,12 @@ const TaskSchedulingSection = ({ control, isEdit = false }) => {
             />
           </Box>
 
-          <RowLimitField control={control} />
+          {!policy && <RowLimitField control={control} />}
         </>
       )}
 
       {/* ── Sampling rate (both modes) ── */}
-      <SamplingRateField control={control} />
+      {!policy && <SamplingRateField control={control} />}
     </Box>
   );
 };

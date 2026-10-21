@@ -52,6 +52,8 @@ MODULES = (
     "psycopg",
     "clickhouse_connect",
     "clickhouse_driver",
+    "sqlglot",
+    "pyarrow.parquet",
     "xmlsec",
     "saml2",
     "grpc",

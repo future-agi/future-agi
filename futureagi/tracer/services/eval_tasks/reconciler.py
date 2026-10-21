@@ -62,6 +62,11 @@ def reconcile(task: EvalTask) -> ReconcileResult:
         # not look like concurrent edits to the revision fence.
         task = EvalTask.objects.get(id=task.id)
 
+    if getattr(task, "sampling_policy", None):
+        from tracer.services.eval_tasks.sampling.service import reconcile_policy
+
+        return reconcile_policy(task)
+
     now = timezone.now()
     force_full = _continuous_requires_full_reclassification(task)
     resolver_task = task
@@ -167,6 +172,7 @@ def _requeue_and_drop(
     task: EvalTask,
     *,
     resolved: ResolvedRowSet,
+    scope_to_candidates: bool = False,
 ) -> tuple[int, int]:
     hashes = {cfg.id: resolved_config_hash(cfg) for cfg in task.evals.all()}
     current_eval_ids = set(hashes)
@@ -182,7 +188,15 @@ def _requeue_and_drop(
     # what turns it into a statement about *when* the row changed.
     window_floor = getattr(task, "continuous_cursor", None)
     # Stream the live entries — we only collect ids, never hold all objects.
-    for entry in EvalLogger.objects.filter(eval_task_id=str(task.id)).iterator():
+    entries = EvalLogger.objects.filter(eval_task_id=str(task.id))
+    if scope_to_candidates:
+        field = {
+            RowType.SPANS: "observation_span_id",
+            RowType.TRACES: "trace_id",
+            RowType.SESSIONS: "trace_session_id",
+        }[task.row_type]
+        entries = entries.filter(**{f"{field}__in": candidates})
+    for entry in entries.iterator():
         cfg_id = entry.custom_eval_config_id
         current_eval = cfg_id in current_eval_ids
         identity = _entry_identity(entry, task.row_type)
@@ -341,6 +355,7 @@ def _task_revision(task: EvalTask) -> str:
         "id": str(task.id),
         "filters": task.filters,
         "sampling_rate": task.sampling_rate,
+        "sampling_policy": task.sampling_policy,
         "spans_limit": task.spans_limit,
         "run_type": task.run_type,
         "row_type": task.row_type,

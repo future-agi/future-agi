@@ -29,6 +29,7 @@ import {
 import { enqueueSnackbar } from "src/components/snackbar";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import TaskSchedulingSection from "./TaskSchedulingSection";
+import SamplingPolicyEditor from "./SamplingPolicyEditor";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { PROJECT_SOURCE } from "src/utils/constants";
 import { mappingChipLabel } from "src/sections/evals/utils/evalMappingPath";
@@ -295,7 +296,7 @@ const TaskConfigPanel = ({
   mode,
   control,
   setValue,
-  getValues: _getValues,
+  getValues,
   projectLocked = false,
   initialProjectName = null,
 }) => {
@@ -800,6 +801,7 @@ const TaskConfigPanel = ({
               subtitle="Choose when and how much data to evaluate"
             />
             <TaskSchedulingSection control={control} isEdit={mode === "edit"} />
+            <SamplingPolicyEditor control={control} getValues={getValues} />
           </Box>
         </Box>
       </Box>

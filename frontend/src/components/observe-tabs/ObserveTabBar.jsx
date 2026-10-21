@@ -47,6 +47,7 @@ const FIXED_TABS = [
     shortcut: "2",
   },
   { key: "users", label: "Users", icon: "mdi:account-outline", shortcut: "3" },
+  { key: "query", label: "Query", icon: "mdi:database-search-outline" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -99,7 +100,7 @@ const ObserveTabBar = ({
   // Hide Sessions/Users tabs for voice (simulator) projects
   const visibleFixedTabs = useMemo(() => {
     if (projectSource === "simulator") {
-      return FIXED_TABS.filter((t) => t.key === "traces");
+      return FIXED_TABS.filter((t) => t.key === "traces" || t.key === "query");
     }
     return FIXED_TABS;
   }, [projectSource]);
@@ -241,7 +242,8 @@ const ObserveTabBar = ({
       if (isNaN(num) || num < 1 || num > 9) return;
 
       if (num <= 3) {
-        onTabChange(visibleFixedTabs[num - 1]?.key);
+        const fixedTab = visibleFixedTabs.find((tab) => tab.shortcut === String(num));
+        if (fixedTab) onTabChange(fixedTab.key);
       } else {
         const idx = num - 4;
         if (idx < allCustomTabs.length) {
@@ -252,7 +254,7 @@ const ObserveTabBar = ({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onTabChange, allCustomTabs]);
+  }, [onTabChange, allCustomTabs, visibleFixedTabs]);
 
   // -----------------------------------------------------------------------
   // Tab action handlers
@@ -409,6 +411,7 @@ const ObserveTabBar = ({
         >
           <ButtonBase
             data-create-view-btn
+            disabled={activeTab === "query"}
             onClick={(e) => setSaveViewAnchor(e.currentTarget)}
             sx={{
               display: "inline-flex",
