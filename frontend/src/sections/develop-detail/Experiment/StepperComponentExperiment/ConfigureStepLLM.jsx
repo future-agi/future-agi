@@ -19,6 +19,7 @@ import { getRandomId } from "src/utils/utils";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useGetListOfAgents } from "../../../../api/experiment/use-get-agents";
 import { PROMPT_CONFIG_TYPE, PROMPT_CONFIG_TYPES } from "../common";
+import { getTemplateFormat } from "../utils";
 
 const transformPromptToFormSchema = (listPrompt) => {
   const modelArray = [
@@ -42,6 +43,7 @@ const transformPromptToFormSchema = (listPrompt) => {
         listPrompt?.toolChoice ||
         "auto",
       tools: listPrompt?.configuration?.tools || listPrompt?.tools || [],
+      template_format: getTemplateFormat(listPrompt?.configuration),
     },
     modelParams: {},
     name: listPrompt?.name || "Untitled",

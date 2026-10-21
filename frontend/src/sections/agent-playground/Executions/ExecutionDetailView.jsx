@@ -8,7 +8,7 @@ import NodeOutputDetail from "../AgentBuilder/RunAgentPanel/NodeOutputDetail";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import { useGetExecutionDetail } from "src/api/agent-playground/agent-playground";
 import useResolvedExecution from "../hooks/useResolvedExecution";
-import { EXECUTION_STATUS } from "../utils/workflowExecution";
+import { EXECUTION_STATUS, isSkippedStatus } from "../utils/workflowExecution";
 
 export default function ExecutionDetailView({ graphId, executionId }) {
   const queryClient = useQueryClient();
@@ -82,8 +82,11 @@ export default function ExecutionDetailView({ graphId, executionId }) {
       setSelectedNodeId(null);
       return;
     }
-    // Find last node that has a node_execution (skip pending nodes)
-    const executedNodes = executionData.nodes.filter((n) => n.node_execution);
+    // Find the last node that actually ran (skip pending and skipped nodes).
+    const executedNodes = executionData.nodes.filter(
+      (n) =>
+        n.node_execution && !isSkippedStatus(n.node_execution.status),
+    );
     if (executedNodes.length === 0) {
       setSelectedNodeId(null);
       return;
@@ -92,7 +95,8 @@ export default function ExecutionDetailView({ graphId, executionId }) {
     const lastNodeSubGraph = lastNode.sub_graph;
     if (lastNodeSubGraph?.nodes?.length) {
       const executedInner = lastNodeSubGraph.nodes.filter(
-        (n) => n.node_execution,
+        (n) =>
+          n.node_execution && !isSkippedStatus(n.node_execution.status),
       );
       if (executedInner.length > 0) {
         const lastInner = executedInner[executedInner.length - 1];

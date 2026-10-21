@@ -29,6 +29,9 @@ export const EXECUTION_STATUS = {
   SKIPPED: "skipped",
 };
 
+export const isSkippedStatus = (status) =>
+  status?.toLowerCase() === EXECUTION_STATUS.SKIPPED;
+
 /**
  * Map an API execution status string to the corresponding NODE_EXECUTION_STATE.
  * Returns null for unrecognized statuses.

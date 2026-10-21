@@ -7,6 +7,18 @@ import {
 import _ from "lodash";
 import { DEFAULT_MESSAGES } from "./constants";
 
+const DEFAULT_TEMPLATE_FORMAT = "mustache";
+
+export const getTemplateFormat = (configuration) =>
+  configuration?.template_format ||
+  configuration?.templateFormat ||
+  DEFAULT_TEMPLATE_FORMAT;
+
+const withTemplateFormat = (configuration = {}) => ({
+  ...configuration,
+  template_format: getTemplateFormat(configuration),
+});
+
 // Normalize key for matching (remove special chars, lowercase)
 const normalizeKey = (key) => {
   return key.toLowerCase().replace(/[-_/]/g, "");
@@ -75,6 +87,7 @@ export const getDefaultPromptConfig = () => {
     configuration: {
       tools: [],
       toolChoice: "auto",
+      template_format: DEFAULT_TEMPLATE_FORMAT,
     },
   };
 };
@@ -447,6 +460,10 @@ export const reversePromptConfigTransform = (data, experimentType) => {
   if (!Array.isArray(data) || data.length === 0) return [];
 
   const defaultConfig = { toolChoice: "auto", tools: [] };
+  const llmDefaultConfig = {
+    ...defaultConfig,
+    template_format: DEFAULT_TEMPLATE_FORMAT,
+  };
 
   if (experimentType === MODEL_TYPES.LLM) {
     const groups = new Map();
@@ -463,7 +480,10 @@ export const reversePromptConfigTransform = (data, experimentType) => {
           model: [],
           modelParams: {},
           experimentType: experimentType,
-          configuration: item.configuration || defaultConfig,
+          configuration: withTemplateFormat({
+            ...llmDefaultConfig,
+            ...(item.configuration || {}),
+          }),
           ...(item.outputFormat && { outputFormat: item.outputFormat }),
         });
       }
@@ -621,6 +641,10 @@ export const promptConfigTransform = (
   isEditing = false,
 ) => {
   const defaultConfig = { toolChoice: "auto", tools: [] };
+  const llmDefaultConfig = {
+    ...defaultConfig,
+    template_format: DEFAULT_TEMPLATE_FORMAT,
+  };
 
   const buildModelParams = (modelParams, e) => ({
     providers: e?.providers || "",
@@ -662,7 +686,9 @@ export const promptConfigTransform = (
         agent_version: promptConfig?.agentVersion || null,
         model: e.value,
         model_params: updatedModelParams[e.value] || {},
-        configuration: promptConfig?.configuration || defaultConfig,
+        configuration: withTemplateFormat(
+          promptConfig?.configuration || llmDefaultConfig,
+        ),
       }));
     });
   }

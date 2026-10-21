@@ -28,6 +28,8 @@ export const getStatusBorderColor = (status, theme, isDark, defaultColor) => {
     case EXECUTION_STATUS.FAILED:
     case EXECUTION_STATUS.ERROR:
       return theme.palette.red[500];
+    case EXECUTION_STATUS.SKIPPED:
+      return theme.palette.grey[500];
     default:
       return isDark ? defaultColor.dark : defaultColor.light;
   }
@@ -46,10 +48,17 @@ export const getStatusBackgroundColor = (status, theme, isDark) => {
       return isDark
         ? alpha(theme.palette.red[700], 0.3)
         : theme.palette.red[50];
+    case EXECUTION_STATUS.SKIPPED:
+      return alpha(theme.palette.grey[500], isDark ? 0.3 : 0.15);
     default:
       return null;
   }
 };
+
+export const getSkippedNodeTooltip = (errorMessage) =>
+  errorMessage
+    ? `Skipped: ${errorMessage}`
+    : "Skipped: this node was not executed.";
 
 const PORT_LABEL_OFFSET = 14;
 const PORT_LABEL_MAX_WIDTH = 200;

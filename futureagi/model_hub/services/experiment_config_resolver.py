@@ -6,6 +6,25 @@ resolve_prompt_config() produces a dict that the execution engine can
 consume directly — one model per config, no inner loop needed.
 """
 
+DEFAULT_TEMPLATE_FORMAT = "mustache"
+
+
+def _get_saved_template_format(prompt_version):
+    """Read the template format from a prompt version snapshot, if present."""
+    if not prompt_version:
+        return None
+
+    snapshot = prompt_version.prompt_config_snapshot
+    if isinstance(snapshot, list):
+        snapshot = snapshot[0] if snapshot else None
+    if not isinstance(snapshot, dict):
+        return None
+
+    configuration = snapshot.get("configuration")
+    if not isinstance(configuration, dict):
+        return None
+    return configuration.get("template_format") or configuration.get("templateFormat")
+
 
 def resolve_prompt_config(exp_prompt_config):
     """
@@ -22,6 +41,15 @@ def resolve_prompt_config(exp_prompt_config):
     Returns:
         dict with snake_case keys matching the backend execution engine.
     """
+    configuration = dict(exp_prompt_config.configuration or {})
+    saved_template_format = _get_saved_template_format(exp_prompt_config.prompt_version)
+    configuration["template_format"] = (
+        saved_template_format
+        or configuration.get("template_format")
+        or configuration.get("templateFormat")
+        or DEFAULT_TEMPLATE_FORMAT
+    )
+
     config = {
         "name": exp_prompt_config.name,
         "messages": exp_prompt_config.get_messages(),
@@ -29,7 +57,7 @@ def resolve_prompt_config(exp_prompt_config):
         "model_display_name": exp_prompt_config.model_display_name,
         "model_config": exp_prompt_config.model_config,
         "model_params": exp_prompt_config.model_params,
-        "configuration": exp_prompt_config.configuration,
+        "configuration": configuration,
         "output_format": exp_prompt_config.output_format,
     }
 

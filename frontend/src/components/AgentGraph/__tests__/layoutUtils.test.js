@@ -289,6 +289,27 @@ describe("buildExecutionGraph", () => {
     expect(child.data.hasSubGraph).toBe(true);
   });
 
+  it("makes skipped nodes non-selectable while preserving selectable statuses", () => {
+    const data = {
+      nodes: [
+        makeApiNode("skipped", { nodeExecution: { status: "skipped" } }),
+        makeApiNode("success", { nodeExecution: { status: "success" } }),
+      ],
+      node_connections: [],
+    };
+
+    const { nodes } = buildExecutionGraph(data);
+
+    expect(findNode(nodes, "skipped")).toMatchObject({
+      selectable: false,
+      focusable: false,
+    });
+    expect(findNode(nodes, "success")).toMatchObject({
+      selectable: true,
+      focusable: true,
+    });
+  });
+
   // -----------------------------------------------------------------------
   // snake_case: node_execution
   // -----------------------------------------------------------------------
