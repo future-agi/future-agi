@@ -102,6 +102,9 @@ jobs:
           result = subprocess.run(['docker', 'compose', '-p', fixture['project'], '-f', str(directory / 'compose.json'), 'logs', '--no-color', '--tail', '80'], capture_output=True, text=True, timeout=60)
           text = (result.stdout + result.stderr).replace(fixture['password'], '[REDACTED]')
           (Path(os.environ['RUNNER_TEMP']) / 'cluster-services.log').write_text(text)
+          acceptance_log = Path(os.environ['RUNNER_TEMP']) / 'cluster-acceptance.log'
+          if acceptance_log.exists():
+              acceptance_log.write_text(acceptance_log.read_text().replace(fixture['password'], '[REDACTED]'))
           PY
       - name: Remove only this generated project and its disposable volumes
         if: always()
