@@ -25211,6 +25211,7 @@ export interface SamplingRuleApi {
   name?: string;
   filters?: SamplingPredicateApi[];
   /**
+   * Percentage with at most six decimal places; closed quotas use exact integer arithmetic.
    * @minimum 0
    * @maximum 100
    */

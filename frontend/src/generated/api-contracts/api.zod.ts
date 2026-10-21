@@ -52888,7 +52888,10 @@ export const TracerEvalTaskListResponse = zod.object({
                   .max(
                     tracerEvalTaskListResponseResultsItemSamplingPolicyStrataItemRateMax,
                   )
-                  .optional(),
+                  .optional()
+                  .describe(
+                    "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                  ),
                 target_n: zod
                   .number()
                   .min(
@@ -53004,7 +53007,10 @@ export const TracerEvalTaskListResponse = zod.object({
                 .max(
                   tracerEvalTaskListResponseResultsItemSamplingPolicyDefaultRateMax,
                 )
-                .optional(),
+                .optional()
+                .describe(
+                  "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                ),
               target_n: zod
                 .number()
                 .min(
@@ -53427,7 +53433,10 @@ export const TracerEvalTaskCreateBody = zod.object({
               .number()
               .min(tracerEvalTaskCreateBodySamplingPolicyStrataItemRateMin)
               .max(tracerEvalTaskCreateBodySamplingPolicyStrataItemRateMax)
-              .optional(),
+              .optional()
+              .describe(
+                "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+              ),
             target_n: zod
               .number()
               .min(tracerEvalTaskCreateBodySamplingPolicyStrataItemTargetNMin)
@@ -53519,7 +53528,10 @@ export const TracerEvalTaskCreateBody = zod.object({
             .number()
             .min(tracerEvalTaskCreateBodySamplingPolicyDefaultRateMin)
             .max(tracerEvalTaskCreateBodySamplingPolicyDefaultRateMax)
-            .optional(),
+            .optional()
+            .describe(
+              "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+            ),
           target_n: zod
             .number()
             .min(tracerEvalTaskCreateBodySamplingPolicyDefaultTargetNMin)
@@ -53975,7 +53987,10 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
                   .max(
                     tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyStrataItemRateMax,
                   )
-                  .optional(),
+                  .optional()
+                  .describe(
+                    "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                  ),
                 target_n: zod
                   .number()
                   .min(
@@ -54091,7 +54106,10 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
                 .max(
                   tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultRateMax,
                 )
-                .optional(),
+                .optional()
+                .describe(
+                  "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                ),
               target_n: zod
                 .number()
                 .min(
@@ -54569,7 +54587,10 @@ export const TracerEvalTaskGetEvalTaskLogsResponse = zod.object({
                   .max(
                     tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingPolicyStrataItemRateMax,
                   )
-                  .optional(),
+                  .optional()
+                  .describe(
+                    "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                  ),
                 target_n: zod
                   .number()
                   .min(
@@ -54685,7 +54706,10 @@ export const TracerEvalTaskGetEvalTaskLogsResponse = zod.object({
                 .max(
                   tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingPolicyDefaultRateMax,
                 )
-                .optional(),
+                .optional()
+                .describe(
+                  "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                ),
               target_n: zod
                 .number()
                 .min(
@@ -55515,7 +55539,10 @@ export const TracerEvalTaskSamplingPreviewBody = zod.object({
             .max(
               tracerEvalTaskSamplingPreviewBodySamplingPolicyStrataItemRateMax,
             )
-            .optional(),
+            .optional()
+            .describe(
+              "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+            ),
           target_n: zod
             .number()
             .min(
@@ -55625,7 +55652,10 @@ export const TracerEvalTaskSamplingPreviewBody = zod.object({
           .number()
           .min(tracerEvalTaskSamplingPreviewBodySamplingPolicyDefaultRateMin)
           .max(tracerEvalTaskSamplingPreviewBodySamplingPolicyDefaultRateMax)
-          .optional(),
+          .optional()
+          .describe(
+            "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+          ),
         target_n: zod
           .number()
           .min(tracerEvalTaskSamplingPreviewBodySamplingPolicyDefaultTargetNMin)
@@ -55908,7 +55938,10 @@ export const TracerEvalTaskUpdateEvalTaskBody = zod.object({
               .max(
                 tracerEvalTaskUpdateEvalTaskBodySamplingPolicyStrataItemRateMax,
               )
-              .optional(),
+              .optional()
+              .describe(
+                "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+              ),
             target_n: zod
               .number()
               .min(
@@ -56018,7 +56051,10 @@ export const TracerEvalTaskUpdateEvalTaskBody = zod.object({
             .number()
             .min(tracerEvalTaskUpdateEvalTaskBodySamplingPolicyDefaultRateMin)
             .max(tracerEvalTaskUpdateEvalTaskBodySamplingPolicyDefaultRateMax)
-            .optional(),
+            .optional()
+            .describe(
+              "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+            ),
           target_n: zod
             .number()
             .min(
@@ -56622,7 +56658,10 @@ export const TracerEvalTaskReadResponse = zod.object({
               .number()
               .min(tracerEvalTaskReadResponseSamplingPolicyStrataItemRateMin)
               .max(tracerEvalTaskReadResponseSamplingPolicyStrataItemRateMax)
-              .optional(),
+              .optional()
+              .describe(
+                "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+              ),
             target_n: zod
               .number()
               .min(tracerEvalTaskReadResponseSamplingPolicyStrataItemTargetNMin)
@@ -56718,7 +56757,10 @@ export const TracerEvalTaskReadResponse = zod.object({
             .number()
             .min(tracerEvalTaskReadResponseSamplingPolicyDefaultRateMin)
             .max(tracerEvalTaskReadResponseSamplingPolicyDefaultRateMax)
-            .optional(),
+            .optional()
+            .describe(
+              "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+            ),
           target_n: zod
             .number()
             .min(tracerEvalTaskReadResponseSamplingPolicyDefaultTargetNMin)
@@ -57120,7 +57162,10 @@ export const TracerEvalTaskUpdateBody = zod.object({
               .number()
               .min(tracerEvalTaskUpdateBodySamplingPolicyStrataItemRateMin)
               .max(tracerEvalTaskUpdateBodySamplingPolicyStrataItemRateMax)
-              .optional(),
+              .optional()
+              .describe(
+                "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+              ),
             target_n: zod
               .number()
               .min(tracerEvalTaskUpdateBodySamplingPolicyStrataItemTargetNMin)
@@ -57212,7 +57257,10 @@ export const TracerEvalTaskUpdateBody = zod.object({
             .number()
             .min(tracerEvalTaskUpdateBodySamplingPolicyDefaultRateMin)
             .max(tracerEvalTaskUpdateBodySamplingPolicyDefaultRateMax)
-            .optional(),
+            .optional()
+            .describe(
+              "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+            ),
           target_n: zod
             .number()
             .min(tracerEvalTaskUpdateBodySamplingPolicyDefaultTargetNMin)
@@ -57608,7 +57656,10 @@ export const TracerEvalTaskUpdateResponse = zod.object({
               .number()
               .min(tracerEvalTaskUpdateResponseSamplingPolicyStrataItemRateMin)
               .max(tracerEvalTaskUpdateResponseSamplingPolicyStrataItemRateMax)
-              .optional(),
+              .optional()
+              .describe(
+                "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+              ),
             target_n: zod
               .number()
               .min(
@@ -57708,7 +57759,10 @@ export const TracerEvalTaskUpdateResponse = zod.object({
             .number()
             .min(tracerEvalTaskUpdateResponseSamplingPolicyDefaultRateMin)
             .max(tracerEvalTaskUpdateResponseSamplingPolicyDefaultRateMax)
-            .optional(),
+            .optional()
+            .describe(
+              "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+            ),
           target_n: zod
             .number()
             .min(tracerEvalTaskUpdateResponseSamplingPolicyDefaultTargetNMin)
@@ -58118,7 +58172,10 @@ export const TracerEvalTaskPartialUpdateBody = zod.object({
               .max(
                 tracerEvalTaskPartialUpdateBodySamplingPolicyStrataItemRateMax,
               )
-              .optional(),
+              .optional()
+              .describe(
+                "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+              ),
             target_n: zod
               .number()
               .min(
@@ -58228,7 +58285,10 @@ export const TracerEvalTaskPartialUpdateBody = zod.object({
             .number()
             .min(tracerEvalTaskPartialUpdateBodySamplingPolicyDefaultRateMin)
             .max(tracerEvalTaskPartialUpdateBodySamplingPolicyDefaultRateMax)
-            .optional(),
+            .optional()
+            .describe(
+              "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+            ),
           target_n: zod
             .number()
             .min(tracerEvalTaskPartialUpdateBodySamplingPolicyDefaultTargetNMin)
@@ -58638,7 +58698,10 @@ export const TracerEvalTaskPartialUpdateResponse = zod.object({
               .max(
                 tracerEvalTaskPartialUpdateResponseSamplingPolicyStrataItemRateMax,
               )
-              .optional(),
+              .optional()
+              .describe(
+                "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+              ),
             target_n: zod
               .number()
               .min(
@@ -58754,7 +58817,10 @@ export const TracerEvalTaskPartialUpdateResponse = zod.object({
             .max(
               tracerEvalTaskPartialUpdateResponseSamplingPolicyDefaultRateMax,
             )
-            .optional(),
+            .optional()
+            .describe(
+              "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+            ),
           target_n: zod
             .number()
             .min(
