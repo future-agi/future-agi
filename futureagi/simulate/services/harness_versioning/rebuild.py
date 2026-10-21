@@ -811,6 +811,17 @@ def briefing(environment: HostedHarnessJob, nudge: HarnessNudge) -> str:
                 or "none listed"
             ),
         ]
+    if nudge.target == Target.SUITE and _added_sub_goals(nudge):
+        head.append(
+            "Every sub-goal the environment added must be named by at least one"
+            " scenario; one scenario may cover several."
+        )
+    if (nudge.usage or {}).get("attempts"):
+        head.append(
+            "An earlier attempt at this update ended without landing; none of its"
+            " changes were kept. Start from the workspace as it is now and redo"
+            " every change."
+        )
     head.append("Load builder/agent-update first, and end with report_update.")
     text = "\n".join(head)
     patches = _patches(facts)
@@ -968,6 +979,11 @@ def dispatch_nudge(environment_id: Any, *, start_runtime: bool = True) -> bool:
                 "base_labels": _labels(nudge),
                 "user_draft_keys": (
                     _user_draft_keys(head) if nudge.target == Target.SUITE else []
+                ),
+                **(
+                    {"new_sub_goals": _added_sub_goals(nudge)}
+                    if nudge.target == Target.SUITE
+                    else {}
                 ),
             },
             server_payload=(
@@ -1420,18 +1436,17 @@ def _result_draft(locked: HostedHarnessJob, nudge: HarnessNudge) -> Any:
 
 
 def _unhandled_tools(
-    nudge: HarnessNudge, draft: Any, update: Mapping[str, Any] | None
+    nudge: HarnessNudge, locked: HostedHarnessJob, result: Any
 ) -> list[dict[str, str]]:
-    """Contract tools this rebuild added that the saved world has no handler for."""
-    from simulate.services.harness_versioning import archives, drafts
+    """Contract tools the saved world has no handler for."""
+    from simulate.services.harness_versioning import diffs, drafts
 
-    added = (((update or {}).get("contract") or {}).get("tools") or {}).get("added")
-    if nudge.target != Target.ENVIRONMENT or not added:
+    if nudge.target != Target.ENVIRONMENT:
         return []
-    files = drafts._side(
-        archives.read_archive(archives.get_archive(draft.archive_object_key)),
-        "environment",
-    )
+    tools = diffs._tools((result.documents or {}).get("contract") or {})
+    if not tools:
+        return []
+    files = drafts._piece_files(locked, "environment", result)
     try:
         manifest = json.loads(files["manifest.json"])
     except (KeyError, ValueError):
@@ -1447,8 +1462,35 @@ def _unhandled_tools(
             "kind": "world",
             "message": "contract tool has no handler: the world was not saved with it",
         }
-        for name in sorted(set(added) - covered)
+        for name in sorted(set(tools) - covered)
     ]
+
+
+def _uncovered_sub_goals(nudge: HarnessNudge, result: Any) -> list[dict[str, str]]:
+    """Sub-goals the environment rebuild added that no scenario names."""
+    if nudge.target != Target.SUITE:
+        return []
+    added = _added_sub_goals(nudge)
+    named = {
+        goal
+        for scenario in (result.documents or {}).get("scenarios") or []
+        if isinstance(scenario, Mapping)
+        for goal in scenario.get("sub_goals") or []
+    }
+    return [
+        {
+            "item": name,
+            "kind": "sub_goal",
+            "message": "added by the environment rebuild; no scenario names it",
+        }
+        for name in added
+        if name not in named
+    ]
+
+
+def _added_sub_goals(nudge: HarnessNudge) -> list[str]:
+    diff = (nudge.facts or {}).get("environment_diff") or {}
+    return sorted((diff.get("sub_goals") or {}).get("added") or [])
 
 
 def land_nudge_result(
@@ -1502,6 +1544,24 @@ def land_nudge_result(
         if not report["passed"]:
             return fail(report["problems"])
         snapshot = (nudge.draft_snapshot or {}).get("piece") or {}
+        if problems := _unhandled_tools(nudge, locked, result) or (
+            _uncovered_sub_goals(nudge, result)
+        ):
+            return fail(problems)
+        if (
+            nudge.target == Target.ENVIRONMENT
+            and report["changed"]
+            and (draft is None or draft.hash == snapshot.get("hash"))
+        ):
+            return fail(
+                [
+                    {
+                        "item": "world",
+                        "kind": "world",
+                        "message": "the update reported changes but none were saved",
+                    }
+                ]
+            )
         extra = {
             key: report[key]
             for key in ("left_out", "not_checked", "warnings")
@@ -1514,8 +1574,6 @@ def land_nudge_result(
                 locked, nudge, turn_event=turn_event, notes=report["notes"], **extra
             )
             return nudge
-        if unhandled := _unhandled_tools(nudge, draft, changes["update"]):
-            return fail(unhandled)
         summary = _land(locked, nudge, found.get(PROOFS), extra)
         if summary is None:
             close(state=State.FAILED, error={"code": "not_runnable"})

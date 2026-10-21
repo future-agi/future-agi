@@ -185,7 +185,7 @@ def run_warnings(
         warnings.append(
             _warning(
                 "agent_differs",
-                f"Agent {label} differs from the agent environment"
+                f"Agent {label} differs from the agent that environment"
                 f" {environment_label} was built with",
                 "agent",
             )

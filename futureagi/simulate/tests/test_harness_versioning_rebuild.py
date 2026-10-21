@@ -742,7 +742,7 @@ class TestLanding:
             "tools": [{"name": "lookup_order"}, REFUND["tools"][0]],
         }
 
-        world = {"tools": ["refund_order"], "tables": {"orders": 1}}
+        world = {"tools": ["lookup_order", "refund_order"], "tables": {"orders": 1}}
 
         with django_capture_on_commit_callbacks(execute=True):
             nudge = _turn(
@@ -916,6 +916,113 @@ class TestLanding:
             )
 
         assert nudge.state == "applied", (nudge.error, nudge.summary)
+
+    def test_changes_reported_but_never_saved_fail(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, a1, a2 = _queued(
+            user,
+            workspace,
+            storage,
+            "r-not-saved",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        e1 = environment.environment_version
+        built_with = e1.agent_version_id
+
+        with django_capture_on_commit_callbacks(execute=True):
+            nudge = _turn(environment, nudge, storage, contract=None)
+
+        assert nudge.state == "failed", (nudge.error, nudge.summary)
+        assert nudge.error["code"] == "checks_failed"
+        assert [
+            (one["item"], one["kind"], one["in_your_unsaved_edits"])
+            for one in nudge.error["problems"]
+        ] == [("world", "world", False)]
+        e1.refresh_from_db()
+        assert environment.environment_version_id == e1.id
+        assert e1.agent_version_id == built_with != a2.id
+        assert environment.agent_version_id == a2.id
+
+    def test_an_inherited_tool_the_world_does_not_cover_fails_without_changes(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            "r-inherited-gap",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        e1 = environment.environment_version
+        HarnessEnvironmentVersion.all_objects.filter(id=e1.id).update(
+            documents={**(e1.documents or {}), "contract": REFUND}
+        )
+        world = {"tools": [], "tables": {"orders": 1}}
+        files = drafts._piece_files
+
+        def with_world(locked, piece, version):
+            found = files(locked, piece, version)
+            if piece == "environment":
+                found = {**found, "manifest.json": json.dumps(world).encode()}
+            return found
+
+        with patch.object(drafts, "_piece_files", with_world):
+            nudge = _turn(
+                environment,
+                nudge,
+                storage,
+                contract=None,
+                result=_result(nudge, changed=False),
+            )
+
+        assert nudge.state == "failed", (nudge.error, nudge.summary)
+        assert nudge.error["code"] == "checks_failed"
+        assert [(one["item"], one["kind"]) for one in nudge.error["problems"]] == [
+            ("refund_order", "world")
+        ]
+        assert environment.environment_version_id == e1.id
+
+    def test_rebuild_again_briefs_that_the_earlier_attempt_was_dropped(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            "r-again-brief",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        line = "An earlier attempt at this update ended without landing"
+        assert line not in rebuild.briefing(environment, nudge)
+
+        nudge.usage = {"attempts": [{"command_message_id": "m1"}]}
+
+        assert line in rebuild.briefing(environment, nudge)
 
     def test_nothing_changed_keeps_the_version_and_records_it_fits(
         self,
@@ -2346,6 +2453,67 @@ class TestSuite:
         assert environment.agent_version_id == a3.id
         assert suite.state == "no_change", suite.error
         assert NEW_VALUE not in json.dumps([suite.summary, suite.error])
+
+    @pytest.mark.parametrize(
+        ("named", "state"),
+        [((), "failed"), (("refunded",), "applied")],
+        ids=["unnamed", "named"],
+    )
+    def test_a_sub_goal_the_environment_added_must_be_named(
+        self,
+        named,
+        state,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        from simulate.tests.test_harness_amend_archive import NAMES
+        from simulate.tests.test_harness_versioning_record import _scenario
+
+        environment, suite = _suite_queued(
+            user,
+            workspace,
+            storage,
+            f"r-suite-goal-{state}",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        HarnessNudge.no_workspace_objects.filter(id=suite.id).update(
+            facts={
+                **suite.facts,
+                "environment_diff": {"sub_goals": {"added": ["refunded"]}},
+            }
+        )
+        suite.refresh_from_db()
+        scenarios = [
+            _scenario(NAMES[0], sub_goals=list(named)),
+            _scenario(NAMES[1]),
+        ]
+        assert "sub-goal the environment added" in rebuild.briefing(environment, suite)
+
+        suite = _turn(
+            environment,
+            suite,
+            storage,
+            contract=None,
+            names=NAMES[:2],
+            **{
+                "scenarios.json": json.dumps(scenarios),
+                f"scenarios/{NAMES[0]}/scenario.json": json.dumps(scenarios[0]),
+            },
+        )
+
+        assert suite.command_message.payload["new_sub_goals"] == ["refunded"]
+        assert suite.state == state, (suite.error, suite.summary)
+        if state == "failed":
+            assert suite.error["code"] == "checks_failed"
+            assert [(one["item"], one["kind"]) for one in suite.error["problems"]] == [
+                ("refunded", "sub_goal")
+            ]
 
     def test_a_nested_proofs_file_reads_as_none(self, storage):
         body = _authoring(

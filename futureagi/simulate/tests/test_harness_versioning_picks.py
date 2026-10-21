@@ -762,7 +762,9 @@ class TestPickedRun:
         assert response.status_code == 202, response.content
         assert {
             "code": "agent_differs",
-            "message": "Agent v1 differs from the agent environment v1 was built with",
+            "message": (
+                "Agent v1 differs from the agent that environment v1 was built with"
+            ),
             "piece": "agent",
         } in response.json()["warnings"]
 
@@ -960,7 +962,9 @@ class TestWarnings:
 
         assert {
             "code": "agent_differs",
-            "message": "Agent v1 differs from the agent environment v1 was built with",
+            "message": (
+                "Agent v1 differs from the agent that environment v1 was built with"
+            ),
             "piece": "agent",
         } in warnings
 
