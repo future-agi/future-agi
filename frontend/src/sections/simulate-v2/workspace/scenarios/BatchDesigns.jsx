@@ -50,7 +50,9 @@ const headline = (b) => (b.meta.source === "derived"
   ? `${who(b)} built the environment`
   : `${who(b)} ${b.rows.length && b.rows.every((r) => r.proposed) ? "proposed" : "added"} ${plural(b.rows.length)}`);
 const howAndWhen = (b) => [
-  b.meta.source === "derived" ? "written from the agent" : HOW[b.meta.source],
+  b.meta.source === "derived"
+    ? (b.rows.some((r) => r.fromDescription) ? "written from your description" : "written from the agent")
+    : HOW[b.meta.source],
   b.meta.note,
   relativeTime(b.meta.addedAt),
 ].filter(Boolean).join(" · ");

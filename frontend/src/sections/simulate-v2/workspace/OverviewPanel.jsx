@@ -1521,6 +1521,9 @@ function SourceToSandboxMap({ env, envState, progress }) {
     };
   });
 
+  /* Built from a description: nothing has been read from an agent yet, so
+     every row says where it really came from — or that it's still to come. */
+  const fromDescription = env?.builtFrom?.kind === "scratch";
   const surface = getSurface(env.surface);
   const actors = [
     { key: "transfer", name: "transfer target", origin: "prompt", target: "Supervisor persona", mapped: true },
@@ -1569,7 +1572,7 @@ function SourceToSandboxMap({ env, envState, progress }) {
       </Box>
 
       {/* Groups */}
-      <MapGroup label="Tools" hint="from the agent config & call-graph"
+      <MapGroup label="Tools" hint={fromDescription ? "read when your agent is connected" : "from the agent config & call-graph"}
         right={found(tools.length, allTools.length, `${tools.length} mapped`)}
         first
       >
@@ -1587,7 +1590,7 @@ function SourceToSandboxMap({ env, envState, progress }) {
         ))}
       </MapGroup>
 
-      <MapGroup label="Rules" hint="from policy.yaml, enforced"
+      <MapGroup label="Rules" hint={fromDescription ? "from your description" : "from policy.yaml, enforced"}
         right={found(ruleProv.length, allRules.length, `${ruleProv.length} mapped`)}
       >
         {streaming && ruleProv.length < allRules.length && (
@@ -1598,14 +1601,14 @@ function SourceToSandboxMap({ env, envState, progress }) {
             key={r.id}
             index={i}
             name={r.subject}
-            origin={r.origin === "code" ? "policy" : r.origin}
+            origin={fromDescription ? "description" : r.origin === "code" ? "policy" : r.origin}
             target={ruleTarget(r.subject, r.origin, connectOnly)}
             mono
           />
         ))}
       </MapGroup>
 
-      <MapGroup label="Stores" hint="from your fixtures"
+      <MapGroup label="Stores" hint={fromDescription ? "seeded when your agent is connected" : "from your fixtures"}
         right={found(tables.length, allTables.length, `${tables.length} mapped`)}
       >
         {streaming && tables.length < allTables.length && (
@@ -1623,7 +1626,7 @@ function SourceToSandboxMap({ env, envState, progress }) {
         ))}
       </MapGroup>
 
-      {!streaming && (
+      {!streaming && !fromDescription && (
       <MapGroup label="Other parties" hint="from the call-graph & prompt"
         right={`${actorMapped} mapped · ${actors.length - actorMapped} derived`}
       >

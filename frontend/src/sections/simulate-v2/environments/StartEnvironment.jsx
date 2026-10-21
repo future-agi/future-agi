@@ -20,6 +20,8 @@ import ChipCard from "./ChipCard";
 import EnvironmentsLanding from "./EnvironmentsLanding";
 import PrebuiltWorldsView from "./PrebuiltWorldsView";
 import SetupDrawer from "./SetupDrawer";
+import { stampNewBatch } from "../_mock/addScenarios";
+import { SOURCES } from "../_mock/scenarioProvenance";
 import SideDrawer from "../components/SideDrawer";
 import { worldTotal } from "./landingData";
 import GithubRepoPicker from "../integrations/GithubRepoPicker";
@@ -235,8 +237,17 @@ export default function StartEnvironment({ entry = false }) {
               Build environment
             </Button>
           ) : entry ? (
-            /* No environments yet: the tab below is the builder. */
-            null
+            /* No environments yet: the tab below is the builder — and the
+               way to start from a description instead of an agent. */
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => pickFromLanding("scratch", null, "header", null, SCRATCH_META)}
+              startIcon={<Iconify icon="solar:document-add-linear" width={14} />}
+              sx={{ typography: "s2", fontWeight: 600, color: "text.primary", borderColor: "divider" }}
+            >
+              Build from scratch
+            </Button>
           ) : (
             <Button
               size="small"
@@ -318,6 +329,19 @@ export default function StartEnvironment({ entry = false }) {
                       : "Every environment belongs to one agent — pick yours, or connect one, then start from its own world or one of these."}
                   </Typography>
                 </Box>
+                {/* No agent yet, or rather start from the world: describe it
+                    and connect the agent later. */}
+                {view === "landing" && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => pickFromLanding("scratch", null, "header", null, SCRATCH_META)}
+                    startIcon={<Iconify icon="solar:document-add-linear" width={14} />}
+                    sx={{ typography: "s2", fontWeight: 600, color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+                  >
+                    Build from scratch
+                  </Button>
+                )}
                 <IconButton size="small" onClick={closeBuild} aria-label="Close">
                   <Iconify icon="eva:close-fill" width={18} sx={{ color: "text.secondary" }} />
                 </IconButton>
@@ -1782,7 +1806,8 @@ function PanelScratch() {
       id: envId,
       agentType: null,
       name: finalName,
-      surface: "chat",
+      /* A description of calls builds a voice world; anything else, chat. */
+      surface: /\b(calls?|calling|phone|voice|dial)\b/i.test(flowText) ? "voice" : "chat",
       domain: "custom",
       tagline: attachments.length
         ? `Scratch-built · ${attachments.length} reference file${attachments.length === 1 ? "" : "s"}`
@@ -1805,7 +1830,12 @@ function PanelScratch() {
       buildStatus: "ready",
       starterScenarios: derivedScenarios,
     };
-    dispatch({ type: "adoptEnvironment", env, now: new Date().toISOString() });
+    const now = new Date().toISOString();
+    dispatch({ type: "adoptEnvironment", env, now });
+    /* Stamped like every other add: written by the system from the
+       description just now, each checked against v1 — not back-filled with
+       made-up authors, and not waiting on a re-check. */
+    const batch = stampNewBatch(derivedScenarios, { env, envState: {}, source: "derived", actor: SOURCES.derived.actor, at: now });
     /* Seed the workspace envState with the derived scenarios only.
        Evals stay empty on purpose — the derived list lives on
        env.evalPreset and surfaces on the Evaluations tab under
@@ -1817,7 +1847,7 @@ function PanelScratch() {
       type: "patchEnvState",
       envId,
       patch: {
-        scenarios: derivedScenarios,
+        scenarios: batch.rows,
       },
     });
     /* Route to the scratch build-in-progress screen instead of straight
@@ -2485,12 +2515,15 @@ const OPTIONS = [
   {
     id: "scratch",
     group: "hidden",
-    title: "Start from scratch",
+    title: "Build from scratch",
     icon: "solar:document-add-linear",
     blurb: "Design the world, personas, and evals first — connect the agent later.",
-    setupSubtitle: "Design the environment now; wire an agent in when it's ready.",
+    setupSubtitle: "Describe the world to test in — connect the agent when it's ready.",
   },
 ];
+
+/* How the setup drawer is titled when Build from scratch opens it. */
+const SCRATCH_META = { name: "Build from scratch", icon: "solar:document-add-linear", withSubtitle: true };
 
 const PANELS = {
   connected: PanelConnectedAgent,
@@ -2676,6 +2709,13 @@ function deriveScratchScenarios(flowText, envName) {
     );
   }
 
+  /* Grouped by what they test, the way a built environment's are. */
+  const USE_CASE = {
+    core: "The flow as described",
+    "edge case": "Edge cases",
+    adversarial: "Callers who push",
+    "failure mode": "When a tool fails",
+  };
   return base.map((s, i) => ({
     id: `sc-scratch-${short}-${s.key}`,
     name: `${short}-${s.key}`,
@@ -2683,7 +2723,11 @@ function deriveScratchScenarios(flowText, envName) {
     summary: s.task,
     task: s.task,
     situation: s.situation,
-    outcome: "The task lands in the described end state and the check confirms it.",
+    useCase: USE_CASE[s.branch] || "The flow as described",
+    /* What a pass looks like — the reference outcome the gates prove against. */
+    expected: s.task,
+    outcome: s.task,
+    fromDescription: true,
     /* SubTasksCell expects { id, label } objects, not bare strings —
        otherwise rows render numbers only ("1. 2. 3.") and the label
        disappears. */
@@ -2749,6 +2793,13 @@ function deriveScratchName(flowText, attachments) {
   const t = String(flowText || "").toLowerCase();
   const has = (...needles) => needles.some((n) => t.includes(n));
 
+  /* Most specific first — "change a hotel booking … refunds over $300" is a
+     bookings line, not a refunds one. */
+  if (has("hotel")) return "Hotel bookings environment";
+  if (has("flight", "airline", "rebook")) return "Flight changes environment";
+  if (has("booking", "reservation")) return "Bookings environment";
+  if (has("appointment", "clinic", "patient")) return "Appointments environment";
+  if (has("insurance", "claim")) return "Claims environment";
   if (has("refund", "return")) return "Refunds & returns environment";
   if (has("support", "ticket", "helpdesk", "help desk")) return "Support agent environment";
   if (has("github", " pr ", "pull request", "merge request", "gitlab", "bitbucket")) return "Repo triage environment";

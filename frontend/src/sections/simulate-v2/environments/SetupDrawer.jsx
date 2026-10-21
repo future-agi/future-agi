@@ -26,7 +26,7 @@ export default function SetupDrawer({ open, onClose, meta, subtitle, children, w
                   </Typography>
                 )}
               </Stack>
-              {subtitle && !meta?.name && <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>{subtitle}</Typography>}
+              {subtitle && (!meta?.name || meta?.withSubtitle) && <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>{subtitle}</Typography>}
             </Box>
             <ButtonBase
               onClick={onClose}

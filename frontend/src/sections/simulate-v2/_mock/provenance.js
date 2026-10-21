@@ -38,6 +38,15 @@ export const ORIGIN_KINDS = {
     color: "#CA8A04",
     note: "Stated in the system prompt and nowhere else. Nothing enforces it at runtime — which is precisely why it is worth grading rather than assuming.",
   },
+  /* Written by a person when the environment was built from a description,
+     before any agent was connected. */
+  description: {
+    id: "description",
+    label: "from your description",
+    short: "DESCRIPTION",
+    color: "#7857FC",
+    note: "Taken from the description the environment was built from. No agent is connected yet, so nothing enforces it — it's graded from the conversation until the agent's own rules are read.",
+  },
   doc: {
     id: "doc",
     label: "prose only",

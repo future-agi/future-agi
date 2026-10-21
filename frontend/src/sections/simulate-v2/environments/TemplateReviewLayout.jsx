@@ -6,7 +6,6 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
-import { SectionCard } from "../components/primitives";
 import { useEnvState } from "../store";
 import { runReadiness } from "../_mock/setupGaps";
 import useRunFitCheck from "../run/useRunFitCheck";
@@ -104,7 +103,11 @@ export default function TemplateReviewLayout({
     do the derivation stages start streaming. Seeded flows carry
     prior state and skip the receipt entirely.
   */
-  const [awaitReadAck, setAwaitReadAck] = useState(!seeded);
+  /* Built from a description: there's no agent to read, so the build starts
+     from what the person wrote — no read receipt. */
+  const fromScratch = env?.builtFrom?.kind === "scratch";
+  const scratchText = env?.builtFrom?.intake?.flow || "";
+  const [awaitReadAck, setAwaitReadAck] = useState(!seeded && !fromScratch);
   const [readAnswers, setReadAnswers] = useState(null);
 
   /*
@@ -141,16 +144,30 @@ export default function TemplateReviewLayout({
       });
     };
     setRunning(true);
-    setTurns([{
-      id: "a-init",
-      role: "assistant",
-      steps: [{
-        kind: "note",
-        text: `Building ${env.name} — ${scenarioCount} scenarios, ${(env.tools || []).length} tools, ${(env.rules || []).length} rules.`,
-      }],
-    }]);
+    setTurns([
+      ...(fromScratch && scratchText ? [{ id: "u-intake", role: "user", text: scratchText }] : []),
+      {
+        id: "a-init",
+        role: "assistant",
+        steps: [{
+          kind: "note",
+          text: fromScratch
+            ? `Building ${env.name} from your description — ${scenarioCount} scenario${scenarioCount === 1 ? "" : "s"} and ${(env.rules || []).length} rule${(env.rules || []).length === 1 ? "" : "s"} to start. No agent yet: connect it when it's ready, and runs start once it is.`
+            : `Building ${env.name} — ${scenarioCount} scenarios, ${(env.tools || []).length} tools, ${(env.rules || []).length} rules.`,
+        }],
+      },
+    ]);
     play("understand", 600);
   };
+
+  /* A scratch build starts as soon as the page opens — once, even when
+     React mounts the effect twice. */
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (!fromScratch || seeded || startedRef.current) return;
+    startedRef.current = true;
+    startDerivation();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     return () => {
@@ -172,7 +189,12 @@ export default function TemplateReviewLayout({
   /* What the build narration reads: this world's own tools, the agent it
      belongs to (so the narration says sealed or live honestly), and the
      distinct sub-goals its scenarios use. */
-  const narrationSource = () => ({
+  const narrationSource = () => (fromScratch ? {
+    kind: "scratch",
+    rules: (env.rules || []).length,
+    scenarios: (envState?.scenarios || []).length,
+    surface: env.surface,
+  } : {
     kind: "template", value: env.name, templateId: env.id, tools: env.tools || [],
     connectedAgent: envState?.agent || null,
     subGoalCount: subGoalCatalogOf(env, { ...envState, scenarios: (envState?.scenarios || []).filter((r) => !r.proposed) }).length,
@@ -390,25 +412,33 @@ export default function TemplateReviewLayout({
         })()}
       </Stack>
 
+      {/* Builder console (left) + tabbed panels (right) — one surface split
+          by a single rule, the same as the workspace. */}
       <Box
         sx={{
-          flex: 1, minHeight: 0, display: "grid", gap: 2, p: 2,
-          gridTemplateColumns: { xs: "1fr", lg: "minmax(360px, 400px) 1fr" },
+          flex: 1, minHeight: 0, display: "grid",
+          gridTemplateColumns: { xs: "1fr", lg: "minmax(340px, 400px) 1fr" },
         }}
       >
-        <SectionCard sx={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <Box sx={{
+          height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden",
+          /* Widths and colour set separately: a responsive "1px solid"
+             shorthand resets the colour to the text colour. */
+          borderStyle: "solid", borderWidth: 0, borderColor: "divider",
+          borderRightWidth: { xs: 0, lg: 1 }, borderBottomWidth: { xs: 1, lg: 0 },
+        }}>
           <AssistantConsole
             turns={turns} running={running} chips={chips}
             onSend={send} onChip={(c) => send(c)}
             frozen={env?.buildStatus === "building"}
             frozenReason="Environment is still being built"
           />
-        </SectionCard>
+        </Box>
 
-        <SectionCard sx={{
+        <Box sx={{
           height: "100%", minHeight: 0,
           display: "flex", flexDirection: "column",
-          overflow: "hidden", px: 2.5,
+          overflow: "hidden", px: 2.5, bgcolor: "background.paper",
         }}>
           <DerivedPanels
             env={env}
@@ -419,7 +449,7 @@ export default function TemplateReviewLayout({
             running={running}
             onTabChange={setActiveTab}
           />
-        </SectionCard>
+        </Box>
       </Box>
       {runFitDialog}
     </Box>

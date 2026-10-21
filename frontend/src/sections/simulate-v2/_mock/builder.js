@@ -520,7 +520,46 @@ const asksOf = (world, source) => [
   },
 ];
 
+/*
+  Built from a description: there's no agent to read and no data to seed
+  yet, so the narration says what it took from the description and what's
+  still to come — with this environment's own counts, never a demo world's.
+  source = { kind: "scratch", rules, scenarios, kept, surface }
+*/
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+const SCRATCH_STAGES = {
+  understand: (source) => ({
+    title: "Reading your description",
+    steps: [
+      think("Reading what you wrote — who calls, what the agent does, when it's done and when it hands off."),
+      tool("extract_rules", `${plural(source.rules || 0, "rule")} · from your description`),
+      tool("extract_tools", "none yet — the agent's tools are read when you connect it"),
+      note("Rules come from your words, so they're graded from the conversation until the agent is connected. Correct any of them here in chat."),
+    ],
+    chips: [],
+  }),
+  build: (source) => ({
+    title: "Setting up the world",
+    steps: [
+      think(`A ${source.surface === "voice" ? "voice" : "chat"} world, empty for now: no code to read and no data to seed until an agent is connected.`),
+      tool("write_checks", "one check per sub-goal · judged from the conversation"),
+      note("Connect your agent from Overview. Its tools and data are read then, and the world learns to answer them."),
+    ],
+    chips: [],
+  }),
+  scenarios: (source) => ({
+    title: "Writing scenarios",
+    steps: [
+      think("One per situation your description implies — the flow itself, edge cases, callers who push, and tools that fail."),
+      tool("write + check", `${source.kept ?? source.scenarios ?? 0} of ${source.scenarios ?? 0} kept · each has a reference outcome and sub-goals`),
+      note("They run once your agent is connected."),
+    ],
+    chips: [],
+  }),
+};
+
 export const builderRun = (stage, source, text = "") => {
+  if (source?.kind === "scratch" && SCRATCH_STAGES[stage]) return SCRATCH_STAGES[stage](source);
   if (stage === "ask") {
     const hit = asksOf(worldFor(source), source).find((a) => a.match.test(text));
     if (hit) return { title: null, steps: hit.steps, chips: [] };
