@@ -11,6 +11,7 @@ from rest_framework.viewsets import ViewSet
 
 from accounts.authentication import workspace_read_only
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tracer.serializers.sql_query import (
     SQLCatalogSerializer,
     SQLExecutionSerializer,
@@ -60,9 +61,13 @@ class SQLViewMixin:
         elif isinstance(exc, (UnsafeQuery, ValueError)):
             exc = ValidationError({"detail": str(exc)})
         elif isinstance(exc, (QueryUnavailable, CatalogUnavailable)):
-            return Response({"detail": str(exc)}, status=503)
+            return Response(
+                build_error_envelope(str(exc), status_code=503), status=503
+            )
         elif isinstance(exc, service.AdmissionFull):
-            return Response({"detail": str(exc)}, status=429)
+            return Response(
+                build_error_envelope(str(exc), status_code=429), status=429
+            )
         return super().handle_exception(exc)
 
 
