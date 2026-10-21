@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "1e672ba2152767a7ef755123a57db92e0d88e679a271c49c2a67ff87831f7343",
+  "source_contract_sha256": "69ec675573b7dde66148effbb60a53281ce526b90d85b44ba2cee1caed3001bc",
   "tool_count": 109,
   "tools": [
     {
@@ -4503,6 +4503,9 @@
             "maximum": 100.0,
             "minimum": 1.0
           },
+          "sampling_policy": {
+            "$ref": "#/definitions/SamplingPolicy"
+          },
           "last_run": {
             "anyOf": [
               {
@@ -4628,7 +4631,227 @@
           "sampling_rate",
           "run_type",
           "evals"
-        ]
+        ],
+        "definitions": {
+          "SamplingAttribute": {
+            "required": [
+              "key"
+            ],
+            "type": "object",
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string",
+                "enum": [
+                  "span",
+                  "resource",
+                  "metadata"
+                ],
+                "default": "span"
+              },
+              "key": {
+                "title": "Key",
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              }
+            }
+          },
+          "SamplingPolicy": {
+            "anyOf": [
+              {
+                "required": [
+                  "version",
+                  "sampling_unit",
+                  "window"
+                ],
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "maximum": 1,
+                    "minimum": 1
+                  },
+                  "sampling_unit": {
+                    "title": "Sampling unit",
+                    "type": "string",
+                    "enum": [
+                      "span",
+                      "trace",
+                      "session",
+                      "user",
+                      "attribute"
+                    ]
+                  },
+                  "unit_attribute": {
+                    "$ref": "#/definitions/SamplingAttribute"
+                  },
+                  "missing_id": {
+                    "title": "Missing id",
+                    "type": "string",
+                    "enum": [
+                      "exclude",
+                      "row"
+                    ],
+                    "default": "exclude"
+                  },
+                  "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "enum": [
+                      "closed",
+                      "live"
+                    ],
+                    "default": "closed"
+                  },
+                  "window": {
+                    "$ref": "#/definitions/SamplingWindow"
+                  },
+                  "strata": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/SamplingRule"
+                    }
+                  },
+                  "group_by": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/SamplingAttribute"
+                    }
+                  },
+                  "default": {
+                    "$ref": "#/definitions/SamplingRule"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "SamplingPredicate": {
+            "required": [
+              "key"
+            ],
+            "type": "object",
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string",
+                "enum": [
+                  "span",
+                  "resource",
+                  "metadata"
+                ],
+                "default": "span"
+              },
+              "key": {
+                "title": "Key",
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              "op": {
+                "title": "Op",
+                "type": "string",
+                "enum": [
+                  "in",
+                  "not_in",
+                  "exists",
+                  "missing",
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte"
+                ],
+                "default": "in"
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "description": "Any valid JSON value."
+                },
+                "maxItems": 100
+              }
+            }
+          },
+          "SamplingRule": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              "filters": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/SamplingPredicate"
+                }
+              },
+              "rate": {
+                "title": "Rate",
+                "description": "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                "type": "number",
+                "maximum": 100,
+                "minimum": 0
+              },
+              "target_n": {
+                "title": "Target n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "min_n": {
+                "title": "Min n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "max_n": {
+                "title": "Max n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "rare_below": {
+                "title": "Rare below",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              }
+            }
+          },
+          "SamplingWindow": {
+            "required": [
+              "start"
+            ],
+            "type": "object",
+            "properties": {
+              "start": {
+                "title": "Start",
+                "description": "Inclusive ISO 8601 UTC event time.",
+                "type": "string",
+                "minLength": 1
+              },
+              "end": {
+                "anyOf": [
+                  {
+                    "title": "End",
+                    "description": "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
       },
       "annotations": {
         "readOnlyHint": false,
@@ -4647,6 +4870,7 @@
             "name",
             "filters",
             "sampling_rate",
+            "sampling_policy",
             "last_run",
             "spans_limit",
             "run_type",
@@ -4674,6 +4898,9 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "sampling_policy": {
+            "$ref": "#/definitions/SamplingPolicy"
+          },
           "name": {
             "title": "Name",
             "type": "string",
@@ -4993,7 +5220,227 @@
             "format": "uuid"
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "definitions": {
+          "SamplingAttribute": {
+            "required": [
+              "key"
+            ],
+            "type": "object",
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string",
+                "enum": [
+                  "span",
+                  "resource",
+                  "metadata"
+                ],
+                "default": "span"
+              },
+              "key": {
+                "title": "Key",
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              }
+            }
+          },
+          "SamplingPolicy": {
+            "anyOf": [
+              {
+                "required": [
+                  "version",
+                  "sampling_unit",
+                  "window"
+                ],
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "maximum": 1,
+                    "minimum": 1
+                  },
+                  "sampling_unit": {
+                    "title": "Sampling unit",
+                    "type": "string",
+                    "enum": [
+                      "span",
+                      "trace",
+                      "session",
+                      "user",
+                      "attribute"
+                    ]
+                  },
+                  "unit_attribute": {
+                    "$ref": "#/definitions/SamplingAttribute"
+                  },
+                  "missing_id": {
+                    "title": "Missing id",
+                    "type": "string",
+                    "enum": [
+                      "exclude",
+                      "row"
+                    ],
+                    "default": "exclude"
+                  },
+                  "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "enum": [
+                      "closed",
+                      "live"
+                    ],
+                    "default": "closed"
+                  },
+                  "window": {
+                    "$ref": "#/definitions/SamplingWindow"
+                  },
+                  "strata": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/SamplingRule"
+                    }
+                  },
+                  "group_by": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/definitions/SamplingAttribute"
+                    }
+                  },
+                  "default": {
+                    "$ref": "#/definitions/SamplingRule"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "SamplingPredicate": {
+            "required": [
+              "key"
+            ],
+            "type": "object",
+            "properties": {
+              "source": {
+                "title": "Source",
+                "type": "string",
+                "enum": [
+                  "span",
+                  "resource",
+                  "metadata"
+                ],
+                "default": "span"
+              },
+              "key": {
+                "title": "Key",
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              "op": {
+                "title": "Op",
+                "type": "string",
+                "enum": [
+                  "in",
+                  "not_in",
+                  "exists",
+                  "missing",
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte"
+                ],
+                "default": "in"
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "description": "Any valid JSON value."
+                },
+                "maxItems": 100
+              }
+            }
+          },
+          "SamplingRule": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string",
+                "maxLength": 80,
+                "minLength": 1
+              },
+              "filters": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/SamplingPredicate"
+                }
+              },
+              "rate": {
+                "title": "Rate",
+                "description": "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                "type": "number",
+                "maximum": 100,
+                "minimum": 0
+              },
+              "target_n": {
+                "title": "Target n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "min_n": {
+                "title": "Min n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "max_n": {
+                "title": "Max n",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              },
+              "rare_below": {
+                "title": "Rare below",
+                "type": "integer",
+                "maximum": 1000000,
+                "minimum": 0
+              }
+            }
+          },
+          "SamplingWindow": {
+            "required": [
+              "start"
+            ],
+            "type": "object",
+            "properties": {
+              "start": {
+                "title": "Start",
+                "description": "Inclusive ISO 8601 UTC event time.",
+                "type": "string",
+                "minLength": 1
+              },
+              "end": {
+                "anyOf": [
+                  {
+                    "title": "End",
+                    "description": "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
       },
       "annotations": {
         "readOnlyHint": false,
@@ -5008,6 +5455,7 @@
           "path": [],
           "query": [],
           "body": [
+            "sampling_policy",
             "name",
             "filters",
             "sampling_rate",
@@ -5245,7 +5693,8 @@
               "eval_metric",
               "annotation_metric",
               "custom_attribute",
-              "custom_column"
+              "custom_column",
+              "derived_metric"
             ],
             "default": ""
           },
@@ -10232,7 +10681,8 @@
                   "eval_metric",
                   "annotation_metric",
                   "custom_attribute",
-                  "custom_column"
+                  "custom_column",
+                  "derived_metric"
                 ],
                 "default": "system_metric"
               },
@@ -10244,7 +10694,8 @@
                   "datasets",
                   "simulation",
                   "both",
-                  "all"
+                  "all",
+                  "derived_metrics"
                 ],
                 "default": "traces"
               },
@@ -10338,7 +10789,8 @@
                   "eval_metric",
                   "annotation_metric",
                   "custom_attribute",
-                  "custom_column"
+                  "custom_column",
+                  "derived_metric"
                 ]
               },
               "source": {
@@ -10349,7 +10801,8 @@
                   "datasets",
                   "simulation",
                   "both",
-                  "all"
+                  "all",
+                  "derived_metrics"
                 ],
                 "default": "traces"
               },
@@ -10393,6 +10846,11 @@
               "config_id": {
                 "title": "Config id",
                 "type": "string"
+              },
+              "derived_run_id": {
+                "title": "Derived run id",
+                "type": "string",
+                "format": "uuid"
               },
               "label_id": {
                 "title": "Label id",
@@ -10625,7 +11083,8 @@
               "eval_metric",
               "annotation_metric",
               "custom_attribute",
-              "custom_column"
+              "custom_column",
+              "derived_metric"
             ],
             "default": ""
           },
