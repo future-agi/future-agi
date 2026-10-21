@@ -72,11 +72,11 @@ test('OBS-E2E-052: an analyst saves a scoped SQL result as a live dashboard quer
       // Route + aria label pinned from SQLQueryView.jsx and dashboard.jsx.
       await page.goto(`/dashboard/observe/${projectId}/query`, { waitUntil: 'domcontentloaded' });
       const editor = page.getByRole('textbox', { name: 'SQL query editor', exact: false });
-      await expect(editor).toBeVisible();
+      await expect(editor).toBeVisible({ timeout: UI_READY });
       await editor.click();
       await editor.press('ControlOrMeta+A');
       await page.keyboard.insertText(sql);
-      const response = page.waitForResponse((res) => res.url().endsWith(SQL_RUN) && res.request().method() === 'POST');
+      const response = page.waitForResponse((res) => res.url().endsWith(SQL_RUN) && res.request().method() === 'POST', { timeout: UI_READY });
       await page.getByRole('button', { name: 'Run query', exact: true }).click();
       const submitted = await response;
       expect(submitted.status()).toBe(202);
@@ -92,17 +92,17 @@ test('OBS-E2E-052: an analyst saves a scoped SQL result as a live dashboard quer
     expect(finished!.result.truncated).toBe(false);
     await test.step('UI: inspect exact rows and save a project-shared query', async () => {
       const cells = page.getByRole('table', { name: 'SQL query results' }).locator('tbody tr');
-      await expect(cells).toHaveCount(2);
-      await expect(cells.nth(0).getByRole('cell')).toHaveText([child, '1']);
-      await expect(cells.nth(1).getByRole('cell')).toHaveText([root, '1']);
+      await expect(cells).toHaveCount(2, { timeout: UI_READY });
+      await expect(cells.nth(0).getByRole('cell')).toHaveText([child, '1'], { timeout: UI_READY });
+      await expect(cells.nth(1).getByRole('cell')).toHaveText([root, '1'], { timeout: UI_READY });
       await page.getByRole('button', { name: 'Save query', exact: true }).click();
       await page.getByLabel('Query name', { exact: true }).fill(queryName);
       await page.getByLabel('Visibility', { exact: true }).click();
       await page.getByRole('option', { name: 'Project members', exact: true }).click();
-      const savedResponse = page.waitForResponse((res) => res.url().endsWith(SAVED) && res.request().method() === 'POST');
+      const savedResponse = page.waitForResponse((res) => res.url().endsWith(SAVED) && res.request().method() === 'POST', { timeout: UI_READY });
       await page.getByRole('dialog').getByRole('button', { name: 'Save', exact: true }).click();
       expect((await savedResponse).status()).toBe(201);
-      await expect(page.getByRole('dialog')).toHaveCount(0);
+      await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: UI_READY });
     }, { timeout: UI_READY });
     // Exact table names pinned from tracer/models/sql_query.py and dashboard.py.
     const saved = await probe.pg<{ id: string; sql: string; visibility: string }>(
@@ -114,7 +114,7 @@ test('OBS-E2E-052: an analyst saves a scoped SQL result as a live dashboard quer
       await page.getByRole('button', { name: 'Add to dashboard', exact: true }).click();
       await page.getByLabel('Dashboard', { exact: true }).click();
       await page.getByRole('option', { name: dashboardName, exact: true }).click();
-      const added = page.waitForResponse((res) => res.url().includes(`/saved-sql-query/${saved[0].id}/add-widget/`) && res.request().method() === 'POST');
+      const added = page.waitForResponse((res) => res.url().includes(`/saved-sql-query/${saved[0].id}/add-widget/`) && res.request().method() === 'POST', { timeout: UI_READY });
       await page.getByRole('button', { name: 'Add query', exact: true }).click();
       expect((await added).status()).toBe(201);
     }, { timeout: UI_READY });
@@ -126,7 +126,7 @@ test('OBS-E2E-052: an analyst saves a scoped SQL result as a live dashboard quer
     await testInfo.attach('sql-identities', { body: JSON.stringify({ projectId, jobId, savedId: saved[0].id, dashboardId, widgetId: widgets[0].id }), contentType: 'application/json' });
     let dashboardJobId = '';
     await test.step('UI: reopen the dashboard and start a fresh saved execution', async () => {
-      const rerun = page.waitForResponse((res) => res.url().endsWith(SQL_RUN_SAVED) && res.request().method() === 'POST');
+      const rerun = page.waitForResponse((res) => res.url().endsWith(SQL_RUN_SAVED) && res.request().method() === 'POST', { timeout: UI_READY });
       await page.goto(`/dashboard/dashboards/${dashboardId}`, { waitUntil: 'domcontentloaded' });
       const response = await rerun;
       expect(response.status()).toBe(202);
@@ -139,9 +139,9 @@ test('OBS-E2E-052: an analyst saves a scoped SQL result as a live dashboard quer
     expect(rerun.result.rows).toEqual(expectedRows);
     await test.step('UI: dashboard shows the exact rerun rows', async () => {
       const rows = page.getByRole('table', { name: 'SQL query results' }).locator('tbody tr');
-      await expect(rows).toHaveCount(2);
-      await expect(rows.nth(0).getByRole('cell')).toHaveText([child, '1']);
-      await expect(rows.nth(1).getByRole('cell')).toHaveText([root, '1']);
+      await expect(rows).toHaveCount(2, { timeout: UI_READY });
+      await expect(rows.nth(0).getByRole('cell')).toHaveText([child, '1'], { timeout: UI_READY });
+      await expect(rows.nth(1).getByRole('cell')).toHaveText([root, '1'], { timeout: UI_READY });
     }, { timeout: UI_READY });
   } finally {
     await req.dispose();

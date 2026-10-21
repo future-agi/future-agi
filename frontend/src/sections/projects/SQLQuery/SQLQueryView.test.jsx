@@ -8,7 +8,7 @@ import { sqlApi } from "./api";
 
 const editorState = vi.hoisted(() => ({ provider: null }));
 vi.mock("@monaco-editor/react", () => ({
-  default: ({ value, onChange, onMount }) => {
+  default: function MonacoMock({ value, onChange, onMount }) {
     React.useEffect(() => {
       onMount(
         { getSelection: () => ({}), executeEdits: vi.fn(), focus: vi.fn() },

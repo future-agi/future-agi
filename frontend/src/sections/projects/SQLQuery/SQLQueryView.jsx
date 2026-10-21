@@ -631,7 +631,7 @@ export default function SQLQueryView() {
             ))}
           </TextField>
           <Typography variant="caption">
-            The widget reruns the saved query with each viewer's project
+            The widget reruns the saved query with each viewer&apos;s project
             permissions.
           </Typography>
         </DialogContent>
