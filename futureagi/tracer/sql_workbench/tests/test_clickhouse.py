@@ -343,6 +343,61 @@ def test_real_sampling_metadata_preserves_unknowns_and_task_run_distinction(
     assert windows == [(scope.start, scope.end)]
 
 
+def test_e2e_only_bootstrap_is_idempotent_on_real_clickhouse(scoped_clickhouse):
+    import importlib.util
+    from pathlib import Path
+    from clickhouse_driver import Client
+    from clickhouse_driver.errors import ServerException
+
+    client, scope, ids = scoped_clickhouse
+    path = Path(__file__).resolve().parents[4] / "e2e/stack/backend/bootstrap_sql.py"
+    spec = importlib.util.spec_from_file_location("live_sql_fixture_bootstrap", path)
+    bootstrap = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bootstrap)
+    assert (
+        client.execute(
+            "SELECT count() FROM system.users WHERE name=%(name)s",
+            {"name": bootstrap.ACCOUNT},
+        )[0][0]
+        == 0
+    ), "Refusing to replace a pre-existing fixture account"
+    env = {
+        "FUTURE_AGI_E2E_FIXTURE": "sql-workbench",
+        "SQL_WORKBENCH_CH_USER": bootstrap.ACCOUNT,
+        "SQL_WORKBENCH_CH_PASSWORD": bootstrap.FIXTURE_PASSWORD,
+        "CH_HOST": client.connection.host,
+        "CH_PORT": str(client.connection.port),
+        "CH_DATABASE": scope.database,
+        "CH_USERNAME": client.connection.user,
+        "CH_PASSWORD": client.connection.password,
+        "CH25_EVAL_LOGGER_TABLE": scope.eval_table,
+    }
+    reader = None
+    try:
+        bootstrap.provision_fixture(env)
+        bootstrap.provision_fixture(env)
+        reader = Client(
+            host=client.connection.host,
+            port=client.connection.port,
+            database=scope.database,
+            user=bootstrap.ACCOUNT,
+            password=bootstrap.FIXTURE_PASSWORD,
+        )
+        assert reader.execute(
+            compile_query("SELECT count() AS n FROM spans", scope)
+        ) == [(1,)]
+        with pytest.raises(ServerException):
+            reader.execute("SET max_result_rows=0")
+        with pytest.raises(ServerException):
+            reader.execute(
+                f"INSERT INTO {scope.database}.spans (id) VALUES ('forbidden')"
+            )
+    finally:
+        if reader is not None:
+            reader.disconnect()
+        client.execute(f"DROP USER IF EXISTS {bootstrap.ACCOUNT}")
+
+
 def test_direct_bi_views_and_row_policies_are_tenant_safe(scoped_clickhouse):
     import ipaddress
     import secrets
