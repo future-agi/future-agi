@@ -810,6 +810,9 @@ err_dict = {
     "MISSING_AWS_KEY": [
         "Please provide Access Key, Secret Access Key and Region Name or the API key for the selected provider."
     ],
+    "INVALID_BEDROCK_MODEL_ID": [
+        "Enter the exact Bedrock model ID or supported inference-profile ID, not a display name such as Claude."
+    ],
     "MISSING_OPENAI_KEY": ["OpenAI Key not provided"],
     "MISSING_MODEL_ID": ["Model ID is required."],
     "UNABLE_TO_CREATE_MODEL": ["Unable to create model. Please try again."],
