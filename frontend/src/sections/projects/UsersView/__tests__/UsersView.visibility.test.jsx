@@ -17,7 +17,7 @@ const { getMock, gridState, header } = vi.hoisted(() => ({
   getMock: vi.fn(),
   gridState: { props: null, api: null },
   header: {
-    setHeaderConfig: () => {},
+    setHeaderConfig: vi.fn(),
     setActiveViewConfig: () => {},
     registerGetViewConfig: () => {},
   },
@@ -173,10 +173,121 @@ describe("Users view content visibility", () => {
     gridState.props = null;
     gridState.api = null;
     storedValues.clear();
+    header.setHeaderConfig.mockClear();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it.each(["manual", "auto"])(
+    "%s refresh reads a fresh first page instead of replaying cached users",
+    async (refreshKind) => {
+      const previousRows = [{ user_id: "previous", end_user_id: "previous" }];
+      const freshRows = [{ user_id: "fresh", end_user_id: "fresh" }];
+      const response = (rows) => ({
+        data: {
+          result: {
+            ...emptyUsersResponse().data.result,
+            table: rows,
+            total_count: rows.length,
+          },
+        },
+      });
+      let resolveRefresh;
+      getMock.mockResolvedValueOnce(response(previousRows)).mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveRefresh = resolve;
+        }),
+      );
+      await renderUsersView();
+      const params = makeGridParams();
+      gridState.api = params.api;
+      act(() => gridState.props.onGridReady({ api: params.api }));
+      await act(async () => {
+        await gridState.props.serverSideDatasource.getRows(params);
+      });
+      expect(params.success).toHaveBeenCalledWith({
+        rowData: previousRows,
+        rowCount: 1,
+      });
+
+      act(() => {
+        if (refreshKind === "manual") {
+          header.setHeaderConfig.mock.calls.at(-1)[0]({}).refreshData();
+        } else {
+          window.dispatchEvent(new Event(OBSERVE_LIST_REFRESH_EVENT));
+        }
+      });
+      expect(params.api.refreshServerSide).toHaveBeenCalledWith({
+        purge: false,
+      });
+      const freshParams = makeGridParams();
+      gridState.api = freshParams.api;
+      let pendingRefresh;
+      act(() => {
+        pendingRefresh =
+          gridState.props.serverSideDatasource.getRows(freshParams);
+      });
+      await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
+      expect(getMock.mock.calls[1][1].params).not.toHaveProperty("cursor");
+      expect(getMock.mock.calls[1][1].params.current_page_index).toBe(0);
+      expect(usersGrid()).toBeVisible();
+      expect(freshParams.success).not.toHaveBeenCalled();
+      await act(async () => {
+        resolveRefresh(response(freshRows));
+        await pendingRefresh;
+      });
+      expect(freshParams.success).toHaveBeenCalledWith({
+        rowData: freshRows,
+        rowCount: 1,
+      });
+    },
+  );
+
+  it("manual refresh cancels an older read without publishing its users", async () => {
+    let resolvePrevious;
+    getMock
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolvePrevious = resolve;
+        }),
+      )
+      .mockResolvedValueOnce(emptyUsersResponse());
+    await renderUsersView();
+    const previousParams = makeGridParams();
+    gridState.api = previousParams.api;
+    act(() => gridState.props.onGridReady({ api: previousParams.api }));
+    let previousRead;
+    act(() => {
+      previousRead =
+        gridState.props.serverSideDatasource.getRows(previousParams);
+    });
+    await waitFor(() => expect(getMock).toHaveBeenCalledTimes(1));
+    act(() => header.setHeaderConfig.mock.calls.at(-1)[0]({}).refreshData());
+    expect(getMock.mock.calls[0][1].signal.aborted).toBe(true);
+    const freshParams = makeGridParams();
+    gridState.api = freshParams.api;
+    await act(async () => {
+      await gridState.props.serverSideDatasource.getRows(freshParams);
+      resolvePrevious({
+        data: {
+          result: {
+            ...emptyUsersResponse().data.result,
+            table: [{ user_id: "stale", end_user_id: "stale" }],
+            total_count: 1,
+          },
+        },
+      });
+      await previousRead;
+    });
+    expect(getMock).toHaveBeenCalledTimes(2);
+    expect(freshParams.success).toHaveBeenCalledWith({
+      rowData: [],
+      rowCount: 0,
+    });
+    expect(previousParams.success).not.toHaveBeenCalled();
+    expect(previousParams.fail).toHaveBeenCalledOnce();
   });
 
   it("keeps the grid on screen while a refresh reloads the confirmed-empty page", async () => {
@@ -218,9 +329,8 @@ describe("Users view content visibility", () => {
   });
 
   it("keeps the grid on screen while a search reloads the confirmed-empty page", async () => {
-    // A same-query refresh is answered from the cursor's completed-page
-    // cache, so its loading state is brief. A search is a new query: its
-    // page-0 read goes to the network while searchState is still "empty".
+    // A search is a new query: its page-0 read goes to the network while
+    // searchState is still "empty".
     let resolveSearch;
     getMock.mockResolvedValueOnce(emptyUsersResponse()).mockReturnValueOnce(
       new Promise((resolve) => {
