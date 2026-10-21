@@ -1,6 +1,20 @@
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import { z } from "zod";
 
+export const NOT_A_WEB_ADDRESS_MESSAGE = "The value is not a web address.";
+
+export const isDocumentWebAddress = (value) => {
+  if (typeof value !== "string" || !value.trim()) {
+    return false;
+  }
+  try {
+    const parsed = new URL(value.trim());
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+};
+
 export const getPopperDimensions = (dataType) => {
   const dimensions = {
     "date and time": { width: 700, height: 600 },
