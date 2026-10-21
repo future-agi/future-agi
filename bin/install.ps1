@@ -688,8 +688,10 @@ if ($FromSource) {
 # ---- pull ----
 Step "Pulling images"
 
-# Service and image of every service in the resolved compose file.
+# Service and image of every service in the resolved compose file, and the
+# services with a `build:` section, in its order.
 $serviceImages = @()
+$buildableServices = @()
 $inServices = $false
 $service = $null
 foreach ($line in @(Invoke-Probe { & $DcCmd @DcArgs config })) {
@@ -700,6 +702,8 @@ foreach ($line in @(Invoke-Probe { & $DcCmd @DcArgs config })) {
     $service = $matches[1]
   } elseif ($service -and $line -match '^    image: (.+)$') {
     $serviceImages += [pscustomobject]@{ Service = $service; Image = $matches[1].Trim().Trim('"') }
+  } elseif ($service -and $line -match '^    build:') {
+    $buildableServices += $service
   }
 }
 
@@ -707,8 +711,26 @@ foreach ($line in @(Invoke-Probe { & $DcCmd @DcArgs config })) {
 # distributed stack's fi-collector) and are never pulled. The distributed stack also skips
 # anything it builds itself; the standalone install pulls every other image, so
 # a failed pull can never turn into a surprise source build.
+# bin/update pins the distributed stack's fi-collector to a published release
+# (FI_COLLECTOR_VERSION in .env). A pinned fi-collector is pulled like every
+# other published image and never built: a build from this checkout would
+# replace the verified release image under the release's tag. Whether it is
+# pinned comes from the image Compose resolved for it above, which reads the
+# shell over .env, and .env with its quotes, comments and `export ` lines;
+# -FromSource always builds.
+$collectorImage = @($serviceImages | Where-Object { $_.Service -eq 'fi-collector' } | ForEach-Object { $_.Image }) | Select-Object -First 1
+$collectorPinned = [bool]($IsDistributed -and -not $FromSource -and $collectorImage -and
+  $collectorImage -clike 'futureagi/fi-collector:?*' -and $collectorImage -cne 'futureagi/fi-collector:local')
+# Every other service with `build:` (one a docker-compose.override.yml adds,
+# say) is still built from this checkout, by name, before the stack starts.
+# Services sharing the pinned image (fi-property-catalog-consumer) are not.
+$buildServices = @()
+if ($collectorPinned) {
+  $sharesPin = @($serviceImages | Where-Object { $_.Image -ceq $collectorImage } | ForEach-Object { $_.Service })
+  $buildServices = @($buildableServices | Where-Object { $sharesPin -cnotcontains $_ })
+}
 $pullArgs = @('pull')
-if ($IsDistributed) {
+if ($IsDistributed -and -not $collectorPinned) {
   $pullHelp = (& $DcCmd @DcArgs pull --help 2>&1 | Out-String)
   if ($pullHelp -match '--ignore-buildable') {
     $pullArgs += '--ignore-buildable'
@@ -716,6 +738,8 @@ if ($IsDistributed) {
 }
 $pullServices = @()
 foreach ($entry in $serviceImages) {
+  # Built by name before the stack starts.
+  if ($buildServices -ccontains $entry.Service) { continue }
   if (-not $entry.Image.EndsWith(':local')) {
     $pullServices += $entry.Service
     continue
@@ -768,10 +792,22 @@ if ($appEntry -and $VmArch) {
 # ---- bring up ----
 Step "Starting the stack"
 if ($IsDistributed) {
+  # --build rebuilds fi-collector from this checkout, so a stale image tag
+  # doesn't carry old source into a new install. A pinned fi-collector was
+  # pulled above, so every other service with `build:` is built by name first
+  # and the stack starts with --no-build, which never rebuilds the pinned image.
+  $buildFlag = if ($collectorPinned) { '--no-build' } else { '--build' }
+  if ($buildServices.Count -gt 0) {
+    Append-Log @("running: $DcText build $($buildServices -join ' ')")
+    Invoke-Compose build @buildServices
+    if ($LASTEXITCODE -ne 0) {
+      Die "docker compose build $($buildServices -join ' ') failed; the output above names the error. Fix it, then re-run .\bin\install.ps1."
+    }
+  }
   # One attempt, as in bin/e2e: replaying compose up can rerun an exited schema
   # or mirror job after an uncertain write. Inspect retained state before resuming.
   # Preserve services omitted by an upgrade; legacy retirement is an explicit step.
-  Invoke-Compose up -d --build --wait --wait-timeout 1200
+  Invoke-Compose up -d $buildFlag --wait --wait-timeout 1200
   if ($LASTEXITCODE -ne 0) {
     Die "docker compose startup failed or timed out; partial state retained, no automatic retry. Inspect 'docker compose ps -a' and 'docker compose logs' before explicitly resuming."
   }

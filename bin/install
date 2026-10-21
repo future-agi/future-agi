@@ -796,17 +796,57 @@ compose_service_images() {
 SERVICE_IMAGES=$(compose_service_images || true)
 app_image=$(awk -F'\t' -v s="$APP_SVC" '$1 == s {print $2; exit}' <<<"$SERVICE_IMAGES")
 
+# Services with a `build:` section in the resolved compose file, in its order,
+# except those whose image is IMAGE.
+compose_build_services() { # IMAGE
+  $DC config 2>/dev/null | awk -v skip="$1" '
+    /^services:/ { in_services = 1; next }
+    /^[^ ]/ { in_services = 0 }
+    in_services && /^  [^ ]/ { service = $1; sub(/:$/, "", service); order[++n] = service }
+    in_services && /^    build:/ { build[service] = 1 }
+    in_services && /^    image: / { image = $2; gsub(/"/, "", image); images[service] = image }
+    END { for (i = 1; i <= n; i++) if (build[order[i]] && images[order[i]] != skip) print order[i] }
+  '
+}
+
 # Images tagged `local` are built from this checkout (--from-source, or the
 # distributed stack's fi-collector) and are never pulled. The distributed stack also skips
 # anything it builds itself; the standalone install pulls every other image, so
 # a failed pull can never turn into a surprise source build.
+# bin/update pins the distributed stack's fi-collector to a published release
+# (FI_COLLECTOR_VERSION in .env). A pinned fi-collector is pulled like every
+# other published image and never built: a build from this checkout would
+# replace the verified release image under the release's tag. Whether it is
+# pinned comes from the image Compose resolved for it above, which reads the
+# shell (even an empty value) over .env, and .env with its quotes, comments and
+# `export ` lines; --from-source always builds.
+collector_image=$(awk -F'\t' '$1 == "fi-collector" {print $2; exit}' <<<"$SERVICE_IMAGES")
+collector_pinned=0
+if (( DISTRIBUTED == 1 && FROM_SOURCE == 0 )) && \
+   [[ "$collector_image" == futureagi/fi-collector:?* && "$collector_image" != futureagi/fi-collector:local ]]; then
+  collector_pinned=1
+fi
+# Every other service with `build:` (one a docker-compose.override.yml adds,
+# say) is still built from this checkout, by name, before the stack starts.
+# Services sharing the pinned image (fi-property-catalog-consumer) are not.
+declare -a build_services=()
+if (( collector_pinned == 1 )); then
+  while IFS= read -r service; do
+    if [[ -n "$service" ]]; then build_services+=("$service"); fi
+  done < <(compose_build_services "$collector_image")
+fi
 declare -a pull_command=(pull)
-if (( DISTRIBUTED == 1 )) && $DC pull --help 2>&1 | grep -q -- '--ignore-buildable'; then
+if (( DISTRIBUTED == 1 && collector_pinned == 0 )) && \
+   $DC pull --help 2>&1 | grep -q -- '--ignore-buildable'; then
   pull_command+=(--ignore-buildable)
 fi
 declare -a pull_services=()
 while IFS=$'\t' read -r service image; do
   [[ -z "$service" ]] && continue
+  # Built by name before the stack starts.
+  if (( ${#build_services[@]} > 0 )) && [[ " ${build_services[*]} " == *" $service "* ]]; then
+    continue
+  fi
   if [[ "$image" != *:local ]]; then
     pull_services+=("$service")
   elif [[ "$image" != futureagi/fi-collector:local ]] && ! docker image inspect "$image" >/dev/null 2>&1; then
@@ -858,11 +898,23 @@ if (( DISTRIBUTED == 1 )); then
   # --build forces a rebuild of any service with `build:` set, so a stale
   # image tag from a previous worktree (or an outdated layer) doesn't carry
   # old source into a new install. Docker's layer cache makes this fast
-  # when nothing has actually changed.
+  # when nothing has actually changed. A pinned fi-collector was pulled above,
+  # so every other service with `build:` is built by name first and the stack
+  # starts with --no-build, which never rebuilds the pinned image.
+  build_flag=--build
+  if (( collector_pinned == 1 )); then
+    build_flag=--no-build
+    if (( ${#build_services[@]} > 0 )); then
+      log_only "running: $DC build ${build_services[*]}"
+      if ! $DC build "${build_services[@]}"; then
+        die "docker compose build ${build_services[*]} failed; the output above names the error. Fix it, then re-run ./bin/install."
+      fi
+    fi
+  fi
   # One attempt, as in bin/e2e: replaying compose up can rerun an exited schema
   # or mirror job after an uncertain write. Inspect retained state before resuming.
   # Preserve services omitted by an upgrade; legacy retirement is an explicit step.
-  if ! $DC up -d --build --wait --wait-timeout 1200; then
+  if ! $DC up -d "$build_flag" --wait --wait-timeout 1200; then
     die "docker compose startup failed or timed out; partial state retained, no automatic retry. Inspect 'docker compose ps -a' and 'docker compose logs' before explicitly resuming."
   fi
 else
