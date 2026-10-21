@@ -142852,6 +142852,7 @@
                 },
                 "rate": {
                     "title": "Rate",
+                    "description": "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
                     "type": "number",
                     "maximum": 100,
                     "minimum": 0

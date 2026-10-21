@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('tracer', '0116_error_feed_alert_models'),
+        ('tracer', '0117_sql_workbench'),
     ]
 
     operations = [
