@@ -457,3 +457,34 @@ def test_live_raw_attribute_named_user_id_is_not_a_profile_filter():
         },
     )
     validate_live_filter_sources(value, {"filters": None})
+
+
+@pytest.mark.parametrize("rate", [7, 14, 28, 56, 57, 99])
+def test_closed_rate_integer_boundaries_are_exact(rate):
+    assert target_size({"rate": rate}, 100) == rate
+
+
+def test_closed_rate_precision_and_large_population_have_exact_bounds():
+    assert target_size({"rate": 0.000001}, 100_000_000) == 1
+    assert target_size({"rate": 0.000001}, 100_000_001) == 2
+    assert target_size({"rate": 100}, 2**64 - 1) == 2**64 - 1
+    with pytest.raises(InvalidSamplingPolicy, match="six decimal"):
+        validate_policy(policy(default={"rate": 0.0000001}), now=NOW)
+
+
+def test_pending_proof_is_point_scoped_and_not_limited_to_live_preview_tail():
+    from tracer.services.eval_tasks.sampling.query import SamplingQuery
+
+    task = SimpleNamespace(
+        project_id="ba052ed0-921f-4aa9-972d-7bbbc79e5d30", row_type="spans", filters={}
+    )
+    value = validate_policy(policy(mode="live", default={"rate": 50}), now=NOW)
+    query = SamplingQuery(task, value, "version", NOW)
+    sql, params = query.current_rows(["old-pending", "changed-pending"])
+    assert "id IN %(sp_current_ids)s" in sql
+    assert params["sp_current_ids"] == ("old-pending", "changed-pending")
+    assert params["sp_start"].isoformat() == value["window"]["start"]
+    assert "source_arrival < %(sp_snapshot)s" not in sql
+    assert "_version >= %(sp_arrival_floor_ns)s" not in sql
+    with pytest.raises(ValueError, match="1–1000"):
+        query.current_rows([str(index) for index in range(1001)])

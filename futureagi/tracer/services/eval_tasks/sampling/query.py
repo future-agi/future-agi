@@ -7,7 +7,12 @@ from copy import deepcopy
 from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING
 
-from tracer.services.eval_tasks.sampling.policy import parse_time, threshold
+from tracer.services.eval_tasks.sampling.policy import (
+    RATE_DENOMINATOR,
+    parse_time,
+    rate_units,
+    threshold,
+)
 
 if TYPE_CHECKING:
     from tracer.models.eval_task import EvalTask
@@ -62,6 +67,8 @@ class SamplingQuery:
         }
         self._counter = 0
         self.live_floor = None
+        self.proof_row_ids = None
+        self.current_state = False
 
     def bind(self, value: object) -> str:
         self._counter += 1
@@ -226,6 +233,25 @@ class SamplingQuery:
             # identity that has a change in this delta. Never push an upper
             # bound, tombstone or mutable attribute below latest-state replay.
             scope += " AND _version >= %(sp_arrival_floor_ns)s"
+        if self.proof_row_ids is not None:
+            self.params["sp_current_ids"] = self.proof_row_ids
+            if row_type == "spans":
+                scope = "project_id = %(sp_project)s AND id IN %(sp_current_ids)s"
+            elif row_type == "traces":
+                scope = "project_id = %(sp_project)s AND trace_id IN %(sp_current_ids)s"
+            else:
+                from tracer.services.clickhouse.v2.id_remap_sql import (
+                    bounded_survivor_map_subquery,
+                )
+
+                aliases = bounded_survivor_map_subquery(
+                    "trace_session_id_remap", candidate_param="sp_current_ids"
+                )
+                scope = f"""project_id = %(sp_project)s AND trace_id IN (
+                    SELECT trace_id FROM spans PREWHERE project_id = %(sp_project)s
+                    WHERE trace_session_id IN %(sp_current_ids)s OR trace_session_id IN (
+                        SELECT any_id FROM ({aliases}) WHERE survivor_id IN %(sp_current_ids)s
+                    ))"""
         arrival = "greatest(created_at, updated_at, fromUnixTimestamp64Nano(toInt64(_version), 'UTC'))"
         consumer = " ".join(
             [
@@ -246,9 +272,14 @@ class SamplingQuery:
         )
         canonical_session = resolved_id_expr("s.trace_session_id", "sm")
         canonical_user = resolved_id_expr("s.end_user_id", "um")
+        watermark = (
+            ""
+            if self.current_state
+            else "AND created_at < %(sp_snapshot)s AND source_arrival < %(sp_snapshot)s"
+        )
         return f"""WITH raw AS (
             SELECT *, {arrival} AS source_arrival FROM {latest}
-            WHERE is_deleted = 0 AND created_at < %(sp_snapshot)s AND source_arrival < %(sp_snapshot)s
+            WHERE is_deleted = 0 {watermark}
         ), {", ".join(maps)}, sampling_source AS (
             SELECT s.* EXCEPT(trace_session_id, end_user_id),
                    {canonical_session} AS trace_session_id, {canonical_user} AS end_user_id
@@ -293,12 +324,17 @@ class SamplingQuery:
             count = (
                 f"toUInt64({self.bind(rule['target_n'])})"
                 if "target_n" in rule
-                else f"toUInt64(ceil(toFloat64(population_size) * {self.bind(rule.get('rate', 100) / 100)}))"
+                else f"toUInt64(intDiv(toUInt128(population_size) * toUInt128({self.bind(rate_units(rule.get('rate', 100)))}) + toUInt128({RATE_DENOMINATOR - 1}), toUInt128({RATE_DENOMINATOR})))"
             )
             if "rare_below" in rule:
                 count = f"if(population_size <= {self.bind(rule['rare_below'])}, population_size, {count})"
+            cap = (
+                f"toUInt64({self.bind(rule['max_n'])})"
+                if "max_n" in rule
+                else "population_size"
+            )
             target.append(
-                f"least(population_size, toUInt64({self.bind(rule.get('max_n', 2**63 - 1))}), greatest(toUInt64({self.bind(rule.get('min_n', 0))}), {count}))"
+                f"least(population_size, {cap}, greatest(toUInt64({self.bind(rule.get('min_n', 0))}), {count}))"
             )
         k = self._rule_case(target)
         if self.policy["mode"] == "closed":
@@ -363,6 +399,31 @@ class SamplingQuery:
             ctes
             + f""" SELECT r.row_id, r.unit_id, c.stratum, c.inclusion_probability, c.selected
             FROM rows AS r INNER JOIN classified AS c ON r.unit_id = c.unit_id {predicate}""",
+            self.params,
+        )
+
+    def current_rows(self, row_ids: list[str]) -> tuple[str, dict]:
+        """Exact current-state proof for bounded pending IDs, not an arrival delta.
+
+        Missing rows are negative only after this point-scoped latest replay;
+        absence from a poll/selected-unit page alone is never such a proof.
+        """
+        identities = tuple(dict.fromkeys(str(value) for value in row_ids))
+        if not identities or len(identities) > BATCH_SIZE:
+            raise ValueError("Pending row proofs require 1–1000 identities.")
+        self.proof_row_ids = identities
+        self.current_state = True
+        self.live_floor = None
+        if self.policy["mode"] == "live":
+            self.scan_window = {
+                "start": self.policy["window"]["start"],
+                "end": self.params["sp_snapshot"].isoformat(),
+            }
+            self.params["sp_start"] = parse_time(self.scan_window["start"])
+        source = self._source()
+        return (
+            source
+            + " SELECT r.row_id, r.unit_id FROM rows AS r WHERE r.row_id IN %(sp_current_ids)s",
             self.params,
         )
 

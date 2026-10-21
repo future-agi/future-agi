@@ -256,6 +256,7 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
         full = (
             cohort_created
             or task.run_type != RunType.CONTINUOUS
+            or task.continuous_cursor is None
             or _continuous_requires_full_reclassification(task)
         )
         floor = None if full else task.continuous_cursor
@@ -316,7 +317,7 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
             materialize_pending(task, metadata.keys(), **materialize_options)
             requeued, dropped = _requeue_and_drop(
                 task,
-                resolved=ResolvedRowSet(tuple(candidates), tuple(metadata), False),
+                resolved=ResolvedRowSet(tuple(candidates), tuple(metadata), full),
                 scope_to_candidates=True,
             )
             result.requeued += requeued
@@ -328,6 +329,11 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
             )
             .exclude(custom_eval_config_id__in=current_evals)
             .update(deleted=True, deleted_at=now)
+        )
+        from tracer.services.eval_tasks.sampling.pending import revalidate_pending
+
+        result.dropped += revalidate_pending(
+            task, policy, version, cohort, sampling_clock()
         )
         result.created = _live_count(task) - before + result.dropped
         if task.run_type == RunType.CONTINUOUS:

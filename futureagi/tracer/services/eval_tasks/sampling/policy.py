@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from tracer.models.eval_task import EvalTask
 
+RATE_SCALE = 1_000_000
+RATE_DENOMINATOR = 100 * RATE_SCALE
 MAX_STRATA = 100
 MAX_WINDOW = timedelta(days=31)
 UNITS = ("span", "trace", "session", "user", "attribute")
@@ -77,6 +79,7 @@ def _rule(value: dict, *, live: bool, named: bool) -> dict:
             raise InvalidSamplingPolicy(
                 "rate must be a finite percentage from 0 to 100."
             )
+        rate_units(rate)
         result["rate"] = rate
     for key in ("target_n", "min_n", "max_n", "rare_below"):
         if key in result:
@@ -266,8 +269,22 @@ def rate_selects(seed: str, unit_id: str, rate: float) -> bool:
     return "0" + unit_hash(seed, unit_id) < threshold(rate)
 
 
+def rate_units(rate: float) -> int:
+    """Exact millionths of a percent; the bound also makes UInt128 SQL safe."""
+    value = Decimal(str(rate)) * RATE_SCALE
+    if value != value.to_integral_value():
+        raise InvalidSamplingPolicy(
+            "Sampling rates support at most six decimal places."
+        )
+    return int(value)
+
+
 def target_size(rule: dict, population: int) -> int:
-    target = rule.get("target_n", math.ceil(population * rule.get("rate", 100) / 100))
+    target = rule.get("target_n")
+    if target is None:
+        target = (
+            population * rate_units(rule.get("rate", 100)) + RATE_DENOMINATOR - 1
+        ) // RATE_DENOMINATOR
     if population <= rule.get("rare_below", -1):
         target = population
     return min(

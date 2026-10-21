@@ -27,6 +27,31 @@ def controlled_sampling_clock(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def controlled_pending_source(monkeypatch):
+    # Most engine tests model an unchanged source independently of delta pages.
+    # The pending revalidation control flow/locks are real; CH integration tests
+    # exercise this reader without any replacement.
+    def read(task, policy, version, ids, now):
+        from tracer.services.eval_tasks.sampling.pending import IDENTITY_FIELDS
+
+        field = IDENTITY_FIELDS[task.row_type]
+        return {
+            str(getattr(entry, field)): entry.output_metadata["_task_selection"][
+                "sampling"
+            ]["sampling_unit_id"]
+            for entry in EvalLogger.objects.filter(
+                eval_task_id=str(task.id),
+                status=EvalEntryStatus.PENDING,
+                **{f"{field}__in": ids},
+            )
+        }
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.pending.read_current_rows", read
+    )
+
+
 def make_task(project, config, *, mode="closed"):
     now = timezone.now()
     task = EvalTask.objects.create(
@@ -694,3 +719,158 @@ def test_generic_policy_task_edit_rejects_cross_project_evaluator(
     )
     assert response.status_code == 400
     assert list(task.evals.values_list("id", flat=True)) == [custom_eval_config.id]
+
+
+@pytest.mark.parametrize("state", [EvalEntryStatus.ERRORED, EvalEntryStatus.SKIPPED])
+def test_full_eval_revision_pass_preserves_converged_failure_and_delta_retry(
+    project, custom_eval_config, monkeypatch, state
+):
+    from types import SimpleNamespace
+
+    from tracer.models.custom_eval_config import CustomEvalConfig
+    from tracer.services.eval_tasks import entries
+
+    task = make_task(project, custom_eval_config)
+    trace = Trace.objects.create(project=project, name="convergence")
+    monkeypatch.setattr(
+        entries, "get_reader", lambda: SimpleNamespace(close=lambda: None)
+    )
+    monkeypatch.setattr(
+        entries,
+        "_resolve_entry_fks",
+        lambda reader, kind, ids, **_: {
+            identity: {"observation_span_id": identity, "trace_id": trace.id}
+            for identity in ids
+        },
+    )
+
+    def stream(sql, params):
+        yield (
+            [("session:one", "cell", 1, 1)]
+            if "WHERE selected" in sql
+            else [("failed-span", "session:one", "", 0, False)]
+        )
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.stream_query", stream
+    )
+    reconcile(task)
+    failed = EvalLogger.objects.get(
+        eval_task_id=str(task.id), custom_eval_config=custom_eval_config
+    )
+    EvalLogger.objects.filter(pk=failed.pk).update(
+        status=state, updated_at=timezone.now() - timedelta(days=2)
+    )
+    EvalTask.objects.filter(pk=task.pk).update(
+        continuous_cursor=timezone.now() - timedelta(hours=1)
+    )
+    added = CustomEvalConfig.objects.create(
+        project=project,
+        name="new evaluator",
+        eval_template=custom_eval_config.eval_template,
+        config=custom_eval_config.config,
+        mapping=custom_eval_config.mapping,
+        filters={},
+    )
+    task.evals.add(added)
+    result = reconcile(task)
+    failed.refresh_from_db()
+    assert failed.status == state
+    assert result.requeued == 0
+    assert (
+        EvalLogger.objects.filter(
+            eval_task_id=str(task.id),
+            custom_eval_config=added,
+            status=EvalEntryStatus.PENDING,
+        ).count()
+        == 1
+    )
+    # With no full revision now, this controlled stream proves a changed row
+    # inside the arrival window. Genuine retry still occurs exactly once.
+    changed = reconcile(task)
+    failed.refresh_from_db()
+    assert changed.requeued == 1
+    assert failed.status == EvalEntryStatus.PENDING
+    EvalLogger.objects.filter(pk=failed.pk).update(
+        status=state, updated_at=timezone.now()
+    )
+    unchanged = reconcile(task)
+    failed.refresh_from_db()
+    assert unchanged.requeued == 0
+    assert failed.status == state
+
+
+@pytest.mark.django_db(transaction=True)
+def test_pending_proof_lock_prevents_claiming_a_proven_negative(
+    project, custom_eval_config, monkeypatch
+):
+    from threading import Event, Thread
+
+    from django.db import close_old_connections, connection, transaction
+
+    from tracer.services.eval_tasks.entries import claim_pending_batch
+    from tracer.services.eval_tasks.sampling.pending import revalidate_pending
+    from tracer.services.eval_tasks.sampling.service import task_policy
+
+    assert connection.vendor == "postgresql", (
+        "This locking regression requires real PostgreSQL."
+    )
+    task = make_task(project, custom_eval_config)
+    stub_materialization(monkeypatch, task)
+
+    def stream(sql, params):
+        yield (
+            [("session:one", "cell", 1, 1)]
+            if "WHERE selected" in sql
+            else [("locked-span", "session:one", "", 0, False)]
+        )
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.stream_query", stream
+    )
+    reconcile(task)
+    entered, release = Event(), Event()
+    errors = []
+
+    def blocked_current(*args):
+        entered.set()
+        if not release.wait(5):
+            raise TimeoutError("test did not release the pending proof")
+        return {}
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.pending.read_current_rows", blocked_current
+    )
+
+    def proof():
+        close_old_connections()
+        try:
+            with transaction.atomic():
+                locked = (
+                    EvalTask.objects.select_for_update(of=("self",))
+                    .select_related("project")
+                    .get(pk=task.pk)
+                )
+                policy, version = task_policy(locked, now=timezone.now())
+                cohort = EvalSamplingCohort.objects.get(task=locked)
+                assert (
+                    revalidate_pending(locked, policy, version, cohort, timezone.now())
+                    == 1
+                )
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            close_old_connections()
+
+    worker = Thread(target=proof, daemon=True)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        assert claim_pending_batch(task, 1) == []
+    finally:
+        release.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert errors == []
+    assert claim_pending_batch(task, 1) == []
+    assert EvalLogger.all_objects.get(eval_task_id=str(task.id)).deleted

@@ -414,3 +414,219 @@ def test_corrected_timestamp_outside_window_does_not_resurrect_old_version(
     preview = preview_policy(task)
     assert sum(cell["eligible_units"] for cell in preview["strata"]) == 1
     assert sum(cell["selected_rows"] for cell in preview["strata"]) == 2
+
+
+@pytest.mark.parametrize("change", ["filter", "unit", "deleted"])
+def test_pending_negative_proof_preserves_unaffected_old_backlog(
+    project, custom_eval_config, ch_seed, change
+):
+    chosen = TraceSession.objects.create(project=project, name="pending-selected")
+    unaffected = TraceSession.objects.create(project=project, name="pending-old")
+    rows = seed_contact(project, chosen, {"locale": "en"}, traces=1, seed=False)
+    rows += seed_contact(project, unaffected, {"locale": "en"}, traces=1, seed=False)
+    seed_ch_spans(rows)
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        filters={
+            "filters": [
+                {
+                    "column_id": "locale",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": ["en"],
+                    },
+                }
+            ]
+        },
+        sampling_policy=make_policy(default={"rate": 100}),
+    )
+    task.evals.add(custom_eval_config)
+    reconcile(task)
+    assert EvalLogger.objects.filter(eval_task_id=str(task.id)).count() == 4
+    floor = sampling_clock()
+    EvalTask.objects.filter(pk=task.pk).update(continuous_cursor=floor)
+    changed = rows[0]
+    if change == "filter":
+        changed.span_attributes = {"locale": "fr"}
+    elif change == "unit":
+        other = TraceSession.objects.create(
+            project=project, name="not-in-frozen-cohort"
+        )
+        changed.trace_session_id = other.id
+    else:
+        changed.deleted = True
+    changed.updated_at = timezone.now()
+    seed_ch_spans([changed])
+    result = reconcile(task)
+    assert result.dropped == 1
+    remaining = set(
+        EvalLogger.objects.filter(eval_task_id=str(task.id)).values_list(
+            "observation_span_id", flat=True
+        )
+    )
+    assert remaining == {span.id for span in rows[1:]}
+    assert EvalLogger.all_objects.get(
+        eval_task_id=str(task.id), observation_span_id=changed.id
+    ).deleted
+
+
+@pytest.mark.parametrize("rate", [7, 14, 28])
+def test_closed_percent_quotas_are_exact_on_integer_boundaries(project, ch_seed, rate):
+    now = timezone.now()
+    seed_ch_spans(
+        [
+            {
+                "id": uuid.uuid4().hex[:16],
+                "trace_id": str(uuid.uuid4()),
+                "project_id": str(project.id),
+                "org_id": str(project.organization_id),
+                "trace_session_id": uuid.uuid4(),
+                "name": "rate-boundary",
+                "observation_type": "llm",
+                "start_time": now - timedelta(minutes=5),
+                "created_at": now - timedelta(minutes=1),
+            }
+            for _ in range(100)
+        ]
+    )
+    task = EvalTask(
+        project=project,
+        row_type="spans",
+        filters={},
+        sampling_policy=make_policy(default={"rate": rate}),
+    )
+    preview = preview_policy(task)
+    assert sum(cell["selected_units"] for cell in preview["strata"]) == rate
+    policy, version = task_policy(task, now=sampling_clock())
+    members = [
+        row
+        for block in stream_query(
+            *SamplingQuery(task, policy, version, sampling_clock()).members()
+        )
+        for row in block
+    ]
+    assert len(members) == rate
+    assert {row[2] for row in members} == {rate / 100}
+
+
+def test_pending_move_between_selected_units_refreshes_actual_probability(
+    project, custom_eval_config, ch_seed
+):
+    groups = {}
+    for index, locale in enumerate(("en", "en", "fr")):
+        session = TraceSession.objects.create(
+            project=project, name=f"probability-{index}"
+        )
+        groups[str(session.id)] = seed_contact(
+            project, session, {"locale": locale}, traces=1, seed=False
+        )
+    seed_ch_spans([span for spans in groups.values() for span in spans])
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy=make_policy(
+            group_by=[{"key": "locale"}], default={"target_n": 1}
+        ),
+    )
+    task.evals.add(custom_eval_config)
+    reconcile(task)
+    members = list(EvalSamplingMember.objects.filter(cohort__task=task, selected=True))
+    source = next(member for member in members if member.inclusion_probability == 0.5)
+    target = next(member for member in members if member.inclusion_probability == 1)
+    moving = groups[source.unit_id.split(":", 1)[1]]
+    EvalTask.objects.filter(pk=task.pk).update(continuous_cursor=sampling_clock())
+    for span in moving:
+        span.trace_session_id = target.unit_id.split(":", 1)[1]
+        span.updated_at = timezone.now()
+    seed_ch_spans(moving)
+    reconcile(task)
+    entries = EvalLogger.objects.filter(
+        eval_task_id=str(task.id), observation_span_id__in=[span.id for span in moving]
+    )
+    assert entries.count() == 2
+    for entry in entries:
+        metadata = entry.output_metadata["_task_selection"]["sampling"]
+        assert metadata["sampling_unit_id"] == target.unit_id
+        assert metadata["stratum"] == target.stratum
+        assert metadata["inclusion_probability"] == 1
+
+
+def test_pending_trace_refreshes_filter_witness_when_only_children_change(
+    project, custom_eval_config, ch_seed
+):
+    trace = Trace.objects.create(project=project, name="pending-trace-witness")
+    timestamp = timezone.now() - timedelta(minutes=5)
+    root = ObservationSpan.objects.create(
+        id=uuid.uuid4().hex[:16],
+        project=project,
+        trace=trace,
+        name="root",
+        observation_type="llm",
+        start_time=timestamp,
+    )
+    first = ObservationSpan.objects.create(
+        id=uuid.uuid4().hex[:16],
+        project=project,
+        trace=trace,
+        parent_span_id=root.id,
+        name="first",
+        observation_type="llm",
+        start_time=timestamp + timedelta(seconds=1),
+        span_attributes={"locale": "en"},
+    )
+    second = ObservationSpan.objects.create(
+        id=uuid.uuid4().hex[:16],
+        project=project,
+        trace=trace,
+        parent_span_id=root.id,
+        name="second",
+        observation_type="llm",
+        start_time=timestamp + timedelta(seconds=2),
+        span_attributes={"locale": "fr"},
+    )
+    seed_ch_spans([root, first, second])
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="traces",
+        run_type=RunType.CONTINUOUS,
+        filters={
+            "filters": [
+                {
+                    "column_id": "locale",
+                    "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": ["en"],
+                    },
+                }
+            ]
+        },
+        sampling_policy=make_policy(sampling_unit="trace", default={"rate": 100}),
+    )
+    task.evals.add(custom_eval_config)
+    reconcile(task)
+    entry = EvalLogger.objects.get(eval_task_id=str(task.id))
+    sampling = entry.output_metadata["_task_selection"]["sampling"]
+    assert (
+        entry.output_metadata["_task_selection"]["filter_witnesses"][0]["span_id"]
+        == first.id
+    )
+    EvalTask.objects.filter(pk=task.pk).update(continuous_cursor=sampling_clock())
+    first.span_attributes = {"locale": "fr"}
+    second.span_attributes = {"locale": "en"}
+    first.updated_at = second.updated_at = timezone.now()
+    seed_ch_spans([first, second])
+    reconcile(task)
+    entry.refresh_from_db()
+    assert entry.output_metadata["_task_selection"]["sampling"] == sampling
+    assert (
+        entry.output_metadata["_task_selection"]["filter_witnesses"][0]["span_id"]
+        == second.id
+    )

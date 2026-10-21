@@ -26,7 +26,7 @@ class SamplingPredicateSerializer(SamplingAttributeSerializer):
 class SamplingRuleSerializer(StrictInputSerializer):
     name = serializers.CharField(max_length=80, required=False)
     filters = SamplingPredicateSerializer(many=True, required=False)
-    rate = serializers.FloatField(min_value=0, max_value=100, required=False)
+    rate = serializers.FloatField(min_value=0, max_value=100, required=False, help_text="Percentage with at most six decimal places; closed quotas use exact integer arithmetic.")
     target_n = serializers.IntegerField(min_value=0, max_value=1000000, required=False)
     min_n = serializers.IntegerField(min_value=0, max_value=1000000, required=False)
     max_n = serializers.IntegerField(min_value=0, max_value=1000000, required=False)

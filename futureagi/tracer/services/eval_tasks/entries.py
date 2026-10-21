@@ -163,6 +163,28 @@ def persist_eval_result(logger_kwargs: dict[str, Any]) -> EvalLogger | None:
     return EvalLogger.objects.filter(id=entry_id).first()
 
 
+def serialize_trace_witnesses(
+    trace_filter_witnesses: Iterable[TraceFilterWitness],
+) -> dict[str, list[dict[str, Any]]]:
+    witnesses_by_trace: dict[str, list[dict[str, Any]]] = {}
+    for witness in trace_filter_witnesses:
+        witnesses_by_trace.setdefault(str(witness.trace_id), []).append(
+            {
+                "filter_ordinal": int(witness.filter_ordinal),
+                "column_id": str(witness.column_id),
+                "col_type": str(witness.col_type),
+                "project_id": str(witness.project_id),
+                "trace_id": str(witness.trace_id),
+                "span_id": str(witness.span_id),
+                "start_time": witness.start_time.isoformat(),
+            }
+        )
+    return {
+        key: sorted(value, key=lambda item: item["filter_ordinal"])
+        for key, value in witnesses_by_trace.items()
+    }
+
+
 def materialize_pending(
     task: EvalTask,
     resolved_row_ids: Iterable[str] | None = None,
@@ -181,19 +203,7 @@ def materialize_pending(
         return 0
     hashes = {cfg.id: resolved_config_hash(cfg) for cfg in evals}
     target_type = _TARGET_TYPE[task.row_type]
-    witnesses_by_trace: dict[str, list[dict[str, Any]]] = {}
-    for witness in trace_filter_witnesses:
-        witnesses_by_trace.setdefault(str(witness.trace_id), []).append(
-            {
-                "filter_ordinal": int(witness.filter_ordinal),
-                "column_id": str(witness.column_id),
-                "col_type": str(witness.col_type),
-                "project_id": str(witness.project_id),
-                "trace_id": str(witness.trace_id),
-                "span_id": str(witness.span_id),
-                "start_time": witness.start_time.isoformat(),
-            }
-        )
+    witnesses_by_trace = serialize_trace_witnesses(trace_filter_witnesses)
     submitted = 0
     reader = get_reader()
     try:

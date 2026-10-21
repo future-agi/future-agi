@@ -362,6 +362,12 @@ def generate(directory: Path) -> None:
             "unit_ids": [f"session:{late_rows[-1]['session']}"],
         },
     )
+    rate_rows = [contact(f"exact-rate-{index}")[0] for index in range(100)]
+    ranked_units = sorted([f"session:{row['session']}" for row in rate_rows], key=lambda unit: unit_hash("native-proof", unit))
+    for rate in (7, 14, 28):
+        case(f"exact-closed-percent-{rate}", rate_rows, {**base, "default": {"rate": rate}}, "members", {
+            "units": sorted(ranked_units[:rate]), "probabilities": [rate / 100], "populations": [100],
+        })
     (directory / "cases.json").write_text(json.dumps(cases))
 
 
