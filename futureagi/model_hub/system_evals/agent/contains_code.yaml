@@ -16,6 +16,7 @@ criteria: "You are evaluating whether the output contains valid, executable code
 eval_tags:
 - Code
 - Output Format
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false
