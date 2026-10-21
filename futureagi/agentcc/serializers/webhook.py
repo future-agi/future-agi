@@ -54,7 +54,9 @@ class AgentccWebhookSerializer(serializers.ModelSerializer):
 
     def validate_url(self, value):
         try:
-            ensure_public_http_url(value, WEBHOOK_PRIVATE_URL_ERROR)
+            ensure_public_http_url(
+                value, WEBHOOK_PRIVATE_URL_ERROR, allow_unresolvable=True
+            )
         except ValueError as exc:
             raise serializers.ValidationError(str(exc))
         return value
