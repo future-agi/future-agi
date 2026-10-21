@@ -32,10 +32,12 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
 	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 // Config is what main() passes us. Public fields = YAML wire format.
@@ -44,6 +46,7 @@ type Config struct {
 	HTTPAddr       string        `yaml:"http_addr"`         // :4318 default; empty disables
 	BatchMaxRows   int           `yaml:"batch_max_rows"`    // flush after N rows
 	BatchMaxAge    time.Duration `yaml:"batch_max_age"`     // flush after X time
+	MaxPendingRows int           `yaml:"max_pending_rows"`  // pending + in-flight; whole requests rejected when full
 	GRPCMaxRecvMiB int           `yaml:"grpc_max_recv_mib"` // max gRPC message size in MiB; default + rationale in New()
 }
 
@@ -79,6 +82,7 @@ type Server struct {
 	// avoiding many tiny RMT parts. It rides the same lock + flush cycle as
 	// `pend` so the curated dual-write flushes with the span batch.
 	pendMu       sync.Mutex
+	bufferedRows int // includes the batch currently being flushed
 	pend         []map[string]any
 	pendCurated  *curatedwriter.Batch
 	pendProperty []observedcatalog.ScopedSpan
@@ -139,6 +143,9 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	if cfg.BatchMaxAge <= 0 {
 		cfg.BatchMaxAge = 5 * time.Second
 	}
+	if cfg.MaxPendingRows <= 0 {
+		cfg.MaxPendingRows = 20000
+	}
 	if cfg.GRPCMaxRecvMiB <= 0 {
 		// Go gRPC's default 4 MiB rejects large single-span exports (e.g. an
 		// ended voice call with full transcript) with RESOURCE_EXHAUSTED.
@@ -191,9 +198,8 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 }
 
 // Run blocks until ctx is cancelled or a serve error occurs. On shutdown
-// we drain pending rows once before returning so an SIGTERM doesn't lose
-// the in-flight batch (DECISIONS: in-flight loss bounded to last 5 s as
-// the deliberate at-least-once boundary).
+// we attempt to drain pending rows once before returning. A hard process crash
+// can still lose all acknowledged rows that have not reached ClickHouse.
 func (s *Server) Run(ctx context.Context) error {
 	if s.cfg.GRPCAddr == "" && s.cfg.HTTPAddr == "" {
 		return fmt.Errorf("at least one of GRPCAddr / HTTPAddr must be set")
@@ -351,6 +357,7 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	// Keep the authenticated workspace out-of-band. StampResourceAttrs retains
 	// the existing org/project behavior but deliberately does not add a
 	// workspace attribute to the canonical span payload.
+	receivedSpans := req.Traces().SpanCount()
 	var propertyOrganizationID, propertyWorkspaceID string
 	var propertyProjectIDs map[string]struct{}
 	if result := auth.FromContext(ctx); result != nil {
@@ -374,12 +381,18 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), err
 	}
-	h.s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs)
+	if !h.s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs) {
+		retry, err := status.New(codes.ResourceExhausted, "collector pending row budget exhausted; retry with backoff").WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(time.Second)})
+		if err != nil {
+			return ptraceotlp.NewExportResponse(), status.Error(codes.Unavailable, "collector pending row budget exhausted")
+		}
+		return ptraceotlp.NewExportResponse(), retry.Err()
+	}
 
 	payloadBytes, _ := req.MarshalProto()
 	h.s.emitUsage(ctx, req.Traces(), int64(len(payloadBytes)))
 
-	return ptraceotlp.NewExportResponse(), nil
+	return exportResponse(receivedSpans - req.Traces().SpanCount()), nil
 }
 
 // Cap the body size we will read from an OTLP/HTTP request. 16 MiB matches
@@ -397,8 +410,8 @@ const maxOTLPHTTPBodyBytes = 16 << 20
 // Success is HTTP 200 + an empty (or near-empty) ExportTraceServiceResponse
 // in the response media type that matches the request — the spec requires
 // echoing the content-type so client SDKs can decode the partial-success
-// field. We always return the fully-successful response since our pipeline
-// is at-least-once + dead-letter for failed inserts.
+// field. Success acknowledges enqueue, not durable storage; project-resolution
+// drops are reported as partial success and a full row budget is retryable.
 func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
@@ -453,6 +466,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Keep the authenticated workspace out-of-band; see the gRPC path above.
+	receivedSpans := req.Traces().SpanCount()
 	var propertyOrganizationID, propertyWorkspaceID string
 	var propertyProjectIDs map[string]struct{}
 	if result := auth.FromContext(r.Context()); result != nil {
@@ -480,14 +494,18 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "convert: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs)
+	if !s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs) {
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "collector pending row budget exhausted; retry with backoff", http.StatusServiceUnavailable)
+		return
+	}
 
 	s.emitUsage(r.Context(), req.Traces(), int64(len(body)))
 
-	// Empty ExportTraceServiceResponse — same wire shape, encoded to match
+	// ExportTraceServiceResponse, including any rejected spans, encoded to match
 	// the request's content-type. The spec requires the response media type
 	// to match the request.
-	resp := ptraceotlp.NewExportResponse()
+	resp := exportResponse(receivedSpans - req.Traces().SpanCount())
 	var out []byte
 	switch ct {
 	case "application/json":
@@ -502,6 +520,17 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", ct)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(out)
+}
+
+// OTLP counts rejected spans, not ResourceSpans containers. Project resolution
+// can discard one resource containing many spans even when the rest are queued.
+func exportResponse(rejected int) ptraceotlp.ExportResponse {
+	resp := ptraceotlp.NewExportResponse()
+	if rejected > 0 {
+		resp.PartialSuccess().SetRejectedSpans(int64(rejected))
+		resp.PartialSuccess().SetErrorMessage("spans with unresolvable project were rejected")
+	}
+	return resp
 }
 
 // indexByte and trimSpace are lifted here so the file doesn't grow a
@@ -533,8 +562,8 @@ func trimSpace(s string) string {
 // `ids` are the CURATED dimension identities collected for this same payload;
 // they ride alongside `rows` so the curated dual-write flushes with the span
 // batch. A nil / empty Batch is skipped (the common no-user/no-session case).
-func (s *Server) enqueue(rows []map[string]any, ids *curatedwriter.Batch) {
-	s.enqueueScoped(rows, ids, "", "", nil)
+func (s *Server) enqueue(rows []map[string]any, ids *curatedwriter.Batch) bool {
+	return s.enqueueScoped(rows, ids, "", "", nil)
 }
 
 // enqueueScoped keeps the authenticated workspace in a drain-local sidecar.
@@ -546,11 +575,16 @@ func (s *Server) enqueueScoped(
 	organizationID string,
 	workspaceID string,
 	workspaceProjectIDs map[string]struct{},
-) {
+) bool {
 	if len(rows) == 0 {
-		return
+		return true
 	}
 	s.pendMu.Lock()
+	if len(rows) > s.cfg.MaxPendingRows-s.bufferedRows {
+		s.pendMu.Unlock()
+		return false
+	}
+	s.bufferedRows += len(rows)
 	s.pend = append(s.pend, rows...)
 	if s.traceNotifier != nil {
 		s.pendRoots = append(s.pendRoots, traceavailable.ExtractRoots(rows, organizationID, workspaceID, workspaceProjectIDs)...)
@@ -586,6 +620,7 @@ func (s *Server) enqueueScoped(
 		default:
 		}
 	}
+	return true
 }
 
 // flushLoop runs until stopCh closes. Wakes on either an explicit kick
@@ -622,6 +657,13 @@ func (s *Server) drainNow(ctx context.Context) {
 	if len(batch) == 0 {
 		return
 	}
+	// Hold the reservation through the in-flight insert (including retries and
+	// sidecars). Releasing it at buffer-swap would hide a stalled writer.
+	defer func() {
+		s.pendMu.Lock()
+		s.bufferedRows -= len(batch)
+		s.pendMu.Unlock()
+	}()
 	spanErr := s.writer.Insert(ctx, batch)
 	if spanErr == nil && s.traceNotifier != nil && len(roots) > 0 {
 		if err := s.traceNotifier.EnqueueRoots(roots); err != nil {

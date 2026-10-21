@@ -11,18 +11,18 @@ writer:
   database: default
   table: spans
   # Retry policy. 5 retries with exponential backoff (100ms → 10s capped)
-  # tolerates the 99.9p HTTP latency spike from CH compaction. After that
-  # we dead-letter to disk — no silent drops, no infinite loop on a
-  # malformed payload (4xx skips the retry budget).
+  # Failed batches go to the dead-letter file if its disk write succeeds.
+  # Most 4xx responses skip retries; 429 is retryable. This is not a
+  # durable pre-ack queue, and retry latency has not been capacity-certified.
   max_retries: 5
   initial_backoff: 100ms
   max_backoff: 10s
   request_timeout: 30s
   # Local path inside the container; bind-mount to /var/lib/fi-collector
-  # on the host in compose so a container restart preserves the queue.
+  # on the host so a container restart preserves written dead-letter rows.
   dead_letter_file: /var/lib/fi-collector/dead_letter.jsonl
-  # We default async_insert OFF — our own batching is the primary
-  # backpressure mechanism. Flip on under acute write spikes only.
+  # Synchronous canonical inserts by default. Enabling async_insert changes
+  # confirmation semantics and is incompatible with observed catalog mode.
   async_insert: false
 
 server:
@@ -33,6 +33,9 @@ server:
   # per https://opentelemetry.io/docs/specs/otlp/#otlphttp.
   # Set "" (or FI_HTTP_ADDR=disable) to turn the listener off.
   http_addr: ":4318"
+  # Whole exports over the pending + in-flight budget get HTTP 503 / gRPC
+  # RESOURCE_EXHAUSTED. This bounds rows, not bytes or all process memory.
+  max_pending_rows: 20000
   batch_max_rows: 5000
   batch_max_age: 5s
   # Max gRPC receive message size in MiB (FI_GRPC_MAX_RECV_MIB); 16 matches
@@ -72,4 +75,4 @@ observed_catalog:
   replay_interval: 1s
 
 admin:
-  addr: ":9464" # /healthz and /metrics
+  addr: ":9464" # /healthz; the stock admin server has no /metrics route
