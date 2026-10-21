@@ -36,19 +36,21 @@ config:
             return {"score": 0.0, "reason": "Empty hypothesis"}
         def _ng(t, n):
             return [tuple(t[i:i+n]) for i in range(len(t)-n+1)]
+        # Only score the n-gram orders the hypothesis can form; fixed 1..4
+        # orders zeroed out short snippets (identical "return x" scored 0.30
+        # because orders 3-4 contributed log(1e-9) each). Zero-overlap orders
+        # get a small epsilon mass (NLTK method-1 style) instead.
+        max_n = min(4, len(ht))
         lp = []
-        for n in range(1, 5):
+        for n in range(1, max_n + 1):
             rn = Counter(_ng(rt, n))
             hn = Counter(_ng(ht, n))
             tot = sum(hn.values())
-            if tot == 0:
-                p = 1e-9
-            else:
-                cl = sum(min(hn[ng], rn.get(ng, 0)) for ng in hn)
-                p = (cl + 1) / (tot + 1)
+            cl = sum(min(hn[ng], rn.get(ng, 0)) for ng in hn)
+            p = cl / tot if cl > 0 else 0.1 / tot
             lp.append(math.log(p))
         bp = 1.0 if len(ht) >= len(rt) else math.exp(1 - len(rt)/max(len(ht), 1))
-        bleu = bp * math.exp(sum(0.25*l for l in lp))
+        bleu = bp * math.exp(sum(l / max_n for l in lp))
         kws = {"def","class","return","if","else","elif","for","while","try","except",
                "finally","with","import","from","as","in","not","and","or","is","None",
                "True","False","lambda","yield","async","await","function","const","let",
