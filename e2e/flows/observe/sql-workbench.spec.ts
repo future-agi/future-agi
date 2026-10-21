@@ -73,7 +73,9 @@ test('OBS-E2E-052: an analyst saves a scoped SQL result as a live dashboard quer
       await page.goto(`/dashboard/observe/${projectId}/query`, { waitUntil: 'domcontentloaded' });
       const editor = page.getByRole('textbox', { name: 'SQL query editor', exact: false });
       await expect(editor).toBeVisible({ timeout: UI_READY });
-      await editor.click();
+      // Monaco paints text over its backing textarea; focus it for keyboard input.
+      await editor.focus();
+      await expect(editor).toBeFocused();
       await editor.press('ControlOrMeta+A');
       await page.keyboard.insertText(sql);
       const response = page.waitForResponse((res) => res.url().endsWith(SQL_RUN) && res.request().method() === 'POST', { timeout: UI_READY });
