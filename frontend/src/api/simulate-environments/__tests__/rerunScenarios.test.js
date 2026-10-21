@@ -8,7 +8,7 @@ vi.mock("src/utils/axios", async (importOriginal) => {
 const axiosMod = await import("src/utils/axios");
 const axios = axiosMod.default;
 const { endpoints } = axiosMod;
-const { listMatchingScenarioKeys, uniqueScenarioKeys } = await import(
+const { listMatchingCalls, uniqueScenarioKeys } = await import(
   "../rerunScenarios"
 );
 
@@ -25,7 +25,7 @@ describe("uniqueScenarioKeys", () => {
   });
 });
 
-describe("listMatchingScenarioKeys", () => {
+describe("listMatchingCalls", () => {
   beforeEach(() => axios.get.mockReset());
 
   it("walks every page of the filtered calls, flat, and skips the unticked ones", async () => {
@@ -50,11 +50,15 @@ describe("listMatchingScenarioKeys", () => {
         },
       });
 
-    const keys = await listMatchingScenarioKeys("ex1", { status: ["failed"] }, [
+    const calls = await listMatchingCalls("ex1", { status: ["failed"] }, [
       "c3",
     ]);
 
-    expect(keys).toEqual(["refund", "timeout"]);
+    expect(calls).toEqual([
+      { id: "c1", sourceScenarioKey: "refund" },
+      { id: "c2", sourceScenarioKey: "refund" },
+      { id: "c4", sourceScenarioKey: "timeout" },
+    ]);
     expect(axios.get).toHaveBeenCalledTimes(2);
     expect(axios.get).toHaveBeenNthCalledWith(
       1,

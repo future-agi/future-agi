@@ -32095,7 +32095,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           404: {
             $ref: "#/definitions/ErrorResponse",
           },
+          409: {
+            $ref: "#/definitions/ErrorResponse",
+          },
           500: {
+            $ref: "#/definitions/ErrorResponse",
+          },
+          503: {
             $ref: "#/definitions/ErrorResponse",
           },
           default: {

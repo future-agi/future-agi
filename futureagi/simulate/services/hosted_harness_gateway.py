@@ -45,6 +45,7 @@ from simulate.services.hosted_harness import (
     record_cleanup,
     register_attempt,
     request_cancellation,
+    scope_dispatch_to_rerun,
 )
 from simulate.services.hosted_harness_conversation import (
     ensure_conversation,
@@ -1929,8 +1930,10 @@ class HostedHarnessGateway:
             if authoring_archive is None
             else ({}, "")
         )
-        dispatch_payload = prepare_dispatch_payload(
-            payload, secrets_map, simulator_secrets=simulator_env, job=job
+        dispatch_payload = scope_dispatch_to_rerun(
+            prepare_dispatch_payload(
+                payload, secrets_map, simulator_secrets=simulator_env, job=job
+            )
         )
         platform_host = _hostname_from_url(endpoint_base_url)
         allowed_domains = _resolved_egress_domains(
@@ -1949,7 +1952,7 @@ class HostedHarnessGateway:
         from simulate.services.harness_capacity import configured_capacity
 
         try:
-            capacity = configured_capacity(payload)
+            capacity = configured_capacity(scope_dispatch_to_rerun(payload))
         except ValueError as exc:
             raise HostedHarnessError(
                 "sandbox_capacity_unavailable",

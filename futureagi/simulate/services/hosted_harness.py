@@ -532,6 +532,168 @@ def _scenario_edits(
     return edits
 
 
+# Job payload metadata naming the executions an in-run re-run chose. Every later attempt
+# of the job is that re-run (infrastructure retries included), so launch dispatches only
+# these and the job's counters treat every other receipt as still current.
+RERUN_EXECUTION_KEYS = "rerun_execution_keys"
+
+
+def rerun_calls_in_run(
+    test_execution: TestExecution, call_execution_ids: list[uuid.UUID]
+) -> HostedHarnessJob:
+    """Re-run chosen calls of a finished Run as a new attempt of that same Run.
+
+    Each call row is reset in place and refilled by the new attempt's receipt. The
+    earlier result survives as a ``CallExecutionSnapshot`` and in the earlier attempt's
+    ``receipt_history``; nothing about it is deleted.
+    """
+    from simulate.services.alk_simulate_ingestion import (
+        PREALLOCATED_CALL_METADATA_KEYS,
+    )
+    from simulate.services.call_rerun import clear_call_for_rerun
+    from simulate.temporal.client import start_hosted_harness_gateway_workflow
+
+    base_url = str(getattr(settings, "HARNESS_PUBLIC_BASE_URL", "") or "").rstrip("/")
+    if not base_url:
+        raise HostedHarnessError(
+            "public_base_url_missing",
+            "HARNESS_PUBLIC_BASE_URL is required to rerun a hosted harness job",
+            status_code=503,
+        )
+    if not call_execution_ids:
+        raise HostedHarnessError(
+            "call_selection_empty", "select at least one call", status_code=400
+        )
+    with transaction.atomic():
+        job = (
+            HostedHarnessJob.no_workspace_objects.select_for_update()
+            .filter(test_execution_id=test_execution.id)
+            .first()
+        )
+        if job is None:
+            raise HostedHarnessError(
+                "run_not_rerunnable",
+                "this run has no saved harness job to re-run",
+                status_code=409,
+            )
+        execution = TestExecution.no_workspace_objects.select_for_update().get(
+            id=test_execution.id
+        )
+        # The job and the run settle separately: transport ends with the job, grading
+        # with the run. A re-run waits for both so it never races either one.
+        if job.state not in _TERMINAL_STATES or execution.status not in (
+            TestExecution.ExecutionStatus.COMPLETED,
+            TestExecution.ExecutionStatus.FAILED,
+            TestExecution.ExecutionStatus.CANCELLED,
+        ):
+            raise HostedHarnessError(
+                "rerun_in_progress",
+                "this run is still running or grading; re-run its calls once it finishes",
+                status_code=409,
+            )
+        allocations = list(
+            HostedHarnessExecution.no_workspace_objects.filter(
+                job=job, call_execution_id__in=call_execution_ids
+            ).select_related("call_execution")
+        )
+        if len(allocations) != len(set(call_execution_ids)):
+            raise HostedHarnessError(
+                "call_selection_unknown",
+                "some selected calls do not belong to this run",
+                status_code=400,
+            )
+        for allocation in allocations:
+            clear_call_for_rerun(
+                allocation.call_execution,
+                keep_metadata_keys=PREALLOCATED_CALL_METADATA_KEYS,
+            )
+        payload = dict(job.payload)
+        payload["metadata"] = {
+            **(payload.get("metadata") or {}),
+            RERUN_EXECUTION_KEYS: sorted(
+                allocation.execution_key for allocation in allocations
+            ),
+        }
+        job.payload = payload
+        job.state = HostedHarnessJob.State.QUEUED
+        job.current_stage = "queued"
+        job.failure = None
+        job.terminal_at = None
+        job.cancel_requested_at = None
+        job.cancel_reason = None
+        job.save(
+            update_fields=[
+                "payload",
+                "state",
+                "current_stage",
+                "failure",
+                "terminal_at",
+                "cancel_requested_at",
+                "cancel_reason",
+                "updated_at",
+            ]
+        )
+        execution.status = TestExecution.ExecutionStatus.RUNNING
+        execution.completed_at = None
+        execution.error_reason = None
+        execution.save(
+            update_fields=["status", "completed_at", "error_reason", "updated_at"]
+        )
+
+    retry_cfg = job.payload["retry"]
+    try:
+        start_hosted_harness_gateway_workflow(
+            str(job.id),
+            base_url,
+            retry_cfg["max_infrastructure_attempts"],
+            retry_cfg["initial_backoff_seconds"],
+            retry_cfg["max_backoff_seconds"],
+        )
+    except Exception:
+        now = timezone.now()
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            state=HostedHarnessJob.State.FAILED,
+            current_stage="failed",
+            terminal_at=now,
+            failure={
+                "domain": "infrastructure",
+                "stage": "queued",
+                "code": "scheduler_unavailable",
+                "message": "Hosted rerun could not be scheduled",
+            },
+        )
+        TestExecution.no_workspace_objects.filter(id=execution.id).update(
+            status=TestExecution.ExecutionStatus.FAILED,
+            completed_at=now,
+            error_reason="Hosted rerun could not be scheduled",
+        )
+        CallExecution.no_workspace_objects.filter(
+            id__in=[allocation.call_execution_id for allocation in allocations]
+        ).update(
+            status=CallExecution.CallStatus.FAILED,
+            completed_at=now,
+            ended_reason="Rerun could not be scheduled",
+        )
+        raise
+    return job
+
+
+def scope_dispatch_to_rerun(dispatch_payload: dict[str, Any]) -> dict[str, Any]:
+    """Narrow a Run's dispatch document to the executions an in-run re-run chose."""
+
+    metadata = dict(dispatch_payload.get("metadata") or {})
+    chosen = set(metadata.pop(RERUN_EXECUTION_KEYS, None) or ())
+    if not chosen:
+        return dispatch_payload
+    manifest = [
+        entry
+        for entry in metadata.get("execution_manifest") or []
+        if entry["execution_key"] in chosen
+    ]
+    metadata["execution_manifest"] = manifest
+    return {**dispatch_payload, "scenario_count": len(manifest), "metadata": metadata}
+
+
 def _apply_parallelism_admission(
     job: HostedHarnessJob, snapshot_digest: str | None
 ) -> int:
@@ -553,7 +715,8 @@ def _apply_parallelism_admission(
     admitted, clamped = clamp_parallelism(requested, snapshot_digest)
     from simulate.services.harness_capacity import configured_capacity
 
-    capacity = configured_capacity(job.payload)
+    # An in-run re-run executes only its chosen calls, so W is bounded by those.
+    capacity = configured_capacity(scope_dispatch_to_rerun(job.payload))
     admitted = min(admitted, capacity.parallelism)
     clamped = admitted != requested
     metadata = dict(job.payload.get("metadata") or {})
@@ -1551,10 +1714,19 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
         current_attempt_number = locked_job.current_attempt_number
         # Reruns retain old receipts until their replacements arrive. Counters must describe
         # only the current attempt while its parallel receipts are delivered independently.
-        receipts = HostedHarnessReceipt.no_workspace_objects.filter(
-            job=locked_job,
-            attempt_number=current_attempt_number,
+        receipts = HostedHarnessReceipt.no_workspace_objects.filter(job=locked_job)
+        rerun_keys = (locked_job.payload.get("metadata") or {}).get(
+            RERUN_EXECUTION_KEYS
         )
+        if rerun_keys:
+            # An in-run re-run replaces only its chosen calls: every other call's
+            # receipt is still that call's result in the Run.
+            receipts = receipts.exclude(
+                execution__execution_key__in=rerun_keys,
+                attempt_number__lt=current_attempt_number,
+            )
+        else:
+            receipts = receipts.filter(attempt_number=current_attempt_number)
         # Harness receipt outcomes answer "did the scenario satisfy its checks?"; TestExecution
         # counters answer "did the call transport complete?". Keep those dimensions separate so a
         # completed, playable call with a failed behavioural/evidence verdict is not reported as a

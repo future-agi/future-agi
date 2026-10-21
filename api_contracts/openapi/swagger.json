@@ -58196,7 +58196,19 @@
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
                     "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"

@@ -19,6 +19,7 @@ import {
   callDetailKeyPrefix,
   runAnalyticsKey,
 } from "src/api/simulate-environments/runEvals";
+import { useRerunCallsInRun } from "src/api/simulate-environments/rerunScenarios";
 
 import SectionCard from "../../../components/SectionCard";
 import StatusChip from "../StatusChip";
@@ -100,6 +101,7 @@ export default function RunDetail({
   // edit form, one confirm and one re-run request, so a re-run sent from
   // either holds both.
   const evalRun = useRunEvalActions({ envId: env?.id, executionId });
+  const rerunInRun = useRerunCallsInRun(executionId);
 
   // The past self-improvement (optimization) runs for this execution — REAL,
   // scoped by test_execution_id. The Trials tab only appears once at least one
@@ -382,9 +384,11 @@ export default function RunDetail({
                   : null
               }
               initialFilters={tableHandoff.filters}
-              // Ticked calls re-run as a new simulation, through the same start
-              // as any run: it opens the new run.
+              // Ticked calls re-run either inside this run (their rows are
+              // refilled in place) or as a new simulation, through the same
+              // start as any run: that one opens the new run.
               onRerunScenarios={onStartRun}
+              onRerunInRun={rerunInRun.mutate}
               onTickableChange={setHasTickableCalls}
               runTrials={identity?.trials || 1}
               rerunDisabledReason={
@@ -392,7 +396,9 @@ export default function RunDetail({
                   ? "Wait for this run to finish before re-running calls"
                   : runStarting
                     ? "Starting the run…"
-                    : null
+                    : rerunInRun.isPending
+                      ? "Starting the re-run…"
+                      : null
               }
             />
           )}
