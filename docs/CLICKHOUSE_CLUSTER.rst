@@ -291,7 +291,11 @@ v2/catalog/CDC ClickHouse and Redis/cache/channel targets. All aliases are pinne
 to the generated loopback endpoints; stale cached settings fail before networking
 or migration. Dotenv loading and incidental remote model-metadata fetching are
 disabled in this fixture. The runtime repeats the resolved-settings checks before
-and after Django startup, then runs actual Django migrations,
+and after Django startup. Optional libpq service, file and option variables are
+removed entirely (empty service-file paths are not safe defaults). Once PostgreSQL
+is running, real libpq and all three Django aliases must connect and verify their
+owned database/user identities before migrations; the evidence gate requires that
+executed connection proof. The runner then runs actual Django migrations,
 replays the native bootstrap, creates every inspected CDC mirror/dependent view,
 and proves captured insert/update/delete through the real outbox installer/drain.
 It then applies a later additive table/MV/column migration without replacing the

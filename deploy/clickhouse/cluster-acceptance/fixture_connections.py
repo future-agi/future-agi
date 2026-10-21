@@ -12,6 +12,32 @@ PG_DATABASE = "cluster_acceptance"
 CH_DATABASE = "acceptance_v1"
 CATALOG_DATABASE = "acceptance_catalog"
 
+# Empty libpq service/file values are NOT equivalent to absence (libpq will
+# attempt to open a service file named ""). Optional overrides must be removed.
+ABSENT_LIBPQ_ENV = frozenset(
+    {
+        "PGSERVICE",
+        "PGSERVICEFILE",
+        "PGSYSCONFDIR",
+        "PGPASSFILE",
+        "PGOPTIONS",
+        "PGSSLROOTCERT",
+        "PGSSLCERT",
+        "PGSSLKEY",
+        "PGSSLCRL",
+        "PGSSLCRLDIR",
+        "PGSSLCERTMODE",
+        "PGSSLMINPROTOCOLVERSION",
+        "PGSSLMAXPROTOCOLVERSION",
+        "PGSSLNEGOTIATION",
+        "PGSSLSNI",
+        "PGCHANNELBINDING",
+        "PGREQUIREAUTH",
+        "PGREQUIREPEER",
+        "PGAPPNAME",
+    }
+)
+
 
 def environment(fixture):
     port = int(fixture["port"])
@@ -21,6 +47,8 @@ def environment(fixture):
     ):
         raise ValueError("application fixture must use its generated nine-port layout")
     password = fixture["password"]
+    if not isinstance(password, str) or not password:
+        raise ValueError("acceptance fixture requires an explicit nonempty password")
 
     def redis(database):
         return f"redis://{HOST}:{fixture['redis_port']}/{database}"
@@ -59,15 +87,10 @@ def environment(fixture):
         "PGDATABASE": PG_DATABASE,
         "PGUSER": "test",
         "PGPASSWORD": password,
-        "PGSERVICE": "",
-        "PGSERVICEFILE": "",
-        "PGPASSFILE": "",
-        "PGOPTIONS": "",
-        "PGSSLROOTCERT": "",
-        "PGSSLCERT": "",
-        "PGSSLKEY": "",
         "PGGSSENCMODE": "disable",
         "PGTARGETSESSIONATTRS": "any",
+        "PGCLIENTENCODING": "UTF8",
+        "PGTZ": "UTC",
         "CH_HTTP_PORT": str(port),
         "CH_PORT": str(fixture["native_port"]),
         "CH25_HTTP_PORT": str(port),
@@ -130,10 +153,18 @@ def environment(fixture):
 
 
 def configure(fixture):
+    for key in ABSENT_LIBPQ_ENV:
+        os.environ.pop(key, None)
     os.environ.update(environment(fixture))
 
 
+def verify_libpq_environment():
+    if ABSENT_LIBPQ_ENV.intersection(os.environ):
+        raise RuntimeError("acceptance fixture optional libpq overrides must be absent")
+
+
 def verify(fixture):
+    verify_libpq_environment()
     from django.conf import settings
     from django.db import connections
 
@@ -245,3 +276,48 @@ def verify(fixture):
         and not cdc.hosted,
         "CDC destination",
     )
+
+
+def probe_postgres(*, port, database, user, password):
+    """Real libpq handshake and identity check; constant read-only SQL only."""
+    verify_libpq_environment()
+    import psycopg
+
+    with psycopg.connect(
+        host=HOST,
+        port=port,
+        dbname=database,
+        user=user,
+        password=password,
+        connect_timeout=2,
+        autocommit=True,
+        options="-c default_transaction_read_only=on -c statement_timeout=5000",
+    ) as connection:
+        identity = connection.execute(
+            "SELECT current_database(), current_user"
+        ).fetchone()
+        if (
+            identity != (database, user)
+            or connection.info.host != HOST
+            or int(connection.info.port) != port
+        ):
+            raise RuntimeError("acceptance PostgreSQL connection identity mismatch")
+
+
+def probe_django_postgres(fixture):
+    """Exercise every resolved alias after startup, before running migrations."""
+    verify(fixture)
+    from django.db import connections
+
+    checked = []
+    for alias in sorted(connections):
+        connection = connections[alias]
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT current_database(), current_user")
+                if cursor.fetchone() != (PG_DATABASE, "test"):
+                    raise RuntimeError("acceptance Django connection identity mismatch")
+            checked.append(alias)
+        finally:
+            connection.close()
+    return checked

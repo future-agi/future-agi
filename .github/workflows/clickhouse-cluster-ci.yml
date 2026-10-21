@@ -89,6 +89,7 @@ jobs:
                       'replica_loss', 'strict_quorum_refused_unsafe_ack', 'explicit_availability_mode')
           assert all(evidence.get(key) is True for key in required), evidence
           assert evidence['acknowledged_rows_survived'] == 90 and evidence['shard_count'] == 3, evidence
+          assert evidence['postgres_connections'] == ['default', 'default_direct', 'replica'], evidence
           assert len(evidence['cdc_tables']) >= 19 and len(evidence['cdc_dependents']) == 11, evidence
           print('All bounded 3x2 schema/CDC/fault proofs executed')
           PY

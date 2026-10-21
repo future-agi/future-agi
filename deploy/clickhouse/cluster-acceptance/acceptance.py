@@ -75,8 +75,8 @@ def run(directory, allow_faults, application=False):
 
         # Production order: relational migrations, then native schema, catalog
         # and the existing outbox installer. Do not bootstrap CH ahead of PG.
-        prepare(fixture)
-        application_evidence = qualify(fixture)
+        application_evidence = prepare(fixture)
+        application_evidence.update(qualify(fixture))
         assert apply_plan(admin, topology, plan, password=fixture["password"]) == 0
     else:
         assert apply_plan(admin, topology, plan, password=fixture["password"]) == len(

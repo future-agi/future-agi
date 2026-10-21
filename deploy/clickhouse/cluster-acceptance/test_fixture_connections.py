@@ -40,15 +40,19 @@ if mutation == "cached":
     os.environ["EE_LICENSE_KEY"] = ""
     from django.conf import settings
     assert settings.DATABASES["default"]["HOST"] == "ambient.invalid"
-from fixture_connections import configure, verify
+from fixture_connections import ABSENT_LIBPQ_ENV, configure, verify
+for index, key in enumerate(sorted(ABSENT_LIBPQ_ENV)):
+    os.environ[key] = "" if index % 2 else "ambient_override"
+os.environ["PGSERVICEFILE"] = ""
 configure(fixture)
+assert not ABSENT_LIBPQ_ENV.intersection(os.environ)
 from dotenv import load_dotenv
 assert load_dotenv(sys.argv[4], override=True) is False
 if mutation == "cached":
     try:
         verify(fixture)
     except RuntimeError as error:
-        assert "connection mismatch" in str(error)
+        assert "connection mismatch" in str(error) or "optional libpq overrides must be absent" in str(error)
     else:
         raise AssertionError("cached foreign settings were accepted")
 else:
@@ -77,11 +81,13 @@ else:
         settings.CHANNEL_LAYERS["default"]["CONFIG"]["hosts"] = ["redis://foreign.invalid:6379/3"]
     elif mutation == "cdc":
         os.environ["SRC_PG_HOST"] = "foreign.invalid"
+    elif mutation == "empty_service":
+        os.environ["PGSERVICEFILE"] = ""
     if mutation:
         try:
             verify(fixture)
         except RuntimeError as error:
-            assert "connection mismatch" in str(error)
+            assert "connection mismatch" in str(error) or "optional libpq overrides must be absent" in str(error)
         else:
             raise AssertionError("foreign resolved alias was accepted")
 assert not attempts
@@ -150,6 +156,18 @@ class FixtureConnectionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("fixture-connections-ok", result.stdout)
 
+    def test_optional_libpq_overrides_are_absent_not_empty(self):
+        from fixture_connections import ABSENT_LIBPQ_ENV, environment
+
+        configured = environment(FIXTURE)
+        self.assertTrue(ABSENT_LIBPQ_ENV.isdisjoint(configured))
+        self.assertFalse(
+            any(
+                key.startswith("PG") and value == ""
+                for key, value in configured.items()
+            )
+        )
+
     def test_all_actual_settings_ignore_ambient_and_dotenv_aliases(self):
         self.check_subprocess()
 
@@ -165,6 +183,7 @@ class FixtureConnectionTests(unittest.TestCase):
             "channels",
             "cdc",
             "cached",
+            "empty_service",
         ):
             with self.subTest(mutation=mutation):
                 self.check_subprocess(mutation)

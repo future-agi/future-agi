@@ -11,7 +11,12 @@ from datetime import UTC, datetime
 
 
 def prepare(fixture):
-    from fixture_connections import configure, verify
+    from fixture_connections import (
+        configure,
+        probe_django_postgres,
+        probe_postgres,
+        verify,
+    )
 
     configure(fixture)
     verify(fixture)
@@ -29,22 +34,21 @@ def prepare(fixture):
     deadline = time.monotonic() + 90
     while True:
         try:
-            connection = psycopg.connect(
-                host="127.0.0.1",
+            probe_postgres(
                 port=fixture["pg_port"],
-                dbname="cluster_acceptance",
+                database="cluster_acceptance",
                 user="test",
                 password=fixture["password"],
-                connect_timeout=2,
             )
-            connection.close()
             break
         except psycopg.OperationalError:
             if time.monotonic() >= deadline:
                 raise
             time.sleep(1)
+    checked = probe_django_postgres(fixture)
     os.environ["NO_STARTUP_DB_MUTATIONS"] = "false"
     call_command("migrate", interactive=False, verbosity=0)
+    return {"postgres_connections": checked}
 
 
 def qualify(fixture):
