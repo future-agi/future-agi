@@ -16,9 +16,6 @@ import {
 import Iconify from "src/components/iconify";
 import { computeDiff, matchConversationsByIndex } from "./compareUtils";
 
-// Side-by-side baseline-vs-replay transcript with optional word-level diff.
-
-// Speaker colors mirror VoiceDetailDrawerV2/TranscriptView (kept inline).
 const useSpeakerColors = () => {
   const theme = useTheme();
   return useMemo(
@@ -36,8 +33,6 @@ const useSpeakerColors = () => {
   );
 };
 
-// Match the label override used by `TranscriptView` so legend chips
-// read "Customer / Assistant" rather than the internal "user" key.
 const ROLE_LABELS = {
   user: "Customer",
   assistant: "Assistant",
@@ -45,13 +40,7 @@ const ROLE_LABELS = {
   tool: "Tool",
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Diff token rendering
-// ─────────────────────────────────────────────────────────────────────────────
-
 const DiffToken = ({ part, side }) => {
-  // Theme-aware foreground / background so diff spans stay readable in
-  // both light and dark modes.
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const isRemoval = side === "A" && part.removed;
@@ -103,8 +92,6 @@ DiffToken.propTypes = {
   side: PropTypes.oneOf(["A", "B"]).isRequired,
 };
 
-// Render one column from a pair whose diff was already computed (see the
-// `pairs` memo). Falls back to plain content when diffing is off or empty.
 const renderSide = (pair, side, showDiff) => {
   const content = side === "A" ? pair.baselineContent : pair.replayedContent;
   if (!showDiff) return content;
@@ -112,13 +99,6 @@ const renderSide = (pair, side, showDiff) => {
   if (!diff || diff.length === 0) return content;
   return diff.map((part, i) => <DiffToken key={i} part={part} side={side} />);
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Per-turn cell — mirrors TranscriptView's TurnRow visual structure
-// (timestamp + speaker chip on top, content body underneath, role-color
-// left border accent). Kept lightweight: no audio sync since chat has
-// no audio.
-// ─────────────────────────────────────────────────────────────────────────────
 
 const TurnCell = ({ turn, colors, content, isPlaceholder }) => {
   if (!turn || isPlaceholder) {
@@ -128,9 +108,7 @@ const TurnCell = ({ turn, colors, content, isPlaceholder }) => {
           minHeight: 36,
           fontStyle: "italic",
           fontSize: 11,
-          // `text.disabled` + opacity:0.4 was washing the placeholder
-          // out completely on light backgrounds. `text.secondary` reads
-          // clearly in both themes.
+
           color: "text.secondary",
           py: 0.75,
           px: 1.25,
@@ -214,11 +192,6 @@ TurnCell.propTypes = {
   isPlaceholder: PropTypes.bool,
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Speaker legend — two chips in the column header, same look the chat
-// transcript view uses.
-// ─────────────────────────────────────────────────────────────────────────────
-
 const SpeakerLegend = ({ colors }) => (
   <Stack direction="row" spacing={1.25}>
     {["user", "assistant"].map((role) => (
@@ -294,11 +267,7 @@ CountPill.propTypes = {
   label: PropTypes.string.isRequired,
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main
-// ─────────────────────────────────────────────────────────────────────────────
-
-const ChatCompareTranscript = ({ data, isLoading }) => {
+const CompareTranscript = ({ data, isLoading }) => {
   const colors = useSpeakerColors();
   const [showDiff, setShowDiff] = useState(false);
   const [query, setQuery] = useState("");
@@ -309,15 +278,19 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
     [data?.baselineSession, data?.replayedSession],
   );
 
-  // Compute each pair's word-diff once (only when diffing is on) and reuse it
-  // for the removal/addition counts and both render columns — no recompute.
   const pairs = useMemo(
     () =>
       matchedConversations.map((m) => {
         const baselineContent = m.baseline?.content || "";
         const replayedContent = m.replayed?.content || "";
         if (!showDiff) {
-          return { ...m, baselineContent, replayedContent, diffA: null, diffB: null };
+          return {
+            ...m,
+            baselineContent,
+            replayedContent,
+            diffA: null,
+            diffB: null,
+          };
         }
         return {
           ...m,
@@ -365,7 +338,7 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
         <Box
           sx={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr",
+            gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
             gap: 1,
             border: "1px solid",
             borderColor: "divider",
@@ -408,7 +381,6 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
 
   return (
     <Stack gap={1}>
-      {/* Toolbar: title + counts + search + Show Diff */}
       <Stack
         direction="row"
         alignItems="center"
@@ -509,7 +481,6 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
         </Stack>
       </Stack>
 
-      {/* Side-by-side grid */}
       <Box
         sx={{
           border: "1px solid",
@@ -518,11 +489,10 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
           overflow: "hidden",
         }}
       >
-        {/* Sticky column headers */}
         <Box
           sx={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr",
+            gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
             position: "sticky",
             top: 0,
             zIndex: 1,
@@ -577,7 +547,6 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
           </Box>
         </Box>
 
-        {/* Paired turn rows */}
         <Box
           sx={{
             maxHeight: 720,
@@ -601,7 +570,7 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
                 key={match.baseline?.id || match.replayed?.id || `pair-${i}`}
                 sx={{
                   display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
+                  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
                   columnGap: 1,
                   p: 1,
                   borderBottom: "1px solid",
@@ -630,9 +599,9 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
   );
 };
 
-ChatCompareTranscript.propTypes = {
+CompareTranscript.propTypes = {
   data: PropTypes.object,
   isLoading: PropTypes.bool,
 };
 
-export default ChatCompareTranscript;
+export default CompareTranscript;
