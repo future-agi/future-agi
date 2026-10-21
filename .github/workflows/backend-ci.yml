@@ -29,10 +29,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      backend: ${{ steps.filter.outputs.backend || steps.always.outputs.backend }}
+      backend: ${{ steps.release.outputs.skip != 'true' && (steps.filter.outputs.backend || steps.always.outputs.backend) || 'false' }}
       executor_base: ${{ steps.filter.outputs.executor_base || 'false' }}
     steps:
       - uses: actions/checkout@v4
+      - id: release
+        uses: ./.github/actions/release-pr-metadata
       - id: filter
         if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@v3
