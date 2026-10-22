@@ -484,10 +484,13 @@ function Row({ done, title, body, action, panel }) {
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2, py: 1 }}>
+        {/* A status, not a control: open items hold the next run or fix (a lock), done ones are ticked.
+            An empty circle read as a radio button. */}
         <Iconify
-          icon={done ? "solar:check-circle-bold" : "solar:circle-linear"}
-          width={18}
-          sx={{ color: done ? "text.secondary" : "text.disabled", flexShrink: 0 }}
+          icon={done ? "solar:check-circle-bold" : "solar:lock-keyhole-minimalistic-linear"}
+          width={done ? 18 : 16}
+          aria-label={done ? "Done" : "Still needed"}
+          sx={{ color: done ? "text.secondary" : "text.subtitle", flexShrink: 0, mx: done ? 0 : "1px" }}
         />
         <Box flex={1} minWidth={0}>
           <Typography sx={{ typography: "s2", fontWeight: 600, color: done ? "text.secondary" : "text.primary" }}>{title}</Typography>
