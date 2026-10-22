@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import io
 import math
+import shutil
+import subprocess
 from unittest.mock import patch
 
 import pytest
@@ -88,6 +90,54 @@ def test_silent_audio_is_mostly_dead_air():
     assert "_dead_air_error" not in out
     assert out["_dead_air_percentage"] > 50.0
     assert out["_dead_air_max_gap_ms"] > 1000.0
+
+
+def _synth_m4a_bytes(tmp_path, **kwargs):
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not installed")
+    wav = tmp_path / "clip.wav"
+    m4a = tmp_path / "clip.m4a"
+    wav.write_bytes(_synth_wav_bytes(**kwargs))
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-i", str(wav), "-c:a", "aac", str(m4a)],
+        check=True,
+        timeout=30,
+    )
+    return m4a.read_bytes()
+
+
+def test_m4a_audio_is_decoded(tmp_path):
+    """libsndfile can't read MP4/AAC, and m4a uploads, base64 and own-bucket
+    audio reach the preprocessor without being transcoded."""
+    body = _synth_m4a_bytes(
+        tmp_path,
+        duration_sec=2.0,
+        silence_segments=[(0.0, 1.6)],
+    )
+    with patch(
+        "tfc.utils.storage.audio_bytes_from_url_or_base64",
+        return_value=body,
+    ):
+        out = preprocess_inputs(
+            "dead_air_detection",
+            {"input_audio": "https://example.com/silent.m4a"},
+        )
+    assert "_dead_air_error" not in out
+    assert out["_dead_air_percentage"] > 50.0
+    assert out["_dead_air_max_gap_ms"] > 1000.0
+
+
+def test_undecodable_bytes_return_error():
+    with patch(
+        "tfc.utils.storage.audio_bytes_from_url_or_base64",
+        return_value=b"not audio at all",
+    ):
+        out = preprocess_inputs(
+            "dead_air_detection",
+            {"input_audio": "https://example.com/broken.m4a"},
+        )
+    assert out["_dead_air_error"].startswith("Could not decode audio")
+    assert "_dead_air_percentage" not in out
 
 
 def test_loader_called_with_no_silence_padding():
