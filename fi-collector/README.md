@@ -179,10 +179,15 @@ the litellm table nor custom pricing applies, the span's cost is 0.
 
 ## End-to-end benchmark and current evidence
 
-See [benchmark design and runbook](benchmark/README.rst) for safe defaults, real
-OTLP-to-ClickHouse verification, the 15k spans/s x 24h and 60k spans/s burst target
-profiles, actual authenticated application-read probes, resource collection,
-public comparison sources and an explicitly extrapolated sizing worksheet.
+See [benchmark design and runbook](benchmark/README.rst) for safe defaults, the
+OTLP/HTTP protobuf, JSON and gRPC (optionally gzip) wire paths, per-request
+outcome accounting (acknowledged, partial, whole-request rejected, ambiguous),
+exact-ID ClickHouse verification that separates acknowledged-but-missing spans from
+rejected ones and can resume from a checkpoint, the collector settings the 15k
+spans/s x 24h and 60k spans/s burst target profiles need (neither profile has been
+run), direct ClickHouse and authenticated application read probes, provenance
+recording, a public methodology comparison and an explicitly extrapolated sizing
+worksheet.
 
 The CLI is offline by default and requires `--execute` to send anything. Remote
 hosts need an exact allowlist and run-ID confirmation; larger load also needs a
