@@ -58,6 +58,16 @@ const unsafeRoutes: [string, (cfg: any) => void][] = [
   ['control plane', c => { c.control_plane = { url: 'http://other.invalid' }; }],
   ['env expansion', c => { c.providers.openai.base_url = '${UNTRUSTED_UPSTREAM}'; }],
   ['unknown model', c => { c.providers.openai.models.push('another-model'); }],
+  // The one managed provider (fagi-managed) stays on the mock with the dummy key.
+  ['external managed upstream', c => { c.providers['fagi-managed'].base_url = 'https://openrouter.ai/api'; }],
+  ['managed provider without a base_url', c => { delete c.providers['fagi-managed'].base_url; }],
+  ['real managed key', c => { c.providers['fagi-managed'].api_key = 'sk-or-not-the-dummy'; }],
+  ['second managed provider', c => { c.providers['fagi-managed-2'] = structuredClone(c.providers['fagi-managed']); }],
+  ['managed models list', c => { c.providers['fagi-managed'].models = ['anthropic/claude-haiku-4.5']; }],
+  ['live catalog refresh', c => { c.managed.catalog_refresh = '1m'; }],
+  ['managed Redis ledger', c => { c.managed.require_redis = true; }],
+  ['managed provider without its section', c => { delete c.managed; }],
+  ['managed section without its provider', c => { delete c.providers['fagi-managed']; }],
 ];
 for (const [name, mutate] of unsafeRoutes) {
   test(`managed mock rejects ${name} before registration`, async () => {

@@ -22,8 +22,31 @@ export const requireSafe = (ok: unknown, reason: string): void => {
 };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
+/** The one managed provider gateway.e2e.yaml may declare: FutureAGI-credentialed
+ * (`managed: true`) but on the same deterministic mock and dummy key. `type:
+ * openrouter` is allowed here only, and only beside an explicit mock base_url,
+ * which the gateway keeps over the preset's (providers/presets.go adds just the
+ * /v1 path prefix); it is what seeds the bundled OpenRouter catalog snapshot.
+ */
+export const MANAGED_PROVIDER = 'fagi-managed';
+/** The managed section the E2E gateway runs with: the bundled catalog only (no
+ * live fetch) and the in-memory, test-only credit ledger (no Redis in this config). */
+export const MANAGED_SETTINGS = { markup_percent: 5, require_credits: true, require_redis: false, catalog_refresh: '0s' };
+
+export function validateManagedMock(provider: Record<string, unknown> | undefined, managed: unknown): void {
+  requireSafe(provider && same(Object.keys(provider).sort(), ['api_format', 'api_key', 'auto_discover', 'base_url',
+    'conn_pool_size', 'default_timeout', 'managed', 'max_concurrent', 'type']), 'unexpected managed provider fields');
+  requireSafe(provider!.base_url === 'http://mock-llm:8080' && provider!.api_key === 'e2e-mock' &&
+    provider!.api_format === 'openai' && provider!.type === 'openrouter' && provider!.managed === true &&
+    provider!.auto_discover === false, 'managed provider is not the deterministic mock');
+  requireSafe(managed && typeof managed === 'object' && same(Object.keys(managed).sort(),
+    Object.keys(MANAGED_SETTINGS).sort()) && Object.entries(MANAGED_SETTINGS).every(
+    ([key, value]) => (managed as Record<string, unknown>)[key] === value), 'unexpected managed settings');
+}
+
 /** Strict safety contract, not a general gateway config validator. No env expansion,
- * aliases, extra providers, presets, model maps, mirrors, tools or control plane.
+ * aliases, extra providers, presets, model maps, mirrors, tools or control plane;
+ * the one exception is the managed provider and section validateManagedMock pins.
  * Gateway config.Load expands env; registry.NewRegistry applies these routing knobs.
  */
 export function validateMockRouting(source: string, evalBackground = false): void {
@@ -32,8 +55,12 @@ export function validateMockRouting(source: string, evalBackground = false): voi
   let cfg;
   try { cfg = doc.toJS({ maxAliasCount: 0 }); }
   catch { throw new Error('STOP: managed mock aliased gateway YAML'); }
-  requireSafe(cfg && same(Object.keys(cfg).sort(), ['logging', 'providers', 'server']), 'unexpected gateway sections');
-  requireSafe(same(Object.keys(cfg.providers ?? {}), ['openai']), 'provider set is not mock-only');
+  const sections = cfg ? Object.keys(cfg).sort() : [];
+  const withManaged = same(sections, ['logging', 'managed', 'providers', 'server']);
+  requireSafe(withManaged || same(sections, ['logging', 'providers', 'server']), 'unexpected gateway sections');
+  requireSafe(same(Object.keys(cfg.providers ?? {}), withManaged ? ['openai', MANAGED_PROVIDER] : ['openai']),
+    'provider set is not mock-only');
+  if (withManaged) validateManagedMock(cfg.providers[MANAGED_PROVIDER], cfg.managed);
   const provider = cfg.providers.openai;
   requireSafe(same(Object.keys(provider).sort(), ['api_format', 'api_key', 'base_url', 'conn_pool_size',
     'default_timeout', 'max_concurrent', 'models']), 'unexpected provider fields');
@@ -80,7 +107,11 @@ function gatewayValues({ gateway, controlPlane }: MockTopology) {
   // credential or network allowance: private provider URLs stay refused.
   const wiring: Record<string, string> = { AGENTCC_CONTROL_PLANE_URL: controlPlane,
     AGENTCC_CONTROL_PLANE_TOKEN: allowed.AGENTCC_ADMIN_TOKEN, AGENTCC_SYNC_ON_STARTUP: 'true',
-    AGENTCC_SYNC_INTERVAL: '60s', AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: 'false' };
+    AGENTCC_SYNC_INTERVAL: '60s', AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: 'false',
+    // The stack keeps the published admin token, which the gateway and the
+    // API's admin endpoints refuse without this dev-only opt-in (e2e/stack/*.env
+    // set it; the backend and workers carry it too).
+    AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN: '1' };
   return { allowed, wiring };
 }
 

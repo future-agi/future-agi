@@ -959,7 +959,7 @@
 ### GW-E2E-003 — a platform engineer adds a declared custom property as a Request Logs column
 
 **Goal:** A platform engineer shows a declared custom property beside the built-in Request Logs columns, keeps that choice across reloads in this browser, and never sees it under another organization  
-**Spec:** `flows/gateway/request-log-columns.spec.ts:83`  
+**Spec:** `flows/gateway/request-log-columns.spec.ts:103`  
 **Tags:** —
 
 **User steps:**
@@ -993,6 +993,125 @@
 
 - the picker opens, toggles, reorders and closes by keyboard alone: focus stays on the pressed Move button, moves to the opposite Move button when the column reaches the end of its group, and returns to Columns on Escape
 - a tenant value longer than 80 characters shows its preview in the cell, and Tab to it shows the full value in a tooltip
+
+### GW-E2E-004 — Request Logs show how each gateway request was billed and every upstream attempt behind it
+
+**Goal:** A platform engineer sees, for each gateway request, how it was billed and every upstream attempt behind it  
+**Spec:** `flows/gateway/request-attempts.spec.ts:73`  
+**Tags:** —
+
+**User steps:**
+
+1. mint a gateway API key in an organization of its own
+2. deliver two gateway requests on the logs webhook: a managed request whose first attempt was rate limited and fell back, and a BYOK request served on its first attempt
+3. open Request Logs, open Columns and tick Billing mode, Upstream cost, Markup and Attempts
+4. read the two rows' billing cells
+5. open the managed request and read its attempts in the detail drawer
+
+**Backend state verified:**
+
+- each request is stored in PG agentcc_request_log under the key's organization with the billing mode, upstream cost, markup and attempt count the gateway reported
+- PG agentcc_request_attempt holds exactly the managed request's two attempts in index order, error then success, and the BYOK request's one
+- the request-log detail endpoint returns those attempts in order and no landed cost
+- the table shows exactly Managed and BYOK with each row's upstream cost, markup and attempt count
+- the drawer lists the two attempts in order, rate-limited primary then the auto fallback that was billed, and the landed cost appears nowhere on the page
+
+### GW-E2E-005 — a saved auto routing preference and price caps reach the gateway and survive a reload
+
+**Goal:** A platform engineer tunes how model "auto" picks a model, and the gateway serves with the saved tuning  
+**Spec:** `flows/gateway/auto-routing.spec.ts:37`  
+**Tags:** —
+
+**User steps:**
+
+1. open Models, then the Auto routing tab
+2. choose the Quality preference and type a maximum input and output price
+3. save changes
+4. reload the page and see the saved preference and caps
+5. clear the output cap and save again
+
+**Backend state verified:**
+
+- the save sends one update-config patch carrying only routing.auto with the preference and both caps
+- the org's active PG agentcc_org_config version holds routing.auto with the Quality preference and both caps
+- the gateway's own copy of the org config carries the same routing.auto
+- after a reload the tab shows the saved preference and caps
+- clearing a cap deletes that key in a new active version, keeps the rest, and reaches the gateway
+
+### GW-E2E-006 — the Models page lists the gateway managed catalog at provider price plus the managed markup
+
+**Goal:** A developer browses the managed model catalog and sees what each model will be billed before using it  
+**Spec:** `flows/gateway/managed-catalog.spec.ts:72`  
+**Tags:** —
+
+**User steps:**
+
+1. open Models
+2. read the managed models card and the catalog's model count
+3. search the catalog for one model id
+4. open that model's details
+5. clear the search and filter the catalog by that model's vendor
+
+**Backend state verified:**
+
+- the managed-models status API reports managed models available and off for this org, at the gateway's 5% markup
+- the console's catalog API serves the gateway's own catalog: the same model ids as the gateway admin catalog, each list price billed at provider price plus 5%
+- the page counts exactly the catalog API's models and says the prices come from the bundled list
+- a search for one model id leaves exactly that model's row, with its billed input and output prices
+- the details drawer shows that model's provider and managed prices
+- the vendor filter leaves exactly the API's model count for that vendor
+
+### GW-E2E-007 — an org admin turns on managed models and, with no credit, sees why managed calls are refused
+
+**Goal:** An org admin turns on managed models and, with no credit left, sees in the console why managed requests are refused  
+**Spec:** `flows/gateway/managed-optin-credits.spec.ts:63`  
+**Tags:** —
+
+**User steps:**
+
+1. mint a gateway API key in an organization of its own
+2. call a managed catalog model with the key before opting in
+3. open Models, switch on Use managed models and confirm Enable
+4. read the card: Enabled, the credit balance and the out-of-credit warning
+5. call the same managed model again
+6. open Request Logs and the refused request
+
+**Backend state verified:**
+
+- before opt-in the gateway refuses the managed model for this org's key as not permitted, not as a 402
+- the switch saves managed_models.enabled true in the org's active PG agentcc_org_config version and creates the org's managed-credit account at zero in PG usage_managedcreditaccount
+- the card shows Enabled, a $0.00 balance and the out-of-credit warning naming HTTP 402
+- the managed-models status API reports enabled with a zero balance at the gateway markup
+- after opt-in the gateway answers the same call with 402 managed_credits_exhausted from the agentcc_credits limit, so the zero account was pushed to it
+- the refused call is logged under the org as a managed 402 with the gateway's reason, and Request Logs show exactly that row and reason
+
+### GW-E2E-008 — a stored org-config alert channel credential URL is write-only: masked to every reader, encrypted at rest, still sent to the gateway
+
+**Goal:** An org admin stores an alert channel whose webhook URL carries a credential; no member can read it back, and the gateway still gets it  
+**Spec:** `flows/gateway/org-config-secrets.spec.ts:56`  
+**Tags:** —
+
+**User steps:**
+
+1. open Gateway Settings, then Org Config, and open the config editor
+2. on the Alerting tab enable per-org alerting, add a webhook channel and type its URL, which carries a token
+3. save and activate
+4. reopen the editor and see the stored URL as dots with a Replace action
+5. add a second channel with a plain URL and save again
+6. as a view-only member, search the Full Config view for the URL
+
+**Backend state verified:**
+
+- the first save sends one update-config patch carrying the typed channel and its URL
+- the active PG agentcc_org_config version stores the URL as enc:: ciphertext, never the typed value
+- the gateway's own copy of the org config carries the typed URL in clear
+- a view-only member reads the URL on org-configs/active and gateways/default/config only as the read mask, listed in secrets_set
+- the second save's patch carries the stored URL only as its read mask, never the URL; the new active version keeps the same ciphertext and the gateway keeps the URL
+
+**Browser observations:**
+
+- the reopened editor shows the stored URL as read-only dots with Replace, never the value or the mask
+- the view-only member's Full Config search finds the URL's pointer once and its value nowhere
 
 ## observe
 
