@@ -126,7 +126,10 @@ every world:
 
 ```json
 [{"id": "sql", "server": "sql", "tools": ["query"],
-  "attach": {"database_reader": {"tables": ["providers", "slots"]}}}]
+  "attach": {"database_reader": {"tables": ["providers", "slots"]}}},
+ {"id": "docs", "server": "filesystem",
+  "tools": ["read_text_file", "list_directory", "search_files", "list_allowed_directories"],
+  "attach": {"directory": "attached/docs"}}]
 ```
 
 - Each server starts over stdio, fresh for the world, on first use. Its listed
@@ -136,16 +139,24 @@ every world:
   role. The seed grants that role `SELECT` on the listed tables, so every world
   cloned from the template keeps the grant. Internal tables (`_alk_*`,
   `environment_policy`) cannot be listed.
+- `directory` is a folder of the release under `attached/`; the server is
+  confined to it and runs from it, so a relative path lands inside. It is sealed
+  with the release like any other file.
 - `sql` is ALK's read-only SQL server: one `query` tool, a single prepared
   statement in a read-only transaction, a 5 s statement timeout and 200 rows.
+- `filesystem` is `@modelcontextprotocol/server-filesystem` 2026.1.14 (MIT),
+  installed from ALK's lockfile (`mcp-servers/filesystem/`) into
+  `/opt/mcp-servers` in the hosted image and never downloaded at run time.
+  Releases attach only its read tools.
 
 Sealing refuses an unknown server, a duplicate id, a tool name that clashes with
-a native tool, a server that does not take the attach it is given, and a table
-that does not exist or is internal. An extension cannot change its parent's
-`servers.json`. A scenario whose reference solution calls an attached tool is
-checked for readiness on SQLite and proved in full on PostgreSQL (§2.3), so such
-a suite needs a PostgreSQL DSN to seal. A provider agent without the tool cannot
-pass that scenario; adaptation reports it unscorable (§7.5).
+a native tool, a server that does not take the attach it is given or lacks one
+it needs, a table that does not exist or is internal, and a directory outside
+`attached/`. An extension cannot change its parent's `servers.json`. A scenario
+whose reference solution calls an attached tool is checked for readiness on
+SQLite and proved in full on PostgreSQL (§2.3), so such a suite needs a
+PostgreSQL DSN to seal. A provider agent without the tool cannot pass that
+scenario; adaptation reports it unscorable (§7.5).
 
 ### 2.2 Extensions (mixed environments)
 
