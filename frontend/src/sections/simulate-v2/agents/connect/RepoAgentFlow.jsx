@@ -78,8 +78,6 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
   const [mode, setMode] = useState(
     (pasted && !pastedVisible) || (host === "github" && !githubReady && !preset?.repo && !suggestedRepo) ? "manual" : "github",
   );
-  /* The option it opens on sits first, and the order holds while the person switches. */
-  const [linkFirst] = useState(mode === "manual");
   const [ghRepo, setGhRepo] = useState(preset?.repo || (pastedVisible ? pasted : "") || suggestedRepo || "");
   /* Access granted on GitHub after opening: pick the matching repository then. */
   useEffect(() => {
@@ -242,7 +240,7 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
     onClick: connect,
   };
 
-  /* GitHub only: the two ways in, the one it opens on first. */
+  /* GitHub only: the two ways in, always in this order. */
   const githubOption = (
     <WhereOption
       key="github"
@@ -313,7 +311,8 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
         ) : null}
         {host === "github" && (
           <Box sx={{ display: "grid", gap: 1, gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" } }}>
-            {(linkFirst ? [linkOption, githubOption] : [githubOption, linkOption])}
+            {/* Always Connect GitHub, then Paste a repo link — only which one is picked changes. */}
+            {[githubOption, linkOption]}
           </Box>
         )}
         {viaGithub && host !== "github" ? null : viaGithub ? (
