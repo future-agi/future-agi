@@ -41,7 +41,6 @@ from accounts.serializers.contracts import (
     AccountsDirectMessageResponseSerializer,
     AccountsMessageResponseSerializer,
     AccountsStringResultResponseSerializer,
-    AccountsTokenPairResponseSerializer,
     AccountsUserProfileResponseSerializer,
     LogoutRequestSerializer,
     PasswordResetConfirmRequestSerializer,
