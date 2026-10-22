@@ -13,7 +13,7 @@ class Migration(migrations.Migration):
             "accounts",
             "0025_gcpmarketplaceprocessedevent_gcpmarketplaceaccount_and_more",
         ),
-        ("simulate", "0097_merge_selected_runs_environment_v3"),
+        ("simulate", "0098_agent_version_setup"),
     ]
 
     operations = [
