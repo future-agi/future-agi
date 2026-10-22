@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +32,26 @@ type Registry struct {
 	modelMap       map[string]string   // model name → provider ID
 	modelProviders map[string][]string // model name → all provider IDs that serve it
 	router         *routing.Router     // nil if no routing configured
+	managed        map[string]ManagedProvider
+
+	// configs holds each config.yaml provider's config as its instance was
+	// built from it (presets, local defaults and discovered models applied),
+	// so key rotation can rebuild the instance with a new key.
+	configs map[string]config.ProviderConfig
+
+	// retired maps each instance a key rotation replaced to its provider id,
+	// so CurrentInstance can hand work that captured it the instance serving
+	// now. One entry per promote; an operator action, so it stays small.
+	retired map[Provider]string
+}
+
+// ManagedProvider is a global provider FutureAGI supplies the credentials
+// for. Orgs that opt in to managed models may use it.
+type ManagedProvider struct {
+	ID   string
+	Type string // the config.yaml type, e.g. "openrouter"; selects the catalog format
+	// CatalogURL is where the provider lists its models.
+	CatalogURL string
 }
 
 // NewRegistry creates a registry from config.
@@ -38,6 +60,9 @@ func NewRegistry(cfg *config.Config) (*Registry, error) {
 		providers:      make(map[string]Provider),
 		modelMap:       make(map[string]string),
 		modelProviders: make(map[string][]string),
+		managed:        make(map[string]ManagedProvider),
+		configs:        make(map[string]config.ProviderConfig),
+		retired:        make(map[Provider]string),
 	}
 
 	for name, pcfg := range cfg.Providers {
@@ -57,8 +82,19 @@ func NewRegistry(cfg *config.Config) (*Registry, error) {
 			return nil, fmt.Errorf("creating provider %q: %w", name, err)
 		}
 		r.providers[name] = p
+		r.configs[name] = pcfg
+		if pcfg.Managed {
+			r.managed[name] = ManagedProvider{
+				ID:         name,
+				Type:       pcfg.Type,
+				CatalogURL: config.JoinEndpoint(strings.TrimRight(pcfg.BaseURL, "/"), pcfg.EffectiveAPIPathPrefix(), "/v1/models"),
+			}
+		}
 
 		attrs := []any{"name", name, "format", pcfg.APIFormat, "base_url", pcfg.BaseURL}
+		if pcfg.Managed {
+			attrs = append(attrs, "managed", true)
+		}
 		if IsLocalProvider(pcfg) {
 			attrs = append(attrs, "local", true)
 		}
@@ -163,6 +199,65 @@ func (r *Registry) ProviderIDs() []string {
 	for id := range r.providers {
 		ids = append(ids, id)
 	}
+	return ids
+}
+
+// IsManaged reports whether id is a managed provider.
+func (r *Registry) IsManaged(id string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.managed[id]
+	return ok
+}
+
+// ManagedProviders returns the managed providers, sorted by ID.
+func (r *Registry) ManagedProviders() []ManagedProvider {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]ManagedProvider, 0, len(r.managed))
+	for _, mp := range r.managed {
+		out = append(out, mp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// ResolveManaged finds the managed provider that serves model and the model
+// ID to send it. In order: a model the config maps to a managed provider; a
+// model in a managed provider's catalog (inCatalog); "<managed id>/<model>",
+// sent upstream as <model>. ok is false when no managed provider serves it.
+func (r *Registry) ResolveManaged(model string, inCatalog func(providerID, model string) bool) (p Provider, upstreamModel string, ok bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.managed) == 0 {
+		return nil, "", false
+	}
+	if id, found := r.modelMap[model]; found {
+		if _, managed := r.managed[id]; managed {
+			return r.providers[id], model, true
+		}
+	}
+	if inCatalog != nil {
+		for _, id := range r.sortedManagedIDs() {
+			if inCatalog(id, model) {
+				return r.providers[id], model, true
+			}
+		}
+	}
+	if idx := strings.Index(model, "/"); idx > 0 && idx < len(model)-1 {
+		if _, managed := r.managed[model[:idx]]; managed {
+			return r.providers[model[:idx]], model[idx+1:], true
+		}
+	}
+	return nil, "", false
+}
+
+func (r *Registry) sortedManagedIDs() []string {
+	ids := make([]string, 0, len(r.managed))
+	for id := range r.managed {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
 	return ids
 }
 
@@ -440,4 +535,84 @@ func (r *Registry) ReloadRouter(routingCfg config.RoutingConfig) error {
 	r.router = newRouter
 	r.mu.Unlock()
 	return nil
+}
+
+// RotationCandidate builds, without registering it, an instance of the
+// config.yaml provider id that authenticates with key instead of its
+// configured one, for a key rotation to validate the key on before it is
+// applied. It also returns the provider's api_format and models. The caller
+// closes the instance.
+func (r *Registry) RotationCandidate(id, key string) (p Provider, apiFormat string, models []string, err error) {
+	r.mu.RLock()
+	pcfg, ok := r.configs[id]
+	r.mu.RUnlock()
+	if !ok {
+		return nil, "", nil, fmt.Errorf("provider %q is not a config.yaml provider", id)
+	}
+	pcfg.APIKey = key
+	p, err = createProvider(id, pcfg)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return p, pcfg.APIFormat, append([]string(nil), pcfg.Models...), nil
+}
+
+// RotateProviderKey rebuilds the config.yaml provider id from its config with
+// key and swaps it in, under the registry lock: every lookup from then on
+// returns the new instance, so every new upstream call (a retry included,
+// since each attempt looks the provider up) sends key. A call already in
+// flight finishes on the instance it holds. It returns that previous
+// instance, which the caller closes once its drain period has passed.
+func (r *Registry) RotateProviderKey(id, key string) (Provider, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	pcfg, ok := r.configs[id]
+	if !ok {
+		return nil, fmt.Errorf("provider %q is not a config.yaml provider", id)
+	}
+	old, ok := r.providers[id]
+	if !ok {
+		return nil, fmt.Errorf("provider %q is not registered", id)
+	}
+	pcfg.APIKey = key
+	p, err := createProvider(id, pcfg)
+	if err != nil {
+		return nil, err
+	}
+	r.providers[id] = p
+	r.configs[id] = pcfg
+	if usableAsKey(old) {
+		r.retired[old] = id
+	}
+	return old, nil
+}
+
+// CurrentInstance returns the instance that serves p's provider now when p is
+// one a key rotation replaced (through any number of later rotations), and p
+// unchanged otherwise: the current instance, an org's own provider (built
+// apart from the registry with the org's key), a rotation candidate, nil.
+// Work that captured an instance and runs later, such as an async job queued
+// before a promote, calls it when it starts, so it sends the key in force
+// then and never a rotated-out one, while an org's key stays the org's.
+func (r *Registry) CurrentInstance(p Provider) Provider {
+	if !usableAsKey(p) {
+		return p
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	id, ok := r.retired[p]
+	if !ok {
+		return p
+	}
+	if cur, ok := r.providers[id]; ok {
+		return cur
+	}
+	return p
+}
+
+// usableAsKey reports whether p can be a map key: every provider this
+// registry builds is a pointer, but RegisterProvider takes any Provider, and
+// a map lookup with an uncomparable dynamic type panics.
+func usableAsKey(p Provider) bool {
+	return p != nil && reflect.TypeOf(p).Comparable()
 }
