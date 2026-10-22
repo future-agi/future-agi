@@ -362,6 +362,7 @@ func (vf *verifier) run(ctx context.Context) Verification {
 	vf.v = &v
 	fail := func(err error) Verification {
 		vf.fill(&v)
+		v.Chunks, v.NamespaceWindows = vf.cp.NextChunk, vf.cp.NextWindow
 		v.Complete = false
 		v.Error = err.Error()
 		v.ElapsedSeconds = time.Since(start).Seconds()
@@ -388,7 +389,6 @@ func (vf *verifier) run(ctx context.Context) Verification {
 			}
 		}
 		vf.cp.NextChunk++
-		v.Chunks++
 		if err := vf.save(); err != nil {
 			return fail(err)
 		}
@@ -398,7 +398,6 @@ func (vf *verifier) run(ctx context.Context) Verification {
 			return fail(fmt.Errorf("namespace window %d of %d: %w", vf.cp.NextWindow+1, len(vf.cp.Windows), err))
 		}
 		vf.cp.NextWindow++
-		v.NamespaceWindows++
 		if err := vf.save(); err != nil {
 			return fail(err)
 		}
@@ -420,6 +419,7 @@ func (vf *verifier) run(ctx context.Context) Verification {
 		return fail(fmt.Errorf("%d partial-success requests were not fully scanned", len(vf.cp.Accum.PartialOpen)))
 	}
 	vf.fill(&v)
+	v.Chunks, v.NamespaceWindows = vf.cp.NextChunk, vf.cp.NextWindow
 	if err := vf.checkIdentity(&v); err != nil {
 		return fail(err)
 	}

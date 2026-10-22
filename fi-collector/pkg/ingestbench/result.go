@@ -111,26 +111,28 @@ type Verification struct {
 	// ScannedAttempted is the attempted spans the finished chunks cover;
 	// Unscanned (attempted - scanned) counts as missing until verified, and
 	// MissingBy decomposes only the scanned part.
-	ScannedAttempted   uint64                     `json:"scanned_attempted_spans"`
-	Unscanned          uint64                     `json:"unscanned_attempted_spans"`
-	MissingBy          MissingByAcknowledgement   `json:"missing_by_acknowledgement"`
-	PersistedBy        PersistedByAcknowledgement `json:"persisted_without_acknowledgement"`
-	DataLossDetected   bool                       `json:"data_loss_detected"`
-	ContractViolation  bool                       `json:"rejection_contract_violation"`
-	Chunks             int64                      `json:"verified_chunks"`
-	TotalChunks        int64                      `json:"planned_chunks"`
-	ChunkSpans         int64                      `json:"chunk_spans"`
-	NamespaceWindows   int64                      `json:"verified_namespace_windows"`
-	RecheckedChunks    int64                      `json:"rechecked_chunks"`
-	ResumedAtChunk     int64                      `json:"resumed_at_chunk"`
-	Queries            int64                      `json:"queries"`
-	QueryRetries       int64                      `json:"query_retries"`
-	TimeoutSeconds     float64                    `json:"timeout_seconds"`
-	QueryTimeoutSecs   float64                    `json:"query_timeout_seconds"`
-	QueryMaxMemory     int64                      `json:"query_max_memory_bytes"`
-	Error              string                     `json:"error,omitempty"`
-	ElapsedSeconds     float64                    `json:"elapsed_seconds"`
-	PreexistingRunRows uint64                     `json:"preexisting_run_rows"`
+	ScannedAttempted  uint64                     `json:"scanned_attempted_spans"`
+	Unscanned         uint64                     `json:"unscanned_attempted_spans"`
+	MissingBy         MissingByAcknowledgement   `json:"missing_by_acknowledgement"`
+	PersistedBy       PersistedByAcknowledgement `json:"persisted_without_acknowledgement"`
+	DataLossDetected  bool                       `json:"data_loss_detected"`
+	ContractViolation bool                       `json:"rejection_contract_violation"`
+	Chunks            int64                      `json:"verified_chunks"`
+	TotalChunks       int64                      `json:"planned_chunks"`
+	ChunkSpans        int64                      `json:"chunk_spans"`
+	// Chunks and NamespaceWindows are the totals verified so far, including
+	// any done before a resume; ResumedAtChunk is where this process started.
+	NamespaceWindows   int64   `json:"verified_namespace_windows"`
+	RecheckedChunks    int64   `json:"rechecked_chunks"`
+	ResumedAtChunk     int64   `json:"resumed_at_chunk"`
+	Queries            int64   `json:"queries"`
+	QueryRetries       int64   `json:"query_retries"`
+	TimeoutSeconds     float64 `json:"timeout_seconds"`
+	QueryTimeoutSecs   float64 `json:"query_timeout_seconds"`
+	QueryMaxMemory     int64   `json:"query_max_memory_bytes"`
+	Error              string  `json:"error,omitempty"`
+	ElapsedSeconds     float64 `json:"elapsed_seconds"`
+	PreexistingRunRows uint64  `json:"preexisting_run_rows"`
 }
 
 type Percentiles struct {

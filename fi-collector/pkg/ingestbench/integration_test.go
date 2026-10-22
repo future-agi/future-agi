@@ -581,7 +581,7 @@ func TestVerificationResumesFromCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.RunID != c.RunID || !v.Complete || v.ResumedAtChunk != 1 || v.DistinctExpected != 12 || v.Missing != 0 || v.MissingBy.AcknowledgedMissing != 0 || v.PreexistingRunRows != 0 {
+	if cfg.RunID != c.RunID || !v.Complete || v.ResumedAtChunk != 1 || v.Chunks != 2 || v.TotalChunks != 2 || v.DistinctExpected != 12 || v.Missing != 0 || v.MissingBy.AcknowledgedMissing != 0 || v.PreexistingRunRows != 0 {
 		t.Fatalf("resumed verification: %+v", v)
 	}
 	// A completed checkpoint answers without querying again.

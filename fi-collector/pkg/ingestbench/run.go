@@ -75,7 +75,11 @@ func Run(ctx context.Context, c Config, options Options) (Result, error) {
 		for _, w := range r.Provenance.Collector.Budget.Warnings() {
 			r.warn(options, w)
 		}
-		r.DirectReads = disabledDirectReads(clickHouse{cfg: c})
+		status := "not-configured"
+		if c.DirectProbes.Enabled {
+			status = "not-executed"
+		}
+		r.DirectReads = idleDirectReads(clickHouse{cfg: c}, status)
 		return r, nil
 	}
 	if !c.AllowUnauth && len(options.OTLPHeaders) == 0 {
@@ -286,7 +290,7 @@ produce:
 		}
 		r.DirectReads = direct.results()
 	} else {
-		r.DirectReads = disabledDirectReads(ch)
+		r.DirectReads = idleDirectReads(ch, "not-configured")
 	}
 	s.mu.Lock()
 	r.Counters = s.counters

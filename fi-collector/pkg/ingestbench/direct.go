@@ -185,12 +185,13 @@ func (d *directRunner) results() []DirectReadResult {
 	return out
 }
 
-// disabledDirectReads reports the probes as explicitly not configured.
-func disabledDirectReads(ch clickHouse) []DirectReadResult {
+// idleDirectReads reports the probes as not run, with the reason as status
+// ("not-configured" when disabled, "not-executed" for a dry run).
+func idleDirectReads(ch clickHouse, status string) []DirectReadResult {
 	var out []DirectReadResult
 	for _, phase := range []string{"during-load", "after-settle"} {
 		for _, p := range directProbes {
-			out = append(out, DirectReadResult{Name: p.name, Phase: phase, Kind: "direct_clickhouse_sql", Status: "not-configured", Query: fmt.Sprintf(p.query, ch.table())})
+			out = append(out, DirectReadResult{Name: p.name, Phase: phase, Kind: "direct_clickhouse_sql", Status: status, Query: fmt.Sprintf(p.query, ch.table())})
 		}
 	}
 	return out
