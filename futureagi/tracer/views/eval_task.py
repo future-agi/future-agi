@@ -3080,7 +3080,10 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                     field in update_fields
                     and update_fields[field] != getattr(eval_task, field)
                     for field in (
-                        "filters", "sampling_rate", "spans_limit", "sampling_policy"
+                        "filters",
+                        "sampling_rate",
+                        "spans_limit",
+                        "sampling_policy",
                     )
                 )
                 new_run_type = update_fields.get("run_type")
@@ -3089,14 +3092,20 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 # the old cohort with newly selected rows under different p.
                 sampling_changed = population_changed(eval_task, update_fields)
                 if sampling_changed and edit_type != "fresh_run":
-                    return self._gm.bad_request("Sampling population changes require Delete & rerun; duplicate the task to preserve the prior results.")
+                    return self._gm.bad_request(
+                        "Sampling population changes require Delete & rerun; duplicate the task to preserve the prior results."
+                    )
                 # Preserve historical action rules for unchanged/legacy populations.
-                action_error = None if sampling_changed else validate_edit_action(
-                    edit_type,
-                    original_run_type=original_run_type,
-                    new_run_type=new_run_type,
-                    evals_changed=evals_changed,
-                    rows_changed=rows_changed,
+                action_error = (
+                    None
+                    if sampling_changed
+                    else validate_edit_action(
+                        edit_type,
+                        original_run_type=original_run_type,
+                        new_run_type=new_run_type,
+                        evals_changed=evals_changed,
+                        rows_changed=rows_changed,
+                    )
                 )
                 if action_error:
                     return self._gm.bad_request(action_error)
@@ -3108,7 +3117,9 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                     and original_run_type == RunType.CONTINUOUS
                     and not update_fields.get("spans_limit")
                     and not eval_task.spans_limit
-                    and not update_fields.get("sampling_policy", eval_task.sampling_policy)
+                    and not update_fields.get(
+                        "sampling_policy", eval_task.sampling_policy
+                    )
                 ):
                     return self._gm.bad_request(
                         "Switching to a historical task requires a row limit."
