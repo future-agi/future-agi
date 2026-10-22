@@ -323,6 +323,30 @@ class TestReuseAndNewVersions:
             == 2
         )
 
+    @pytest.mark.parametrize(
+        ("path", "new_version"),
+        [("world.sqlite", True), ("generic-harness/world-ir.json", False)],
+    )
+    def test_world_data_versions_by_world_sqlite_only(
+        self, user, workspace, storage, path, new_version
+    ):
+        # A repair is written into world.sqlite; world-ir.json is derived from it.
+        environment = _environment(user, workspace, f"reuse-world-{new_version}")
+        first = record_authoring(
+            environment, _authoring(**{path: b"before"}), origin="authoring"
+        )
+
+        second = record_authoring(
+            environment, _authoring(**{path: b"after"}), origin="authoring"
+        )
+
+        assert (second.environment.id != first.environment.id) is new_version
+        if new_version:
+            files = archives.read_archive(
+                storage.objects[second.environment.archive_object_key]
+            )
+            assert files[path] == b"after"
+
     def test_a_new_scenario_makes_s2_and_keeps_e1(self, user, workspace, storage):
         environment = _environment(user, workspace, "reuse-new-suite")
         first = record_authoring(environment, _authoring(), origin="authoring")
