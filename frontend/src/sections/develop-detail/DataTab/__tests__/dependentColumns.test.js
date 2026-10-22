@@ -252,6 +252,19 @@ describe("waitForColumnCompletion", () => {
     expect(wait).toHaveBeenCalledWith(1);
   });
 
+  it("polls at the grid's 5 s cadence by default", async () => {
+    const fetchColumns = vi
+      .fn()
+      .mockResolvedValueOnce([{ ...source, status: "Running" }])
+      .mockResolvedValueOnce([{ ...source, status: "Completed" }]);
+    const wait = vi.fn().mockResolvedValue(undefined);
+
+    await waitForColumnCompletion({ columnId: source.id, fetchColumns, wait });
+
+    expect(wait).toHaveBeenCalledTimes(1);
+    expect(wait).toHaveBeenCalledWith(5000);
+  });
+
   it("keeps waiting for a column that runs longer than ten minutes", async () => {
     // e.g. LLM classification over a few thousand rows at concurrency 5.
     let waited = 0;

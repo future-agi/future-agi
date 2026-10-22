@@ -52,10 +52,11 @@ const RerunDependentColumns = ({ dataset: datasetId }) => {
     );
   };
 
+  // Only column_config (with each column's status) is read, so fetch a
+  // single row instead of the grid's full first page.
   const fetchColumns = async () => {
     const queryOptions = getDatasetQueryOptions(dataset, 0, [], [], "", {
-      enabled: true,
-      staleTime: 0,
+      pageSize: 1,
     });
     const response = await queryOptions.queryFn();
     return response?.data?.result?.column_config ?? [];

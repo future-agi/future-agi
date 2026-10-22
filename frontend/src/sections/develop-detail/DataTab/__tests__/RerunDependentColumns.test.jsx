@@ -7,6 +7,7 @@ import { useRerunDependentColumnsStore } from "../../states";
 const mocks = vi.hoisted(() => ({
   enqueueSnackbar: vi.fn(),
   getColumns: vi.fn(),
+  getQueryOptions: vi.fn(),
   post: vi.fn(),
   refreshGrid: vi.fn(),
 }));
@@ -16,9 +17,10 @@ vi.mock("src/components/snackbar", () => ({
 }));
 
 vi.mock("src/api/develop/develop-detail", () => ({
-  getDatasetQueryOptions: () => ({
-    queryFn: mocks.getColumns,
-  }),
+  getDatasetQueryOptions: (...args) => {
+    mocks.getQueryOptions(...args);
+    return { queryFn: mocks.getColumns };
+  },
 }));
 
 vi.mock("src/utils/axios", () => ({
@@ -72,6 +74,7 @@ describe("RerunDependentColumns", () => {
   beforeEach(() => {
     mocks.enqueueSnackbar.mockReset();
     mocks.getColumns.mockReset();
+    mocks.getQueryOptions.mockReset();
     mocks.post.mockReset();
     mocks.refreshGrid.mockReset();
     useRerunDependentColumnsStore.getState().setRerunDependentColumns(null);
@@ -113,6 +116,27 @@ describe("RerunDependentColumns", () => {
     // Once after the dependent starts, so the grid shows it running, and
     // once when the chain is done.
     expect(mocks.refreshGrid).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads a single table row per completion poll", async () => {
+    mocks.getColumns.mockResolvedValue(completedColumns);
+    mocks.post.mockResolvedValue({ data: { status: true } });
+    openDialog();
+    render(<RerunDependentColumns dataset="dataset-id" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Rerun selected" }));
+
+    await waitFor(() =>
+      expect(mocks.enqueueSnackbar).toHaveBeenCalledWith(
+        "Dependent columns rerun successfully",
+        { variant: "success" },
+      ),
+    );
+    // One poll for the source column and one for the dependent.
+    expect(mocks.getQueryOptions).toHaveBeenCalledTimes(2);
+    mocks.getQueryOptions.mock.calls.forEach((args) =>
+      expect(args).toEqual(["dataset-id", 0, [], [], "", { pageSize: 1 }]),
+    );
   });
 
   it("closes once confirmed and finishes the chain in the background", async () => {

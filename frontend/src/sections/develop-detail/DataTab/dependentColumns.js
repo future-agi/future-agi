@@ -343,7 +343,8 @@ export const toggleDependentColumnSelection = ({
 export const waitForColumnCompletion = async ({
   columnId,
   fetchColumns,
-  pollInterval = 1500,
+  // Same cadence as the grid's own poll of running columns (DevelopDataV2).
+  pollInterval = 5000,
   maxAttempts = Math.ceil(COLUMN_RUN_TIMEOUT_MS / pollInterval) + 1,
   wait = (duration) =>
     new Promise((resolve) => {
