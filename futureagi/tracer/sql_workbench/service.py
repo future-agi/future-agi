@@ -18,7 +18,12 @@ from tracer.models.dashboard import Dashboard, DashboardWidget
 from tracer.models.sql_query import SavedSQLQuery, SQLExecution
 
 from .access import AccessDenied, authorize
-from .catalog import MAX_CONFIGS, Scope
+from .catalog import (
+    EVAL_CONFIG_LIMIT_MESSAGE,
+    MAX_CONFIGS,
+    EvalConfigLimitExceeded,
+    Scope,
+)
 from .compiler import MAX_RESULT_BYTES, compile_query, validate
 from .runner import QueryUnavailable, connection_config
 
@@ -67,6 +72,38 @@ def object_id(value):
         return None
 
 
+def eval_config_scope(project):
+    """All configurations the project owns, deleted ones included and flagged.
+
+    Ownership is the configuration's project, which a soft delete does not
+    change, so historical results stay attributable. More than ``MAX_CONFIGS``
+    raises a user-visible limit instead of returning a partial dataset.
+    """
+    rows = list(
+        CustomEvalConfig._base_manager.filter(
+            project=project,
+            project__organization_id=project.organization_id,
+            project__workspace_id=project.workspace_id,
+        )
+        .order_by("id")
+        .values_list("id", "deleted")[: MAX_CONFIGS + 1]
+    )
+    if len(rows) > MAX_CONFIGS:
+        raise EvalConfigLimitExceeded(EVAL_CONFIG_LIMIT_MESSAGE)
+    return (
+        tuple(config_id for config_id, _ in rows),
+        tuple(config_id for config_id, deleted in rows if deleted),
+    )
+
+
+def eval_results_unavailable_reason(project):
+    try:
+        eval_config_scope(project)
+    except EvalConfigLimitExceeded as exc:
+        return str(exc)
+    return ""
+
+
 def _resource_limit(name, default):
     value = getattr(settings, name, default)
     if type(value) is not int or value <= 0:
@@ -78,15 +115,14 @@ def _resource_limit(name, default):
 
 def query_scope(actor, project, start, end, sql):
     _, references = validate(sql)
-    configs = ()
+    if (
+        project.organization_id != actor.organization_id
+        or project.workspace_id != actor.workspace_id
+    ):
+        raise AccessDenied("Project not available.")
+    configs, deleted = (), ()
     if any(table.name == "eval_results" for table in references):
-        configs = tuple(
-            CustomEvalConfig.no_workspace_objects.filter(
-                project=project,
-                project__organization_id=actor.organization_id,
-                project__workspace_id=actor.workspace_id,
-            ).values_list("id", flat=True)[: MAX_CONFIGS + 1]
-        )
+        configs, deleted = eval_config_scope(project)
     return Scope(
         actor.organization_id,
         actor.workspace_id,
@@ -98,6 +134,7 @@ def query_scope(actor, project, start, end, sql):
         settings.CLICKHOUSE_V2["CH25_DATABASE"],
         os.environ.get("SQL_WORKBENCH_DERIVED_METRICS_ENABLED", "false").lower()
         == "true",
+        deleted,
     )
 
 

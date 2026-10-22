@@ -564,6 +564,47 @@ def test_compiled_text_is_bounded_by_the_profile_query_size(scope):
         )
 
 
+def test_deleted_configurations_are_kept_and_flagged(scope):
+    from dataclasses import replace
+
+    deleted = uuid4()
+    flagged = replace(
+        scope,
+        eval_config_ids=(*scope.eval_config_ids, deleted),
+        deleted_eval_config_ids=(deleted,),
+    )
+    sql = sources(flagged)["eval_results"]
+    assert f"toUUID('{deleted}')" in sql.split("FROM tracer_eval_logger")[1]
+    assert (
+        f"toUInt8(custom_eval_config_id IN (toUUID('{deleted}'))) AS config_deleted"
+        in sql
+    )
+    assert "toUInt8(0) AS config_deleted" in sources(scope)["eval_results"]
+    with pytest.raises(ValueError):
+        replace(scope, deleted_eval_config_ids=(uuid4(),))
+
+
+def test_more_than_the_config_limit_is_an_explicit_error_not_partial(scope):
+    from dataclasses import replace
+
+    from tracer.sql_workbench.catalog import EvalConfigLimitExceeded, catalog
+
+    with pytest.raises(EvalConfigLimitExceeded, match="1,000"):
+        replace(scope, eval_config_ids=tuple(uuid4() for _ in range(1001)))
+    item = next(
+        value
+        for value in catalog(False, "", "too many configurations")
+        if value["name"] == "eval_results"
+    )
+    assert item["available"] is False
+    assert item["unavailable_reason"] == "too many configurations"
+    assert all(
+        value["available"]
+        for value in catalog(True, "", "")
+        if value["name"] != "derived_metrics"
+    )
+
+
 def test_additional_table_filters_cover_every_grantable_relation(scope):
     from dataclasses import replace
 

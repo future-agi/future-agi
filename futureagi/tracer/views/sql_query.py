@@ -90,7 +90,7 @@ class SQLQueryViewSet(SQLViewMixin, ViewSet):
     def catalog(self, request):
         actor = self.actor()
         project_id = request.validated_query_data["project_id"]
-        authorize(actor, project_id)
+        project = authorize(actor, project_id)
         try:
             authorize(actor, project_id, write=True)
             can_save = True
@@ -101,7 +101,11 @@ class SQLQueryViewSet(SQLViewMixin, ViewSet):
             {
                 "version": CATALOG_VERSION,
                 "identity_semantics": IDENTITY_SEMANTICS,
-                "datasets": catalog(metrics_available, reason),
+                "datasets": catalog(
+                    metrics_available,
+                    reason,
+                    service.eval_results_unavailable_reason(project),
+                ),
                 "max_rows": MAX_RESULT_ROWS,
                 "max_window_days": 31,
                 "can_save": can_save,

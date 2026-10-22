@@ -17,6 +17,15 @@ class CatalogUnavailable(Exception):
 
 MAX_WINDOW = timedelta(days=31)
 MAX_CONFIGS = 1000
+EVAL_CONFIG_LIMIT_MESSAGE = (
+    "eval_results supports projects with at most 1,000 evaluation configurations, "
+    "including deleted ones. This project has more, so eval_results is "
+    "unavailable here rather than returning a partial result."
+)
+
+
+class EvalConfigLimitExceeded(ValueError):
+    """A documented, user-visible limit; never a silently partial dataset."""
 
 
 @dataclass(frozen=True)
@@ -30,6 +39,9 @@ class Scope:
     eval_table: str = "tracer_eval_logger"
     database: str = "default"
     derived_metrics_enabled: bool = False
+    # Project-owned configurations that were later soft-deleted. Their results
+    # stay in eval_results (flagged config_deleted = 1); never dropped silently.
+    deleted_eval_config_ids: tuple[UUID, ...] = ()
 
     def __post_init__(self):
         for value in (self.organization_id, self.workspace_id, self.project_id):
@@ -41,10 +53,12 @@ class Scope:
             raise ValueError("Use timezone-aware timestamps.")
         if not timedelta(0) < self.end - self.start <= MAX_WINDOW:
             raise ValueError("Select a time window of at most 31 days.")
-        if len(self.eval_config_ids) > MAX_CONFIGS or any(
+        if len(self.eval_config_ids) > MAX_CONFIGS:
+            raise EvalConfigLimitExceeded(EVAL_CONFIG_LIMIT_MESSAGE)
+        if any(
             not isinstance(value, UUID) or value.int == 0
             for value in self.eval_config_ids
-        ):
+        ) or not set(self.deleted_eval_config_ids) <= set(self.eval_config_ids):
             raise ValueError("Invalid evaluation configuration scope.")
         if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,63}", self.database):
             raise ValueError("Invalid SQL source database.")
@@ -124,6 +138,7 @@ COLUMNS = {
         "sampling_window_start": "Nullable(DateTime64)",
         "sampling_window_end": "Nullable(DateTime64)",
         "population_size": "Nullable(UInt64)",
+        "config_deleted": "UInt8",
     },
     "annotations": {
         "id": "UUID",
@@ -170,7 +185,7 @@ DESCRIPTIONS = {
     "traces": "One live trace created in the selected window.",
     "sessions": "Sessions first seen in the window; locale is the latest present span locale in that window.",
     "users": "Users first seen in the window (not active-user counts).",
-    "eval_results": "Live scores created in the window with project-owned config and target; run_id is null until real execution provenance exists; eval_task_id is the task key. Sampling metadata is nullable for legacy results.",
+    "eval_results": "Live scores created in the window with project-owned config and target; run_id is null until real execution provenance exists; eval_task_id is the task key. Sampling metadata is nullable for legacy results. Results of configurations deleted later are kept with config_deleted = 1 (Observe hides them); projects with more than 1,000 configurations cannot use this dataset.",
     "derived_metrics": "Committed derived-metric attempts; windows fully contained in the selected window. Requires the derived metrics schema and reader grants.",
     "annotations": "Unified scores with explicit organization, workspace and tracer-project ownership; legacy null ownership is excluded.",
 }
@@ -179,17 +194,17 @@ DESCRIPTIONS = {
 def catalog(
     derived_metrics_available=False,
     unavailable_reason="Derived metrics schema is not enabled.",
+    eval_results_unavailable_reason="",
 ):
+    reasons = {"eval_results": eval_results_unavailable_reason}
+    if not derived_metrics_available:
+        reasons["derived_metrics"] = unavailable_reason
     return [
         {
             "name": name,
             "description": DESCRIPTIONS[name],
-            "available": name != "derived_metrics" or derived_metrics_available,
-            "unavailable_reason": (
-                unavailable_reason
-                if name == "derived_metrics" and not derived_metrics_available
-                else ""
-            ),
+            "available": not reasons.get(name),
+            "unavailable_reason": reasons.get(name, ""),
             "columns": [
                 {"name": column, "type": kind} for column, kind in columns.items()
             ],
@@ -345,6 +360,16 @@ def sources(scope: Scope) -> dict[str, str]:
             "parseDateTime64BestEffortOrNull(JSONExtractString(output_metadata, '_task_selection', 'sampling', 'window', 'start'), 6, 'UTC') AS sampling_window_start",
             "parseDateTime64BestEffortOrNull(JSONExtractString(output_metadata, '_task_selection', 'sampling', 'window', 'end'), 6, 'UTC') AS sampling_window_end",
             f"if({population} >= 0, toUInt64({population}), NULL) AS population_size",
+            (
+                "toUInt8(custom_eval_config_id IN ({}))".format(
+                    ", ".join(
+                        f"toUUID('{value}')" for value in scope.deleted_eval_config_ids
+                    )
+                )
+                if scope.deleted_eval_config_ids
+                else "toUInt8(0)"
+            )
+            + " AS config_deleted",
         ]
     )
     result = {

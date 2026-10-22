@@ -10,7 +10,11 @@ from tracer.models.sql_query import SQLExecution
 
 from .access import Actor, authorize
 from .compiler import compile_query
-from .catalog import CatalogUnavailable, additional_table_filters
+from .catalog import (
+    CatalogUnavailable,
+    EvalConfigLimitExceeded,
+    additional_table_filters,
+)
 from .runner import QueryCancelled, QueryUnavailable, run
 from .service import EXECUTION_SECONDS, confirm_stopped, query_scope
 
@@ -66,7 +70,9 @@ def execute_sql(job_id):
         # Do not return or log that text. Job ids provide safe audit correlation.
         message = (
             str(exc)
-            if isinstance(exc, (QueryUnavailable, CatalogUnavailable))
+            if isinstance(
+                exc, (QueryUnavailable, CatalogUnavailable, EvalConfigLimitExceeded)
+            )
             else "Query failed or reached a resource limit. Narrow the window or simplify the query."
         )
         logger.warning(

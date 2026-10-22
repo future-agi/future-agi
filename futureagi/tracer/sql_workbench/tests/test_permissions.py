@@ -969,3 +969,135 @@ def test_a_job_whose_queue_window_expired_never_starts(tenants):
     job.refresh_from_db()
     assert job.state == "queued"
     assert service.snapshot(job)["state"] == "failed"
+
+
+def _configs(project, count, *, deleted=False):
+    from tracer.models.custom_eval_config import CustomEvalConfig
+    from tracer.tests.eval_task_factories import make_template
+
+    template = make_template(
+        organization=project.organization, workspace=project.workspace
+    )
+    rows = [
+        CustomEvalConfig(
+            id=uuid4(),
+            name=f"config-{uuid4()}",
+            project=project,
+            eval_template=template,
+            config={},
+            mapping={},
+            filters={},
+            deleted=deleted,
+        )
+        for _ in range(count)
+    ]
+    CustomEvalConfig.objects.bulk_create(rows)
+    return [row.id for row in rows]
+
+
+def test_eval_scope_keeps_deleted_configuration_results_flagged(tenants):
+    from tracer.sql_workbench.catalog import sources
+
+    (actor, project, _), (_, foreign, _) = tenants
+    live = _configs(project, 2)
+    gone = _configs(project, 1, deleted=True)
+    _configs(foreign, 1)
+    now = timezone.now()
+    sql = "SELECT config_id, config_deleted, score FROM eval_results"
+    scope = service.query_scope(actor, project, now - timedelta(hours=1), now, sql)
+    assert set(scope.eval_config_ids) == set(live + gone)
+    assert scope.deleted_eval_config_ids == tuple(gone)
+    source = sources(scope)["eval_results"]
+    assert (
+        f"toUInt8(custom_eval_config_id IN (toUUID('{gone[0]}'))) AS config_deleted"
+        in (source)
+    )
+    # Scopes without eval_results never load configurations at all.
+    assert (
+        service.query_scope(
+            actor, project, now - timedelta(hours=1), now, "SELECT id FROM spans"
+        ).eval_config_ids
+        == ()
+    )
+
+
+def test_more_than_the_configuration_limit_is_explicit_never_partial(
+    tenants, django_capture_on_commit_callbacks
+):
+    from tracer.sql_workbench.catalog import (
+        EVAL_CONFIG_LIMIT_MESSAGE,
+        MAX_CONFIGS,
+        EvalConfigLimitExceeded,
+    )
+    from tracer.views.sql_query import SQLQueryViewSet
+
+    (actor, project, user), _ = tenants
+    _configs(project, MAX_CONFIGS - 1)
+    _configs(project, 1, deleted=True)
+    now = timezone.now()
+    sql = "SELECT count() FROM eval_results"
+    assert (
+        len(
+            service.query_scope(
+                actor, project, now - timedelta(hours=1), now, sql
+            ).eval_config_ids
+        )
+        == MAX_CONFIGS
+    )
+    assert service.eval_results_unavailable_reason(project) == ""
+    _configs(project, 1, deleted=True)  # Deleted ones count: they keep results.
+    with pytest.raises(EvalConfigLimitExceeded):
+        service.query_scope(actor, project, now - timedelta(hours=1), now, sql)
+    assert service.eval_results_unavailable_reason(project) == EVAL_CONFIG_LIMIT_MESSAGE
+    catalog = SQLQueryViewSet.as_view({"get": "catalog"})(
+        api_request(
+            actor,
+            user,
+            "get",
+            "/tracer/sql-query/catalog/",
+            {"project_id": str(project.id)},
+        )
+    )
+    datasets = {entry["name"]: entry for entry in catalog.data["datasets"]}
+    assert datasets["eval_results"]["available"] is False
+    assert datasets["eval_results"]["unavailable_reason"] == EVAL_CONFIG_LIMIT_MESSAGE
+    assert datasets["spans"]["available"] is True
+    run = SQLQueryViewSet.as_view({"post": "run"})
+    with (
+        patch("tracer.sql_workbench.service.connection_config"),
+        patch("tracer.sql_workbench.tasks.execute_sql.apply_async") as dispatch,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        refused = run(
+            api_request(
+                actor,
+                user,
+                "post",
+                "/tracer/sql-query/run/",
+                {
+                    "project_id": str(project.id),
+                    "sql": sql,
+                    "start": (now - timedelta(hours=1)).isoformat(),
+                    "end": now.isoformat(),
+                },
+            )
+        )
+        assert refused.status_code == 400
+        assert "1,000" in str(refused.data)
+        # Other datasets keep working for the same project.
+        accepted = run(
+            api_request(
+                actor,
+                user,
+                "post",
+                "/tracer/sql-query/run/",
+                {
+                    "project_id": str(project.id),
+                    "sql": "SELECT count() FROM spans",
+                    "start": (now - timedelta(hours=1)).isoformat(),
+                    "end": now.isoformat(),
+                },
+            )
+        )
+        assert accepted.status_code == 202
+    assert dispatch.call_count == 1
