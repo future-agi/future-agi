@@ -1509,6 +1509,8 @@ def _store_alk_chat_messages(
                 item["name"] = seg["speaker_name"]
             if speaker in {"tool_calls", "tool_call_result"}:
                 item["kind"] = speaker
+            if isinstance(seg.get("start_time_ms"), int):
+                item["start_time_ms"] = seg["start_time_ms"]
             content_items.append(item)
         joined = "\n".join(t for t in texts if t)
         return ChatMessageModel(

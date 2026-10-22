@@ -36,6 +36,14 @@ vi.mock("src/components/VoiceDetailDrawerV2", () => ({
       data-hide-path-tabs={String(!!hidePathTabs)}
       data-show-fix-with-falcon={String(showFixWithFalcon)}
       data-hide-annotation-tab={String(!!hideAnnotationTab)}
+      data-eval-statuses={JSON.stringify(
+        Object.fromEntries(
+          Object.entries(data?.eval_metrics ?? {}).map(([id, row]) => [
+            id,
+            row?.status ?? null,
+          ]),
+        ),
+      )}
     >
       voice:{data?.id}:{data?.transcript?.map((turn) => turn.content).join("|")}
       <button type="button" onClick={onPrev} disabled={!hasPrev}>
@@ -475,7 +483,84 @@ describe("CallDrawer — the run-detail endpoint's removed verdicts, through to 
   });
 });
 
+describe("CallDrawer — chat evals that have no verdict", () => {
+  const scoringPayload = {
+    ...RAW_CHAT_PAYLOAD,
+    eval_metrics: { cfg_t: {}, cfg_f: {} },
+    evaluations: [
+      {
+        id: "cfg_t",
+        name: "Resolution",
+        value: null,
+        reason: "Scoring timed out: no progress for 10 minutes.",
+        status: "timed_out",
+      },
+      {
+        id: "cfg_f",
+        name: "Policy",
+        value: null,
+        reason: "Model quota hit",
+        status: "failed",
+      },
+    ],
+  };
+
+  it("lists a timed-out and a failed eval from the call detail", async () => {
+    useCallDetail.mockReturnValue({
+      callDetail: mapCallDetail(scoringPayload),
+      isLoading: false,
+    });
+    const user = userEvent.setup();
+    render(<CallDrawer task={chatTask} agentType="text" onClose={() => {}} />);
+    await user.click(screen.getByRole("tab", { name: /Evals \(2\)/ }));
+    expect(screen.getByText("Timed out")).toBeInTheDocument();
+    expect(screen.getByText("Error")).toBeInTheDocument();
+  });
+
+  it("marks a failed eval from the list row while the detail loads", async () => {
+    useCallDetail.mockReturnValue({ callDetail: null, isLoading: true });
+    const user = userEvent.setup();
+    const task = {
+      ...chatTask,
+      evalResults: mapCallRow(scoringPayload, [
+        { id: "cfg_t", type: "evaluation" },
+        { id: "cfg_f", type: "evaluation" },
+      ]).evalResults,
+    };
+    render(<CallDrawer task={task} agentType="text" onClose={() => {}} />);
+    await user.click(screen.getByRole("tab", { name: /Evals \(2\)/ }));
+    expect(screen.getByText("Timed out")).toBeInTheDocument();
+    expect(screen.getByText("Error")).toBeInTheDocument();
+  });
+});
+
 describe("CallDrawer — voice branch", () => {
+  it("hands the voice drawer each unscored eval's status", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: {
+        id: "voice-s",
+        transcript: [],
+        eval_metrics: { cfg_t: {}, cfg_ok: { name: "Tone", value: 0.9 } },
+        evaluations: [
+          { id: "cfg_t", name: "Resolution", reason: "late", status: "timed_out" },
+          { id: "cfg_p", name: "Policy", reason: "", status: "pending" },
+          { id: "cfg_ok", name: "Tone", score: 0.9, status: "succeeded" },
+        ],
+      },
+      isPending: false,
+    });
+    render(
+      <CallDrawer
+        task={{ id: "voice-s", simulationCallType: "voice" }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+    expect(
+      JSON.parse(screen.getByTestId("voice-drawer").dataset.evalStatuses),
+    ).toEqual({ cfg_t: "timed_out", cfg_ok: null, cfg_p: "pending" });
+  });
+
   it("routes a voice call to the real product voice drawer, fed the call detail", () => {
     useCallExecutionV3Detail.mockReturnValue({
       data: {

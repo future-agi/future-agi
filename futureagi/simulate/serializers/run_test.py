@@ -26,6 +26,7 @@ from simulate.serializers.response.scenarios import ScenarioResponseSerializer
 from simulate.serializers.simulator_agent import SimulatorAgentSerializer
 from simulate.services.eval_config_edit import has_own_mapping
 from simulate.services.harness_evals import (
+    effective_simulation_mapping,
     harness_run_test_ids,
     is_harness_run_test,
     regrade_mapping,
@@ -80,6 +81,14 @@ class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
             "regradable",
             "editable",
         ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if isinstance(data["mapping"], dict):
+            data["mapping"] = effective_simulation_mapping(
+                instance.eval_template, data["mapping"]
+            )
+        return data
 
     def get_eval_group(self, obj):
         """

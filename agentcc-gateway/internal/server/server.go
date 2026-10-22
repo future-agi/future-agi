@@ -32,6 +32,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
 	"github.com/futureagi/agentcc-gateway/internal/realtime"
 	"github.com/futureagi/agentcc-gateway/internal/redisstate"
 	"github.com/futureagi/agentcc-gateway/internal/responses"
@@ -82,6 +83,11 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	}
 	if cfg != nil && keyStore == nil {
 		keyStore = auth.NewKeyStore(cfg.Auth)
+	}
+	// Load settles this, but a Config built in code need not have been through
+	// it, and a server without a ceiling is one no request is bounded by.
+	if cfg != nil && cfg.Server.MaxRequestTimeout <= 0 {
+		cfg.Server.MaxRequestTimeout = cfg.Server.WriteTimeout
 	}
 	authKeyStore := keyStore
 	if !authEnabled {
@@ -205,7 +211,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 	}
 
-	handlers := NewHandlers(registry, engine, cfg.Server.MaxRequestBodySize, cfg.Server.DefaultRequestTimeout, failover, modelFallbacks, condRouter, healthMonitor, cfg.Routing.ModelTimeouts, mirror, guardrailEngine, policyStore, cfg.Guardrails.Streaming, modelDBPtr, tenantStore, orgProviderCache, authKeyStore)
+	handlers := NewHandlers(registry, engine, cfg.Server.MaxRequestBodySize, cfg.Server.DefaultRequestTimeout, cfg.Server.MaxRequestTimeout, failover, modelFallbacks, condRouter, healthMonitor, cfg.Routing.ModelTimeouts, mirror, guardrailEngine, policyStore, cfg.Guardrails.Streaming, modelDBPtr, tenantStore, orgProviderCache, authKeyStore)
 	// A streamed completion exists nowhere else — it has to be assembled while
 	// the chunks go past, and only if something is going to record it.
 	handlers.SetCaptureStreamContent(cfg.Logging.RequestLogging.IncludeBodies || (cfg.OTel.Enabled && cfg.OTel.IncludeBodies))
@@ -470,6 +476,11 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		AllowedOrigins:     cfg.CORS.AllowedOrigins,
 	})
 	router.Handle("GET", "/v1/realtime", realtimeHandler.HandleRealtime)
+
+	// Speech vendors' own streaming APIs (Deepgram, Cartesia), each under the vendor's name.
+	for _, ep := range speech.Endpoints() {
+		router.Handle("GET", "/"+ep.Vendor+ep.Path, handlers.SpeechRelay(ep.Vendor, ep.Path))
+	}
 
 	// Video Generation API.
 	router.Handle("POST", "/v1/videos", handlers.SubmitVideo)
@@ -875,7 +886,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Apply middleware: outermost wraps first.
 	var handler http.Handler = router
-	handler = middleware.Timeout(cfg.Server.DefaultRequestTimeout, "/v1/chat/completions")(handler)
+	handler = middleware.Timeout(cfg.Server.MaxRequestTimeout)(handler)
 	handler = middleware.KeyAuth(authKeyStore, authEnabled)(handler)
 	handler = middleware.LicenseAuth(cfg.LicenseAuth, redisstate.NewLicenseStore(redisClient))(handler)
 	handler = middleware.RequestID(handler)
@@ -1273,6 +1284,8 @@ func ConvertModelOverrides(cfgOverrides map[string]config.ModelOverrideConfig) m
 				CachedInputPerToken: co.Pricing.CachedInputPerToken,
 				BatchInputPerToken:  co.Pricing.BatchInputPerToken,
 				BatchOutputPerToken: co.Pricing.BatchOutputPerToken,
+				InputPerSecond:      co.Pricing.InputPerSecond,
+				InputPerCharacter:   co.Pricing.InputPerCharacter,
 			}
 		}
 		if co.Capabilities != nil {

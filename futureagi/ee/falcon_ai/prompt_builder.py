@@ -126,6 +126,7 @@ class PromptBuilder:
             "- Tracing: list_projects → search_traces → get_trace → list_spans → get_span\n"
             "- Deep trace debugging: explore_trace_legacy → read_trace_span (verbatim evidence)\n"
             "- Error feed: list_error_clusters → get_error_cluster → analyze_error_cluster\n"
+            "- Error Feed alerts: list_slack_alert_integrations → list_slack_alert_channels → create_error_feed_alert_rule; use start_slack_alert_install first when Slack is not connected\n"
             "- Dashboards: list_dashboard_metrics → query_dashboard_metrics → create_dashboard → create_dashboard_widget\n"
             "- Costs: list_dashboard_metrics → query_dashboard_metrics → search_traces\n"
             "- Evals: list_eval_templates → create_eval_template → configure_dataset_evaluation → run_dataset_evals → list_dataset_evaluations\n"

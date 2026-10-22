@@ -726,6 +726,64 @@
 
 ## error-feed
 
+### ERR-E2E-001 — connect Slack and notify only for matching Error Feed issues
+
+**Goal:** A developer connects Slack, creates an Error Feed rule, and receives only matching issue notifications  
+**Spec:** `flows/error-feed/slack-alert.spec.ts:22`  
+**Tags:** —
+
+**User steps:**
+
+1. open the Error Feed alert builder and enter a project, trigger, and filters
+2. connect a Slack workspace from the builder and return to the saved draft
+3. select a channel and create the rule
+4. create a nonmatching issue and a matching issue
+5. see the matching notification in Slack
+
+**Backend state verified:**
+
+- the rule is saved in the scoped alert API with the selected Slack channel
+- both seeded issue events are processed and only the matching issue has a sent delivery
+- the mock Slack API receives exactly the matching issue message with a Feed link
+
+### ERR-E2E-002 — every issue trigger sends only after its selected transition
+
+**Goal:** A developer chooses each issue trigger and receives a Slack alert when its condition occurs  
+**Spec:** `flows/error-feed/trigger-matrix.spec.ts:30`  
+**Tags:** —
+
+**User steps:**
+
+1. connect a test Slack workspace and create an Error Feed project
+2. create a rule in the UI for each issue trigger with a distinct issue-group filter
+3. create and update issues through the test-only issue API to exercise each transition
+4. confirm each selected transition posts exactly one message to Slack
+
+**Backend state verified:**
+
+- the alert API persists all four selected triggers and issue-group filters
+- each matching transition creates a sent delivery for its rule
+- the mock Slack API receives one message for each matched issue
+
+### ERR-E2E-003 — failed Slack reconnect can recover and the connection can be removed
+
+**Goal:** A developer can recover from a denied Slack reconnect and disconnect the integration  
+**Spec:** `flows/error-feed/slack-integration-management.spec.ts:17`  
+**Tags:** —
+
+**User steps:**
+
+1. connect Slack and open its card in Settings Integrations
+2. attempt to reconnect but deny consent and see the error
+3. retry the reconnect successfully
+4. disconnect Slack from the integration card
+
+**Backend state verified:**
+
+- denied consent leaves the existing connection active and unchanged
+- successful reconnect preserves the same workspace connection ID
+- disconnect removes the connection from the scoped integrations API
+
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
 **Goal:** A saved link to a retired issue opens its surviving issue  

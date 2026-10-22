@@ -17,6 +17,7 @@ criteria: "You are evaluating whether an image caption contains details not actu
 eval_tags:
 - Image
 - Hallucination
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

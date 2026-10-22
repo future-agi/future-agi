@@ -178,6 +178,12 @@ type usageMeterResponseWriter struct {
 	written bool
 }
 
+// Unwrap lets http.ResponseController reach the real writer, so a deadline or
+// a hijack set further in still finds the connection.
+func (w *usageMeterResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 func (w *usageMeterResponseWriter) WriteHeader(status int) {
 	if !w.written {
 		w.status = status

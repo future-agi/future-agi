@@ -15,8 +15,9 @@ criteria: "You are evaluating the accuracy of OCR-extracted JSON content against
   \ if major transcription errors or misrepresented structure. Score 0.5 if mostly accurate with some errors. Score 1.0 if\
   \ every JSON value precisely matches the PDF source.\n\n## Inputs\n\n<input_pdf>{{input_pdf}}</input_pdf>\n\n<json_content>{{json_content}}</json_content>"
 eval_tags:
-- PDF
-- Text
+- OCR
+- Document
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

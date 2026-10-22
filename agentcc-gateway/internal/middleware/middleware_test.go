@@ -221,3 +221,119 @@ func TestRequestTimeoutHeader(t *testing.T) {
 		})
 	}
 }
+
+func TestTimeout_MaximumHoldsOverTheHeader(t *testing.T) {
+	const maxTimeout = 30 * time.Second
+
+	tests := []struct {
+		name   string
+		header map[string]string
+		want   time.Duration
+	}{
+		{"no header leaves the maximum", nil, maxTimeout},
+		{"a shorter header applies", map[string]string{"x-agentcc-timeout": "5s"}, 5 * time.Second},
+		{"a longer duration header is held at the maximum", map[string]string{"x-agentcc-timeout": "10m"}, maxTimeout},
+		{"a longer milliseconds header is held at the maximum", map[string]string{"x-agentcc-request-timeout": "600000"}, maxTimeout},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var remaining time.Duration
+			handler := Timeout(maxTimeout)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				deadline, ok := r.Context().Deadline()
+				if !ok {
+					t.Fatal("the request reached the handler with no deadline")
+				}
+				remaining = time.Until(deadline)
+			}))
+
+			req := httptest.NewRequest("POST", "/v1/embeddings", nil)
+			for k, v := range tt.header {
+				req.Header.Set(k, v)
+			}
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+
+			if remaining > tt.want || remaining < tt.want-time.Second {
+				t.Errorf("deadline in %v, want about %v", remaining, tt.want)
+			}
+		})
+	}
+}
+
+// deadlineRecorder is a ResponseWriter that carries a write deadline, which is
+// what http.ResponseController looks for.
+type deadlineRecorder struct {
+	http.ResponseWriter
+	deadline time.Time
+	calls    int
+}
+
+func (w *deadlineRecorder) SetWriteDeadline(t time.Time) error {
+	w.deadline = t
+	w.calls++
+	return nil
+}
+
+// A response that takes longer than server.write_timeout cannot be written at
+// all, because that deadline is armed when the request headers arrive and
+// nothing resets it. The request's own ceiling has to move it, or the handler
+// runs to the end and the client is left with a closed connection.
+func TestTimeout_HoldsTheResponseWriteDeadline(t *testing.T) {
+	tests := []struct {
+		name       string
+		maxTimeout time.Duration
+		header     string
+		want       time.Duration // expected deadline, as a distance from now
+	}{
+		{"the ceiling, plus the grace for the last write", 200 * time.Second, "", 210 * time.Second},
+		{"a shorter header moves it in too", 200 * time.Second, "30s", 40 * time.Second},
+		{"a longer header is held at the ceiling", 200 * time.Second, "900s", 210 * time.Second},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var served bool
+			handler := Timeout(tc.maxTimeout)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				served = true
+			}))
+
+			req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+			if tc.header != "" {
+				req.Header.Set("x-agentcc-timeout", tc.header)
+			}
+			rec := &deadlineRecorder{ResponseWriter: httptest.NewRecorder()}
+
+			start := time.Now()
+			handler.ServeHTTP(rec, req)
+
+			if !served {
+				t.Fatal("handler did not run")
+			}
+			if rec.calls != 1 {
+				t.Fatalf("SetWriteDeadline called %d times, want 1", rec.calls)
+			}
+			got := rec.deadline.Sub(start)
+			if got < tc.want-time.Second || got > tc.want+time.Second {
+				t.Errorf("write deadline = now+%s, want now+%s", got, tc.want)
+			}
+		})
+	}
+}
+
+// A ResponseWriter that cannot carry a deadline must not stop the request.
+func TestTimeout_WriterWithoutADeadlineStillServes(t *testing.T) {
+	var served bool
+	handler := Timeout(60 * time.Second)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		served = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	w := httptest.NewRecorder() // no SetWriteDeadline, no Unwrap
+	handler.ServeHTTP(w, httptest.NewRequest("POST", "/v1/chat/completions", nil))
+
+	if !served {
+		t.Fatal("handler did not run")
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+}

@@ -145,6 +145,7 @@ from simulate.services.eval_config_edit import (
     visible_eval_template_query,
 )
 from simulate.services.harness_evals import (
+    effective_simulation_mapping,
     is_harness_run_test,
     is_regrading_a_finished_harness_run,
     runnable_eval_config_ids,
@@ -5256,11 +5257,10 @@ class GetEvalConfigStructureView(APIView):
                     final_config[key]["default"] = eval_config_config.get(key, "")
 
             # Build final_mapping from eval_config
+            mapping = effective_simulation_mapping(template, eval_config.mapping or {})
             final_mapping = {}
             for key in template.config.get("required_keys", []):
-                final_mapping[key] = (
-                    eval_config.mapping.get(key, "") if eval_config.mapping else ""
-                )
+                final_mapping[key] = mapping.get(key, "")
 
             eval_data = {
                 "id": str(eval_config.id),
