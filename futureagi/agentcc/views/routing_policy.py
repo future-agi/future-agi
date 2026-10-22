@@ -6,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from agentcc.models.routing_policy import AgentccRoutingPolicy
+from agentcc.permissions import GatewayAdminActionsMixin
 from agentcc.serializers.routing_policy import AgentccRoutingPolicySerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
@@ -17,10 +18,18 @@ _GATEWAY_SYNC_WARNING = (
 )
 
 
-class AgentccRoutingPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
-    """Routing policy management with version history. Org-scoped."""
+class AgentccRoutingPolicyViewSet(
+    GatewayAdminActionsMixin, BaseModelViewSetMixinWithUserOrg, ModelViewSet
+):
+    """Routing policy management with version history. Org-scoped.
+
+    Each write merges the active policies into a new org config version and
+    pushes it, so writes are an org Owner's or Admin's."""
 
     permission_classes = [IsAuthenticated]
+    gateway_admin_actions = frozenset(
+        {"create", "update", "partial_update", "destroy", "activate", "sync"}
+    )
     serializer_class = AgentccRoutingPolicySerializer
     queryset = AgentccRoutingPolicy.no_workspace_objects.all()
     _gm = GeneralMethods()
@@ -217,8 +226,10 @@ class AgentccRoutingPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet
                     change_description="Routing policy sync",
                 )
                 # Fail closed: a version the gateway contract rejects must not
-                # become active. Raising here rolls the whole save back.
-                validate_org_config(new_config)
+                # become active. Raising here rolls the whole save back. The
+                # guardrails are copied as they are, so their "${" check is
+                # not this save's to make.
+                validate_org_config(new_config, check_guardrails=False)
 
             return push_org_config(str(org.id), new_config)
         except Exception as e:

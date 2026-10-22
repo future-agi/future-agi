@@ -9787,7 +9787,7 @@
             },
             "delete": {
                 "operationId": "agentcc_api-keys_delete",
-                "description": "",
+                "description": "Delete a key: it is revoked on the gateway before the row is\ndeleted, so it stops working at once. When the gateway cannot revoke\nit, the delete answers 503, the row is kept and the delete can be\nretried.",
                 "parameters": [],
                 "responses": {
                     "204": {
@@ -10657,7 +10657,7 @@
         "/agentcc/gateways/": {
             "get": {
                 "operationId": "agentcc_gateways_list",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10757,7 +10757,7 @@
         "/agentcc/gateways/{id}/cancel-batch/": {
             "post": {
                 "operationId": "agentcc_gateways_cancel_batch",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [
                     {
                         "name": "data",
@@ -10812,7 +10812,7 @@
         "/agentcc/gateways/{id}/config/": {
             "get": {
                 "operationId": "agentcc_gateways_config",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10850,7 +10850,7 @@
         "/agentcc/gateways/{id}/get-batch/": {
             "get": {
                 "operationId": "agentcc_gateways_get_batch",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10894,7 +10894,7 @@
         "/agentcc/gateways/{id}/health_check/": {
             "post": {
                 "operationId": "agentcc_gateways_health_check",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [
                     {
                         "name": "data",
@@ -10943,7 +10943,7 @@
         "/agentcc/gateways/{id}/mcp-prompts/": {
             "get": {
                 "operationId": "agentcc_gateways_mcp_prompts",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10975,7 +10975,7 @@
         "/agentcc/gateways/{id}/mcp-resources/": {
             "get": {
                 "operationId": "agentcc_gateways_mcp_resources",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -11007,7 +11007,7 @@
         "/agentcc/gateways/{id}/mcp-status/": {
             "get": {
                 "operationId": "agentcc_gateways_mcp_status",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -11045,7 +11045,7 @@
         "/agentcc/gateways/{id}/mcp-tools/": {
             "get": {
                 "operationId": "agentcc_gateways_mcp_tools",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -11077,7 +11077,7 @@
         "/agentcc/gateways/{id}/providers/": {
             "get": {
                 "operationId": "agentcc_gateways_providers",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -11164,7 +11164,7 @@
         "/agentcc/gateways/{id}/remove-budget/": {
             "post": {
                 "operationId": "agentcc_gateways_remove_budget",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11213,7 +11213,7 @@
         "/agentcc/gateways/{id}/remove-mcp-server/": {
             "post": {
                 "operationId": "agentcc_gateways_remove_mcp_server",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11323,7 +11323,7 @@
         "/agentcc/gateways/{id}/set-budget/": {
             "post": {
                 "operationId": "agentcc_gateways_set_budget",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11372,7 +11372,7 @@
         "/agentcc/gateways/{id}/submit-batch/": {
             "post": {
                 "operationId": "agentcc_gateways_submit_batch",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11421,7 +11421,7 @@
         "/agentcc/gateways/{id}/test-mcp-tool/": {
             "post": {
                 "operationId": "agentcc_gateways_test_mcp_tool",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11519,7 +11519,7 @@
         "/agentcc/gateways/{id}/toggle-guardrail/": {
             "post": {
                 "operationId": "agentcc_gateways_toggle_guardrail",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11617,7 +11617,7 @@
         "/agentcc/gateways/{id}/update-guardrail/": {
             "post": {
                 "operationId": "agentcc_gateways_update_guardrail",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11666,7 +11666,7 @@
         "/agentcc/gateways/{id}/update-mcp-guardrails/": {
             "post": {
                 "operationId": "agentcc_gateways_update_mcp_guardrails",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11715,7 +11715,7 @@
         "/agentcc/gateways/{id}/update-mcp-server/": {
             "post": {
                 "operationId": "agentcc_gateways_update_mcp_server",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.\n\nThe view's config writes (``gateway_admin_actions``, the role check) are\nan org Owner's or Admin's.",
                 "parameters": [
                     {
                         "name": "data",
@@ -12211,7 +12211,8 @@
         "/agentcc/guardrail-policies/": {
             "get": {
                 "operationId": "agentcc_guardrail-policies_list",
-                "description": "CRUD for reusable guardrail policies. Org-scoped.",
+                "summary": "CRUD for reusable guardrail policies. Org-scoped.",
+                "description": "A policy's checks are merged into the org config and pushed to the\ngateway (``sync_guardrail_policies``); every write is an org Owner's or\nAdmin's, and every member can read.",
                 "parameters": [
                     {
                         "name": "page",
@@ -12273,7 +12274,8 @@
             },
             "post": {
                 "operationId": "agentcc_guardrail-policies_create",
-                "description": "CRUD for reusable guardrail policies. Org-scoped.",
+                "summary": "CRUD for reusable guardrail policies. Org-scoped.",
+                "description": "A policy's checks are merged into the org config and pushed to the\ngateway (``sync_guardrail_policies``); every write is an org Owner's or\nAdmin's, and every member can read.",
                 "parameters": [
                     {
                         "name": "data",
@@ -12341,7 +12343,8 @@
         "/agentcc/guardrail-policies/{id}/": {
             "get": {
                 "operationId": "agentcc_guardrail-policies_read",
-                "description": "CRUD for reusable guardrail policies. Org-scoped.",
+                "summary": "CRUD for reusable guardrail policies. Org-scoped.",
+                "description": "A policy's checks are merged into the org config and pushed to the\ngateway (``sync_guardrail_policies``); every write is an org Owner's or\nAdmin's, and every member can read.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -12363,7 +12366,8 @@
             },
             "put": {
                 "operationId": "agentcc_guardrail-policies_update",
-                "description": "CRUD for reusable guardrail policies. Org-scoped.",
+                "summary": "CRUD for reusable guardrail policies. Org-scoped.",
+                "description": "A policy's checks are merged into the org config and pushed to the\ngateway (``sync_guardrail_policies``); every write is an org Owner's or\nAdmin's, and every member can read.",
                 "parameters": [
                     {
                         "name": "data",
@@ -12394,7 +12398,8 @@
             },
             "patch": {
                 "operationId": "agentcc_guardrail-policies_partial_update",
-                "description": "CRUD for reusable guardrail policies. Org-scoped.",
+                "summary": "CRUD for reusable guardrail policies. Org-scoped.",
+                "description": "A policy's checks are merged into the org config and pushed to the\ngateway (``sync_guardrail_policies``); every write is an org Owner's or\nAdmin's, and every member can read.",
                 "parameters": [
                     {
                         "name": "data",
@@ -12425,7 +12430,8 @@
             },
             "delete": {
                 "operationId": "agentcc_guardrail-policies_delete",
-                "description": "CRUD for reusable guardrail policies. Org-scoped.",
+                "summary": "CRUD for reusable guardrail policies. Org-scoped.",
+                "description": "A policy's checks are merged into the org config and pushed to the\ngateway (``sync_guardrail_policies``); every write is an org Owner's or\nAdmin's, and every member can read.",
                 "parameters": [],
                 "responses": {
                     "204": {
@@ -13732,7 +13738,8 @@
         "/agentcc/routing-policies/": {
             "get": {
                 "operationId": "agentcc_routing-policies_list",
-                "description": "Routing policy management with version history. Org-scoped.",
+                "summary": "Routing policy management with version history. Org-scoped.",
+                "description": "Each write merges the active policies into a new org config version and\npushes it, so writes are an org Owner's or Admin's.",
                 "parameters": [
                     {
                         "name": "page",
@@ -13862,7 +13869,8 @@
         "/agentcc/routing-policies/{id}/": {
             "get": {
                 "operationId": "agentcc_routing-policies_read",
-                "description": "Routing policy management with version history. Org-scoped.",
+                "summary": "Routing policy management with version history. Org-scoped.",
+                "description": "Each write merges the active policies into a new org config version and\npushes it, so writes are an org Owner's or Admin's.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -13915,7 +13923,8 @@
             },
             "patch": {
                 "operationId": "agentcc_routing-policies_partial_update",
-                "description": "Routing policy management with version history. Org-scoped.",
+                "summary": "Routing policy management with version history. Org-scoped.",
+                "description": "Each write merges the active policies into a new org config version and\npushes it, so writes are an org Owner's or Admin's.",
                 "parameters": [
                     {
                         "name": "data",
@@ -13946,7 +13955,8 @@
             },
             "delete": {
                 "operationId": "agentcc_routing-policies_delete",
-                "description": "Routing policy management with version history. Org-scoped.",
+                "summary": "Routing policy management with version history. Org-scoped.",
+                "description": "Each write merges the active policies into a new org config version and\npushes it, so writes are an org Owner's or Admin's.",
                 "parameters": [],
                 "responses": {
                     "204": {
@@ -14308,7 +14318,8 @@
         "/agentcc/shadow-experiments/": {
             "get": {
                 "operationId": "agentcc_shadow-experiments_list",
-                "description": "CRUD for shadow experiments with pause/resume/complete lifecycle actions.",
+                "summary": "CRUD for shadow experiments with pause/resume/complete lifecycle actions.",
+                "description": "Writes (create, update, partial update, destroy, pause, resume, complete)\nare an org Owner's or Admin's; list, retrieve and stats are open to every\nmember of the org.",
                 "parameters": [
                     {
                         "name": "page",
@@ -14370,7 +14381,8 @@
             },
             "post": {
                 "operationId": "agentcc_shadow-experiments_create",
-                "description": "CRUD for shadow experiments with pause/resume/complete lifecycle actions.",
+                "summary": "CRUD for shadow experiments with pause/resume/complete lifecycle actions.",
+                "description": "Writes (create, update, partial update, destroy, pause, resume, complete)\nare an org Owner's or Admin's; list, retrieve and stats are open to every\nmember of the org.",
                 "parameters": [
                     {
                         "name": "data",
@@ -14404,7 +14416,8 @@
         "/agentcc/shadow-experiments/{id}/": {
             "get": {
                 "operationId": "agentcc_shadow-experiments_read",
-                "description": "CRUD for shadow experiments with pause/resume/complete lifecycle actions.",
+                "summary": "CRUD for shadow experiments with pause/resume/complete lifecycle actions.",
+                "description": "Writes (create, update, partial update, destroy, pause, resume, complete)\nare an org Owner's or Admin's; list, retrieve and stats are open to every\nmember of the org.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -14426,7 +14439,8 @@
             },
             "put": {
                 "operationId": "agentcc_shadow-experiments_update",
-                "description": "CRUD for shadow experiments with pause/resume/complete lifecycle actions.",
+                "summary": "CRUD for shadow experiments with pause/resume/complete lifecycle actions.",
+                "description": "Writes (create, update, partial update, destroy, pause, resume, complete)\nare an org Owner's or Admin's; list, retrieve and stats are open to every\nmember of the org.",
                 "parameters": [
                     {
                         "name": "data",
@@ -14457,7 +14471,8 @@
             },
             "patch": {
                 "operationId": "agentcc_shadow-experiments_partial_update",
-                "description": "CRUD for shadow experiments with pause/resume/complete lifecycle actions.",
+                "summary": "CRUD for shadow experiments with pause/resume/complete lifecycle actions.",
+                "description": "Writes (create, update, partial update, destroy, pause, resume, complete)\nare an org Owner's or Admin's; list, retrieve and stats are open to every\nmember of the org.",
                 "parameters": [
                     {
                         "name": "data",
@@ -14488,7 +14503,8 @@
             },
             "delete": {
                 "operationId": "agentcc_shadow-experiments_delete",
-                "description": "CRUD for shadow experiments with pause/resume/complete lifecycle actions.",
+                "summary": "CRUD for shadow experiments with pause/resume/complete lifecycle actions.",
+                "description": "Writes (create, update, partial update, destroy, pause, resume, complete)\nare an org Owner's or Admin's; list, retrieve and stats are open to every\nmember of the org.",
                 "parameters": [],
                 "responses": {
                     "204": {
@@ -88279,6 +88295,14 @@
                     "type": "string",
                     "format": "date-time"
                 },
+                "secrets_set": {
+                    "description": "JSON pointers of the infrastructure secrets stored in the active org config. Each one reads as a mask, never its value.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
                 "providers": {
                     "title": "Providers",
                     "type": "object",
@@ -89642,6 +89666,15 @@
                     "title": "Updated at",
                     "type": "string",
                     "format": "date-time",
+                    "readOnly": true
+                },
+                "secrets_set": {
+                    "description": "JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
                     "readOnly": true
                 }
             }

@@ -4,6 +4,7 @@ Called when org configs are created, activated, or deleted.
 """
 
 import copy
+import uuid
 
 import structlog
 from django.conf import settings as django_settings
@@ -15,49 +16,20 @@ from agentcc.contracts.gateway_admin import (
 from agentcc.contracts.gateway_admin import AlertRuleConfig as GatewayAlertRuleConfig
 from agentcc.contracts.gateway_admin import OrgConfig as GatewayOrgConfig
 from agentcc.contracts.gateway_admin import ProviderConfig as GatewayProviderConfig
+from agentcc.guardrail_names import (
+    RULE_PROVIDER_DEFAULTS as _RULE_PROVIDER_DEFAULTS,
+)
+from agentcc.guardrail_names import RULE_TO_REGISTRY as _RULE_TO_REGISTRY
 from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import normalize_cache_config
 from agentcc.services.gateway_client import GatewayClientError, get_gateway_client
+from agentcc.validators import (
+    env_reference_error,
+    find_changed_guardrail_env_reference,
+    find_guardrail_env_reference,
+)
 
 logger = structlog.get_logger(__name__)
-
-# Map org-config rule names → gateway registry names
-_RULE_TO_REGISTRY = {
-    "pii-detector": "pii-detection",
-    "injection-detector": "prompt-injection",
-    "secrets-detector": "secret-detection",
-    # These are the same in both:
-    "content-moderation": "content-moderation",
-    "keyword-blocklist": "keyword-blocklist",
-    "topic-restriction": "topic-restriction",
-    "language-detection": "language-detection",
-    "system-prompt-protection": "system-prompt-protection",
-    "hallucination-detection": "hallucination-detection",
-    "data-leakage-prevention": "data-leakage-prevention",
-}
-
-# External guardrail rules that need a "provider" key in their config
-# for the gateway's dynamic factory to recognize them.
-_RULE_PROVIDER_DEFAULTS = {
-    "futureagi-eval": "futureagi",
-    "llama-guard": "llama_guard",
-    "azure-content-safety": "azure_content_safety",
-    "presidio-pii": "presidio",
-    "lakera-guard": "lakera",
-    "bedrock-guardrails": "bedrock_guardrails",
-    "hiddenlayer-guard": "hiddenlayer",
-    "aporia-guard": "aporia",
-    "pangea-guard": "pangea",
-    "dynamoai-guard": "dynamoai",
-    "enkrypt-guard": "enkrypt",
-    "ibm-ai-detector": "ibm_ai",
-    "grayswan-guard": "grayswan",
-    "lasso-guard": "lasso",
-    "crowdstrike-aidr": "crowdstrike",
-    "zscaler-guard": "zscaler",
-    "tool-permissions": "tool_permissions",
-    "mcp-security": "mcp_security",
-}
 
 _PROVIDER_CREDENTIAL_ALIASES = {
     "access_key": "aws_access_key_id",
@@ -126,31 +98,115 @@ def _normalize_eval_ids(cfg):
         cfg.pop("eval_id", None)
 
 
-def _inject_guardrail_credentials(checks):
+def guardrail_check_items(checks):
+    """(name, check) pairs of a guardrail checks list, or of a map keyed by
+    name. A list entry is named by its "name" key; anything else yields none."""
+    if isinstance(checks, list):
+        return [
+            (check.get("name"), check) for check in checks if isinstance(check, dict)
+        ]
+    if isinstance(checks, dict):
+        return [
+            (name, check) for name, check in checks.items() if isinstance(check, dict)
+        ]
+    return []
+
+
+def nonstring_check_name_path(guardrails, path="guardrails"):
+    """The field path of the first guardrail check that has a name which is
+    not a string (``guardrails.rules[i].name`` or ``guardrails.checks[i].name``),
+    or None.
+
+    The push keys checks by name and the gateway contract takes only a string
+    name. A checks map is keyed by name, and JSON keys are strings, so only
+    the two list shapes are read. A check with no name, or an entry that is
+    not an object, is left to the rest of the validation.
     """
-    Decrypt and inject real credentials into guardrail checks, replacing
-    "__encrypted__" sentinel values with actual secrets from the policy's
-    encrypted_check_configs blob.
+    if not isinstance(guardrails, dict):
+        return None
+    for key in ("rules", "checks"):
+        entries = guardrails.get(key)
+        if not isinstance(entries, list):
+            continue
+        for i, check in enumerate(entries):
+            if (
+                isinstance(check, dict)
+                and "name" in check
+                and not isinstance(check["name"], str)
+            ):
+                return f"{path}.{key}[{i}].name"
+    return None
+
+
+def guardrail_policy_id(check):
+    """The canonical id of the policy a check's `_policy` names, or None when
+    it names none. A value that is not a UUID names no policy."""
+    try:
+        return str(uuid.UUID(str(check.get("_policy"))))
+    except ValueError:
+        return None
+
+
+_POLICY_REF_PREFIX_CHARS = 8
+
+
+def guardrail_policy_ref(check):
+    """How a log or a message names the policy a check's `_policy` names: its
+    canonical id. A string that is not a UUID is named by its first 8
+    characters and its length, any other value by its type, so a value
+    pasted there by mistake never reaches a log whole."""
+    pid = guardrail_policy_id(check)
+    if pid is not None:
+        return pid
+    value = check.get("_policy")
+    if isinstance(value, str):
+        return f"{value[:_POLICY_REF_PREFIX_CHARS]}... ({len(value)} chars)"
+    return f"<{type(value).__name__}>"
+
+
+def org_guardrail_policies(org_id, policy_ids):
+    """The org's own live guardrail policies among `policy_ids`.
+
+    A policy is read only when it is one of the pushed org's own live
+    policies; with no org, none is.
     """
     from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
+
+    if org_id is None or not policy_ids:
+        return AgentccGuardrailPolicy.no_workspace_objects.none()
+    return AgentccGuardrailPolicy.no_workspace_objects.filter(
+        id__in=policy_ids, organization_id=org_id, deleted=False
+    )
+
+
+def _inject_guardrail_credentials(checks, org_id):
+    """
+    Decrypt and inject real credentials into guardrail checks, replacing
+    "__encrypted__" sentinel values with actual secrets from the
+    encrypted_check_configs blob of the org's own policy that the check names.
+
+    A `_policy` that is not one of `org_id`'s live policies (another org's, a
+    deleted or unknown one, or not a UUID at all) is never loaded: its check
+    gets no credential, and the log names only the policy id. A check without
+    `_policy` is left as it is.
+    """
     from integrations.services.credentials import CredentialManager
 
     ENCRYPTED_SENTINEL = "__encrypted__"
 
-    # Collect unique policy IDs from merged checks metadata
-    policy_ids = set()
-    for check in checks if isinstance(checks, list) else checks.values():
-        pid = check.get("_policy") if isinstance(check, dict) else None
-        if pid:
-            policy_ids.add(pid)
-
-    if not policy_ids:
+    items = [
+        (name, check)
+        for name, check in guardrail_check_items(checks)
+        if check.get("_policy")
+    ]
+    if not items:
         return
 
-    # Bulk-load policies and decrypt their credential blobs
-    policies = AgentccGuardrailPolicy.no_workspace_objects.filter(
-        id__in=policy_ids, deleted=False
-    ).only("id", "encrypted_check_configs")
+    # Bulk-load the org's own policies and decrypt their credential blobs
+    policy_ids = {pid for _, check in items if (pid := guardrail_policy_id(check))}
+    policies = list(
+        org_guardrail_policies(org_id, policy_ids).only("id", "encrypted_check_configs")
+    )
     decrypted_map = {}  # {policy_id: {check_name: {key: value}}}
     for policy in policies:
         if policy.encrypted_check_configs:
@@ -163,20 +219,24 @@ def _inject_guardrail_credentials(checks):
                     "guardrail_credential_decrypt_failed",
                     policy_id=str(policy.id),
                 )
+    for pid in sorted(policy_ids - {str(policy.id) for policy in policies}):
+        logger.warning("guardrail_policy_not_in_org", policy_id=pid)
+    not_ids = {
+        guardrail_policy_ref(check)
+        for _, check in items
+        if guardrail_policy_id(check) is None
+    }
+    for ref in sorted(not_ids):
+        logger.warning(
+            "guardrail_policy_not_in_org", policy_id=ref, reason="not_a_uuid"
+        )
 
     # Inject real credentials into each check's config
-    if isinstance(checks, list):
-        items = [(check.get("name"), check) for check in checks]
-    else:
-        items = [(name, check) for name, check in checks.items()]
     for check_name, check in items:
-        if not isinstance(check, dict):
-            continue
-        pid = check.get("_policy")
         cfg = check.get("config")
-        if not pid or not check_name or not isinstance(cfg, dict):
+        if not check_name or not isinstance(cfg, dict):
             continue
-        policy_secrets = decrypted_map.get(pid, {})
+        policy_secrets = decrypted_map.get(guardrail_policy_id(check), {})
         check_secrets = policy_secrets.get(check_name, {})
         for key, value in list(cfg.items()):
             if value == ENCRYPTED_SENTINEL:
@@ -210,7 +270,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     # Checks as list (from guardrail_sync — merged policies)
     if isinstance(raw_checks, list) and raw_checks:
         # Inject decrypted guardrail credentials (replaces __encrypted__ sentinels)
-        _inject_guardrail_credentials(raw_checks)
+        _inject_guardrail_credentials(raw_checks, org_id)
 
         checks = {}
         for rule in raw_checks:
@@ -242,7 +302,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     # Checks as dict (from frontend saves via OrgConfig)
     if isinstance(raw_checks, dict) and raw_checks:
         # Inject decrypted guardrail credentials (replaces __encrypted__ sentinels)
-        _inject_guardrail_credentials(raw_checks)
+        _inject_guardrail_credentials(raw_checks, org_id)
 
         mapped = {}
         for name, cfg in raw_checks.items():
@@ -262,10 +322,10 @@ def _transform_guardrails(guardrails_data, org_id=None):
 
     # Convert rules array → checks map
     if not isinstance(rules, list) or not rules:
-        return guardrails_data
+        return _section_without_checks(guardrails_data)
 
     # Inject decrypted guardrail credentials before transformation
-    _inject_guardrail_credentials(rules)
+    _inject_guardrail_credentials(rules, org_id)
 
     checks = {}
     for rule in rules:
@@ -296,6 +356,45 @@ def _transform_guardrails(guardrails_data, org_id=None):
     if guardrails_data.get("timeout_ms"):
         result["timeout_ms"] = guardrails_data["timeout_ms"]
     return result
+
+
+# The keys a stored section may hold that the gateway contract does not take,
+# when the section holds no check: an "enabled" flag next to an empty checks
+# list (as a stored row may hold) and an emptied rules list (the rules
+# editor's save once its last rule is deleted).
+_EMPTY_SECTION_EXTRA_KEYS = ("enabled", "rules")
+
+
+def _section_without_checks(guardrails_data):
+    """The gateway section for a stored section that holds no check: no rule
+    in its rules list and no check in its checks list or map.
+
+    Such a section is sent as an empty checks map beside its section-level
+    settings, which the contract accepts and the gateway reads as "no org
+    check", so the gateway stops running the checks it had. A section with a
+    key the contract would refuse (an "enabled" flag, an emptied rules list,
+    an empty checks list) is sent that way too, so the org config is accepted
+    and every save and the bulk sync go through. A section
+    that is already valid is sent as stored, and one whose rules or checks
+    are not a list or a map is left for the contract to refuse.
+    """
+    rules = guardrails_data.get("rules")
+    checks = guardrails_data.get("checks")
+    if rules is not None and rules != []:
+        return guardrails_data
+    if checks is not None and not (isinstance(checks, (list, dict)) and not checks):
+        return guardrails_data
+    if not any(key in guardrails_data for key in _EMPTY_SECTION_EXTRA_KEYS) and (
+        not isinstance(checks, list)
+    ):
+        return guardrails_data
+    section = {
+        key: value
+        for key, value in guardrails_data.items()
+        if key not in _EMPTY_SECTION_EXTRA_KEYS
+    }
+    section["checks"] = {}
+    return section
 
 
 def _normalize_url(url):
@@ -635,8 +734,15 @@ def _transform_budgets(budgets):
     return result
 
 
-def _build_payload(org_id, config):
-    """Build the config payload for the gateway, assembling providers from credentials."""
+def _build_payload(org_id, config, *, decrypt_secrets=True):
+    """Build the config payload for the gateway, assembling providers from credentials.
+
+    The org config's infrastructure secrets (cache, a2a, audit, alerting and
+    MCP; ``org_config_secrets``) are stored encrypted and decrypted here, so
+    the gateway gets the real values. A save-time validation
+    (``decrypt_secrets=False``) never decrypts: the ``enc::`` ciphertext stays
+    in place for the contract to accept as a plain string.
+    """
     payload = {
         "providers": _assemble_providers(org_id),
         "guardrails": _transform_guardrails(config.guardrails, org_id=org_id),
@@ -655,26 +761,58 @@ def _build_payload(org_id, config):
         "model_database": config.model_database,
         "model_map": config.model_map,
     }
-    return GatewayOrgConfig.model_validate(payload).model_dump(
+    dumped = GatewayOrgConfig.model_validate(payload).model_dump(
         by_alias=True,
         exclude_none=True,
     )
+    if decrypt_secrets:
+        from agentcc.services.org_config_secrets import decrypt_payload_secrets
+
+        decrypt_payload_secrets(dumped, org_id=org_id)
+    return dumped
 
 
 class OrgConfigRejected(ValueError):
     """The gateway contract does not accept an org config."""
 
 
-def validate_org_config(config):
+def validate_org_config(config, check_guardrails=True, guardrails_before=None):
     """
     Raise OrgConfigRejected if the gateway cannot accept `config`.
 
     Call it before a config version becomes active. The gateway pulls every
     active config through the same contract, so a version the contract rejects
     stops that org's sync until someone repairs the row.
+
+    With `check_guardrails` (a save that changes guardrails, and activating a
+    version), it also refuses a "${" in a guardrail setting
+    (validators.find_guardrail_env_reference) in every check the push switches
+    on: first as stored, where the path names the field as the org wrote it,
+    then in the built payload with every policy credential in place. A
+    switched-off check is not counted
+    there: the gateway never builds it, and refusing it would stop an org from
+    activating a version or saving guardrails until it fixed a check that
+    runs nowhere. With `guardrails_before` (the section a gateway save
+    replaces), a check the save adds or changes is refused whether it is on or
+    off, as a save's own settings are on every other path. A save that leaves
+    guardrails as they are (a budget, an MCP server, routing) passes False:
+    such an org's stored "${" is not what it is changing, the gateway already
+    refuses that one check, and refusing the save would lock the org out of
+    everything else. It reads the payload rather than running inside
+    _build_payload, so the bulk config endpoint still serves every org.
+
+    A guardrail check whose name is not a string is refused first, naming
+    the field.
     """
+    bad_name = nonstring_check_name_path(config.guardrails)
+    if bad_name:
+        raise OrgConfigRejected(
+            f"The gateway cannot accept this config. {bad_name} must be a string."
+        )
     try:
-        _build_payload(str(config.organization_id), config)
+        payload = _build_payload(
+            str(config.organization_id), config, decrypt_secrets=False
+        )
     except ValidationError as e:
         fields = "; ".join(
             f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
@@ -683,6 +821,27 @@ def validate_org_config(config):
         raise OrgConfigRejected(
             f"The gateway cannot accept this config. {fields}"
         ) from e
+
+    if not check_guardrails:
+        return
+    found = (
+        find_guardrail_env_reference(
+            config.guardrails, "guardrails", switched_on_only=True
+        )
+        or find_guardrail_env_reference(
+            payload.get("guardrails"), "guardrails", switched_on_only=True
+        )
+        or (
+            guardrails_before is not None
+            and find_changed_guardrail_env_reference(
+                config.guardrails, guardrails_before, "guardrails"
+            )
+        )
+    )
+    if found:
+        raise OrgConfigRejected(
+            f"The gateway cannot accept this config. {env_reference_error(found)}"
+        )
 
 
 def push_org_config(org_id, config):

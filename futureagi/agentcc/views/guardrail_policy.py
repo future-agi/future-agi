@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
+from agentcc.permissions import GatewayAdminActionsMixin
 from agentcc.serializers.guardrail_policy import AgentccGuardrailPolicySerializer
 from agentcc.services.guardrail_sync import sync_guardrail_policies
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
@@ -17,10 +18,20 @@ _GATEWAY_SYNC_WARNING = (
 )
 
 
-class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
-    """CRUD for reusable guardrail policies. Org-scoped."""
+class AgentccGuardrailPolicyViewSet(
+    GatewayAdminActionsMixin, BaseModelViewSetMixinWithUserOrg, ModelViewSet
+):
+    """CRUD for reusable guardrail policies. Org-scoped.
+
+    A policy's checks are merged into the org config and pushed to the
+    gateway (``sync_guardrail_policies``); every write is an org Owner's or
+    Admin's, and every member can read.
+    """
 
     permission_classes = [IsAuthenticated]
+    gateway_admin_actions = frozenset(
+        {"create", "update", "partial_update", "destroy", "apply", "sync"}
+    )
     serializer_class = AgentccGuardrailPolicySerializer
     queryset = AgentccGuardrailPolicy.no_workspace_objects.all()
     _gm = GeneralMethods()
@@ -146,9 +157,7 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
                         deleted=False,
                     ).values_list("id", flat=True)
                 )
-                invalid_keys = set(str(k) for k in key_ids) - set(
-                    str(k) for k in valid_keys
-                )
+                invalid_keys = {str(k) for k in key_ids} - {str(k) for k in valid_keys}
                 if invalid_keys:
                     return self._gm.bad_request(
                         f"Invalid or unauthorized key IDs: {list(invalid_keys)}"
@@ -169,9 +178,9 @@ class AgentccGuardrailPolicyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewS
                         deleted=False,
                     ).values_list("id", flat=True)
                 )
-                invalid_projects = set(str(p) for p in project_ids) - set(
+                invalid_projects = {str(p) for p in project_ids} - {
                     str(p) for p in valid_projects
-                )
+                }
                 if invalid_projects:
                     return self._gm.bad_request(
                         f"Invalid or unauthorized project IDs: {list(invalid_projects)}"

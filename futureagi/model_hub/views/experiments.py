@@ -1914,6 +1914,9 @@ class ExperimentListAPIView(BaseModelViewSetMixin, generics.ListAPIView):
     _gm = GeneralMethods()
     serializer_class = ExperimentListSerializer
     queryset = ExperimentsTable.objects.all()
+    # An experiment has no organization, workspace or project of its own;
+    # its dataset's organization owns it.
+    organization_lookup = "dataset__organization"
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_class = ExperimentFilter
@@ -1922,8 +1925,12 @@ class ExperimentListAPIView(BaseModelViewSetMixin, generics.ListAPIView):
     search_fields = ["name", "status"]
 
     def get_queryset(self):
-        # Get base queryset with automatic filtering from mixin
-        queryset = super().get_queryset()
+        # The mixin keeps the rows in the request's org (organization_lookup);
+        # the model has no workspace of its own, so narrow to the request's
+        # workspace through the dataset, as the other experiment views do.
+        queryset = (
+            super().get_queryset().filter(_request_workspace_filter(self.request))
+        )
         dataset_id = self.request.query_params.get("dataset_id")
         if dataset_id:
             queryset = queryset.filter(dataset_id=dataset_id)

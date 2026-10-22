@@ -45,10 +45,12 @@ def sync_guardrail_policies(org, user=None):
                     "_scope": policy.scope,
                 }
 
-    merged_guardrails = {
-        "enabled": len(merged_checks) > 0,
-        "checks": list(merged_checks.values()),
-    }
+    # With no check left in any active global policy, the section is an empty
+    # checks list, which the push sends as an empty section, so the gateway
+    # stops running the checks it had.
+    merged_guardrails = {"checks": list(merged_checks.values())}
+    if merged_checks:
+        merged_guardrails = {"enabled": True, **merged_guardrails}
 
     with transaction.atomic():
         # Get current active org config with lock

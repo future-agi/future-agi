@@ -5,9 +5,9 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-from integrations.services.credentials import CredentialManager
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.provider_credential import AgentccProviderCredential
+from agentcc.permissions import GatewayAdminActionsMixin
 from agentcc.serializers.provider_credential import (
     AgentccProviderCredentialCreateSerializer,
     AgentccProviderCredentialSerializer,
@@ -22,6 +22,7 @@ from agentcc.services.url_safety import (
     ensure_public_http_url,
     private_provider_urls_allowed,
 )
+from integrations.services.credentials import CredentialManager
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -53,8 +54,15 @@ def _join_api_endpoint(base_url, api_path_prefix, path):
     return base + prefix + path
 
 
-class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
+class AgentccProviderCredentialViewSet(
+    GatewayAdminActionsMixin, BaseModelViewSetMixinWithUserOrg, ModelViewSet
+):
     permission_classes = [IsAuthenticated]
+    # Writes push the org config and are an org Owner's or Admin's.
+    # fetch_models reads through the saved key and is open to every member.
+    gateway_admin_actions = frozenset(
+        {"create", "update", "partial_update", "destroy", "rotate"}
+    )
     serializer_class = AgentccProviderCredentialSerializer
     queryset = AgentccProviderCredential.no_workspace_objects.all()
     _gm = GeneralMethods()
@@ -391,7 +399,10 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             data = resp.json()
             return sorted(m["id"] for m in data.get("data", []))
 
-        if name in ("google", "gemini", "google_gemini") or api_format in ("gemini", "google"):
+        if name in ("google", "gemini", "google_gemini") or api_format in (
+            "gemini",
+            "google",
+        ):
             url = "https://generativelanguage.googleapis.com/v1beta/models"
             resp = http.get(
                 url,
