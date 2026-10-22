@@ -333,10 +333,22 @@ func newCheckpoint(c Config, attempted int64, ledger *outcomeLedger, tl *timelin
 		cp.Chunks = append(cp.Chunks, spec)
 	}
 	from, to := tl.span()
-	for at := from; at.Before(to); at = at.Add(time.Hour) {
-		cp.Windows = append(cp.Windows, timeWindow{Lo: at, Hi: minTime(at.Add(time.Hour), to)})
-	}
+	cp.Windows = hourWindows(from, to)
 	return cp
+}
+
+// hourWindows tiles [from, to) with windows that each lie inside one UTC clock
+// hour. The spans primary key contains toStartOfHour(start_time), so a window
+// inside one hour reads one hour of granules; a window crossing an hour
+// boundary would read two.
+func hourWindows(from, to time.Time) []timeWindow {
+	var out []timeWindow
+	for at := from.UTC(); at.Before(to); {
+		next := minTime(at.Truncate(time.Hour).Add(time.Hour), to)
+		out = append(out, timeWindow{Lo: at, Hi: next})
+		at = next
+	}
+	return out
 }
 
 func minTime(a, b time.Time) time.Time {

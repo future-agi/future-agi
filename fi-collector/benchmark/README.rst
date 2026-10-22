@@ -401,7 +401,8 @@ own client) and checks EVERY attempted span by BOTH deterministic IDs:
   export request, ``uniqExact`` of valid sequence numbers and the row count; rows
   whose IDs do not match their sequence (or lie beyond the attempted range) are
   counted as ``unexpected_rows``. Excess rows are ``duplicate_expected_rows_visible``.
-* **Run rows outside the namespace.** One query per hour of the run counts
+* **Run rows outside the namespace.** One query per UTC clock hour the run
+  touches (so each reads a single ``toStartOfHour`` key bucket) counts
   run-tagged rows whose trace ID is outside this run's namespace (included in
   ``unexpected_rows`` and reported as ``run_rows_outside_trace_namespace``). Rows
   tagged with the run but timestamped outside the run window are not scanned.

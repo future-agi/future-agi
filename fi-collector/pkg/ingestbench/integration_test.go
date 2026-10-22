@@ -713,6 +713,28 @@ func TestDirectProbesWithoutACandidateAreReportedAsSkipped(t *testing.T) {
 	}
 }
 
+// B4: the namespace scan reads each toStartOfHour key bucket once: windows tile
+// the run window without gaps or overlap and none crosses a clock hour.
+func TestNamespaceWindowsTileTheRunInsideClockHours(t *testing.T) {
+	from := time.Date(2026, 10, 22, 9, 58, 30, 0, time.UTC)
+	for _, to := range []time.Time{from.Add(time.Minute), from.Add(90 * time.Second), from.Add(25 * time.Hour), time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)} {
+		windows := hourWindows(from, to)
+		at := from
+		for _, w := range windows {
+			if !w.Lo.Equal(at) || !w.Hi.After(w.Lo) || w.Hi.After(to) || !w.Lo.Truncate(time.Hour).Equal(w.Hi.Add(-time.Nanosecond).Truncate(time.Hour)) {
+				t.Fatalf("to %s: bad window %+v after %s", to, w, at)
+			}
+			at = w.Hi
+		}
+		if !at.Equal(to) {
+			t.Fatalf("to %s: windows end at %s", to, at)
+		}
+	}
+	if n := len(hourWindows(from, from.Add(25*time.Hour))); n != 26 {
+		t.Fatalf("25 hours from :58 touch 26 clock hours, got %d windows", n)
+	}
+}
+
 // B6: the preflight row count survives into the final verification.
 func TestPreexistingRunRowsSurviveVerification(t *testing.T) {
 	v := cannedVerifier(t, func(w http.ResponseWriter, r *http.Request) {
