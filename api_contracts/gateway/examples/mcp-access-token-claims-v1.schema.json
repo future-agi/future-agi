@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/mcp-access-token-claims-v1.schema.json",
+  "title": "mcp-access-token-claims-v1",
+  "description": "The claims of two ES256 tokens, each with a kid: an MCP access token for a virtual server (typ futureagi-mcp-access, exp - iat at most 900 s) and a callback token for /v1/responses MCP tools (typ futureagi-mcp-callback, exp - iat at most 600 s). Runtime token claims are runtime-token-claims-v1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["access", "callback"],
+  "properties": {
+    "access": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["header", "claims"],
+      "properties": {
+        "header": {
+          "$ref": "#/$defs/Header"
+        },
+        "claims": {
+          "$ref": "#/$defs/AccessClaims"
+        }
+      }
+    },
+    "callback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["header", "claims"],
+      "properties": {
+        "header": {
+          "$ref": "#/$defs/Header"
+        },
+        "claims": {
+          "$ref": "#/$defs/CallbackClaims"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "Header": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alg", "kid"],
+      "properties": {
+        "alg": {
+          "const": "ES256"
+        },
+        "kid": {
+          "type": "string",
+          "minLength": 1
+        },
+        "typ": {
+          "type": "string"
+        }
+      }
+    },
+    "AccessClaims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "typ",
+        "iss",
+        "aud",
+        "sub",
+        "org_id",
+        "client_id",
+        "scope",
+        "iat",
+        "nbf",
+        "exp",
+        "jti"
+      ],
+      "properties": {
+        "typ": {
+          "const": "futureagi-mcp-access"
+        },
+        "iss": {
+          "type": "string",
+          "minLength": 1
+        },
+        "aud": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The virtual server's canonical URI (RFC 8707)."
+        },
+        "sub": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The user id."
+        },
+        "org_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "type": "string",
+          "pattern": "^mcp:(tools|resources|prompts)( mcp:(tools|resources|prompts))*$"
+        },
+        "iat": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "nbf": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exp": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "jti": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "CallbackClaims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "typ",
+        "iss",
+        "aud",
+        "key_id",
+        "run_id",
+        "generation_id",
+        "depth",
+        "allowed_tools",
+        "max_calls",
+        "iat",
+        "exp",
+        "jti"
+      ],
+      "properties": {
+        "typ": {
+          "const": "futureagi-mcp-callback"
+        },
+        "iss": {
+          "type": "string",
+          "minLength": 1,
+          "description": "mcp.oauth.callback_issuer."
+        },
+        "aud": {
+          "type": "string",
+          "minLength": 1
+        },
+        "org_id": {
+          "type": "string"
+        },
+        "key_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "allowed_tools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "The tools the token allows."
+        },
+        "max_calls": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The most tool calls the token allows."
+        },
+        "iat": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "nbf": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exp": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "jti": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

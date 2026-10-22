@@ -1,0 +1,227 @@
+{
+  "description": "The routes whose request a check on the request reads (an organization's check that runs before the provider, or a rule in the gateway's config file at the pre stage), and what it reads on each (release notes C32 and C35). On every route listed in read, a request a check blocks is refused before the provider gets it; a check's rewrite (pii-detection's mask, redact or hash) reaches the provider or the request is refused (remediation_unavailable); and where unread names what the checks cannot read, a check that would block or rewrite the request refuses it before the provider (request_unavailable), whatever its text. A route with a note is served only as the note says. no_model_text lists the POST routes that send no text a model reads to a provider (or no request at all), and not_served the APIs this gateway has no route for: neither is read. Two tests read this file, so neither the console nor the gateway can drift from it unnoticed: the gateway's (agentcc-gateway/internal/server/guardrail_request_routes_contract_test.go) checks that every POST route the gateway registers under /v1, /v1beta and /a2a, and the batch API, is in read (by one of its patterns) or no_model_text, that each route in read is one its request-check tests send a request a check blocks to, and that no route in not_served is registered; the console's (frontend/src/sections/gateway/guardrails/requestRoutes.test.jsx) checks that the Guardrails page lists exactly these routes.",
+  "read": [
+    {
+      "route": "POST /v1/chat/completions",
+      "patterns": ["POST /v1/chat/completions"],
+      "reads": "Every message's text, tool calls and tools"
+    },
+    {
+      "route": "POST /v1/completions",
+      "patterns": ["POST /v1/completions"],
+      "reads": "The prompt, or each prompt of a list",
+      "unread": "A prompt of token ids"
+    },
+    {
+      "route": "POST /v1/messages",
+      "patterns": ["POST /v1/messages"],
+      "reads": "The system prompt, every turn's text, documents' and search results' text, tool results, tool calls and tools"
+    },
+    {
+      "route": "POST /v1/messages/count_tokens",
+      "patterns": ["POST /v1/messages/count_tokens"],
+      "reads": "The prompt whose tokens are counted, as on /v1/messages"
+    },
+    {
+      "route": "POST /v1beta/models/{model}:generateContent",
+      "patterns": [
+        "POST /v1beta/models/{model_action}",
+        "POST /v1beta/models/{provider}/{model_action}"
+      ],
+      "reads": "The system instruction, every content's text, function responses and code execution results, function calls and tools"
+    },
+    {
+      "route": "POST /v1beta/models/{model}:streamGenerateContent",
+      "patterns": [
+        "POST /v1beta/models/{model_action}",
+        "POST /v1beta/models/{provider}/{model_action}"
+      ],
+      "reads": "As generateContent"
+    },
+    {
+      "route": "POST /v1beta/models/{model}:countTokens",
+      "patterns": [
+        "POST /v1beta/models/{model_action}",
+        "POST /v1beta/models/{provider}/{model_action}"
+      ],
+      "reads": "The request whose tokens are counted, as generateContent"
+    },
+    {
+      "route": "POST /v1beta/models/{model}:embedContent",
+      "patterns": [
+        "POST /v1beta/models/{model_action}",
+        "POST /v1beta/models/{provider}/{model_action}"
+      ],
+      "reads": "The content's text parts and the title"
+    },
+    {
+      "route": "POST /v1/responses",
+      "patterns": ["POST /v1/responses"],
+      "reads": "The instructions, the input's text, tool outputs and a stored prompt's variables, streamed, not streamed or in the background"
+    },
+    {
+      "route": "POST /v1/embeddings",
+      "patterns": ["POST /v1/embeddings"],
+      "reads": "The input: a string, or each string of a list",
+      "unread": "Token ids"
+    },
+    {
+      "route": "POST /v1/images/generations",
+      "patterns": ["POST /v1/images/generations"],
+      "reads": "The prompt"
+    },
+    {
+      "route": "POST /v1/audio/speech",
+      "patterns": ["POST /v1/audio/speech"],
+      "reads": "The input text"
+    },
+    {
+      "route": "POST /v1/audio/speech/stream",
+      "patterns": ["POST /v1/audio/speech/stream"],
+      "reads": "The input text"
+    },
+    {
+      "route": "POST /v1/audio/transcriptions",
+      "patterns": ["POST /v1/audio/transcriptions"],
+      "reads": "The prompt",
+      "unread": "The audio file"
+    },
+    {
+      "route": "POST /v1/audio/translations",
+      "patterns": ["POST /v1/audio/translations"],
+      "reads": "The prompt",
+      "unread": "The audio file"
+    },
+    {
+      "route": "POST /v1/rerank",
+      "patterns": ["POST /v1/rerank"],
+      "reads": "The query and each document"
+    },
+    {
+      "route": "POST /v1/search",
+      "patterns": ["POST /v1/search"],
+      "reads": "The query: a string, or each string of a list",
+      "note": "No provider in this release serves search: the route answers 501."
+    },
+    {
+      "route": "POST /v1/ocr",
+      "patterns": ["POST /v1/ocr"],
+      "reads": "Nothing: the input is a document",
+      "unread": "The document (a document or image URL, inline data, or a file at the provider)"
+    },
+    {
+      "route": "POST /v1/videos",
+      "patterns": ["POST /v1/videos"],
+      "reads": "The prompt, before the job is stored",
+      "note": "No provider in this release serves video: the route answers 501."
+    },
+    {
+      "route": "POST /v1/assistants",
+      "patterns": ["POST /v1/assistants"],
+      "reads": "The instructions and the tools"
+    },
+    {
+      "route": "POST /v1/assistants/{assistant_id}",
+      "patterns": ["POST /v1/assistants/{assistant_id}"],
+      "reads": "The instructions and the tools"
+    },
+    {
+      "route": "POST /v1/threads",
+      "patterns": ["POST /v1/threads"],
+      "reads": "Each message's text"
+    },
+    {
+      "route": "POST /v1/threads/{thread_id}/messages",
+      "patterns": ["POST /v1/threads/{thread_id}/messages"],
+      "reads": "The message's text"
+    },
+    {
+      "route": "POST /v1/threads/{thread_id}/runs",
+      "patterns": ["POST /v1/threads/{thread_id}/runs"],
+      "reads": "The instructions, additional instructions, additional messages' text and the tools"
+    },
+    {
+      "route": "POST /v1/threads/runs",
+      "patterns": ["POST /v1/threads/runs"],
+      "reads": "The thread's messages' text, the instructions and the tools"
+    },
+    {
+      "route": "POST /v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs",
+      "patterns": [
+        "POST /v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs"
+      ],
+      "reads": "Each tool output"
+    },
+    {
+      "route": "POST /v1/vector_stores/{vector_store_id}/search",
+      "patterns": ["POST /v1/vector_stores/{vector_store_id}/search"],
+      "reads": "The query: a string, or each string of a list"
+    },
+    {
+      "route": "POST /v1/a2a",
+      "patterns": ["POST /v1/a2a", "POST /a2a"],
+      "reads": "Each task's message, as a chat request (also at /a2a)"
+    },
+    {
+      "route": "POST /-/batches",
+      "patterns": ["POST /-/batches"],
+      "reads": "Each item, as a chat request run as the batch key's organization"
+    }
+  ],
+  "no_model_text": [
+    {
+      "pattern": "POST /v1/files",
+      "why": "Stored by the gateway; no provider gets it"
+    },
+    {
+      "pattern": "POST /v1/count_tokens",
+      "why": "Counted by the gateway; no provider gets it"
+    },
+    {
+      "pattern": "POST /v1/threads/{thread_id}",
+      "why": "A thread's metadata and tool resources"
+    },
+    {
+      "pattern": "POST /v1/threads/{thread_id}/messages/{message_id}",
+      "why": "A message's metadata"
+    },
+    {
+      "pattern": "POST /v1/threads/{thread_id}/runs/{run_id}",
+      "why": "A run's metadata"
+    },
+    {
+      "pattern": "POST /v1/threads/{thread_id}/runs/{run_id}/cancel",
+      "why": "No body"
+    },
+    {
+      "pattern": "POST /v1/vector_stores",
+      "why": "A store's name, files by id and metadata"
+    },
+    {
+      "pattern": "POST /v1/vector_stores/{vector_store_id}",
+      "why": "A store's name, expiry and metadata"
+    },
+    {
+      "pattern": "POST /v1/vector_stores/{vector_store_id}/files",
+      "why": "A file by id"
+    },
+    {
+      "pattern": "POST /v1/vector_stores/{vector_store_id}/file_batches",
+      "why": "Files by id"
+    },
+    { "pattern": "POST /v1/scheduled", "why": "Refused on this release (501)" },
+    {
+      "pattern": "POST /v1/feedback",
+      "why": "Feedback on a request, kept by the gateway"
+    },
+    {
+      "pattern": "POST /v1/capabilities/echo",
+      "why": "The test capability (404 unless the operator configures it): its input goes to a tool vendor, not a model"
+    }
+  ],
+  "not_served": [
+    { "route": "POST /v1/moderations" },
+    { "route": "POST /v1/images/edits" },
+    { "route": "POST /v1/images/variations" }
+  ]
+}

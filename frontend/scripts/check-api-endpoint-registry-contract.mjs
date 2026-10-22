@@ -28,8 +28,11 @@ const endpointRegistryPath = path.join(
 );
 const MAX_UNMARKED_UNCONTRACTED_REGISTRY_PATHS = 0;
 const MAX_RAW_REGISTRY_PATHS = 0;
-const MAX_CONTRACT_EXCEPTION_REGISTRY_PATHS = 0;
-const MAX_CONTRACT_EXCEPTION_SURFACE_PATHS = 0;
+// The gateway console registers 30 endpoints ahead of their Django views (see
+// api-contract-exceptions.js). Lower both caps back to 0 when the contracts
+// are regenerated and those endpoints move to apiPath().
+const MAX_CONTRACT_EXCEPTION_REGISTRY_PATHS = 30;
+const MAX_CONTRACT_EXCEPTION_SURFACE_PATHS = 30;
 const MANAGEMENT_API_GROUPS = Object.keys(API_SURFACE_CONTRACT.groups)
   .filter((groupName) => groupName !== "root")
   .sort();

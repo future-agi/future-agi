@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/managed-upstream-keys-push-v1.schema.json",
+  "title": "managed-upstream-keys-push-v1",
+  "description": "The value of managed_models.upstream_keys in a pushed org config, keyed by managed provider id. It exists only in the push payload: never stored in AgentccOrgConfig, never returned by a read, never in config history. A save that contains it is 400 secret_in_config. The gateway uses it only in managed.upstream_key_mode per_org or per_org_with_shared_fallback.",
+  "type": "object",
+  "propertyNames": { "minLength": 1 },
+  "additionalProperties": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["api_key", "key_hash"],
+    "properties": {
+      "api_key": { "type": "string", "minLength": 1 },
+      "key_hash": { "type": "string", "minLength": 1 },
+      "label": { "type": "string" }
+    }
+  }
+}

@@ -1,0 +1,239 @@
+{
+  "meta": {
+    "version": 12,
+    "config_id": "6f1d2c3b-8a9e-4f70-b1c2-d3e4f5a6b7c8",
+    "pushed_at": "2026-10-15T09:00:00.123456+00:00"
+  },
+  "providers": {
+    "openai": {
+      "api_key": "test-openai-key-not-a-real-secret",
+      "base_url": "https://api.openai.com/v1",
+      "api_format": "openai",
+      "models": ["gpt-6-sol"],
+      "enabled": true,
+      "zdr_attested": true,
+      "data_region": "us"
+    }
+  },
+  "guardrails": {
+    "pipeline_mode": "parallel",
+    "checks": {
+      "secret-detection": {
+        "enabled": true,
+        "action": "block",
+        "confidence_threshold": 0.8
+      }
+    },
+    "tool_calls": {
+      "enabled": true,
+      "checks": ["secret-detection"],
+      "on_block": "strip",
+      "apply_to": "managed",
+      "max_args_bytes": 32768,
+      "stop_run_on_block": true
+    }
+  },
+  "routing": {
+    "strategy": "cost_optimized",
+    "fastest": {
+      "enabled": true,
+      "hedge_after_ms": 1500,
+      "max_hedges": 2,
+      "allow_managed": true
+    },
+    "auto": {
+      "preference": "latency",
+      "candidates": ["anthropic/claude-sonnet-5.5", "openai/gpt-6-sol"],
+      "max_output_per_mtok": 20,
+      "step_profiles": {
+        "plan": {
+          "min_tier": "complex",
+          "max_tier": "complex",
+          "prefer": "quality"
+        },
+        "tool": {
+          "min_tier": "simple",
+          "max_tier": "standard",
+          "require": ["tools"],
+          "prefer": "cost"
+        }
+      },
+      "affinity": { "enabled": false, "ttl_seconds": 600 },
+      "outcome_feedback": {
+        "enabled": true,
+        "window_seconds": 3600,
+        "min_samples": 50,
+        "penalty_weight": 0.5
+      },
+      "deadline_latency_fraction": 0.4,
+      "latency_target_ms": 3000,
+      "quality_priors": {
+        "anthropic/claude-sonnet-5.5": 0.85,
+        "openai/gpt-6-sol": 0.8
+      },
+      "exclude_states": ["deprecated"],
+      "selector": {
+        "enabled": true,
+        "mode": "enforce",
+        "model": "openai/gpt-6-mini",
+        "timeout_ms": 600,
+        "max_cost_usd": 0.001,
+        "daily_budget_usd": 2,
+        "ambiguity_threshold": 0.1,
+        "max_candidates": 5
+      }
+    },
+    "data_policy": {
+      "zdr": true,
+      "data_collection": "deny",
+      "allowed_regions": ["us", "eu"],
+      "block_preview_in_envs": ["production"]
+    },
+    "agents": {
+      "default_model": "omega-default",
+      "budget_scope_ttl_seconds": 7200,
+      "step_presets": { "act": "fast-act", "verify": "careful" },
+      "always_emit_metadata": false,
+      "unpriced_under_cap": "allow",
+      "framework_aliases": false,
+      "price_ceiling": {
+        "prompt_usd_per_mtok": 3.15,
+        "completion_usd_per_mtok": 15.75,
+        "request_usd": 0
+      },
+      "envelopes": {
+        "defaults": {
+          "max_usd": 5,
+          "max_uncached_input_tokens_per_hour": 2000000,
+          "max_calls": 400,
+          "max_wall_ms": 1800000,
+          "max_concurrent_children": 10
+        },
+        "on_breach": "downgrade",
+        "soft_threshold": 0.75,
+        "allow_downgrade": true,
+        "downgrade_model": "openai/gpt-6-mini",
+        "loop": { "action": "warn" }
+      }
+    },
+    "presets": {
+      "fast-act": {
+        "model": "openai/gpt-6-sol",
+        "models": ["openai/gpt-6-sol", "anthropic/claude-sonnet-5.5"],
+        "provider": {
+          "order": ["openai", "anthropic"],
+          "only": ["openai", "anthropic"],
+          "ignore": ["deepinfra"],
+          "allow_fallbacks": false,
+          "require_parameters": true,
+          "data_collection": "deny",
+          "zdr": true,
+          "quantizations": ["fp8"],
+          "sort": { "by": "price", "partition": "model" },
+          "max_price": {
+            "prompt": 5,
+            "completion": 20,
+            "request": 0,
+            "image": 0.01
+          },
+          "preferred_max_latency": 2.5,
+          "preferred_min_throughput": { "p50": 40, "p90": 20 }
+        },
+        "params": {
+          "temperature": 0.2,
+          "top_p": 0.9,
+          "max_tokens": 2048,
+          "reasoning_effort": "low"
+        }
+      },
+      "careful": {
+        "auto": { "preference": "quality" },
+        "provider": { "sort": "throughput" }
+      }
+    },
+    "idempotency": {
+      "enabled": true,
+      "ttl_seconds": 3600,
+      "accept_attempt_id": true
+    },
+    "prompt_caching": { "mode": "auto" },
+    "max_total_attempts": 4,
+    "retry_budget": { "max_retry_ratio": 0.1, "max_hedges_per_minute": 30 },
+    "rollout": {
+      "version": "v13",
+      "percent": 10,
+      "sticky_by": "session",
+      "started_at": "2026-10-15T08:00:00Z",
+      "routing": {
+        "strategy": "cost_optimized",
+        "auto": { "preference": "cost" },
+        "max_total_attempts": 3
+      },
+      "managed_models": { "enabled": true, "allow_free": false }
+    }
+  },
+  "rate_limiting": {
+    "enabled": true,
+    "per_key_rpm": 600,
+    "per_key_max_parallel": 8
+  },
+  "budgets": {
+    "enabled": true,
+    "keys": {
+      "key_7f3a": {
+        "limit": 50,
+        "period": "monthly",
+        "include_byok": false,
+        "alert_thresholds": [0.8, 1]
+      }
+    },
+    "fail_mode": "open",
+    "no_max_tokens": "clamp"
+  },
+  "privacy": {
+    "enabled": false,
+    "retention": {
+      "request_log_days": 30,
+      "attempt_days": 90,
+      "store_bodies": false
+    },
+    "content_mode": "none"
+  },
+  "managed_models": {
+    "enabled": true,
+    "allow_models": ["anthropic/*", "openai/gpt-6-*"],
+    "deny_models": ["openai/gpt-6-max"],
+    "allow_vendors": ["anthropic", "openai"],
+    "deny_vendors": ["deepseek"],
+    "fallback_to_managed": true,
+    "allow_free": false,
+    "hedging": true,
+    "allow_data_collection": true,
+    "upstream_keys": {
+      "openrouter": {
+        "api_key": "test-upstream-key-not-a-real-secret",
+        "key_hash": "kh_3b9e",
+        "label": "acme-prod"
+      }
+    },
+    "max_call_cost_usd": 0.5,
+    "default_max_tokens_estimate": 2048,
+    "spend_guard": {
+      "max_usd_per_minute": 2,
+      "max_usd_per_hour": 50,
+      "alert_usd_per_hour": 20,
+      "new_org_daily_cap_usd": 25,
+      "auto_pause": true
+    },
+    "topup": { "min_usd": 50 }
+  },
+  "identity": {
+    "require_human_sponsor": true,
+    "grants": { "max_ttl_days": 14 },
+    "idp": {
+      "issuer": "https://login.example.com",
+      "token_endpoint": "https://login.example.com/oauth2/v1/token",
+      "client_id": "agentcc-gateway"
+    }
+  }
+}

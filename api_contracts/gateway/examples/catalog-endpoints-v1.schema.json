@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/catalog-endpoints-v1.schema.json",
+  "title": "catalog-endpoints-v1",
+  "description": "A model and its endpoints, served by the admin GET /-/catalog/endpoints and the developer endpoints API. Prices are decimal strings in USD per token or per unit. upstream_fee_bps is admin-only: the developer API omits it, because fee and landed-cost data are never sent to customers.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data"],
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "architecture", "endpoints"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "architecture": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "modality": { "type": "string" },
+            "input_modalities": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "output_modalities": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "tokenizer": { "type": "string" },
+            "instruct_type": { "type": ["string", "null"] }
+          }
+        },
+        "endpoints": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Endpoint" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "Price": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" },
+    "NullableNumber": { "type": ["number", "null"], "minimum": 0 },
+    "Endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "provider_name",
+        "tag",
+        "context_length",
+        "pricing",
+        "supported_parameters",
+        "status",
+        "health_source",
+        "source"
+      ],
+      "properties": {
+        "name": { "type": "string" },
+        "provider_name": { "type": "string" },
+        "tag": { "type": "string" },
+        "quantization": { "type": ["string", "null"] },
+        "region": { "type": ["string", "null"] },
+        "context_length": { "type": "integer", "minimum": 0 },
+        "max_completion_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "pricing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["prompt", "completion"],
+          "properties": {
+            "prompt": { "$ref": "#/$defs/Price" },
+            "completion": { "$ref": "#/$defs/Price" },
+            "input_cache_read": { "$ref": "#/$defs/Price" },
+            "input_cache_write": { "$ref": "#/$defs/Price" },
+            "request": { "$ref": "#/$defs/Price" },
+            "image": { "$ref": "#/$defs/Price" },
+            "web_search": { "$ref": "#/$defs/Price" },
+            "internal_reasoning": { "$ref": "#/$defs/Price" }
+          }
+        },
+        "supported_parameters": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "status": { "type": "integer" },
+        "uptime_last_30m": { "$ref": "#/$defs/NullableNumber" },
+        "latency_last_30m": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "p50": { "$ref": "#/$defs/NullableNumber" },
+            "p90": { "$ref": "#/$defs/NullableNumber" }
+          }
+        },
+        "throughput_last_30m": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "p50": { "$ref": "#/$defs/NullableNumber" }
+          }
+        },
+        "zdr": { "type": ["boolean", "null"] },
+        "data_collection": {
+          "type": "string",
+          "enum": ["allow", "deny", "unknown"]
+        },
+        "health_source": { "type": "string", "enum": ["upstream", "gateway"] },
+        "source": {
+          "type": "string",
+          "enum": ["openrouter", "openai_compatible", "price_card"]
+        },
+        "upstream_fee_bps": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Admin-only (GET /-/catalog/endpoints). Never in the developer API."
+        }
+      }
+    }
+  }
+}

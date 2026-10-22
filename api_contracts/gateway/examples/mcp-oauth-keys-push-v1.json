@@ -1,0 +1,15 @@
+{
+  "issuer": "https://app.futureagi.com/agentcc/mcp/oauth",
+  "version": 3,
+  "keys": [
+    {
+      "kty": "EC",
+      "crv": "P-256",
+      "kid": "as-2026-10",
+      "use": "sig",
+      "alg": "ES256",
+      "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+      "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+    }
+  ]
+}

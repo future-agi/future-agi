@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1073,
+  endpointCount: 1075,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -198,6 +198,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/agentcc/guardrail-policies/sync/": ["post"],
       "/agentcc/guardrail-policies/{id}/": ["delete", "get", "patch", "put"],
       "/agentcc/guardrail-policies/{id}/apply/": ["post"],
+      "/agentcc/managed-models/": ["get"],
+      "/agentcc/managed-models/catalog/": ["get"],
       "/agentcc/org-configs/": ["get", "post"],
       "/agentcc/org-configs/active/": ["get"],
       "/agentcc/org-configs/bulk/": ["get"],
@@ -1535,6 +1537,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/agentcc/guardrail-policies/sync/": ["post"],
   "/agentcc/guardrail-policies/{id}/": ["delete", "get", "patch", "put"],
   "/agentcc/guardrail-policies/{id}/apply/": ["post"],
+  "/agentcc/managed-models/": ["get"],
+  "/agentcc/managed-models/catalog/": ["get"],
   "/agentcc/org-configs/": ["get", "post"],
   "/agentcc/org-configs/active/": ["get"],
   "/agentcc/org-configs/bulk/": ["get"],

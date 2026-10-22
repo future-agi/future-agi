@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/generation-v1.schema.json",
+  "title": "generation-v1",
+  "description": "GET /v1/generation. Customer-facing and OpenRouter-shaped: it carries no request or response content and no landed cost or fee data. id equals request_id; upstream_id is the provider's id. latency and generation_time are milliseconds; costs are USD.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["data"],
+  "properties": {
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "request_id",
+        "created_at",
+        "model",
+        "provider_name",
+        "router",
+        "api_type",
+        "streamed",
+        "cancelled",
+        "latency",
+        "tokens_prompt",
+        "tokens_completion",
+        "total_cost",
+        "is_byok",
+        "provider_responses",
+        "routing"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "minLength": 1 },
+        "upstream_id": { "$ref": "#/$defs/NullableString" },
+        "session_id": { "$ref": "#/$defs/NullableString" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "model": { "type": "string" },
+        "provider_name": { "type": "string" },
+        "router": { "type": "string", "enum": ["auto", "explicit", "preset"] },
+        "api_type": { "type": "string" },
+        "streamed": { "type": "boolean" },
+        "cancelled": { "type": "boolean" },
+        "finish_reason": { "$ref": "#/$defs/NullableString" },
+        "native_finish_reason": { "$ref": "#/$defs/NullableString" },
+        "latency": { "type": "number", "minimum": 0 },
+        "generation_time": { "type": ["number", "null"], "minimum": 0 },
+        "tokens_prompt": { "type": "integer", "minimum": 0 },
+        "tokens_completion": { "type": "integer", "minimum": 0 },
+        "native_tokens_cached": { "type": "integer", "minimum": 0 },
+        "native_tokens_cache_write": { "type": "integer", "minimum": 0 },
+        "native_tokens_reasoning": { "type": "integer", "minimum": 0 },
+        "total_cost": { "type": "number", "minimum": 0 },
+        "upstream_inference_cost": { "type": ["number", "null"], "minimum": 0 },
+        "cache_discount": { "type": ["number", "null"] },
+        "is_byok": { "type": "boolean" },
+        "external_user": { "$ref": "#/$defs/NullableString" },
+        "http_referer": { "$ref": "#/$defs/NullableString" },
+        "app_title": { "$ref": "#/$defs/NullableString" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "provider_responses": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ProviderResponse" }
+        },
+        "routing": { "$ref": "#/$defs/Routing" },
+        "agent": { "$ref": "#/$defs/Agent" }
+      }
+    }
+  },
+  "$defs": {
+    "NullableString": { "type": ["string", "null"] },
+    "Step": {
+      "type": "string",
+      "enum": [
+        "plan",
+        "act",
+        "tool",
+        "extract",
+        "verify",
+        "reflect",
+        "memory",
+        "coordinate",
+        "summarize",
+        "final",
+        "other"
+      ]
+    },
+    "Outcome": {
+      "type": "string",
+      "enum": [
+        "success",
+        "error",
+        "timeout",
+        "cancelled",
+        "discarded",
+        "skipped",
+        "circuit_open",
+        "hollow"
+      ]
+    },
+    "ErrorClass": {
+      "type": ["string", "null"],
+      "enum": [
+        "rate_limited",
+        "timeout",
+        "upstream_5xx",
+        "upstream_4xx",
+        "context_length",
+        "content_filter",
+        "auth",
+        "invalid_request",
+        "network",
+        "circuit_open",
+        "policy",
+        "budget",
+        "insufficient_credits",
+        "cancelled",
+        "unknown",
+        "hollow_completion",
+        null
+      ]
+    },
+    "ProviderResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "provider_name",
+        "model",
+        "is_byok",
+        "latency",
+        "outcome"
+      ],
+      "properties": {
+        "status": { "type": ["integer", "null"] },
+        "provider_name": { "type": "string" },
+        "endpoint_id": { "$ref": "#/$defs/NullableString" },
+        "model": { "type": "string" },
+        "is_byok": { "type": "boolean" },
+        "latency": { "type": "number", "minimum": 0 },
+        "error_class": { "$ref": "#/$defs/ErrorClass" },
+        "outcome": { "$ref": "#/$defs/Outcome" }
+      }
+    },
+    "AttemptSummary": {
+      "type": "object",
+      "description": "A customer-safe attempt: no landed cost, fee or upstream key fields.",
+      "additionalProperties": false,
+      "required": [
+        "attempt_id",
+        "kind",
+        "provider",
+        "model",
+        "credential_type",
+        "outcome",
+        "upstream_cost_micros",
+        "billed_cost_micros"
+      ],
+      "properties": {
+        "attempt_id": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "primary",
+            "retry",
+            "failover",
+            "model_fallback",
+            "auto_fallback",
+            "request_fallback",
+            "hedge",
+            "selector"
+          ]
+        },
+        "reason": { "type": "string" },
+        "provider": { "type": "string" },
+        "model": { "type": "string" },
+        "credential_type": { "type": "string", "enum": ["managed", "byok"] },
+        "status_code": { "type": "integer" },
+        "outcome": { "$ref": "#/$defs/Outcome" },
+        "error_class": { "$ref": "#/$defs/ErrorClass" },
+        "latency_ms": { "type": "integer", "minimum": 0 },
+        "upstream_cost_micros": { "type": "integer", "minimum": 0 },
+        "billed_cost_micros": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "Routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested_model",
+        "resolved_model",
+        "final_provider",
+        "credential_type",
+        "attempts"
+      ],
+      "properties": {
+        "requested_model": { "type": "string" },
+        "resolved_model": { "type": "string" },
+        "final_provider": { "type": "string" },
+        "credential_type": { "type": "string", "enum": ["managed", "byok"] },
+        "reason": { "type": "string" },
+        "policy_version": { "type": "string" },
+        "policy_variant": { "type": "string", "enum": ["stable", "candidate"] },
+        "catalog_snapshot_id": { "type": "string" },
+        "auto": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "model": { "type": "string" },
+                "tier": {
+                  "type": "string",
+                  "enum": ["simple", "standard", "complex"]
+                },
+                "reason": { "type": "string" },
+                "step": { "$ref": "#/$defs/Step" },
+                "affinity": {
+                  "type": "string",
+                  "pattern": "^(hit|new|off|broken:.+)$"
+                }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "attempts": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/AttemptSummary" }
+        }
+      }
+    },
+    "Agent": {
+      "type": "object",
+      "description": "Agent context, snake_case.",
+      "additionalProperties": false,
+      "properties": {
+        "framework": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "agent_version": { "type": "string" },
+        "run_id": { "type": "string" },
+        "parent_run_id": { "type": "string" },
+        "root_run_id": { "type": "string" },
+        "task_id": { "type": "string" },
+        "trace_id": { "type": "string" },
+        "workflow": { "type": "string" },
+        "step": { "$ref": "#/$defs/Step" },
+        "turn": { "type": "integer", "minimum": 0 },
+        "budget_scope": { "type": "string" },
+        "budget_usd": { "type": "number", "minimum": 0 },
+        "budget_remaining_usd": { "type": "number" },
+        "max_cost_usd": { "type": "number", "minimum": 0 },
+        "attempt_id": { "type": "string" },
+        "deadline_ms": { "type": "integer", "minimum": 0 },
+        "route_hint": {
+          "type": "string",
+          "enum": ["cost", "balanced", "quality", "latency"]
+        },
+        "require": { "type": "array", "items": { "type": "string" } },
+        "prev_outcome": {
+          "type": "string",
+          "enum": ["ok", "empty", "verify_failed", "retried"]
+        },
+        "env": { "type": "string" },
+        "user_id": { "type": "string" },
+        "workspace_id": { "type": "string" }
+      }
+    }
+  }
+}

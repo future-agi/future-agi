@@ -5,6 +5,104 @@
   "description": "Canonical backend-to-gateway admin API payload types.",
   "type": "object",
   "$defs": {
+    "Step": {
+      "type": "string",
+      "description": "Agent step. Drives step-aware auto routing.",
+      "enum": [
+        "plan",
+        "act",
+        "tool",
+        "extract",
+        "verify",
+        "reflect",
+        "memory",
+        "coordinate",
+        "summarize",
+        "final",
+        "other"
+      ]
+    },
+    "Tier": {
+      "type": "string",
+      "enum": ["simple", "standard", "complex"]
+    },
+    "AutoPreference": {
+      "type": "string",
+      "enum": ["cost", "balanced", "quality", "latency"]
+    },
+    "DataCollection": {
+      "type": "string",
+      "enum": ["allow", "deny"]
+    },
+    "ContentMode": {
+      "type": "string",
+      "description": "How much request content is kept. The most restrictive of org, key, request and global default wins.",
+      "enum": ["full", "metadata", "none"]
+    },
+    "ProviderSortSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["by"],
+      "properties": {
+        "by": { "type": "string", "enum": ["price", "throughput", "latency"] },
+        "partition": { "type": "string" }
+      }
+    },
+    "PercentileThresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "p50": { "type": "number", "minimum": 0 },
+        "p75": { "type": "number", "minimum": 0 },
+        "p90": { "type": "number", "minimum": 0 },
+        "p99": { "type": "number", "minimum": 0 }
+      }
+    },
+    "ProviderMaxPrice": {
+      "type": "object",
+      "description": "prompt and completion are USD per million tokens; request and image are USD per unit.",
+      "additionalProperties": false,
+      "properties": {
+        "prompt": { "type": "number", "minimum": 0 },
+        "completion": { "type": "number", "minimum": 0 },
+        "request": { "type": "number", "minimum": 0 },
+        "image": { "type": "number", "minimum": 0 }
+      }
+    },
+    "ProviderPrefs": {
+      "type": "object",
+      "description": "OpenRouter-shaped provider preferences.",
+      "additionalProperties": false,
+      "properties": {
+        "order": { "type": "array", "items": { "type": "string" } },
+        "only": { "type": "array", "items": { "type": "string" } },
+        "ignore": { "type": "array", "items": { "type": "string" } },
+        "allow_fallbacks": { "type": "boolean" },
+        "require_parameters": { "type": "boolean" },
+        "data_collection": { "$ref": "#/$defs/DataCollection" },
+        "zdr": { "type": "boolean" },
+        "quantizations": { "type": "array", "items": { "type": "string" } },
+        "sort": {
+          "oneOf": [
+            { "type": "string", "enum": ["price", "throughput", "latency"] },
+            { "$ref": "#/$defs/ProviderSortSpec" }
+          ]
+        },
+        "max_price": { "$ref": "#/$defs/ProviderMaxPrice" },
+        "preferred_max_latency": {
+          "oneOf": [
+            { "type": "number", "minimum": 0 },
+            { "$ref": "#/$defs/PercentileThresholds" }
+          ]
+        },
+        "preferred_min_throughput": {
+          "oneOf": [
+            { "type": "number", "minimum": 0 },
+            { "$ref": "#/$defs/PercentileThresholds" }
+          ]
+        }
+      }
+    },
     "ProviderConfig": {
       "type": "object",
       "additionalProperties": false,
@@ -23,7 +121,9 @@
         "aws_secret_access_key": { "type": "string" },
         "aws_region": { "type": "string" },
         "aws_session_token": { "type": "string" },
-        "service_account_json": { "type": "string" }
+        "service_account_json": { "type": "string" },
+        "zdr_attested": { "type": "boolean" },
+        "data_region": { "type": "string" }
       }
     },
     "GuardrailCheck": {
@@ -46,7 +146,29 @@
         "checks": {
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/GuardrailCheck" }
-        }
+        },
+        "tool_calls": { "$ref": "#/$defs/ToolCallGuardrailConfig" }
+      }
+    },
+    "ToolCallGuardrailConfig": {
+      "type": "object",
+      "description": "Guardrails on agent tool calls. checks names guardrail checks the org already configures.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "checks": { "type": "array", "items": { "type": "string" } },
+        "on_block": {
+          "type": "string",
+          "enum": ["error", "strip"],
+          "default": "error"
+        },
+        "apply_to": {
+          "type": "string",
+          "enum": ["all", "managed", "byok"],
+          "default": "all"
+        },
+        "max_args_bytes": { "type": "integer", "minimum": 1, "default": 65536 },
+        "stop_run_on_block": { "type": "boolean", "default": false }
       }
     },
     "ConditionalRoute": {
@@ -91,7 +213,13 @@
         "enabled": { "type": "boolean" },
         "max_concurrent": { "type": "integer" },
         "cancel_delay": { "type": "string" },
-        "excluded_providers": { "type": "array", "items": { "type": "string" } }
+        "excluded_providers": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "hedge_after_ms": { "type": "integer", "minimum": 0 },
+        "max_hedges": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "allow_managed": { "type": "boolean", "default": false }
       }
     },
     "ScheduledConfig": {
@@ -201,18 +329,288 @@
         "rules": { "type": "array", "items": { "$ref": "#/$defs/MirrorRule" } }
       }
     },
-    "RoutingConfig": {
+    "AutoStepProfile": {
       "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min_tier": { "$ref": "#/$defs/Tier" },
+        "max_tier": { "$ref": "#/$defs/Tier" },
+        "require": { "type": "array", "items": { "type": "string" } },
+        "prefer": { "$ref": "#/$defs/AutoPreference" }
+      }
+    },
+    "AutoAffinityConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "ttl_seconds": { "type": "integer", "minimum": 1, "default": 1800 }
+      }
+    },
+    "AutoOutcomeFeedbackConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "window_seconds": { "type": "integer", "minimum": 1, "default": 86400 },
+        "min_samples": { "type": "integer", "minimum": 1, "default": 20 },
+        "penalty_weight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.3
+        }
+      }
+    },
+    "AutoSelectorConfig": {
+      "type": "object",
+      "description": "Optional LLM selector for ambiguous auto decisions. observe records its choice without acting on it.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "mode": {
+          "type": "string",
+          "enum": ["observe", "enforce"],
+          "default": "observe"
+        },
+        "model": { "type": "string" },
+        "timeout_ms": { "type": "integer", "minimum": 1, "default": 800 },
+        "max_cost_usd": { "type": "number", "minimum": 0, "default": 0.002 },
+        "daily_budget_usd": { "type": "number", "minimum": 0 },
+        "ambiguity_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.05
+        },
+        "max_candidates": { "type": "integer", "minimum": 1, "default": 8 }
+      }
+    },
+    "AutoRoutingConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preference": { "$ref": "#/$defs/AutoPreference" },
+        "candidates": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "max_input_per_mtok": { "type": "number", "minimum": 0 },
+        "max_output_per_mtok": { "type": "number", "minimum": 0 },
+        "step_profiles": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/Step" },
+          "additionalProperties": { "$ref": "#/$defs/AutoStepProfile" }
+        },
+        "affinity": { "$ref": "#/$defs/AutoAffinityConfig" },
+        "outcome_feedback": { "$ref": "#/$defs/AutoOutcomeFeedbackConfig" },
+        "deadline_latency_fraction": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "default": 0.5
+        },
+        "latency_target_ms": { "type": "integer", "minimum": 1 },
+        "quality_priors": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "exclude_states": { "type": "array", "items": { "type": "string" } },
+        "selector": { "$ref": "#/$defs/AutoSelectorConfig" }
+      }
+    },
+    "DataPolicyConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "zdr": { "type": "boolean", "default": false },
+        "data_collection": {
+          "$ref": "#/$defs/DataCollection",
+          "default": "allow"
+        },
+        "allowed_regions": { "type": "array", "items": { "type": "string" } },
+        "block_preview_in_envs": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "AgentsPriceCeiling": {
+      "type": "object",
+      "description": "Billed prices, markup included.",
+      "additionalProperties": false,
+      "properties": {
+        "prompt_usd_per_mtok": { "type": "number", "minimum": 0 },
+        "completion_usd_per_mtok": { "type": "number", "minimum": 0 },
+        "request_usd": { "type": "number", "minimum": 0 }
+      }
+    },
+    "AgentsEnvelopeDefaults": {
+      "type": "object",
+      "description": "Default run envelope limits. An unset limit is unbounded.",
+      "additionalProperties": false,
+      "properties": {
+        "max_usd": { "type": "number", "minimum": 0 },
+        "max_uncached_input_tokens_per_hour": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_calls": { "type": "integer", "minimum": 0 },
+        "max_wall_ms": { "type": "integer", "minimum": 0 },
+        "max_concurrent_children": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "AgentsEnvelopeLoop": {
+      "type": "object",
+      "description": "Loop guard. action defaults to stop.",
+      "additionalProperties": false,
+      "properties": {
+        "action": { "type": "string", "enum": ["warn", "stop"] }
+      }
+    },
+    "AgentsEnvelopesConfig": {
+      "type": "object",
+      "description": "Run-tree envelopes. Defaults: on_breach stop, soft_threshold 0.8, allow_downgrade false.",
+      "additionalProperties": false,
+      "properties": {
+        "defaults": { "$ref": "#/$defs/AgentsEnvelopeDefaults" },
+        "on_breach": {
+          "type": "string",
+          "enum": ["warn", "downgrade", "pause", "stop"]
+        },
+        "soft_threshold": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "allow_downgrade": { "type": "boolean" },
+        "downgrade_model": { "type": "string", "minLength": 1 },
+        "loop": { "$ref": "#/$defs/AgentsEnvelopeLoop" }
+      }
+    },
+    "AgentsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default_model": { "type": "string", "default": "auto" },
+        "budget_scope_ttl_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 86400
+        },
+        "step_presets": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/Step" },
+          "additionalProperties": { "type": "string" }
+        },
+        "always_emit_metadata": { "type": "boolean", "default": true },
+        "unpriced_under_cap": {
+          "type": "string",
+          "enum": ["reject", "allow"],
+          "default": "reject"
+        },
+        "framework_aliases": { "type": "boolean", "default": true },
+        "price_ceiling": {
+          "anyOf": [
+            { "$ref": "#/$defs/AgentsPriceCeiling" },
+            { "type": "null" }
+          ],
+          "default": null
+        },
+        "envelopes": { "$ref": "#/$defs/AgentsEnvelopesConfig" }
+      }
+    },
+    "RoutingPresetAuto": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preference": { "$ref": "#/$defs/AutoPreference" }
+      }
+    },
+    "RoutingPresetParams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "temperature": { "type": "number", "minimum": 0 },
+        "top_p": { "type": "number", "minimum": 0, "maximum": 1 },
+        "max_tokens": { "type": "integer", "minimum": 1 },
+        "reasoning_effort": { "type": "string" }
+      }
+    },
+    "RoutingPreset": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": { "type": "string" },
+        "models": {
+          "type": "array",
+          "maxItems": 5,
+          "items": { "type": "string" }
+        },
+        "provider": { "$ref": "#/$defs/ProviderPrefs" },
+        "auto": { "$ref": "#/$defs/RoutingPresetAuto" },
+        "params": { "$ref": "#/$defs/RoutingPresetParams" }
+      }
+    },
+    "IdempotencyConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "ttl_seconds": { "type": "integer", "minimum": 1, "default": 86400 },
+        "accept_attempt_id": { "type": "boolean", "default": false }
+      }
+    },
+    "PromptCachingConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "type": "string", "enum": ["off", "auto"], "default": "off" }
+      }
+    },
+    "RetryBudgetConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_retry_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.2
+        },
+        "max_hedges_per_minute": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 60
+        }
+      }
+    },
+    "RolloutRoutingConfig": {
+      "type": "object",
+      "description": "The candidate routing of a staged rollout: RoutingConfig without rollout. Keep the properties in step with RoutingConfig.",
       "additionalProperties": false,
       "properties": {
         "strategy": { "type": "string" },
         "fallback_enabled": { "type": "boolean" },
-        "fallback_on_status_codes": { "type": "array", "items": { "type": "integer" } },
+        "fallback_on_status_codes": {
+          "type": "array",
+          "items": { "type": "integer" }
+        },
         "model_fallbacks": {
           "type": "object",
-          "additionalProperties": { "type": "array", "items": { "type": "string" } }
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
         },
-        "conditional_routes": { "type": "array", "items": { "$ref": "#/$defs/ConditionalRoute" } },
+        "conditional_routes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ConditionalRoute" }
+        },
         "default_model": { "type": "string" },
         "complexity": { "$ref": "#/$defs/ComplexityRoutingConfig" },
         "fastest": { "$ref": "#/$defs/FastestResponseConfig" },
@@ -230,7 +628,98 @@
         "model_timeouts": {
           "type": "object",
           "additionalProperties": { "type": "string" }
-        }
+        },
+        "auto": { "$ref": "#/$defs/AutoRoutingConfig" },
+        "data_policy": { "$ref": "#/$defs/DataPolicyConfig" },
+        "agents": { "$ref": "#/$defs/AgentsConfig" },
+        "presets": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/RoutingPreset" }
+        },
+        "idempotency": { "$ref": "#/$defs/IdempotencyConfig" },
+        "prompt_caching": { "$ref": "#/$defs/PromptCachingConfig" },
+        "max_total_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16,
+          "default": 6
+        },
+        "retry_budget": { "$ref": "#/$defs/RetryBudgetConfig" }
+      }
+    },
+    "RolloutConfig": {
+      "type": "object",
+      "description": "Staged rollout of a candidate policy. The gateway buckets traffic deterministically by sticky_by.",
+      "additionalProperties": false,
+      "required": ["version", "percent", "sticky_by", "routing"],
+      "properties": {
+        "version": { "type": "string" },
+        "percent": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "sticky_by": {
+          "type": "string",
+          "enum": ["session", "key", "request"]
+        },
+        "started_at": { "type": "string", "format": "date-time" },
+        "routing": { "$ref": "#/$defs/RolloutRoutingConfig" },
+        "managed_models": { "$ref": "#/$defs/ManagedModelsConfig" }
+      }
+    },
+    "RoutingConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": { "type": "string" },
+        "fallback_enabled": { "type": "boolean" },
+        "fallback_on_status_codes": {
+          "type": "array",
+          "items": { "type": "integer" }
+        },
+        "model_fallbacks": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "conditional_routes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ConditionalRoute" }
+        },
+        "default_model": { "type": "string" },
+        "complexity": { "$ref": "#/$defs/ComplexityRoutingConfig" },
+        "fastest": { "$ref": "#/$defs/FastestResponseConfig" },
+        "scheduled": { "$ref": "#/$defs/ScheduledConfig" },
+        "adaptive": { "$ref": "#/$defs/AdaptiveRoutingConfig" },
+        "provider_lock": { "$ref": "#/$defs/ProviderLockConfig" },
+        "access_groups": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/AccessGroup" }
+        },
+        "failover": { "$ref": "#/$defs/FailoverConfig" },
+        "circuit_breaker": { "$ref": "#/$defs/CircuitBreakerConfig" },
+        "retry": { "$ref": "#/$defs/RetryConfig" },
+        "mirror": { "$ref": "#/$defs/MirrorConfig" },
+        "model_timeouts": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "auto": { "$ref": "#/$defs/AutoRoutingConfig" },
+        "data_policy": { "$ref": "#/$defs/DataPolicyConfig" },
+        "agents": { "$ref": "#/$defs/AgentsConfig" },
+        "presets": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/RoutingPreset" }
+        },
+        "idempotency": { "$ref": "#/$defs/IdempotencyConfig" },
+        "prompt_caching": { "$ref": "#/$defs/PromptCachingConfig" },
+        "max_total_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16,
+          "default": 6
+        },
+        "retry_budget": { "$ref": "#/$defs/RetryBudgetConfig" },
+        "rollout": { "$ref": "#/$defs/RolloutConfig" }
       }
     },
     "DiskCacheConfig": {
@@ -370,7 +859,8 @@
         "per_key_rpm": { "type": "integer" },
         "per_key_tpm": { "type": "integer" },
         "per_model_rpm": { "type": "integer" },
-        "per_user_rpm": { "type": "integer" }
+        "per_user_rpm": { "type": "integer" },
+        "per_key_max_parallel": { "type": "integer", "minimum": 1 }
       }
     },
     "BudgetLevelConfig": {
@@ -386,6 +876,17 @@
         "per_model": {
           "type": "object",
           "additionalProperties": { "type": "number" }
+        },
+        "include_byok": { "type": "boolean", "default": true },
+        "alert_thresholds": {
+          "type": "array",
+          "items": { "type": "number", "exclusiveMinimum": 0 },
+          "default": [0.5, 0.75, 1.0]
+        },
+        "throttle_rpm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "With action throttle: past the limit, the level admits this many requests a minute (default 1) and refuses the rest with 429 budget_throttled and Retry-After; under the limit it admits every request."
         }
       }
     },
@@ -402,6 +903,11 @@
         "action": { "type": "string" },
         "action_mode": { "type": "string" },
         "on_exceed": { "type": "string" },
+        "throttle_rpm": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The org budget's throttle (org_limit with action throttle): past the limit, this many requests a minute (default 1); the rest get 429 budget_throttled and Retry-After."
+        },
         "organization": { "$ref": "#/$defs/BudgetLevelConfig" },
         "org": { "$ref": "#/$defs/BudgetLevelConfig" },
         "teams": {
@@ -419,6 +925,16 @@
         "tags": {
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/BudgetLevelConfig" }
+        },
+        "fail_mode": {
+          "type": "string",
+          "description": "Budget holds when budget state is unreachable: closed (default) refuses with 503 budget_state_unavailable, open lets the request through unenforced.",
+          "enum": ["closed", "open"]
+        },
+        "no_max_tokens": {
+          "type": "string",
+          "description": "A request with no max_tokens: reserve_default (default) holds the estimate and records any overshoot, clamp forwards max_tokens equal to the estimate's output cap.",
+          "enum": ["reserve_default", "clamp"]
         }
       }
     },
@@ -459,8 +975,16 @@
         "condition": { "type": "string" },
         "threshold": { "type": "number" },
         "window": { "type": "string" },
-        "cooldown": { "type": "string" },
-        "channels": { "type": "array", "items": { "type": "string" } }
+        "cooldown": {
+          "type": "string",
+          "description": "A Go duration (e.g. 15m). After the rule fires it waits this long before it can fire again, while its condition holds. Empty or not a duration: 15m. 0s fires on every request past the threshold."
+        },
+        "channels": { "type": "array", "items": { "type": "string" } },
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warning", "critical"],
+          "description": "Sent with every alert the rule fires (webhook payload severity, Slack text). Empty: warning."
+        }
       }
     },
     "AlertChannelConfig": {
@@ -481,8 +1005,14 @@
       "additionalProperties": false,
       "properties": {
         "enabled": { "type": "boolean" },
-        "rules": { "type": "array", "items": { "$ref": "#/$defs/AlertRuleConfig" } },
-        "channels": { "type": "array", "items": { "$ref": "#/$defs/AlertChannelConfig" } }
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AlertRuleConfig" }
+        },
+        "channels": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AlertChannelConfig" }
+        }
       }
     },
     "RedactPatternConfig": {
@@ -499,7 +1029,32 @@
       "properties": {
         "enabled": { "type": "boolean" },
         "mode": { "type": "string" },
-        "redact_patterns": { "type": "array", "items": { "$ref": "#/$defs/RedactPatternConfig" } }
+        "redact_patterns": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RedactPatternConfig" }
+        },
+        "retention": { "$ref": "#/$defs/PrivacyRetentionConfig" },
+        "content_mode": { "$ref": "#/$defs/ContentMode", "default": "full" }
+      }
+    },
+    "PrivacyRetentionConfig": {
+      "type": "object",
+      "description": "Retention TTLs for request logs and attempts, at most 36500 days (100 years), so the daily purge cutoff never underflows. Ledger entries are never purged. store_bodies=false is read as content_mode=metadata.",
+      "additionalProperties": false,
+      "properties": {
+        "request_log_days": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 36500,
+          "default": null
+        },
+        "attempt_days": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 36500,
+          "default": null
+        },
+        "store_bodies": { "type": "boolean", "default": true }
       }
     },
     "ToolPolicyConfig": {
@@ -523,14 +1078,144 @@
         "key": { "type": "string" }
       }
     },
+    "MCPCredentialMode": {
+      "type": "string",
+      "description": "How a server's upstream credential is resolved: none, the org's shared credential, the caller's own (per_user), RFC 8693 token exchange or ID-JAG, or a vendor's per-end-user identity (vendor_end_user).",
+      "enum": [
+        "none",
+        "shared",
+        "per_user",
+        "exchange",
+        "id_jag",
+        "vendor_end_user"
+      ]
+    },
+    "MCPCredentialState": {
+      "type": "string",
+      "description": "A credential's state. When a credential lapses, it keeps its mode and its state is marked.",
+      "enum": ["active", "revoked", "expired", "needs_reauth"]
+    },
+    "MCPCredentialSecret": {
+      "type": "object",
+      "description": "PUSH-ONLY. A static upstream secret assembled at push time by config_push. It is never stored in an org config, returned by a GET or kept in config history.",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "header": { "type": "string" },
+        "value": { "type": "string", "minLength": 1 }
+      }
+    },
+    "MCPIdentityBinding": {
+      "type": "object",
+      "description": "Where a vendor_end_user server receives the end user's identity.",
+      "additionalProperties": false,
+      "required": ["in", "name"],
+      "properties": {
+        "in": { "type": "string", "enum": ["header", "query", "path"] },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "MCPServerCredential": {
+      "type": "object",
+      "description": "The server's upstream credential. mode defaults to none and state to active.",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "$ref": "#/$defs/MCPCredentialMode" },
+        "credential_id": { "type": "string" },
+        "header": { "type": "string" },
+        "state": { "$ref": "#/$defs/MCPCredentialState" },
+        "secret": { "$ref": "#/$defs/MCPCredentialSecret" },
+        "vendor": {
+          "type": "string",
+          "description": "vendor_end_user only.",
+          "enum": [
+            "pipedream",
+            "composio",
+            "arcade",
+            "merge",
+            "nango",
+            "zapier"
+          ]
+        },
+        "identity_binding": { "$ref": "#/$defs/MCPIdentityBinding" }
+      }
+    },
+    "MCPServerOAuthConfig": {
+      "type": "object",
+      "description": "Upstream OAuth adapter. adapter defaults to auto.",
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "generic",
+            "entra",
+            "okta",
+            "slack",
+            "github",
+            "atlassian",
+            "google"
+          ]
+        }
+      }
+    },
+    "MCPToolLabel": {
+      "type": "string",
+      "description": "Information-flow label of a server or tool.",
+      "enum": ["private_data", "untrusted_input", "egress"]
+    },
     "MCPServerOrgConfig": {
       "type": "object",
+      "description": "One upstream MCP server, keyed by a server id matching ^[a-z0-9][a-z0-9_-]{0,47}$. Defaults: era auto, trusted_annotations false, timeout_ms 30000, tools_cache_ttl_seconds 300, propagate_depth false, enabled true. There is no private_network key: private egress is the operator list mcp.egress.private_allow.",
       "additionalProperties": false,
       "properties": {
         "url": { "type": "string" },
-        "transport": { "type": "string" },
+        "transport": {
+          "type": "string",
+          "description": "http, or sse for a 2024-11-05 upstream."
+        },
+        "era": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "2026-07-28",
+            "2025-11-25",
+            "2025-06-18",
+            "2025-03-26",
+            "2024-11-05"
+          ]
+        },
+        "credential": { "$ref": "#/$defs/MCPServerCredential" },
         "auth": { "$ref": "#/$defs/MCPAuthOrgConfig" },
-        "tools_cache_ttl": { "type": "string" }
+        "trusted_annotations": { "type": "boolean" },
+        "timeout_ms": { "type": "integer", "minimum": 1 },
+        "tools_cache_ttl": {
+          "type": "string",
+          "description": "Legacy duration string (for example 5m). tools_cache_ttl_seconds wins when both are set."
+        },
+        "tools_cache_ttl_seconds": { "type": "integer", "minimum": 0 },
+        "forward_headers": {
+          "type": "array",
+          "description": "Request headers forwarded upstream. authorization, cookie, x-api-key, proxy-authorization, mcp-session-id, mcp-protocol-version, x-agentcc-* and x-omega-* are refused (400 forward_header_refused), compared trimmed and case-folded; every name is an HTTP token.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+          }
+        },
+        "propagate_depth": {
+          "type": "boolean",
+          "description": "Send X-Agentcc-Agent-Depth to this server."
+        },
+        "enabled": { "type": "boolean" },
+        "oauth": { "$ref": "#/$defs/MCPServerOAuthConfig" },
+        "labels": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/MCPToolLabel" }
+        }
       }
     },
     "MCPGuardrailOrgConfig": {
@@ -548,16 +1233,614 @@
         }
       }
     },
-    "MCPOrgConfig": {
+    "MCPAccessConfig": {
+      "type": "object",
+      "description": "What a key bound to no virtual server, with no org default, may use. default defaults to deny.",
+      "additionalProperties": false,
+      "properties": {
+        "default": { "type": "string", "enum": ["deny", "allow"] }
+      }
+    },
+    "MCPToolFilter": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "include": { "type": "array", "items": { "type": "string" } },
+        "exclude": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "MCPToolOverride": {
+      "type": "object",
+      "description": "Per-tool presentation override, keyed <server_id>/<tool>.",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "hidden": { "type": "boolean" },
+        "labels": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/MCPToolLabel" }
+        }
+      }
+    },
+    "MCPStepProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "MCPAccessRuleMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "key_ids": { "type": "array", "items": { "type": "string" } },
+        "agent_ids": { "type": "array", "items": { "type": "string" } },
+        "user_ids": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "MCPAccessRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["match"],
+      "properties": {
+        "match": { "$ref": "#/$defs/MCPAccessRuleMatch" },
+        "allow": { "type": "array", "items": { "type": "string" } },
+        "deny": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "MCPVirtualServerAccess": {
+      "type": "object",
+      "description": "Who may use the virtual server. At most one virtual server per org sets default_for_org.",
+      "additionalProperties": false,
+      "properties": {
+        "keys": { "type": "array", "items": { "type": "string" } },
+        "agents": { "type": "array", "items": { "type": "string" } },
+        "users": { "type": "array", "items": { "type": "string" } },
+        "default_for_org": { "type": "boolean" },
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MCPAccessRule" }
+        }
+      }
+    },
+    "MCPApprovalConfig": {
+      "type": "object",
+      "description": "Approval settings. Defaults: require none, validity once, ttl_seconds 900. validity step ties an approval to the run, step and turn.",
+      "additionalProperties": false,
+      "properties": {
+        "require": {
+          "type": "string",
+          "enum": ["none", "destructive", "listed"]
+        },
+        "tools": { "type": "array", "items": { "type": "string" } },
+        "validity": { "type": "string", "enum": ["once", "ttl", "step"] },
+        "ttl_seconds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "MCPPerToolBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_calls_per_run": { "type": "integer", "minimum": 0 },
+        "rpm": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "MCPVirtualServerBudgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_tool_calls_per_run": { "type": "integer", "minimum": 0 },
+        "max_tool_usd_per_run": { "type": "number", "minimum": 0 },
+        "rpm_per_key": { "type": "integer", "minimum": 0 },
+        "per_tool": {
+          "type": "object",
+          "description": "Keyed by a tool glob.",
+          "additionalProperties": { "$ref": "#/$defs/MCPPerToolBudget" }
+        }
+      }
+    },
+    "MCPVirtualServerConfig": {
+      "type": "object",
+      "description": "A virtual server, keyed by a slug matching ^[a-z0-9][a-z0-9-]{0,62}$. Defaults: naming prefixed, mode direct, cache_scope private.",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "vs_<ULID>. Assigned by the control plane when the slug is created and never changed (400 vs_id_immutable).",
+          "pattern": "^vs_[0-9A-HJKMNP-TV-Z]{26}$"
+        },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "members": {
+          "type": "array",
+          "description": "Each member is a server id, fagi.<managed_id>, or <server_id>@<account_label>.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "tools": { "$ref": "#/$defs/MCPToolFilter" },
+        "overrides": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/MCPToolOverride" }
+        },
+        "naming": { "type": "string", "enum": ["prefixed", "flat"] },
+        "mode": { "type": "string", "enum": ["direct", "search"] },
+        "step_profiles": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/Step" },
+          "additionalProperties": { "$ref": "#/$defs/MCPStepProfile" }
+        },
+        "access": { "$ref": "#/$defs/MCPVirtualServerAccess" },
+        "approval": { "$ref": "#/$defs/MCPApprovalConfig" },
+        "budgets": { "$ref": "#/$defs/MCPVirtualServerBudgets" },
+        "cache_scope": { "type": "string", "enum": ["private"] }
+      }
+    },
+    "MCPManagedToolCredential": {
+      "type": "object",
+      "description": "The org's own credential for a fagi.* managed server. Its presence means the org has had a credential, so a lapsed one never moves calls to managed unless fallback_to_managed is set.",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "type": "string", "enum": ["shared", "per_user"] },
+        "credential_id": { "type": "string" },
+        "state": { "$ref": "#/$defs/MCPCredentialState" },
+        "secret": { "$ref": "#/$defs/MCPCredentialSecret" }
+      }
+    },
+    "MCPManagedToolsConfig": {
+      "type": "object",
+      "description": "The org's one managed opt-in for FutureAGI-supplied paid tools, MCP and REST capabilities alike. allow and deny take fagi.<id>/<tool> and <capability>/<vendor> globs. Defaults: enabled false, max_call_cost_usd unset, fallback_to_managed false, allow_user_tokens false.",
+      "additionalProperties": false,
+      "properties": {
         "enabled": { "type": "boolean" },
+        "allow": { "type": "array", "items": { "type": "string" } },
+        "deny": { "type": "array", "items": { "type": "string" } },
+        "max_call_cost_usd": { "type": ["number", "null"], "minimum": 0 },
+        "fallback_to_managed": { "type": "boolean" },
+        "allow_user_tokens": { "type": "boolean" },
+        "credentials": {
+          "type": "object",
+          "description": "Keyed by managed server id.",
+          "additionalProperties": { "$ref": "#/$defs/MCPManagedToolCredential" }
+        }
+      }
+    },
+    "MCPPinningConfig": {
+      "type": "object",
+      "description": "Tool pinning. Defaults: mode quarantine, new_tools quarantine, auto_baseline true. pins maps <server_id>/<tool> to the sha256 of the tool's canonical definition.",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "type": "string", "enum": ["off", "warn", "quarantine"] },
+        "new_tools": { "type": "string", "enum": ["quarantine", "allow"] },
+        "auto_baseline": { "type": "boolean" },
+        "pins": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    "MCPScanningConfig": {
+      "type": "object",
+      "description": "Description, argument and result scanning. Defaults: descriptions warn, shadow true.",
+      "additionalProperties": false,
+      "properties": {
+        "descriptions": { "type": "string", "enum": ["off", "warn", "block"] },
+        "arguments": { "type": "array", "items": { "type": "string" } },
+        "results": { "type": "array", "items": { "type": "string" } },
+        "shadow": { "type": "boolean" }
+      }
+    },
+    "MCPFlowControlConfig": {
+      "type": "object",
+      "description": "Run-level information-flow control. Defaults: mode shadow, on_egress_after_taint approve.",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "type": "string", "enum": ["off", "shadow", "enforce"] },
+        "on_egress_after_taint": {
+          "type": "string",
+          "enum": ["approve", "deny"]
+        }
+      }
+    },
+    "MCPPolicyMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tools"],
+      "properties": {
+        "tools": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "servers": { "type": "array", "items": { "type": "string" } },
+        "agents": { "type": "array", "items": { "type": "string" } },
+        "steps": { "type": "array", "items": { "$ref": "#/$defs/Step" } },
+        "env": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["prod", "staging", "dev"] }
+        }
+      }
+    },
+    "MCPPolicyAction": {
+      "type": "string",
+      "enum": ["allow", "approve", "deny"]
+    },
+    "MCPPolicyRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "match", "action", "reason"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "match": { "$ref": "#/$defs/MCPPolicyMatch" },
+        "when": {
+          "type": "string",
+          "description": "An argument predicate."
+        },
+        "action": { "$ref": "#/$defs/MCPPolicyAction" },
+        "reason": { "type": "string" },
+        "shadow": { "type": "boolean" }
+      }
+    },
+    "MCPPolicyCombo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sequence", "within", "action"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "sequence": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "string" }
+        },
+        "within": { "type": "string", "enum": ["run"] },
+        "action": { "type": "string", "enum": ["deny", "approve"] }
+      }
+    },
+    "MCPPolicyDefaultTier": {
+      "type": "object",
+      "description": "Action per risk tier when no rule matches. Defaults: read_only allow, undeclared approve, destructive approve, destructive_prod deny.",
+      "additionalProperties": false,
+      "properties": {
+        "read_only": { "$ref": "#/$defs/MCPPolicyAction" },
+        "undeclared": { "$ref": "#/$defs/MCPPolicyAction" },
+        "destructive": { "$ref": "#/$defs/MCPPolicyAction" },
+        "destructive_prod": { "$ref": "#/$defs/MCPPolicyAction" }
+      }
+    },
+    "MCPPolicyConfig": {
+      "type": "object",
+      "description": "Tool policy v2.",
+      "additionalProperties": false,
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MCPPolicyRule" }
+        },
+        "combos": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MCPPolicyCombo" }
+        },
+        "default_tier": { "$ref": "#/$defs/MCPPolicyDefaultTier" }
+      }
+    },
+    "MCPShapingToolConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "budget_bytes": { "type": "integer", "minimum": 1 },
+        "project": {
+          "type": "array",
+          "description": "JSON pointers to keep.",
+          "items": { "type": "string", "pattern": "^(/.*)?$" }
+        }
+      }
+    },
+    "MCPShapingConfig": {
+      "type": "object",
+      "description": "Tool result shaping. budget_bytes may not exceed the operator's mcp.max_result_bytes.",
+      "additionalProperties": false,
+      "properties": {
+        "per_tool": {
+          "type": "object",
+          "description": "Keyed by a tool glob.",
+          "additionalProperties": { "$ref": "#/$defs/MCPShapingToolConfig" }
+        }
+      }
+    },
+    "MCPOrgConfig": {
+      "type": "object",
+      "description": "Org config mcp v2. Every key is optional.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "access": { "$ref": "#/$defs/MCPAccessConfig" },
         "servers": {
           "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,47}$"
+          },
           "additionalProperties": { "$ref": "#/$defs/MCPServerOrgConfig" }
         },
-        "guardrails": { "$ref": "#/$defs/MCPGuardrailOrgConfig" }
+        "virtual_servers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+          },
+          "additionalProperties": { "$ref": "#/$defs/MCPVirtualServerConfig" }
+        },
+        "managed_tools": { "$ref": "#/$defs/MCPManagedToolsConfig" },
+        "pinning": { "$ref": "#/$defs/MCPPinningConfig" },
+        "scanning": { "$ref": "#/$defs/MCPScanningConfig" },
+        "guardrails": { "$ref": "#/$defs/MCPGuardrailOrgConfig" },
+        "flow_control": { "$ref": "#/$defs/MCPFlowControlConfig" },
+        "policy": { "$ref": "#/$defs/MCPPolicyConfig" },
+        "shaping": { "$ref": "#/$defs/MCPShapingConfig" }
+      }
+    },
+    "MCPAdminServerStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["server_id", "healthy", "tool_count"],
+      "properties": {
+        "server_id": { "type": "string", "minLength": 1 },
+        "era": { "type": "string" },
+        "transport": { "type": "string" },
+        "healthy": { "type": "boolean" },
+        "tool_count": { "type": "integer", "minimum": 0 },
+        "last_error": { "type": ["string", "null"] },
+        "last_refreshed_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      }
+    },
+    "MCPAdminStatus": {
+      "type": "object",
+      "description": "mcp-admin-status-v1: an org's MCP status. enabled is the gateway's MCP switch and org_enabled the org's; each count is of the org's own servers.",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "org_enabled",
+        "servers",
+        "sessions",
+        "tools",
+        "resources",
+        "prompts"
+      ],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "org_enabled": { "type": "boolean" },
+        "servers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MCPAdminServerStatus" }
+        },
+        "sessions": { "type": "integer", "minimum": 0 },
+        "tools": { "type": "integer", "minimum": 0 },
+        "resources": { "type": "integer", "minimum": 0 },
+        "prompts": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "MCPToolPrice": {
+      "type": "object",
+      "description": "The published managed price of a tool call, markup included.",
+      "additionalProperties": false,
+      "required": ["sku", "usd_per_unit_billed", "markup_percent"],
+      "properties": {
+        "sku": { "type": "string", "minLength": 1 },
+        "usd_per_unit_billed": { "type": "number", "minimum": 0 },
+        "markup_percent": { "type": "number", "minimum": 0 }
+      }
+    },
+    "MCPAdminTool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "server_id", "upstream_name", "quarantined"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "server_id": { "type": "string", "minLength": 1 },
+        "upstream_name": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string" },
+        "quarantined": { "type": "boolean" },
+        "annotations": {
+          "type": "object",
+          "description": "The upstream's MCP tool annotations, as sent."
+        },
+        "price": { "$ref": "#/$defs/MCPToolPrice" }
+      }
+    },
+    "MCPAdminTools": {
+      "type": "object",
+      "description": "mcp-admin-tools-v1: an org's MCP tools.",
+      "additionalProperties": false,
+      "required": ["tools"],
+      "properties": {
+        "tools": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MCPAdminTool" }
+        }
+      }
+    },
+    "MCPProbeAuth": {
+      "type": "object",
+      "description": "A typed secret used for one probe only; never stored or logged.",
+      "additionalProperties": false,
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "header": { "type": "string" },
+        "value": { "type": "string", "minLength": 1 }
+      }
+    },
+    "MCPProbeRequest": {
+      "type": "object",
+      "description": "POST /-/mcp/probe. A credential goes inline as auth; a body that carries credential_id is refused (400 invalid_probe_request).",
+      "additionalProperties": false,
+      "required": ["org_id", "url"],
+      "properties": {
+        "org_id": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "minLength": 1 },
+        "transport": { "type": "string" },
+        "credential_id": { "type": "string" },
+        "auth": { "$ref": "#/$defs/MCPProbeAuth" }
+      }
+    },
+    "MCPProbeServerInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "title": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "MCPProbeResult": {
+      "type": "object",
+      "description": "mcp-probe-v1. Nothing is stored. tools_hash is the sha256 of the canonical tool definitions (the form pinning uses). error names why ok is false, for example egress_refused or not_mcp.",
+      "additionalProperties": false,
+      "required": ["ok", "latency_ms"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "era": { "type": "string" },
+        "server_info": { "$ref": "#/$defs/MCPProbeServerInfo" },
+        "tool_count": { "type": "integer", "minimum": 0 },
+        "tools_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "latency_ms": { "type": "integer", "minimum": 0 },
+        "error": { "type": ["string", "null"] }
+      }
+    },
+    "MCPRevisionDiff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field"],
+      "properties": {
+        "field": { "type": "string", "minLength": 1 },
+        "before": {},
+        "after": {}
+      }
+    },
+    "MCPRevision": {
+      "type": "object",
+      "description": "mcp-revision-v1: a changed, new or colliding tool definition and how it differs.",
+      "additionalProperties": false,
+      "required": [
+        "org_id",
+        "server_id",
+        "tool",
+        "revision",
+        "definition",
+        "diff",
+        "first_seen_at",
+        "reason"
+      ],
+      "properties": {
+        "org_id": { "type": "string", "minLength": 1 },
+        "server_id": { "type": "string", "minLength": 1 },
+        "tool": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 },
+        "previous_revision": { "type": "string" },
+        "definition": { "type": "object" },
+        "previous_definition": { "type": "object" },
+        "diff": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MCPRevisionDiff" }
+        },
+        "first_seen_at": { "type": "string", "format": "date-time" },
+        "reason": { "type": "string", "enum": ["changed", "new", "collision"] },
+        "collides_with": { "type": "string" }
+      }
+    },
+    "MCPApprovalPrincipal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["key", "oauth", "runtime", "callback", "admin"]
+        },
+        "key_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "client_id": { "type": "string" }
+      }
+    },
+    "MCPApproval": {
+      "type": "object",
+      "description": "mcp-approval-v1: an approval naming its org, virtual server, tool, argument hash, run and principal. Approvals are free.",
+      "additionalProperties": false,
+      "required": [
+        "approval_id",
+        "org_id",
+        "virtual_server_id",
+        "tool",
+        "args_hash",
+        "principal",
+        "status",
+        "requested_at",
+        "expires_at"
+      ],
+      "properties": {
+        "approval_id": { "type": "string", "minLength": 1 },
+        "org_id": { "type": "string", "minLength": 1 },
+        "virtual_server_id": { "type": "string", "minLength": 1 },
+        "tool": { "type": "string", "minLength": 1 },
+        "args_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "agent_run_id": { "type": "string" },
+        "principal": { "$ref": "#/$defs/MCPApprovalPrincipal" },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "denied", "expired", "used"]
+        },
+        "requested_at": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "decided_by": { "type": "string" },
+        "decided_at": { "type": "string", "format": "date-time" },
+        "note": { "type": "string" }
+      }
+    },
+    "MCPApprovalDecision": {
+      "type": "object",
+      "description": "An approval decision: org_id is the org of the approval it decides.",
+      "additionalProperties": false,
+      "required": ["org_id", "decision", "actor"],
+      "properties": {
+        "org_id": { "type": "string", "minLength": 1 },
+        "decision": { "type": "string", "enum": ["approve", "deny"] },
+        "actor": { "type": "string", "minLength": 1 },
+        "note": { "type": "string" }
+      }
+    },
+    "MCPOAuthKeysPush": {
+      "type": "object",
+      "description": "mcp-oauth-keys-push-v1: the public verification keys (JWK) of Django's authorization server, with their issuer and a version; never a private key.",
+      "additionalProperties": false,
+      "required": ["issuer", "version", "keys"],
+      "properties": {
+        "issuer": { "type": "string", "minLength": 1 },
+        "version": { "type": "integer", "minimum": 1 },
+        "keys": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["kty", "kid"],
+            "not": {
+              "anyOf": [
+                { "required": ["d"] },
+                { "required": ["p"] },
+                { "required": ["q"] },
+                { "required": ["k"] }
+              ]
+            }
+          }
+        }
       }
     },
     "AuditSinkConfig": {
@@ -580,7 +1863,10 @@
         "enabled": { "type": "boolean" },
         "min_severity": { "type": "string" },
         "categories": { "type": "array", "items": { "type": "string" } },
-        "sinks": { "type": "array", "items": { "$ref": "#/$defs/AuditSinkConfig" } }
+        "sinks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/AuditSinkConfig" }
+        }
       }
     },
     "A2ACardConfig": {
@@ -617,7 +1903,10 @@
         "url": { "type": "string" },
         "auth": { "$ref": "#/$defs/A2AAuthConfig" },
         "description": { "type": "string" },
-        "skills": { "type": "array", "items": { "$ref": "#/$defs/A2ASkillConfig" } }
+        "skills": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/A2ASkillConfig" }
+        }
       }
     },
     "A2AOrgConfig": {
@@ -680,6 +1969,198 @@
         }
       }
     },
+    "ManagedUpstreamKey": {
+      "type": "object",
+      "description": "A per-org managed upstream key. Push-only: never stored in an org config and never returned by a read.",
+      "additionalProperties": false,
+      "required": ["api_key", "key_hash"],
+      "properties": {
+        "api_key": { "type": "string" },
+        "key_hash": { "type": "string" },
+        "label": { "type": "string" }
+      }
+    },
+    "ManagedSpendGuardConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_usd_per_minute": { "type": "number", "minimum": 0 },
+        "max_usd_per_hour": { "type": "number", "minimum": 0 },
+        "alert_usd_per_hour": { "type": "number", "minimum": 0 },
+        "new_org_daily_cap_usd": { "type": "number", "minimum": 0 },
+        "auto_pause": { "type": "boolean", "default": false }
+      }
+    },
+    "ManagedTopupConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min_usd": { "type": "number", "minimum": 0, "default": 25 }
+      }
+    },
+    "ManagedModelsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "allow_models": { "type": "array", "items": { "type": "string" } },
+        "deny_models": { "type": "array", "items": { "type": "string" } },
+        "allow_vendors": { "type": "array", "items": { "type": "string" } },
+        "deny_vendors": { "type": "array", "items": { "type": "string" } },
+        "fallback_to_managed": { "type": "boolean", "default": false },
+        "allow_free": { "type": "boolean", "default": true },
+        "hedging": { "type": "boolean", "default": false },
+        "allow_data_collection": { "type": "boolean", "default": false },
+        "upstream_keys": {
+          "type": "object",
+          "description": "Push-only. Assembled by config_push at push time; a save that contains it is rejected with secret_in_config.",
+          "additionalProperties": { "$ref": "#/$defs/ManagedUpstreamKey" }
+        },
+        "max_call_cost_usd": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "default": null
+        },
+        "default_max_tokens_estimate": {
+          "type": "integer",
+          "minimum": 1024,
+          "default": 4096
+        },
+        "spend_guard": { "$ref": "#/$defs/ManagedSpendGuardConfig" },
+        "topup": { "$ref": "#/$defs/ManagedTopupConfig" }
+      }
+    },
+    "ConfigMeta": {
+      "type": "object",
+      "description": "Push-time metadata from AgentccOrgConfig. Never stored. The gateway's policy version is \"v\" + version.",
+      "additionalProperties": false,
+      "required": ["version"],
+      "properties": {
+        "version": { "type": "integer", "minimum": 1 },
+        "config_id": { "type": "string" },
+        "pushed_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ToolsCapabilityConfig": {
+      "type": "object",
+      "description": "One capability's org settings. Defaults: enabled false; providers empty (the price cards' default order); max_cost_usd_per_call unset. pinned options are developer-pinned and the model cannot override them.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "providers": {
+          "type": "array",
+          "description": "Vendor order.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "max_cost_usd_per_call": { "type": ["number", "null"], "minimum": 0 },
+        "defaults": { "type": "object" },
+        "pinned": { "type": "object" }
+      }
+    },
+    "ToolsDomainsPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow": { "type": "array", "items": { "type": "string" } },
+        "deny": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "ToolsPolicyConfig": {
+      "type": "object",
+      "description": "Org capability policy. Defaults: no_training_vendors_only false, zdr_required false, no region pin, no retention override. retention_override may only tighten a card's results_retention.",
+      "additionalProperties": false,
+      "properties": {
+        "domains": { "$ref": "#/$defs/ToolsDomainsPolicy" },
+        "no_training_vendors_only": { "type": "boolean" },
+        "zdr_required": { "type": "boolean" },
+        "regions": { "type": "array", "items": { "type": "string" } },
+        "retention_override": {
+          "type": "string",
+          "enum": ["none", "metadata", "full"]
+        }
+      }
+    },
+    "ToolsConfig": {
+      "type": "object",
+      "description": "Org config tools v1. There is no managed flag here: the managed opt-in is mcp.managed_tools. BYOK vendor credentials are providers.<vendor> entries.",
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "type": "object",
+          "description": "Keyed by capability name.",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.]*$"
+          },
+          "additionalProperties": { "$ref": "#/$defs/ToolsCapabilityConfig" }
+        },
+        "policy": { "$ref": "#/$defs/ToolsPolicyConfig" }
+      }
+    },
+    "IdentityGrantsConfig": {
+      "type": "object",
+      "description": "Standing grants. max_ttl_days defaults to 30.",
+      "additionalProperties": false,
+      "properties": {
+        "max_ttl_days": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "IdentityIdPConfig": {
+      "type": "object",
+      "description": "The org's identity provider for ID-JAG. client_secret is PUSH-ONLY: never stored in an org config or returned by a GET.",
+      "additionalProperties": false,
+      "properties": {
+        "issuer": { "type": "string", "minLength": 1 },
+        "token_endpoint": { "type": "string", "minLength": 1 },
+        "client_id": { "type": "string", "minLength": 1 },
+        "client_secret": { "type": "string", "minLength": 1 }
+      }
+    },
+    "DelegatedGrantScopes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "servers": { "type": "array", "items": { "type": "string" } },
+        "tools": { "type": "array", "items": { "type": "string" } },
+        "models": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "DelegatedGrant": {
+      "type": "object",
+      "description": "A standing grant that lets an agent act for its grantor. PUSH-ONLY, inside identity.delegated_grants.",
+      "additionalProperties": false,
+      "required": [
+        "grant_id",
+        "agent_id",
+        "grantor_user_id",
+        "scopes",
+        "expires_at"
+      ],
+      "properties": {
+        "grant_id": { "type": "string", "minLength": 1 },
+        "agent_id": { "type": "string", "minLength": 1 },
+        "grantor_user_id": { "type": "string", "minLength": 1 },
+        "scopes": { "$ref": "#/$defs/DelegatedGrantScopes" },
+        "max_usd": { "type": "number", "minimum": 0 },
+        "preapproved_rules": { "type": "array", "items": { "type": "string" } },
+        "expires_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "IdentityConfig": {
+      "type": "object",
+      "description": "Delegated identity. require_human_sponsor defaults to false. idp.client_secret and delegated_grants are PUSH-ONLY.",
+      "additionalProperties": false,
+      "properties": {
+        "require_human_sponsor": { "type": "boolean" },
+        "grants": { "$ref": "#/$defs/IdentityGrantsConfig" },
+        "idp": { "$ref": "#/$defs/IdentityIdPConfig" },
+        "delegated_grants": {
+          "type": "object",
+          "description": "PUSH-ONLY. Active standing grants by grant id, assembled at push time; never stored in an org config.",
+          "additionalProperties": { "$ref": "#/$defs/DelegatedGrant" }
+        }
+      }
+    },
     "OrgConfig": {
       "type": "object",
       "additionalProperties": false,
@@ -705,7 +2186,11 @@
         "model_map": {
           "type": "object",
           "additionalProperties": { "type": "string" }
-        }
+        },
+        "managed_models": { "$ref": "#/$defs/ManagedModelsConfig" },
+        "tools": { "$ref": "#/$defs/ToolsConfig" },
+        "identity": { "$ref": "#/$defs/IdentityConfig" },
+        "meta": { "$ref": "#/$defs/ConfigMeta" }
       }
     },
     "CreateKeyRequest": {

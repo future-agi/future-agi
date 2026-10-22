@@ -1,0 +1,31 @@
+{
+  "tools": [
+    {
+      "name": "github_create_issue",
+      "server_id": "github",
+      "upstream_name": "create_issue",
+      "revision": "cc1441cea3b1f974d2f8bb95234d3c36b99536a4b6dbc21dc7dee08b463908d0",
+      "quarantined": false,
+      "annotations": { "readOnlyHint": false, "destructiveHint": false }
+    },
+    {
+      "name": "fagi.web_search",
+      "server_id": "fagi.web",
+      "upstream_name": "search",
+      "quarantined": false,
+      "annotations": { "readOnlyHint": true, "openWorldHint": true },
+      "price": {
+        "sku": "exa.search.standard",
+        "usd_per_unit_billed": 0.00525,
+        "markup_percent": 5
+      }
+    },
+    {
+      "name": "github_delete_repo",
+      "server_id": "github",
+      "upstream_name": "delete_repo",
+      "revision": "f9d35d43770d39092a663e665e82ae1d84a9e0da3d0d10c407acada6a40cd281",
+      "quarantined": true
+    }
+  ]
+}

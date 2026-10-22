@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/mcp-revision-v1.schema.json",
+  "title": "mcp-revision-v1",
+  "description": "One pending tool revision: a changed, new or colliding tool definition and how it differs. The shape is the MCPRevision definition of the admin contract.",
+  "$ref": "../agentcc-admin.schema.json#/$defs/MCPRevision"
+}

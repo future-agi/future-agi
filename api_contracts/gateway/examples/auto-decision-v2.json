@@ -1,0 +1,104 @@
+{
+  "v": 2,
+  "step": "act",
+  "step_source": "header",
+  "step_profile": {
+    "min_tier": "standard",
+    "max_tier": "complex",
+    "require": ["tools"],
+    "prefer": "balanced"
+  },
+  "affinity": "hit",
+  "policy_version": "v12",
+  "policy_variant": "stable",
+  "catalog_snapshot_id": "3f9a1c0b2d4e",
+  "constraints": {
+    "call_cap_usd": 0.05,
+    "deadline_ms": 20000,
+    "require": ["tools"],
+    "route_hint": "balanced",
+    "data_policy": { "zdr": false, "data_collection": "deny" },
+    "request_provider": null
+  },
+  "inputs": {
+    "needs": ["tools"],
+    "task_tier": "standard",
+    "complexity": 41,
+    "est_input_tokens": 1820,
+    "max_tokens": 4096,
+    "candidate_health": {
+      "openai/gpt-6-sol": { "success_rate": 0.991, "p50": 820 },
+      "anthropic/claude-sonnet-5.5": { "success_rate": 0.997, "p50": 640 }
+    },
+    "outcome_stats": {
+      "openai/gpt-6-sol": { "samples": 48, "bad_rate": 0.04 }
+    }
+  },
+  "candidates": [
+    {
+      "model": "openai/gpt-6-sol",
+      "provider": "openrouter",
+      "tier": "standard",
+      "price": {
+        "prompt_usd_per_mtok": 2.625,
+        "completion_usd_per_mtok": 15.75,
+        "est_cost_usd": 0.0112
+      },
+      "score_components": {
+        "price": 0.61,
+        "latency": 0.55,
+        "quality_prior": 0.8,
+        "tier_fit": 1.0,
+        "affinity": 0.15,
+        "outcome_penalty": -0.012,
+        "switch_cost": 0.0
+      }
+    },
+    {
+      "model": "anthropic/claude-sonnet-5.5",
+      "provider": "openrouter",
+      "tier": "standard",
+      "price": {
+        "prompt_usd_per_mtok": 3.15,
+        "completion_usd_per_mtok": 15.75,
+        "est_cost_usd": 0.0122
+      },
+      "score_components": {
+        "price": 0.57,
+        "latency": 0.62,
+        "quality_prior": 0.85,
+        "tier_fit": 1.0,
+        "affinity": 0.0,
+        "outcome_penalty": 0.0,
+        "switch_cost": 0.00486
+      }
+    }
+  ],
+  "rejected": [
+    {
+      "model": "google/gemini-3.5-pro",
+      "provider": "openrouter",
+      "reason": "tool_history_incompatible"
+    },
+    {
+      "model": "openai/gpt-6-max",
+      "provider": "openrouter",
+      "reason": "over_price_ceiling"
+    }
+  ],
+  "chosen": { "model": "openai/gpt-6-sol", "provider": "openrouter" },
+  "fallbacks": [
+    { "model": "anthropic/claude-sonnet-5.5", "provider": "openrouter" }
+  ],
+  "clamped_max_tokens": 4096,
+  "selector": {
+    "mode": "observe",
+    "used": true,
+    "model": "openai/gpt-6-mini",
+    "confidence": 0.71,
+    "latency_ms": 412,
+    "cost": 0.0004,
+    "fallback_reason": null,
+    "agrees_with_deterministic": false
+  }
+}

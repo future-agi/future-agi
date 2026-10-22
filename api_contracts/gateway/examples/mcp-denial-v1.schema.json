@@ -1,0 +1,946 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/mcp-denial-v1.schema.json",
+  "title": "mcp-denial-v1",
+  "description": "A refusal on tools/call: an isError result with HTTP 200, whose _meta[\"io.futureagi/error\"] is the error object the model path sends (error-402-v1 for credit, spend-guard, key-limit and budget codes) and whose _meta[\"io.futureagi/tool_call\"], when present, carries the call's billing evidence. resultType is complete on 2026-07-28. Protocol failures (auth, headers, versions, body size) are HTTP and JSON-RPC errors, not this. The golden holds one denial per refusal family; validate one denial against $defs/Denial. Uses only the keywords internal/contracts/schematest supports.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["results"],
+  "properties": {
+    "results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/Denial"
+      }
+    }
+  },
+  "$defs": {
+    "Denial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content", "isError", "_meta"],
+      "properties": {
+        "content": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "text"],
+            "properties": {
+              "type": {
+                "const": "text"
+              },
+              "text": {
+                "type": "string",
+                "pattern": "^.+ \\[[a-z_]+\\]$",
+                "description": "<message> [<code>]"
+              }
+            }
+          }
+        },
+        "isError": {
+          "const": true
+        },
+        "resultType": {
+          "const": "complete"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["io.futureagi/error", "io.futureagi/tool_call"],
+          "properties": {
+            "io.futureagi/error": {
+              "$ref": "#/$defs/Error"
+            },
+            "io.futureagi/tool_call": {
+              "$ref": "#/$defs/ToolCallMeta"
+            }
+          }
+        }
+      }
+    },
+    "Error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message", "param", "metadata"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code": {
+          "type": "string",
+          "enum": [
+            "tool_denied",
+            "invalid_arguments",
+            "tool_quarantined",
+            "approval_required",
+            "approval_mismatch",
+            "tool_call_depth_exceeded",
+            "tool_rate_limited",
+            "auth_required",
+            "managed_credits_exhausted",
+            "managed_credits_insufficient",
+            "managed_billing_unavailable",
+            "managed_tools_disabled",
+            "managed_tool_over_cap",
+            "managed_spend_velocity",
+            "managed_spend_paused",
+            "key_limit_exceeded",
+            "tool_budget_exhausted",
+            "agent_run_stopped",
+            "agent_envelope_exceeded",
+            "agent_run_paused",
+            "tool_call_blocked",
+            "tool_result_blocked",
+            "upstream_error",
+            "input_required_unsupported",
+            "request_state_invalid",
+            "request_state_instance_mismatch",
+            "policy_unavailable",
+            "sponsor_required",
+            "delegation_scope_exceeded",
+            "grant_required",
+            "egress_blocked_after_untrusted_input",
+            "managed_capability_unavailable",
+            "capability_provider_unavailable",
+            "end_user_identity_required",
+            "memory_unscoped_write",
+            "memory_cross_subject",
+            "policy_terms_violation",
+            "spend_policy_denied"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "param": {
+          "type": "null"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      },
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "tool_denied"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["rule"],
+              "properties": {
+                "rule": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "An access rule, or policy:<id> for a tool policy rule."
+                },
+                "virtual_server": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "invalid_arguments"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["errors"],
+              "properties": {
+                "errors": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 5,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["path", "message"],
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "tool_quarantined"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["reason"],
+              "properties": {
+                "revision_expected": {
+                  "type": "string"
+                },
+                "revision_seen": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": ["changed", "new", "collision"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "approval_required"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "approval_id",
+                "status",
+                "approve_url",
+                "poll_url",
+                "expires_at"
+              ],
+              "properties": {
+                "approval_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["pending"]
+                },
+                "approve_url": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "poll_url": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "expires_at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "rule": {
+                  "type": "string",
+                  "description": "The tool policy rule id that asked for the approval, when one did."
+                },
+                "private_source": {
+                  "type": "string"
+                },
+                "untrusted_source": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "approval_mismatch"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["approval_id"],
+              "properties": {
+                "approval_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "tool_call_depth_exceeded"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["max_depth"],
+              "properties": {
+                "max_depth": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "tool_rate_limited"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["scope", "limit", "window_s", "retry_after_s"],
+              "properties": {
+                "scope": {
+                  "type": "string",
+                  "pattern": "^(org|key:[^:]+(:parallel)?|team:.+|user:.+|run:.+|tag:.+|concurrency)$"
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "window_s": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "retry_after_s": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "auth_required"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["server_id", "reason"],
+              "properties": {
+                "server_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "connect_url": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "no_token",
+                    "expired",
+                    "needs_reauth",
+                    "no_user_identity",
+                    "account_ambiguous"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "managed_credits_exhausted",
+                "managed_credits_insufficient"
+              ]
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["limit_source", "remedy_hint", "scope", "resets_at"],
+              "properties": {
+                "limit_source": {
+                  "type": "string",
+                  "enum": ["agentcc_credits", "agentcc_in_flight"]
+                },
+                "remedy_hint": {
+                  "type": "string"
+                },
+                "required_usd": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "available_usd": {
+                  "type": "number"
+                },
+                "scope": {
+                  "const": "org"
+                },
+                "resets_at": {
+                  "type": "null"
+                },
+                "retry_after_s": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "managed_billing_unavailable"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["reason", "retry_after_s"],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "enum": ["redis_unavailable", "account_state_missing"]
+                },
+                "retry_after_s": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": ["managed_tools_disabled", "managed_tool_over_cap"]
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["remedy_hint"],
+              "properties": {
+                "remedy_hint": {
+                  "type": "string"
+                },
+                "cap_usd": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": ["user_tokens_not_allowed"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": ["managed_spend_velocity", "managed_spend_paused"]
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["limit_source", "remedy_hint", "scope", "resets_at"],
+              "properties": {
+                "limit_source": {
+                  "type": "string",
+                  "enum": ["agentcc_spend_guard", "agentcc_budget"]
+                },
+                "remedy_hint": {
+                  "type": "string"
+                },
+                "required_usd": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "available_usd": {
+                  "type": "number"
+                },
+                "scope": {
+                  "type": "string",
+                  "pattern": "^(org|key:[^:]+(:parallel)?|team:.+|user:.+|run:.+|tag:.+|concurrency)$"
+                },
+                "resets_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "retry_after_s": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "key_limit_exceeded"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["limit_source", "remedy_hint", "scope", "resets_at"],
+              "properties": {
+                "limit_source": {
+                  "const": "agentcc_key_limit"
+                },
+                "remedy_hint": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string",
+                  "pattern": "^(org|key:[^:]+(:parallel)?|team:.+|user:.+|run:.+|tag:.+|concurrency)$"
+                },
+                "resets_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": ["insufficient_for_reservation"]
+                },
+                "required_usd": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "available_usd": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "tool_budget_exhausted"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "limit_source",
+                "scope",
+                "resets_at",
+                "kind",
+                "remaining"
+              ],
+              "properties": {
+                "limit_source": {
+                  "const": "agentcc_tool_budget"
+                },
+                "remedy_hint": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string",
+                  "pattern": "^run:.+$"
+                },
+                "resets_at": {
+                  "type": "null"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": ["calls", "usd"]
+                },
+                "remaining": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "agent_run_stopped"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["limit_source", "reason"],
+              "properties": {
+                "limit_source": {
+                  "const": "agentcc_run_stop"
+                },
+                "remedy_hint": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "scope": {
+                  "type": "string",
+                  "pattern": "^(org|key:[^:]+(:parallel)?|team:.+|user:.+|run:.+|tag:.+|concurrency)$"
+                },
+                "resets_at": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "agent_envelope_exceeded"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["limit_source", "scope", "dimension", "resets_at"],
+              "properties": {
+                "limit_source": {
+                  "const": "agentcc_run_envelope"
+                },
+                "remedy_hint": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string",
+                  "pattern": "^run:.+$"
+                },
+                "dimension": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "resets_at": {
+                  "type": "null"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "agent_run_paused"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["limit_source", "dimension", "approve_url"],
+              "properties": {
+                "limit_source": {
+                  "const": "agentcc_run_envelope"
+                },
+                "dimension": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "used": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "limit": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "approve_url": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "tool_call_blocked"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["check", "action", "executed"],
+              "properties": {
+                "check": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "action": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "executed": {
+                  "const": false
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "tool_result_blocked"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["check", "executed", "remedy_hint"],
+              "properties": {
+                "check": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "executed": {
+                  "const": true
+                },
+                "remedy_hint": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "upstream_error"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["attribution"],
+              "properties": {
+                "attribution": {
+                  "type": "string",
+                  "enum": ["upstream", "network", "timeout"]
+                },
+                "upstream_code": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "input_required_unsupported",
+                "request_state_invalid",
+                "request_state_instance_mismatch",
+                "policy_unavailable",
+                "sponsor_required",
+                "delegation_scope_exceeded"
+              ]
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [],
+              "properties": {}
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "grant_required"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["grant_url"],
+              "properties": {
+                "grant_url": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "egress_blocked_after_untrusted_input"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["private_source", "untrusted_source"],
+              "properties": {
+                "private_source": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "untrusted_source": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "managed_capability_unavailable"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["reason"],
+              "properties": {
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "byok_only",
+                    "no_managed_credential",
+                    "not_enabled",
+                    "managed_tools_disabled",
+                    "owner_price_pending"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "const": "capability_provider_unavailable"
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["attempts"],
+              "properties": {
+                "attempts": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": [
+                "end_user_identity_required",
+                "memory_unscoped_write",
+                "memory_cross_subject",
+                "policy_terms_violation",
+                "spend_policy_denied"
+              ]
+            },
+            "metadata": {
+              "type": "object",
+              "description": "A capability refusal on a built-in server; its metadata is the capability endpoint's."
+            }
+          }
+        }
+      ]
+    },
+    "ToolCallMeta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tool_call_id",
+        "executed",
+        "billing_mode",
+        "billed_usd",
+        "latency_ms"
+      ],
+      "properties": {
+        "tool_call_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executed": {
+          "type": "boolean"
+        },
+        "billing_mode": {
+          "type": "string",
+          "enum": ["byok", "managed"]
+        },
+        "billed_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "latency_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

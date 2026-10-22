@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/mcp-approval-v1.schema.json",
+  "title": "mcp-approval-v1",
+  "description": "One tool-call approval. It names the org, virtual server, tool, the sha256 of the canonical arguments, the run (or principal) and the requesting principal. Approvals are free. The shape is the MCPApproval definition of the admin contract; decisions use MCPApprovalDecision.",
+  "$ref": "../agentcc-admin.schema.json#/$defs/MCPApproval"
+}

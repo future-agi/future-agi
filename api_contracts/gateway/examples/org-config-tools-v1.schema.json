@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/org-config-tools-v1.schema.json",
+  "title": "org-config-tools-v1",
+  "description": "An org config carrying the tools v1 section, as pushed to the gateway. tools has no managed flag: the org's managed opt-in for paid capabilities is mcp.managed_tools, whose allow and deny globs take <capability>/<vendor> beside fagi.<id>/<tool>. The shape is the OrgConfig definition of the admin contract; this file only points at it. Resolve the reference by registering ../agentcc-admin.schema.json under its $id.",
+  "$ref": "../agentcc-admin.schema.json#/$defs/OrgConfig"
+}

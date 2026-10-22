@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/capability-usage-v1.schema.json",
+  "title": "capability-usage-v1",
+  "description": "The usage block every capability response carries, and its two headers. Cost fields follow the gateway's presentation rules: a cache hit is served from the organization's own cache at 0, with cost_source cache_hit. The block and its headers carry no latency or quality figure for any provider, a no_perf_disclosure provider's included. Uses only the keywords internal/contracts/schematest supports.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["usage", "headers"],
+  "properties": {
+    "usage": {
+      "$ref": "#/$defs/Usage"
+    },
+    "headers": {
+      "$ref": "#/$defs/Headers"
+    }
+  },
+  "$defs": {
+    "Usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "units",
+        "upstream_cost_usd",
+        "charged_usd",
+        "billing_mode",
+        "cost_source",
+        "estimated"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "units": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sku", "count"],
+            "properties": {
+              "sku": {
+                "type": "string",
+                "minLength": 1
+              },
+              "count": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "upstream_cost_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "charged_usd": {
+          "type": "number",
+          "minimum": 0,
+          "description": "0 for byok (BYOK capability calls are free)."
+        },
+        "billing_mode": {
+          "type": "string",
+          "enum": ["managed", "byok", "native", "builtin"]
+        },
+        "cost_source": {
+          "type": "string",
+          "enum": ["vendor_reported", "rate_card", "native", "cache_hit"]
+        },
+        "estimated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "Headers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x-agentcc-capability-provider", "x-agentcc-billing-mode"],
+      "properties": {
+        "x-agentcc-capability-provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "x-agentcc-billing-mode": {
+          "type": "string",
+          "enum": ["managed", "byok", "native", "builtin"]
+        }
+      }
+    }
+  }
+}

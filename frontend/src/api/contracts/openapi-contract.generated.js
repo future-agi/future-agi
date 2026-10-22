@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1073,
+  endpointCount: 1075,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -6299,6 +6299,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/AgentccErrorResponse",
           },
+          404: {
+            $ref: "#/definitions/AgentccErrorResponse",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -6895,6 +6898,46 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/agentcc/managed-models/": {
+      get: {
+        operationId: "agentcc_managed-models_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/ManagedModelsStatusResponse",
+          },
+          400: {
+            $ref: "#/definitions/AgentccErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/agentcc/managed-models/catalog/": {
+      get: {
+        operationId: "agentcc_managed-models_catalog",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/ManagedCatalogResponse",
+          },
+          400: {
+            $ref: "#/definitions/AgentccErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/agentcc/org-configs/": {
       get: {
         operationId: "agentcc_org-configs_list",
@@ -7483,6 +7526,83 @@ export const OPENAPI_CONTRACT = Object.freeze({
               minLength: 1,
             },
           },
+          billing_mode: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          credential_type: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          agent_id: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          run_id: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          step: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          policy_variant: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          env: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          error_class: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          application: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          service: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          tags: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
         },
         responses: {
           200: {
@@ -7519,7 +7639,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/agentcc/request-logs/export/": {
       get: {
         operationId: "agentcc_request-logs_export",
-        runtimeRequestValidation: false,
+        runtimeRequestValidation: true,
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
@@ -7527,12 +7647,263 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "integer",
+              minimum: 1,
             },
           },
           limit: {
             required: false,
             schema: {
               type: "integer",
+              minimum: 1,
+            },
+          },
+          user_id: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          session_id: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          api_key_id: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 255,
+            },
+          },
+          request_id: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          model: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          provider: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          status_code: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          min_status_code: {
+            required: false,
+            schema: {
+              type: "integer",
+            },
+          },
+          max_status_code: {
+            required: false,
+            schema: {
+              type: "integer",
+            },
+          },
+          is_error: {
+            required: false,
+            schema: {
+              type: "boolean",
+            },
+          },
+          cache_hit: {
+            required: false,
+            schema: {
+              type: "boolean",
+            },
+          },
+          fallback_used: {
+            required: false,
+            schema: {
+              type: "boolean",
+            },
+          },
+          guardrail_triggered: {
+            required: false,
+            schema: {
+              type: "boolean",
+            },
+          },
+          is_stream: {
+            required: false,
+            schema: {
+              type: "boolean",
+            },
+          },
+          started_after: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          started_before: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          min_latency: {
+            required: false,
+            schema: {
+              type: "integer",
+            },
+          },
+          max_latency: {
+            required: false,
+            schema: {
+              type: "integer",
+            },
+          },
+          min_cost: {
+            required: false,
+            schema: {
+              type: "number",
+            },
+          },
+          max_cost: {
+            required: false,
+            schema: {
+              type: "number",
+            },
+          },
+          min_tokens: {
+            required: false,
+            schema: {
+              type: "integer",
+            },
+          },
+          max_tokens: {
+            required: false,
+            schema: {
+              type: "integer",
+            },
+          },
+          q: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          ordering: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          billing_mode: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          credential_type: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          agent_id: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          run_id: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          step: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          policy_variant: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          env: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          error_class: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          application: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          service: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          tags: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          export_format: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+          max_rows: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 10000,
             },
           },
         },
@@ -8504,6 +8875,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/WebhookIngestResponse",
           },
           400: {
+            $ref: "#/definitions/AgentccErrorResponse",
+          },
+          503: {
             $ref: "#/definitions/AgentccErrorResponse",
           },
           default: {
@@ -49472,14 +49846,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         required: {
           title: "Required",
+          description:
+            "Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
           type: "boolean",
         },
         allowed_values: {
           title: "Allowed values",
+          description:
+            "For enum properties. Checked by POST custom-properties/validate/; the gateway does not apply it to requests.",
           type: "object",
         },
         default_value: {
           title: "Default value",
+          description:
+            "Not applied anywhere. A new non-null value answers 400 property_rule_not_enforced; a stored value stays readable and may be kept unchanged or cleared with null.",
           type: "object",
           "x-nullable": true,
         },
@@ -49553,6 +49933,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         last_triggered_at: {
           title: "Last triggered at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        last_error: {
+          title: "Last error",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        last_error_at: {
+          title: "Last error at",
           type: "string",
           format: "date-time",
           readOnly: true,
@@ -49873,6 +50266,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Model map",
           type: "object",
         },
+        managed_models: {
+          title: "Managed models",
+          type: "object",
+        },
+        tools: {
+          title: "Tools",
+          type: "object",
+        },
+        identity: {
+          title: "Identity",
+          type: "object",
+        },
         is_active: {
           title: "Is active",
           type: "boolean",
@@ -49899,6 +50304,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Updated at",
           type: "string",
           format: "date-time",
+          readOnly: true,
+        },
+        secrets_set: {
+          description:
+            "JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
           readOnly: true,
         },
       },
@@ -50154,6 +50569,135 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "date-time",
           readOnly: true,
         },
+        generation_id: {
+          title: "Generation id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        attempt_count: {
+          title: "Attempt count",
+          type: "integer",
+          readOnly: true,
+        },
+        billing_mode: {
+          title: "Billing mode",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        credential_type: {
+          title: "Credential type",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        cost_upstream: {
+          title: "Cost upstream",
+          type: "string",
+          format: "decimal",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        cost_markup: {
+          title: "Cost markup",
+          type: "string",
+          format: "decimal",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        cost_source: {
+          title: "Cost source",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        usage_estimated: {
+          title: "Usage estimated",
+          type: "boolean",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        agent_framework: {
+          title: "Agent framework",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agent_id: {
+          title: "Agent id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agent_run_id: {
+          title: "Agent run id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agent_parent_run_id: {
+          title: "Agent parent run id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agent_root_run_id: {
+          title: "Agent root run id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agent_workflow: {
+          title: "Agent workflow",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agent_step: {
+          title: "Agent step",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agent_env: {
+          title: "Agent env",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        policy_version: {
+          title: "Policy version",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        policy_variant: {
+          title: "Policy variant",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        auto_routed: {
+          title: "Auto routed",
+          type: "boolean",
+          readOnly: true,
+          "x-nullable": true,
+        },
       },
     },
     AgentccRequestLogDetail: {
@@ -50335,6 +50879,96 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+        generation_id: {
+          title: "Generation id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        attempt_count: {
+          title: "Attempt count",
+          type: "integer",
+          readOnly: true,
+        },
+        cached_tokens: {
+          title: "Cached tokens",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        cache_write_tokens: {
+          title: "Cache write tokens",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        reasoning_tokens: {
+          title: "Reasoning tokens",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        served_upstream_provider: {
+          title: "Served upstream provider",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        content_mode: {
+          title: "Content mode",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        app_title: {
+          title: "App title",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        app_referer: {
+          title: "App referer",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        end_user: {
+          title: "End user",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        tags: {
+          title: "Tags",
+          type: "object",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        attempts: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentccRequestAttempt",
+          },
+          readOnly: true,
+        },
+        billing: {
+          $ref: "#/definitions/AgentccRequestBilling",
+        },
+        agent: {
+          $ref: "#/definitions/AgentccRequestAgent",
+        },
+        routing: {
+          $ref: "#/definitions/AgentccRequestRouting",
+        },
+        guardrail: {
+          $ref: "#/definitions/AgentccRequestGuardrail",
         },
       },
     },
@@ -62278,6 +62912,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         routing: {
@@ -62285,6 +62922,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         cache: {
@@ -62292,6 +62932,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         rate_limiting: {
@@ -62299,6 +62942,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         budgets: {
@@ -62306,6 +62952,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         cost_tracking: {
@@ -62313,6 +62962,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         ip_acl: {
@@ -62320,6 +62972,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         alerting: {
@@ -62327,6 +62982,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         privacy: {
@@ -62334,6 +62992,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         tool_policy: {
@@ -62341,6 +63002,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         mcp: {
@@ -62348,6 +63012,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         a2a: {
@@ -62355,6 +63022,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         audit: {
@@ -62362,6 +63032,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         model_database: {
@@ -62369,6 +63042,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         model_map: {
@@ -62376,6 +63052,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: {
             type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+        managed_models: {
+          title: "Managed models",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+        tools: {
+          title: "Tools",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+        identity: {
+          title: "Identity",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
       },
@@ -67577,6 +68286,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/MCPToolListResult",
+        },
+      },
+    },
+    ManagedCatalogResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/ManagedCatalogResult",
+        },
+      },
+    },
+    ManagedModelsStatusResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/ManagedModelsStatusResult",
         },
       },
     },
@@ -86037,6 +86772,430 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentccRequestAgent: {
+      required: [
+        "framework",
+        "agent_id",
+        "agent_version",
+        "run_id",
+        "parent_run_id",
+        "root_run_id",
+        "task_id",
+        "workflow",
+        "step",
+        "step_source",
+        "turn",
+        "env",
+        "budget_scope",
+        "identity_source",
+      ],
+      type: "object",
+      properties: {
+        framework: {
+          title: "Framework",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agent_id: {
+          title: "Agent id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agent_version: {
+          title: "Agent version",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        run_id: {
+          title: "Run id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        parent_run_id: {
+          title: "Parent run id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        root_run_id: {
+          title: "Root run id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        task_id: {
+          title: "Task id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        workflow: {
+          title: "Workflow",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        step: {
+          title: "Step",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        step_source: {
+          title: "Step source",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        turn: {
+          title: "Turn",
+          type: "integer",
+          "x-nullable": true,
+        },
+        env: {
+          title: "Env",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        budget_scope: {
+          title: "Budget scope",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        identity_source: {
+          title: "Identity source",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentccRequestAttempt: {
+      type: "object",
+      properties: {
+        attempt_id: {
+          title: "Attempt id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        index: {
+          title: "Index",
+          type: "integer",
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: [
+            "primary",
+            "retry",
+            "failover",
+            "model_fallback",
+            "auto_fallback",
+            "request_fallback",
+            "hedge",
+            "selector",
+          ],
+          readOnly: true,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        provider: {
+          title: "Provider",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        endpoint_id: {
+          title: "Endpoint id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        upstream_provider: {
+          title: "Upstream provider",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        served_upstream_provider: {
+          title: "Served upstream provider",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        upstream_key_id: {
+          title: "Upstream key id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        credential_type: {
+          title: "Credential type",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        status_code: {
+          title: "Status code",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          enum: [
+            "success",
+            "error",
+            "timeout",
+            "cancelled",
+            "discarded",
+            "skipped",
+            "circuit_open",
+            "hollow",
+          ],
+          readOnly: true,
+        },
+        error_class: {
+          title: "Error class",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        error_origin: {
+          title: "Error origin",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        error_message: {
+          title: "Error message",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        latency_ms: {
+          title: "Latency ms",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        ttfb_ms: {
+          title: "Ttfb ms",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        prompt_tokens: {
+          title: "Prompt tokens",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        completion_tokens: {
+          title: "Completion tokens",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        cached_tokens: {
+          title: "Cached tokens",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        cache_write_tokens: {
+          title: "Cache write tokens",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        reasoning_tokens: {
+          title: "Reasoning tokens",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        upstream_cost_micros: {
+          title: "Upstream cost micros",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        billed_cost_micros: {
+          title: "Billed cost micros",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        landed_cost_micros: {
+          title: "Landed cost micros",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        upstream_fee_bps: {
+          title: "Upstream fee bps",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        processing_fee_bps: {
+          title: "Processing fee bps",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        cost_source: {
+          title: "Cost source",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        usage_estimated: {
+          title: "Usage estimated",
+          type: "boolean",
+          readOnly: true,
+        },
+        billable: {
+          title: "Billable",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
+    AgentccRequestBilling: {
+      required: [
+        "mode",
+        "credential_type",
+        "cost_upstream",
+        "cost_markup",
+        "billed",
+        "cost_source",
+        "usage_estimated",
+        "cost_landed",
+      ],
+      type: "object",
+      properties: {
+        mode: {
+          title: "Mode",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        credential_type: {
+          title: "Credential type",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        cost_upstream: {
+          title: "Cost upstream",
+          type: "string",
+          format: "decimal",
+          "x-nullable": true,
+        },
+        cost_markup: {
+          title: "Cost markup",
+          type: "string",
+          format: "decimal",
+          "x-nullable": true,
+        },
+        billed: {
+          title: "Billed",
+          type: "string",
+          format: "decimal",
+        },
+        cost_source: {
+          title: "Cost source",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        usage_estimated: {
+          title: "Usage estimated",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        cost_landed: {
+          title: "Cost landed",
+          description: "Staff only.",
+          type: "string",
+          format: "decimal",
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentccRequestGuardrail: {
+      description:
+        "The tool-call guardrail verdict, as the gateway reported it; null when it reported none.",
+      required: ["tool_calls"],
+      type: "object",
+      properties: {
+        tool_calls: {
+          $ref: "#/definitions/AgentccToolCallsVerdict",
+        },
+      },
+    },
+    AgentccRequestRouting: {
+      required: [
+        "policy_version",
+        "policy_variant",
+        "catalog_snapshot_id",
+        "auto_routed",
+      ],
+      type: "object",
+      properties: {
+        policy_version: {
+          title: "Policy version",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        policy_variant: {
+          title: "Policy variant",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        catalog_snapshot_id: {
+          title: "Catalog snapshot id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        auto_routed: {
+          title: "Auto routed",
+          type: "boolean",
+          "x-nullable": true,
+        },
+      },
+    },
     AgentccRequestLogMetadataValues: {
       required: ["application", "service", "tags"],
       type: "object",
@@ -92502,11 +93661,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     GatewayBatchCancelResult: {
-      required: ["batch_id", "status"],
+      required: ["batch_id", "org_id", "status"],
       type: "object",
       properties: {
         batch_id: {
           title: "Batch id",
+          type: "string",
+          minLength: 1,
+        },
+        org_id: {
+          title: "Org id",
+          description:
+            "The organization the batch runs as: every item is a request authenticated by a key minted for it.",
           type: "string",
           minLength: 1,
         },
@@ -92518,17 +93684,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     GatewayBatchDetailResult: {
-      required: [
-        "batch_id",
-        "status",
-        "total",
-        "max_concurrency",
-        "created_at",
-      ],
+      required: ["batch_id", "org_id", "status", "total", "created_at"],
       type: "object",
       properties: {
         batch_id: {
           title: "Batch id",
+          type: "string",
+          minLength: 1,
+        },
+        org_id: {
+          title: "Org id",
+          description:
+            "The organization the batch runs as: every item is a request authenticated by a key minted for it.",
+          type: "string",
+          minLength: 1,
+        },
+        key_id: {
+          title: "Key id",
+          description: "The gateway id of the key the batch's items run as.",
           type: "string",
           minLength: 1,
         },
@@ -92543,6 +93716,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         max_concurrency: {
           title: "Max concurrency",
+          description:
+            "Absent when the gateway does not hold the batch (see error).",
           type: "integer",
         },
         created_at: {
@@ -92564,11 +93739,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         summary: {
           $ref: "#/definitions/GatewayBatchSummary",
         },
+        outcome: {
+          title: "Outcome",
+          description:
+            "unknown: the gateway lost the batch before it was seen to end (status failed).",
+          type: "string",
+          minLength: 1,
+        },
+        error: {
+          title: "Error",
+          description:
+            "Set when the gateway does not hold the batch: the answer is the status recorded when it finished, without results or summary.",
+          type: "string",
+          minLength: 1,
+        },
       },
     },
     GatewayBatchSubmitResult: {
       required: [
         "batch_id",
+        "org_id",
         "status",
         "total",
         "max_concurrency",
@@ -92578,6 +93768,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         batch_id: {
           title: "Batch id",
+          type: "string",
+          minLength: 1,
+        },
+        org_id: {
+          title: "Org id",
+          description:
+            "The organization the batch runs as: every item is a request authenticated by a key minted for it.",
+          type: "string",
+          minLength: 1,
+        },
+        key_id: {
+          title: "Key id",
+          description: "The gateway id of the key the batch's items run as.",
           type: "string",
           minLength: 1,
         },
@@ -92679,6 +93882,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Model map",
           type: "object",
         },
+        managed_models: {
+          title: "Managed models",
+          type: "object",
+        },
+        tools: {
+          title: "Tools",
+          type: "object",
+        },
+        identity: {
+          title: "Identity",
+          type: "object",
+        },
         is_active: {
           title: "Is active",
           type: "boolean",
@@ -92704,6 +93919,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
         },
+        secrets_set: {
+          description:
+            "JSON pointers of the infrastructure secrets stored in the active org config. Each one reads as a mask, never its value.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
         providers: {
           title: "Providers",
           type: "object",
@@ -92713,6 +93937,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         gateway: {
           $ref: "#/definitions/GatewayStatus",
+        },
+        server: {
+          $ref: "#/definitions/GatewayServerSettings",
+        },
+        logging: {
+          $ref: "#/definitions/GatewayLoggingSettings",
+        },
+        batch: {
+          $ref: "#/definitions/GatewayBatchSettings",
+        },
+        org_sections_enforced: {
+          description:
+            "The org config sections this gateway node enforces, from alerting, budgets, cache, ip_acl, rate_limiting and tool_policy. Absent: the gateway did not say.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        guardrail_pipeline: {
+          $ref: "#/definitions/GatewayGuardrailPipeline",
+        },
+        org_sections_not_enforced: {
+          title: "Org sections not enforced",
+          description:
+            "Org config section -> the reason this gateway node gives for not enforcing it. Absent: no such section, or the gateway did not say.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        last_health_check: {
+          title: "Last health check",
+          description:
+            "When a member of the org last ran Check Health (ISO 8601), or null when no check is recorded.",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        last_health_check_status: {
+          title: "Last health check status",
+          description:
+            "What the org's last health check found: healthy or unreachable.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },
@@ -92749,6 +94020,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Model count",
           type: "integer",
         },
+        last_health_check: {
+          title: "Last health check",
+          description:
+            "When a member of the org last ran Check Health (ISO 8601), or null when no check is recorded.",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        last_health_check_status: {
+          title: "Last health check status",
+          description:
+            "What the org's last health check found: healthy or unreachable.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
       },
     },
     GatewayHealthResult: {
@@ -92774,6 +94061,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         model_count: {
           title: "Model count",
           type: "integer",
+        },
+        org_configs_pushed: {
+          title: "Org configs pushed",
+          description:
+            "Whether this check re-pushed every org's config to the gateway. Only an Owner or Admin's check does, at most once per 5 minutes.",
+          type: "boolean",
+        },
+        last_health_check: {
+          title: "Last health check",
+          description:
+            "When a member of the org last ran Check Health (ISO 8601), or null when no check is recorded.",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        last_health_check_status: {
+          title: "Last health check status",
+          description:
+            "What the org's last health check found: healthy or unreachable.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },
@@ -92810,11 +94119,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         servers: {
           description:
-            "Gateway MCP server statuses are adapter-specific objects; the Django fallback normalizes configured servers to objects with id and status.",
+            "The gateway's MCP server statuses (mcp-admin-status-v1, keyed by server_id), limited to the org's own servers.",
           type: "array",
           items: {
             type: "object",
           },
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          enum: ["gateway_mcp_disabled", "gateway_unreachable"],
         },
       },
     },
@@ -92898,6 +94212,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Enabled",
           type: "boolean",
         },
+        warnings: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
       },
     },
     GatewayPlaygroundTestResult: {
@@ -92934,11 +94258,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         blocked: {
           title: "Blocked",
+          description:
+            "HTTP 403 with error.type guardrail_error: a check blocked.",
           type: "boolean",
         },
         warned: {
           title: "Warned",
+          description:
+            "A 2xx with x-agentcc-guardrail-triggered: true: a check warned or logged and the request went through.",
           type: "boolean",
+        },
+        guardrail_action: {
+          title: "Guardrail action",
+          description:
+            "x-agentcc-guardrail-action on a warned answer, when sent.",
+          type: "string",
+          enum: ["warn", "log"],
+          "x-nullable": true,
+        },
+        triggered_checks: {
+          description:
+            "The check names in x-agentcc-guardrails-triggered on a warned answer; empty when the gateway does not send the header.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -96638,6 +97983,56 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ManagedCatalogResult: {
+      required: ["markup_percent", "providers", "models"],
+      type: "object",
+      properties: {
+        markup_percent: {
+          title: "Markup percent",
+          type: "number",
+        },
+        providers: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ManagedCatalogProvider",
+          },
+        },
+        models: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ManagedCatalogModel",
+          },
+        },
+      },
+    },
+    ManagedModelsStatusResult: {
+      required: ["available", "enabled", "balance_usd", "markup_percent"],
+      type: "object",
+      properties: {
+        available: {
+          title: "Available",
+          description:
+            "The gateway offers managed models (it has managed providers).",
+          type: "boolean",
+        },
+        enabled: {
+          title: "Enabled",
+          description:
+            "This org has opted in (org config managed_models.enabled).",
+          type: "boolean",
+        },
+        balance_usd: {
+          title: "Balance usd",
+          type: "number",
+          "x-nullable": true,
+        },
+        markup_percent: {
+          title: "Markup percent",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+    },
     ManualDatasetCreateResult: {
       required: ["message", "dataset_id", "rows_created", "columns_created"],
       type: "object",
@@ -97803,6 +99198,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         model_map: {
           title: "Model map",
+          type: "object",
+        },
+        managed_models: {
+          title: "Managed models",
+          type: "object",
+        },
+        tools: {
+          title: "Tools",
+          type: "object",
+        },
+        identity: {
+          title: "Identity",
           type: "object",
         },
       },
@@ -107035,6 +108442,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
+    AgentccToolCallsVerdict: {
+      required: ["checked", "blocked", "stripped"],
+      type: "object",
+      properties: {
+        checked: {
+          title: "Checked",
+          type: "integer",
+        },
+        blocked: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        stripped: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
     AlertOption: {
       required: ["value", "label"],
       type: "object",
@@ -110820,6 +112251,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GatewayBatchSettings: {
+      type: "object",
+      properties: {
+        storage: {
+          title: "Storage",
+          description: "Where batches live: memory (the node's).",
+          type: "string",
+          minLength: 1,
+        },
+        default_max_concurrency: {
+          title: "Default max concurrency",
+          description: "The concurrency a submission that sets none runs at.",
+          type: "integer",
+        },
+        max_body_bytes: {
+          title: "Max body bytes",
+          description: "The largest submit body the gateway reads.",
+          type: "integer",
+        },
+      },
+    },
     GatewayConfigProvider: {
       required: [
         "id",
@@ -110891,6 +112343,81 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Conn pool size",
           type: "integer",
           "x-nullable": true,
+        },
+      },
+    },
+    GatewayGuardrailPipeline: {
+      required: ["enabled", "fail_open", "mode"],
+      type: "object",
+      properties: {
+        enabled: {
+          title: "Enabled",
+          description:
+            "guardrails.enabled on the node: without it no org check runs.",
+          type: "boolean",
+        },
+        fail_open: {
+          title: "Fail open",
+          description:
+            "The node's guardrails.fail_open: an org check that errors or times out lets the request through when true.",
+          type: "boolean",
+        },
+        mode: {
+          title: "Mode",
+          description:
+            "sequential: org checks run in turn and the first block stops the rest.",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    GatewayLoggingSettings: {
+      type: "object",
+      properties: {
+        level: {
+          title: "Level",
+          type: "string",
+        },
+        request_logging: {
+          title: "Request logging",
+          type: "boolean",
+        },
+        include_bodies: {
+          title: "Include bodies",
+          type: "boolean",
+        },
+        content_mode: {
+          title: "Content mode",
+          type: "string",
+        },
+      },
+    },
+    GatewayServerSettings: {
+      type: "object",
+      properties: {
+        host: {
+          title: "Host",
+          type: "string",
+        },
+        port: {
+          title: "Port",
+          type: "integer",
+        },
+        read_timeout_ms: {
+          title: "Read timeout ms",
+          type: "integer",
+        },
+        write_timeout_ms: {
+          title: "Write timeout ms",
+          type: "integer",
+        },
+        idle_timeout_ms: {
+          title: "Idle timeout ms",
+          type: "integer",
+        },
+        max_request_timeout_ms: {
+          title: "Max request timeout ms",
+          type: "integer",
         },
       },
     },
@@ -111001,6 +112528,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         error_rate: {
           title: "Error rate",
           type: "number",
+        },
+        status_reason: {
+          title: "Status reason",
+          description:
+            "Why the status is what it is: the org's own error rate over the last 24 h (unhealthy at 50% or more, degraded at 10% or more, both from 5 requests), or why the provider is not pushed.",
+          type: "string",
+          minLength: 1,
+        },
+        pushed: {
+          title: "Pushed",
+          description:
+            "Whether the config push sends this provider to the gateway. False for a stored credential the push cannot use.",
+          type: "boolean",
         },
       },
     },
@@ -112382,6 +113922,116 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Input schema",
           type: "object",
           readOnly: true,
+        },
+      },
+    },
+    ManagedCatalogModel: {
+      required: ["id", "provider", "vendor"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        created: {
+          title: "Created",
+          type: "integer",
+        },
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+        },
+        vendor: {
+          title: "Vendor",
+          type: "string",
+        },
+        context_length: {
+          title: "Context length",
+          type: "integer",
+        },
+        max_output_tokens: {
+          title: "Max output tokens",
+          type: "integer",
+        },
+        input_modalities: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        output_modalities: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        supported_parameters: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        input_per_mtok: {
+          title: "Input per mtok",
+          type: "number",
+        },
+        output_per_mtok: {
+          title: "Output per mtok",
+          type: "number",
+        },
+        cache_read_per_mtok: {
+          title: "Cache read per mtok",
+          type: "number",
+        },
+        billed_input_per_mtok: {
+          title: "Billed input per mtok",
+          type: "number",
+        },
+        billed_output_per_mtok: {
+          title: "Billed output per mtok",
+          type: "number",
+        },
+        dynamic_price: {
+          title: "Dynamic price",
+          type: "boolean",
+        },
+      },
+    },
+    ManagedCatalogProvider: {
+      required: ["provider", "source", "fetched_at", "models"],
+      type: "object",
+      properties: {
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          minLength: 1,
+        },
+        fetched_at: {
+          title: "Fetched at",
+          type: "string",
+          minLength: 1,
+        },
+        models: {
+          title: "Models",
+          type: "integer",
         },
       },
     },

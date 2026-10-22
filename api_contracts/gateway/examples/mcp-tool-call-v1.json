@@ -1,0 +1,120 @@
+{
+  "kind": "tool_call",
+  "v": 1,
+  "event_id": "tc_01M4ZF0A9KQ2V7W3X5Y8Z1B4C6",
+  "org_id": "0b7c1e52-4f3a-4d0e-9b8a-2a7d6c5e4f31",
+  "request_id": "req_01M4ZF0A9KQ2V7W3X5Y8Z1B4C5",
+  "tool_call_id": "tc_01M4ZF0A9KQ2V7W3X5Y8Z1B4C6",
+  "ts_ms": 1792056612419,
+  "started_at": "2026-10-16T09:10:12.231Z",
+  "api_key_id": "key_7f3a",
+  "principal_kind": "key",
+  "virtual_server_id": "vs_01M4ZEB9E0J3AADR85Z4T4428X",
+  "server_id": "fagi.web",
+  "tool": "fagi.web_search",
+  "upstream_tool": "search",
+  "tool_revision": "f9d35d43770d39092a663e665e82ae1d84a9e0da3d0d10c407acada6a40cd281",
+  "era": "2026-07-28",
+  "protocol_version": "2026-07-28",
+  "session_hash": "090772cf4068973daad3f715eb788d39fe2c02be42efd86de81f0e59198d6237",
+  "agent": {
+    "framework": "omega",
+    "agent_id": "researcher",
+    "agent_version": "3",
+    "run_id": "run_R2",
+    "parent_run_id": "run_R1",
+    "root_run_id": "run_R1",
+    "task_id": "task_7",
+    "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+    "workflow": "deep-research",
+    "step": "tool",
+    "turn": 4,
+    "session_id": "sess_9c1d",
+    "identity_source": "runtime_token"
+  },
+  "generation_id": "req_01M4ZF0A9KQ2V7W3X5Y8Z1B4C1",
+  "outcome": "success",
+  "is_error": false,
+  "latency_ms": 412,
+  "upstream_latency_ms": 389,
+  "gateway_overhead_ms": 23,
+  "bytes_in": 214,
+  "bytes_out": 5120,
+  "billing_mode": "managed",
+  "credential_type": "managed",
+  "credential_source": "managed",
+  "upstream_cost_micros": 5000,
+  "billed_cost_micros": 5250,
+  "markup_micros": 250,
+  "markup_bps": 500,
+  "cost_source": "tool_price",
+  "usage_estimated": 0,
+  "dispatched": true,
+  "budget_scope": "run_R1",
+  "guardrail": {
+    "checked": ["prompt-injection"],
+    "blocked": [],
+    "masked": [],
+    "shadow": ["secret-detection"]
+  },
+  "content_mode": "full",
+  "arguments": {
+    "query": "gateway billing reconciliation"
+  },
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "[redacted: 5 results]"
+      }
+    ]
+  },
+  "identity": {
+    "sponsor": {
+      "user_id": "user_42",
+      "org_id": "0b7c1e52-4f3a-4d0e-9b8a-2a7d6c5e4f31",
+      "idp": "okta",
+      "idp_subject": "00u1a2b3c4"
+    },
+    "actor_chain": [
+      {
+        "agent_id": "planner",
+        "run_id": "run_R1",
+        "deployment_id": "dep_research_prod"
+      },
+      {
+        "agent_id": "researcher",
+        "run_id": "run_R2"
+      }
+    ],
+    "grant_id": "grant_1",
+    "source": "runtime"
+  },
+  "account_label": "work",
+  "policy": {
+    "rule": "policy:read-only-web",
+    "action": "allow",
+    "shadow": false
+  },
+  "flow": {
+    "state_before": {
+      "untrusted_seen": {
+        "tool_call_id": "tc_01M4ZF09ZR3QW8E1T5Y2U7I9O0",
+        "tool": "issues_read_issue"
+      }
+    },
+    "decision": "allow",
+    "shadow": true,
+    "sources": [
+      {
+        "tool_call_id": "tc_01M4ZF09ZR3QW8E1T5Y2U7I9O0",
+        "tool": "issues_read_issue"
+      }
+    ]
+  },
+  "shaped": {
+    "original_bytes": 48211,
+    "returned_bytes": 5120,
+    "spilled": true
+  }
+}

@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://futureagi.com/contracts/gateway/examples/tool-price-card-v1.schema.json",
+  "title": "tool-price-card-v1",
+  "description": "Capability price cards. Each file under agentcc-gateway/catalog/tools/<capability>/<vendor>.json is one card ($defs/Card); this golden holds one card per resale_status and a native card with owner_price_pending. usd_per_unit is upstream cost; the billed price adds managed.tool_markup_percent. Each terms flag (no_divert, no_perf_disclosure, no_benchmark, cacheable, results_retention, eval_export) does what its own description below says. Uses only the keywords internal/contracts/schematest supports.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["cards"],
+  "properties": {
+    "cards": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/Card"
+      }
+    }
+  },
+  "$defs": {
+    "Card": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vendor",
+        "capability",
+        "skus",
+        "resale_status",
+        "resale_terms_ref",
+        "terms_url",
+        "terms_checked_at",
+        "zdr_capable",
+        "trains_on_input",
+        "improvement_license",
+        "regions",
+        "results_retention",
+        "cacheable",
+        "eval_export",
+        "no_divert",
+        "no_perf_disclosure",
+        "no_benchmark"
+      ],
+      "properties": {
+        "vendor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capability": {
+          "type": "string",
+          "minLength": 1
+        },
+        "skus": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/Sku"
+          }
+        },
+        "resale_status": {
+          "type": "string",
+          "enum": ["native", "managed_partner", "unconfirmed", "byok_only"],
+          "description": "byok_only refuses a managed credential (400 capability_managed_not_allowed at save, a config-load error in the gateway)."
+        },
+        "owner_price_pending": {
+          "type": "boolean",
+          "description": "On a native card, managed calls are refused with 503 managed_capability_unavailable (reason owner_price_pending) until the owner sets the price."
+        },
+        "resale_terms_ref": {
+          "type": "string",
+          "description": "Empty means not cleared for launch; traffic is never blocked by it."
+        },
+        "terms_url": {
+          "type": "string",
+          "minLength": 1
+        },
+        "terms_checked_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "zdr_capable": {
+          "type": "boolean"
+        },
+        "trains_on_input": {
+          "type": "string",
+          "enum": ["no", "ai_features_only", "yes"]
+        },
+        "improvement_license": {
+          "type": "boolean"
+        },
+        "improvement_opt_out_ref": {
+          "type": "string"
+        },
+        "regions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "results_retention": {
+          "type": "string",
+          "enum": ["none", "metadata", "full"]
+        },
+        "cacheable": {
+          "type": "string",
+          "enum": ["none", "org", "global"]
+        },
+        "eval_export": {
+          "type": "string",
+          "enum": ["allowed", "forbidden"]
+        },
+        "no_divert": {
+          "type": "boolean",
+          "description": "Used only when pinned; never in an auto pool; a failure returns 503 capability_provider_unavailable, never another vendor."
+        },
+        "no_perf_disclosure": {
+          "type": "boolean",
+          "description": "The vendor's terms forbid disclosing its performance: capability responses and their headers carry no latency, health, error-rate or quality figure for it."
+        },
+        "no_benchmark": {
+          "type": "boolean",
+          "description": "Excluded from parity probes, published comparisons, evals and leaderboards."
+        },
+        "attribution": {
+          "type": "string"
+        },
+        "price_effective_until": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        }
+      }
+    },
+    "Sku": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sku", "unit", "usd_per_unit", "free_on_failure"],
+      "properties": {
+        "sku": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit": {
+          "type": "string",
+          "enum": [
+            "request",
+            "result",
+            "page",
+            "content_page",
+            "second",
+            "minute",
+            "char_1k",
+            "gb",
+            "search_unit",
+            "image",
+            "clip",
+            "container_hour",
+            "gb_day"
+          ]
+        },
+        "usd_per_unit": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Upstream cost per unit, before markup."
+        },
+        "tier": {
+          "type": "string",
+          "minLength": 1
+        },
+        "free_on_failure": {
+          "type": "boolean"
+        },
+        "min_units": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max_usd_per_call": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cost_from_result_meta": {
+          "type": "boolean",
+          "description": "The vendor reports the call's cost in its result; it wins over the rate."
+        }
+      }
+    }
+  }
+}
