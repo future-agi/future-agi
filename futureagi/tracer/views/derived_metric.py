@@ -8,7 +8,7 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import APIException, ValidationError
+from rest_framework.exceptions import APIException, Throttled, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -37,7 +37,7 @@ from tracer.serializers.derived_metric import (
 )
 from tracer.services.derived_metrics import service
 from tracer.services.derived_metrics.cursor import newest_first_page
-from tracer.services.derived_metrics.errors import MetricInputError
+from tracer.services.derived_metrics.errors import MetricBusyError, MetricInputError
 from tracer.services.derived_metrics.formula import FormulaError
 from tracer.services.derived_metrics.queries import Scope
 from tracer.utils.workspace_scope import (
@@ -83,6 +83,10 @@ def _enqueue(run):
 
 class MetricViewSet(viewsets.GenericViewSet):
     def handle_exception(self, exc):
+        if isinstance(exc, MetricBusyError):
+            return super().handle_exception(
+                Throttled(wait=exc.retry_after, detail=str(exc.detail))
+            )
         if isinstance(exc, MetricInputError):
             return super().handle_exception(ValidationError(exc.detail))
         if isinstance(exc, (APIException, Http404, DjangoPermissionDenied)):
@@ -257,6 +261,7 @@ class DerivedMetricViewSet(MetricViewSet):
             data["window_end"],
             data["filters"],
             source_run,
+            actor_id=request.user.id,
         )
         return Response(result)
 

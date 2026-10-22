@@ -58,6 +58,22 @@ class Scope:
 
 SCOPE_SQL = "org_id = %(org_id)s AND workspace_id = %(workspace_id)s AND project_id = %(project_id)s"
 
+# Interactive previews run synchronously on a web worker, so they get a much
+# smaller abort budget than the single-slot background lane. Every limit throws
+# (never truncates); a preview that exceeds one is rejected with guidance to run
+# and persist the window instead. A preview returns exactly one overall row.
+PREVIEW_QUERY_SETTINGS = {
+    **QUERY_SETTINGS,
+    "max_execution_time": 15,
+    "max_memory_usage": 268435456,
+    "max_rows_to_read": 5000000,
+    "max_bytes_to_read": 2147483648,
+    "max_rows_to_group_by": 250000,
+    "max_result_rows": 10,
+    "timeout_overflow_mode": "throw",
+    "max_threads": 2,
+}
+
 # The v2 spans store keeps these measures in non-Nullable columns with DEFAULT 0,
 # so the physical zero written for "the collector never saw a value" is identical
 # to a measured zero. Rules (documented in docs/derived-metrics.rst):

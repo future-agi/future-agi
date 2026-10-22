@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
 import structlog
+from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 
@@ -24,9 +26,10 @@ from tracer.services.derived_metrics.cursor import (
     decode_result_cursor,
     encode_result_cursor,
 )
-from tracer.services.derived_metrics.errors import MetricInputError
+from tracer.services.derived_metrics.errors import MetricBusyError, MetricInputError
 from tracer.services.derived_metrics.formula import compile_formula
 from tracer.services.derived_metrics.queries import (
+    PREVIEW_QUERY_SETTINGS,
     QUERY_SETTINGS,
     SCOPE_SQL,
     Scope,
@@ -555,6 +558,61 @@ def read_results(
     }
 
 
+# --- Interactive preview ---------------------------------------------------------
+# Preview is a synchronous ClickHouse read on a web worker, outside the single-slot
+# background lane. It is bounded three ways: (1) a cross-process (cache-backed)
+# concurrency guard per actor and per organization, so one user or tenant cannot
+# occupy the worker pool or the database; (2) a much smaller server-side abort
+# budget than a persisted run (PREVIEW_QUERY_SETTINGS: rows/bytes read, memory,
+# group-by, execution time, result rows; every limit throws, nothing truncates);
+# (3) the single overall row it returns. A guard lease outlives the longest allowed
+# query, so a crashed worker releases its slot by expiry instead of blocking forever.
+PREVIEW_ACTOR_SLOTS = 1
+PREVIEW_ORG_SLOTS = 4
+PREVIEW_LEASE_SECONDS = PREVIEW_QUERY_SETTINGS["max_execution_time"] + 15
+PREVIEW_MAX_ROWS = 1
+# ClickHouse server codes for an aborted read budget: TOO_MANY_ROWS, TIMEOUT_EXCEEDED,
+# TOO_SLOW, MEMORY_LIMIT_EXCEEDED, TOO_MANY_BYTES, TOO_MANY_ROWS_OR_BYTES.
+BUDGET_ERROR_CODES = frozenset({158, 159, 160, 241, 307, 396})
+
+
+def _acquire_slot(prefix: str, limit: int, token: str) -> str | None:
+    for index in range(limit):
+        key = f"{prefix}:{index}"
+        if cache.add(key, token, timeout=PREVIEW_LEASE_SECONDS):
+            return key
+    return None
+
+
+@contextmanager
+def preview_admission(actor_id, organization_id):
+    """Hold one actor slot and one organization slot for the duration of a preview."""
+    token = uuid4().hex
+    held: list[str] = []
+    try:
+        for scope, identity, limit in (
+            ("actor", actor_id, PREVIEW_ACTOR_SLOTS),
+            ("org", organization_id, PREVIEW_ORG_SLOTS),
+        ):
+            key = _acquire_slot(
+                f"derived-metric-preview:{scope}:{identity}", limit, token
+            )
+            if key is None:
+                raise MetricBusyError(
+                    "A metric preview is already running"
+                    + (" for you" if scope == "actor" else " in this organization")
+                    + ". Wait for it to finish, then retry.",
+                    retry_after=PREVIEW_LEASE_SECONDS,
+                )
+            held.append(key)
+        yield
+    finally:
+        for key in held:
+            # Release only our own lease; an expired one may belong to someone else.
+            if cache.get(key) == token:
+                cache.delete(key)
+
+
 def preview(
     definition,
     scope: Scope,
@@ -562,32 +620,50 @@ def preview(
     end: datetime,
     filters: list[dict],
     source_run_id: str,
+    *,
+    actor_id,
 ) -> dict:
-    query, params = snapshot_select(
-        definition,
-        scope,
-        start,
-        end,
-        timezone.now(),
-        definition.filters + filters,
-        source_run_id,
-    )
+    require_satisfiable_filters(definition, filters)
     formula = compile_formula(
         definition.formula, [item["alias"] for item in definition.inputs]
     )
-    client = get_clickhouse_client()
-    if client.server_enforced_readonly:
-        raise RuntimeError(
-            "Metric preview requires the bounded computation connection."
+    with preview_admission(actor_id, scope.organization):
+        query, params = snapshot_select(
+            definition,
+            scope,
+            start,
+            end,
+            timezone.now(),
+            definition.filters + filters,
+            source_run_id,
         )
-    rows, columns = client.execute(
-        aggregate_select(query, formula, rollup="overall"),
-        {**params, **formula.parameters},
-        with_column_types=True,
-        settings=QUERY_SETTINGS,
-    )
+        client = get_clickhouse_client()
+        if client.server_enforced_readonly:
+            raise RuntimeError(
+                "Metric preview requires the bounded computation connection."
+            )
+        try:
+            rows, columns = client.execute(
+                aggregate_select(query, formula, rollup="overall"),
+                {**params, **formula.parameters},
+                with_column_types=True,
+                settings=PREVIEW_QUERY_SETTINGS,
+            )
+        except Exception as exc:
+            if getattr(exc, "code", None) in BUDGET_ERROR_CODES:
+                logger.warning("derived_metric_preview_budget", code=exc.code)
+                raise MetricInputError(
+                    {
+                        "window": "This preview exceeded its interactive read budget. "
+                        "Choose a shorter window or narrower filters, or run and persist "
+                        "the window instead."
+                    }
+                ) from exc
+            raise
     names = [column[0] for column in columns]
     return {
-        "results": [dict(zip(names, row, strict=True)) for row in rows],
+        "results": [
+            dict(zip(names, row, strict=True)) for row in rows[:PREVIEW_MAX_ROWS]
+        ],
         "next_cursor": None,
     }
