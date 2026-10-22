@@ -60,7 +60,9 @@ const EditAgentDetails = ({
   setValue,
   getValues,
   clearErrors,
+  agentKind,
 }) => {
+  const isSourceAgent = agentKind === "source";
   const { orgLimit } = useAuthContext();
   const { agentDefinitionId } = useParams();
   const [lastFetchedAt, setLastFetchedAt] = useState(null);
@@ -226,7 +228,8 @@ const EditAgentDetails = ({
     }
   };
 
-  const canEnableObservability = Boolean(apiKey && assistantId);
+  const canEnableObservability =
+    isSourceAgent || Boolean(apiKey && assistantId);
   const keysRequired = inbound === false;
   // "others" provider brings its own endpoint, so outbound has no
   // meaning (nothing to call). Lock the toggle to inbound.
@@ -249,10 +252,12 @@ const EditAgentDetails = ({
   );
 
   useEffect(() => {
+    // A code agent has no key or assistant id to wait for.
+    if (isSourceAgent) return;
     if (observabilityEnabled && (!apiKey || !assistantId)) {
       setValue("observabilityEnabled", false);
     }
-  }, [apiKey, assistantId, observabilityEnabled, setValue]);
+  }, [apiKey, assistantId, isSourceAgent, observabilityEnabled, setValue]);
 
   return (
     <Box>
@@ -431,7 +436,9 @@ const EditAgentDetails = ({
                     control={control}
                     fieldName="assistantId"
                     placeholder="asst_xxx"
-                    required={observabilityEnabled || keysRequired}
+                    required={
+                      (!isSourceAgent && observabilityEnabled) || keysRequired
+                    }
                     label="Assistant ID"
                     fullWidth
                     size="small"
@@ -547,7 +554,7 @@ const EditAgentDetails = ({
                   },
                 }}
                 options={AUTH_METHODS_BY_PROVIDER[selectedProvider] || []}
-                required={observabilityEnabled}
+                required={!isSourceAgent && observabilityEnabled}
               />
             </ShowComponent>
             <ShowComponent
@@ -561,7 +568,9 @@ const EditAgentDetails = ({
                 fieldName="apiKey"
                 placeholder="Enter API key"
                 label="Provider API Key"
-                required={observabilityEnabled || keysRequired}
+                required={
+                  (!isSourceAgent && observabilityEnabled) || keysRequired
+                }
                 error={errors && !!errors.apiKey?.message}
                 helperText={errors && errors.apiKey?.message}
                 fullWidth
@@ -588,7 +597,7 @@ const EditAgentDetails = ({
               fieldName="livekitUrl"
               placeholder="https://your-project.livekit.cloud"
               label="LiveKit Server URL"
-              required
+              required={!isSourceAgent}
               fullWidth
               size="small"
               error={errors && !!errors.livekitUrl?.message}
@@ -599,7 +608,7 @@ const EditAgentDetails = ({
               fieldName="livekitApiKey"
               placeholder="APIxxxxxxxxxxxxxxxx"
               label="LiveKit API Key"
-              required
+              required={!isSourceAgent}
               fullWidth
               size="small"
               autoComplete="new-password"
@@ -612,7 +621,7 @@ const EditAgentDetails = ({
               placeholder="Paste the secret you copied when creating the key"
               label="LiveKit API Secret"
               type="password"
-              required
+              required={!isSourceAgent}
               fullWidth
               size="small"
               autoComplete="new-password"
@@ -626,7 +635,7 @@ const EditAgentDetails = ({
                   fieldName="livekitAgentName"
                   placeholder="e.g. test-agent"
                   label="Agent Name"
-                  required
+                  required={!isSourceAgent}
                   fullWidth
                   size="small"
                   error={errors && !!errors.livekitAgentName?.message}
@@ -768,7 +777,7 @@ const EditAgentDetails = ({
           <Box>
             <FormTextFieldV2
               label="Prompt/Chains"
-              required
+              required={!isSourceAgent}
               control={control}
               fieldName="description"
               placeholder="Describe the agent's purpose and functions"
@@ -1069,9 +1078,10 @@ const EditAgentDetails = ({
         </ShowComponent>
         <ShowComponent
           condition={
-            agentType === AGENT_TYPES.VOICE &&
-            selectedProvider !== "others" &&
-            !isLiveKitProvider(selectedProvider)
+            isSourceAgent ||
+            (agentType === AGENT_TYPES.VOICE &&
+              selectedProvider !== "others" &&
+              !isLiveKitProvider(selectedProvider))
           }
         >
           <Stack>
@@ -1094,7 +1104,9 @@ const EditAgentDetails = ({
                   labelPlacement="end"
                   helperText={""}
                   defaultValue={true}
-                  onChange={() => trigger(["apiKey", "assistantId"])}
+                  onChange={() => {
+                    if (!isSourceAgent) trigger(["apiKey", "assistantId"]);
+                  }}
                   disabled={!canEnableObservability}
                 />
               </span>
@@ -1132,6 +1144,7 @@ EditAgentDetails.propTypes = {
   getValues: PropTypes.func,
   trigger: PropTypes.func,
   clearErrors: PropTypes.func,
+  agentKind: PropTypes.string,
 };
 
 export default EditAgentDetails;

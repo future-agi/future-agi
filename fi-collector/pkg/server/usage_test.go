@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"testing"
+	"time"
 
+	chexp "github.com/future-agi/future-agi/fi-collector/exporter/clickhouse25exporter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -158,5 +160,36 @@ func TestDistinctTraceIDsMultiple(t *testing.T) {
 	}
 	if got := len(distinctTraceIDs(traces)); got != 3 {
 		t.Errorf("got %d distinct ids, want 3", got)
+	}
+}
+
+// A simulated run's spans are billed like any others: converting the payload
+// leaves the span and trace counts that emitUsage bills untouched.
+func TestConvertLeavesTheBilledPayloadUnchanged(t *testing.T) {
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	ra := rs.Resource().Attributes()
+	ra.PutStr("fi.project_id", "44444444-4444-4444-8444-444444444444")
+	ra.PutStr("fi.org_id", "33333333-3333-4333-8333-333333333333")
+	ra.PutStr("project_type", "observe")
+	ra.PutStr("fi.simulation.origin", "simulation")
+	spans := rs.ScopeSpans().AppendEmpty().Spans()
+	for i, tr := range []byte{1, 1, 2} {
+		sp := spans.AppendEmpty()
+		sp.SetTraceID(pcommon.TraceID([16]byte{0x61, tr}))
+		sp.SetSpanID(pcommon.SpanID([8]byte{0x51, byte(i + 1)}))
+		sp.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000000, 0)))
+		sp.Attributes().PutStr("user.id", "usage-user@example.test")
+		sp.Attributes().PutStr("session.id", "usage-session-1")
+	}
+
+	if _, _, err := chexp.ConvertWithIdentities(context.Background(), traces, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := traces.SpanCount(); got != 3 {
+		t.Errorf("span count after conversion = %d, want 3", got)
+	}
+	if got := countDistinctTraces(traces); got != 2 {
+		t.Errorf("trace count after conversion = %d, want 2", got)
 	}
 }

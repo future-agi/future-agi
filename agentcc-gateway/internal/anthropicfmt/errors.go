@@ -8,7 +8,10 @@ import (
 )
 
 // WriteError writes an error response in Anthropic format.
+// Redacted like the other dialect writers: an upstream message can carry a
+// credential in a URL, and this is a boundary a response leaves through.
 func WriteError(w http.ResponseWriter, statusCode int, errorType string, message string) {
+	message = models.RedactCredentials(message)
 	resp := struct {
 		Type  string `json:"type"`
 		Error struct {

@@ -27,10 +27,15 @@ const environmentEvaluationPath = (id, evalConfigId) =>
     { id, eval_config_id: evalConfigId },
   );
 
-export const listHarnessEnvironments = async ({ page, limit } = {}) => {
+export const listHarnessEnvironments = async ({
+  page,
+  limit,
+  agentDefinitionId,
+} = {}) => {
   const params = {};
   if (page != null) params.page = page;
   if (limit != null) params.limit = limit;
+  if (agentDefinitionId) params.agent_definition_id = agentDefinitionId;
   return (await axios.get(environmentsPath(), { params })).data;
 };
 

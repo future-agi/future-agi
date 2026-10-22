@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 // --- Gemini Imagen native types ---
@@ -105,7 +106,7 @@ func (p *Provider) CreateImage(ctx context.Context, req *models.ImageRequest) (*
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024)) // 50MB — images can be large.
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: reading image response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "gemini: reading image response")
 	}
 
 	if resp.StatusCode != http.StatusOK {

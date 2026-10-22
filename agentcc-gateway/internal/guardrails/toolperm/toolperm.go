@@ -13,6 +13,34 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
+// toolRef is one tool to decide about, and whether alias equivalence applies
+// to it. An application function is matched by its exact name; two spellings
+// of a function name are two different functions.
+type toolRef struct {
+	name    string
+	builtin bool
+}
+
+// matches reports whether a configured pattern covers this tool.
+//
+// For a provider-executed tool, every spelling of the same capability is
+// tried: the patterns are globs, so canonicalizing the name alone would stop a
+// pattern written the other way from matching — "*Execution" would miss
+// code_execution. For a function the exact name is used, so an application
+// function called "codeExecution" is not covered by a rule about the built-in
+// code_execution, and the reverse.
+func (g *ToolPermGuardrail) matches(tool toolRef) bool {
+	if !tool.builtin {
+		return g.matchesAny(tool.name)
+	}
+	for _, spelling := range models.CapabilitySpellings(tool.name) {
+		if g.matchesAny(spelling) {
+			return true
+		}
+	}
+	return false
+}
+
 // ToolPermGuardrail enforces tool permission policies.
 type ToolPermGuardrail struct {
 	name     string
@@ -54,7 +82,7 @@ func New(name string, cfg map[string]interface{}) *ToolPermGuardrail {
 	return g
 }
 
-func (g *ToolPermGuardrail) Name() string           { return g.name }
+func (g *ToolPermGuardrail) Name() string            { return g.name }
 func (g *ToolPermGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // IsToolPermConfig returns true if the config specifies a tool permission guardrail.
@@ -72,45 +100,60 @@ func (g *ToolPermGuardrail) Check(ctx context.Context, input *guardrails.CheckIn
 		return &guardrails.CheckResult{Pass: true}
 	}
 
-	var toolNames []string
+	var tools []toolRef
 
-	// Collect tool names from request (pre-stage).
+	// Collect tools from the request (pre-stage).
 	if (g.applyTo == "request" || g.applyTo == "both") && input.Request != nil {
 		for _, tool := range input.Request.Tools {
-			toolNames = append(toolNames, tool.Function.Name)
+			// The capability the provider will forward, not the function name
+			// beside it. An entry naming one capability in its type and another
+			// in its function passed a denylist for the first and was sent
+			// anyway, and a bare {"google_search":{}} names no function at all.
+			tools = append(tools, toolRef{
+				name:    tool.Capability(),
+				builtin: tool.NamesBuiltinCapability(),
+			})
 		}
 	}
 
-	// Collect tool names from response (post-stage).
+	// Collect tools from the response (post-stage). These are function calls
+	// the model made, so they are matched by their exact names.
 	if (g.applyTo == "response" || g.applyTo == "both") && input.Response != nil {
-		toolNames = append(toolNames, extractResponseToolNames(input.Response)...)
+		for _, name := range extractResponseToolNames(input.Response) {
+			tools = append(tools, toolRef{name: name})
+		}
 	}
 
-	if len(toolNames) == 0 {
+	if len(tools) == 0 {
 		return &guardrails.CheckResult{Pass: true}
+	}
+
+	toolNames := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		toolNames = append(toolNames, tool.name)
 	}
 
 	var violations []string
 
 	switch g.mode {
 	case "allowlist":
-		for _, name := range toolNames {
-			if !g.matchesAny(name) {
-				violations = append(violations, name)
+		for _, tool := range tools {
+			if !g.matches(tool) {
+				violations = append(violations, tool.name)
 			}
 		}
 	case "denylist":
-		for _, name := range toolNames {
-			if g.matchesAny(name) {
-				violations = append(violations, name)
+		for _, tool := range tools {
+			if g.matches(tool) {
+				violations = append(violations, tool.name)
 			}
 		}
 	case "audit":
 		// In audit mode, flag matches but always pass.
 		var matched []string
-		for _, name := range toolNames {
-			if g.matchesAny(name) {
-				matched = append(matched, name)
+		for _, tool := range tools {
+			if g.matches(tool) {
+				matched = append(matched, tool.name)
 			}
 		}
 		return &guardrails.CheckResult{

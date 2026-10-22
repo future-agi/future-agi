@@ -1198,7 +1198,7 @@ LogViewTable.propTypes = {
 
 /* ── InlineTagsRow — always-visible tag chips with add/remove ── */
 
-const InlineTagsRow = ({ tags = [], traceId, spanId }) => {
+const InlineTagsRow = ({ tags = [], traceId, spanId, readOnly = false }) => {
   const [isAdding, setIsAdding] = useState(false);
   const queryClient = useQueryClient();
 
@@ -1243,6 +1243,7 @@ const InlineTagsRow = ({ tags = [], traceId, spanId }) => {
           name={tag.name}
           color={tag.color}
           size="small"
+          readOnly={readOnly}
           onRemove={() => persist(normalized.filter((_, i) => i !== idx))}
           onColorChange={(c) =>
             persist(
@@ -1258,7 +1259,8 @@ const InlineTagsRow = ({ tags = [], traceId, spanId }) => {
         />
       ))}
 
-      {isAdding ? (
+      {!readOnly &&
+        (isAdding ? (
         <Box
           sx={{ minWidth: 130 }}
           onBlur={(e) => {
@@ -1298,7 +1300,7 @@ const InlineTagsRow = ({ tags = [], traceId, spanId }) => {
           <Iconify icon="mdi:plus" width={12} />
           tag
         </Box>
-      )}
+      ))}
     </Stack>
   );
 };
@@ -1307,6 +1309,7 @@ InlineTagsRow.propTypes = {
   tags: PropTypes.array,
   traceId: PropTypes.string,
   spanId: PropTypes.string,
+  readOnly: PropTypes.bool,
 };
 
 /* ── EvalCard — single eval score display ─────────────── */
@@ -1725,6 +1728,7 @@ const SpanDetailPane = ({
   onSelectSpan,
   initialEvalFocus = false,
   drawerOpen = true,
+  readOnly = false,
 }) => {
   const [activeTab, setActiveTab] = useState("preview");
   const evalFocusSeededRef = useRef(false);
@@ -1839,11 +1843,15 @@ const SpanDetailPane = ({
         label: "Evals",
         icon: "mdi:checkbox-marked-circle-outline",
       },
-      { key: "annotations", label: "Annotations", icon: "mdi:pencil-outline" },
+      !readOnly && {
+        key: "annotations",
+        label: "Annotations",
+        icon: "mdi:pencil-outline",
+      },
       { key: "events", label: "Events", icon: "mdi:bell-outline" },
     );
-    return tabs;
-  }, [hasLogView]);
+    return tabs.filter(Boolean);
+  }, [hasLogView, readOnly]);
 
   if (!span) return null;
 
@@ -1940,6 +1948,7 @@ const SpanDetailPane = ({
           tags={span?.tags || []}
           traceId={span?.trace}
           spanId={span?.id}
+          readOnly={readOnly}
         />
       </Box>
 
@@ -2159,6 +2168,8 @@ const SpanDetailPane = ({
             evals={collectAllEvalsFromEntry(entry)}
             onSelectSpan={onSelectSpan}
             emptyMessage="No evaluations for this span or its children"
+            showErrorLocalization={!readOnly}
+            showFixWithFalcon={!readOnly}
             onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
               const traceId = span?.trace;
               if (level === "eval" && ev) {
@@ -2205,7 +2216,7 @@ const SpanDetailPane = ({
         )}
 
         {/* Annotations Tab */}
-        {activeTab === "annotations" && (
+        {activeTab === "annotations" && !readOnly && (
           <AnnotationsTabContent
             spanId={span?.id}
             traceId={span?.trace}
@@ -2779,6 +2790,7 @@ SpanDetailPane.propTypes = {
   onSelectSpan: PropTypes.func,
   initialEvalFocus: PropTypes.bool,
   drawerOpen: PropTypes.bool,
+  readOnly: PropTypes.bool,
 };
 
 export default React.memo(SpanDetailPane);

@@ -1,13 +1,16 @@
 package config
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -530,7 +533,11 @@ func TestLoad_MaxRequestTimeoutDefaultsToWriteTimeout(t *testing.T) {
 
 // A ceiling above the write timeout is one no response can reach, so Load
 // lowers it rather than refusing to start.
-func TestLoad_MaxRequestTimeoutIsHeldAtTheWriteTimeout(t *testing.T) {
+// A ceiling above write_timeout is kept. The timeout middleware holds the
+// response write deadline at the ceiling, so write_timeout no longer decides
+// how long a request may take — and lowering the ceiling to it would truncate
+// the operator's own setting silently.
+func TestLoad_MaxRequestTimeoutAboveTheWriteTimeoutIsKept(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	body := "server:\n  write_timeout: 300s\n  max_request_timeout: 600s\n"
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -541,8 +548,62 @@ func TestLoad_MaxRequestTimeoutIsHeldAtTheWriteTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Server.MaxRequestTimeout != 300*time.Second {
-		t.Errorf("max_request_timeout = %v, want 300s (the write timeout)", cfg.Server.MaxRequestTimeout)
+	if cfg.Server.MaxRequestTimeout != 600*time.Second {
+		t.Errorf("max_request_timeout = %v, want 600s (the configured ceiling)", cfg.Server.MaxRequestTimeout)
+	}
+}
+
+// In a YAML flow mapping, "input_per_token:1e-07" (no space after the colon)
+// is one key with no value. The gateway reads no such key, so the price stays
+// unset and the model's requests carry no cost. Load must name the key, and
+// must not print the secret a mistyped key would otherwise carry.
+func TestLoad_WarnsAboutKeysTheGatewayDoesNotRead(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	t.Setenv("AGENTCC_TEST_PORT", "8080")
+	t.Setenv("AGENTCC_TEST_TOKEN", "do-not-log-me")
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := `server:
+  port: ${AGENTCC_TEST_PORT}
+admin: { token:${AGENTCC_TEST_TOKEN} }
+model_database:
+  overrides:
+    "vendor/model":
+      pricing: { input_per_token:1e-07, output_per_token: 2e-07 }
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.ModelDatabase.Overrides["vendor/model"].Pricing.InputPerToken; got != nil {
+		t.Fatalf("input_per_token = %v, want unset", *got)
+	}
+	out := logs.String()
+	// Every value a missing space pulled into a key is dropped, a ${VAR}
+	// stand-in included: a reference and a literal compose, so
+	// {token:${EMPTY_VAR}sk-live-...} would otherwise carry the secret whole.
+	// The key with its line number is what finds the typo.
+	for _, key := range []string{"input_per_token:<value omitted>", "token:<value omitted>"} {
+		if !strings.Contains(out, key) {
+			t.Errorf("log does not name the unread key %q:\n%s", key, out)
+		}
+	}
+	// The variable's value must never appear either way.
+	if strings.Contains(out, "do-not-log-me") {
+		t.Errorf("the environment variable's value reached the log:\n%s", out)
+	}
+	if strings.Contains(out, "do-not-log-me") {
+		t.Errorf("log carries the token's value:\n%s", out)
+	}
+	if strings.Contains(out, "cannot unmarshal") {
+		t.Errorf("log flags the unexpanded ${AGENTCC_TEST_PORT}, which is not a key:\n%s", out)
 	}
 }
 
@@ -583,6 +644,104 @@ func TestLoadFromEnv_DurationWithoutAUnitKeepsTheConfiguredValue(t *testing.T) {
 
 			if cfg.Server.DefaultRequestTimeout != tt.want {
 				t.Errorf("default_request_timeout = %v, want %v", cfg.Server.DefaultRequestTimeout, tt.want)
+			}
+		})
+	}
+}
+
+// The typo this warning exists to catch is what pulls a value into a key name,
+// so the error text is exactly where a literal credential turns up. The ${VAR}
+// stand-ins cover a credential referenced from the environment; this covers one
+// written into the file.
+func TestWarnUnreadKeys_DoesNotLogALiteralCredential(t *testing.T) {
+	const secret = "sk-live-FAKE-SENTINEL-0123456789"
+
+	tests := []struct {
+		name string
+		body string
+		key  string // the key name an operator needs in order to find the typo
+	}{
+		{
+			name: "a provider api_key in a flow mapping",
+			body: "providers:\n  demo: {api_key:" + secret + ", api_format: openai}\n",
+			key:  "api_key",
+		},
+		{
+			name: "an admin token in a flow mapping",
+			body: "admin: {token:" + secret + "}\n",
+			key:  "token",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var logged strings.Builder
+			restore := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn})))
+			defer slog.SetDefault(restore)
+
+			warnUnreadKeys([]byte(tc.body))
+
+			out := logged.String()
+			if strings.Contains(out, secret) {
+				t.Fatalf("the credential reached the log:\n%s", out)
+			}
+			if !strings.Contains(out, tc.key) {
+				t.Errorf("the key %q is missing, so the operator cannot find the typo:\n%s", tc.key, out)
+			}
+		})
+	}
+}
+
+// An ordinary unread key is still reported in full: it carries no value, and
+// the whole point of the warning is to name it.
+func TestWarnUnreadKeys_ReportsAnOrdinaryUnreadKey(t *testing.T) {
+	var logged strings.Builder
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(restore)
+
+	warnUnreadKeys([]byte("server:\n  unknown_thing: 5\n"))
+
+	if out := logged.String(); !strings.Contains(out, "unknown_thing") {
+		t.Errorf("the unread key was not named:\n%s", out)
+	}
+}
+
+// A ${VAR} reference and a literal compose into one key. The stand-in made the
+// whole value look like a variable name, so keeping it published the literal
+// suffix in full.
+func TestWarnUnreadKeys_ComposedReferenceAndLiteral(t *testing.T) {
+	const secret = "sk-live-COMPOSED-SENTINEL-0123456789"
+
+	for _, tc := range []struct{ name, env, body string }{
+		{
+			name: "an empty reference followed by a literal",
+			env:  "",
+			body: "admin: { token:${AGENTCC_TEST_PREFIX}" + secret + " }\n",
+		},
+		{
+			name: "a set reference followed by a literal",
+			env:  "prefix-",
+			body: "admin: { token:${AGENTCC_TEST_PREFIX}" + secret + " }\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AGENTCC_TEST_PREFIX", tc.env)
+
+			var logged strings.Builder
+			restore := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn})))
+			defer slog.SetDefault(restore)
+
+			warnUnreadKeys([]byte(tc.body))
+
+			out := logged.String()
+			if strings.Contains(out, secret) {
+				t.Fatalf("the literal credential reached the log:\n%s", out)
+			}
+			if !strings.Contains(out, "token") {
+				t.Errorf("the key is missing, so the operator cannot find the typo:\n%s", out)
 			}
 		})
 	}

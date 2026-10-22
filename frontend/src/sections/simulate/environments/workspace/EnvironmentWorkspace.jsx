@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
-import { Box, Button, Stack } from "@mui/material";
+import { Alert, Box, Button, Stack } from "@mui/material";
 import {
   useNavigate,
   useParams,
@@ -64,6 +64,19 @@ const blockedReason = (envState) => {
   if (!envState.scenarios?.length) return WORKSPACE_COPY.runBlocked.scenarios;
   return WORKSPACE_COPY.runBlocked.generic;
 };
+
+// Why the platform left observability off; the Environment builds either way.
+function refusalReason(refusal) {
+  if (refusal.code === "agent_not_stored") return "the agent's code could not be read";
+  if (refusal.code === "bound") {
+    return "the run uses an existing agent; turn it on from the agent page";
+  }
+  const details = refusal.details && typeof refusal.details === "object" ? refusal.details : {};
+  const messages = Object.values(details)
+    .map((list) => (Array.isArray(list) ? list[0] : undefined))
+    .filter((message) => typeof message === "string" && message);
+  return messages.length ? messages.join("; ") : "the project could not be created";
+}
 
 /**
  * The environment workspace at `environments/:envId`.
@@ -197,6 +210,14 @@ export default function EnvironmentWorkspace() {
     />
   );
 
+  const refusal = jobQuery.data?.job?.metadata?.observability_refusal;
+  const refusalLine =
+    refusal && typeof refusal === "object" && !Array.isArray(refusal) ? (
+      <Alert severity="warning" role="status" sx={{ mx: 2, mt: 2 }}>
+        {`Observability was not turned on: ${refusalReason(refusal)}`}
+      </Alert>
+    ) : null;
+
   const executionMatch = useMatch(EXECUTION_PATTERN);
 
   if (notFound) {
@@ -273,6 +294,7 @@ export default function EnvironmentWorkspace() {
           locked
         />
         {creditBanner}
+        {refusalLine}
         <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
           <BuildingStage
             progress={progress}
@@ -415,6 +437,7 @@ export default function EnvironmentWorkspace() {
         selectionActive={selectionActive}
       />
       {creditBanner}
+      {refusalLine}
 
       <SystemBanners env={env} envState={envState} patch={patch} />
       <VersionBar env={env} envState={envState} />

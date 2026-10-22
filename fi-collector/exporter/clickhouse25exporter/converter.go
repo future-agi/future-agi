@@ -44,6 +44,9 @@ const (
 	attrSessionID    = "session.id"
 	resAttrProjectTy = "project_type"
 
+	// Marks a simulated run's resource, whose spans must not show up as sessions or end users.
+	resAttrSimulationOrigin = "fi.simulation.origin"
+
 	// zeroUUIDString: traceIDToUUIDString output for a missing/zero trace id;
 	// collectTrace skips it to avoid an all-zeros-keyed trace_dict row.
 	zeroUUIDString = "00000000-0000-0000-0000-000000000000"
@@ -356,7 +359,10 @@ func spanToRow(
 	// external_session_id) so curatedwriter can mirror the end_users /
 	// trace_sessions RMTs keyed by the SAME id. The span columns below read the
 	// ids straight off this identity — no second derivation.
-	identity := newSpanIdentity(span.Attributes(), projectID, orgID, projectType)
+	var identity spanIdentity // zero value: both id columns nil, addTo writes no identity rows
+	if _, marked := resourceAttrs[resAttrSimulationOrigin]; !marked {
+		identity = newSpanIdentity(span.Attributes(), projectID, orgID, projectType)
+	}
 	endUserID := identity.endUserColumn()
 	traceSessionID := identity.sessionColumn()
 
