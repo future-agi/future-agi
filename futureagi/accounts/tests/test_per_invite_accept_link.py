@@ -15,6 +15,8 @@ from accounts.models.organization import Organization
 from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
+from accounts.models.workspace import Workspace
+from conftest import WorkspaceAwareAPIClient
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import (
@@ -41,6 +43,13 @@ def _make_owner(org, email):
         role=OrganizationRoles.OWNER,
         level=Level.OWNER,
         is_active=True,
+    )
+    Workspace.objects.create(
+        name=f"{org.name} default",
+        organization=org,
+        is_default=True,
+        is_active=True,
+        created_by=user,
     )
     return user
 
@@ -113,6 +122,123 @@ class TestInviteTokens:
 
     def test_legacy_django_token_reads_none(self, invited_user):
         assert (
-            read_invite_token(default_token_generator.make_token(invited_user))
-            is None
+            read_invite_token(default_token_generator.make_token(invited_user)) is None
         )
+
+
+def _token_from_link(link):
+    return link.rstrip("/").rsplit("/", 1)[1]
+
+
+def _owner_client(owner):
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=owner)
+    client.set_workspace(
+        Workspace.objects.get(organization=owner.organization, is_default=True)
+    )
+    return client
+
+
+def _invite_via_api(owner, email):
+    response = _owner_client(owner).post(
+        "/accounts/organization/invite/",
+        {"emails": [email], "org_level": Level.MEMBER, "workspace_access": []},
+        format="json",
+    )
+    assert response.status_code == 200, response.data
+    return OrganizationInvite.objects.get(
+        organization=owner.organization,
+        target_email__iexact=email,
+        status=InviteStatus.PENDING,
+    )
+
+
+@pytest.fixture
+def sent_emails(monkeypatch):
+    import accounts.utils as accounts_utils
+    import accounts.views.workspace_management as wm
+
+    sent = []
+
+    def _capture(subject, template, context, recipients, *args, **kwargs):
+        sent.append({"template": template, "context": context, "to": recipients})
+
+    monkeypatch.setattr(accounts_utils, "email_helper", _capture)
+    monkeypatch.setattr(wm, "email_helper", _capture)
+    monkeypatch.setattr(
+        wm, "log_and_deduct_cost_for_resource_request", None, raising=False
+    )
+    return sent
+
+
+class TestInviteEmailLinks:
+    def test_invite_create_email_link_names_that_invite(
+        self, owner_a, owner_b, sent_emails
+    ):
+        email = "two-org-new@futureagi.com"
+        invite_a = _invite_via_api(owner_a, email)
+        invite_b = _invite_via_api(owner_b, email)
+
+        links = [m["context"]["invite_link"] for m in sent_emails]
+        assert [read_invite_token(_token_from_link(link)) for link in links] == [
+            invite_a.id,
+            invite_b.id,
+        ]
+
+    def test_resend_to_active_user_with_pending_invite_sends_link(
+        self, owner_b, invited_user, other_invite, sent_emails
+    ):
+        invited_user.is_active = True
+        invited_user.save(update_fields=["is_active"])
+
+        response = _owner_client(owner_b).post(
+            "/accounts/organization/invite/resend/",
+            {"invite_id": str(other_invite.id)},
+            format="json",
+        )
+
+        assert response.status_code == 200, response.data
+        assert sent_emails[-1]["template"] == "invite_user.html"
+        link = sent_emails[-1]["context"]["invite_link"]
+        assert read_invite_token(_token_from_link(link)) == other_invite.id
+
+    def test_workspace_invite_email_token_names_invite(
+        self, auth_client, workspace, sent_emails
+    ):
+        email = "ws-per-invite@futureagi.com"
+        response = auth_client.post(
+            "/accounts/workspace/invite/",
+            {
+                "emails": [email],
+                "role": OrganizationRoles.WORKSPACE_MEMBER,
+                "workspace_ids": [str(workspace.id)],
+                "select_all": False,
+            },
+            format="json",
+        )
+        assert response.status_code in (200, 201), response.data
+
+        invite = OrganizationInvite.objects.get(target_email__iexact=email)
+        assert read_invite_token(sent_emails[-1]["context"]["token"]) == invite.id
+
+    def test_manage_team_invite_email_token_names_invite(
+        self, auth_client, workspace, sent_emails
+    ):
+        email = "team-per-invite@futureagi.com"
+        response = auth_client.post(
+            "/accounts/team/users/",
+            {
+                "members": [
+                    {
+                        "email": email,
+                        "name": "Team Per Invite",
+                        "organization_role": OrganizationRoles.MEMBER,
+                    }
+                ]
+            },
+            format="json",
+        )
+        assert response.status_code in (200, 201), response.data
+
+        invite = OrganizationInvite.objects.get(target_email__iexact=email)
+        assert read_invite_token(sent_emails[-1]["context"]["token"]) == invite.id
