@@ -1,6 +1,7 @@
 from rest_framework.decorators import action
 
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tracer.models.eval_task import EvalTask
 from tracer.models.project import Project
@@ -97,10 +98,10 @@ class SamplingPreviewMixin:
             from rest_framework.response import Response
 
             return Response(
-                {
-                    "status": False,
-                    "error": "Sampling preview exceeded its read budget or is unavailable. Narrow the window and retry.",
-                },
+                build_error_envelope(
+                    "Sampling preview exceeded its read budget or is unavailable. Narrow the window and retry.",
+                    status_code=503,
+                ),
                 status=503,
             )
         return self._gm.success_response(result)
