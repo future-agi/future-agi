@@ -265,13 +265,37 @@ export interface AcceptInvitationPreviewResponseApi {
   email: string;
   /** @minLength 1 */
   org_name: string;
+  existing_user: boolean;
 }
 
 export interface AcceptInvitationRequestApi {
   /** @minLength 1 */
-  new_password: string;
+  new_password?: string;
   /** @minLength 1 */
-  repeat_password: string;
+  repeat_password?: string;
+}
+
+export interface AcceptInvitationResponseApi {
+  /** @minLength 1 */
+  access?: string;
+  /** @minLength 1 */
+  refresh?: string;
+  requires_two_factor?: boolean;
+  challenge_token?: string;
+  methods?: string[];
+  requires_org_setup?: boolean;
+  /** @minLength 1 */
+  message?: string;
+  new_org?: boolean;
+  /** @minLength 1 */
+  org_name?: string;
+  is_first_login?: boolean;
+  /** @minLength 1 */
+  recovery_codes_warning?: string;
+  joined?: boolean;
+  existing_user?: boolean;
+  /** @minLength 1 */
+  organization_id?: string;
 }
 
 export interface AccountOrganizationDetailApi {
