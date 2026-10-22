@@ -1,0 +1,54 @@
+{
+  "vendor": "exa",
+  "capability": "search",
+  "skus": [
+    {
+      "sku": "exa.search.instant",
+      "unit": "request",
+      "usd_per_unit": 0.004,
+      "tier": "fast",
+      "free_on_failure": false
+    },
+    {
+      "sku": "exa.search.auto",
+      "unit": "request",
+      "usd_per_unit": 0.007,
+      "tier": "standard",
+      "free_on_failure": false
+    },
+    {
+      "sku": "exa.search.deep",
+      "unit": "request",
+      "usd_per_unit": 0.012,
+      "tier": "deep",
+      "free_on_failure": false
+    },
+    {
+      "sku": "exa.search.deep_reasoning",
+      "unit": "request",
+      "usd_per_unit": 0.015,
+      "tier": "deep",
+      "free_on_failure": false
+    },
+    {
+      "sku": "exa.search.extra_result",
+      "unit": "result",
+      "usd_per_unit": 0.001,
+      "free_on_failure": false
+    }
+  ],
+  "resale_status": "unconfirmed",
+  "resale_terms_ref": "",
+  "terms_url": "https://exa.ai/terms",
+  "terms_checked_at": "2026-10-15",
+  "zdr_capable": true,
+  "trains_on_input": "no",
+  "improvement_license": true,
+  "regions": [],
+  "results_retention": "metadata",
+  "cacheable": "none",
+  "eval_export": "allowed",
+  "no_divert": false,
+  "no_perf_disclosure": false,
+  "no_benchmark": false
+}
