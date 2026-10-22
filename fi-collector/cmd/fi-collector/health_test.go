@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
+	"runtime/debug"
 	"testing"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
@@ -63,9 +66,10 @@ func TestAdminHealthReportsBuildAndAdmissionLimits(t *testing.T) {
 		t.Fatalf("healthz = %d", rec.Code)
 	}
 	var body struct {
-		Status string         `json:"status"`
-		Build  map[string]any `json:"build"`
-		Limits struct {
+		Status  string         `json:"status"`
+		Build   map[string]any `json:"build"`
+		Runtime map[string]any `json:"runtime"`
+		Limits  struct {
 			MaxPendingRows   int   `json:"max_pending_rows"`
 			BatchMaxRows     int   `json:"batch_max_rows"`
 			BatchMaxAgeMS    int64 `json:"batch_max_age_ms"`
@@ -80,6 +84,14 @@ func TestAdminHealthReportsBuildAndAdmissionLimits(t *testing.T) {
 	}
 	if body.Build["configured_revision"] != "0123456789abcdef0123456789abcdef01234567" || body.Build["go_version"] == "" {
 		t.Fatalf("build identity missing: %v", body.Build)
+	}
+	// The CPU the collector process may use, as the Go runtime sees it.
+	if cpus, _ := body.Runtime["num_cpu"].(float64); cpus < 1 || body.Runtime["gomaxprocs"] != float64(runtime.GOMAXPROCS(0)) {
+		t.Fatalf("runtime hardware missing: %v", body.Runtime)
+	}
+	limit, reported := body.Runtime["go_memory_limit_bytes"]
+	if want := debug.SetMemoryLimit(-1); (want == math.MaxInt64) == reported || (reported && limit != float64(want)) {
+		t.Fatalf("memory limit misreported (in force %d): %v", want, body.Runtime)
 	}
 	// The default budget is reported, not a zero that a reader could take for unlimited.
 	rec = httptest.NewRecorder()

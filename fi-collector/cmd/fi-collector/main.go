@@ -24,6 +24,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -434,9 +435,21 @@ func buildInfo(getenv func(string) string) map[string]any {
 	return info
 }
 
+// runtimeInfo is the CPU and memory the collector process may use, so a
+// benchmark report records the hardware the measured collector ran with.
+// go_memory_limit_bytes is present only when a Go memory limit (GOMEMLIMIT) is
+// set.
+func runtimeInfo() map[string]any {
+	info := map[string]any{"num_cpu": runtime.NumCPU(), "gomaxprocs": runtime.GOMAXPROCS(0), "os": runtime.GOOS, "arch": runtime.GOARCH}
+	if limit := debug.SetMemoryLimit(-1); limit != math.MaxInt64 {
+		info["go_memory_limit_bytes"] = limit
+	}
+	return info
+}
+
 // adminHandler serves /healthz: writer statistics, the simulation routing
-// counters, the build the binary identifies as, and the admission limits in
-// force.
+// counters, the build the binary identifies as, its CPU and memory limits, and
+// the admission limits in force.
 func adminHandler(w *chwriter.Writer, router routingReporter, limits server.Limits) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
@@ -448,6 +461,7 @@ func adminHandler(w *chwriter.Writer, router routingReporter, limits server.Limi
 		}
 		body := healthBody(status, s, router)
 		body["build"] = buildInfo(os.Getenv)
+		body["runtime"] = runtimeInfo()
 		body["limits"] = limits
 		rw.WriteHeader(code)
 		_ = json.NewEncoder(rw).Encode(body)

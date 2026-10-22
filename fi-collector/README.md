@@ -167,7 +167,8 @@ the litellm table nor custom pricing applies, the span's cost is 0.
   validation. Record the actual settings in any benchmark.
 - The admin listener (`:9464`) exposes `/healthz` with writer statistics, a
   `build` object (Go version, VCS revision when the binary was built from a git
-  checkout, and `FI_BUILD_REVISION` when set) and the admission `limits` in force
+  checkout, and `FI_BUILD_REVISION` when set), a `runtime` object (logical CPUs,
+  `GOMAXPROCS`, OS/arch and any Go memory limit) and the admission `limits` in force
   (`max_pending_rows`, `batch_max_rows`, `batch_max_age_ms`, gRPC and HTTP size
   caps) so a benchmark can record the revision and budget it measured instead of
   assuming them. The stock binary does not expose the `/metrics` endpoint claimed
