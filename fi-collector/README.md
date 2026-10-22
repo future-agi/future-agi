@@ -142,6 +142,11 @@ the litellm table nor custom pricing applies, the span's cost is 0.
   distinct **non-retryable** status naming the limit: HTTP 413 (no `Retry-After`)
   or gRPC `INVALID_ARGUMENT` (no `RetryInfo`). Keep the exporter batch size at or
   below the configured budget. Do not hot-loop retries.
+- Every OTLP/HTTP 4xx/5xx response body is a `google.rpc.Status` message, as the
+  OTLP/HTTP specification requires: protobuf for `application/x-protobuf` requests
+  and for failures before the media type is known, JSON for `application/json`
+  requests. The HTTP status line is authoritative for retryability (429, 502, 503
+  and 504 are retryable; every other failure is not).
 - The cap bounds retained row count, **not bytes**: large payloads, concurrent
   request decoding, converter allocations and sidecars still use memory. There
   is no Collector-framework `memory_limiter` or advertised 1,000-request queue.

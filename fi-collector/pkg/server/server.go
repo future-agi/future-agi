@@ -507,7 +507,7 @@ func readOTLPBody(r *http.Request) ([]byte, int, error) {
 func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeOTLPError(w, "", http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -530,7 +530,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		if code == http.StatusUnsupportedMediaType {
 			w.Header().Set("Accept-Encoding", "gzip, identity")
 		}
-		http.Error(w, err.Error(), code)
+		writeOTLPError(w, ct, code, err.Error())
 		return
 	}
 
@@ -538,23 +538,23 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	switch ct {
 	case "application/x-protobuf":
 		if err := req.UnmarshalProto(body); err != nil {
-			http.Error(w, "decode protobuf: "+err.Error(), http.StatusBadRequest)
+			writeOTLPError(w, ct, http.StatusBadRequest, "decode protobuf: "+err.Error())
 			return
 		}
 	case "application/json":
 		if err := req.UnmarshalJSON(body); err != nil {
-			http.Error(w, "decode json: "+err.Error(), http.StatusBadRequest)
+			writeOTLPError(w, ct, http.StatusBadRequest, "decode json: "+err.Error())
 			return
 		}
 	default:
 		// The spec is explicit: unsupported media types return 415.
 		w.Header().Set("Accept", "application/x-protobuf, application/json")
-		http.Error(w, "unsupported content type: "+ct, http.StatusUnsupportedMediaType)
+		writeOTLPError(w, "", http.StatusUnsupportedMediaType, "unsupported content type: "+ct)
 		return
 	}
 
 	if check, ok := s.checkUsage(r.Context()); !ok {
-		http.Error(w, check.Reason, http.StatusTooManyRequests)
+		writeOTLPError(w, ct, http.StatusTooManyRequests, check.Reason)
 		return
 	}
 
@@ -570,7 +570,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		routed, err = s.routeSimulation(r.Context(), result, req.Traces())
 		if err != nil {
 			w.Header().Set("Retry-After", "5")
-			http.Error(w, "simulation routing temporarily unavailable", http.StatusServiceUnavailable)
+			writeOTLPError(w, ct, http.StatusServiceUnavailable, "simulation routing temporarily unavailable")
 			return
 		}
 		if routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
@@ -580,7 +580,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		}
 		dropped, err := auth.StampResourceAttrs(r.Context(), s.auth, ck, req.Traces(), result)
 		if err != nil {
-			http.Error(w, "auth stamp: "+err.Error(), http.StatusBadRequest)
+			writeOTLPError(w, ct, http.StatusBadRequest, "auth stamp: "+err.Error())
 			return
 		}
 		if dropped > 0 {
@@ -590,7 +590,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
 		hiddenProjectIDs, _ = result.HiddenProjectIDsInWorkspace(propertyWorkspaceID)
 		if !scoped {
-			http.Error(w, "auth project/workspace scope mismatch", http.StatusBadRequest)
+			writeOTLPError(w, ct, http.StatusBadRequest, "auth project/workspace scope mismatch")
 			return
 		}
 	}
@@ -598,11 +598,11 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	rows, ids, err := chexp.ConvertWithIdentities(r.Context(), req.Traces(), s.pricer)
 	if err != nil {
 		// 4xx — the SDK shouldn't retry a malformed conversion.
-		http.Error(w, "convert: "+err.Error(), http.StatusBadRequest)
+		writeOTLPError(w, ct, http.StatusBadRequest, "convert: "+err.Error())
 		return
 	}
 	if outcome := s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs); outcome != enqueueAccepted {
-		s.writeRefusal(w, outcome, len(rows))
+		s.writeRefusal(w, ct, outcome, len(rows))
 		return
 	}
 
@@ -625,7 +625,7 @@ func writeExportResponse(w http.ResponseWriter, ct string, resp ptraceotlp.Expor
 		out, err = resp.MarshalProto()
 	}
 	if err != nil {
-		http.Error(w, "encode response: "+err.Error(), http.StatusInternalServerError)
+		writeOTLPError(w, ct, http.StatusInternalServerError, "encode response: "+err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", ct)
@@ -923,14 +923,14 @@ func (s *Server) grpcRefusal(outcome enqueueOutcome, rows int) error {
 // writeRefusal answers an OTLP/HTTP request that was not admitted: 503 with
 // Retry-After for a full buffer (retryable per the OTLP spec), 413 for a
 // request that can never fit (not retryable per the OTLP spec).
-func (s *Server) writeRefusal(w http.ResponseWriter, outcome enqueueOutcome, rows int) {
+func (s *Server) writeRefusal(w http.ResponseWriter, contentType string, outcome enqueueOutcome, rows int) {
 	if outcome == enqueueOversize {
 		s.logOversize(rows)
-		http.Error(w, oversizeMessage(rows, s.cfg.MaxPendingRows), http.StatusRequestEntityTooLarge)
+		writeOTLPError(w, contentType, http.StatusRequestEntityTooLarge, oversizeMessage(rows, s.cfg.MaxPendingRows))
 		return
 	}
 	w.Header().Set("Retry-After", "1")
-	http.Error(w, "collector pending row budget exhausted; retry with backoff", http.StatusServiceUnavailable)
+	writeOTLPError(w, contentType, http.StatusServiceUnavailable, "collector pending row budget exhausted; retry with backoff")
 }
 
 func oversizeMessage(rows, limit int) string {
