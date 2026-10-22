@@ -245,8 +245,9 @@ slow generator or collector shows as missed scheduled work (``attempted_spans <
 planned_spans``) and a growing dispatch delay. CPU-starved generators must not be
 used to claim a storage throughput ceiling: measure the generator host with
 ``BenchmarkBuildRequest`` first. Default-level gzip is far more expensive than
-serialisation (about 25x per request in one measurement on a heavily loaded
-development machine), so gzip profiles need proportionally more generator cores.
+serialisation (25x to 33x per 500-span mixed request in two measurements on one
+heavily loaded 10-core development machine), so gzip profiles need proportionally
+more generator cores or several generator processes.
 Each run owns one deterministic namespace; multiple generators need distinct run
 IDs and their combined rates must be summed explicitly rather than assuming a
 single run met a cluster target.
