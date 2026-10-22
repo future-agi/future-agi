@@ -8,6 +8,7 @@ import { SectionCard } from "../components/primitives";
 import OpenPrDialog from "../integrations/OpenPrDialog";
 import PrCard from "../integrations/PrCard";
 import { prFilesOf, repoNameOf, useIntegrations } from "../_mock/integrations";
+import { prOfImprovement } from "../_mock/improvementPr";
 import { changeFileFor } from "../_mock/optimize";
 import { agentSourceOf, definitionOf, agentIdOf, envAgentKey } from "../_mock/agentRegistry";
 import { fagiPromptsOf, gitHostOf } from "../agents/agentProfile";
@@ -91,7 +92,7 @@ const routeOf = (agent, suggestion) => {
 
 export default function OmegaHandoff({
   env, envState, patch, included, projected, current, willFix, projectedOn,
-  handoffKey, landedVersion, provenance, onLand, onRerun, brief, briefTarget, proof, suggestion = false,
+  handoffKey, landedVersion, provenance, onLand, onRerun, brief, briefTarget, proof, suggestion = false, steps = true,
 }) {
   const navigate = useNavigate();
   const store = useOptionalSimStore();
@@ -166,7 +167,7 @@ export default function OmegaHandoff({
 
   /* The PR for this hand-off, if one was opened — found again after the
      drawer was closed, so the card doesn't offer a second one. */
-  const pr = handoffKey ? prs.find((p) => p.handoffKey === handoffKey && p.status !== "closed") : null;
+  const pr = handoffKey ? prOfImprovement(prs, handoffKey, env?.id, { open: true }) : null;
 
   /* `patchText`, not `patch` — the prop of that name is the state patcher. */
   const patchOf = (list) => list
@@ -366,18 +367,19 @@ export default function OmegaHandoff({
     );
   }
 
-  return (
-    <SectionCard>
-      <Stack spacing={1.5} sx={{ px: 2.5, py: 2 }}>
-        {/* How it will ship is said before it ships; once it has landed the
-            section above says where it is, so only the re-run bar stays. */}
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-          {!landedVersion && intro}
-          {/* The projection, said here so the number checked later is one the
-              reader saw before handing anything over. */}
-          {projected != null && `${landedVersion ? "" : " "}The re-run after it lands is held against ${projected}%${projectedOn ? ` (${projectedOn === "held out" ? "held-back scenarios" : projectedOn})` : ""}.`}
-        </Typography>
+  /* Ship, in order — make the draft, make it live, released — and where it is now. */
+  const shipSteps = shipStepsOf({
+    route, provider, source, draftKind, repo, review, uploaded, promptOnly, suggestion,
+    issueId: issueFix ? (envState?.optimizations || []).find((o) => o.id === handoffKey)?.trigger?.issueId : null,
+    releaseBranch: definitionOf(agent).ref || "main",
+  });
+  /* Step 1 is done once this route's own hand-off exists — a seeded draft
+     version alone doesn't mean a PR was opened. */
+  const made = !!landedVersion || (route === "pr" ? !!pr : route === "draft" ? !!draft : route === "builtin" ? false : !!(done.copied || draftVersion));
+  const currentStep = released ? shipSteps.length - 1 : made ? 1 : 0;
 
+  const actionBlocks = (
+    <>
         {/* ── a mixed change: each part and how it ships ── */}
         {mixed && (
           <ShipParts
@@ -419,6 +421,41 @@ export default function OmegaHandoff({
               onPromote={() => { setCanary(null); markReleased({ origin: "platform", note: `Promoted from a ${canary.share}% canary on ${source.label} — ${summaryLine}` }); }}
               onRollBack={() => setCanary(null)}
             />
+          ) : draft && steps ? (
+            /* Ship's step 2: the person makes it live there; we watch, or they tell us. */
+            <Stack spacing={1}>
+              <Stack direction="row" spacing={1} flexWrap="wrap" rowGap={1}>
+                <Button
+                  size="small" variant="contained" color="primary"
+                  onClick={() => markReleased({ origin: "platform", note: `Marked released on ${source.label} — ${summaryLine}` })}
+                  startIcon={<Iconify icon="solar:check-read-linear" width={15} />}
+                  sx={{ typography: "s2", fontWeight: 700 }}
+                >
+                  {provider === "vapi" ? "I've swapped it in" : draftKind === "branch" ? "I've merged it" : `It's live on ${source.label}`}
+                </Button>
+                {canCanary && (
+                  <Tooltip arrow title={CANARY_NOTE}>
+                    <span>
+                      <Button
+                        size="small" variant="outlined"
+                        onClick={() => setCanary({ share: CANARY_SHARE, startedAt: new Date().toISOString() })}
+                        startIcon={<Iconify icon="solar:pie-chart-2-linear" width={14} />}
+                        sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
+                      >
+                        {`Try it on ${CANARY_SHARE}% of calls first`}
+                      </Button>
+                    </span>
+                  </Tooltip>
+                )}
+              </Stack>
+              {draft.watch && !demo && (
+                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                  {provider === "vapi"
+                    ? "We're watching Vapi — when the live assistant matches the copy, it's marked released on its own."
+                    : `We're watching ${source.label} — when it's live there, it's marked released on its own.`}
+                </Typography>
+              )}
+            </Stack>
           ) : draft ? (
             <Stack direction="row" alignItems="center" spacing={1.5}>
               <Iconify icon="solar:check-circle-linear" width={16} sx={{ color: "text.secondary", flexShrink: 0 }} />
@@ -490,7 +527,7 @@ export default function OmegaHandoff({
               >
                 {platform?.shipAction || "Create a draft version"}
               </Button>
-              {platform && (
+              {platform && !steps && (
                 <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}>{`Tested as: ${platform.tests.charAt(0).toLowerCase()}${platform.tests.slice(1)}.`}</Typography>
               )}
             </Box>
@@ -512,7 +549,19 @@ export default function OmegaHandoff({
         )}
 
         {/* ── endpoint, pasted prompt, or a platform without drafts: a patch ── */}
-        {route === "recommend" && !landedVersion && (
+        {/* Ship's first step for a patch is copying it — Mark as released comes after. */}
+        {steps && route === "recommend" && !uploaded && !landedVersion && !done.copied && (
+          <Box>
+            <Button
+              size="small" variant="contained" color="primary" onClick={copy}
+              startIcon={<Iconify icon="solar:copy-linear" width={15} />}
+              sx={{ typography: "s2", fontWeight: 700 }}
+            >
+              Copy patch
+            </Button>
+          </Box>
+        )}
+        {route === "recommend" && !landedVersion && (uploaded || !steps || done.copied) && (
           uploaded ? (
             <Box>
               <input ref={uploadInput} type="file" accept=".zip,.tar,.gz,.tgz" hidden onChange={onUploadPatched} />
@@ -545,7 +594,7 @@ export default function OmegaHandoff({
         {/* The Draft version this proposal recorded — named, not live. */}
         {draftVersion && !landedVersion && (
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {`Recorded as Draft agent ${draftVersion.label}${draftVersion.draftOf?.where ? ` · ${draftVersion.draftOf.where}` : ""} — it becomes Released when ${route === "pr" ? "the PR merges" : route === "draft" ? "it goes live on the platform and you mark it released" : uploaded ? "you upload the patched code" : "you mark it released"}.`}
+            {steps ? `In the agent's history as draft ${draftVersion.label} until it's released.` : `Recorded as Draft agent ${draftVersion.label}${draftVersion.draftOf?.where ? ` · ${draftVersion.draftOf.where}` : ""} — it becomes Released when ${route === "pr" ? "the PR merges" : route === "draft" ? "it goes live on the platform and you mark it released" : uploaded ? "you upload the patched code" : "you mark it released"}.`}
           </Typography>
         )}
 
@@ -624,9 +673,37 @@ export default function OmegaHandoff({
             </Button>
           </Stack>
         )}
+    </>
+  );
+
+  return (
+    <SectionCard>
+      <Stack spacing={1.5} sx={{ px: 2.5, py: 2 }}>
+        {steps ? (
+          /* Ship: what happens next, in order — the action sits on the step it belongs to. */
+          <ShipSteps
+            steps={shipSteps}
+            current={currentStep}
+            finished={released}
+            action={<Stack spacing={1.5}>{actionBlocks}</Stack>}
+          />
+        ) : (
+          <>
+        {/* How it will ship is said before it ships; once it has landed the
+            section above says where it is, so only the re-run bar stays. */}
+        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+          {!landedVersion && intro}
+          {/* The projection, said here so the number checked later is one the
+              reader saw before handing anything over. */}
+          {projected != null && `${landedVersion ? "" : " "}The re-run after it lands is held against ${projected}%${projectedOn ? ` (${projectedOn === "held out" ? "held-back scenarios" : projectedOn})` : ""}.`}
+        </Typography>
+            {actionBlocks}
+          </>
+        )}
 
         {/* ── always: the change as a patch, or as a brief for a coding agent ── */}
-        <Stack direction="row" spacing={1} flexWrap="wrap" rowGap={1} sx={{ pt: 0.5 }}>
+        <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" rowGap={1} sx={{ pt: 0.5, ...(steps && { borderTop: "1px solid", borderColor: "divider", pt: 1.5 }) }}>
+          {steps && <Typography sx={{ typography: "s3", color: "text.subtitle", mr: 0.5 }}>Or hand it over yourself</Typography>}
           <Button
             size="small" variant="outlined" onClick={copy}
             startIcon={<Iconify icon={done.copied ? "solar:check-circle-bold" : "solar:copy-linear"} width={15} />}
@@ -672,6 +749,105 @@ OmegaHandoff.propTypes = {
   briefTarget: PropTypes.object,
   proof: PropTypes.string,
   suggestion: PropTypes.bool,
+  /* The hand-over as numbered next steps (the default); false keeps the older paragraph. */
+  steps: PropTypes.bool,
+};
+
+/*
+  What shipping means for this agent, in three steps: make the draft where
+  the agent lives, make it live there (a person does), released. Worded per
+  route so the reader knows what they do next and what we do.
+*/
+const shipStepsOf = ({ route, provider, source, draftKind, repo, review, uploaded, promptOnly, suggestion, issueId, releaseBranch }) => {
+  const where = source.label;
+  const watch = issueId ? `, and the Error Feed watches ${issueId} for 30 days` : "";
+  if (route === "pr") {
+    return [
+      { title: `Open a draft ${review.long}`, body: `On ${repo || "the agent's repository"}. Nothing changes until it's merged.` },
+      { title: "Review and merge it", body: `Merging into ${releaseBranch} is the release.` },
+      { title: "Released", body: `We see the merge and mark it released. It becomes the new baseline${watch}.` },
+    ];
+  }
+  if (route === "draft") {
+    const make = provider === "vapi"
+      ? { title: "Create a copy on Vapi", body: "A copy of the assistant in your Vapi account. Your live assistant doesn't change." }
+      : draftKind === "branch"
+        ? { title: `Create a branch on ${where}`, body: "Your live agent doesn't change." }
+        : { title: `Create a draft version on ${where}`, body: "Unpublished — your live agent doesn't change." };
+    const live = provider === "vapi"
+      ? { title: "Swap it in on Vapi", body: "When you're ready, point your live phone number at the copy — or try it on 10% of calls first." }
+      : provider === "retell"
+        ? { title: "Make it live on Retell", body: "Point your live numbers at the new version — directly, or through a tag like prod." }
+        : draftKind === "branch"
+          ? { title: "Merge the branch", body: `Merge it into the live agent on ${where}.` }
+          : { title: `Make it live on ${where}`, body: "Publish it where the agent runs." };
+    return [make, live, { title: "Released", body: `We see it go live and mark it released — or you can. It becomes the new baseline${watch}.` }];
+  }
+  if (route === "builtin") {
+    return [
+      { title: promptOnly ? "Create a prompt version" : "Create an agent version", body: "Saved in Future AGI — not live yet." },
+      { title: "Make it live, then mark it released", body: "Switch production to it." },
+      { title: "Released", body: `The new baseline${watch}.` },
+    ];
+  }
+  return [
+    { title: "Copy the patch", body: uploaded ? "Apply it to your code." : `Apply it ${source.kind === "platform" ? `in ${where}` : "where the agent runs"}${suggestion ? " — a suggested fix, not yet proven" : ""}.` },
+    uploaded
+      ? { title: "Upload the patched code", body: "Uploading it releases it." }
+      : { title: "Deploy it, then mark it released", body: "We can't see this agent's deploys, so you tell us." },
+    { title: "Released", body: `The new baseline${watch}.${suggestion ? " Re-run it to prove the fix." : ""}` },
+  ];
+};
+
+/* The steps, the current one carrying its action. */
+function ShipSteps({ steps, current, finished = false, action }) {
+  return (
+    <Stack>
+      {steps.map((st, i) => {
+        const done = i < current || (finished && i === current);
+        const now = i === current && !finished;
+        const last = i === steps.length - 1;
+        return (
+          <Stack key={st.title} direction="row" spacing={1.5}>
+            {/* The marker, joined to the next step by a line. */}
+            <Stack alignItems="center" sx={{ width: 22, flexShrink: 0 }}>
+              {done ? (
+                <Iconify icon="solar:check-circle-bold" width={22} sx={{ color: "text.secondary" }} />
+              ) : (
+                <Box
+                  sx={{
+                    width: 22, height: 22, borderRadius: "50%", display: "grid", placeItems: "center",
+                    typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums",
+                    ...(now
+                      ? { bgcolor: "text.primary", color: "background.paper" }
+                      : { border: "1px solid", borderColor: "divider", color: "text.disabled" }),
+                  }}
+                >
+                  {i + 1}
+                </Box>
+              )}
+              {!last && <Box sx={{ width: "1px", flex: 1, minHeight: 12, bgcolor: "divider", my: 0.5 }} />}
+            </Stack>
+            <Box flex={1} minWidth={0} sx={{ pb: last ? 0 : 2 }}>
+              <Typography sx={{ typography: "s2", fontWeight: 700, color: now || done ? "text.primary" : "text.disabled", lineHeight: "22px" }}>
+                {st.title}
+              </Typography>
+              {/* Once released, the last step's action line says what happened. */}
+              {!(finished && i === current) && <Typography sx={{ typography: "s3", color: now ? "text.secondary" : "text.subtitle", mt: 0.25 }}>{st.body}</Typography>}
+              {(now || (finished && i === current)) && <Box sx={{ mt: 1.25 }}>{action}</Box>}
+            </Box>
+          </Stack>
+        );
+      })}
+    </Stack>
+  );
+}
+
+ShipSteps.propTypes = {
+  steps: PropTypes.array,
+  current: PropTypes.number,
+  finished: PropTypes.bool,
+  action: PropTypes.node,
 };
 
 /*

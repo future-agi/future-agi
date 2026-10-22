@@ -9,6 +9,7 @@ import { envAgentKey, repairAgentRecord } from "../_mock/agentRegistry";
 import { improvementOutcome, improvementTotalSpend, searchMinutes, searchSpend, REPEATS, improvementPhaseOf } from "../_mock/optimizationRuns";
 import { attemptsOf } from "../_mock/improverAttempts";
 import { improverSessionFor } from "../_mock/integrations";
+import { prOfImprovement } from "../_mock/improvementPr";
 import { improvementRunName, depthOf } from "../_mock/optimizer";
 import { creditsForUsd } from "../_mock/metering";
 import { runIdentityOf } from "../_mock/runIdentity";
@@ -53,10 +54,10 @@ const lifecycleOf = (record, env, es, prs, now) => {
   /* shippedStateOf reads the issue's recurrence itself — the Error Feed and
      this list always agree. */
   let st = null;
-  try { st = shippedStateOf(record, es, prs, { now }); } catch (e) { st = null; }
+  try { st = shippedStateOf(record, es, prs, { now, envId: env?.id }); } catch (e) { st = null; }
   if (!st) return null;
   const landed = es?.handoffLandings?.[record.id] || null;
-  const pr = prs.find((p) => (p.handoffKey || p.meta?.handoffKey) === record.id && p.status !== "closed");
+  const pr = prOfImprovement(prs, record.id, env?.id, { open: true });
   const kind = st.key === "review" ? (landed ? "version" : pr ? "pr" : "draft") : st.key;
   return {
     kind,
@@ -109,6 +110,7 @@ export const heldShortOf = (outcome) => {
   if (outcome.chosen) {
     return { text: `${outcome.chosen.projected ? "≈" : ""}${outcome.chosen.held}% held back`, broke: null, note: outcome.chosen.verified ? `Run ${outcome.chosen.n}, your pick` : `Run ${outcome.chosen.n} · not verified` };
   }
+  if (outcome.thin) return { text: "Too few to hold back", broke: null };
   return {
     text: h.failingBefore ? `Fixed ${h.fixed} of ${h.failingBefore} held back` : "Held back already passing",
     broke: h.broke,

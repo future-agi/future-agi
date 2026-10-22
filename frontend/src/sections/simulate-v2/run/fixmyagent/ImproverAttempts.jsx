@@ -6,6 +6,7 @@ import Iconify from "src/components/iconify";
 import { clickable, focusRing } from "../../components/clickable";
 import { ATTEMPT_BUDGET, TIERS, attemptProof, attemptsOf, sessionState } from "../../_mock/improverAttempts";
 import { codingAgentById, heldBackHiddenFrom, openPr, useIntegrations } from "../../_mock/integrations";
+import { prOfImprovement } from "../../_mock/improvementPr";
 import { definitionOf } from "../../_mock/agentRegistry";
 import { candidateRouteOf } from "../../_mock/candidateRoute";
 import { creditsForUsd, creditsLabel } from "../../_mock/metering";
@@ -47,7 +48,7 @@ export default function ImproverAttempts({ record, env, envState, session, name,
   const accepted = status?.key === "accepted" ? status.attempt : null;
   const def = definitionOf(envState?.agent);
   const repo = (def.kind === "repo" || def.kind === "framework") && def.repoUrl ? (def.repoUrl || "").replace(/^https?:\/\/github\.com\//, "") : null;
-  const pr = prs.find((p) => p.handoffKey === record.id && p.by === accepted?.improver);
+  const pr = prOfImprovement((prs || []).filter((p) => p.by === accepted?.improver), record.id, env?.id);
   useEffect(() => {
     if (!accepted || !repo || pr) return;
     openPr({

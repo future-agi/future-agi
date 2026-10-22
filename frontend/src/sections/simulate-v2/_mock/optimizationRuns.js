@@ -132,6 +132,9 @@ export const optimizationVerdict = (record) => {
     report was a regression — and here it reported one, which is the more
     serious finding and was being read as the milder one.
   */
+  /* Too few reproduced to hold any back: there is no held-back number to
+     read a gap, a gain or a regression from — the issue line says so. */
+  if (r.split?.thin) return null;
   if (r.heldBase >= 100) {
     const broke = (r.heldTasks || []).filter((t) => r.heldPerScenario?.[t.id] === "broke");
     return r.heldScore < r.heldBase
@@ -668,7 +671,10 @@ export const improvementOutcome = (rec, { model } = {}) => {
     ? `Fixed ${held.fixed} of ${held.failingBefore} failing ${held.failingBefore === 1 ? "scenario" : "scenarios"} on the held-back set`
     : "The held-back set was already passing";
   const costText = costKnown ? `cost per conversation ${signed(effect.cost)}` : "cost not measured";
-  const result = `${fixedLine}, broke ${held.broke ? held.broke : "none"}, ${costText}`;
+  /* Nothing held back: say what was measured, not a held-back set that wasn't there. */
+  const result = r.split?.thin
+    ? `${shipped ? `Target ${r.base}% → ${shipped.score}%` : "No change kept"}, too few scenarios to hold any back, ${costText}`
+    : `${fixedLine}, broke ${held.broke ? held.broke : "none"}, ${costText}`;
 
   const issue = issueOutcome(record);
   /*

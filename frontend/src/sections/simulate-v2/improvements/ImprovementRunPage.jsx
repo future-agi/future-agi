@@ -48,6 +48,8 @@ export default function ImprovementRunPage() {
   /* The drawer beside the runs: the short decision first; the full record on request. */
   const [searchOpen, setSearchOpen] = useState(false);
   const [fullRecord, setFullRecord] = useState(false);
+  /* Ship: what ships and the next steps, on their own. */
+  const [shipOpen, setShipOpen] = useState(false);
   /* Back goes to the issue it fixes, else the list it was opened from. */
   const back = () => {
     if (fromIssue) navigate(paths.dashboard.errorFeed.detail(fromIssue));
@@ -117,8 +119,9 @@ export default function ImprovementRunPage() {
         key: record.id,
         version: version.label,
         fromRun: record.fromRunId || null,
-        projected: shippedCandidate(record)?.held ?? record.result?.heldScore,
-        projectedOn: "held-back scenarios",
+        /* Nothing held back: the target scenarios are the number to hold it to. */
+        projected: record.result?.split?.thin ? shippedCandidate(record)?.score ?? record.result?.winner?.score : shippedCandidate(record)?.held ?? record.result?.heldScore,
+        projectedOn: record.result?.split?.thin ? "the scenarios it was tuned on" : "held-back scenarios",
         envVersion: currentEnvVersion(env, envState)?.label || null,
         scenarios: allScenarioIds,
         addresses: [...new Set(changes.flatMap((c) => c.addresses || []))],
@@ -148,8 +151,10 @@ export default function ImprovementRunPage() {
     optimizations: (envState?.optimizations || []).map((o) => (o.id === record.id && o.status === OPT_STATUS.RUNNING ? endOf(o) : o)),
   });
 
-  const search = (inDrawer) => (
+  const search = (inDrawer, { ship = false } = {}) => (
       <OptimizationRunView
+        shipOnly={ship}
+        onOpenDecision={ship ? () => { setShipOpen(false); setFullRecord(false); setSearchOpen(true); } : undefined}
         /* In the drawer beside the runs list: the decision, not the runs
            and growth chart the page already shows. */
         decisionOnly={inDrawer}
@@ -169,7 +174,7 @@ export default function ImprovementRunPage() {
         }}
         onBack={inDrawer ? () => setFullRecord(false) : back}
         backLabel={inDrawer ? undefined : fromIssue}
-        onClose={inDrawer ? () => setSearchOpen(false) : close}
+        onClose={ship ? () => setShipOpen(false) : inDrawer ? () => setSearchOpen(false) : close}
         onDone={finish}
       />
   );
@@ -190,9 +195,11 @@ export default function ImprovementRunPage() {
           onOpenIssue={record.trigger?.issueId ? () => navigate(paths.dashboard.errorFeed.detail(record.trigger.issueId)) : undefined}
           onOpenStartRun={sourceRun ? () => navigate(paths.dashboard.simulate.simulationRun(env.id, sourceRun.id)) : undefined}
           onVerify={() => runWinner()}
-          /* Ship opens the hand-over in the full record beside the runs. */
-          onShip={() => { setFullRecord(true); setSearchOpen(true); }}
+          onShip={() => { setSearchOpen(false); setShipOpen(true); }}
         />
+        <SideDrawer open={shipOpen} onClose={() => setShipOpen(false)} width={720}>
+          {shipOpen && search(true, { ship: true })}
+        </SideDrawer>
         <SideDrawer open={searchOpen} onClose={() => setSearchOpen(false)} width={fullRecord ? 1080 : 560}>
           {searchOpen && (fullRecord
             ? search(true)

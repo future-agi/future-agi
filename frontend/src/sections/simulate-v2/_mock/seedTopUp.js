@@ -14,7 +14,7 @@ import { withErrorFeedFixes, withAirlineTracing, withWatchedFixes, SEEDED_RETELL
 import { withVoiceRunHistory, HISTORY_ENV } from "./voiceRunHistory";
 import { withFiveAGoal, TOPUP_ENV } from "./voiceScenarioTopUp";
 import { PRE_VERSIONING_AGENT_NOTE, PRE_VERSIONING_ENV_NOTE, recordedBeforeVersioning } from "./versions";
-import { withCommitChanges, withCommitHistory, withCommitTies } from "./commitHistorySeed";
+import { withCommitChanges, withCommitHistory, withCommitTies, withFixPr } from "./commitHistorySeed";
 import { withProjectLinkRepair } from "./projectLinkRepair";
 
 /*
@@ -27,7 +27,7 @@ import { withProjectLinkRepair } from "./projectLinkRepair";
   has are left exactly as they are, and an environment someone deliberately
   removed stays removed because the marker moves on regardless.
 */
-export const SEED_VERSION = 34;
+export const SEED_VERSION = 35;
 /* Environments a seed version added, so a later top-up adds only those —
    never one someone removed since the last. */
 const ADDED_AT = { 21: ["env-clinic-line"] };
@@ -438,7 +438,9 @@ const topUpSeedVersions = (stored) => {
   /* Seed 33: each agent back on the one Observe project its traces land in. */
   const withLinks = (stored.seedVersion || 0) < 33 ? withProjectLinkRepair(withChanges) : withChanges;
   /* Seed 34: the seeded fix branches tied to the pull requests they are. */
-  return (stored.seedVersion || 0) < 34 ? withCommitTies(withLinks) : withLinks;
+  const withTies = (stored.seedVersion || 0) < 34 ? withCommitTies(withLinks) : withLinks;
+  /* Seed 35: Pickup dispatch's fix branch opened as its own draft PR. */
+  return (stored.seedVersion || 0) < 35 ? withFixPr(withTies) : withTies;
 };
 
 /*

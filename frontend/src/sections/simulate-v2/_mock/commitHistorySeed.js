@@ -13,6 +13,7 @@
   is left alone.
 */
 import { envAgentKey } from "./agentRegistry";
+import { seedDemoPr } from "./integrations";
 
 const HISTORIES = {
   "repo:https://github.com/acme-inc/pickup-dispatch#app/graph.py:dispatch": {
@@ -25,7 +26,7 @@ const HISTORIES = {
       ["maya.k", "Don't promise an ETA the dispatcher hasn't confirmed"],
       ["priya.s", "Hand over to a person after two failed lookups"],
     ],
-    /* The fix Improvement 2 opened for ISS-4453 — PR #141. */
+    /* The fix Improvement 2 opened for ISS-4453 — a draft PR; its real number is set at Seed 35 (withFixPr). */
     fix: {
       branch: "future-agi/fix-iss-4453",
       issueId: "ISS-4453",
@@ -182,5 +183,47 @@ export const withCommitTies = (state) => {
       const key = es?.agent ? envAgentKey(es.agent, id) : null;
       return [id, ties[key] ? { ...es, agentVersions: fix(key, es.agentVersions) } : es];
     })),
+  };
+};
+
+/*
+  Seed 35: Pickup dispatch's fix branch is a draft pull request of its own in
+  Integrations — on acme-inc/pickup-dispatch, from the improvement that fixes
+  ISS-4453 — and its commits name that PR's number. Seed 34 had borrowed
+  PR #141, which belongs to another environment's improvement with the same
+  id. Billing copilot's branch is a teammate's PR outside Future AGI, so it
+  gets none.
+*/
+export const withFixPr = (state) => {
+  const agent = (state.connectedAgents || []).find((a) => HISTORIES[a.key]?.fix.issueId && (a.versions || []).some((v) => v.seededCommit && v.draftOf?.optId));
+  if (!agent) return state;
+  const h = HISTORIES[agent.key];
+  const tie = agent.versions.find((v) => v.seededCommit && v.draftOf?.optId).draftOf;
+  const env = (state.myEnvironments || []).find((e) => e.id === tie.envId);
+  const repo = (agent.key.match(/github\.com\/([^#]+)/) || [])[1] || null;
+  const pr = repo && seedDemoPr({
+    seedId: `fix-${h.fix.issueId}`,
+    repo, base: "main", branch: h.fix.branch,
+    title: `Fix: ${h.fix.commits[0][1]}`,
+    body: [
+      "## What this fixes",
+      `${h.fix.issueId} in the Error Feed — ${h.fix.commits.map(([, m]) => m.toLowerCase()).join("; ")}.`,
+      "",
+      "_Opened by Future AGI. Nothing changes in your agent until you merge._",
+    ].join("\n"),
+    files: [{ path: "app/prompts/system.md", title: h.fix.commits[0][1], adds: h.fix.commits.length, dels: 0 }],
+    check: null,
+    envId: tie.envId, envName: env?.name || null,
+    agentKey: agent.key, agentName: agent.name,
+    kind: "fix", host: "github", handoffKey: tie.optId, applied: [],
+  });
+  if (!pr) return state;
+  const fix = (list) => (list || []).map((v) => (v.seededCommit && v.draftOf?.optId === tie.optId
+    ? { ...v, prNumber: pr.number, draftOf: { ...v.draftOf, prNumber: pr.number }, note: String(v.note || "").replace(/PR #\d+/, `PR #${pr.number}`) }
+    : v));
+  return {
+    ...state,
+    connectedAgents: state.connectedAgents.map((a) => (a.key === agent.key ? { ...a, versions: fix(a.versions) } : a)),
+    byEnv: Object.fromEntries(Object.entries(state.byEnv || {}).map(([id, es]) => [id, es?.agent && envAgentKey(es.agent, id) === agent.key ? { ...es, agentVersions: fix(es.agentVersions) } : es])),
   };
 };

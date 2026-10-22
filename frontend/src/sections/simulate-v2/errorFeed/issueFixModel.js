@@ -15,6 +15,7 @@ import { agentStatusFor, mainEnvFor } from "../_mock/improvementPolicy";
 import { needsFoundCheck } from "../_mock/agentRegistry";
 import { errorFeedScenarios } from "../_mock/scenarioSources";
 import { projectLinkOf, projectsOfAgent } from "../_mock/projectLinks";
+import { prOfImprovement } from "../_mock/improvementPr";
 import { mockCluster } from "src/api/errorFeed/mockAdapter";
 import { paths } from "src/routes/paths";
 
@@ -572,7 +573,7 @@ const inReview = (record, via) => `${record?.trigger?.issueId ? "Fix in review" 
  * still forces Reopened, for older callers.
  *   { key: "review" | "watching" | "resolved" | "reopened", label, detail?, change? }
  */
-export const shippedStateOf = (record, es, prs = [], { recurs, now = Date.now() } = {}) => {
+export const shippedStateOf = (record, es, prs = [], { recurs, now = Date.now(), envId = null } = {}) => {
   if (!record) return null;
   const landed = es?.handoffLandings?.[record.id];
   if (landed) {
@@ -585,7 +586,7 @@ export const shippedStateOf = (record, es, prs = [], { recurs, now = Date.now() 
     const back = recurrenceOf(record, es, now) || byPerson || (recurs === true ? { at: null, version: landed } : null);
     if (back) {
       /* Reopened links to the change that was meant to fix it. */
-      const pr = prs.find((p) => (p.handoffKey || p.meta?.handoffKey) === record.id);
+      const pr = prOfImprovement(prs, record.id, envId);
       const draft = es?.handoffDrafts?.[record.id];
       return {
         key: "reopened", label: "Reopened", detail: back.by ? `by ${back.by}` : `seen again on ${landed}`,
@@ -605,7 +606,7 @@ export const shippedStateOf = (record, es, prs = [], { recurs, now = Date.now() 
       ? { key: "resolved", label: "Resolved", detail: `${landed} · ${WATCH_DAYS} days clean`, version: landed }
       : { key: "watching", label: "Watching", detail: `${WATCH_DAYS - days} days left`, version: landed };
   }
-  const pr = prs.find((p) => (p.handoffKey || p.meta?.handoffKey) === record.id && p.status !== "closed");
+  const pr = prOfImprovement(prs, record.id, envId, { open: true });
   /* One set of words for a fix's state on every surface: Ready for review →
      Fix in review → Watching → Resolved | Reopened (RSI PRD). */
   if (pr) return { key: "review", label: inReview(record, `PR #${pr.number}`), via: `PR #${pr.number}` };
@@ -642,7 +643,7 @@ export const fixStatusOf = (issue, state, prs = [], now = Date.now()) => {
   if (ending.key === "budget" && beforeSearch) return { ...at, key: "over-budget", label: "Stopped at budget", detail: "before searching" };
   /* Recurrence is the record's own (shippedStateOf reads it); a caller's
      explicit flag still forces Reopened. */
-  const shipped = shippedStateOf(record, es, prs, { now, ...(issue?.recurs_after_fix === true && { recurs: true }) });
+  const shipped = shippedStateOf(record, es, prs, { now, envId: env.id, ...(issue?.recurs_after_fix === true && { recurs: true }) });
   if (shipped) return { ...at, ...shipped };
   if (ending.key === "budget") return { ...at, key: "ready", label: "Stopped at budget" };
   if (ending.key === "suggestion") return { ...at, key: "ready", label: "Suggestion only" };

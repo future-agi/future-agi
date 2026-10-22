@@ -70,6 +70,7 @@ import { creditsLabel } from "../../_mock/metering";
 
 export default function OptimizationRunView({
   record, name, env, envState, patch, tasks, onOpenTask, onBack, backLabel, onClose, onDone, onRunWinner, handoff, decisionOnly = false,
+  shipOnly = false, onOpenDecision,
 }) {
   const theme = useTheme();
   const navigate = useNavigate();
@@ -174,7 +175,7 @@ export default function OptimizationRunView({
   /* Once the winner ships, the page follows it: Fix in review → Released →
      Watching → Resolved or Reopened (RSI PRD, Part 3) — the same reading the
      Error Feed's chip uses. */
-  const lifecycle = shippedStateOf(record, envState, integrations.prs || []);
+  const lifecycle = shippedStateOf(record, envState, integrations.prs || [], { envId: env?.id });
   const session = env?.id ? improverSessionFor(env.id, record.id, integrations) : null;
   const [, setTick] = useState(0);
   const attemptsNow = session && result
@@ -247,6 +248,85 @@ export default function OptimizationRunView({
     ? `from ${record.trigger.issueId}`
     : fromRun ? `from Run ${fromRun.ordinal || ""}`.trim()
       : record.trigger?.kind === "schedule" ? "scheduled" : record.trigger?.kind === "manual" ? `started by ${record.trigger.by || "you"}` : record.trigger?.kind === "goal" ? "from a goal" : "from Debug failures";
+
+  /* The hand-over, as numbered next steps — in Ship and in the full record. */
+  const handoffOf = () => (
+    <OmegaHandoff
+      env={env}
+      envState={envState}
+      patch={patch}
+      included={shipped?.proposals || winner.proposals || []}
+      /* Nothing held back: the re-run is held to the target scenarios instead. */
+      projected={result.split?.thin ? (shipped || winner).score : shipped?.held ?? result.heldScore}
+      projectedOn={result.split?.thin ? "the scenarios it was tuned on" : "held-back scenarios"}
+      current={result.split?.thin ? result.base : result.heldBase}
+      willFix={(shipped || winner).fixed || 0}
+      handoffKey={handoff?.key}
+      landedVersion={handoff?.landedVersion}
+      provenance={handoff?.provenance}
+      onLand={handoff?.onLand}
+      onRerun={handoff?.onRerun}
+      brief={handBrief}
+      briefTarget={briefTarget}
+      proof={proofMarkdown({ record, outcome, name, agent, members: scope.names, channelNotes: scope.shared || !scope.hasMembers ? channelNotes : [], identity })}
+    />
+  );
+
+  /*
+    Ship, on its own: what ships and what happens next — nothing else. The
+    verdict, runs and constraints are on the page behind it; the evidence is
+    one click away (How it was decided).
+  */
+  if (shipOnly && result && winner) {
+    const ships = shipped || winner;
+    const count = (ships.proposals || []).length;
+    return (
+      <Stack sx={{ height: "100%", minHeight: 0 }}>
+        <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
+          <Box flex={1} minWidth={0}>
+            <Typography sx={{ typography: "s1", fontWeight: 700 }}>{`Ship Run ${ships.n}`}</Typography>
+            <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+              {[agent?.name || env?.name, agent ? agentSourceOf(agent).label : null, record.trigger?.issueId].filter(Boolean).join(" · ")}
+            </Typography>
+          </Box>
+          {onOpenDecision && (
+            <Button
+              size="small" variant="outlined" onClick={onOpenDecision}
+              startIcon={<Iconify icon="solar:shield-check-linear" width={15} />}
+              sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+            >
+              How it was decided
+            </Button>
+          )}
+          <IconButton size="small" onClick={onClose}>
+            <Iconify icon="eva:close-fill" width={17} />
+          </IconButton>
+        </Stack>
+        <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0, px: 2.5, py: 2.5 }}>
+          <Typography sx={{ typography: "s2", fontWeight: 700 }}>What ships</Typography>
+          <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1 }}>
+            {`${count} ${count === 1 ? "change" : "changes"} · ${result.split?.thin ? "checked on its target and must-pass scenarios" : "verified on held-back and must-pass scenarios"}`}
+          </Typography>
+          <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
+            <WinnerChanges env={env} winner={ships} record={record} members={scope.hasMembers ? proposalMembers(ships.proposals || [], { agent, limits: record.limits, target: record.targetMember }) : null} />
+          </Box>
+          <Typography sx={{ typography: "s2", fontWeight: 700, mt: 3 }}>What happens next</Typography>
+          <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1 }}>
+            {"Nothing goes live from here — it's released when someone makes it live where the agent runs."}
+          </Typography>
+          {verified || lifecycle ? handoffOf() : (
+            <Button
+              size="small" variant="contained" color="primary" onClick={() => onRunWinner?.(null)} disabled={!onRunWinner}
+              startIcon={<Iconify icon="solar:play-bold" width={14} />}
+              sx={{ typography: "s2", fontWeight: 700 }}
+            >
+              {`Verify Run ${ships.n}`}
+            </Button>
+          )}
+        </Box>
+      </Stack>
+    );
+  }
 
   return (
     <Stack sx={{ height: "100%", minHeight: 0 }}>
@@ -649,24 +729,7 @@ export default function OptimizationRunView({
                   {`Verify Run ${shipped?.n}`}
                 </Button>
               ) : (
-              <OmegaHandoff
-                env={env}
-                envState={envState}
-                patch={patch}
-                included={shipped?.proposals || winner.proposals || []}
-                projected={shipped?.held ?? result.heldScore}
-                projectedOn="held-back scenarios"
-                current={result.heldBase}
-                willFix={(shipped || winner).fixed || 0}
-                handoffKey={handoff?.key}
-                landedVersion={handoff?.landedVersion}
-                provenance={handoff?.provenance}
-                onLand={handoff?.onLand}
-                onRerun={handoff?.onRerun}
-                brief={handBrief}
-                briefTarget={briefTarget}
-                proof={proofMarkdown({ record, outcome, name, agent, members: scope.names, channelNotes: scope.shared || !scope.hasMembers ? channelNotes : [], identity })}
-              />
+              handoffOf()
               )}
             </Box>
           )}
@@ -685,6 +748,9 @@ export default function OptimizationRunView({
 OptimizationRunView.propTypes = {
   /* Beside the runs list: hide the runs and the search chart. */
   decisionOnly: PropTypes.bool,
+  /* Ship's drawer: what ships and the next steps only. */
+  shipOnly: PropTypes.bool,
+  onOpenDecision: PropTypes.func,
   record: PropTypes.object,
   name: PropTypes.string,
   env: PropTypes.object,

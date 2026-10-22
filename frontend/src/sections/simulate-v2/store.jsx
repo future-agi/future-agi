@@ -30,7 +30,7 @@ import { scrubAgentSecrets } from "./_mock/secretRefs";
 import { recordCredentialSets } from "./_mock/envConfig";
 /* Topping a stored copy up with what the seed gained since it was saved. */
 import { SEED_VERSION, topUpSeed, scrubEnvState, scrubPatch, withRsiSeed } from "./_mock/seedTopUp";
-import { withCommitHistory, withCommitTies } from "./_mock/commitHistorySeed";
+import { withCommitHistory, withCommitTies, withFixPr } from "./_mock/commitHistorySeed";
 import { withProjectLinkRepair } from "./_mock/projectLinkRepair";
 import { readStored, writeStored, updateStored } from "./_mock/storeStorage";
 /* A search that played out while nobody watched has finished. */
@@ -129,7 +129,7 @@ const WORKSPACE_ROLE = "admin";
   like work already in progress — and only when nothing is stored, so it never
   overwrites what someone actually did.
 */
-const firstRunState = () => ({ ...initialState, ...withProjectLinkRepair(withCommitTies(withCommitHistory(withRsiSeed(seededState())))), seedVersion: SEED_VERSION });
+const firstRunState = () => ({ ...initialState, ...withFixPr(withProjectLinkRepair(withCommitTies(withCommitHistory(withRsiSeed(seededState()))))), seedVersion: SEED_VERSION });
 
 /* ── agent versions: one way in ──────────────────────────────────────────────
    A version belongs to the agent. Every environment testing that agent, and

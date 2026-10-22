@@ -547,6 +547,20 @@ export const openPr = (pr) => {
   });
   return record;
 };
+/*
+  A draft PR the demo seed opens, once per `seedId`: found again on later
+  loads, and not reopened after it's been removed. Null when there's no
+  browser to keep it in.
+*/
+export const seedDemoPr = ({ seedId, ...pr }) => {
+  if (typeof window === "undefined") return null;
+  const have = state.prs.find((p) => p.seedId === seedId);
+  if (have) return have;
+  if (state.demoShares?.[`pr:${seedId}`]) return null;
+  const record = { id: uid("pr"), number: 140 + state.prs.length + 1, status: "open", openedAt: now(), seedId, ...pr };
+  set({ prs: [record, ...state.prs], demoShares: { ...(state.demoShares || {}), [`pr:${seedId}`]: true } });
+  return record;
+};
 export const updatePr = (id, patch) => set({ prs: state.prs.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
 
 /*
