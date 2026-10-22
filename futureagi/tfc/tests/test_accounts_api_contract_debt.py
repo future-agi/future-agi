@@ -97,7 +97,7 @@ def test_accounts_endpoints_have_response_contracts():
         ("GET", "/accounts/2fa/status/"): "TwoFactorStatus",
         ("POST", "/accounts/2fa/verify/recovery/"): "AccountsTokenPairResponse",
         ("POST", "/accounts/accept-invitation/{uidb64}/{token}/"): (
-            "AccountsTokenPairResponse"
+            "AcceptInvitationResponse"
         ),
         ("GET", "/accounts/config/"): "PublicConfigResponse",
         ("GET", "/accounts/key/get_secret_keys/"): "SecretKeyListResponse",
