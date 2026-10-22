@@ -12,7 +12,10 @@ import { optimizationSummary, OPT_STATUS } from "../../_mock/optimizationRuns";
 import { protoRunId } from "../../_mock/executionAdapter";
 import DiagnosisPane from "./DiagnosisPane";
 import ImprovementSetup from "./ImprovementSetup";
-import { buildImprovement } from "../../_mock/improvementStart";
+import { buildImprovement, budgetsWithin } from "../../_mock/improvementStart";
+import { asCoderImprovement } from "../../_mock/improverAttempts";
+import { startImproverSession } from "../../_mock/integrations";
+import { limitsOf } from "../../agents/agentLimits";
 import { envAgentKey } from "../../_mock/agentRegistry";
 import OptimizationRunView from "./OptimizationRunView";
 import { useSimStore } from "../../store";
@@ -154,6 +157,32 @@ export default function FixMyAgentDrawer({
     });
   };
 
+  /*
+    Handed to the customer's coding agent from here (Open in Claude Code,
+    Dispatch to …): an improvement on this run's failures starts for it —
+    no search of ours; the agent's attempts are the candidates and we judge
+    each one. Not navigated to: the brief's confirmation links there.
+  */
+  const handToAgent = (coder) => {
+    if (!env?.id || !envState) return null;
+    const limits = limitsOf(simState, envAgentKey(envState.agent, env.id));
+    const record = asCoderImprovement(buildImprovement({
+      state: simState, env, es: envState, tasks,
+      fromRunId: sourceRunId, baseAgentVersion: runAgentVersion,
+      trigger: { kind: "run" },
+      limits, budget: budgetsWithin(limits.budget.dollars).at(-1), regressionEnvIds: [env.id],
+      extra: { diagnosis: report.filter((a) => !a.nothing).map((a) => ({ id: a.id, label: a.label, headline: a.headline, severity: a.severity })) },
+    }), coder);
+    commit({ type: "patchEnvState", envId: env.id, patch: { optimizations: [...records, record] } });
+    startImproverSession({ agentId: coder.id, envId: env.id, optId: record.id, where: "future-agi" });
+    const from = (envState?.runs || []).find((r) => r.id === sourceRunId);
+    return {
+      href: improvementPath(env.id, record.id),
+      state: { back: { to: paths.dashboard.simulate.simulationRun(env.id, sourceRunId), label: from?.ordinal ? `Run ${from.ordinal}` : "the run" } },
+      label: "See its attempts",
+    };
+  };
+
   const finish = () => {
     patch({
       optimizations: records.map((o) => (
@@ -269,6 +298,7 @@ export default function FixMyAgentDrawer({
           onViewIssue={onViewIssue}
           runId={runId}
           onOptimize={() => setSetupOpen(true)}
+          onHandToAgent={handToAgent}
           previous={previous}
           onOpenPrevious={(id) => { setActiveId(id); setView("optimization"); }}
           handoff={{

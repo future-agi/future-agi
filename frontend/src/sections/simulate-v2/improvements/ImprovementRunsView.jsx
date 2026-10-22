@@ -10,7 +10,8 @@ import { clickable, focusRing } from "../components/clickable";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { useConnectedAgents } from "../store";
-import { useIntegrations } from "../_mock/integrations";
+import { improverSessionFor, useIntegrations } from "../_mock/integrations";
+import ImproverAttempts from "../run/fixmyagent/ImproverAttempts";
 import { evalSeries, runSummaries, trialSummaries } from "../_mock/comparison";
 import { allMetrics, deltaAgainst } from "../_mock/winner";
 import { Head, MetricCell, ScoreCell } from "../run/RunsTableCells";
@@ -19,7 +20,7 @@ import { candidatesOf, chosenVerified, shippedCandidate } from "../run/fixmyagen
 import WinnerChanges from "../run/fixmyagent/WinnerChanges";
 import ScenarioOutcomes from "../run/fixmyagent/ScenarioOutcomes";
 import { membersChanged, proposalMembers } from "../_mock/improvementPolicy";
-import { improvementOutcome, IMPROVEMENT_PHASES } from "../_mock/optimizationRuns";
+import { improvementOutcome, IMPROVEMENT_PHASES, searchSpend } from "../_mock/optimizationRuns";
 import RunsOverview from "../run/RunsOverview";
 import WinnerDrawer from "../run/WinnerDrawer";
 import { improvementRowsOf } from "./improvementRows";
@@ -60,7 +61,9 @@ export default function ImprovementRunsView({ env, envState, record, patch, onBa
   const navigate = useNavigate();
   const location = useLocation();
   const { agents, state: simState } = useConnectedAgents();
-  const { prs } = useIntegrations();
+  const { prs, improverSessions } = useIntegrations();
+  /* A coding agent working on this improvement alongside the search. */
+  const session = useMemo(() => improverSessionFor(env.id, record.id, { improverSessions }), [env.id, record.id, improverSessions]);
   const [selected, setSelected] = useState([]);
   const [picking, setPicking] = useState(false);
   /* Flow 5's tabs once it has finished: the runs, what the kept change
@@ -527,6 +530,17 @@ export default function ImprovementRunsView({ env, envState, record, patch, onBa
           </Stack>
         </Box>
       </Box>
+
+      {/* A coding agent handed this improvement: its attempts, each judged
+          the same way as the runs above, under them. */}
+      {session && (
+        <Box sx={{ mt: 2, border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
+          <ImproverAttempts
+            record={record} env={env} envState={envState} session={session}
+            name={row?.name || record.name} searchSpent={result ? searchSpend(result, env.surface) : 0}
+          />
+        </Box>
+      )}
       </>
       )}
 

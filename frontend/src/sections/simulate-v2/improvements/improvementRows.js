@@ -7,7 +7,7 @@
  */
 import { envAgentKey, repairAgentRecord } from "../_mock/agentRegistry";
 import { improvementOutcome, improvementTotalSpend, searchMinutes, searchSpend, REPEATS, improvementPhaseOf } from "../_mock/optimizationRuns";
-import { attemptsOf } from "../_mock/improverAttempts";
+import { attemptsOf, coderStatusOf } from "../_mock/improverAttempts";
 import { improverSessionFor } from "../_mock/integrations";
 import { prOfImprovement } from "../_mock/improvementPr";
 import { improvementRunName, depthOf } from "../_mock/optimizer";
@@ -171,6 +171,8 @@ const improvementRowsRaw = ({ state, agents = [], prs = [], now = Date.now() }) 
       /* Running reads as where it is: Reproducing, Searching, Verifying. */
       const phase = running ? improvementPhaseOf(record, now) : null;
       const lifecycle = lifecycleOf(record, env, es, prs, now);
+      /* A coding agent's improvement reads its session: fixing, accepted, or out of attempts. */
+      const coder = record.improver ? coderStatusOf(record, env.id, { now, surface: env.surface }) : null;
       /* Prompt or code — what time to proposal is measured against. */
       const changeKind = r?.winner ? (depthOf(r.winner.proposals || []) >= 3 ? "code" : "prompt") : null;
       return {
@@ -186,9 +188,17 @@ const improvementRowsRaw = ({ state, agents = [], prs = [], now = Date.now() }) 
         trigger,
         /* Once its change ships, the run's status follows it — never "Ready
            for review" beside a released change. */
-        status: phase ? { key: "running", label: phase.label, phase: phase.key } : (lifecycle && SHIPPED_STATUS[lifecycle.kind]) || outcome.ending,
-        headline: outcome.headline || "",
-        held: running ? null : heldShortOf(outcome),
+        status: phase ? { key: "running", label: phase.label, phase: phase.key } : (lifecycle && SHIPPED_STATUS[lifecycle.kind]) || (coder && { key: coder.key, label: coder.label }) || outcome.ending,
+        headline: coder?.headline || outcome.headline || "",
+        /* A coding agent's improvement: what its attempts came to, in the Result column. */
+        held: coder
+          ? {
+            text: coder.attempt ? `Accepted · attempt ${coder.attempt.n}` : coder.key === "no-fix" ? "No attempt accepted" : `${coder.attempts.length} ${coder.attempts.length === 1 ? "attempt" : "attempts"} so far`,
+            broke: null, note: `by ${coder.improver}`,
+          }
+          : running ? null : heldShortOf(outcome),
+        /* Who wrote the change — a coding agent's improvement says so. */
+        improver: coder?.improver || null,
         output: lifecycle,
         identity: improvementIdentityOf(record, env, es),
         href: improvementPath(env.id, record.id),

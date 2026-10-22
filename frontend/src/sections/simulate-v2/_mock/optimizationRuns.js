@@ -503,6 +503,15 @@ export const improvementOutcome = (rec, { model } = {}) => {
   const record = rec && settled !== rec.status ? { ...rec, status: settled } : rec;
   const r = record?.result;
   const limits = record?.limits || DEFAULT_LIMITS;
+  /* Fixed by the customer's coding agent and judged by us: there's no search
+     of ours to read an ending from — its state is the agent's session
+     (improverAttempts' coderStatusOf), which every surface asks instead. */
+  if (record?.improver) {
+    return {
+      ending: { key: "coder", label: "With your coding agent" }, headline: "", coder: true,
+      held: null, effect: { cost: 0, latency: 0 }, costKnown: false, checks: [], issue: null, train: null, gap: null, heldScore: null, finalists: [],
+    };
+  }
   if (record?.status === OPT_STATUS.NOTHING) {
     return { ending: { key: "nothing", label: "Nothing to improve" }, headline: `Nothing to improve — every scenario already meets ${goalWords(record.nothing?.goal)}.` };
   }

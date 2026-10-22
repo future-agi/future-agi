@@ -176,7 +176,7 @@ export default function DiagnosisPane({
   tasks, report, trace, proposals, verdict,
   applied, setApplied, current, projected, willFix,
   measured, failing, onOpenTask, onViewIssue, onOptimize, onClose,
-  env, envState, patch, handoff: handoffProps, runId, previous = [], onOpenPrevious,
+  env, envState, patch, handoff: handoffProps, runId, previous = [], onOpenPrevious, onHandToAgent,
 }) {
   /* First open of this runId: play the analyzer animation. Every
      subsequent open in this session: skip straight to the results. */
@@ -700,7 +700,7 @@ export default function DiagnosisPane({
                 </Box>
                 {/* For teams whose coding agent makes the edit — it gets the
                     evidence and the constraints, and submits back here. */}
-                {!running && !!sorted.length && <CopyBriefButton size="small" getBrief={brief} target={{ kind: "run", envId: env?.id, runId }} />}
+                {!running && !!sorted.length && <CopyBriefButton size="small" getBrief={brief} target={{ kind: "run", envId: env?.id, runId }} onOpened={onHandToAgent} />}
               </Stack>
               {running && !shownIssues.length && (
                 <Box
@@ -819,7 +819,7 @@ export default function DiagnosisPane({
                             )}
                             {/* This proposal alone, for a coding agent. */}
                             {!running && (
-                              <CopyBriefButton size="small" getBrief={briefFor(p)} target={{ kind: "run", envId: env?.id, runId }} />
+                              <CopyBriefButton size="small" getBrief={briefFor(p)} target={{ kind: "run", envId: env?.id, runId }} onOpened={onHandToAgent} />
                             )}
                           </Stack>
                           <Stack spacing={0.375} sx={{ mt: 1.125 }}>
@@ -920,6 +920,8 @@ export default function DiagnosisPane({
 }
 
 DiagnosisPane.propTypes = {
+  /* Handed to a coding agent: starts the improvement its attempts land on. */
+  onHandToAgent: PropTypes.func,
   tasks: PropTypes.array,
   report: PropTypes.array,
   trace: PropTypes.array,

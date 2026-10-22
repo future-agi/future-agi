@@ -16,6 +16,7 @@ import { needsFoundCheck } from "../_mock/agentRegistry";
 import { errorFeedScenarios } from "../_mock/scenarioSources";
 import { projectLinkOf, projectsOfAgent } from "../_mock/projectLinks";
 import { prOfImprovement } from "../_mock/improvementPr";
+import { coderStatusOf } from "../_mock/improverAttempts";
 import { mockCluster } from "src/api/errorFeed/mockAdapter";
 import { paths } from "src/routes/paths";
 
@@ -628,6 +629,14 @@ export const fixStatusOf = (issue, state, prs = [], now = Date.now()) => {
   if (!found) return null;
   const { record, env, es } = found;
   const at = { envId: env.id, optId: record.id, runId: record.fromRunId };
+  /* Handed to the customer's coding agent: its PR, once opened, leads;
+     until then the agent's session says where it stands. */
+  if (record.improver) {
+    const shippedNow = shippedStateOf(record, es, prs, { now, envId: env.id });
+    if (shippedNow) return { ...at, ...shippedNow };
+    const coder = coderStatusOf(record, env.id, { now, surface: env.surface });
+    return { ...at, key: coder.key === "running" ? "fixing" : coder.key, label: coder.label, improver: coder.improver };
+  }
   const { ending, beforeSearch } = improvementOutcome(record);
   /* While it runs, the PRD's own phases: Reproducing → Searching → Verifying. */
   if (ending.key === "running") return { ...at, key: "fixing", label: improvementPhaseOf(record, now)?.label || "Searching" };

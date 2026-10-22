@@ -545,11 +545,13 @@ export default function OptimizationRunView({
               >
                 {sessionNow.key === "accepted"
                   ? shippable
-                    ? `${sessionNow.attempt.label} was also accepted by Future AGI — see Runs.`
-                    : `Our own search found no safe change, but ${sessionNow.attempt.label} passed every check — see Runs for its proof.`
+                    ? `${sessionNow.attempt.label} was also accepted by Future AGI — ${decisionOnly ? "see its attempts under the runs" : "see Runs"}.`
+                    : `Our own search found no safe change, but ${sessionNow.attempt.label} passed every check — ${decisionOnly ? "its proof is under the runs" : "see Runs for its proof"}.`
                   : sessionNow.key === "budget"
-                    ? `${improverLabel} stopped without an accepted run — see Runs.`
-                    : `${improverLabel} is working on this — its attempts show in Runs.`}
+                    ? `${improverLabel} stopped without an accepted run — ${decisionOnly ? "see its attempts under the runs" : "see Runs"}.`
+                    : decisionOnly
+                      ? `${improverLabel} is working on this — its attempts are listed under the runs.`
+                      : `${improverLabel} is working on this — its attempts show in Runs.`}
               </Typography>
             )}
             {/* Re-read is on the stepper; only an outside change needs saying. */}

@@ -56,6 +56,8 @@ export default function ImproverAttempts({ record, env, envState, session, name,
       title: `Fix: ${accepted.title}`,
       files: [{ path: "agent", title: accepted.title }],
       handoffKey: record.id,
+      /* Improvement ids repeat across environments — the PR names its own. */
+      envId: env?.id, envName: env?.name,
       by: accepted.improver,
       body: attemptProof(record, accepted, name),
       /* The verify check re-runs everything on the PR's commit — visible,
@@ -67,7 +69,7 @@ export default function ImproverAttempts({ record, env, envState, session, name,
         after: accepted.score,
       },
     });
-  }, [accepted, repo, pr, record, name]);
+  }, [accepted, repo, pr, record, name, env?.id, env?.name]);
 
   if (!session) return null;
   /* Everything the improvement spent — reproducing, the search and these
@@ -102,7 +104,7 @@ export default function ImproverAttempts({ record, env, envState, session, name,
                 ? "Waiting for its next submission — it gets a verdict for every one."
                 : `Waiting for its first submission. It submits ${route.submits}; ${route.tested.charAt(0).toLowerCase()}${route.tested.slice(1)}`
               : status.key === "accepted"
-                ? pr ? `It opened PR #${pr.number} on ${pr.repo} carrying this proof.` : repo ? "It's opening its PR with this proof." : "Copy the proof below — this agent isn't in a repository it can open a PR on."
+                ? pr ? `It opened PR #${pr.number} on ${pr.repo} carrying this proof.` : repo ? "It's opening its PR with this proof." : "This agent isn't in a repository it can open a PR on — ship the change below; each verdict carries its proof."
                 : "Ship this improvement's own winner, or hand it over again with a fresh brief."}
           </Typography>
         </Box>

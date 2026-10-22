@@ -14,7 +14,8 @@
 import { useCallback, useMemo } from "react";
 import { useSimStore, useConnectedAgents } from "../store";
 import { limitsOf } from "../agents/agentLimits";
-import { useIntegrations } from "../_mock/integrations";
+import { startImproverSession, useIntegrations } from "../_mock/integrations";
+import { asCoderImprovement } from "../_mock/improverAttempts";
 import { rereadFor } from "../_mock/improvementPolicy";
 import { currentUser } from "../_mock/scenarioProvenance";
 import {
@@ -49,9 +50,12 @@ export function useIssueFix(issue) {
     doesn't happen, the run stops there and keeps the search it would have
     run for "Continue anyway".
   */
-  /* Fix runs Future AGI's engine. A customer's own coding agent comes in
-     through Copy for coding agent instead (RSI PRD, Flow 6). */
-  const start = useCallback(({ env, drafts, regressionEnvIds, budget, minutes, textSearch, targetMember, rootCause, lineage }) => {
+  /* Fix runs Future AGI's engine. Handing the issue to the customer's own
+     coding agent (Open in Claude Code, Dispatch to …) starts the same
+     improvement with `improver` set: today is measured and the scenarios
+     frozen, but the agent writes the candidates and we only judge them
+     (RSI PRD, Bring your own improver). */
+  const start = useCallback(({ env, drafts, regressionEnvIds, budget, minutes, textSearch, targetMember, rootCause, lineage, improver = null }) => {
     const es = state.byEnv[env.id];
     const reread = rereadFor(agent, state);
     if (reread?.changed && reread.versionRecord && agentKey) {
@@ -64,10 +68,13 @@ export function useIssueFix(issue) {
     const today = todayRunFor(env, es, issue.cluster_id);
     if (today) commit({ type: "recordRun", envId: env.id, run: today });
     const esNow = today ? { ...es, runs: [today, ...(es?.runs || [])] } : es;
-    const record = issueFixRecord({
+    const built = issueFixRecord({
       issue, env, es: esNow, drafts, budget, regressionEnvIds, state, reread, textSearch, targetMember, rootCause, lineage, today,
       limits: minutes ? { ...limits, budget: { ...limits.budget, minutes } } : limits,
     });
+    const record = improver ? asCoderImprovement(built, improver) : built;
+    /* The agent's submissions land on this improvement as its attempts. */
+    if (improver) startImproverSession({ agentId: improver.id, envId: env.id, optId: record.id, where: "future-agi" });
     /* Saved now — Start fix leaves the Error Feed straight after. The
        issue's scenarios belong to this improvement only (RSI PRD: "They join
        the environment only if the user adds them, or through regression

@@ -46,6 +46,8 @@ export default function CopyBriefButton({ getBrief, label = "Copy for coding age
   const [done, setDone] = useState(null); // null | "copied" | "sent" | "dispatched"
   const [cloud, setCloud] = useState(null); // the cloud agent last dispatched to
   const [menu, setMenu] = useState(null);
+  /* Where the agent's attempts will land, when handing it over started an improvement. */
+  const [landing, setLanding] = useState(null);
   const anchor = useRef(null);
   const timer = useRef(null);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -70,14 +72,19 @@ export default function CopyBriefButton({ getBrief, label = "Copy for coding age
     if (target?.kind === "improvement") {
       startImproverSession({ agentId: agent.id, envId: target.envId, optId: target.optId, where: "future-agi" });
     }
-    onOpened?.(agent);
-    flash("sent", 4200);
+    /* An issue or a run: the caller starts the improvement its attempts land on. */
+    const where = onOpened?.(agent) || null;
+    setLanding(where);
+    /* With somewhere to go, long enough to read it and click. */
+    flash("sent", where ? 12000 : 4200);
   };
 
   const dispatch = (c) => {
     dispatchToCloudAgent({ agentId: c.id, target, brief: getBrief() });
     setCloud(c);
-    flash("dispatched", 5200);
+    const where = onOpened?.(c) || null;
+    setLanding(where);
+    flash("dispatched", where ? 12000 : 5200);
   };
 
   const s = SIZES[size] || SIZES.medium;
@@ -200,6 +207,16 @@ export default function CopyBriefButton({ getBrief, label = "Copy for coding age
                       </Typography>
                     </>
                   ) : null}
+                  {/* Its attempts have a home: say where, one click away. */}
+                  {landing?.href && (
+                    <Button
+                      size="small" onClick={() => { setDone(null); navigate(landing.href, landing.state ? { state: landing.state } : undefined); }}
+                      endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
+                      sx={{ typography: "s3", fontWeight: 700, color: "text.primary", px: 0, mt: 0.75, minWidth: 0 }}
+                    >
+                      {landing.label || "See its attempts"}
+                    </Button>
+                  )}
                 </Paper>
               </ClickAwayListener>
             </Box>
@@ -223,6 +240,9 @@ CopyBriefButton.propTypes = {
     issueId: PropTypes.string,
     runId: PropTypes.string,
   }),
+  /* Called with the agent the brief went to. For an issue or a run it starts
+     the improvement the agent's attempts land on, and may return
+     { href, label, state } — where to watch them. */
   onOpened: PropTypes.func,
   /* Why the coding-agent route can't be used here — shown on a disabled button. */
   disabledReason: PropTypes.node,

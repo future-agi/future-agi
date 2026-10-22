@@ -14,8 +14,8 @@
   the attempt number, so a reload shows the same attempts.
 */
 import { hashSeed } from "./runStream";
-import { PER_CONVERSATION, REPEATS } from "./optimizationRuns";
-import { codingAgentById, heldBackHiddenFrom } from "./integrations";
+import { OPT_STATUS, PER_CONVERSATION, REPEATS } from "./optimizationRuns";
+import { codingAgentById, heldBackHiddenFrom, improverSessionFor } from "./integrations";
 
 /* How many candidates one improvement accepts from an outside agent. */
 export const ATTEMPT_BUDGET = 5;
@@ -128,10 +128,12 @@ export const attemptsOf = (record, session, { now = Date.now(), surface, budgetL
     const step = SCRIPT[n - 1];
     const key = `${record.id}:attempt:${n}`;
     /* Which visible scenarios this candidate moved. */
-    const perScenario = Object.fromEntries(visible.map((t) => {
+    /* An accepted attempt fixed what it was shown — at least the first
+       failing scenario; a rejected one may have fixed some and broken more. */
+    const perScenario = Object.fromEntries(visible.map((t, i) => {
       const was = wasPassing(t);
       const h = hashSeed(`${key}:${t.id}`) % 100;
-      const fixed = !step.reject ? h < 70 : h < 40;
+      const fixed = !step.reject ? h < 70 || i === 0 : h < 40;
       return [t.id, fixed && !was ? "fixed" : was && h > 96 ? "broke" : fixed ? "fixed" : "same"];
     }));
     const mustFailed = step.reject === "mustPass" ? 1 : 0;
@@ -187,13 +189,19 @@ export const attemptsOf = (record, session, { now = Date.now(), surface, budgetL
       score,
       before,
       delta: score - before,
-      held: clampPct((r.heldBase || 0) + (step.reject ? (hh % 7) - 3 : 8 + (hh % 10))),
+      held: heldAfter(r.heldBase, hh, step.reject),
       spend,
     });
     if (!step.reject) break;
   }
   return out;
 };
+
+/* The held-back figure Future AGI scored: a rejected attempt barely moves
+   it; an accepted one closes most of the gap. */
+const heldAfter = (heldBase = 0, hh = 0, rejected = false) => clampPct(rejected
+  ? heldBase + (hh % 7) - 3
+  : heldBase + (100 - heldBase) * (0.55 + (hh % 30) / 100));
 
 /*
   The newer session: must-pass is the engine's own three-part set (marked,
@@ -258,9 +266,9 @@ const attemptsV2 = (record, session, { now, surface, budgetLeft, tier }) => {
       });
       continue;
     }
-    const perScenario = Object.fromEntries(visible.map((t) => {
+    const perScenario = Object.fromEntries(visible.map((t, i) => {
       const h = hashSeed(`${key}:${t.id}`) % 100;
-      const fixed = !step.reject ? h < 70 : h < 40;
+      const fixed = !step.reject ? h < 70 || i === 0 : h < 40;
       return [t.id, fixed ? "fixed" : t.flakyToday && h > 90 ? "flaky" : "still-failing"];
     }));
     const mustFailed = step.reject === "mustPass" ? 1 : 0;
@@ -299,7 +307,7 @@ const attemptsV2 = (record, session, { now, surface, budgetLeft, tier }) => {
       before,
       delta: score - before,
       /* Scored by Future AGI on the held-back set, never sent to the agent. */
-      held: clampPct((r.heldBase || 0) + (step.reject ? (hh % 7) - 3 : 8 + (hh % 10))),
+      held: heldAfter(r.heldBase, hh, step.reject),
       spend,
     });
     if (!step.reject) break;
@@ -337,4 +345,54 @@ export const attemptProof = (record, attempt, name) => {
     `_The starting version and the change ran on the same frozen scenarios and evaluations, each repeated ${REPEATS} times. The verdict was computed by Future AGI, not by ${attempt.improver}._`,
     `Full proof: https://app.futureagi.com/improvements/${record.id}/attempts/${attempt.n}`,
   ].join("\n");
+};
+
+/*
+  An improvement the customer's coding agent fixes and Future AGI judges
+  (RSI PRD, Bring your own improver) — started by handing the agent an Error
+  Feed issue or a failed run. Today is measured and the scenarios are frozen
+  as for any fix, but no search of ours runs: the agent's attempts are the
+  candidates, each scored here. The measured sets stay on the record — the
+  visible, must-pass and held-back scenarios every attempt is judged on.
+*/
+export const asCoderImprovement = (record, agent) => {
+  const { pendingResult, pendingEnding: _ending, ...rest } = record;
+  const result = record.result || pendingResult || null;
+  return {
+    ...rest,
+    status: OPT_STATUS.COMPLETED,
+    completedAt: new Date().toISOString(),
+    improver: { agentId: agent.id, label: agent.label },
+    result: result ? { ...result, trials: [], winner: null, finalists: [], pool: [], overruled: null } : result,
+  };
+};
+
+/**
+ * Where a coding agent's improvement stands, read from its session:
+ * waiting for (or judging) attempts, one accepted, or out of attempts.
+ * { key: "running" | "ready" | "no-fix", label, headline, attempt?, attempts }
+ */
+export const coderStatusOf = (record, envId, { now = Date.now(), surface, tier } = {}) => {
+  const label = codingAgentById(record?.improver?.agentId)?.label || record?.improver?.label || "Your coding agent";
+  const session = improverSessionFor(envId, record?.id);
+  const attempts = session ? attemptsOf(record, session, { now, surface, budgetLeft: record.budget || Infinity, tier }) : [];
+  const st = session ? sessionState(session, attempts) : { key: "waiting" };
+  if (st.key === "accepted") {
+    return {
+      key: "ready", label: "Ready for review", attempt: st.attempt, attempts, improver: label,
+      headline: `${st.attempt.label} accepted — ${st.attempt.visible.filter((x) => x.outcome === "fixed").length} of ${st.attempt.visible.length} scenarios fixed, must-pass held, every constraint met.`,
+    };
+  }
+  if (st.key === "budget") {
+    return {
+      key: "no-fix", label: "No accepted attempt", attempts, improver: label,
+      headline: st.money ? `${label} reached the budget without an accepted attempt.` : `${label} used all ${ATTEMPT_BUDGET} attempts without an accepted one.`,
+    };
+  }
+  return {
+    key: "running", label: attempts.length ? `${label} · attempt ${attempts.length + 1}` : `${label} is fixing`, attempts, improver: label,
+    headline: attempts.length
+      ? `${label} has submitted ${attempts.length} ${attempts.length === 1 ? "attempt" : "attempts"} — none accepted yet.`
+      : `Waiting for ${label}'s first attempt.`,
+  };
 };

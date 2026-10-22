@@ -15,6 +15,7 @@ import { protoRunId } from "../_mock/executionAdapter";
 import SideDrawer from "../components/SideDrawer";
 import ImprovementRunsView from "./ImprovementRunsView";
 import ImprovementDecision from "./ImprovementDecision";
+import CodingAgentImprovementView from "./CodingAgentImprovementView";
 
 /**
  * One improvement, on its own page — `simulate/improvements/:envId/:optId`,
@@ -178,6 +179,20 @@ export default function ImprovementRunPage() {
         onDone={finish}
       />
   );
+
+  /* Handed to the customer's coding agent: its attempts, judged here. */
+  if (record.improver) {
+    return (
+      <Box sx={{ height: "100%", minHeight: 0, bgcolor: "background.paper" }}>
+        <Helmet><title>{`${improvementRunName(envState, record)} · Improvements`}</title></Helmet>
+        <CodingAgentImprovementView
+          env={env} envState={envState} record={record} patch={patch}
+          onBack={back} backLabel={backLabel}
+          handoff={{ key: record.id, landedVersion: landed, provenance, onLand: land, onRerun: newRun }}
+        />
+      </Box>
+    );
+  }
 
   /* Runs to list once the search has tried some — as they finish while it
      runs. A suggestion-only fix tries none, so it stays on the search view.

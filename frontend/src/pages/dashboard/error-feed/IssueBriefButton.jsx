@@ -5,7 +5,9 @@ import { codingAgentBrief } from "src/sections/simulate-v2/_mock/codingAgentBrie
 import { useSimStore } from "src/sections/simulate-v2/store";
 import { limitsOf } from "src/sections/simulate-v2/agents/agentLimits";
 import { agentDefinitionOf } from "src/sections/simulate-v2/_mock/agentRegistry";
-import { envsForAgent, issueScenarioDrafts } from "src/sections/simulate-v2/errorFeed/issueFix";
+import { FIX_IN_FLIGHT, envsForAgent, issueFixNav, issueScenarioDrafts, useIssueFix } from "src/sections/simulate-v2/errorFeed/issueFix";
+import { budgetsWithin } from "src/sections/simulate-v2/_mock/improvementStart";
+import { startImproverSession } from "src/sections/simulate-v2/_mock/integrations";
 import useIssueRootCause from "./useIssueRootCause";
 
 /**
@@ -20,6 +22,34 @@ export default function IssueBriefButton({ issue, agent, sx }) {
   const { data: overview } = useErrorFeedOverview(issue?.cluster_id);
   /* The same root cause Fix carries — see useIssueRootCause. */
   const root = useIssueRootCause(issue);
+  const { status, start } = useIssueFix(issue);
+
+  /*
+    Handed to a coding agent (Open in Claude Code, Dispatch to …): its
+    attempts need an improvement to land on. A fix already in flight takes
+    them; otherwise one starts for the agent — today measured on the main
+    environment with the issue's scenarios, no search of ours. Without an
+    environment there's nothing to judge on yet, so the brief alone goes.
+  */
+  const handOff = (coder) => {
+    if (!agent || !issue?.cluster_id) return null;
+    if (status?.envId && status?.optId && FIX_IN_FLIGHT.has(status.key)) {
+      startImproverSession({ agentId: coder.id, envId: status.envId, optId: status.optId, where: "future-agi" });
+      const [href, opts] = issueFixNav(status, issue.cluster_id);
+      return { href, state: opts?.state, label: "See its attempts on the fix" };
+    }
+    const env = envsForAgent(agent, state)[0] || null;
+    if (!env) return null;
+    const es = state.byEnv[env.id];
+    const limits = limitsOf(state, agent.key);
+    const at = start({
+      env, drafts: issueScenarioDrafts(issue, env, es), regressionEnvIds: [env.id],
+      budget: budgetsWithin(limits.budget.dollars).at(-1), rootCause: root || null,
+      improver: { id: coder.id, label: coder.label },
+    });
+    const [href, opts] = issueFixNav(at, issue.cluster_id);
+    return { href, state: opts?.state, label: "See its attempts" };
+  };
 
   const brief = () => {
     const env = envsForAgent(agent, state)[0] || null;
@@ -58,6 +88,7 @@ export default function IssueBriefButton({ issue, agent, sx }) {
     <CopyBriefButton
       getBrief={brief}
       target={issue?.cluster_id ? { kind: "issue", issueId: issue.cluster_id } : undefined}
+      onOpened={handOff}
       sx={sx}
     />
   );
