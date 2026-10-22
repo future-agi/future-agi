@@ -56,7 +56,14 @@ and scalar subqueries. Row grain and window semantics are important:
   timestamps or materialize every id in a project. Thus a recent backfill eval
   of a sixty-day-old span/trace or long-lived session is retained. Span targets
   match the (span id, trace id) pair, not a globally assumed span id. Null or
-  foreign targets never grant access. At most 1,000 config ids are admitted.
+  foreign targets never grant access. Ownership comes from every configuration
+  the project owns, *including soft-deleted ones*: a later deletion does not
+  silently drop historical scores. Those rows are kept and flagged with
+  ``config_deleted = 1`` (Observe hides them); filter on it to match Observe.
+  At most 1,000 configurations (deleted ones count) are admitted. A project
+  with more never gets a partial dataset: the catalog marks ``eval_results``
+  unavailable with that reason, and a query that reads it is rejected with
+  HTTP 400 and the same message. The other datasets keep working.
   ``eval_task_id`` is the task key. ``run_id`` remains NULL until actual execution
   provenance is available; tasks are not runs. Typed nullable ``policy_version``,
   ``cohort_id``, ``cohort_frozen_at``, ``membership_mode``, ``sampling_unit``,
@@ -117,7 +124,7 @@ preaggregating at the desired grain.
 Security and lifecycle
 ----------------------
 
-* SQLGlot 28.10.1 parses the ClickHouse dialect. Exactly one SELECT/UNION statement,
+* SQLGlot 28.10.1 (the pinned version) parses the ClickHouse dialect. Exactly one SELECT/UNION statement,
   a closed AST-node set, explicit approved functions and unqualified virtual
   relations are accepted. Unknown future syntax/functions fail closed.
 * Every physical source is replaced by a server-owned SELECT with explicit columns
@@ -131,6 +138,47 @@ Security and lifecycle
   aliases (or USING). Ordinary AND/OR filters, reviewed If aggregate combinators,
   now/percentiles and approved date units work; a Var is allowed only in the
   reviewed date/interval unit positions, never as unrestricted SQL text.
+* Names on the right of ``IN`` are a table read in ClickHouse, not a column:
+  ``x IN spans``, ``x IN (spans)``, ``x IN db.table``, ``x GLOBAL IN t``, a table
+  alias or a CTE name each read a whole relation. SQLGlot parses them as an
+  ``IN`` over a column, so they are never rewritten to a scope. The right side
+  of ``IN``/``NOT IN`` therefore has a positive allow-list: a SELECT subquery,
+  or a list/tuple/array of constant expressions (literals, casts and scalar
+  functions over literals). ``GLOBAL IN`` and the function forms (``in``,
+  ``globalIn``, ``notIn``, ``nullIn`` ...) are rejected, as are ``FROM (name)``,
+  ``EXISTS``, ``ANY``/``ALL``, lambdas, ``ARRAY JOIN``, ``SAMPLE``/``FINAL`` and
+  every function that takes a table, dictionary or setting name (``dictGet*``,
+  ``dictHas``, ``joinGet*``, ``hasColumnInTable``, ``getSetting``, table
+  functions), in every clause (WHERE, SELECT, HAVING, ON, ORDER/GROUP BY,
+  window and CASE positions, CTEs, UNION branches, scalar subqueries).
+* Every user CTE is renamed to a generated ``__sql_cte_N`` name before
+  emission, so no user-chosen name reaches ClickHouse as a table identifier.
+  After compiling, the emitted text is verified independently: each
+  server-generated scoped source must appear exactly as many times as it was
+  referenced, and the remaining (user) part is re-parsed with the same dialect
+  and must contain no table except a generated CTE name defined in the same
+  statement, no IN-table form, no table-name function, no qualified column and
+  no unreviewed syntax. Any doubt fails closed with ``UnsafeQuery``. A compiled
+  statement larger than the profile's 256 KiB ``max_query_size`` is rejected
+  before it is sent (for example, many references to ``eval_results`` with
+  1,000 configurations).
+* Server-side second barrier: each execution also sends ClickHouse
+  ``additional_table_filters`` with the scope's intrinsic ownership predicate
+  for every relation the service principal can be granted (the six sources,
+  both evaluation stores, the derived-metrics view and its two tables, and the
+  ``<table>_local`` shard tables of a cluster installation). ClickHouse applies
+  it to every read of those tables in the query, independently of the AST
+  rewrite. On the owned ClickHouse 25.3.14.14 server it filtered bare, quoted,
+  parenthesized and database-qualified ``IN``-table reads, ``GLOBAL IN``, the
+  ``in()``/``globalIn()`` functions, alias and CTE names on the right of ``IN``,
+  ``FINAL``, joins, ``EXISTS``, scalar subqueries and reads through a view (the
+  live test ``test_server_table_filters_block_unscoped_sql_under_the_locked_profile``);
+  a one-node Distributed table was also checked by hand. The predicates
+  deliberately omit deletion flags and event times, so a filter can never hide
+  the newest version of a row before ``FINAL`` merges it. Limits: the barrier
+  covers only the listed relations (the principal is granted nothing else), a
+  query-level ``SETTINGS`` clause could replace it (the AST rejects every
+  SETTINGS clause), and it is an ownership filter, not the time window.
 * Memberships must be active at admission, worker execution, completion, polling,
   history, cancellation, export and saved-query/widget operations. A viewer can
   read but cannot save, share, delete or attach queries. Organization-level viewer
@@ -151,7 +199,15 @@ Security and lifecycle
   Counters use organization/actor timestamp indexes. A locked ClickHouse service profile
   additionally caps global service-principal concurrency at two. No
   process-local-only semaphore.
-* Jobs expire in the queue after 90 seconds. Execution is capped at 30 seconds,
+* Jobs expire in the queue after 90 seconds. When a worker starts a job, its
+  deadline is re-anchored to that start (45 seconds, the activity limit), so a
+  long queue wait never shortens or kills the execution itself. Cancelling a
+  queued job frees its slot at once. Cancelling a running job marks it
+  cancelled but keeps its admission slot until the worker confirms the native
+  query stopped (the watchdog polls every 0.5 s) or the execution deadline
+  passes; the cancel request waits up to 3 seconds for that confirmation, and
+  a lost worker cannot hold the slot beyond the deadline. Malformed ids in
+  URLs return 404. Execution is capped at 30 seconds,
   10 million scanned rows, 1 GB scanned bytes, 256 MiB memory, 64 MiB join state,
   one million/64 MiB candidate-set entries,
   two threads, 10,000 output rows and 8 MB output. Leaf-node limits apply as well.
@@ -163,8 +219,13 @@ Security and lifecycle
   does not kill a blocked Python thread. Only the main thread reads native packets;
   the cancellation watchdog sends a non-consuming cancel packet.
 * ``readonly=1`` and resource ceilings must be enforced on the database user.
-  The runner verifies every server setting before executing user queries and sends
-  no per-query settings (immutable readonly profiles reject such assignments).
+  The runner verifies every server setting before executing user queries and
+  sends exactly one per-query setting, the scope's ``additional_table_filters``.
+  The provisioned profile marks only that setting ``CHANGEABLE_IN_READONLY``;
+  every other assignment is still refused by the server (code 164), and the
+  runner refuses to execute without the filter. Existing service principals
+  provisioned before this setting must be re-provisioned (``ALTER USER`` with the
+  emitted profile); otherwise execution fails with the locked-profile message.
   It never falls back to the normal application's admin connection. Distributed
   reads also lock ``optimize_distributed_group_by_sharding_key=0``,
   ``optimize_skip_unused_shards=0``, ``distributed_group_by_no_merge=0``,
@@ -257,6 +318,17 @@ Reproducible repository commands::
   cd ../e2e
   yarn typecheck && yarn catalog
 
+The compiler suite also runs a seeded property test
+(``tracer/sql_workbench/tests/test_compiler_fuzz.py``): 1,500 variants of IN
+operators, right-hand sides, quoting, case, comments, whitespace, database
+qualification and query positions must each be rejected or compile to a
+statement whose only table reads are the generated scoped sources. To check a
+SQLGlot upgrade before it lands, run the compiler suites with the newer SQLGlot
+first on ``PYTHONPATH``; 28.10.1 and 30.23.0 were both checked. The live suite
+(``test_clickhouse.py``) compiles and executes the whole adversarial corpus
+against two tenants with sentinel rows and asserts no foreign value is
+returned.
+
 The adversarial unit suite covers joins/CTEs/UNION/subqueries, hidden table
 functions, write/settings/schema escape attempts, null and malicious identifiers,
 profile ceilings, output bounds, cancellation and least-privilege DDL. ORM tests
@@ -348,6 +420,29 @@ this load on a shared developer database::
     --organization '<UUID>' --workspace '<UUID>' --project '<UUID>' \
     --fixture-manifest /secure/verified-project-fixture.json \
     --allow-benchmark-requests > /secure/sql-benchmark.jsonl
+
+Infrastructure this profile needs (none of it exists locally, so it has not
+been run):
+
+* a dedicated deployment of this release: API, the Temporal
+  ``exact_aggregation`` worker, PostgreSQL and a production-shaped ClickHouse
+  (the cluster topology under test, with its Distributed sources), not a
+  shared developer database;
+* the SQL service principal provisioned with ``provision_sql_service`` on every
+  coordinator, and ``SQL_WORKBENCH_CH_USER``/``SQL_WORKBENCH_CH_PASSWORD`` set;
+* one project holding at least 1,000,000,000 spans, with sessions and
+  evaluation scores ingested continuously into the rolling one-hour window for
+  the full 24 hours (the profile query joins ``eval_results`` to ``sessions``);
+* a fixture manifest (``project_id``, ``span_count``) produced by the ingestion
+  fixture's own verified row count, kept with the results;
+* an API bearer token of a member of that project (``SQL_BENCHMARK_TOKEN``) and
+  a client host that can reach the API for 24 hours.
+
+The client exits non-zero if any sample fails, never treats an empty join as a
+success, and reports ``fixture_count_independently_verified: false`` because it
+cannot count the fixture itself. ``tracer/sql_workbench/tests/test_benchmark_harness.py``
+runs the client against a local fake API to keep it runnable; that is not a
+measurement.
 
 Measured local checks are tiny fixtures, not this profile. No billion-span or
 24-hour result is represented by their unit/integration test timings.
