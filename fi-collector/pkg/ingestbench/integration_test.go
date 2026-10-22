@@ -796,6 +796,128 @@ func TestNamespaceWindowsTileTheRunInsideClockHours(t *testing.T) {
 	}
 }
 
+// storedRow is a row as the collector stores span seq of the run in c.
+func storedRow(c Config, seq int64, at time.Time) map[string]any {
+	return map[string]any{
+		"project_id": c.ProjectID, "trace_id": c.traceString(seq), "id": spanID(seq),
+		"start_time":   at.UTC().Format("2006-01-02 15:04:05.000000"),
+		"attrs_string": map[string]any{"benchmark.run_id": c.RunID, "benchmark.seq": strconv.FormatInt(seq, 10)},
+	}
+}
+
+// B3: missing spans are decomposed by what the collector said about their
+// request, including partial-success requests that cross a chunk boundary, and
+// stored spans of refused requests are a contract violation. Six requests of six
+// spans, verified in five chunks of eight:
+//
+//	r0 acknowledged, all stored (span 0 twice)   -> 1 visible duplicate
+//	r1 partial, 2 rejected, 3 of 6 stored        -> 2 rejected-missing, 1 loss (lower bound)
+//	r2 refused retryable, 1 of 6 stored          -> 5 rejected-missing, 1 rejected-but-persisted
+//	r3 acknowledged, span 20 missing             -> 1 loss
+//	r4 ambiguous, 2 of 6 stored                  -> 4 ambiguous-missing, 2 ambiguous-persisted
+//	r5 partial, 1 rejected, all 6 stored         -> 1 persisted beyond the acknowledgement
+func TestMissingSpansDecomposeByRequestOutcome(t *testing.T) {
+	c := testConfig()
+	c.BatchSize, c.VerifyChunk, c.VerifyQueryRetries = 6, 8, 0
+	start := time.Now().Add(-time.Minute).UTC()
+	store := &mockStorage{cfg: c}
+	stored := []int64{0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 18, 19, 21, 22, 23, 24, 25, 30, 31, 32, 33, 34, 35}
+	for _, seq := range stored {
+		store.rows = append(store.rows, storedRow(c, seq, start))
+	}
+	srv := httptest.NewServer(http.HandlerFunc(store.serve))
+	defer srv.Close()
+	c.ClickHouseURL = srv.URL
+	store.cfg = c
+	ledger := newOutcomeLedger(int64(c.BatchSize))
+	for i, o := range []exportOutcome{
+		{class: outcomeAcknowledged},
+		{class: outcomePartial, rejected: 2},
+		{class: outcomeRejectedRetryable},
+		{class: outcomeAcknowledged},
+		{class: outcomeAmbiguous},
+		{class: outcomePartial, rejected: 1},
+	} {
+		if err := ledger.record(int64(i*c.BatchSize), o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tl := newTimeline(start)
+	tl.add(start, 0, 36)
+	v := verifyRun(context.Background(), clickHouse{cfg: c, client: c.readClient()}, ledger, tl, 36, 0)
+	if !v.Complete || v.Error != "" || v.TotalChunks != 5 {
+		t.Fatalf("verification did not finish: %+v", v)
+	}
+	want := MissingByAcknowledgement{AcknowledgedMissing: 2, PartialBeyondRejected: 1, PartialRejectedMissing: 2, RejectedMissing: 5, AmbiguousMissing: 4}
+	if v.MissingBy != want || v.Missing != 13 {
+		t.Fatalf("missing %d decomposed as %+v, want %+v", v.Missing, v.MissingBy, want)
+	}
+	if v.PersistedBy != (PersistedByAcknowledgement{RejectedButPersisted: 1, PartialExcess: 1, AmbiguousPersisted: 2}) {
+		t.Fatalf("persisted without acknowledgement: %+v", v.PersistedBy)
+	}
+	if v.Rows != 24 || v.DistinctExpected != 23 || v.DuplicateRows != 1 || v.UnexpectedRows != 0 || !v.DataLossDetected || !v.ContractViolation {
+		t.Fatalf("totals or conclusions: %+v", v)
+	}
+}
+
+// B2/B11: HTTP 429, the collector's quota answer, is a whole-request retryable
+// rejection carrying its Retry-After, end to end. A throttling proxy in front of
+// the real collector refuses the second request; its spans are expected to be
+// missing and every acknowledged span must be stored.
+func TestThrottledRequestsAreCountedAsRetryableRejections(t *testing.T) {
+	c := mockRunConfig()
+	c.DirectProbes.Enabled = false
+	store := &mockStorage{cfg: c}
+	ch := httptest.NewServer(http.HandlerFunc(store.serve))
+	defer ch.Close()
+	collector := startFixtureCollector(t, ch.URL)
+	var requests atomic.Int64
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if requests.Add(1) == 2 {
+			w.Header().Set("Retry-After", "3")
+			http.Error(w, "quota exceeded", http.StatusTooManyRequests)
+			return
+		}
+		req, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, collector, strings.NewReader(string(body)))
+		req.Header = r.Header.Clone()
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			http.Error(w, "collector unreachable", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for k, v := range resp.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}))
+	defer proxy.Close()
+	c.ClickHouseURL, c.Endpoint = ch.URL, proxy.URL+"/v1/traces"
+	store.cfg = c
+	r, err := Run(context.Background(), c, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	co, v := r.Counters, r.Verification
+	if r.AccountingError != "" || co.Attempted != 12 || co.Acknowledged != 8 || co.RejectedRetryable != 4 || co.WholeRequestRejected != 4 || co.Ambiguous != 0 {
+		t.Fatalf("429 accounting: %s %+v", r.AccountingError, co)
+	}
+	if co.RequestOutcomes != (RequestOutcomes{Acknowledged: 2, RejectedRetryable: 1, RejectedWithRetryHint: 1}) || r.Statuses["http:429"] != 1 || r.Statuses["http:200"] != 2 {
+		t.Fatalf("request outcomes %+v statuses %v", co.RequestOutcomes, r.Statuses)
+	}
+	if r.RetryHints.Requests != 1 || r.RetryHints.Delay.Count != 1 || r.RetryHints.Delay.P50 != 3000 {
+		t.Fatalf("Retry-After not recorded: %+v", r.RetryHints)
+	}
+	if !v.Complete || v.Missing != 4 || v.MissingBy.RejectedMissing != 4 || v.MissingBy.AcknowledgedMissing != 0 || v.DistinctExpected != 8 || v.DataLossDetected || v.ContractViolation {
+		t.Fatalf("verification %+v", v)
+	}
+	if r.Status != "measured-with-errors" {
+		t.Fatalf("a throttled run was reported as %s", r.Status)
+	}
+}
+
 // B6: the preflight row count survives into the final verification.
 func TestPreexistingRunRowsSurviveVerification(t *testing.T) {
 	v := cannedVerifier(t, func(w http.ResponseWriter, r *http.Request) {
