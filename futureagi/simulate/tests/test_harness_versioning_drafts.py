@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from contextlib import nullcontext
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -30,7 +31,7 @@ from simulate.services import harness_scenarios
 from simulate.services.harness_provider import serialize_job
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning.run_warnings import preview_run
-from simulate.services.harness_versioning.versions import move_default
+from simulate.services.harness_versioning.versions import move_default, record_authoring
 from simulate.services.hosted_harness import HostedHarnessError, VersionPicks
 from simulate.services.hosted_harness_conversation import (
     enqueue_message,
@@ -51,7 +52,7 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
     storage as storage,
 )
 from simulate.tests.test_harness_versioning_record import _authoring, _save_drafts
-from simulate.tests.test_harness_versioning_rollback import _built
+from simulate.tests.test_harness_versioning_rollback import _built, _rows
 from simulate.tests.test_hosted_harness_conversation import _put_conversation_checkpoint
 
 pytestmark = pytest.mark.django_db
@@ -59,6 +60,11 @@ pytestmark = pytest.mark.django_db
 BASE = "/simulate/api/harness-environments"
 EXTRA = "refund_status"
 EXTRA_KEY = _key(EXTRA)
+# A chat world edit, and the bundle the chat resealed for it.
+WORLD_EDIT = "create table orders(id int, note text);"
+RESEALED = json.dumps({"files": [], "resealed": True})
+# The default's own bundle: a chat turn whose reseal failed still holds it.
+STALE = json.dumps({"files": []})
 
 
 @pytest.fixture(autouse=True)
@@ -96,7 +102,14 @@ def _publish(
     **files,
 ):
     """A chat turn's save, as a real sandbox makes it: on the composed workspace, so it
-    carries that composition's token, unless ``token`` says otherwise."""
+    carries that composition's token, unless ``token`` says otherwise, and with the
+    bundle the chat resealed for its scenarios, unless ``files`` names another."""
+    files.setdefault(
+        "environment-bundle/manifest.json",
+        json.dumps(
+            {"files": [], "scenarios": sorted(names), "world": files.get("schema.sql")}
+        ),
+    )
     server_payload = {"_author_id": str(user.id)} if user is not None else {}
     if origin:
         server_payload["_origin"] = origin
@@ -1144,28 +1157,273 @@ class TestPairLadder:
         pair = archives.read_archive(storage.objects[metadata["authoring_object_key"]])
         assert pair["environment-bundle/manifest.json"] == resealed.encode()
 
-    def test_a_carried_bundle_is_marked_as_not_resealed(self, user, workspace, storage):
-        environment = _built(user, workspace, "d-ladder-carry")
-        sealed_before = environment.payload["metadata"]["sealed_bundle_object_key"]
-        _publish(environment, storage, sequence=10)
+    def _certified(self, environment, storage, settings):
+        """Save with bundle preparation on: runs certify the unsealed pair it makes."""
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        versions = "simulate.services.harness_versioning.versions"
+        with (
+            patch(f"{versions}._default_runtime", return_value=object()),
+            patch(f"{versions}._cached_sealed", return_value=(None, "")),
+        ):
+            _save_drafts(environment)
+        metadata = environment.payload["metadata"]
+        assert metadata["default_pair_sealed"] is False
+        assert "sealed_bundle_object_key" not in metadata
+        pair = archives.read_archive(storage.objects[metadata["authoring_object_key"]])
+        assert not any(path.startswith("environment-bundle/") for path in pair)
 
+    def _not_runnable(self, environment):
+        """Certify off: an agent's environment is told to turn preparation on."""
+        before = environment.payload["metadata"]["authoring_object_key"]
+        with (
+            patch.object(drafts, "_default_runtime", return_value=object()),
+            pytest.raises(HostedHarnessError) as refused,
+        ):
+            _save_drafts(environment)
+        assert refused.value.code == "draft_not_runnable"
+        assert "turn on bundle preparation" in str(refused.value)
+        environment.refresh_from_db()
+        assert environment.payload["metadata"]["authoring_object_key"] == before
+
+    def test_a_chat_world_edit_runs_the_chats_resealed_bundle(
+        self, user, workspace, storage
+    ):
+        environment = _built(user, workspace, "d-ladder-world")
+        _publish(
+            environment,
+            storage,
+            NAMES[:2],
+            sequence=10,
+            **{"schema.sql": WORLD_EDIT, "environment-bundle/manifest.json": RESEALED},
+        )
+        kept = _draft(environment, "environment").documents["workspace_sealed"]
+        assert kept["resealed"] is True
+
+        _save_drafts(environment)
+
+        # No agent is pinned: the chat's own bundle saves without one.
+        assert environment.agent_version_id is None
+        metadata = environment.payload["metadata"]
+        assert metadata["default_pair_sealed"] is True
+        assert metadata["sealed_bundle_object_key"] == kept["key"]
+        pair = archives.read_archive(storage.objects[metadata["authoring_object_key"]])
+        assert pair["environment-bundle/manifest.json"] == RESEALED.encode()
+
+    def test_a_scenario_edit_after_a_chat_world_edit_is_certified(
+        self, user, workspace, storage, auth_client, settings
+    ):
+        environment = _built(user, workspace, "d-ladder-world-amend")
+        _publish(
+            environment,
+            storage,
+            NAMES[:2],
+            sequence=10,
+            **{"schema.sql": WORLD_EDIT, "environment-bundle/manifest.json": RESEALED},
+        )
+        _amend(auth_client, environment, NAMES[0], "tests", "edited")
+
+        # The chat's bundle was sealed for the suite before the edit, and the default's
+        # bundle holds the old world: neither is replayed.
+        self._not_runnable(environment)
+        self._certified(environment, storage, settings)
+
+    def test_a_world_edit_whose_bundle_was_not_resealed_is_certified(
+        self, user, workspace, storage, settings
+    ):
+        environment = _built(user, workspace, "d-ladder-world-stale")
+        _publish(
+            environment,
+            storage,
+            NAMES[:2],
+            sequence=10,
+            **{"schema.sql": WORLD_EDIT, "environment-bundle/manifest.json": STALE},
+        )
+        kept = _draft(environment, "environment").documents["workspace_sealed"]
+        assert kept["resealed"] is False
+
+        self._not_runnable(environment)
+        self._certified(environment, storage, settings)
+
+    def test_a_bundle_not_resealed_for_an_added_scenario_is_certified(
+        self, user, workspace, storage, settings
+    ):
+        environment = _built(user, workspace, "d-ladder-carry")
+        _publish(
+            environment,
+            storage,
+            sequence=10,
+            **{"environment-bundle/manifest.json": STALE},
+        )
         assert _draft(environment).documents["workspace_sealed"]["resealed"] is False
+
+        self._not_runnable(environment)
+        self._certified(environment, storage, settings)
+
+    def test_a_scenario_edit_the_bundle_does_not_overlay_is_certified(
+        self, user, workspace, storage, auth_client, settings
+    ):
+        environment = _built(user, workspace, "d-ladder-amend")
+        _amend(auth_client, environment, NAMES[0], "tests", "edited")
+
+        self._not_runnable(environment)
+        self._certified(environment, storage, settings)
+
+    @pytest.mark.parametrize(
+        "head_key",
+        [None, "harness-bundles/certified.tar.gz"],
+        ids=["backfilled", "run"],
+    )
+    def test_the_defaults_bundle_reads_as_not_resealed_under_any_key(
+        self, user, workspace, storage, settings, head_key
+    ):
+        environment = _built(user, workspace, f"d-ladder-head-{head_key is None}")
+        payload = dict(environment.payload)
+        metadata = dict(payload["metadata"])
+        # A backfilled default keeps no key; a certified one keeps the run's bundle key.
+        metadata.pop("sealed_bundle_object_key")
+        if head_key:
+            metadata["sealed_bundle_object_key"] = head_key
+        payload["metadata"] = metadata
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload=payload
+        )
+        environment.refresh_from_db()
+        _publish(
+            environment,
+            storage,
+            NAMES[:2],
+            sequence=10,
+            **{"schema.sql": WORLD_EDIT, "environment-bundle/manifest.json": STALE},
+        )
+        kept = _draft(environment, "environment").documents["workspace_sealed"]
+        assert kept["resealed"] is False
+
+        self._not_runnable(environment)
+        self._certified(environment, storage, settings)
+
+    @pytest.mark.parametrize("readable", [True, False])
+    def test_an_earlier_turns_bundle_is_not_resealed_for_a_later_world_edit(
+        self, user, workspace, storage, settings, readable
+    ):
+        environment = _built(user, workspace, f"d-ladder-two-turns-{readable}")
+        conversation = _publish(
+            environment,
+            storage,
+            NAMES[:2],
+            sequence=10,
+            **{"schema.sql": WORLD_EDIT, "environment-bundle/manifest.json": RESEALED},
+        )
+        first = _draft(environment, "environment")
+        sealed = dict(first.documents["workspace_sealed"])
+        # A record written before the manifest digest was kept, whose bundle can't be
+        # read: it may be the very bundle, so it is not taken as new.
+        sealed.pop("manifest_sha256")
+        HarnessEnvironmentVersion.no_workspace_objects.filter(id=first.id).update(
+            documents={**first.documents, "workspace_sealed": sealed}
+        )
+        # The next turn's reseal failed: it still holds the first turn's bundle.
+        unreadable = patch.object(drafts, "_sealed_files", return_value=None)
+        with nullcontext() if readable else unreadable:
+            _publish(
+                environment,
+                storage,
+                NAMES[:2],
+                sequence=11,
+                conversation=conversation,
+                **{
+                    "schema.sql": "create table orders(id int, note text, at text);",
+                    "environment-bundle/manifest.json": RESEALED,
+                },
+            )
+        kept = _draft(environment, "environment").documents["workspace_sealed"]
+        assert kept["resealed"] is False
+
+        self._not_runnable(environment)
+        self._certified(environment, storage, settings)
+
+    def test_an_added_overlay_field_is_certified(
+        self, user, workspace, storage, auth_client, settings
+    ):
+        # The built scenarios have no max_turns: setting one changes what is sealed.
+        environment = _built(user, workspace, "d-ladder-overlay-added")
+        _amend(auth_client, environment, NAMES[0], "max_turns", 20)
+
+        self._not_runnable(environment)
+        self._certified(environment, storage, settings)
+
+    def test_saving_only_the_suite_does_not_run_the_chats_bundle_for_both(
+        self, user, workspace, storage
+    ):
+        environment = _built(user, workspace, "d-ladder-suite-only")
+        _publish(
+            environment,
+            storage,
+            sequence=10,
+            **{"schema.sql": WORLD_EDIT, "environment-bundle/manifest.json": RESEALED},
+        )
+        draft = _draft(environment)
+
+        with pytest.raises(HostedHarnessError) as refused:
+            drafts.save_drafts(
+                environment,
+                {"suite": drafts.SaveRequest(draft.parent_id, draft.revision)},
+                idempotency_key="suite-only",
+                user=user,
+            )
+
+        assert refused.value.code == "draft_not_runnable"
+
+    def test_an_environment_without_an_agent_is_told_to_make_the_edit_in_chat(
+        self, user, workspace, storage, auth_client, settings
+    ):
+        settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        environment = _built(user, workspace, "d-ladder-agentless")
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            agent_version=None
+        )
+        environment.refresh_from_db()
+        _amend(auth_client, environment, NAMES[0], "tests", "edited")
+
+        # No agent version to pin: a run has nothing to prepare the pair with.
+        with (
+            patch(
+                "simulate.services.harness_agent_versions.fill_agent_pin",
+                return_value=False,
+            ),
+            pytest.raises(HostedHarnessError) as refused,
+        ):
+            _save_drafts(environment)
+
+        assert refused.value.code == "draft_not_runnable"
+        assert "make them in chat" in str(refused.value)
+        assert "bundle preparation" not in str(refused.value)
+
+    def test_an_overlay_only_scenario_edit_carries_the_current_bundle(
+        self, user, workspace, storage, auth_client
+    ):
+        environment = record_tests._environment(user, workspace, "d-ladder-overlay")
+        documents = [record_tests._scenario(name, max_turns=8) for name in NAMES[:2]]
+        record_authoring(
+            environment,
+            record_tests._authoring(
+                **{"scenarios.json": json.dumps(documents)},
+                **{
+                    f"scenarios/{one['name']}/scenario.json": json.dumps(one)
+                    for one in documents
+                },
+            ),
+            origin="authoring",
+        )
+        environment.refresh_from_db()
+        _rows(environment)
+        sealed_before = environment.payload["metadata"]["sealed_bundle_object_key"]
+        _amend(auth_client, environment, NAMES[0], "max_turns", 20)
+
         _save_drafts(environment)
 
         metadata = environment.payload["metadata"]
         assert metadata["default_pair_sealed"] is True
         assert metadata["sealed_bundle_object_key"] == sealed_before
-
-    def test_an_edit_after_the_chat_save_carries_the_current_bundle(
-        self, user, workspace, storage, auth_client
-    ):
-        environment = _built(user, workspace, "d-ladder-amend")
-        _publish(environment, storage, sequence=10)
-        _amend(auth_client, environment, NAMES[0], "tests", "edited")
-
-        _save_drafts(environment)
-
-        assert environment.payload["metadata"]["default_pair_sealed"] is True
 
     def _unsealed(self, user, workspace, key):
         environment = _built(user, workspace, key)

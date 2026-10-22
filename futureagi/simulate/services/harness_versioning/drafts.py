@@ -42,6 +42,7 @@ from simulate.services.harness_versioning.versions import (
     USER_ORIGINS,
     _add_members,
     _default_pair,
+    _default_runtime,
     _lock_environment,
     _member_content,
     _member_rows,
@@ -349,6 +350,45 @@ def _sealed_files(key: str) -> dict[str, bytes] | None:
     return files if SEALED_MANIFEST in files else None
 
 
+def _resealed(
+    head: HostedHarnessJob, sealed: Mapping[str, bytes], hashes: tuple[str, str]
+) -> bool:
+    """Whether the chat sealed this bundle anew for ``hashes``.
+
+    The workspace started from the default pair's bundle or a draft's; a reseal always
+    rewrites the manifest, so a bundle with one of theirs was not sealed for this edit.
+    """
+    # TODO: a bundle from a draft since discarded, or from a reseal that was never
+    # promoted, still reads as new; ALK could stamp what it sealed the bundle for.
+    manifest = archives.sha256_hex(sealed[SEALED_MANIFEST])
+    for piece in DRAFT_PIECES:
+        draft = fresh_draft(head, piece)
+        kept = ((draft.documents or {}) if draft else {}).get("workspace_sealed") or {}
+        if not kept:
+            continue
+        held = kept.get("manifest_sha256")
+        if held is None:
+            files = _sealed_files(str(kept.get("key") or ""))
+            if files is None:
+                # Unreadable: it may be this very bundle.
+                return False
+            held = archives.sha256_hex(files[SEALED_MANIFEST])
+        if held == manifest:
+            sealed_for = (kept.get("environment_hash"), kept.get("suite_hash"))
+            return bool(kept.get("resealed")) and sealed_for == hashes
+    key = str(
+        ((head.payload or {}).get("metadata") or {}).get("authoring_object_key") or ""
+    )
+    try:
+        default = archives.split_authoring(
+            archives.read_archive(archives.get_archive(key))
+        ).sealed
+    except (S3Error, HostedHarnessError, ValueError):
+        return False
+    held = default.get(SEALED_MANIFEST)
+    return held is None or archives.sha256_hex(held) != manifest
+
+
 # --- writing drafts -----------------------------------------------------------------
 
 
@@ -556,8 +596,12 @@ def record_draft(
             "size": len(sealed_body),
             "environment_hash": prepared.environment_hash,
             "suite_hash": prepared.suite_hash,
+            "manifest_sha256": archives.sha256_hex(split.sealed[SEALED_MANIFEST]),
             # The key is content-addressed: the same key is the default's own bundle.
-            "resealed": sealed_key != kept,
+            "resealed": sealed_key != kept
+            and _resealed(
+                head, split.sealed, (prepared.environment_hash, prepared.suite_hash)
+            ),
         }
 
     with transaction.atomic():
@@ -843,11 +887,17 @@ def _twin(model: Any, locked: HostedHarnessJob, draft: Any) -> Any | None:
     )
 
 
-def _not_runnable(piece: str) -> HostedHarnessError:
+def _not_runnable(piece: str, *, agentless: bool = False) -> HostedHarnessError:
+    # Without the agent's runtime facts a run can't prepare the environment itself.
+    remedy = (
+        "Discard them and make them in chat instead, which prepares them as it saves"
+        if agentless
+        else "Ask chat to save them again, or turn on bundle preparation"
+    )
     return _error(
         "draft_not_runnable",
         "These changes can't be made live yet: the environment hasn't been prepared "
-        "for them. Ask chat to save them again, or turn on bundle preparation",
+        f"for them. {remedy}",
         422,
         piece=piece,
     )
@@ -895,17 +945,19 @@ def _save_pair(
 ) -> _Pair:
     """The runnable archive of the pair a Save makes the default.
 
-    The chat's own bundle when it was sealed for exactly this pair, else the current
-    pair's bundle carried as every edit carries it, else the roll back ladder. A bundle
-    is sealed for one agent, so a Save that moves the agent takes the ladder.
+    The chat's own bundle when it resealed it for exactly this pair, else the current
+    pair's bundle when the Save changes nothing it seals, else the roll back ladder. A
+    run replays the bundle and lays only overlay values over it, so any other change
+    takes the ladder. A bundle is sealed for one agent, so a Save that moves the agent
+    takes the ladder too.
     """
     if not agent_moved:
         for draft in drafts:
             kept = (draft.documents or {}).get("workspace_sealed") or {}
-            if (kept.get("environment_hash"), kept.get("suite_hash")) != (
-                environment_version.hash,
-                suite_version.hash,
-            ):
+            if not kept.get("resealed") or (
+                kept.get("environment_hash"),
+                kept.get("suite_hash"),
+            ) != (environment_version.hash, suite_version.hash):
                 continue
             sealed = _sealed_files(str(kept.get("key") or ""))
             pair = sealed and _composed_pair(
@@ -913,10 +965,16 @@ def _save_pair(
             )
             if pair:
                 return pair
-        # TODO: once the ALK release that reseals scenarios is deployed, carry only for
-        # a suite-only save that adds no key; otherwise take the ladder below.
         current = str(metadata.get("authoring_object_key") or "")
-        if current and metadata.get("default_pair_sealed") is not False:
+        default_suite = locked.suite_version
+        if (
+            current
+            and metadata.get("default_pair_sealed") is not False
+            and environment_version.id == locked.environment_version_id
+            and default_suite is not None
+            and bool(suite_version.certify_hash)
+            and suite_version.certify_hash == default_suite.certify_hash
+        ):
             try:
                 sealed = _sealed(
                     archives.split_authoring(
@@ -939,7 +997,7 @@ def _save_pair(
     except HostedHarnessError as exc:
         if exc.code != "rollback_unavailable":
             raise
-        raise _not_runnable(piece) from exc
+        raise _not_runnable(piece, agentless=_default_runtime(locked) is None) from exc
 
 
 def activate_drafts(

@@ -765,9 +765,13 @@ class TestChatPromote:
             content="Add one",
             client_request_id=f"chat-{len(names)}-{sequence}",
         )
+        files = archives.read_archive(_chat_checkpoint(names, one_liner="chat"))
+        # The bundle the chat resealed for its edit.
+        files["environment-bundle/manifest.json"] = json.dumps(
+            {"scenarios": names}
+        ).encode()
         body = with_authoring_basis(
-            _chat_checkpoint(names, one_liner="chat"),
-            command.payload["_environment_revision"],
+            archives.pack_archive(files), command.payload["_environment_revision"]
         )
         key, digest = _put_conversation_checkpoint(conversation, storage, body)
         promote_conversation_checkpoint(

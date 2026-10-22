@@ -175,6 +175,10 @@ def _turn(
         )
     if nudge.target == "environment" and contract is not None:
         files.setdefault("sub_goals.json", CHECKED)
+    # The rebuild seals its own bundle.
+    files.setdefault(
+        "environment-bundle/manifest.json", json.dumps({"rebuilt": str(nudge.id)})
+    )
     from simulate.services.hosted_harness_gateway import (
         with_authoring_basis,
         with_draft_basis,
@@ -1588,6 +1592,9 @@ class TestGuestTurn:
                     **{
                         ".futureagi-nudge-result.json": _result(nudge),
                         "sub_goals.json": CHECKED,
+                        "environment-bundle/manifest.json": json.dumps(
+                            {"rebuilt": str(nudge.id)}
+                        ),
                     },
                 ),
                 command.payload["_environment_revision"],

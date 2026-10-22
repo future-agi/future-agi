@@ -90,7 +90,10 @@ def _suite_archive(documents):
         ).encode(),
         "schema.sql": b"create table orders(id int);",
         "scenarios.json": json.dumps(documents).encode(),
-        "environment-bundle/manifest.json": b'{"files": []}',
+        # A chat reseals the bundle for the scenarios it holds.
+        "environment-bundle/manifest.json": json.dumps(
+            {"files": [], "scenarios": [one.get("scenario_key") for one in documents]}
+        ).encode(),
         "runtime-validation.json": b'{"status": "passed"}',
     }
     for document in documents:

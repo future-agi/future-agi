@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from django.test import override_settings
 
 from accounts.models import Workspace
 from simulate.models import (
@@ -116,8 +117,15 @@ def _amend_drop(auth_client, environment, name):
             format="json",
         )
     assert response.status_code == 200, response.content
-    # Since drafts, the amend is made live by Save.
-    record_tests._save_drafts(environment)
+    # Since drafts, the amend is made live by Save. A Scenarios-tab edit is never
+    # resealed, so the new pair is left for its first run to certify.
+    versions = "simulate.services.harness_versioning.versions"
+    with (
+        override_settings(HARNESS_BUNDLE_CERTIFY_ENABLED=True),
+        patch(f"{versions}._default_runtime", return_value=object()),
+        patch(f"{versions}._cached_sealed", return_value=(None, "")),
+    ):
+        record_tests._save_drafts(environment)
 
 
 def _suite(environment, number):
