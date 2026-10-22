@@ -30,7 +30,9 @@ case "$profile" in
     rate=100 batch=100 concurrency=2
     load=(--rate "$rate" --duration 5s --max-duration 1m --max-bytes 16777216
       --batch-size "$batch" --concurrency "$concurrency")
-    verify=() ;;
+    # The default 10s minimum age exceeds a 5s load, so the trace and session
+    # probes could never run during it.
+    verify=(--direct-probe-min-age 1s) ;;
   sustained)
     rate=15000 batch=500 concurrency=16
     load=(--rate "$rate" --duration 24h --max-duration 24h --max-bytes 7000000000000

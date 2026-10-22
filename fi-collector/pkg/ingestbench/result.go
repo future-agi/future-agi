@@ -309,15 +309,15 @@ func Report(w io.Writer, r Result) error {
 	}
 	for _, d := range r.DirectReads {
 		if d.Latency.Count == 0 {
-			fmt.Fprintf(w, "Direct ClickHouse %s/%s: %s; successes/errors %d/%d; latency not measured\n", d.Phase, d.Name, d.Status, d.Successes, d.Errors)
+			fmt.Fprintf(w, "Direct ClickHouse %s/%s: %s; successes/errors/skipped %d/%d/%d; latency not measured\n", d.Phase, d.Name, d.Status, d.Successes, d.Errors, d.Skipped)
 			continue
 		}
 		payload := ""
 		if d.PayloadBytes != nil {
 			payload = fmt.Sprintf("; payload text read per query p50/max %d/%d bytes", d.PayloadBytes.P50, d.PayloadBytes.Max)
 		}
-		fmt.Fprintf(w, "Direct ClickHouse %s/%s: %s; successes/errors %d/%d; p50/p95/p99 %.3f/%.3f/%.3f ms; non-empty results %d of %d%s\n",
-			d.Phase, d.Name, d.Status, d.Successes, d.Errors, d.Latency.P50, d.Latency.P95, d.Latency.P99, d.NonEmpty, d.Successes, payload)
+		fmt.Fprintf(w, "Direct ClickHouse %s/%s: %s; successes/errors/skipped %d/%d/%d; p50/p95/p99 %.3f/%.3f/%.3f ms; non-empty results %d of %d%s\n",
+			d.Phase, d.Name, d.Status, d.Successes, d.Errors, d.Skipped, d.Latency.P50, d.Latency.P95, d.Latency.P99, d.NonEmpty, d.Successes, payload)
 	}
 	reads := append([]ProbeResult(nil), r.Reads...)
 	sort.Slice(reads, func(i, j int) bool { return reads[i].Name < reads[j].Name })

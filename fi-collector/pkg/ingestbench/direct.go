@@ -193,6 +193,9 @@ func (d *directRunner) results() []DirectReadResult {
 				r.Status = "errors"
 			case r.Successes > 0:
 				r.Status = "measured"
+			case r.Skipped > 0:
+				// Every round lacked an acknowledged request old enough to read.
+				r.Status = "skipped-no-candidate"
 			default:
 				r.Status = "not-executed"
 			}

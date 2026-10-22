@@ -684,6 +684,35 @@ func TestVerificationRejectsInvalidAndChangingResponses(t *testing.T) {
 	}
 }
 
+// B9: a trace or session probe with no acknowledged candidate old enough is
+// reported as skipped, never as measured and never silently as not executed.
+func TestDirectProbesWithoutACandidateAreReportedAsSkipped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"rows":0}`)
+	}))
+	defer srv.Close()
+	c := testConfig()
+	c.ClickHouseURL = srv.URL
+	d := newDirectRunner(clickHouse{cfg: c, client: c.readClient()}, time.Now())
+	d.round(context.Background(), "during-load", candidate{})
+	d.round(context.Background(), "during-load", candidate{})
+	for _, r := range d.results() {
+		if r.Phase != "during-load" {
+			continue
+		}
+		switch r.Name {
+		case "attribute-filter":
+			if r.Status != "measured" || r.Successes != 2 || r.Skipped != 0 {
+				t.Fatalf("attribute filter: %+v", r)
+			}
+		default:
+			if r.Status != "skipped-no-candidate" || r.Skipped != 2 || r.Successes != 0 || r.Latency.Count != 0 {
+				t.Fatalf("%s without a candidate: %+v", r.Name, r)
+			}
+		}
+	}
+}
+
 // B6: the preflight row count survives into the final verification.
 func TestPreexistingRunRowsSurviveVerification(t *testing.T) {
 	v := cannedVerifier(t, func(w http.ResponseWriter, r *http.Request) {
