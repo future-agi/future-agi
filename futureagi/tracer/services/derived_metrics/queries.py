@@ -58,6 +58,25 @@ class Scope:
 
 SCOPE_SQL = "org_id = %(org_id)s AND workspace_id = %(workspace_id)s AND project_id = %(project_id)s"
 
+# The v2 spans store keeps these measures in non-Nullable columns with DEFAULT 0,
+# so the physical zero written for "the collector never saw a value" is identical
+# to a measured zero. Rules (documented in docs/derived-metrics.rst):
+#   * latency_ms is measured only when the span ended: end_time IS NULL is missing.
+#     A span that ended with 0 ms keeps a real 0.
+#   * cost and token counts of exactly 0 are treated as NOT REPORTED (missing), never
+#     as a measurement. Only non-zero stored values are measurements. When an
+#     explicit zero must count, bind an attribute_number input to the reported
+#     attribute instead: an absent attribute is missing and a present 0 is a 0.
+# Missing values are excluded as complete-case omissions and counted in
+# missing_count; they are never silently averaged in as zero.
+SPAN_MEASURE_SQL = {
+    "latency_ms": "if(isNull(s.end_time), NULL, toFloat64(s.latency_ms))",
+    "cost": "nullIf(toFloat64(s.cost), 0)",
+    "total_tokens": "nullIf(toFloat64(s.total_tokens), 0)",
+    "prompt_tokens": "nullIf(toFloat64(s.prompt_tokens), 0)",
+    "completion_tokens": "nullIf(toFloat64(s.completion_tokens), 0)",
+}
+
 
 def utc_timestamp(value: datetime) -> str:
     # clickhouse-driver formats datetime parameters only to seconds. Bind a
@@ -146,14 +165,8 @@ def snapshot_select(
         if item["source"] != "span":
             continue
         field = item["field"]
-        if field in {
-            "latency_ms",
-            "cost",
-            "total_tokens",
-            "prompt_tokens",
-            "completion_tokens",
-        }:
-            value = f"toFloat64(s.{field})"
+        if field in SPAN_MEASURE_SQL:
+            value = SPAN_MEASURE_SQL[field]
         else:
             if field not in {"attribute_number", "attribute_bool"}:
                 raise ValueError("Unsupported span input")
@@ -165,7 +178,7 @@ def snapshot_select(
     projections = ", " + ", ".join(span_inputs) if span_inputs else ""
     ctes = [
         """span_versions AS (
-        SELECT id, project_id, org_id, trace_id, trace_session_id, end_user_id, start_time, created_at, updated_at,
+        SELECT id, project_id, org_id, trace_id, trace_session_id, end_user_id, start_time, end_time, created_at, updated_at,
             _version, is_deleted, model, provider, status, name, service_name,
             latency_ms, cost, total_tokens, prompt_tokens, completion_tokens,
             attrs_number, attrs_bool, attrs_string

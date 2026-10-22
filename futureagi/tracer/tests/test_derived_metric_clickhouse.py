@@ -92,7 +92,8 @@ def _schema_client(client):
     client.execute("""CREATE TABLE spans (
         id String, project_id UUID, org_id Nullable(UUID), trace_id String DEFAULT '',
         trace_session_id Nullable(UUID), end_user_id Nullable(UUID),
-        start_time DateTime64(6,'UTC'), created_at DateTime64(6,'UTC'), updated_at DateTime64(6,'UTC'),
+        start_time DateTime64(6,'UTC'), end_time Nullable(DateTime64(6,'UTC')),
+        created_at DateTime64(6,'UTC'), updated_at DateTime64(6,'UTC'),
         _version UInt64 DEFAULT 1, is_deleted UInt8 DEFAULT 0,
         model String DEFAULT '', provider String DEFAULT '', status String DEFAULT '',
         name String DEFAULT '', service_name String DEFAULT '',
@@ -1033,3 +1034,212 @@ def test_live_sampling_window_can_be_explicitly_open_ended(
     )[0]
     assert row["status"] == ("ok" if valid else "invalid_probability")
     assert row["value"] == (1 if valid else None)
+
+
+def seed_measured_span(client, scope, span_id, when, *, attrs_number=None, **columns):
+    """One span per session; unsupplied measure columns keep the store's DEFAULT 0."""
+    stamp = when.strftime("%Y-%m-%d %H:%M:%S.%f")
+    values = {
+        "id": span_id,
+        "project_id": str(scope.project),
+        "org_id": str(scope.organization),
+        "trace_id": str(uuid4()),
+        "trace_session_id": str(uuid4()),
+        "end_user_id": str(uuid4()),
+        "start_time": stamp,
+        "created_at": stamp,
+        "updated_at": stamp,
+        **columns,
+    }
+    names = ", ".join([*values, "attrs_number"])
+    placeholders = ", ".join(
+        [*(f"%({name})s" for name in values), "mapFromArrays(%(keys)s, %(numbers)s)"]
+    )
+    client.execute(
+        f"INSERT INTO spans ({names}) VALUES ({placeholders})",
+        {
+            **values,
+            "keys": list(attrs_number or {}),
+            "numbers": [float(value) for value in (attrs_number or {}).values()],
+        },
+    )
+
+
+def measure_recipe(field, formula, **overrides):
+    return SimpleNamespace(
+        formula=formula,
+        inputs=[
+            {
+                "alias": "value",
+                "source": "span",
+                "field": field,
+                "attribute_key": overrides.pop("attribute_key", ""),
+                "reducer": overrides.pop("reducer", "latest"),
+            }
+        ],
+        selection_unit="session",
+        weighting="none",
+        cohort_key="",
+        filters=[],
+        **overrides,
+    )
+
+
+def test_latency_is_missing_when_the_span_never_ended(metric_ch):
+    scope, now = (
+        Scope(uuid4(), uuid4(), uuid4()),
+        datetime.now(UTC).replace(microsecond=0),
+    )
+    at = now - timedelta(hours=1)
+    ended = at + timedelta(milliseconds=100)
+    seed_measured_span(
+        metric_ch,
+        scope,
+        "ended",
+        at,
+        end_time=ended.strftime("%Y-%m-%d %H:%M:%S.%f"),
+        latency_ms=100,
+    )
+    # A span that ended instantly measured a real zero.
+    seed_measured_span(
+        metric_ch,
+        scope,
+        "instant",
+        at,
+        end_time=at.strftime("%Y-%m-%d %H:%M:%S.%f"),
+        latency_ms=0,
+    )
+    # A span that never ended has no end_time; its latency_ms is the column default 0.
+    seed_measured_span(metric_ch, scope, "open", at)
+    rows = execute_formula(
+        metric_ch, measure_recipe("latency_ms", "mean(value)"), scope, now
+    )
+    assert rows[0]["status"] == "ok"
+    assert float(rows[0]["value"]) == pytest.approx(50)  # (100 + 0) / 2, not / 3
+    assert int(rows[0]["unit_count"]) == 3
+    assert int(rows[0]["valid_count"]) == 2
+    assert int(rows[0]["missing_count"]) == 1
+    query, params = snapshot_select(
+        measure_recipe("latency_ms", "mean(value)"),
+        scope,
+        now - timedelta(days=1),
+        now,
+        now,
+        [],
+        "",
+    )
+    frozen = metric_ch.execute(query, params, settings=QUERY_SETTINGS)
+    # The frozen snapshot keeps an unmeasured latency as NULL, never as a stored 0.
+    values = sorted((row[5]["value"] is None, row[5]["value"]) for row in frozen)
+    assert values == [(False, 0.0), (False, 100.0), (True, None)]
+
+
+def test_only_an_open_span_population_has_no_latency_value(metric_ch):
+    scope, now = (
+        Scope(uuid4(), uuid4(), uuid4()),
+        datetime.now(UTC).replace(microsecond=0),
+    )
+    for index in range(2):
+        seed_measured_span(metric_ch, scope, f"open-{index}", now - timedelta(hours=1))
+    row = execute_formula(
+        metric_ch, measure_recipe("latency_ms", "mean(value)"), scope, now
+    )[0]
+    assert row["status"] == "missing_inputs"
+    assert row["value"] is None and row["numerator"] is None
+    assert int(row["missing_count"]) == 2 and int(row["valid_count"]) == 0
+
+
+@pytest.mark.parametrize(
+    "field", ["cost", "total_tokens", "prompt_tokens", "completion_tokens"]
+)
+def test_unreported_cost_and_tokens_are_missing_not_zero(metric_ch, field):
+    scope, now = (
+        Scope(uuid4(), uuid4(), uuid4()),
+        datetime.now(UTC).replace(microsecond=0),
+    )
+    at = now - timedelta(hours=1)
+    seed_measured_span(metric_ch, scope, "small", at, **{field: 2})
+    seed_measured_span(metric_ch, scope, "large", at, **{field: 6})
+    # Nothing was reported: the store holds its DEFAULT 0, which is not a measurement.
+    seed_measured_span(metric_ch, scope, "unreported", at)
+    mean = execute_formula(metric_ch, measure_recipe(field, "mean(value)"), scope, now)[
+        0
+    ]
+    assert mean["status"] == "ok"
+    assert float(mean["value"]) == pytest.approx(4)  # (2 + 6) / 2, not / 3
+    assert int(mean["valid_count"]) == 2 and int(mean["missing_count"]) == 1
+    total = execute_formula(metric_ch, measure_recipe(field, "sum(value)"), scope, now)[
+        0
+    ]
+    assert float(total["value"]) == pytest.approx(8)
+    only_unreported = Scope(uuid4(), uuid4(), uuid4())
+    seed_measured_span(metric_ch, only_unreported, "none", at)
+    empty = execute_formula(
+        metric_ch, measure_recipe(field, "mean(value)"), only_unreported, now
+    )[0]
+    assert empty["status"] == "missing_inputs" and empty["value"] is None
+
+
+def test_an_explicit_zero_attribute_is_a_measurement_unlike_a_default_column(
+    metric_ch,
+):
+    scope, now = (
+        Scope(uuid4(), uuid4(), uuid4()),
+        datetime.now(UTC).replace(microsecond=0),
+    )
+    at = now - timedelta(hours=1)
+    seed_measured_span(
+        metric_ch, scope, "free", at, attrs_number={"gen_ai.cost.total": 0.0}
+    )
+    seed_measured_span(
+        metric_ch, scope, "paid", at, attrs_number={"gen_ai.cost.total": 3.0}
+    )
+    seed_measured_span(metric_ch, scope, "silent", at)
+    row = execute_formula(
+        metric_ch,
+        measure_recipe(
+            "attribute_number", "mean(value)", attribute_key="gen_ai.cost.total"
+        ),
+        scope,
+        now,
+    )[0]
+    assert float(row["value"]) == pytest.approx(
+        1.5
+    )  # a present 0 counts; absent does not
+    assert int(row["valid_count"]) == 2 and int(row["missing_count"]) == 1
+
+
+def test_session_measures_skip_spans_that_reported_nothing(metric_ch):
+    """A session mixes LLM spans (cost, tokens) with tool/chain spans (none)."""
+    scope, now = (
+        Scope(uuid4(), uuid4(), uuid4()),
+        datetime.now(UTC).replace(microsecond=0),
+    )
+    at = now - timedelta(hours=1)
+    mixed, priced = str(uuid4()), str(uuid4())
+    seed_measured_span(metric_ch, scope, "llm", at, trace_session_id=mixed, cost=4)
+    # The tool span runs last and carries the store's DEFAULT 0 for cost.
+    seed_measured_span(
+        metric_ch,
+        scope,
+        "tool",
+        at,
+        trace_session_id=mixed,
+        updated_at=(at + timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S.%f"),
+    )
+    seed_measured_span(metric_ch, scope, "other", at, trace_session_id=priced, cost=2)
+    mean = execute_formula(
+        metric_ch, measure_recipe("cost", "mean(value)", reducer="mean"), scope, now
+    )[0]
+    # Per-session mean over spans that reported a cost: (4 + 2) / 2. Reading the
+    # tool span's stored 0 as a measurement would give ((4 + 0) / 2 + 2) / 2 = 2.
+    assert mean["status"] == "ok"
+    assert float(mean["value"]) == pytest.approx(3)
+    assert int(mean["unit_count"]) == 2 and int(mean["missing_count"]) == 0
+    # "latest" is the latest span's own value and does not fall back to an
+    # earlier span: here the latest span reported nothing, so that unit is missing.
+    latest = execute_formula(
+        metric_ch, measure_recipe("cost", "mean(value)"), scope, now
+    )[0]
+    assert float(latest["value"]) == pytest.approx(2)
+    assert int(latest["valid_count"]) == 1 and int(latest["missing_count"]) == 1
