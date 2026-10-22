@@ -61707,6 +61707,18 @@
                             "$ref": "#/definitions/ApiErrorResponse"
                         }
                     },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
                     "503": {
                         "description": "",
                         "schema": {

@@ -71229,6 +71229,16 @@ export type tracerEvalTaskSamplingPreviewResponse400 = {
   status: 400;
 };
 
+export type tracerEvalTaskSamplingPreviewResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerEvalTaskSamplingPreviewResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
 export type tracerEvalTaskSamplingPreviewResponse503 = {
   data: ApiErrorResponseApi;
   status: 503;
@@ -71236,7 +71246,7 @@ export type tracerEvalTaskSamplingPreviewResponse503 = {
 
 export type tracerEvalTaskSamplingPreviewResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 503>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 429 | 500 | 503>;
 };
 
 export type tracerEvalTaskSamplingPreviewResponseSuccess =
@@ -71245,6 +71255,8 @@ export type tracerEvalTaskSamplingPreviewResponseSuccess =
   };
 export type tracerEvalTaskSamplingPreviewResponseError = (
   | tracerEvalTaskSamplingPreviewResponse400
+  | tracerEvalTaskSamplingPreviewResponse429
+  | tracerEvalTaskSamplingPreviewResponse500
   | tracerEvalTaskSamplingPreviewResponse503
   | tracerEvalTaskSamplingPreviewResponseDefault
 ) & {
