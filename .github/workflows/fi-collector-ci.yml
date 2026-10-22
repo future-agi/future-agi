@@ -168,7 +168,7 @@ jobs:
 
   otlp-benchmark-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 14
     env:
       OTLPBENCH_CI_PROJECT: otlpbench-ci-${{ github.run_id }}-${{ github.run_attempt }}
       OTLPBENCH_CI_CH_PORT: "18147"
@@ -184,7 +184,7 @@ jobs:
         with:
           go-version-file: fi-collector/go.mod
           cache-dependency-path: fi-collector/go.sum
-      - name: Start isolated pinned ClickHouse for 20-span smoke
+      - name: Start isolated pinned ClickHouse for the benchmark smoke
         timeout-minutes: 3
         run: |
           docker compose --env-file /dev/null -f fi-collector/benchmark/ci-compose.yml \
@@ -212,22 +212,37 @@ jobs:
           PY
           "${compose[@]}" exec -T clickhouse clickhouse-client --user test --password test \
             --database otlpbench_ci --multiquery < "$RUNNER_TEMP/otlpbench-curated.sql"
-      - name: Require actual collector to ClickHouse ID verification
-        timeout-minutes: 5
+      - name: Require actual collector to ClickHouse ID verification and backpressure accounting
+        timeout-minutes: 6
         working-directory: fi-collector
         run: |
           set -o pipefail
+          # The backpressure case runs a real collector with a 16-row budget
+          # (the in-process equivalent of FI_MAX_PENDING_ROWS=16) over HTTP
+          # protobuf, HTTP JSON+gzip and gRPC+gzip, and sends requests larger
+          # than the whole budget to prove they are refused as non-retryable.
           OTLPBENCH_LIVE_RESULT="$RUNNER_TEMP/otlpbench-real-smoke.json" \
-            go test -race -count=1 -p 1 -timeout 90s -json \
-            -run '^TestLiveClickHouseCollectorPipeline$' ./pkg/ingestbench \
+          OTLPBENCH_LIVE_BACKPRESSURE_RESULT="$RUNNER_TEMP/otlpbench-real-backpressure.json" \
+            go test -race -count=1 -p 1 -timeout 240s -json \
+            -run '^(TestLiveClickHouseCollectorPipeline|TestLiveClickHouseBackpressureAccounting)$' ./pkg/ingestbench \
             | tee "$RUNNER_TEMP/otlpbench-smoke-tests.jsonl"
           python3 - <<'PY'
           import json
           import os
           from pathlib import Path
           events = [json.loads(line) for line in (Path(os.environ['RUNNER_TEMP']) / 'otlpbench-smoke-tests.jsonl').read_text().splitlines()]
-          if not any(e.get('Test') == 'TestLiveClickHouseCollectorPipeline' and e['Action'] == 'pass' for e in events):
-              raise SystemExit('Real ClickHouse smoke missing or skipped')
+          passed = {e.get('Test') for e in events if e['Action'] == 'pass'}
+          required = {
+              'TestLiveClickHouseCollectorPipeline',
+              'TestLiveClickHouseBackpressureAccounting',
+              'TestLiveClickHouseBackpressureAccounting/protobuf-gzip-false',
+              'TestLiveClickHouseBackpressureAccounting/json-gzip-true',
+              'TestLiveClickHouseBackpressureAccounting/grpc-gzip-true',
+          }
+          missing = required - passed
+          if missing:
+              raise SystemExit(f'Real ClickHouse benchmark proofs missing or skipped: {sorted(missing)}')
+          print(f'Confirmed {len(required)} real ClickHouse benchmark proofs')
           PY
       - name: Collect only this smoke project's logs
         if: always()
@@ -248,6 +263,7 @@ jobs:
           name: otlpbench-smoke-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/otlpbench-real-smoke.json
+            ${{ runner.temp }}/otlpbench-real-backpressure.json
             ${{ runner.temp }}/otlpbench-smoke-tests.jsonl
             ${{ runner.temp }}/otlpbench-services.log
           if-no-files-found: warn

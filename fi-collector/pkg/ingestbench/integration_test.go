@@ -259,7 +259,10 @@ func startCollectorWithWriterConfig(t *testing.T, cfg chwriter.Config) string {
 func startCollector(t *testing.T, cfg chwriter.Config, sc server.Config) *collectorFixture {
 	t.Helper()
 	cfg.MaxRetries, cfg.InitialBackoff, cfg.MaxBackoff = 1, time.Millisecond, time.Millisecond
-	cfg.RequestTimeout, cfg.DeadLetterFile = 5*time.Second, t.TempDir()+"/dl.jsonl"
+	if cfg.RequestTimeout == 0 {
+		cfg.RequestTimeout = 5 * time.Second
+	}
+	cfg.DeadLetterFile = t.TempDir() + "/dl.jsonl"
 	writer, err := chwriter.New(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -565,6 +568,11 @@ func TestVerificationResumesFromCheckpoint(t *testing.T) {
 	}
 	if r.Verification.Complete || r.Status != "incomplete" || r.Verification.Chunks != 1 || !strings.Contains(r.Verification.Error, "TIMEOUT_EXCEEDED") {
 		t.Fatalf("interrupted verification certified or misreported: %s %+v", r.Status, r.Verification)
+	}
+	// An unfinished scan concludes nothing: unscanned spans count as missing,
+	// but no loss is claimed from them.
+	if v := r.Verification; v.DataLossDetected || v.ScannedAttempted != 8 || v.Unscanned != 4 || v.Missing != 4 || v.MissingBy.AcknowledgedMissing != 0 {
+		t.Fatalf("incomplete verification overclaimed: %+v", v)
 	}
 	if _, err := Run(context.Background(), c, Options{}); err == nil || !strings.Contains(err.Error(), "checkpoint already exists") {
 		t.Fatalf("a new run overwrote a checkpoint: %v", err)

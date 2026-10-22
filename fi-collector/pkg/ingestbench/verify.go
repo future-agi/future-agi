@@ -423,6 +423,7 @@ func (vf *verifier) run(ctx context.Context) Verification {
 	if err := vf.checkIdentity(&v); err != nil {
 		return fail(err)
 	}
+	v.conclude()
 	v.Complete = true
 	vf.cp.Complete = true
 	v.ElapsedSeconds = time.Since(start).Seconds()
@@ -442,6 +443,8 @@ func (vf *verifier) fill(v *Verification) {
 	}
 	v.Rows, v.DuplicateRows, v.UnexpectedRows, v.OutsideNamespace = a.Rows, a.Duplicates, a.Unexpected, a.OutsideNamespace
 	v.DistinctExpected = present
+	v.ScannedAttempted = expected
+	v.Unscanned = uint64(vf.cp.Attempted) - expected
 	v.Missing = uint64(vf.cp.Attempted) - present
 	if vf.cp.Attempted > 0 {
 		v.MissingFraction = float64(v.Missing) / float64(vf.cp.Attempted)
@@ -456,6 +459,12 @@ func (vf *verifier) fill(v *Verification) {
 		AmbiguousMissing:       a.Expected[outcomeAmbiguous] - a.Present[outcomeAmbiguous],
 	}
 	v.PersistedBy = PersistedByAcknowledgement{RejectedButPersisted: rejectedPresent, PartialExcess: a.PartialExcess, AmbiguousPersisted: a.Present[outcomeAmbiguous]}
+	// Only a finished, rechecked verification may conclude anything; run()
+	// sets these after the recheck succeeds.
+	v.DataLossDetected, v.ContractViolation = false, false
+}
+
+func (v *Verification) conclude() {
 	v.DataLossDetected = v.MissingBy.AcknowledgedMissing > 0
 	v.ContractViolation = v.PersistedBy.RejectedButPersisted > 0 || v.PersistedBy.PartialExcess > 0
 }
@@ -470,7 +479,7 @@ func (vf *verifier) checkIdentity(v *Verification) error {
 		return fmt.Errorf("scanned chunks cover %d spans, not the %d attempted", expected, vf.cp.Attempted)
 	}
 	m := v.MissingBy
-	if m.AcknowledgedMissing+m.PartialRejectedMissing+m.RejectedMissing+m.AmbiguousMissing != v.Missing {
+	if v.Unscanned != 0 || m.AcknowledgedMissing+m.PartialRejectedMissing+m.RejectedMissing+m.AmbiguousMissing != v.Missing {
 		return fmt.Errorf("missing spans do not decompose by acknowledgement outcome")
 	}
 	if v.DistinctExpected+v.DuplicateRows+v.UnexpectedRows != v.Rows {
@@ -711,6 +720,7 @@ func ResumeVerification(ctx context.Context, path string, headers http.Header, o
 	if cp.Complete {
 		v := Verification{Complete: true, Method: "chunked-exact-id-per-request-outcome", TotalChunks: int64(len(cp.Chunks)), Chunks: int64(len(cp.Chunks)), ChunkSpans: cp.ChunkSpans, NamespaceWindows: int64(len(cp.Windows)), PreexistingRunRows: cp.Preexisting}
 		vf.fill(&v)
+		v.conclude()
 		return cp.Config, v, nil
 	}
 	return cp.Config, vf.run(ctx), nil

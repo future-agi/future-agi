@@ -99,15 +99,20 @@ type PersistedByAcknowledgement struct {
 }
 
 type Verification struct {
-	Complete           bool                       `json:"complete"`
-	Method             string                     `json:"method"`
-	Rows               uint64                     `json:"scanned_run_rows"`
-	DistinctExpected   uint64                     `json:"persisted_distinct_attempted_spans"`
-	DuplicateRows      uint64                     `json:"duplicate_expected_rows_visible"`
-	UnexpectedRows     uint64                     `json:"unexpected_rows"`
-	OutsideNamespace   uint64                     `json:"run_rows_outside_trace_namespace"`
-	Missing            uint64                     `json:"missing_attempted_spans"`
-	MissingFraction    float64                    `json:"missing_attempted_fraction"`
+	Complete         bool    `json:"complete"`
+	Method           string  `json:"method"`
+	Rows             uint64  `json:"scanned_run_rows"`
+	DistinctExpected uint64  `json:"persisted_distinct_attempted_spans"`
+	DuplicateRows    uint64  `json:"duplicate_expected_rows_visible"`
+	UnexpectedRows   uint64  `json:"unexpected_rows"`
+	OutsideNamespace uint64  `json:"run_rows_outside_trace_namespace"`
+	Missing          uint64  `json:"missing_attempted_spans"`
+	MissingFraction  float64 `json:"missing_attempted_fraction"`
+	// ScannedAttempted is the attempted spans the finished chunks cover;
+	// Unscanned (attempted - scanned) counts as missing until verified, and
+	// MissingBy decomposes only the scanned part.
+	ScannedAttempted   uint64                     `json:"scanned_attempted_spans"`
+	Unscanned          uint64                     `json:"unscanned_attempted_spans"`
 	MissingBy          MissingByAcknowledgement   `json:"missing_by_acknowledgement"`
 	PersistedBy        PersistedByAcknowledgement `json:"persisted_without_acknowledgement"`
 	DataLossDetected   bool                       `json:"data_loss_detected"`
@@ -285,6 +290,9 @@ func Report(w io.Writer, r Result) error {
 	fmt.Fprintf(w, "Verification complete: %t; scanned rows: %d; distinct attempted: %d; missing: %d; visible duplicate rows: %d; unexpected: %d; outside namespace: %d\n",
 		v.Complete, v.Rows, v.DistinctExpected, v.Missing, v.DuplicateRows, v.UnexpectedRows, v.OutsideNamespace)
 	m := v.MissingBy
+	if !v.Complete {
+		fmt.Fprintf(w, "Verification stopped after %d of %d attempted spans; %d unscanned spans are counted as missing and the decomposition below covers the scanned part only.\n", v.ScannedAttempted, v.ScannedAttempted+v.Unscanned, v.Unscanned)
+	}
 	fmt.Fprintf(w, "Missing by acknowledgement: acknowledged-but-missing (DATA LOSS) %d [of which partial-request lower bound %d]; rejected-and-missing (expected) %d; partial-rejected-and-missing (expected) %d; ambiguous-and-missing %d\n",
 		m.AcknowledgedMissing, m.PartialBeyondRejected, m.RejectedMissing, m.PartialRejectedMissing, m.AmbiguousMissing)
 	p := v.PersistedBy
