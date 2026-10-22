@@ -98,6 +98,27 @@ const scopeNote = (s) => {
 };
 
 const asText = (x) => (typeof x === "string" ? x : x?.title || x?.text || "");
+
+const OUTCOME_WORD = { fixed: "fixed", broke: "broke", "still-failing": "still failing", flaky: "flaky", inconclusive: "inconclusive", "off-script": "caller went off script — not counted", same: "unchanged" };
+
+/**
+ * The per-scenario breakdown a brief carries for a fix: each target
+ * scenario, what measuring today found, and what the last run did to it.
+ * Target scenarios only — the held-back set proves the change, so it never
+ * reaches the improver.
+ */
+export const briefBreakdownOf = (record) => {
+  const r = record?.result || null;
+  const per = record?.reproduce?.perScenario || {};
+  const last = r?.winner || (r?.trials || []).at(-1) || null;
+  const tasks = r?.trainMeasuredTasks?.length ? r.trainMeasuredTasks : (record?.issueScenarios || []).filter((d) => per[d.id]?.state !== "passed");
+  return tasks.map((t) => {
+    const p = per[t.id];
+    const today = p ? (p.fails ? `failed ${p.fails} of ${p.of}` : `passed ${p.of} of ${p.of}`) : t.before === "failed" ? "failing" : t.before === "flaky" ? "flaky" : t.before || "—";
+    const outcome = last?.perScenario?.[t.id];
+    return { title: t.title, today, ...(outcome && { result: OUTCOME_WORD[outcome] || outcome }), ...(last && { run: `${r.winner ? "Kept" : "Last"} run · Run ${last.n}` }) };
+  });
+};
 const bullets = (list) => list.map((x) => `- ${x}`);
 
 /**
@@ -123,6 +144,7 @@ const bullets = (list) => list.map((x) => `- ${x}`);
  */
 export const codingAgentBrief = ({
   agent, env, issue, rootCause, suggestedFix, evidence = [], failingScenarios = [], limits, model, submit, runId, proof, members, names = [], pairing = null,
+  diagnosis = null, breakdown = [],
 }) => {
   const title = asText(issue) || "Failing scenarios";
   const severity = typeof issue === "object" ? issue?.severity : null;
@@ -150,6 +172,30 @@ export const codingAgentBrief = ({
   const cause = rootCause ? scrub(rootCause) : null;
   const scenarios = failingScenarios.map(asText).filter(Boolean).map(scrub);
   const more = scenarios.length > 12 ? scenarios.length - 12 : 0;
+  /* Where in the agent it goes wrong — what a change should start from. */
+  const diagLines = diagnosis ? [
+    "## Diagnosis",
+    ...(diagnosis.where || []).map((w) => `- ${w.kind}: \`${w.ref}\`${w.quote ? ` — “${w.quote}”` : ""}`),
+    "",
+    `**Why it fails.** ${scrub(diagnosis.cause)}`,
+    "",
+    `**What to change.** ${scrub(diagnosis.change)}`,
+    ...(diagnosis.edited ? ["", "_Edited by the person who started the fix._"] : []),
+    "",
+  ] : [];
+  const cell = (x) => String(x).replace(/\|/g, "\\|");
+  const rows = breakdown.slice(0, 20);
+  const showRun = rows.some((x) => x.result);
+  const breakdownLines = rows.length ? [
+    "## Per-scenario breakdown",
+    showRun ? `| Scenario | Today | ${rows.find((x) => x.run)?.run || "Last run"} |` : "| Scenario | Today |",
+    showRun ? "| --- | --- | --- |" : "| --- | --- |",
+    ...rows.map((x) => (showRun ? `| ${cell(scrub(x.title))} | ${x.today} | ${x.result || "—"} |` : `| ${cell(scrub(x.title))} | ${x.today} |`)),
+    ...(breakdown.length > rows.length ? [`_…and ${breakdown.length - rows.length} more._`] : []),
+    "",
+    "_Held-back scenarios are left out: they prove the change, so they're never shown to whoever writes it._",
+    "",
+  ] : [];
 
   return [
     `# ${title}`,
@@ -167,19 +213,20 @@ export const codingAgentBrief = ({
       members?.length && `Changes: ${members.join(", ")}`,
     ].filter(Boolean).join("  \n"),
     "",
-    "## Root cause",
+    ...diagLines,
+    diagnosis ? "## Symptom" : "## Root cause",
     cause || "Not analysed yet.",
     "",
-    "## Suggested fix",
-    ...fixLines,
-    "",
+    /* With a diagnosis, its What to change is the suggestion — not said twice. */
+    ...(diagnosis && !suggestedFix ? [] : ["## Suggested fix", ...fixLines, ""]),
     ...(excerpts.length ? [
       "## Evidence",
       `_Personal data replaced — names, phone numbers, emails, addresses and account numbers are realistic fake values${replaced ? ` (${replaced} replaced)` : ""}. The problem is kept, not the person._`,
       "",
       ...excerpts.map((e) => `> ${e}`).flatMap((e) => [e, ""]),
     ] : []),
-    ...(scenarios.length ? [
+    ...breakdownLines,
+    ...(scenarios.length && !breakdownLines.length ? [
       "## Failing scenarios",
       ...bullets(scenarios.slice(0, 12)),
       ...(more ? [`- …and ${more} more`] : []),

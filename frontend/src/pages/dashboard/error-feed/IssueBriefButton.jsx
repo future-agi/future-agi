@@ -1,7 +1,8 @@
 import PropTypes from "prop-types";
 import { useErrorFeedOverview } from "src/api/errorFeed/mockAdapter";
 import CopyBriefButton from "src/sections/simulate-v2/components/CopyBriefButton";
-import { codingAgentBrief } from "src/sections/simulate-v2/_mock/codingAgentBrief";
+import { briefBreakdownOf, codingAgentBrief } from "src/sections/simulate-v2/_mock/codingAgentBrief";
+import { codeDiagnosisOf } from "src/sections/simulate-v2/errorFeed/codeDiagnosis";
 import { useSimStore } from "src/sections/simulate-v2/store";
 import { limitsOf } from "src/sections/simulate-v2/agents/agentLimits";
 import { agentDefinitionOf } from "src/sections/simulate-v2/_mock/agentRegistry";
@@ -11,9 +12,10 @@ import { startImproverSession } from "src/sections/simulate-v2/_mock/integration
 import useIssueRootCause from "./useIssueRootCause";
 
 /**
- * "Copy for coding agent" on an Error Feed issue — the issue, the Root cause
- * tab's latest finding (or the feed's own one-liner before anyone has run
- * it), a handful of failing traces, and the agent's constraints.
+ * "Copy for coding agent" on an Error Feed issue — the issue, where in the
+ * agent it goes wrong (the fix's diagnosis, else one drafted the same way),
+ * the Root cause tab's finding as the symptom, a per-scenario breakdown, a
+ * handful of failing traces, and the agent's constraints.
  *
  * Wraps the shared button so the issue page only places it.
  */
@@ -61,6 +63,16 @@ export default function IssueBriefButton({ issue, agent, sx }) {
       .filter((t) => !seen.has(t.evidence?.input) && seen.add(t.evidence?.input))
       .map((t) => ({ source: t.trace_id, text: `Caller: "${t.evidence.input}" — Agent: "${t.evidence.output}"` }));
     const fix = root?.fix;
+    /* A fix already started carries its own diagnosis and run; else both are drafted. */
+    const record = status?.envId && status?.optId
+      ? (state.byEnv[status.envId]?.optimizations || []).find((o) => o.id === status.optId) || null
+      : null;
+    const diagnosis = record?.snapshot?.diagnosis
+      || codeDiagnosisOf({ issue, env, promptText: def?.instructions?.visible ? def.instructions.text : null, rootCause: root });
+    const drafts = env ? issueScenarioDrafts(issue, env, es) : [];
+    const breakdown = record?.result || record?.reproduce
+      ? briefBreakdownOf(record)
+      : drafts.map((d) => ({ title: d.title, today: `fails in ${(d.errorFeedIssue?.traceIds || []).length || "its"} production traces` }));
 
     return codingAgentBrief({
       /* The whole record — the submit step depends on where the agent lives. */
@@ -68,11 +80,13 @@ export default function IssueBriefButton({ issue, agent, sx }) {
       env,
       issue: { title: issue?.error?.name, severity: issue?.severity, id: issue?.cluster_id },
       rootCause: root?.headline,
-      suggestedFix: fix || (issue?.fix_layer
-        ? `No written fix yet — the feed places it in the ${issue.fix_layer} layer.`
-        : null),
+      diagnosis,
+      breakdown,
+      /* The diagnosis's What to change stands in for a written fix. */
+      suggestedFix: fix || (diagnosis ? null
+        : issue?.fix_layer ? `No written fix yet — the feed places it in the ${issue.fix_layer} layer.` : null),
       evidence,
-      failingScenarios: env ? issueScenarioDrafts(issue, env, es).map((d) => d.title) : [],
+      failingScenarios: drafts.map((d) => d.title),
       limits: limitsOf(state, agent?.key),
       model: def?.model?.visible ? def.model.name : null,
       /* Without an environment there is nothing to run a branch against yet —

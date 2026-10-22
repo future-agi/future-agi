@@ -2,7 +2,7 @@
   The receipt — every check an improvement made, in order, in plain words.
   Written by Future AGI, never by the model proposing the changes.
 */
-import { heldSplitText, judgeFor, REPEATS } from "../../_mock/optimizationRuns";
+import { heldSplitText, improverModelsText, judgeFor, markedNotCountedText, REPEATS } from "../../_mock/optimizationRuns";
 import { TIERS } from "../../_mock/improverAttempts";
 import { proofDisplay } from "./proofBlock";
 
@@ -25,7 +25,7 @@ export const receiptOf = (record, outcome, { attempts = [], identity = null, env
     ["Baseline measured", `${r.base}% on the target scenarios, ${r.heldBase}% held back · run-to-run noise ±${r.noise || 0} pts`],
     ...(stamped && r.calibration ? [["Run-to-run noise · baseline run twice", `Ran ${r.calibration.version || record.baseAgentVersion || "the current version"} twice: ${r.calibration.disagreed} of ${r.calibration.scenarios} scenarios disagreed, so a change on one of those counts only when it shows up on more than one repeat · noise ±${r.noise} pts`]] : []),
     ...(stamped && r.goal ? [["Targets", `${r.goalTargets} ${r.goalTargets === 1 ? "scenario falls" : "scenarios fall"} short of ${r.goal.id === "pass-rate" ? "the pass rate" : r.goal.label}${r.split?.kind === "goal" ? ` · ${r.split.thin ? "none held back — thin" : `${heldSplitText(r.split)} held back`}` : ""}`]] : []),
-    ["Runs proposed", `${r.trials.length} by ${proposer}${r.stoppedEarly ? ` · stopped after ${r.stoppedEarly.after} with no gain` : ""}`],
+    ["Runs proposed", `${r.trials.length} ${record.writerModel ? improverModelsText(record.model, record.writerModel) : `by ${proposer}`}${r.stoppedEarly ? ` · stopped after ${r.stoppedEarly.after} with no gain` : ""}`],
     ["Runs judged", `by ${judgeFor(record.model)} — a different model family`],
     stamped
       ? ["Static checks", `model, protected parts, areas, settings in range, judges untouched${r.repoTests ? `, ${r.repoTests} on code changes` : ""} — every run · ${(() => { const n = r.trials.filter((t) => t.static && t.static.pass === false).length; return n ? `${n} stopped there` : "all passed"; })()}`]
@@ -37,7 +37,7 @@ export const receiptOf = (record, outcome, { attempts = [], identity = null, env
       ["Finalists scored once", (r.finalists || []).length ? r.finalists.map((f) => `Run ${f.n} ${f.heldScore}%${f.winner ? " · winner" : ""}`).join(" · ") : `${r.heldBase}% → ${r.heldScore}%`],
       ...(r.confirm ? [["Re-run after the pick", `Run ${r.winner.n} on the held-back set again: ${r.confirm.selectionScore}% at the pick, ${r.confirm.score}% on the re-run · ${r.confirm.held ? "held" : `didn't hold — ${r.confirm.why}`}`]] : []),
       ["Held-back set", `${r.heldBase}% → ${r.heldScore}% on ${r.heldMeasured} scenarios${r.confirm ? " · the re-run" : ""}`],
-      ["Must-pass set", `${r.mustPass?.total ?? "—"} scenarios · ${(r.heldBlockers || []).length ? `${r.heldBlockers.length} failed again on a re-run` : "none failed twice"}${(r.flakyToday || []).length ? ` · ${r.flakyToday.length} flaky, not counted` : ""}`],
+      ["Must-pass set", `${r.mustPass?.total ?? "—"} scenarios · ${(r.heldBlockers || []).length ? `${r.heldBlockers.length} failed again on a re-run` : "none failed twice"}${(r.flakyToday || []).length ? ` · ${r.flakyToday.length} flaky, not counted` : ""}${markedNotCountedText(r) ? ` · ${markedNotCountedText(r)}` : ""}`],
       ["Repeats", stamped && (r.finalists || []).find((f) => f.winner)?.fullRegression
         ? `each scenario ${r.repeats || REPEATS}× · code change → ${(r.finalists || []).find((f) => f.winner).repeats} repeats per finalist and the full regression set`
         : `each scenario ${r.repeats || REPEATS}×`],

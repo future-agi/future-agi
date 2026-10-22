@@ -477,7 +477,14 @@ export default function ImprovementRunsView({ env, envState, record, patch, onBa
                           </Typography>
                         )}
                       </Stack>
-                      {r.tried && <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{r.tried}</Typography>}
+                      {r.tried && (
+                        <Tooltip
+                          arrow placement="bottom-start" disableHoverListener={!r.feedback}
+                          title={r.feedback ? feedbackText(r.feedback) : ""}
+                        >
+                          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{r.tried}</Typography>
+                        </Tooltip>
+                      )}
                     </Box>
                   </Stack>
                   <Box sx={{ display: "flex", alignItems: "center", minWidth: 0, pr: 1 }}>{statusOf(r)}</Box>
@@ -567,6 +574,8 @@ export default function ImprovementRunsView({ env, envState, record, patch, onBa
   passed, any that didn't named in red — with the full checklist a click
   away. Colour only on the change and on a broken constraint.
 */
+/* What a retry read from the run before it, and what it changed because of it. */
+const feedbackText = (f) => `Fed Run ${f.from}'s per-scenario results and its ${f.conversations} failing ${f.conversations === 1 ? "conversation" : "conversations"}: ${f.stillFailing.length} still failing (${f.stillFailing.map((x) => `“${x.title.replace(/\.$/, "")}”`).join(", ")}). Adds: “${f.adds}”`;
 const signedPct = (n) => `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(Math.round(n * 10) / 10)}%`;
 function Verdict({ outcome, result, targetNow }) {
   const [allChecks, setAllChecks] = useState(false);

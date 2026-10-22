@@ -510,6 +510,7 @@ export const triedLabelOf = (t, trials = []) => {
     return prev ? `Run ${prev.n}'s change again, to check it holds` : "The best change again, to check it holds";
   }
   if (/^dropped a change|^removed one change/.test(raw)) return "One change removed, to check it's needed";
+  if (t.feedback) return `Revised: ${t.feedback.why}`;
   const m = /^(kept|tried) (.+)$/.exec(raw);
   const what = m ? m[2] : raw;
   return m ? `Tried: ${what}` : `${what.charAt(0).toUpperCase()}${what.slice(1)}`;
@@ -597,7 +598,17 @@ export const paretoPool = (result) => {
  * proportions — so a trial's score, the starting rate and the projection are
  * all the same kind of number and can be put beside each other.
  */
-const scoreOf = (tasks, perScenario, cheated = new Set()) => {
+/*
+  The simulated caller went off script (new improvements): the conversation
+  stopped testing the scenario, so it says nothing about the change — shown,
+  never counted, like the run screens' own off-script calls. Drawn by hash,
+  so the search's own streams stay where they were.
+*/
+const OFF_SCRIPT_PCT = 3;
+const offScript = (key) => hashSeed(`${key}:script`) % 100 < OFF_SCRIPT_PCT;
+
+const scoreOf = (all, perScenario, cheated = new Set()) => {
+  const tasks = all.filter((t) => perScenario[t.id] !== "off-script");
   if (!tasks.length) return 0;
   const after = (t) => {
     /* fail · cheat scores 0, whatever the scenario passed before. */
@@ -776,6 +787,43 @@ export const overLimitFailed = (t) => !!t?.overLimit;
    scenario: failing conversations run long (retries, loops back). */
 const COST_SAVED_IF_ALL_FIXED = 6;
 
+/*
+  A retry learns from the last try (new improvements): with nothing new to
+  add, the search doesn't run the incumbent's change again blind — it hands
+  the proposer the last run's per-scenario results and its failing
+  conversations, and the change comes back revised for what still failed.
+  The revision names what it learned from and what it adds.
+*/
+const lowerFirst = (x) => `${x.charAt(0).toLowerCase()}${x.slice(1)}`;
+const revisionOf = (baseP, still, last, repeats, n) => {
+  const first = still[0];
+  const tool = first.callLog?.missing?.[0] || baseP.step || null;
+  const claim = !!first.callLog?.unsupportedClaim;
+  const when = lowerFirst(scenarioTitle(first.title)).replace(/\.$/, "").replace(/^(caller|guest|traveller|customer|user|patient)\b/, "the $1");
+  const line = claim
+    ? `Including when ${when}: say only what the tool returned. If it failed, say so and offer another way.`
+    : tool
+      ? `Including when ${when}: call ${tool} before you answer, and wait for it to return.`
+      : `Including when ${when}: follow the same rule.`;
+  const reason = claim ? "still told the caller it was done" : tool ? `still answered without ${tool}` : "still failed";
+  return {
+    ...baseP,
+    id: `${baseP.revisionOf || baseP.id}~r${n}`,
+    revisionOf: baseP.revisionOf || baseP.id,
+    title: `${(baseP.title || "").replace(/ — revised after Run \d+$/, "")} — revised after Run ${last.n}`,
+    addresses: [...new Set([...(baseP.addresses || []), ...still.map((t) => t.id)])],
+    diff: [...(baseP.diff || []), { type: "add", text: line }],
+    feedback: {
+      from: last.n,
+      fixed: Object.values(last.perScenario || {}).filter((v) => v === "fixed").length,
+      stillFailing: still.map((t) => ({ id: t.id, title: t.title })),
+      conversations: still.length * repeats,
+      why: `Run ${last.n} ${reason} on “${scenarioTitle(first.title).replace(/\.$/, "")}”${still.length > 1 ? ` and ${still.length - 1} more` : ""}`,
+      adds: line,
+    },
+  };
+};
+
 export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope: given, limitGate = null }) => {
   const scope = given || searchScope({ env, tasks });
   const optimizer = optimizerById(optimizerId);
@@ -817,9 +865,15 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     Must-pass: what the user marked must-pass, regression memory, and every
     other scenario that passes all its repeats on the current version.
     Flaky ones (pass only some repeats today) are shown, never disqualify.
+
+    New improvements gate only what passed every baseline repeat — marked
+    or not. A marked scenario that's flaky today would reject real fixes on
+    its own noise, so it's named as marked but not counted until it passes
+    every repeat again.
   */
   const passesAll = (t) => t.status !== "unmeasured" && passShareOf(t) >= 1;
-  const mustPass = (t) => !!t.critical || !!scope.remembered?.(t) || passesAll(t);
+  const marked = (t) => !!t.critical || !!scope.remembered?.(t);
+  const mustPass = (t) => (rsi ? passesAll(t) : marked(t) || passesAll(t));
   const flakyToday = (t) => t.status !== "unmeasured" && passShareOf(t) > 0 && passShareOf(t) < 1;
   /*
     Three sets that never overlap (new improvements): the targets the
@@ -892,6 +946,10 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
      were written (the suggested fix first). */
   const issueIds = issuePool.map((p) => p.id);
   const triedIssue = new Set();
+  /* A fix's diagnosis says what kind of change fits — a skipped tool or a
+     claim no tool backs. Changes of that kind are tried first. */
+  const framed = (p) => (cfg.frame === "claim" ? p.id === "unsupported-claims" || p.mechanism === "claim"
+    : cfg.frame === "tool" ? p.id.startsWith("missing-") || p.mechanism === "tool" : false);
 
   const r = rng(hashSeed(`${seed}-${optimizerId}`));
   const base = projectedRate(trainMeasured, []);
@@ -920,19 +978,25 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       const keep = r() < 0.2 && best.picks.length > 1
         ? best.picks.slice(0, -1)          // drop the least recent, try without it
         : best.picks;
-      const rest = pool.filter((p) => !keep.includes(p.id));
+      /* A change the incumbent already carries a revision of isn't offered
+         again beside it, and a revision is only ever made, never drawn. */
+      const revised = new Set(keep.map((id) => pool.find((p) => p.id === id)?.revisionOf).filter(Boolean));
+      const rest = pool.filter((p) => !keep.includes(p.id) && !revised.has(p.id) && !p.revisionOf);
       /* A run issue's Fix tries each of the issue's own proposals first; once
          each has had a turn, an issue proposal that didn't stick is tried
          again half the time while none is in the incumbent. */
-      const untriedIssue = issueIds.filter((id) => !keep.includes(id) && !triedIssue.has(id));
-      const issueLeft = issueIds.filter((id) => !keep.includes(id));
+      const carried = (id) => keep.includes(id) || revised.has(id);
+      const untriedIssue = issueIds.filter((id) => !carried(id) && !triedIssue.has(id));
+      const issueLeft = issueIds.filter((id) => !carried(id));
       let next;
       if (untriedIssue.length) {
         [next] = untriedIssue;
-      } else if (issueLeft.length && !keep.some((id) => issueIds.includes(id)) && r() < 0.5) {
+      } else if (issueLeft.length && !issueIds.some(carried) && r() < 0.5) {
         next = issueLeft[Math.floor(r() * issueLeft.length)];
       } else {
-        const towardIssue = rest.filter(onFocus);
+        const toward = rest.filter(onFocus);
+        const framedFirst = cfg.frame && !keep.some((id) => framed(pool.find((p) => p.id === id) || { id: "" })) ? toward.filter(framed) : [];
+        const towardIssue = framedFirst.length ? framedFirst : toward;
         const from = towardIssue.length && (!keep.some((id) => onFocus(pool.find((p) => p.id === id) || { addresses: [] })) || r() < 0.5)
           ? towardIssue
           : rest;
@@ -940,6 +1004,20 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       }
       if (next && issueIds.includes(next)) triedIssue.add(next);
       picks = next ? [...keep, next] : keep;
+      /* Nothing new to add: revise the incumbent's newest change from what
+         the last run still failed, rather than run it again unchanged. */
+      const last = trials[trials.length - 1];
+      const still = !next && rsi && last && keep.length
+        ? trainMeasured.filter((t) => focus.has(t.id) && ["still-failing", "flaky"].includes(last.perScenario?.[t.id]))
+        : [];
+      if (still.length) {
+        const baseP = pool.find((p) => p.id === keep[keep.length - 1]);
+        if (baseP) {
+          const rev = revisionOf(baseP, still, last, cfg.repeats || 3, n);
+          pool.push(rev);
+          picks = [...keep.slice(0, -1), rev.id];
+        }
+      }
     } else {
       const size = 1 + Math.floor(r() * Math.min(pool.length, 1 + Math.ceil((n / count) * pool.length)));
       picks = shuffle(pool, r).slice(0, size).map((p) => p.id);
@@ -973,6 +1051,7 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       if (perScenario[t.id] === "fixed" || perScenario[t.id] === "still-failing") {
         perScenario[t.id] = unsettled(`${seed}:${n}:${t.id}`) || perScenario[t.id];
       }
+      if (rsi && offScript(`${seed}:${n}:${t.id}`)) perScenario[t.id] = "off-script";
     });
     /*
       Fits the environment — new improvements only (`cfg.compat`); drawn by
@@ -1008,6 +1087,7 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       ? !brokeBlocker && (issueFixed > best.issueFixed || (issueFixed === best.issueFixed && score > best.score))
       : score > best.score);
     const added = candidate.filter((p) => !best.picks.includes(p.id))[0];
+    const revised = added?.feedback ? added : null;
     /* The repository's tests, on any candidate that changes code. */
     const touchesCode = cfg.repoTests && candidate.some((p) => ["code", "structure"].includes(KIND_SURFACE[p.kind] || "code"));
     const repoTests = touchesCode && fits ? { command: cfg.repoTests, pass: repoTestsPass(`${seed}:${n}`) } : null;
@@ -1030,7 +1110,10 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       ...(rsi && { depth: depthOf(candidate) }),
       fixed: Object.values(perScenario).filter((v) => v === "fixed").length,
       broke: Object.values(perScenario).filter((v) => v === "broke").length,
-      tried: added
+      ...(revised && { feedback: revised.feedback }),
+      tried: revised
+        ? `revised Run ${revised.feedback.from}'s change`
+        : added
         ? `${improved ? "kept" : "tried"} ${added.trialLabel || added.title.toLowerCase()}`
         : picks.length < best.picks.length
           ? "removed one change, to check it's needed"
@@ -1151,6 +1234,7 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       /* A flip on a scenario that disagreed with itself at calibration
          counts only when it repeats. */
       if (per[t.id] === "fixed" && noisyIds.has(t.id) && hashSeed(`${key}:${t.id}:repeat`) % 2 === 1) per[t.id] = "flaky";
+      if (rsi && offScript(`${key}:${t.id}`)) per[t.id] = "off-script";
     });
     /* No held-back set (a thin one) means no held-back run to check. */
     const score = scoreOf(heldMeasured, per);
@@ -1297,6 +1381,10 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       };
     })(),
     ...(rsi && {
+      /* Marked must-pass (or regression memory) but not passing every repeat today. */
+      markedNotCounted: (cfg.mustPassPool || scope.tasks)
+        .filter((t) => !inSets.has(t.id) && marked(t) && t.status !== "unmeasured" && !passesAll(t))
+        .map((t) => ({ id: t.id, title: t.title, ...(flakyToday(t) ? { flaky: true } : { failing: true }) })),
       mustPassMeasured: mustPassMeasured.length,
       mustPassTasks: mustPassMeasured.map((t) => ({ id: t.id, title: t.title, critical: !!t.critical, ...(scope.remembered?.(t) && { remembered: true }) })),
     }),
@@ -1454,13 +1542,15 @@ export const diagnosisSummaryOf = (record, result = record?.result) => {
   if (!record?.frozen?.diagnoseStep) return null;
   const d = (record.diagnosis || [])[0] || null;
   const fromPool = (result?.pool || []).slice().sort((a, b) => (b.addresses?.length || 0) - (a.addresses?.length || 0))[0];
-  const cause = record.snapshot?.rootCause || d?.headline || d?.label || fromPool?.why || null;
+  const code = record.snapshot?.diagnosis || null;
+  const cause = code?.cause || record.snapshot?.rootCause || d?.headline || d?.label || fromPool?.why || null;
   const surface = smallestSurfaceOf(result);
   return {
     cause,
     layer: record.snapshot?.fixLayer || d?.layer || null,
-    source: record.snapshot ? "Error Feed" : d ? "Debug failures" : "the search's diagnosis",
+    source: code ? (code.edited ? "the diagnosis, as you edited it" : "the code-level diagnosis") : record.snapshot ? "Error Feed" : d ? "Debug failures" : "the search's diagnosis",
     surface,
+    ...(code && { code }),
   };
 };
 
@@ -1499,6 +1589,8 @@ export const searchTrace = (result, record = null) => {
     result: diag.surface ? `smallest surface that fits the cause: ${diag.surface.label}` : "no cause found",
     lines: [
       ...(diag.cause ? [`root cause (${diag.source}): ${String(diag.cause).replace(/\.$/, "")}`] : []),
+      ...(diag.code?.where?.length ? [`where: ${diag.code.where.map((w) => `${w.kind} · ${w.ref}`).join(", ")}`] : []),
+      ...(diag.code?.change ? [`change to make: ${String(diag.code.change).replace(/\.$/, "")}`] : []),
       ...(diag.layer ? [`fix layer: ${diag.layer}`] : []),
       "the search starts from the shallowest change that fits — prompt before settings before code",
     ],

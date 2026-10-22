@@ -11,8 +11,9 @@ import { connectedAgentPath } from "../../improvements/improvementNav";
 import { useSimStore, useConnectedAgents } from "../../store";
 import { agentDefinitionOf } from "../../_mock/agentRegistry";
 import { getEval } from "../../_mock/evals";
+import { evalReliabilityLine, evalReliabilityOf } from "../../_mock/evalReliability";
 import { agentVersions, currentAgentVersion, productionAgentVersion } from "../../_mock/versions";
-import { limitRows, OPTIMIZER_MODELS } from "../../_mock/optimizationRuns";
+import { improverModelsText, limitRows, OPTIMIZER_MODELS, SAME_AS_PLANNER } from "../../_mock/optimizationRuns";
 import { OPTIMIZERS, goalWords, improvementRunName } from "../../_mock/optimizer";
 import { baseRunOf, budgetsWithin, improvementEstimate, outcomeMetricsOf, planSearch } from "../../_mock/improvementStart";
 import { measureTodayRun, measuredSummaryOf } from "../../_mock/measureToday";
@@ -26,6 +27,7 @@ import { creditsForUsd, creditsLabel } from "../../_mock/metering";
 
 const ACCENT = "#7857FC";
 /* "Raise the pass rate", "Raise booking success rate", "Raise Policy adherence". */
+const WARN = "#CA8A04";
 const goalText = (g) => (g.id === "pass-rate" ? "Raise the pass rate" : `Raise ${g.group === "outcome" ? g.label.toLowerCase() : g.label}`);
 const fieldLabel = { typography: "s2", fontWeight: 700, mb: 0.875 };
 const selectSx = { height: 34, typography: "s2", "& .MuiSelect-select": { typography: "s2", py: 0.75 } };
@@ -41,6 +43,52 @@ const selectSx = { height: 34, typography: "s2", "& .MuiSelect-select": { typogr
  * The caller (Fix my agent) has already decided the agent and environment
  * (`preset`) and starts the run itself (`onStart`).
  */
+/*
+  One of the improver's two models, as chips. The writer also offers "Same
+  as planner", its default. Neither is the model the agent runs on.
+*/
+function ModelPicker({ title, hint, value, onChange, same = null }) {
+  const options = [
+    ...(same ? [{ id: SAME_AS_PLANNER, label: `Same as planner (${same})`, note: "One model plans and writes" }] : []),
+    ...OPTIMIZER_MODELS,
+  ];
+  return (
+    <Box>
+      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.25 }}>
+        <Typography sx={{ typography: "s2", fontWeight: 700 }}>{title}</Typography>
+        <Tooltip arrow title="The model doing the improving, not the model your agent runs on.">
+          <Box component="span" sx={{ display: "flex" }}>
+            <Iconify icon="solar:info-circle-linear" width={13} sx={{ color: "text.disabled" }} />
+          </Box>
+        </Tooltip>
+      </Stack>
+      <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 0.875 }}>{hint}</Typography>
+      <Stack direction="row" spacing={0.875} flexWrap="wrap" rowGap={0.875} useFlexGap>
+        {options.map((m) => {
+          const active = m.id === value;
+          return (
+            <Tooltip key={m.id} arrow title={m.note}>
+              <Chip
+                label={m.label}
+                onClick={() => onChange(m.id)}
+                sx={{
+                  height: 27, borderRadius: 0.75, border: "1px solid",
+                  borderColor: active ? ACCENT : "divider",
+                  bgcolor: (t) => (active ? alpha(ACCENT, t.palette.mode === "dark" ? 0.12 : 0.06) : "transparent"),
+                  color: active ? "text.primary" : "text.secondary",
+                  "& .MuiChip-label": { px: 1.125, typography: "s2", fontWeight: 600 },
+                  "&:hover": { bgcolor: (t) => alpha(ACCENT, t.palette.mode === "dark" ? 0.12 : 0.06) },
+                }}
+              />
+            </Tooltip>
+          );
+        })}
+      </Stack>
+    </Box>
+  );
+}
+ModelPicker.propTypes = { title: PropTypes.string, hint: PropTypes.string, value: PropTypes.string, onChange: PropTypes.func, same: PropTypes.string };
+
 export default function ImprovementSetup({ open, onClose, preset, tasks, included = [], onStart }) {
   const navigate = useNavigate();
   const { state, commit } = useSimStore();
@@ -53,6 +101,7 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
   const [name, setName] = useState("");
   const [optimizerId, setOptimizerId] = useState(DEFAULT_METHOD);
   const [model, setModel] = useState(OPTIMIZER_MODELS[0].id);
+  const [writer, setWriter] = useState(SAME_AS_PLANNER);
   const [goal, setGoal] = useState("pass-rate");
   const [budget, setBudget] = useState(null);
   /* The agent's other environments can add their must-pass sets (RSI PRD:
@@ -72,6 +121,7 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
     setName(improvementRunName(es, null));
     setOptimizerId(DEFAULT_METHOD);
     setModel(OPTIMIZER_MODELS[0].id);
+    setWriter(SAME_AS_PLANNER);
     setGoal("pass-rate");
     setBudget(null);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -87,11 +137,16 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
     ...outcomeMetricsOf(main).map((m) => ({ ...m, group: "outcome" })),
     ...((es?.evals || []).map((e) => {
       const id = typeof e === "string" ? e : e.id;
-      return { id, label: getEval(id)?.name || id, group: "eval" };
+      return { id, label: getEval(id)?.name || id, group: "eval", reliability: evalReliabilityOf(id) };
     })),
   ], [es, main]);
   const goalOf = goals.find((g) => g.id === goal) || goals[0];
-  const goalArg = goalOf ? { id: goalOf.id, label: goalOf.label, group: goalOf.group } : undefined;
+  const goalArg = goalOf ? {
+    id: goalOf.id, label: goalOf.label, group: goalOf.group,
+    /* Carried into the record, so the proof says what the goal was worth. */
+    ...(goalOf.reliability && { reliability: goalOf.reliability.measured ? { kappa: goalOf.reliability.kappa, tier: goalOf.reliability.tier, labelled: goalOf.reliability.labelled } : { tier: "unmeasured" } }),
+  } : undefined;
+  const shaky = goalOf?.reliability && goalOf.reliability.tier !== "reliable";
 
   /* From the version in production. A goal improvement measures today
      itself — its first step runs the environment on that version, recorded
@@ -159,7 +214,7 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
     const reread = rereadFor(agent, state);
     recordOutsideChange(commit, state, { agent, reread, activateEnvId: main.id });
     onStart({
-      name: name.trim(), model, optimizerId,
+      name: name.trim(), model, optimizerId, ...(writer !== SAME_AS_PLANNER && writer !== model && { writerModel: writer }),
       agent, env: main, envIds, goal: goalOf, budget: spend, limits, seed, reread, textSearch: inText,
       lineage: acrossLineage ? lineageVersions : undefined, base, today,
     });
@@ -193,7 +248,7 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
             <Iconify icon={advanced ? "eva:arrow-ios-downward-fill" : "eva:arrow-ios-forward-fill"} width={14} sx={{ color: "text.subtitle" }} />
             <Typography sx={{ typography: "s2", fontWeight: 700 }}>Advanced</Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {`${methodLabelOf(optimizerId)} search (${OPTIMIZERS.find((o) => o.id === optimizerId)?.label || optimizerId}) · changes written by ${OPTIMIZER_MODELS.find((m) => m.id === model)?.label || model}${optimizerId === DEFAULT_METHOD && model === OPTIMIZER_MODELS[0].id ? " — the defaults" : ""}`}
+              {`${methodLabelOf(optimizerId)} search (${OPTIMIZERS.find((o) => o.id === optimizerId)?.label || optimizerId}) · changes ${improverModelsText(model, writer)}${optimizerId === DEFAULT_METHOD && model === OPTIMIZER_MODELS[0].id && writer === SAME_AS_PLANNER ? " — the defaults" : ""}`}
             </Typography>
           </Stack>
           {advanced && (
@@ -229,37 +284,17 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
                 </Stack>
               </Box>
 
-              <Box>
-                <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.875 }}>
-                  <Typography sx={{ typography: "s2", fontWeight: 700 }}>Model</Typography>
-                  <Tooltip arrow title="The model doing the improving — reading failures and writing the changes each run tries. Not the model your agent runs on.">
-                    <Box component="span" sx={{ display: "flex" }}>
-                      <Iconify icon="solar:info-circle-linear" width={13} sx={{ color: "text.disabled" }} />
-                    </Box>
-                  </Tooltip>
-                </Stack>
-                <Stack direction="row" spacing={0.875} flexWrap="wrap" rowGap={0.875} useFlexGap>
-                  {OPTIMIZER_MODELS.map((m) => {
-                    const active = m.id === model;
-                    return (
-                      <Tooltip key={m.id} arrow title={m.note}>
-                        <Chip
-                          label={m.label}
-                          onClick={() => setModel(m.id)}
-                          sx={{
-                            height: 27, borderRadius: 0.75, border: "1px solid",
-                            borderColor: active ? ACCENT : "divider",
-                            bgcolor: (t) => (active ? alpha(ACCENT, t.palette.mode === "dark" ? 0.12 : 0.06) : "transparent"),
-                            color: active ? "text.primary" : "text.secondary",
-                            "& .MuiChip-label": { px: 1.125, typography: "s2", fontWeight: 600 },
-                            "&:hover": { bgcolor: (t) => alpha(ACCENT, t.palette.mode === "dark" ? 0.12 : 0.06) },
-                          }}
-                        />
-                      </Tooltip>
-                    );
-                  })}
-                </Stack>
-              </Box>
+              <ModelPicker
+                title="Planner"
+                hint="Reads the failures and decides what to change. It decides the outcome — use the strongest model you can."
+                value={model} onChange={setModel}
+              />
+              <ModelPicker
+                title="Writer"
+                hint="Turns each plan into the exact edit — the prompt line, the tool description. A cheaper model is usually enough."
+                value={writer} onChange={setWriter}
+                same={OPTIMIZER_MODELS.find((m) => m.id === model)?.label}
+              />
             </Stack>
           )}
         </Box>
@@ -276,7 +311,16 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
                     if (!list.length) return [];
                     return [
                       ...(title ? [<ListSubheader key={group} sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", lineHeight: "28px" }}>{title}</ListSubheader>] : []),
-                      ...list.map((g) => <MenuItem key={g.id} value={g.id} sx={{ typography: "s2" }}>{goalText(g)}</MenuItem>),
+                      ...list.map((g) => (
+                        <MenuItem key={g.id} value={g.id} sx={{ typography: "s2", gap: 2 }}>
+                          <Box component="span" sx={{ flex: 1, minWidth: 0 }}>{goalText(g)}</Box>
+                          {g.reliability && (
+                            <Box component="span" sx={{ typography: "s3", fontVariantNumeric: "tabular-nums", color: g.reliability.tier === "unreliable" ? WARN : "text.subtitle", flexShrink: 0 }}>
+                              {g.reliability.measured ? `κ ${g.reliability.kappa.toFixed(2)} · ${g.reliability.label}` : g.reliability.label}
+                            </Box>
+                          )}
+                        </MenuItem>
+                      )),
                     ];
                   })}
                 </Select>
@@ -288,6 +332,15 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
                 </Select>
               </Box>
             </Stack>
+            {/* An evaluation as the goal is only as good as its agreement with people. */}
+            {shaky && (
+              <Stack direction="row" spacing={0.75} alignItems="flex-start" sx={{ mt: 0.75 }}>
+                <Iconify icon="solar:danger-triangle-linear" width={14} sx={{ color: goalOf.reliability.tier === "unreliable" ? WARN : "text.subtitle", flexShrink: 0, mt: "2px" }} />
+                <Typography sx={{ typography: "s3", color: goalOf.reliability.tier === "unreliable" ? "text.primary" : "text.secondary" }}>
+                  {`${goalOf.label}: ${evalReliabilityLine(goalOf.reliability)}`}
+                </Typography>
+              </Stack>
+            )}
             <Typography sx={{ typography: "s3", color: nothing || overBudget ? "text.primary" : "text.subtitle", mt: 0.75 }}>
               {nothing
                 ? `Nothing to improve — every scenario already meets ${goalWords(goalOf)}. Pick another goal.`

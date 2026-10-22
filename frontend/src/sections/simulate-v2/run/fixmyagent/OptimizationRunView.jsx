@@ -7,7 +7,7 @@ import { clickable, focusRing } from "../../components/clickable";
 import { RunTraceLog } from "../../components/RunTrace";
 import ImprovementProgress from "./ImprovementProgress";
 import { searchTrace, blockingVerdict, KIND_SURFACE, rejectedFor, compatFailed, staticFailed, diagnosisSummaryOf, paretoPool, goalWords, triedLabelOf } from "../../_mock/optimizer";
-import { heldSplitText, staleSince, optimizationVerdict, OPTIMIZER_MODELS, OPT_STATUS, DEFAULT_LIMITS, improvementOutcome, improvementTotalSpend, issueLine, limitRows, searchSpend, judgeFor, ladderOf, improvementPhaseOf, TRACE_STEP_MS, statusOf, settlePending, reproduceStepsOf, reproduceMsOf } from "../../_mock/optimizationRuns";
+import { heldSplitText, improverModelsText, staleSince, optimizationVerdict, OPTIMIZER_MODELS, OPT_STATUS, DEFAULT_LIMITS, improvementOutcome, improvementTotalSpend, issueLine, limitRows, searchSpend, judgeFor, ladderOf, improvementPhaseOf, TRACE_STEP_MS, statusOf, settlePending, reproduceStepsOf, reproduceMsOf } from "../../_mock/optimizationRuns";
 import { proofKindOf, fixDepthOf } from "../../_mock/rsiModel";
 import { membersChanged, proposalMembers, uncheckedChannelNotes } from "../../_mock/improvementPolicy";
 import { improvementScenariosNotIn, addImprovementScenariosPatch } from "../../_mock/improvementScenarios";
@@ -31,7 +31,7 @@ import ScenarioOutcomes from "./ScenarioOutcomes";
 import OmegaHandoff from "../OmegaHandoff";
 import TaskLinks from "./TaskLinks";
 import CopyBriefButton from "../../components/CopyBriefButton";
-import { codingAgentBrief } from "../../_mock/codingAgentBrief";
+import { briefBreakdownOf, codingAgentBrief } from "../../_mock/codingAgentBrief";
 import { proofMarkdown } from "./proofBlock";
 import ImproverAttempts from "./ImproverAttempts";
 import TradeoffView from "./TradeoffView";
@@ -215,13 +215,16 @@ export default function OptimizationRunView({
         : record.trigger?.goal ? `Raise ${record.trigger.goal.label || "the pass rate"}` : name || record.name,
       /* The cause, not the verdict — what the search found is its own line. */
       rootCause: [
-        record.snapshot?.rootCause || diag?.cause || (record.diagnosis || [])[0]?.headline || record.trigger?.issueRoot?.subGoal || null,
+        record.snapshot?.rootCause || (diag?.code ? null : diag?.cause) || (record.diagnosis || [])[0]?.headline || record.trigger?.issueRoot?.subGoal || null,
         outcome.headline ? `What the search found: ${outcome.headline}` : null,
       ].filter(Boolean).join("\n\n") || null,
       suggestedFix: (outcome.suggestion || proposals).slice(0, 4),
       /* Production-derived: scrubbed of personal data inside the brief. */
       evidence: briefEvidenceOf({ record, result, winner, tasks }),
       failingScenarios: stillFailing,
+      /* Where it goes wrong and what each target scenario did — never the held-back set. */
+      diagnosis: diag?.code || null,
+      breakdown: briefBreakdownOf(record),
       limits: record.limits,
       model: agentModel,
       proof: proofDisplay(proof),
@@ -1296,7 +1299,8 @@ function ImprovementSteps({ record, fromRun, running, phase, diag, outcome, onOp
     ? { label: (r.overridden && !r.reproduced) || reproducing ? "Reproduce" : `Reproduced on ${r.reproduced || 0} of ${r.total} scenarios`, sub: reproducing ? null : reproduceSub }
     : { label: "Reproduce", sub: [fromRun ? `from Run ${fromRun.ordinal || ""}`.trim() : null, reproduceSub].filter(Boolean).join(" · ") || null };
   const searchSub = [
-    diag?.surface ? `started from the smallest change that fits: ${diag.surface.label}` : null,
+    diag?.code ? `started from ${diag.code.edited ? "your edited diagnosis" : "the diagnosis"}` : null,
+    diag?.surface ? `${diag?.code ? "" : "started from "}the smallest change that fits: ${diag.surface.label}` : null,
     record.stoppedAtBudget ? `${record.stoppedAtBudget.trials} of ${record.stoppedAtBudget.of} runs` : null,
   ].filter(Boolean).join(" · ") || null;
   const suggestion = ending === "suggestion" || (running && record.fixDepth === "suggestion");
@@ -1547,7 +1551,7 @@ function SearchDetails({ record, result, model }) {
       {open && (
         <Box sx={{ mt: 0.5 }}>
           <Typography sx={{ typography: "s3", color: "text.subtitle", px: 0.5 }}>
-            {`${methodLabelOf(result.optimizer?.id)} search (${result.optimizer?.label}) · changes written by ${model?.label || record.model}, judged by ${judgeFor(record.model)} — a different model family, so no model grades its own work · ${result.trials.length}${result.planned && result.planned !== result.trials.length ? ` of ${result.planned}` : ""} runs · ${result.trainMeasured} target / ${result.heldMeasured} held-back${result.mustPassMeasured != null ? ` / ${result.mustPassMeasured} must-pass` : ""} scenarios${result.goal ? ` · targets: scenarios short of ${goalWords(result.goal)}` : ""}`}
+            {`${methodLabelOf(result.optimizer?.id)} search (${result.optimizer?.label}) · changes ${record.writerModel ? improverModelsText(record.model, record.writerModel) : `written by ${model?.label || record.model}`}, judged by ${judgeFor(record.model)} — a different model family, so no model grades its own work · ${result.trials.length}${result.planned && result.planned !== result.trials.length ? ` of ${result.planned}` : ""} runs · ${result.trainMeasured} target / ${result.heldMeasured} held-back${result.mustPassMeasured != null ? ` / ${result.mustPassMeasured} must-pass` : ""} scenarios${result.goal ? ` · targets: scenarios short of ${goalWords(result.goal)}` : ""}`}
           </Typography>
           {/* GEPA keeps the best candidate for each scenario, not one overall best. */}
           {result.optimizer?.id === "gepa" && <ParetoPool result={result} />}

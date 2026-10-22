@@ -35,6 +35,9 @@ const CELL = {
   broke: { bg: "#DC2626", op: 0.8, label: "broke" },
   "still-failing": { bg: "#94A3B8", op: 0.25, label: "still failing" },
   same: { bg: null, op: 0, label: "unchanged" },
+  flaky: { bg: "#94A3B8", op: 0.5, label: "flaky — passed some repeats" },
+  inconclusive: { bg: "#94A3B8", op: 0.12, label: "inconclusive — couldn't be graded" },
+  "off-script": { bg: null, op: 0, dashed: true, label: "caller went off script — not counted" },
 };
 
 const NAME_W = 330;
@@ -54,6 +57,8 @@ export default function TrialHeatmap({ trials = [], scenarios = [], winner }) {
     const list = scenarios.map((s) => {
       const fixed = trials.filter((t) => t.perScenario?.[s.id] === "fixed").length;
       const broke = trials.filter((t) => t.perScenario?.[s.id] === "broke").length;
+      /* A run where the caller went off script says nothing about this scenario. */
+      const counted = trials.filter((t) => t.perScenario?.[s.id] !== "off-script").length;
       /*
         Only a scenario that was failing can be "never fixed". A passing one
         showed 0/12 in amber, which read as a problem the search had failed at
@@ -61,7 +66,7 @@ export default function TrialHeatmap({ trials = [], scenarios = [], winner }) {
         can report is whether a candidate broke it.
       */
       const wasFailing = trials.some((t) => ["fixed", "still-failing"].includes(t.perScenario?.[s.id]));
-      return { ...s, fixed, broke, wasFailing };
+      return { ...s, fixed, broke, wasFailing, counted };
     });
     return list.sort(
       (a, b) => (b.critical ? 1 : 0) - (a.critical ? 1 : 0)
@@ -98,12 +103,12 @@ export default function TrialHeatmap({ trials = [], scenarios = [], winner }) {
           fix — a different kind of change, not a better prompt.
         </Typography>
         <Stack direction="row" spacing={1.25} flexWrap="wrap" rowGap={0.5} sx={{ flexShrink: 0 }}>
-          {["fixed", "broke", "still-failing", "same"].map((k) => (
+          {["fixed", "broke", "still-failing", "same", ...(trials.some((t) => Object.values(t.perScenario || {}).includes("off-script")) ? ["off-script"] : [])].map((k) => (
             <Stack key={k} direction="row" alignItems="center" spacing={0.5}>
               <Box
                 sx={{
                   width: 10, height: 10, borderRadius: "3px", flexShrink: 0,
-                  border: CELL[k].bg ? "none" : "1px solid",
+                  border: CELL[k].bg ? "none" : `1px ${CELL[k].dashed ? "dashed" : "solid"}`,
                   borderColor: "divider",
                   bgcolor: CELL[k].bg ? alpha(CELL[k].bg, CELL[k].op) : "transparent",
                 }}
@@ -193,7 +198,7 @@ export default function TrialHeatmap({ trials = [], scenarios = [], winner }) {
 
                   {trials.map((t) => {
                     const state = t.perScenario?.[s.id] || "same";
-                    const tone = CELL[state];
+                    const tone = CELL[state] || CELL.same;
                     const win = winner && t.n === winner.n;
                     return (
                       <Box key={t.n} sx={{ width: COL, flexShrink: 0, px: "3px" }}>
@@ -201,8 +206,8 @@ export default function TrialHeatmap({ trials = [], scenarios = [], winner }) {
                           <Box
                             sx={{
                               height: 24, borderRadius: "4px", cursor: "default",
-                              border: tone.bg ? "none" : "1px solid",
-                              borderColor: "divider",
+                              border: tone.bg ? "none" : `1px ${tone.dashed ? "dashed" : "solid"}`,
+                              borderColor: tone.dashed ? "text.disabled" : "divider",
                               bgcolor: tone.bg ? alpha(tone.bg, tone.op) : "transparent",
                               outline: win ? "1.5px solid" : "none",
                               outlineColor: alpha("#16A34A", 0.55),
@@ -224,7 +229,7 @@ export default function TrialHeatmap({ trials = [], scenarios = [], winner }) {
                         <Box sx={{ flex: 1, height: 4, borderRadius: 2, bgcolor: "divider", overflow: "hidden" }}>
                           <Box
                             sx={{
-                              width: `${(s.fixed / trials.length) * 100}%`, height: "100%",
+                              width: `${(s.fixed / Math.max(1, s.counted)) * 100}%`, height: "100%",
                               bgcolor: stubborn ? "transparent" : "#16A34A",
                             }}
                           />
@@ -236,7 +241,7 @@ export default function TrialHeatmap({ trials = [], scenarios = [], winner }) {
                             fontWeight: stubborn ? 700 : 500,
                           }}
                         >
-                          {s.fixed}/{trials.length}
+                          {s.fixed}/{s.counted}
                         </Typography>
                       </>
                     ) : (

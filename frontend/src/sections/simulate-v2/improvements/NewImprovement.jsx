@@ -35,7 +35,7 @@ export default function NewImprovement({ open, onClose }) {
   const main = picked ? mainEnvOf(picked, state) : null;
   const env = main?.env || null;
 
-  const start = ({ name, model, envIds, goal, budget, limits, seed, lineage, reread, textSearch, optimizerId, base, today }) => {
+  const start = ({ name, model, writerModel, envIds, goal, budget, limits, seed, lineage, reread, textSearch, optimizerId, base, today }) => {
     const es = state.byEnv[env.id];
     /* Measuring today is a real run of the environment, recorded first. */
     if (today) commit({ type: "recordRun", envId: env.id, run: today });
@@ -45,9 +45,9 @@ export default function NewImprovement({ open, onClose }) {
       env, es, tasks: from.tasks, seed, state, reread, textSearch, optimizerId,
       fromRunId: from.id,
       baseAgentVersion: from.agentVersion || null,
-      trigger: { kind: "goal", goal: goal ? { id: goal.id, label: goal.label, ...(goal.group && { group: goal.group }) } : undefined },
+      trigger: { kind: "goal", goal: goal ? { id: goal.id, label: goal.label, ...(goal.group && { group: goal.group }), ...(goal.reliability && { reliability: goal.reliability }) } : undefined },
       limits, budget, regressionEnvIds: envIds, lineage,
-      extra: { ...(name && { name }), ...(model && { model }) },
+      extra: { ...(name && { name }), ...(model && { model }), ...(writerModel && { writerModel }) },
     });
     commit({ type: "patchEnvState", envId: env.id, patch: { optimizations: [...(es.optimizations || []), record] } });
     close();

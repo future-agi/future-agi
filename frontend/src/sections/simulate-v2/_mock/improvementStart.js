@@ -139,7 +139,7 @@ const limitGateFor = (limits, env, es) => limitGate({ limits, costKnown: costMea
 
 export const planSearch = ({
   env, es, agentVersion, tasks, limits, seed, maxTrials, lineage, issue, textSearch, compatCheck = COMPAT_CHECK,
-  engine = compatCheck ? RSI_ENGINE : 0, goal, optimizerId, state, regressionEnvIds,
+  engine = compatCheck ? RSI_ENGINE : 0, goal, optimizerId, state, regressionEnvIds, diagnosis = null,
 }) => {
   const eng = engine ? engineConfig({ env, es, limits, agentVersion, state, regressionEnvIds, tasks, seed }) : null;
   const list = eng?.voiceCap ? voiceSlice(tasks || [], seed, VOICE_DEFAULTS.scenarios) : tasks || [];
@@ -154,6 +154,7 @@ export const planSearch = ({
   config: {
     ...(eng || {}),
     ...(eng && goal && { goal }),
+    ...(eng && diagnosis?.mechanism && { frame: diagnosis.mechanism }),
     allowed: limits.allowed,
     protected: limits.protected,
     /* Model switches are candidates only when the agent names approved models. */
@@ -260,7 +261,9 @@ export const buildImprovement = ({
      ceiling the agent didn't set. */
   /* A goal improvement (or a run's failures) aims at its goal; a fix at its issue. */
   const goal = trigger?.kind === "error-feed" || trigger?.source === "run-insights" ? null : trigger?.goal || { id: "pass-rate", label: "Pass rate" };
-  const engineArgs = engine ? { goal, optimizerId, state, regressionEnvIds } : { optimizerId };
+  /* A fix's diagnosis frames where the search starts (new improvements). */
+  const diagnosis = extra?.snapshot?.diagnosis || null;
+  const engineArgs = engine ? { goal, optimizerId, state, regressionEnvIds, diagnosis } : { optimizerId };
   /* Re-read the agent first, so the baseline always matches production. A
      caller with the connected agent re-reads it and saves any version found;
      otherwise it's re-read here when there's a workspace to read it against. */

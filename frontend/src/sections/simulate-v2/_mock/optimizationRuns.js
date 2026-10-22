@@ -47,6 +47,15 @@ export const OPTIMIZER_MODELS = [
   { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", note: "Cheapest; fine for many small variations" },
 ];
 
+/* The planner reads the failures and decides what to change — it decides
+   the outcome. The writer turns each plan into the exact edit, and can be a
+   cheaper model. Same as the planner unless someone picks otherwise. */
+export const SAME_AS_PLANNER = "same";
+export const modelLabelOf = (id) => OPTIMIZER_MODELS.find((m) => m.id === id)?.label || id;
+export const improverModelsText = (planner, writer) => (!writer || writer === SAME_AS_PLANNER || writer === planner
+  ? `planned and written by ${modelLabelOf(planner)}`
+  : `planned by ${modelLabelOf(planner)}, written by ${modelLabelOf(writer)}`);
+
 export const optimizations = (envState) => envState?.optimizations || [];
 
 /** Newest first, which is the only order a runs list is ever read in. */
@@ -263,7 +272,7 @@ export const limitRows = (limits = DEFAULT_LIMITS, model, { mustPass = null } = 
   { id: "latency", label: "Latency", value: ceilingLabel(limits.latencyCeiling) },
   { id: "changes", label: "Allowed changes", value: `${allowedLabel(limits.allowed)} only` },
   ...((limits.protected || []).length ? [{ id: "protected", label: "Never edited", value: limits.protected.map(protectedLabel).join(", ") }] : []),
-  ...(mustPass != null ? [{ id: "mustPass", label: "Must-pass", value: mustPass ? `${mustPass} ${mustPass === 1 ? "scenario" : "scenarios"} — none may fail` : "none yet" }] : []),
+  ...(mustPass != null ? [{ id: "mustPass", label: "Must-pass", value: mustPass ? `${mustPass} ${mustPass === 1 ? "scenario" : "scenarios"} — a failure counts only if it repeats on a re-run; flaky ones don't count` : "none yet" }] : []),
   ...(limits.budget ? [{ id: "budget", label: "Run budget", value: creditsLabel(limits.budget.dollars) }] : []),
   ...(limits.budget?.minutes ? [{ id: "time", label: "Time cap", value: `${limits.budget.minutes} min` }] : []),
 ];
@@ -589,9 +598,10 @@ const outcomeOf = (rec, { model } = {}) => {
   const shipped = chosen || winner;
   const chosenFinalist = chosen ? (r.finalists || []).find((f) => f.n === chosen.n) || null : null;
   const verified = chosenVerified(record);
-  const held = { fixed: 0, broke: 0, stillFailing: 0, unchanged: 0, flaky: 0, inconclusive: 0 };
+  const held = { fixed: 0, broke: 0, stillFailing: 0, unchanged: 0, flaky: 0, inconclusive: 0, offScript: 0 };
   Object.values(r.heldPerScenario || {}).forEach((v) => {
-    if (v === "fixed") held.fixed += 1;
+    if (v === "off-script") held.offScript += 1;
+    else if (v === "fixed") held.fixed += 1;
     else if (v === "broke") held.broke += 1;
     else if (v === "still-failing") held.stillFailing += 1;
     else if (v === "flaky") held.flaky += 1;
@@ -660,7 +670,7 @@ const outcomeOf = (rec, { model } = {}) => {
         ? "not run yet — it runs when you verify this pick"
         : blockersBroken
         ? `${plural(blockersBroken, "failed", "failed")} again`
-        : `none of ${r.mustPass?.total ?? "the"} must-pass${(r.flakyToday || []).length ? ` · ${(r.flakyToday || []).length} flaky, not counted` : ""}`,
+        : `none of ${r.mustPass?.total ?? "the"} must-pass${(r.flakyToday || []).length ? ` · ${(r.flakyToday || []).length} flaky, not counted` : ""}${markedNotCountedText(r) ? ` · ${markedNotCountedText(r)}` : ""}`,
       pass: mustPassUnknown ? null : !blockersBroken,
     },
     /* A candidate never changes the rules it's graded against — a rule
@@ -811,13 +821,19 @@ export const proofStrength = (r, issue, held) => {
   if (r.split?.thin) return { key: "few", label: "Too few to tell", note: "nothing could be held back, so this rests on scenarios the search saw" };
   /* What it had to fix where it never looked: the issue's held-back scenarios
      and the environment's that fail the same way — else every failing one. */
-  const envT = (r.heldTasks || []).filter((t) => t.envHeld && t.before !== "passed");
+  const envT = (r.heldTasks || []).filter((t) => t.envHeld && t.before !== "passed" && r.heldPerScenario?.[t.id] !== "off-script");
   const envFixed = envT.filter((t) => r.heldPerScenario?.[t.id] === "fixed").length;
   const n = issue ? issue.held + envT.length : held?.failingBefore || 0;
   const fixed = issue ? issue.heldFixed + envFixed : held?.fixed || 0;
   const parts = issue && envT.length ? ` (${issue.heldFixed} of ${issue.held} from the issue, ${envFixed} of ${envT.length} elsewhere that fail the same way)` : "";
   const of = `fixed ${fixed} of ${n} failing ${n === 1 ? "scenario" : "scenarios"} it never saw${parts}`;
   if (n < TELL_MIN) return { key: "few", label: "Too few to tell", note: `${of} — it takes ${TELL_MIN} or more to tell` };
+  /* Scored on an evaluation that agrees with people at chance: whatever it
+     moved, it can't prove the agent got better. */
+  const goalRel = r.goal?.reliability;
+  if (goalRel?.tier === "unreliable") {
+    return { key: "none", label: "Not proven", note: `${of}, but scored on ${r.goal.label}, which agrees with your annotators about as often as chance (κ ${goalRel.kappa.toFixed(2)})` };
+  }
   const lift = r.heldScore - r.heldBase;
   const noise = r.noise || 0;
   const share = fixed / n;
@@ -832,6 +848,16 @@ export const proofStrength = (r, issue, held) => {
     return { key: "likely", label: "Likely", note: `${of}${rerun} — ${short} would prove it` };
   }
   return { key: "none", label: "Not proven", note: `${of}${rerun}` };
+};
+
+/* Marked must-pass but not passing every repeat today — named, never gating. */
+export const markedNotCountedText = (r) => {
+  const list = r?.markedNotCounted || [];
+  if (!list.length) return null;
+  const flaky = list.every((x) => x.flaky);
+  return list.length === 1
+    ? `“${list[0].title.replace(/\.$/, "")}” is marked must-pass but ${flaky ? "flaky" : "failing"} today, so it isn't counted`
+    : `${list.length} marked must-pass but ${flaky ? "flaky" : "not passing every repeat"} today, not counted`;
 };
 
 /* What was held back, said once for the proof, the receipt and the hints. */
@@ -856,8 +882,9 @@ export const issueOutcome = (record) => {
   if (!id || !r) return null;
   /* Inconclusive scenarios aren't targets (new improvements). */
   const target = (t) => t.fromIssue === id && t.before !== "passed" && !(record.frozen?.inconclusiveOut && t.before === "flaky");
-  const trainT = (r.trainMeasuredTasks || []).filter(target);
-  const heldT = (r.heldTasks || []).filter(target);
+  /* A conversation where the caller went off script says nothing either way. */
+  const trainT = (r.trainMeasuredTasks || []).filter(target).filter((t) => r.winner?.perScenario?.[t.id] !== "off-script");
+  const heldT = (r.heldTasks || []).filter(target).filter((t) => r.heldPerScenario?.[t.id] !== "off-script");
   const trainFixed = trainT.filter((t) => r.winner?.perScenario?.[t.id] === "fixed").length;
   const heldFixed = heldT.filter((t) => r.heldPerScenario?.[t.id] === "fixed").length;
   return {

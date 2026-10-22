@@ -17,6 +17,8 @@ export const trialRowsFor = (env, envState, record, candidates = []) => {
       n: t.n,
       name: `Run ${t.n}`,
       tried: triedLabelOf(t, r.trials),
+      /* A retry that learned from the last run: what it read and what it adds. */
+      feedback: t.feedback || null,
       improved: !!t.improved,
       score: Math.round(t.score),
       fixed: t.fixed || 0,

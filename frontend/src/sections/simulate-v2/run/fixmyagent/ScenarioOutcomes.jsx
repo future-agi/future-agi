@@ -4,8 +4,10 @@ import { Box, Button, Chip, Stack, Typography } from "@mui/material";
 import TrialHeatmap from "./TrialHeatmap";
 import { scenarioTitle } from "../../_mock/scenarios";
 
-const OUTCOME = { fixed: "Fixed", broke: "Broke", "still-failing": "Still failing", flaky: "Flaky", inconclusive: "Inconclusive", same: "Unchanged" };
-const OUTCOME_ORDER = ["fixed", "broke", "still-failing", "flaky", "inconclusive", "same"];
+const OUTCOME = { fixed: "Fixed", broke: "Broke", "still-failing": "Still failing", flaky: "Flaky", inconclusive: "Inconclusive", "off-script": "Not counted", same: "Unchanged" };
+const OUTCOME_ORDER = ["fixed", "broke", "still-failing", "flaky", "inconclusive", "off-script", "same"];
+/* The chip says why, since "not counted" alone doesn't. */
+const CHIP = { "off-script": "Caller went off script" };
 
 /*
   What the winner did to each scenario — fixed, broke, still failing,
@@ -26,10 +28,10 @@ export default function ScenarioOutcomes({ result, winner }) {
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={0.75} sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }} flexWrap="wrap" rowGap={0.75}>
-        {OUTCOME_ORDER.map((k) => (
+        {OUTCOME_ORDER.filter((k) => k !== "off-script" || counts[k]).map((k) => (
           <Chip
             key={k} size="small" clickable onClick={() => setOnly(only === k ? null : k)}
-            label={`${OUTCOME[k]} ${counts[k]}`}
+            label={`${CHIP[k] || OUTCOME[k]} ${counts[k]}`}
             sx={{ height: 24, borderRadius: 0.75, border: "1px solid", color: "text.primary", borderColor: only === k ? "text.primary" : "divider", bgcolor: only === k ? "action.selected" : "transparent", "& .MuiChip-label": { px: 1, typography: "s3", fontWeight: 600 } }}
           />
         ))}
@@ -50,6 +52,7 @@ export default function ScenarioOutcomes({ result, winner }) {
                   {`${x.fromIssue}${x.before === "flaky" ? " · inconclusive" : x.before === "passed" ? " · didn't reproduce" : ""}`}
                 </Typography>
               )}
+              {x.outcome === "off-script" && <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>caller went off script</Typography>}
               {x.fresh && <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>fresh variation</Typography>}
               {x.critical && <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>must-pass</Typography>}
               <Typography sx={{ typography: "s3", color: "text.subtitle", width: 70, flexShrink: 0 }}>{x.split}</Typography>

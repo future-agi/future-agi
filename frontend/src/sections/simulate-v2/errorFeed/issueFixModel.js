@@ -389,6 +389,9 @@ const ISSUE_MECHANISM = {
   "ISS-4593": { unsupportedClaim: true },
 };
 
+/** How the issue's traces fail — a skipped tool, a claim no tool backs, or both. */
+export const issueMechanismOf = (id) => ISSUE_MECHANISM[id] || { unsupportedClaim: true };
+
 /**
  * The issue's scenarios as the search sees them, with what reproducing
  * found: reproduced ones fail and are targets; inconclusive ones (failed
@@ -438,7 +441,7 @@ const summaryOf = measuredSummaryOf;
  */
 export const issueFixRecord = ({
   issue, env, es, drafts, limits, budget, regressionEnvIds, seed, state, reread, textSearch, targetMember, compatCheck = COMPAT_CHECK,
-  rootCause = null, lineage, today = null,
+  rootCause = null, diagnosis = null, lineage, today = null,
 }) => {
   const issueId = issue.cluster_id;
   /* A production issue is fixed on the production version: the search
@@ -483,6 +486,9 @@ export const issueFixRecord = ({
         rootCause: rootCause?.headline || issue.why_shown || null,
         suggestedFix: rootCause?.fix || null,
         rootCauseFrom: rootCause?.source || (issue.why_shown ? "feed" : null),
+        /* Where in the agent it goes wrong, as the Fix page left it — what
+           the search starts from, not the feed's symptom. */
+        ...(diagnosis && { diagnosis }),
         fixLayer: issue.fix_layer || null,
         /* Reproduced ones only — an inconclusive one is checked, never a target. */
         mustStartPassing: drafts.filter((d) => repro.perScenario?.[d.id]?.state === "reproduced").map((d) => d.id),

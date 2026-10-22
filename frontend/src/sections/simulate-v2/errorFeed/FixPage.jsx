@@ -16,6 +16,7 @@ import { limitsOf } from "../agents/agentLimits";
 import { projectLinkOf } from "../_mock/projectLinks";
 import { targetableMembers, membersOf, isProtectedMember, textSearchDefault } from "../_mock/improvementPolicy";
 import ConnectAgentDialog from "./ConnectAgentDialog";
+import { codeDiagnosisOf } from "./codeDiagnosis";
 import { clickable, focusRing } from "../components/clickable";
 import {
   FIX_IN_FLIGHT, envsForAgent, fixEstimate, fixPreview, issueFixNav, issueProjectLinkOf, issueScenarioDrafts, productionVersionOf, useIssueFix,
@@ -63,6 +64,7 @@ const PREP_STEPS = [
   { id: "issue", label: "Reading the issue", ms: 700 },
   { id: "agent", label: "Finding the agent and its version in production", ms: 600 },
   { id: "env", label: "Finding the agent's environment", ms: 600 },
+  { id: "diagnosis", label: "Diagnosing it in the agent's prompt and tools", ms: 900 },
   { id: "scenarios", label: "Writing scenarios from the traces", ms: 1100 },
   { id: "limits", label: "Applying the agent's limits", ms: 500 },
 ];
@@ -196,11 +198,17 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
     const at = list.findIndex((v) => v.label === production.label);
     return (at > 0 ? list.slice(0, at) : []).filter((v) => (v.changes || []).length);
   }, [mainState, production.label]);
-  const model = useMemo(() => {
-    if (!agent || !main) return null;
-    const def = agentDefinitionOf({ agent, env: main, envState: mainState });
-    return def.model?.visible ? def.model.name : null;
-  }, [agent, main, mainState]);
+  const def = useMemo(() => (agent && main ? agentDefinitionOf({ agent, env: main, envState: mainState }) : null), [agent, main, mainState]);
+  const model = def?.model?.visible ? def.model.name : null;
+  /* The diagnosis the search starts from — drafted, then whatever the person edits. */
+  const drafted = useMemo(
+    () => codeDiagnosisOf({ issue, env: main, promptText: def?.instructions?.visible ? def.instructions.text : null, rootCause }),
+    [issue, main, def, rootCause],
+  );
+  const [diagEdits, setDiagEdits] = useState({});
+  const edited = Object.keys(diagEdits).some((k) => diagEdits[k] !== drafted?.[k]);
+  const diagnosis = drafted ? { ...drafted, ...diagEdits, edited } : null;
+  const lead = diagnosis ? 1 : 0;
   const constraints = limitRows(limits, model);
 
   const go = () => {
@@ -208,6 +216,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
       env: main, drafts: chosen, regressionEnvIds: [main.id, ...alsoIn], budget: spend, minutes: spendMinutes,
       lineage: acrossLineage ? lineageVersions : undefined,
       textSearch: inText, targetMember: target || undefined, rootCause,
+      diagnosis: diagnosis ? { where: diagnosis.where, cause: diagnosis.cause.trim(), change: diagnosis.change.trim(), mechanism: diagnosis.mechanism, edited, symptom: diagnosis.symptom } : null,
     });
     navigate(...issueFixNav(at, issue?.cluster_id));
   };
@@ -354,6 +363,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                   env: main
                     ? `${main.name} · ${ready ? "already built — the fix measures it on today's version first" : "still building"}`
                     : "None yet — you'll build one before the fix starts",
+                  diagnosis: drafted ? `${drafted.where.map((w) => `${w.kind} · ${w.ref}`).join(", ")}` : "No prompt or tools to read — the search starts from the issue",
                   scenarios: `${drafts.length} situations · callers inferred · failing step marked`,
                   limits: [constraints.find((c) => c.id === "model")?.value, constraints.find((c) => c.id === "cost")?.value && `cost ${constraints.find((c) => c.id === "cost").value.toLowerCase()}`, `up to ${creditsLabel(spend)}`].filter(Boolean).join(" · "),
                 }[step.id];
@@ -399,19 +409,26 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
             <Box sx={{ display: "grid", gap: 3, alignItems: "start", gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1fr) 360px" } }}>
               {/* ── main column: the plan, in the order it happens ── */}
               <Stack spacing={2.5} sx={{ minWidth: 0 }}>
-                {rootCause && (
-                  <Section n={1} title="What we're fixing" meta={rootCause.source === "analysis" ? "From the Root cause tab" : "The feed's first read — Find root cause gives a fuller one"}>
-                    <Box sx={{ px: 2, py: 1.5 }}>
-                      <Typography sx={{ typography: "s1" }}>{rootCause.headline}</Typography>
-                      {rootCause.fix && (
-                        <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.75 }}>{`Suggested fix · ${rootCause.fix}`}</Typography>
-                      )}
-                    </Box>
+                {diagnosis && (
+                  <Section
+                    n={1} title="Diagnosis"
+                    meta={edited ? "Edited by you — the search starts from this" : "Drafted from the agent's prompt, its tools and the failing calls — edit it if it's wrong"}
+                    action={edited ? (
+                      <Button size="small" onClick={() => setDiagEdits({})} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", minWidth: 0, flexShrink: 0 }}>
+                        Reset
+                      </Button>
+                    ) : null}
+                  >
+                    <Diagnosis
+                      diagnosis={diagnosis} readOnly={!ready}
+                      onEdit={(k, v) => setDiagEdits((d) => ({ ...d, [k]: v }))}
+                      symptomFrom={rootCause?.source === "analysis" ? "Root cause tab" : "Error Feed"}
+                    />
                   </Section>
                 )}
 
                 <Section
-                  n={rootCause ? 2 : 1}
+                  n={lead + 1}
                   title="Scenarios from this issue"
                   meta={`${chosen.length} of ${drafts.length} · used by this fix only`}
                 >
@@ -444,7 +461,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                   </Typography>
                 </Section>
 
-                <Section n={rootCause ? 3 : 2} title="Where it's tested" meta="A change that breaks what passes today is rejected">
+                <Section n={lead + 2} title="Where it's tested" meta="A change that breaks what passes today is rejected">
                   {!main ? (
                     <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 2, py: 1.5 }}>
                       <Iconify icon="solar:box-minimalistic-linear" width={16} sx={{ color: "text.secondary", flexShrink: 0 }} />
@@ -488,7 +505,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                   })}
                 </Section>
 
-                <Section n={rootCause ? 4 : 3} title="How it searches">
+                <Section n={lead + 3} title="How it searches">
                   {members.length > 0 && (
                     <SettingRow
                       title="Target member"
@@ -535,7 +552,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                 </Section>
 
                 <Section
-                  n={rootCause ? 5 : 4}
+                  n={lead + 4}
                   title="What it may change"
                   meta="From the agent — a change that breaks any of these is rejected"
                   action={(
@@ -654,6 +671,63 @@ FixPage.propTypes = {
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
 /* A step of the plan — numbered, titled, its rows inside one frame. */
+/*
+  The diagnosis, as a spec sheet: where in the agent it goes wrong, why,
+  and what to change — the last two edited in place, like the scenario
+  titles below. The feed's read is kept as the symptom it is.
+*/
+function Diagnosis({ diagnosis, readOnly, onEdit, symptomFrom }) {
+  const field = (k) => (
+    <InputBase
+      fullWidth multiline value={diagnosis[k]} readOnly={readOnly}
+      onChange={(e) => onEdit(k, e.target.value)}
+      inputProps={{ "aria-label": k === "cause" ? "Why it fails" : "What to change" }}
+      sx={{
+        py: 0.25, px: 0.75, mx: -0.75, borderRadius: 0.75, border: "1px solid transparent",
+        "&:hover": { borderColor: readOnly ? "transparent" : "divider" },
+        "&.Mui-focused": { borderColor: "primary.main" },
+        "& .MuiInputBase-input": { typography: "s2", p: 0 },
+      }}
+    />
+  );
+  const rows = [
+    ["Where", (
+      <Stack key="where" spacing={0.75}>
+        {diagnosis.where.map((w) => (
+          <Box key={`${w.kind}:${w.ref}`} sx={{ minWidth: 0 }}>
+            <Typography sx={{ typography: "s2" }}>
+              <Box component="span" sx={{ color: "text.secondary" }}>{`${w.kind} · `}</Box>
+              <Box component="span" sx={{ fontWeight: 600, fontFamily: w.kind === "System prompt" ? "inherit" : "ui-monospace, Menlo, monospace", fontSize: w.kind === "System prompt" ? undefined : 12.5 }}>{w.ref}</Box>
+            </Typography>
+            {w.quote && (
+              <Typography sx={{ typography: "s3", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace", mt: 0.25 }}>{`“${w.quote}”`}</Typography>
+            )}
+          </Box>
+        ))}
+      </Stack>
+    )],
+    ["Why it fails", field("cause")],
+    ["What to change", field("change")],
+    diagnosis.symptom && ["Symptom", (
+      <Typography key="symptom" sx={{ typography: "s2", color: "text.secondary" }}>
+        {diagnosis.symptom}
+        <Box component="span" sx={{ color: "text.subtitle" }}>{` · what ${symptomFrom} saw — the search doesn't start from it`}</Box>
+      </Typography>
+    )],
+  ].filter(Boolean);
+  return (
+    <Box>
+      {rows.map(([k, v], i) => (
+        <Box key={k} sx={{ display: "grid", gridTemplateColumns: "120px minmax(0, 1fr)", columnGap: 2, px: 2, py: 1.125, borderTop: i ? "1px solid" : "none", borderColor: "divider" }}>
+          <Typography sx={{ typography: "s2", color: "text.subtitle", pt: k === "Why it fails" || k === "What to change" ? 0.25 : 0 }}>{k}</Typography>
+          <Box sx={{ minWidth: 0 }}>{v}</Box>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+Diagnosis.propTypes = { diagnosis: PropTypes.object.isRequired, readOnly: PropTypes.bool, onEdit: PropTypes.func.isRequired, symptomFrom: PropTypes.string };
+
 function Section({ n, title, meta, action, children }) {
   return (
     <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, overflow: "hidden" }}>

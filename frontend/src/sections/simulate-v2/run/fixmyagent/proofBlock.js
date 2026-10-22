@@ -4,7 +4,7 @@
   constraint checked — so a reviewer who never opened Future AGI can judge
   the change where they review it.
 */
-import { heldSplitText, REPEATS } from "../../_mock/optimizationRuns";
+import { heldSplitText, markedNotCountedText, REPEATS } from "../../_mock/optimizationRuns";
 import { TRUST_TIERS, proofKindOf } from "../../_mock/rsiModel";
 import { scenarioTitle } from "../../_mock/scenarios";
 
@@ -74,6 +74,10 @@ export const proofMarkdown = ({ record, outcome, name, agent, members, channelNo
     "",
     `Proof: ${proofLabelLine(proofOf(record, agent)) || "Run by Future AGI"}.`,
     ...(identity ? [`Measured on ${identity} — the environment version held fixed, only the agent changed.`] : []),
+    /* An evaluation as the goal is only as good as its agreement with people. */
+    ...(r.goal?.reliability ? [r.goal.reliability.tier === "unmeasured"
+      ? `Goal: ${r.goal.label}, not yet checked against annotations.`
+      : `Goal: ${r.goal.label} — agrees with annotators at κ ${r.goal.reliability.kappa.toFixed(2)} on ${r.goal.reliability.labelled} labelled conversations${r.goal.reliability.tier === "unreliable" ? ", about chance" : ""}.`] : []),
     ...(r.textSearch ? ["Searched in text: runs were text conversations; the finalists ran as real calls."] : []),
     ...(r.split?.kind === "issue"
       ? [r.split.thin
@@ -89,7 +93,7 @@ export const proofMarkdown = ({ record, outcome, name, agent, members, channelNo
     ...(r.calibration ? [`Run-to-run noise: ${record.baseAgentVersion || "the current version"} ran twice against itself — ${r.calibration.disagreed} of ${r.calibration.scenarios} scenarios disagreed, so a gain had to clear ±${r.noise} pts and a flip on those had to repeat.`] : []),
     ...((r.finalists || []).find((f) => f.winner)?.fullRegression ? [`Code change → ${(r.finalists || []).find((f) => f.winner).repeats} repeats per finalist and the full regression set${winner?.repoTests ? `, and ${winner.repoTests.command} passed` : ""}.`] : []),
     ...((r.finalists || []).find((f) => f.winner)?.envs?.length ? [`Also ran once in ${(r.finalists || []).find((f) => f.winner).envs.map((e) => `${e.name} (${e.held ? `${e.mustPass} must-pass held` : `“${e.broke.title}” failed twice`})`).join(", ")}.`] : []),
-    ...(r.mustPass ? [`Must-pass: ${r.mustPass.total} scenarios — ${[r.mustPass.marked ? `${r.mustPass.marked} marked` : null, r.mustPass.remembered ? `${r.mustPass.remembered} regression memory` : null, `${r.mustPass.passing} passing every repeat today`].filter(Boolean).join(", ")}. A failure counts only when it repeats on a re-run.${(r.flakyToday || []).length ? ` ${r.flakyToday.length} flaky today, shown but not counted.` : ""}`] : []),
+    ...(r.mustPass ? [`Must-pass: ${r.mustPass.total} scenarios — ${[r.mustPass.marked ? `${r.mustPass.marked} marked` : null, r.mustPass.remembered ? `${r.mustPass.remembered} regression memory` : null, `${r.mustPass.passing} passing every repeat today`].filter(Boolean).join(", ")}. A failure counts only when it repeats on a re-run.${(r.flakyToday || []).length ? ` ${r.flakyToday.length} flaky today, shown but not counted.` : ""}${markedNotCountedText(r) ? ` ${markedNotCountedText(r).charAt(0).toUpperCase()}${markedNotCountedText(r).slice(1)}.` : ""}`] : []),
     ...(members?.length ? [`Changes: ${members.join(", ")}.`] : []),
     ...channelNotes.map((n) => `${n}.`),
     "",

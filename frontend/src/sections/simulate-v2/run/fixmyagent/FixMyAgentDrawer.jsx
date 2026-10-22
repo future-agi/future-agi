@@ -131,17 +131,17 @@ export default function FixMyAgentDrawer({
     page finds it.
   */
   const [setupOpen, setSetupOpen] = useState(false);
-  const startFromSetup = ({ name, model, envIds, goal, budget, limits, seed, lineage, reread, textSearch, targetMember, optimizerId }) => {
+  const startFromSetup = ({ name, model, writerModel, envIds, goal, budget, limits, seed, lineage, reread, textSearch, targetMember, optimizerId }) => {
     const record = buildImprovement({
       reread, textSearch, targetMember, optimizerId, state: simState,
       env, es: envState, tasks, seed,
       fromRunId: sourceRunId,
       baseAgentVersion: runAgentVersion,
-      trigger: { kind: "run", goal: goal ? { id: goal.id, label: goal.label, ...(goal.group && { group: goal.group }) } : undefined },
+      trigger: { kind: "run", goal: goal ? { id: goal.id, label: goal.label, ...(goal.group && { group: goal.group }), ...(goal.reliability && { reliability: goal.reliability }) } : undefined },
       limits, budget, regressionEnvIds: envIds, lineage,
       extra: {
         ...(name && { name }),
-        ...(model && { model }),
+        ...(model && { model }), ...(writerModel && { writerModel }),
         includedIds: included.map((p) => p.id),
         /* The diagnosis this attempt was made against, kept with it — six
            weeks on, "why did we try that" is only answerable if the evidence

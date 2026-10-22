@@ -55,7 +55,7 @@ export function useIssueFix(issue) {
      improvement with `improver` set: today is measured and the scenarios
      frozen, but the agent writes the candidates and we only judge them
      (RSI PRD, Bring your own improver). */
-  const start = useCallback(({ env, drafts, regressionEnvIds, budget, minutes, textSearch, targetMember, rootCause, lineage, improver = null }) => {
+  const start = useCallback(({ env, drafts, regressionEnvIds, budget, minutes, textSearch, targetMember, rootCause, diagnosis = null, lineage, improver = null }) => {
     const es = state.byEnv[env.id];
     const reread = rereadFor(agent, state);
     if (reread?.changed && reread.versionRecord && agentKey) {
@@ -69,7 +69,7 @@ export function useIssueFix(issue) {
     if (today) commit({ type: "recordRun", envId: env.id, run: today });
     const esNow = today ? { ...es, runs: [today, ...(es?.runs || [])] } : es;
     const built = issueFixRecord({
-      issue, env, es: esNow, drafts, budget, regressionEnvIds, state, reread, textSearch, targetMember, rootCause, lineage, today,
+      issue, env, es: esNow, drafts, budget, regressionEnvIds, state, reread, textSearch, targetMember, rootCause, diagnosis, lineage, today,
       limits: minutes ? { ...limits, budget: { ...limits.budget, minutes } } : limits,
     });
     const record = improver ? asCoderImprovement(built, improver) : built;
