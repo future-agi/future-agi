@@ -62,16 +62,20 @@ docker restart agentcc-gateway
 4. Verify tools are discovered:
 
 ```bash
-curl -H "Authorization: Bearer agentcc-admin-secret" http://localhost:8090/-/mcp/tools
+# AGENTCC_ADMIN_TOKEN is the value in .env (the gateway refuses to start on an
+# empty, short, placeholder or published token; generate one with
+# `openssl rand -hex 32`).
+curl -H "Authorization: Bearer $AGENTCC_ADMIN_TOKEN" http://localhost:8090/-/mcp/tools
 ```
 
 ## Run MCP test cases
+
+The backend container carries the gateway's `AGENTCC_ADMIN_TOKEN`.
 
 ```bash
 docker exec backend bash -c \
     "cd /app/backend && \
      AGENTCC_GATEWAY_URL=http://agentcc-gateway:8080 \
-     AGENTCC_ADMIN_TOKEN=agentcc-admin-secret \
      PYTHONPATH=/app/backend \
      python agentic_eval/agenthub/eval_orchestrator/run_real_integration_tests.py --filter MCP"
 ```

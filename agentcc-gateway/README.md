@@ -680,6 +680,8 @@ guardrails:
     - type: pii            # built-in scanner alongside external
 ```
 
+`${VAR}` is read from the gateway's environment for rules in its own config file only, and only in a `futureagi` rule's `api_key`, `secret_key` and `base_url` and an `external` rule's top-level string settings. Guardrail checks an org pushes from the console are never resolved against it. An org's `futureagi` or `external` check that holds `${` in one of those settings makes no call and fails: with action `block`, the request gets 403 `content_blocked` naming the check and the field. The console refuses a save that puts `${` in one of those settings (a 400 naming the field). A `${` anywhere else, such as a blocklist word, an expression or a nested setting, is plain text. An org's `futureagi` check sends only the keys it names. When a guardrail call fails, the caller is told how (for example, the connection was refused) but not the URL or address, which goes to the gateway's log.
+
 ### 🔧 Pipeline plugins — 16 processors
 
 Every request flows through an ordered plugin pipeline. Each plugin is optional, configurable, and isolated — plugins can't step on each other.
@@ -803,7 +805,7 @@ Each subsystem is its own Go package — isolated, tested, independently replace
 | **Credits ledger** | Managed keys charge against a prepaid ledger; balance + top-up visible to admins | key |
 | **Rate limits** | Sliding-window RPM / TPM in the `ratelimit` plugin; sliding-window state via Redis | key · tenant · endpoint |
 | **Quotas** | Absolute caps (requests/day, tokens/month) in the `quota` plugin | key · tenant |
-| **IP allowlist** | CIDR ranges in the `ipacl` plugin (runs before auth) | key · tenant |
+| **IP allowlist** | CIDR ranges. A key's `allowed_ips` is checked at the key gate on every key-gated route; with `ip_acl` on, the gateway's and the key's org's lists are checked there and in the `ipacl` plugin too. The client IP is the TCP peer unless `server.trusted_proxies` or `server.trusted_hops` is set | key · tenant |
 | **RBAC** | Roles with permission sets; team hierarchy; route + resource level | org |
 | **Tool-call governance** | `allowed_tools` / `denied_tools` per key; enforced for MCP + function calling | key |
 | **Audit log** | Append-only, tamper-evident chain; every admin + high-risk event | org |
