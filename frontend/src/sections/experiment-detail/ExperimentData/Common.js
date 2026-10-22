@@ -156,21 +156,21 @@ export function toExcelLetters(num) {
 export const shouldShowDiffModeButton = (experimentData) => {
   // Defensive: validate input
   if (!experimentData) return false;
-  if (!experimentData?.columnId) return false;
+  if (!experimentData?.column_id) return false;
 
   const isLLMType =
-    experimentData.experimentType?.toLowerCase() === MODEL_TYPES.LLM;
+    experimentData.experiment_type?.toLowerCase() === MODEL_TYPES.LLM;
   if (!isLLMType) return false;
 
   // Check for valid configurations
   const hasAgentConfigs =
-    Array.isArray(experimentData?.agentConfigs) &&
-    experimentData?.agentConfigs?.length > 0;
+    Array.isArray(experimentData?.agent_configs) &&
+    experimentData?.agent_configs?.length > 0;
 
   const hasValidPromptConfigs =
-    Array.isArray(experimentData?.promptConfigs) &&
-    experimentData?.promptConfigs?.length > 0 &&
-    experimentData?.promptConfigs[0]?.outputFormat === "string";
+    Array.isArray(experimentData?.prompt_configs) &&
+    experimentData?.prompt_configs?.length > 0 &&
+    experimentData?.prompt_configs[0]?.output_format === "string";
 
   return hasAgentConfigs || hasValidPromptConfigs;
 };

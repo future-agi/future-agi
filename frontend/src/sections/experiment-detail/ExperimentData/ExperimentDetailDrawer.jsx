@@ -689,6 +689,10 @@ const ExperimentDetailDrawer = ({
     setShowDiff((prev) => !prev);
   };
 
+  // Grid rows carry the API's `row_id`; rows this drawer fetched itself are
+  // keyed `rowId`.
+  const currentRowId = row?.row_id ?? row?.rowId;
+
   useEffect(() => {
     const hasDiffValues =
       row &&
@@ -706,15 +710,15 @@ const ExperimentDetailDrawer = ({
       setIsApiLoading(true);
       //@ts-ignore
       updateDiffData({
-        experiment_id: `{{${experimentId}}}`,
+        experiment_id: experimentId,
         column_ids: columnConfig.map((i) => i.id),
         compare_column_ids: columnConfig
-          ?.filter((i) => i?.originType == "experiment")
+          ?.filter((i) => i?.origin_type === "experiment")
           .map((i) => i?.id),
-        row_ids: [row?.rowId],
+        row_ids: [currentRowId],
       });
     }
-  }, [showDiff, row?.rowId, diffMode]);
+  }, [showDiff, currentRowId, diffMode]);
 
   const handleFetchNextRow = () => {
     const nextIndex = row?.index + 1;
@@ -729,10 +733,10 @@ const ExperimentDetailDrawer = ({
       // getCellData(payload);
       setIsApiLoading(true);
       getDiffData({
-        experiment_id: `{{${experimentId}}}`,
+        experiment_id: experimentId,
         column_ids: columnConfig.map((i) => i.id),
         compare_column_ids: columnConfig
-          ?.filter((i) => i?.originType == "experiment")
+          ?.filter((i) => i?.origin_type === "experiment")
           .map((i) => i?.id),
         row_ids: [continuationRowId],
       });

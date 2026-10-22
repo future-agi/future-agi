@@ -181,7 +181,7 @@ const ExperimentBarDataRightSection = ({
         rowHeightMapping={defaultRowHeightMapping}
         currentRowHeight={currentRowHeight}
         onRowHeightChange={handleRowHeightChange}
-        hasAgentConfigs={!!experimentData?.agentConfigs?.length}
+        hasAgentConfigs={!!experimentData?.agent_configs?.length}
       />
 
       <Button
