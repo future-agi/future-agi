@@ -30,6 +30,8 @@ from tracer.services.eval_tiles import build_eval_rollup
 from tracer.utils.helper import _normalize_eval_output_type
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from rest_framework.request import Request
 
     from tracer.services.clickhouse.query_service import AnalyticsQueryService
@@ -63,9 +65,18 @@ class TraceDetailHandlerV2(V2RewriteMixin, TraceDetailHandler):
     # every v2 builder to carry it, so the exclude set is empty.
     _v2_rewrite_exclude = frozenset()
 
-    def __init__(self, *, project_id: str | None = None, **kwargs) -> None:
+    def __init__(
+        self,
+        *,
+        project_id: str | None = None,
+        test_execution_id: UUID | None = None,
+        call_execution_id: UUID | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self.project_id = project_id
+        self.test_execution_id = test_execution_id
+        self.call_execution_id = call_execution_id
 
     def fetch(self) -> TraceDetail:
         """Return the assembled trace-detail dict from ClickHouse."""
@@ -75,6 +86,8 @@ class TraceDetailHandlerV2(V2RewriteMixin, TraceDetailHandler):
             self.pk,
             self.analytics,
             project_id=self.project_id,
+            test_execution_id=self.test_execution_id,
+            call_execution_id=self.call_execution_id,
         )
 
 
@@ -85,6 +98,8 @@ def retrieve_trace_detail_ch(
     analytics: AnalyticsQueryService,
     *,
     project_id: str | None = None,
+    test_execution_id: UUID | None = None,
+    call_execution_id: UUID | None = None,
 ) -> TraceDetail:
     """V2 trace detail from ClickHouse.
 
@@ -95,7 +110,9 @@ def retrieve_trace_detail_ch(
     synthesized from the root span. Returns the response dict.
 
     ``project_id`` pins the read to the project the trace was opened from; a
-    project outside the caller's scope resolves like a missing trace.
+    project outside the caller's scope resolves like a missing trace. With a
+    run the caller can read, the hidden project of that run's agent replaces
+    the caller's set.
     """
     from django.db.utils import ProgrammingError
 
@@ -110,19 +127,36 @@ def retrieve_trace_detail_ch(
     )
     from tracer.views.trace import _project_workspace_scope_q
 
-    # Resolve the caller's authorized project scope *before* touching CH. The
-    # old first query searched trace_id across every tenant and only checked
-    # the selected project afterward; at scale that was both slow and an
-    # avoidable cross-tenant probe. Project remains a small PG dimension.
-    project_manager = getattr(Project, "no_workspace_objects", Project.objects)
-    project_scope = project_manager.filter(
-        _project_workspace_scope_q(request, project_prefix="")
-    )
-    if project_id:
-        project_scope = project_scope.filter(id=project_id)
-    authorized_project_ids = [
-        str(value) for value in project_scope.values_list("id", flat=True)[:4097]
-    ]
+    run_scope = None
+    if test_execution_id is not None or call_execution_id is not None:
+        from tracer.services.simulation_project import (
+            run_scope_project_ids,
+            simulation_scope_for_run,
+        )
+
+        run_scope = simulation_scope_for_run(
+            request,
+            test_execution_id=test_execution_id,
+            call_execution_id=call_execution_id,
+        )
+
+    if run_scope is not None:
+        authorized_project_ids = run_scope_project_ids(run_scope, project_id)
+    else:
+        # Resolve the caller's authorized project scope *before* touching CH.
+        # The old first query searched trace_id across every tenant and only
+        # checked the selected project afterward; at scale that was both slow
+        # and an avoidable cross-tenant probe. Project remains a small PG
+        # dimension.
+        project_manager = getattr(Project, "no_workspace_objects", Project.objects)
+        project_scope = project_manager.filter(
+            _project_workspace_scope_q(request, project_prefix="")
+        )
+        if project_id:
+            project_scope = project_scope.filter(id=project_id)
+        authorized_project_ids = [
+            str(value) for value in project_scope.values_list("id", flat=True)[:4097]
+        ]
 
     # The eval logger has no project column. Resolve the selected project's
     # authorized config IDs only after ``read_trace_detail`` proves the trace's

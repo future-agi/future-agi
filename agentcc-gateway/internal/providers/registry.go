@@ -187,8 +187,9 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	// Try routing first if router is available and model has multiple targets.
-	if r.router != nil && r.router.HasTargets(model) {
+	// Try routing first if the model has routing targets. A single target
+	// routes too: it can name the provider and the model_override to send.
+	if r.router != nil && r.router.TargetCount(model) > 0 {
 		var (
 			routingResult *routing.RoutingResult
 			err           error

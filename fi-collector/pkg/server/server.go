@@ -16,11 +16,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +33,7 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
 	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
@@ -63,6 +66,8 @@ type Server struct {
 	curated         *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
 	propertyCatalog PropertyCatalogWriter // observed keys + values spool; default nil
 	auth            *auth.Authenticator
+	router          auth.SimulationRouter // nil: requests of sandbox keys are dropped
+	refusalLog      auth.LogLimiter
 	usage           UsageEmitter
 	metering        Metering
 	log             *slog.Logger
@@ -99,6 +104,7 @@ type Option struct {
 	log             *slog.Logger
 	pricer          chexp.Pricer
 	propertyCatalog PropertyCatalogWriter
+	router          auth.SimulationRouter
 }
 
 // TraceNotifier receives ended roots only after their canonical batch is stored.
@@ -119,6 +125,12 @@ func WithPricer(p chexp.Pricer) Option { return Option{pricer: p} }
 func WithPropertyCatalogWriter(w PropertyCatalogWriter) Option {
 	return Option{propertyCatalog: w}
 }
+
+// WithSimulationRouter replaces the router of sandbox-key requests, which
+// defaults to the authenticator. A nil router is ignored. A server that ends
+// with no router at all (no authenticator and no option) drops the requests of
+// sandbox keys, so they are never stored under the project name they carry.
+func WithSimulationRouter(r auth.SimulationRouter) Option { return Option{router: r} }
 
 // New wires up the server but does NOT start serving. Call Run().
 //
@@ -160,7 +172,14 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	var pricer chexp.Pricer
 	var propertyCatalogWriter PropertyCatalogWriter
 	var traceNotifier TraceNotifier
+	var router auth.SimulationRouter
+	if authenticator != nil {
+		router = authenticator
+	}
 	for _, o := range opts {
+		if o.router != nil {
+			router = o.router
+		}
 		if o.traceNotifier != nil {
 			traceNotifier = o.traceNotifier
 		}
@@ -180,6 +199,7 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		cfg:             cfg,
 		writer:          writer,
 		auth:            authenticator,
+		router:          router,
 		usage:           usage,
 		metering:        metering,
 		log:             log,
@@ -359,10 +379,20 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	// workspace attribute to the canonical span payload.
 	receivedSpans := req.Traces().SpanCount()
 	var propertyOrganizationID, propertyWorkspaceID string
-	var propertyProjectIDs map[string]struct{}
+	var propertyProjectIDs, hiddenProjectIDs map[string]struct{}
+	var routed auth.RouteOutcome
 	if result := auth.FromContext(ctx); result != nil {
 		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
 		ck := auth.CacheKeyFromContext(ctx)
+		var err error
+		routed, err = h.s.routeSimulation(ctx, result, req.Traces())
+		if err != nil {
+			return ptraceotlp.NewExportResponse(), status.Error(codes.Unavailable, "simulation routing temporarily unavailable")
+		}
+		if routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
+			// Nothing of the request is stored, so nothing of it is metered.
+			return partialSuccessResponse(routed), nil
+		}
 		dropped, err := auth.StampResourceAttrs(ctx, h.s.auth, ck, req.Traces(), result)
 		if err != nil {
 			return ptraceotlp.NewExportResponse(), status.Errorf(codes.InvalidArgument, "auth stamp: %v", err)
@@ -372,6 +402,7 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 		}
 		var scoped bool
 		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
+		hiddenProjectIDs, _ = result.HiddenProjectIDsInWorkspace(propertyWorkspaceID)
 		if !scoped {
 			return ptraceotlp.NewExportResponse(), status.Error(codes.InvalidArgument, "auth project/workspace scope mismatch")
 		}
@@ -381,18 +412,14 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), err
 	}
-	if !h.s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs) {
-		retry, err := status.New(codes.ResourceExhausted, "collector pending row budget exhausted; retry with backoff").WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(time.Second)})
-		if err != nil {
-			return ptraceotlp.NewExportResponse(), status.Error(codes.Unavailable, "collector pending row budget exhausted")
-		}
-		return ptraceotlp.NewExportResponse(), retry.Err()
+	if outcome := h.s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs); outcome != enqueueAccepted {
+		return ptraceotlp.NewExportResponse(), h.s.grpcRefusal(outcome, len(rows))
 	}
 
 	payloadBytes, _ := req.MarshalProto()
 	h.s.emitUsage(ctx, req.Traces(), int64(len(payloadBytes)))
 
-	return exportResponse(receivedSpans - req.Traces().SpanCount()), nil
+	return exportResponse(receivedSpans-req.Traces().SpanCount(), routed), nil
 }
 
 // Cap the body size we will read from an OTLP/HTTP request. 16 MiB matches
@@ -468,10 +495,23 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	// Keep the authenticated workspace out-of-band; see the gRPC path above.
 	receivedSpans := req.Traces().SpanCount()
 	var propertyOrganizationID, propertyWorkspaceID string
-	var propertyProjectIDs map[string]struct{}
+	var propertyProjectIDs, hiddenProjectIDs map[string]struct{}
+	var routed auth.RouteOutcome
 	if result := auth.FromContext(r.Context()); result != nil {
 		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
 		ck := auth.CacheKeyFromContext(r.Context())
+		var err error
+		routed, err = s.routeSimulation(r.Context(), result, req.Traces())
+		if err != nil {
+			w.Header().Set("Retry-After", "5")
+			http.Error(w, "simulation routing temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
+			// Nothing of the request is stored, so nothing of it is metered.
+			writeExportResponse(w, ct, partialSuccessResponse(routed))
+			return
+		}
 		dropped, err := auth.StampResourceAttrs(r.Context(), s.auth, ck, req.Traces(), result)
 		if err != nil {
 			http.Error(w, "auth stamp: "+err.Error(), http.StatusBadRequest)
@@ -482,6 +522,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		}
 		var scoped bool
 		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
+		hiddenProjectIDs, _ = result.HiddenProjectIDsInWorkspace(propertyWorkspaceID)
 		if !scoped {
 			http.Error(w, "auth project/workspace scope mismatch", http.StatusBadRequest)
 			return
@@ -494,19 +535,23 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "convert: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if !s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs) {
-		w.Header().Set("Retry-After", "1")
-		http.Error(w, "collector pending row budget exhausted; retry with backoff", http.StatusServiceUnavailable)
+	if outcome := s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs); outcome != enqueueAccepted {
+		s.writeRefusal(w, outcome, len(rows))
 		return
 	}
 
 	s.emitUsage(r.Context(), req.Traces(), int64(len(body)))
 
-	// ExportTraceServiceResponse, including any rejected spans, encoded to match
-	// the request's content-type. The spec requires the response media type
-	// to match the request.
-	resp := exportResponse(receivedSpans - req.Traces().SpanCount())
+	// ExportTraceServiceResponse, including any rejected spans, encoded to
+	// match the request's content-type. The spec requires the response media
+	// type to match the request.
+	writeExportResponse(w, ct, exportResponse(receivedSpans-req.Traces().SpanCount(), routed))
+}
+
+// writeExportResponse answers 200 with resp in the request's media type.
+func writeExportResponse(w http.ResponseWriter, ct string, resp ptraceotlp.ExportResponse) {
 	var out []byte
+	var err error
 	switch ct {
 	case "application/json":
 		out, err = resp.MarshalJSON()
@@ -522,15 +567,125 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(out)
 }
 
-// OTLP counts rejected spans, not ResourceSpans containers. Project resolution
-// can discard one resource containing many spans even when the rest are queued.
-func exportResponse(rejected int) ptraceotlp.ExportResponse {
+// dropNoRouter is the reason given for a sandbox-key request that arrives
+// where nothing can route it.
+const dropNoRouter = "no_router"
+
+// routeSimulation sends the spans of a sandbox key to the hidden project of
+// its agent. An error means the request must be refused as retryable; nothing
+// of it has been stored or changed.
+func (s *Server) routeSimulation(ctx context.Context, result *auth.ResolveResult, traces ptrace.Traces) (auth.RouteOutcome, error) {
+	if s.router == nil {
+		if result.KeyType != auth.KeyTypeIngest {
+			return auth.RouteOutcome{}, nil
+		}
+		// Storing the spans under their own project name would put a
+		// sandbox run in a production project.
+		spans := traces.SpanCount()
+		traces.ResourceSpans().RemoveIf(func(ptrace.ResourceSpans) bool { return true })
+		var out auth.RouteOutcome
+		if spans > 0 {
+			out.Dropped = map[string]int{dropNoRouter: spans}
+			if s.refusalLog.Allow(dropNoRouter, time.Now()) {
+				s.log.Error("simulation span dropped: the server has no router for sandbox keys",
+					"reason", dropNoRouter, "spans", spans)
+			}
+		}
+		return out, nil
+	}
+	outcome, err := s.router.RouteSimulation(ctx, auth.CacheKeyFromContext(ctx), traces, result)
+	switch {
+	case err == nil:
+	case errors.Is(err, auth.ErrRoutingNotReady):
+		// Expected until the first column check, or for the first request
+		// after a cached key is read again.
+		s.log.Debug("simulation routing is not ready; request refused", "err", err)
+	case s.refusalLog.Allow("refused", time.Now()):
+		s.log.Warn("simulation routing refused a request as retryable", "err", err)
+	}
+	return outcome, err
+}
+
+// partialSuccessResponse is the empty success response, carrying the count
+// and reasons of the spans routing dropped when there were any.
+func partialSuccessResponse(routed auth.RouteOutcome) ptraceotlp.ExportResponse {
 	resp := ptraceotlp.NewExportResponse()
-	if rejected > 0 {
-		resp.PartialSuccess().SetRejectedSpans(int64(rejected))
-		resp.PartialSuccess().SetErrorMessage("spans with unresolvable project were rejected")
+	if n := routed.DroppedSpans(); n > 0 {
+		partial := resp.PartialSuccess()
+		partial.SetRejectedSpans(int64(n))
+		partial.SetErrorMessage("simulation routing dropped " + strconv.Itoa(n) + " spans: " + routed.Summary())
 	}
 	return resp
+}
+
+// exportResponse is the success response of a request of which `rejected`
+// spans were discarded before storage. OTLP counts rejected spans, not
+// ResourceSpans containers: routing or project resolution can discard one
+// resource that holds many spans even when the rest of the request is queued.
+func exportResponse(rejected int, routed auth.RouteOutcome) ptraceotlp.ExportResponse {
+	if rejected <= 0 {
+		return ptraceotlp.NewExportResponse()
+	}
+	routedDrops := routed.DroppedSpans()
+	if routedDrops == rejected {
+		return partialSuccessResponse(routed)
+	}
+	resp := ptraceotlp.NewExportResponse()
+	partial := resp.PartialSuccess()
+	partial.SetRejectedSpans(int64(rejected))
+	message := "spans with unresolvable project were rejected"
+	if routedDrops > 0 {
+		message = "simulation routing dropped " + strconv.Itoa(routedDrops) + " spans: " + routed.Summary() + "; " + message
+	}
+	partial.SetErrorMessage(message)
+	return resp
+}
+
+// enqueueRouted parks the rows of a request. Rows of a hidden project, whether
+// routing put the whole request there or another key's request names one,
+// neither the observed catalog nor the stored-root notifier may see, so they
+// are parked without a tenant scope: both then skip them, and the catalog does
+// not record a scope failure for every drain that carries them.
+//
+// The request is admitted or refused as ONE unit, even when its rows are
+// parked in two parcels: a client that is told to retry a refused request
+// would otherwise store the parcel that fitted a second time.
+func (s *Server) enqueueRouted(
+	rows []map[string]any,
+	ids *curatedwriter.Batch,
+	routed auth.RouteOutcome,
+	organizationID string,
+	workspaceID string,
+	workspaceProjectIDs map[string]struct{},
+	hiddenProjectIDs map[string]struct{},
+) enqueueOutcome {
+	if routed.Hidden != "" {
+		return s.enqueueParcels(parcel{rows: rows, ids: ids})
+	}
+	if len(hiddenProjectIDs) > 0 {
+		var visible, hidden []map[string]any
+		for _, row := range rows {
+			if projectID, _ := row["project_id"].(string); projectID != "" {
+				if _, isHidden := hiddenProjectIDs[projectID]; isHidden {
+					hidden = append(hidden, row)
+					continue
+				}
+			}
+			visible = append(visible, row)
+		}
+		if len(hidden) > 0 {
+			// The payload's identities go with the visible rows, or with the
+			// hidden ones when nothing else is left.
+			if len(visible) == 0 {
+				return s.enqueueParcels(parcel{rows: hidden, ids: ids})
+			}
+			return s.enqueueParcels(
+				parcel{rows: hidden},
+				parcel{rows: visible, ids: ids, organizationID: organizationID, workspaceID: workspaceID, projectIDs: workspaceProjectIDs},
+			)
+		}
+	}
+	return s.enqueueScoped(rows, ids, organizationID, workspaceID, workspaceProjectIDs)
 }
 
 // indexByte and trimSpace are lifted here so the file doesn't grow a
@@ -555,6 +710,31 @@ func trimSpace(s string) string {
 	return s
 }
 
+// enqueueOutcome is the admission decision for one request.
+type enqueueOutcome int
+
+const (
+	// enqueueAccepted: every row of the request is parked.
+	enqueueAccepted enqueueOutcome = iota
+	// enqueueFull: the pending and in-flight budget cannot hold the request
+	// now. Nothing is parked; the same request can fit once the writer frees
+	// budget, so it is the one outcome a client should retry.
+	enqueueFull
+	// enqueueOversize: the request alone is larger than the whole budget, so
+	// it can never be admitted however long a client waits. Nothing is
+	// parked; retrying the same request is pointless.
+	enqueueOversize
+)
+
+// parcel is a group of rows parked together under one tenant scope.
+type parcel struct {
+	rows           []map[string]any
+	ids            *curatedwriter.Batch
+	organizationID string
+	workspaceID    string
+	projectIDs     map[string]struct{}
+}
+
 // enqueue parks rows on the pending buffer and signals the flusher.
 // We choose non-blocking signalling: if the channel already holds a tick
 // the flusher will already wake up and see this batch.
@@ -562,7 +742,7 @@ func trimSpace(s string) string {
 // `ids` are the CURATED dimension identities collected for this same payload;
 // they ride alongside `rows` so the curated dual-write flushes with the span
 // batch. A nil / empty Batch is skipped (the common no-user/no-session case).
-func (s *Server) enqueue(rows []map[string]any, ids *curatedwriter.Batch) bool {
+func (s *Server) enqueue(rows []map[string]any, ids *curatedwriter.Batch) enqueueOutcome {
 	return s.enqueueScoped(rows, ids, "", "", nil)
 }
 
@@ -575,42 +755,39 @@ func (s *Server) enqueueScoped(
 	organizationID string,
 	workspaceID string,
 	workspaceProjectIDs map[string]struct{},
-) bool {
-	if len(rows) == 0 {
-		return true
+) enqueueOutcome {
+	return s.enqueueParcels(parcel{
+		rows:           rows,
+		ids:            ids,
+		organizationID: organizationID,
+		workspaceID:    workspaceID,
+		projectIDs:     workspaceProjectIDs,
+	})
+}
+
+// enqueueParcels admits every parcel or none of them. The budget is checked
+// against the rows of all parcels together, under the same lock that reserves
+// them, so a concurrent request can never slip between the check and the
+// reservation.
+func (s *Server) enqueueParcels(parcels ...parcel) enqueueOutcome {
+	total := 0
+	for _, p := range parcels {
+		total += len(p.rows)
+	}
+	if total == 0 {
+		return enqueueAccepted
+	}
+	if total > s.cfg.MaxPendingRows {
+		return enqueueOversize
 	}
 	s.pendMu.Lock()
-	if len(rows) > s.cfg.MaxPendingRows-s.bufferedRows {
+	if total > s.cfg.MaxPendingRows-s.bufferedRows {
 		s.pendMu.Unlock()
-		return false
+		return enqueueFull
 	}
-	s.bufferedRows += len(rows)
-	s.pend = append(s.pend, rows...)
-	if s.traceNotifier != nil {
-		s.pendRoots = append(s.pendRoots, traceavailable.ExtractRoots(rows, organizationID, workspaceID, workspaceProjectIDs)...)
-	}
-	if s.propertyCatalog != nil && organizationID != "" && workspaceID != "" {
-		for _, row := range rows {
-			projectID, _ := row["project_id"].(string)
-			scopeError := ""
-			if workspaceProjectIDs == nil {
-				scopeError = "missing_project_workspace_proof"
-			} else if _, allowed := workspaceProjectIDs[projectID]; !allowed {
-				scopeError = "project_workspace_mismatch"
-			}
-			s.pendProperty = append(s.pendProperty, observedcatalog.ScopedSpan{
-				OrganizationID: organizationID,
-				WorkspaceID:    workspaceID,
-				ScopeError:     scopeError,
-				Row:            row,
-			})
-		}
-	}
-	if ids != nil && !ids.Empty() {
-		if s.pendCurated == nil {
-			s.pendCurated = curatedwriter.NewBatch()
-		}
-		s.pendCurated.Merge(ids)
+	s.bufferedRows += total
+	for _, p := range parcels {
+		s.appendLocked(p)
 	}
 	shouldKick := len(s.pend) >= s.cfg.BatchMaxRows
 	s.pendMu.Unlock()
@@ -620,7 +797,87 @@ func (s *Server) enqueueScoped(
 		default:
 		}
 	}
-	return true
+	return enqueueAccepted
+}
+
+// appendLocked parks a parcel whose rows are already reserved. s.pendMu must
+// be held.
+func (s *Server) appendLocked(p parcel) {
+	rows := p.rows
+	if len(rows) == 0 {
+		return
+	}
+	s.pend = append(s.pend, rows...)
+	if s.traceNotifier != nil {
+		s.pendRoots = append(s.pendRoots, traceavailable.ExtractRoots(rows, p.organizationID, p.workspaceID, p.projectIDs)...)
+	}
+	if s.propertyCatalog != nil && p.organizationID != "" && p.workspaceID != "" {
+		for _, row := range rows {
+			projectID, _ := row["project_id"].(string)
+			scopeError := ""
+			if p.projectIDs == nil {
+				scopeError = "missing_project_workspace_proof"
+			} else if _, allowed := p.projectIDs[projectID]; !allowed {
+				scopeError = "project_workspace_mismatch"
+			}
+			s.pendProperty = append(s.pendProperty, observedcatalog.ScopedSpan{
+				OrganizationID: p.organizationID,
+				WorkspaceID:    p.workspaceID,
+				ScopeError:     scopeError,
+				Row:            row,
+			})
+		}
+	}
+	if p.ids != nil && !p.ids.Empty() {
+		if s.pendCurated == nil {
+			s.pendCurated = curatedwriter.NewBatch()
+		}
+		s.pendCurated.Merge(p.ids)
+	}
+}
+
+// grpcRefusal is the gRPC status of a request that was not admitted.
+//
+// A request that merely met a full buffer is RESOURCE_EXHAUSTED with RetryInfo,
+// the one form OTLP clients retry. A request larger than the whole budget is
+// INVALID_ARGUMENT, which no OTLP client retries and which names the limit, so
+// the sender can split the export instead of looping on it.
+func (s *Server) grpcRefusal(outcome enqueueOutcome, rows int) error {
+	if outcome == enqueueOversize {
+		s.logOversize(rows)
+		return status.Error(codes.InvalidArgument, oversizeMessage(rows, s.cfg.MaxPendingRows))
+	}
+	retry, err := status.New(codes.ResourceExhausted, "collector pending row budget exhausted; retry with backoff").WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(time.Second)})
+	if err != nil {
+		return status.Error(codes.Unavailable, "collector pending row budget exhausted")
+	}
+	return retry.Err()
+}
+
+// writeRefusal answers an OTLP/HTTP request that was not admitted: 503 with
+// Retry-After for a full buffer (retryable per the OTLP spec), 413 for a
+// request that can never fit (not retryable per the OTLP spec).
+func (s *Server) writeRefusal(w http.ResponseWriter, outcome enqueueOutcome, rows int) {
+	if outcome == enqueueOversize {
+		s.logOversize(rows)
+		http.Error(w, oversizeMessage(rows, s.cfg.MaxPendingRows), http.StatusRequestEntityTooLarge)
+		return
+	}
+	w.Header().Set("Retry-After", "1")
+	http.Error(w, "collector pending row budget exhausted; retry with backoff", http.StatusServiceUnavailable)
+}
+
+func oversizeMessage(rows, limit int) string {
+	return "request carries " + strconv.Itoa(rows) + " spans, more than the collector's max_pending_rows (" +
+		strconv.Itoa(limit) + "), so it can never be admitted; split the export into batches of at most " +
+		strconv.Itoa(limit) + " spans or raise max_pending_rows"
+}
+
+func (s *Server) logOversize(rows int) {
+	if s.refusalLog.Allow("oversize", time.Now()) {
+		s.log.Error("request over the pending row budget refused as not retryable",
+			"rows", rows, "max_pending_rows", s.cfg.MaxPendingRows)
+	}
 }
 
 // flushLoop runs until stopCh closes. Wakes on either an explicit kick

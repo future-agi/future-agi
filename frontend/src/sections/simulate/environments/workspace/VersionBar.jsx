@@ -2,21 +2,17 @@ import PropTypes from "prop-types";
 import { Box, Stack, Typography, Tooltip } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { WORKSPACE_COPY } from "./workspace.constants";
-import {
-  currentEnvVersion,
-  currentAgentVersion,
-} from "src/api/simulate-environments/_fixtures/versions";
 
-// What is being tested, against what. A run is a pairing — this environment
-// version against that agent version — and a result nobody can attribute to a
-// specific pair is not reproducible, so the pairing is stated here.
+// What is being tested. A run pairs this environment with one agent version,
+// and a result nobody can attribute to a specific agent version is not
+// reproducible, so the agent under test is stated here.
 //
-// Stated, not selected: two dropdowns under the header would read as filters
-// that scope the page and do not. The choice belongs at the moment before a
-// run, so this is a read-only strip; the version-creation control is deferred.
+// Stated, not selected: a dropdown under the header would read as a filter
+// that scopes the page and does not. The environment has no version of its
+// own in the API, so only the agent's is shown.
 export default function VersionBar({ env, envState }) {
-  const envV = currentEnvVersion(env, envState);
-  const agentV = currentAgentVersion(envState);
+  const subject = env?.testSubject;
+  const scenarioCount = env?.counts?.scenarios ?? envState?.scenarios?.length ?? 0;
   const { versionBar } = WORKSPACE_COPY;
 
   return (
@@ -34,37 +30,35 @@ export default function VersionBar({ env, envState }) {
         rowGap: 1,
       }}
     >
-      {/* The environment is the primary identity; the agent version is the
-          current test subject running against it. The env is stated first and
-          bold, the agent prefixed "Test subject" and rendered lighter. */}
-      <Tooltip arrow title={versionBar.pairingTooltip(envV.label, envV.note, agentV.label)}>
-        <Stack direction="row" alignItems="center" spacing={0.75} sx={{ cursor: "default" }}>
-          <Iconify icon="solar:box-linear" width={14} sx={{ color: "text.subtitle" }} />
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            {versionBar.envPrefix}{" "}
-            <Box component="span" sx={{ color: "text.primary", fontWeight: "fontWeightBold" }}>
-              {envV.label}
-            </Box>
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.disabled", mx: 0.25 }}>·</Typography>
-          <Iconify icon="solar:cpu-bolt-linear" width={14} sx={{ color: "text.subtitle" }} />
-          <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: "fontWeightSemiBold" }}>
-            {versionBar.testSubject}
-          </Typography>
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            {versionBar.agentPrefix}{" "}
-            <Box component="span" sx={{ color: "text.primary", fontWeight: "fontWeightBold" }}>
-              {agentV.label}
-            </Box>
-          </Typography>
-        </Stack>
-      </Tooltip>
+      {subject && (
+        <>
+          <Tooltip arrow title={versionBar.subjectTooltip}>
+            <Stack direction="row" alignItems="center" spacing={0.75} sx={{ cursor: "default" }}>
+              <Iconify icon="solar:cpu-bolt-linear" width={14} sx={{ color: "text.subtitle" }} />
+              <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: "fontWeightSemiBold" }}>
+                {versionBar.testSubject}
+              </Typography>
+              <Typography sx={{ typography: "s2", color: "text.primary", fontWeight: "fontWeightBold" }}>
+                {subject.name || versionBar.unnamedAgent}
+              </Typography>
+              {subject.active_version && (
+                <Box
+                  component="span"
+                  sx={{ typography: "s2", color: "text.secondary", fontWeight: "fontWeightBold" }}
+                >
+                  {subject.active_version}
+                </Box>
+              )}
+            </Stack>
+          </Tooltip>
 
-      <Typography sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}>·</Typography>
+          <Typography sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}>·</Typography>
+        </>
+      )}
 
       <Tooltip arrow title={versionBar.scenariosTooltip}>
         <Typography sx={{ typography: "s3", color: "text.subtitle", cursor: "default" }}>
-          {versionBar.scenariosShared(envState?.scenarios?.length ?? 0)}
+          {versionBar.scenariosShared(scenarioCount)}
         </Typography>
       </Tooltip>
     </Stack>
@@ -72,12 +66,15 @@ export default function VersionBar({ env, envState }) {
 }
 
 VersionBar.propTypes = {
-  env: PropTypes.shape({ id: PropTypes.string }),
+  env: PropTypes.shape({
+    id: PropTypes.string,
+    testSubject: PropTypes.shape({
+      name: PropTypes.string,
+      active_version: PropTypes.string,
+    }),
+    counts: PropTypes.shape({ scenarios: PropTypes.number }),
+  }),
   envState: PropTypes.shape({
-    envVersions: PropTypes.arrayOf(PropTypes.shape({ label: PropTypes.string })),
-    agentVersions: PropTypes.arrayOf(PropTypes.shape({ label: PropTypes.string })),
-    activeEnvVersion: PropTypes.string,
-    activeAgentVersion: PropTypes.string,
     scenarios: PropTypes.arrayOf(PropTypes.any),
   }),
 };

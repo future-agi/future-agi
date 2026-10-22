@@ -1,15 +1,33 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { paths } from "src/routes/paths";
+import { RouterLink } from "src/routes/components";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
-import { AGENT_SUMMARY_COPY } from "./overview.constants";
+import { VOICE_CHAT_PROVIDERS } from "src/sections/agents/constants";
+import { AGENT_SUMMARY_COPY, CONNECTOR_LABEL } from "./overview.constants";
+
+// The agent definition's provider, named the way the Agents pages name it;
+// harness connector names cover the rest.
+const providerLabel = (provider) =>
+  VOICE_CHAT_PROVIDERS.find((p) => p.value === provider)?.label
+  || CONNECTOR_LABEL[provider]
+  || provider;
 
 export default function AgentSummarySection({ subject }) {
   const title = subject
     ? AGENT_SUMMARY_COPY.agentTitle(subject.name, subject.active_version)
     : AGENT_SUMMARY_COPY.noAgentTitle;
   const body = subject ? null : AGENT_SUMMARY_COPY.portableBody;
+  // Where the agent runs and how many versions it has, from the agent
+  // definition the environment tests.
+  const facts = subject
+    ? [
+        subject.provider && providerLabel(subject.provider),
+        subject.versions_count != null && AGENT_SUMMARY_COPY.versions(subject.versions_count),
+      ].filter(Boolean).join(" · ")
+    : "";
 
   return (
     <Box sx={{ my: 2, p: 2, borderRadius: 1.5, border: "1px solid", borderColor: "divider" }}>
@@ -42,14 +60,29 @@ export default function AgentSummarySection({ subject }) {
             )}
           </Stack>
           <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold", mt: 0.25 }}>{title}</Typography>
+          {facts && <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>{facts}</Typography>}
           {body && <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>{body}</Typography>}
         </Box>
+        {subject?.id && (
+          <Button
+            component={RouterLink}
+            href={`${paths.dashboard.simulate.agentDefinition}/${subject.id}`}
+            size="small"
+            variant="outlined"
+            color="inherit"
+            endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
+            sx={{ flexShrink: 0 }}
+          >
+            {AGENT_SUMMARY_COPY.viewAgent}
+          </Button>
+        )}
       </Stack>
     </Box>
   );
 }
 AgentSummarySection.propTypes = {
   subject: PropTypes.shape({
+    id: PropTypes.string,
     name: PropTypes.string,
     provider: PropTypes.string,
     versions_count: PropTypes.number,

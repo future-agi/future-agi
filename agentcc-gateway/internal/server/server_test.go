@@ -2349,3 +2349,203 @@ func TestProviderPrefixRouting(t *testing.T) {
 		t.Fatalf("status = %d, want 200. Body: %s", w.Code, string(body))
 	}
 }
+
+// A routing target's model_override is the model the provider receives. An
+// alias has one target, and is often listed as a model too so that
+// /v1/models shows it; neither may drop the override.
+func TestChatCompletionSendsTargetModelOverrideUpstream(t *testing.T) {
+	const alias, upstreamModel = "openrouter/deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash"
+
+	for _, tc := range []struct {
+		name      string
+		listAlias bool
+		stream    bool
+	}{
+		{name: "alias listed as a model", listAlias: true},
+		{name: "alias not listed", listAlias: false},
+		{name: "alias listed, streamed", listAlias: true, stream: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var sent atomic.Value
+			mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req models.ChatCompletionRequest
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				sent.Store(req.Model)
+				if req.Stream {
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintf(w, "data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"model\":%q,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", req.Model)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"id":"c","object":"chat.completion","model":%q,"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`, req.Model)
+			}))
+			defer mock.Close()
+
+			cfg := config.DefaultConfig()
+			providerModels := []string{upstreamModel}
+			if tc.listAlias {
+				providerModels = append(providerModels, alias)
+			}
+			cfg.Providers["openrouter"] = config.ProviderConfig{BaseURL: mock.URL, APIFormat: "openai", Models: providerModels}
+			cfg.Routing.Targets = map[string][]config.RoutingTargetConfig{
+				alias: {{Provider: "openrouter", ModelOverride: upstreamModel}},
+			}
+			cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 5}
+
+			registry, err := providers.NewRegistry(cfg)
+			if err != nil {
+				t.Fatalf("creating registry: %v", err)
+			}
+			srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+			srv.ready.Store(true)
+
+			reqBody := fmt.Sprintf(`{"model":%q,"stream":%t,"messages":[{"role":"user","content":"Hello"}]}`, alias, tc.stream)
+			req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+			w := httptest.NewRecorder()
+			srv.httpServer.Handler.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200. Body: %s", w.Code, w.Body.String())
+			}
+			if got, _ := sent.Load().(string); got != upstreamModel {
+				t.Fatalf("upstream model = %q, want the target's model_override %q", got, upstreamModel)
+			}
+		})
+	}
+}
+
+// A model_fallbacks chain is configured under the name the caller asks for.
+// Applying a target's model_override rewrites the request model before the
+// failover path reads it, so the chain was looked up by the upstream name and
+// never found — the request failed instead of falling back.
+func TestChatCompletionFallbackChainIsKeyedByTheRequestedAlias(t *testing.T) {
+	const alias, upstreamModel, fallbackModel = "alias/primary-v1", "vendor/primary-v1", "vendor/fallback-v1"
+
+	for _, tc := range []struct {
+		name    string
+		targets int
+		stream  bool
+	}{
+		{name: "single target", targets: 1},
+		{name: "single target, streamed", targets: 1, stream: true},
+		{name: "multiple targets", targets: 2},
+		{name: "multiple targets, streamed", targets: 2, stream: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The primary always refuses, so only the fallback can answer.
+			primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(`{"error":{"message":"unavailable"}}`))
+			}))
+			defer primary.Close()
+
+			var served atomic.Value
+			fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req models.ChatCompletionRequest
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				served.Store(req.Model)
+				if req.Stream {
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintf(w, "data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"model\":%q,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", req.Model)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"id":"c","object":"chat.completion","model":%q,"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`, req.Model)
+			}))
+			defer fallback.Close()
+
+			cfg := config.DefaultConfig()
+			cfg.Providers["primary"] = config.ProviderConfig{BaseURL: primary.URL, APIFormat: "openai", Models: []string{upstreamModel}}
+			cfg.Providers["spare"] = config.ProviderConfig{BaseURL: fallback.URL, APIFormat: "openai", Models: []string{fallbackModel}}
+
+			targets := []config.RoutingTargetConfig{{Provider: "primary", ModelOverride: upstreamModel}}
+			if tc.targets == 2 {
+				targets = append(targets, config.RoutingTargetConfig{Provider: "primary", ModelOverride: upstreamModel})
+			}
+			cfg.Routing.Targets = map[string][]config.RoutingTargetConfig{alias: targets}
+			cfg.Routing.ModelFallbacks = map[string][]string{alias: {fallbackModel}}
+			cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 3}
+
+			registry, err := providers.NewRegistry(cfg)
+			if err != nil {
+				t.Fatalf("creating registry: %v", err)
+			}
+			srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+			srv.ready.Store(true)
+
+			reqBody := fmt.Sprintf(`{"model":%q,"stream":%t,"messages":[{"role":"user","content":"Hello"}]}`, alias, tc.stream)
+			req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+			w := httptest.NewRecorder()
+			srv.httpServer.Handler.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 via the fallback chain. Body: %s", w.Code, w.Body.String())
+			}
+			if got, _ := served.Load().(string); got != fallbackModel {
+				t.Errorf("the fallback provider received %q, want %q", got, fallbackModel)
+			}
+		})
+	}
+}
+
+// A single-target alias whose only provider is unhealthy has nowhere to go.
+// Routing a single target is what this change enables, so the unhealthy case
+// needs pinning: it must refuse rather than send the alias upstream as if it
+// were a model the provider knows.
+func TestChatCompletionSingleTargetAliasWithNoHealthyProviderRefuses(t *testing.T) {
+	const alias, upstreamModel = "alias/only-v1", "vendor/only-v1"
+
+	var completions atomic.Int32
+	var sentModel atomic.Value
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only a completion counts; the stack may probe other paths.
+		if strings.Contains(r.URL.Path, "/chat/completions") {
+			completions.Add(1)
+			var req models.ChatCompletionRequest
+			json.NewDecoder(r.Body).Decode(&req)
+			sentModel.Store(req.Model)
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer mock.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Providers["only"] = config.ProviderConfig{BaseURL: mock.URL, APIFormat: "openai", Models: []string{upstreamModel}}
+	cfg.Routing.Targets = map[string][]config.RoutingTargetConfig{
+		alias: {{Provider: "only", ModelOverride: upstreamModel}},
+	}
+
+	registry, err := providers.NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("creating registry: %v", err)
+	}
+	// The only target is down.
+	if router := registry.Router(); router != nil {
+		router.SetHealthy("only", false)
+	}
+
+	srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	srv.ready.Store(true)
+
+	reqBody := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"Hello"}]}`, alias)
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, req)
+
+	if w.Code == http.StatusOK {
+		t.Fatalf("status = 200 with no healthy provider. Body: %s", w.Body.String())
+	}
+	if w.Code != http.StatusServiceUnavailable {
+		t.Logf("status = %d (not 503, but a refusal): %s", w.Code, w.Body.String())
+	}
+	if n := completions.Load(); n != 0 {
+		got, _ := sentModel.Load().(string)
+		t.Errorf("the upstream was called %d times with no healthy target, sending model %q", n, got)
+	}
+}

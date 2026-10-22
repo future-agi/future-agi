@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { useTheme, alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Tab } from "@mui/material";
+import { Box, ButtonBase, Stack, Typography, Tab } from "@mui/material";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
@@ -36,9 +36,16 @@ const BRANCHES = [
 // more") lifts the cap and shows every item.
 const MAX_LEAVES = 5;
 
-export default function CapabilityGraph({ env, envState, data }) {
+const focusRing = {
+  "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: "2px", borderRadius: "4px" },
+};
+
+export default function CapabilityGraph({ env, envState, data, defaultOpen = false }) {
   const theme = useTheme();
   const [focus, setFocus] = useState(null);
+  // The graph is one more view of the same tools, so it stays folded until
+  // asked for.
+  const [open, setOpen] = useState(defaultOpen);
   const contract = contractFor(env);
 
   // Non-backed fallback: personas derived from scenario personas (deduped).
@@ -102,11 +109,32 @@ export default function CapabilityGraph({ env, envState, data }) {
   const strong = theme.palette.text.primary;
   const bold = theme.typography.fontWeightBold;
 
+  if (!open) {
+    return (
+      <ButtonBase
+        onClick={() => setOpen(true)}
+        aria-expanded={false}
+        sx={{
+          ...focusRing, width: "100%", justifyContent: "flex-start", gap: 1,
+          px: 2, py: 1.25, borderRadius: 1, border: "1px solid", borderColor: "divider",
+          "&:hover": { bgcolor: "action.hover" },
+        }}
+      >
+        <Iconify icon="solar:graph-new-linear" width={15} sx={{ color: "text.subtitle" }} />
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>Capability graph</Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1, textAlign: "left" }}>
+          Tools, flows, personas and guardrails as one picture
+        </Typography>
+        <Iconify icon="solar:alt-arrow-down-linear" width={14} sx={{ color: "text.subtitle" }} />
+      </ButtonBase>
+    );
+  }
+
   return (
+    <Box>
     <SectionCard
       title="Capability graph"
       subtitle="Everything read from your agent, as one object rather than four lists"
-      sx={{ mb: 2 }}
       action={
         <SegmentedTabs
           value={focus || "all"}
@@ -256,6 +284,17 @@ export default function CapabilityGraph({ env, envState, data }) {
         </Typography>
       </Stack>
     </SectionCard>
+      <ButtonBase
+        onClick={() => setOpen(false)}
+        aria-expanded
+        sx={{
+          ...focusRing, mt: 0.75, px: 0.5, typography: "s3", fontWeight: 600,
+          color: "text.secondary", borderRadius: 0.5, "&:hover": { color: "text.primary" },
+        }}
+      >
+        Hide capability graph
+      </ButtonBase>
+    </Box>
   );
 }
 
@@ -270,4 +309,6 @@ CapabilityGraph.propTypes = {
     personas: PropTypes.arrayOf(PropTypes.string),
     guardrails: PropTypes.arrayOf(PropTypes.string),
   }),
+  // Open on first render (tests); the tab starts it folded.
+  defaultOpen: PropTypes.bool,
 };

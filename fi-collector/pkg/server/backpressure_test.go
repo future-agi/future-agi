@@ -34,7 +34,7 @@ func TestPendingRowBudgetIncludesBlockedInflightInsert(t *testing.T) {
 	}
 	defer writer.Close()
 	s := New(Config{MaxPendingRows: 2}, writer, nil, nil, nil)
-	if !s.enqueue([]map[string]any{{"id": "a"}, {"id": "b"}}, nil) {
+	if s.enqueue([]map[string]any{{"id": "a"}, {"id": "b"}}, nil) != enqueueAccepted {
 		t.Fatal("initial batch rejected")
 	}
 	done := make(chan struct{})
@@ -47,21 +47,24 @@ func TestPendingRowBudgetIncludesBlockedInflightInsert(t *testing.T) {
 	}
 	// The old code swaps pend to nil before the insert. A cap on len(pend)
 	// alone would let more rows in and is not a bounded in-flight budget.
-	accepted := s.enqueue([]map[string]any{{"id": "c"}}, nil)
+	refused := s.enqueue([]map[string]any{{"id": "c"}}, nil)
 	close(release)
 	<-done
-	if accepted {
-		t.Fatal("accepted another row while in-flight budget was full")
+	if refused != enqueueFull {
+		t.Fatalf("another row while the in-flight budget was full got %v, want enqueueFull", refused)
 	}
-	if !s.enqueue([]map[string]any{{"id": "d"}}, nil) {
+	if s.enqueue([]map[string]any{{"id": "d"}}, nil) != enqueueAccepted {
 		t.Fatal("capacity not released after insert")
 	}
 }
 
 func TestPendingBudgetWholeRequestRejectionAndConcurrency(t *testing.T) {
 	s := New(Config{MaxPendingRows: 10}, nil, nil, nil, nil)
-	if s.enqueue(make([]map[string]any, 11), nil) {
-		t.Fatal("oversized request partially accepted")
+	if got := s.enqueue(make([]map[string]any, 11), nil); got != enqueueOversize {
+		t.Fatalf("request over the whole budget got %v, want enqueueOversize", got)
+	}
+	if len(s.pend) != 0 || s.bufferedRows != 0 {
+		t.Fatalf("oversized request left rows behind: pending=%d reserved=%d", len(s.pend), s.bufferedRows)
 	}
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
@@ -78,7 +81,7 @@ func TestPendingBudgetRetryableHTTPAndGRPC(t *testing.T) {
 	for _, protocol := range []string{"json", "protobuf", "grpc"} {
 		t.Run(protocol, func(t *testing.T) {
 			s := New(Config{MaxPendingRows: 1}, nil, nil, nil, nil)
-			if !s.enqueue([]map[string]any{{"id": "existing"}}, nil) {
+			if s.enqueue([]map[string]any{{"id": "existing"}}, nil) != enqueueAccepted {
 				t.Fatal("initial reservation failed")
 			}
 			traces := makeTraces("backpressure", "44444444-4444-4444-8444-444444444444")

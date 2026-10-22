@@ -28,9 +28,8 @@ function humanizeEvalKey(key) {
 // A summary row is one completed run, read against the environment's applied
 // evals. Real columns (pass rate, tasks, avg duration) come from the executions
 // row; per-eval scores come from that run's kpis (or, under the QA switch, from
-// the mock run itself). Tokens / cost / said-not-done / mean-return have no
-// backend field yet, so they are null here and rendered as a dashed "Dummy"
-// cell — never a fabricated number.
+// the mock run itself). Tokens and cost have no field on the runs list, so they
+// are null here and render as a dashed cell, never a fabricated number.
 
 // One run → the summary table's row shape. `scores` is the run's {evalId: 0–100}
 // map (kpis-derived for a real run, inline for a mock one); absent → {}.
@@ -54,11 +53,8 @@ export function buildSummaryRow(run, scores) {
     passRate: total ? Math.round((passed / total) * 100) : 0,
     durationS: run?.durationS ?? null,
     scores: scores || {},
-    // No backend field — shown as a dashed "Dummy" cell, not a made-up value.
     tokens: null,
     cost: null,
-    saidNotDone: null,
-    meanReturn: null,
   };
 }
 

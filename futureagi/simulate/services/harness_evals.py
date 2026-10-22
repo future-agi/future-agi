@@ -144,6 +144,7 @@ _SOURCE_BY_KEY_TEXT = {
 # this, so every source in the tables above must have an entry here.
 _LABEL_BY_SOURCE = {
     "voice_recording": "Call recording",
+    "assistant_recording": "Agent recording",
     "transcript": "Transcript",
     "agent_prompt": "Agent instructions",
     "scenario_columns.situation.value": "Scenario situation",
@@ -169,6 +170,20 @@ _SUITE_EVAL_REGRADE_SOURCES = {
 }
 
 
+def effective_simulation_mapping(
+    template: EvalTemplate, mapping: dict[str, Any]
+) -> dict[str, Any]:
+    """Resolve legacy combined-audio mappings for the single-speaker system eval."""
+    mapping = dict(mapping)
+    if (
+        template.owner == OwnerChoices.SYSTEM.value
+        and template.name == "audio_signal_metrics"
+        and mapping.get("input_audio") in ("voice_recording", "call.voice_recording")
+    ):
+        mapping["input_audio"] = "assistant_recording"
+    return mapping
+
+
 def regrade_mapping(config: SimulateEvalConfig) -> dict[str, str] | None:
     """The mapping a finished run's calls are graded again with, or None when the platform can't.
 
@@ -180,7 +195,7 @@ def regrade_mapping(config: SimulateEvalConfig) -> dict[str, str] | None:
     """
     mapping = config.mapping if isinstance(config.mapping, dict) else {}
     if mapping:
-        return dict(mapping)
+        return effective_simulation_mapping(config.eval_template, mapping)
     template = config.eval_template
     if template.owner != OwnerChoices.SYSTEM.value:
         return None
@@ -266,7 +281,7 @@ def resolve_eval_mapping(
         if source is None:
             return None
         mapping[key] = source
-    return mapping
+    return effective_simulation_mapping(template, mapping)
 
 
 def agent_kind(modality: str) -> str:
@@ -468,6 +483,7 @@ def eval_entry(
     mapping can point at a scenario column by id; the detail passes the
     column names it resolved.
     """
+    mapping = effective_simulation_mapping(template, mapping)
     return {
         "name": str(template.name or ""),
         "description": str(template.description or "")[:500],

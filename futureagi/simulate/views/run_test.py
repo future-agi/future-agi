@@ -38,7 +38,6 @@ from simulate.models import (
     CallLogEntry,
     ChatMessageModel,
     HostedHarnessJob,
-    HostedHarnessReceipt,
     RunTest,
     Scenarios,
     SimulateEvalConfig,
@@ -144,7 +143,9 @@ from simulate.services.eval_config_edit import (
     update_eval_config,
     visible_eval_template_query,
 )
+from simulate.services.harness_environment import receipt_outcome_counts
 from simulate.services.harness_evals import (
+    effective_simulation_mapping,
     is_harness_run_test,
     is_regrading_a_finished_harness_run,
     runnable_eval_config_ids,
@@ -5256,11 +5257,10 @@ class GetEvalConfigStructureView(APIView):
                     final_config[key]["default"] = eval_config_config.get(key, "")
 
             # Build final_mapping from eval_config
+            mapping = effective_simulation_mapping(template, eval_config.mapping or {})
             final_mapping = {}
             for key in template.config.get("required_keys", []):
-                final_mapping[key] = (
-                    eval_config.mapping.get(key, "") if eval_config.mapping else ""
-                )
+                final_mapping[key] = mapping.get(key, "")
 
             eval_data = {
                 "id": str(eval_config.id),
@@ -5682,28 +5682,7 @@ class RunTestExecutionsView(APIView):
                     test_execution_id__in=execution_ids
                 ).only("id", "test_execution_id")
             }
-            outcome_counts = {}
-            if hosted_jobs:
-                # A receipt belongs to a call through its execution, or, for a
-                # scenario-level receipt, through the scenario registration.
-                # Receipts of soft-deleted calls stay in the table and must
-                # not be counted.
-                receipt_of_deleted_call = models.Q(
-                    execution__call_execution__deleted=True
-                ) | models.Q(
-                    execution__isnull=True, scenario__call_execution__deleted=True
-                )
-                for row in (
-                    HostedHarnessReceipt.no_workspace_objects.filter(
-                        job_id__in=hosted_jobs.values()
-                    )
-                    .exclude(receipt_of_deleted_call)
-                    .values("job_id", "status")
-                    .annotate(count=Count("id"))
-                ):
-                    outcome_counts.setdefault(row["job_id"], {})[row["status"]] = row[
-                        "count"
-                    ]
+            outcome_counts = receipt_outcome_counts(hosted_jobs.values())
             agent_turn_counts = {}
             chat_duration_map = {}
             if execution_ids:
