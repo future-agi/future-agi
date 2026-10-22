@@ -17,6 +17,11 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # from BENCH_SUT_REVISION (BENCH_REVISION is accepted for older runbooks).
 sut_revision="${BENCH_SUT_REVISION:-${BENCH_REVISION:-}}"
 generator_revision="$(git -C "$root" rev-parse HEAD 2>/dev/null || true)"
+# 'go run' does not stamp VCS state, so a checkout with uncommitted changes to the
+# generator would otherwise be recorded as the clean revision.
+if [[ -n "$generator_revision" && -n "$(git -C "$root" status --porcelain --untracked-files=no -- . 2>/dev/null)" ]]; then
+  generator_revision+="-modified"
+fi
 
 # Per-profile load shape. Collector budget requirement: see "Collector settings"
 # in benchmark/README.rst; 'otlpbench collector-budget' prints the exact value.
