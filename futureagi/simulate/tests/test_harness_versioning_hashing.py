@@ -112,6 +112,7 @@ class TestEnvironmentHash:
             ).encode(),
             "sub_goals.json": b"[]",
             "schema.sql": b"create table orders(id int);",
+            "world.sqlite": b"SQLite format 3\x00orders: 1",
             "generic-harness/source-model.json": b'{"source_digest": "aaa"}',
             "generic-harness/world-ir.json": b'{"source_model_fingerprint": "aaa"}',
         }
@@ -129,6 +130,12 @@ class TestEnvironmentHash:
         before = hashing.environment_hash(environment, provider_agent=False)
         environment["schema.sql"] = b"create table refunds(id int);"
 
+        assert hashing.environment_hash(environment, provider_agent=False) != before
+
+    def test_changes_with_world_data(self, environment):
+        # world-ir.json is not hashed: a reseal derives it from world.sqlite.
+        before = hashing.environment_hash(environment, provider_agent=False)
+        environment["world.sqlite"] = b"SQLite format 3\x00orders: 2"
         assert hashing.environment_hash(environment, provider_agent=False) != before
 
     def test_ignores_chosen_evals(self, environment):
