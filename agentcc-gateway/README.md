@@ -12,7 +12,7 @@
 ### The OpenAI-compatible gateway for production AI.
 
 **One gateway, every modality.**
-Text · chat · embeddings · images · audio (speech + TTS) · video · OCR · rerank · realtime WebSocket · Assistants + threads · vector stores · batch jobs — all with dedicated routes.
+Text · chat · embeddings · images · audio (speech + TTS) · OCR · rerank · Assistants + threads · vector stores · batch jobs — all with dedicated routes. (The realtime, video, search and scheduled-job routes answer 501 on this release.)
 Route · cache · govern · guard · observe. Single Go binary. Drop-in OpenAI API.
 
 <p>
@@ -43,7 +43,7 @@ Agent Command Center sits between your app and LLM providers. Every request flow
 - **Cost control** — exact + semantic caching, per-key budgets, quotas, virtual keys, rate limits, credits ledger.
 - **Safety** — 18 built-in guardrail scanners (PII, injection, jailbreak, secrets, hallucination, MCP security, content moderation, custom policy, validation, leakage, language, blocklist, …) + adapters for 15 third-party guardrail vendors.
 - **Observability** — Prometheus + OpenTelemetry, per-request metrics (cost, tokens, cache hit, provider).
-- **Modern protocols first-class** — MCP, A2A, Assistants + threads, vector stores, batch, files, realtime WebSocket, responses API, video — shipped, not roadmap.
+- **Modern protocols first-class** — MCP, A2A, Assistants + threads, vector stores, batch, files, responses API. The realtime WebSocket and video routes answer 501 on this release.
 
 One binary. One config. No proprietary control plane.
 
@@ -244,7 +244,7 @@ Every row below uses the **same methodology** each vendor uses for their own cla
 
 - **Against Bifrost**, the fastest published Go gateway: Bifrost claims **5 000 req/s** at 11 µs overhead on t3.xlarge (4 vCPU). **On the same t3.xlarge profile** our gateway sustains **~28 900 req/s — roughly 5.7×** the RPS at P99 ≤ 21 ms with 100 % success. On the apples-to-apples microbench, our **weighted target selection runs at ~9.9 ns** (vs their ~10 ns key-pick — we're slightly faster) and our **HTTP router dispatches in 36 ns**. Full chat pipeline in-process measures ~5 µs for a read path and ~66 µs for a full proxy round-trip through the plugin pipeline.
 
-- **Against Portkey**, the Node.js gateway: Portkey ships a 122 KB binary and claims "< 1 ms latency" (unqualified). Our binary is ~140× bigger because it includes the full guardrail stack (18 built-in scanners), 6 exact + 4 semantic cache backends, MCP/A2A/batch/files/realtime/responses/video endpoints, multi-tenant RBAC, and clustering — all compiled in, no plugin marketplace required. The "< 1 ms" claim has no hardware or workload attached; any face-value comparison is apples-to-oranges.
+- **Against Portkey**, the Node.js gateway: Portkey ships a 122 KB binary and claims "< 1 ms latency" (unqualified). Our binary is ~140× bigger because it includes the full guardrail stack (18 built-in scanners), 6 exact + 4 semantic cache backends, MCP/A2A/batch/files/responses endpoints and multi-tenant RBAC — all compiled in, no plugin marketplace required. The "< 1 ms" claim has no hardware or workload attached; any face-value comparison is apples-to-oranges.
 
 - **Against Helicone + Kong AI Gateway**: neither publishes performance numbers. Run our harness, then theirs, then tell us.
 
@@ -289,7 +289,7 @@ go run ./cmd/server
 
 <details><summary><b>Kubernetes / Helm</b></summary>
 
-Official Kubernetes manifests and Helm charts are coming soon. For now, run AgentCC Gateway with Docker or as part of the Future AGI Docker Compose stack.
+The Future AGI Helm chart (`deploy/helm/futureagi`) runs the gateway with the rest of the platform (its `agentccGateway` values). You can also run AgentCC Gateway with Docker or as part of the Future AGI Docker Compose stack.
 
 </details>
 
@@ -316,14 +316,14 @@ Nobody publishes a head-to-head gateway comparison. So we did.
 | **A2A support** | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
 | **Batch API** | ✅ | ⚠️ | ❌ | ✅ | ❌ | ❌ |
 | **Files API** | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
-| **Realtime / WebSocket** | ✅ | ❌ | ❌ | ⚠️ | ❌ | ❌ |
+| **Realtime / WebSocket** | ❌ (the route answers 501 on this release) | ❌ | ❌ | ⚠️ | ❌ | ❌ |
 | **Responses API** | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
-| **Video API** | ✅ | ❌ | ❌ | ⚠️ | ❌ | ❌ |
+| **Video API** | ❌ (the route answers 501 on this release) | ❌ | ❌ | ⚠️ | ❌ | ❌ |
 | **Prometheus metrics** | ✅ native | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **OpenTelemetry spans** | ✅ native | ⚠️ | ⚠️ | ✅ | ✅ | ✅ |
 | **Multi-tenant RBAC** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Clustering / HA** | ✅ Raft | ⚠️ | ❌ | ⚠️ | ❌ | ✅ |
-| **Audit log (tamper-evident)** | ✅ | ⚠️ | ❌ | ⚠️ | ✅ | ⚠️ |
+| **Clustering / HA** | ⚠️ replicas share state in Redis; no cluster membership | ⚠️ | ❌ | ⚠️ | ❌ | ✅ |
+| **Audit log (tamper-evident)** | ⚠️ stdout events, not chained | ⚠️ | ❌ | ⚠️ | ✅ | ⚠️ |
 | **Self-host friendly** | Single binary | Docker | Single binary | Python + deps | Docker | Docker + DB |
 
 Legend: ✅ first-class · ⚠️ partial/paid · ❌ not in OSS.
@@ -360,9 +360,8 @@ Corrections welcome — open an issue or send a PR.
 - **15 routing strategies** (roundrobin, latency, costopt, adaptive, complexity, conditional, providerlock, accessgroups, race/hedged, mirror/shadow, modelfallback, failover, circuitbreaker, retry, healthmonitor)
 - Cross-provider format translation (OpenAI ↔ Anthropic ↔ Gemini ↔ Bedrock)
 - Prompt caching (Anthropic `cache_control`)
-- Idempotency keys for safe retries
 - W3C Trace Context propagation
-- Raft-based clustering (no external coord)
+- Multi-replica: rate limits, budgets, credits, key revocations and provider key rotations shared through Redis
 - Edge mode (central control plane)
 
 </td>
@@ -380,10 +379,10 @@ Corrections welcome — open an issue or send a PR.
 
 - Virtual keys per tenant/user
 - Budget caps ($ / tokens / requests)
-- Rate limits (sliding window)
+- Rate limits per key, organization, model and user (RPM and TPM)
 - RBAC + team hierarchy
 - IP allowlists
-- Audit log (append-only)
+- Audit events (JSON lines on stdout)
 - Credits ledger
 
 </td>
@@ -414,24 +413,21 @@ Corrections welcome — open an issue or send a PR.
 - A2A (agent-to-agent)
 - Batch API
 - Files API
-- Realtime (WebSocket)
 - OpenAI Responses API
-- Video models
 - Streaming SSE + chunk-level plugins
 - Webhooks
-- Scheduled jobs
 
 </td>
 <td>
 
-- Prometheus `/metrics` (request, cost, tokens, cache, errors)
+- Prometheus metrics at `/-/metrics` or `prometheus.path`, admin token (request, cost, tokens, cache, errors)
 - OpenTelemetry spans (W3C context propagation up + down)
 - Response-header scrubber — strips upstream fingerprints
 - Accurate tokenizer (LiteLLM DB, 2 373 models priced)
 - Per-tenant spend sync (no hot-path contention)
-- Response headers: `x-agentcc-provider`, `x-agentcc-cost`, `x-agentcc-cache`, `x-agentcc-latency`
-- Audit chain (append-only, tamper-evident)
-- Alerting on SLO breach / guardrail violation
+- Response headers: `x-agentcc-provider`, `x-agentcc-cost`, `x-agentcc-cache`, `x-agentcc-latency-ms` ([all headers](#-request-and-response-headers))
+- Audit events on stdout (request, budget, guardrail)
+- Threshold alerts on requests, errors, tokens, cost and latency, with a severity and a cooldown
 
 </td>
 <td>
@@ -452,7 +448,7 @@ Corrections welcome — open an issue or send a PR.
 
 ## 📋 Capabilities in detail
 
-**One gateway, every modality your providers expose.** Text · chat · vision · embeddings · reranking · speech-to-text · text-to-speech (+ streaming) · realtime WebSocket · image generation · video generation · OCR · grounded search · tool calling · structured output · Assistants + threads · vector stores · batch jobs — all have dedicated gateway routes. The specific model you reach is whatever the configured upstream provider serves at that endpoint; we pass the full provider-native payload through.
+**One gateway, every modality your providers expose.** Text · chat · vision · embeddings · reranking · speech-to-text · text-to-speech (+ streaming) · image generation · OCR · tool calling · structured output · Assistants + threads · vector stores · batch jobs — all have dedicated gateway routes. The specific model you reach is whatever the configured upstream provider serves at that endpoint; we pass the full provider-native payload through. The realtime, video, search and scheduled-job routes (`/v1/realtime`, `/v1/videos`, `/v1/search`, `/v1/scheduled`) exist but are not available on this release: they answer 501 (`/v1/realtime` answers 403 to any key but an internal one before that). No provider adapter that ships with this release serves realtime, video or search, and the config refuses `routing.scheduled.enabled`.
 
 **Surface area at a glance:** 🔌 **109 routes** across 23 endpoint categories · 🛡️ **18 built-in guardrails + 15 external vendor adapters** · 🧠 **15 routing strategies** · 🔧 **16 pipeline plugins** · 🔄 **2 cross-provider translators** (OpenAI ↔ Anthropic · OpenAI ↔ Gemini) · 🌐 **7 native provider packages** · 🔒 **6 secret resolvers** (AWS SM · Azure KV · GCP SM · HashiCorp Vault · env · file) · 💾 **10 cache backends** (6 exact + 4 semantic) · 🧩 **39 internal subsystems**. Every count is grep-verifiable in the tree.
 
@@ -467,17 +463,14 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 | Image generation | `/v1/images/generations` |
 | Speech-to-text | `/v1/audio/transcriptions` · `/v1/audio/translations` · streaming: `/deepgram/v1/listen` · `/cartesia/stt/websocket` |
 | Text-to-speech (+ streaming) | `/v1/audio/speech` · `/v1/audio/speech/stream` · streaming: `/deepgram/v1/speak` · `/cartesia/tts/websocket` |
-| Realtime voice + text (WebSocket) | `/v1/realtime` |
-| Video generation | `/v1/videos` · `/v1/videos/{id}` |
 | Embeddings | `/v1/embeddings` |
 | Reranking | `/v1/rerank` |
 | OCR | `/v1/ocr` |
-| Search | `/v1/search` |
 | Tool calling | on all chat endpoints (provider-native schemas preserved) |
 | Structured output | `/v1/chat/completions` · `/v1/responses` (JSON schema) |
 | Assistants + threads | `/v1/assistants` · `/v1/threads` · `/v1/threads/{id}/{messages,runs,runs/{id}/steps}` |
 | Vector stores (RAG) | `/v1/vector_stores` · `/v1/vector_stores/{id}/{files,file_batches,search}` |
-| Batch (async) | `/-/batches` |
+| Batch (async) | `/-/batches` (admin token + `x-agentcc-batch-key`; each item a chat completion run as the key's org) |
 
 ### 🔌 Endpoints — 109 routes across 23 categories
 
@@ -506,12 +499,12 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 <tr>
 <td><b>Video</b></td>
 <td><code>POST /v1/videos</code><br><code>GET /v1/videos</code><br><code>GET /v1/videos/{id}</code><br><code>DELETE /v1/videos/{id}</code></td>
-<td>Async job model · Sora · Veo · Runway via provider</td>
+<td>Answer 501 <code>endpoint_not_configured</code> on this release: no provider adapter that ships with it serves video</td>
 </tr>
 <tr>
 <td><b>OCR &amp; Search</b></td>
 <td><code>POST /v1/ocr</code><br><code>POST /v1/search</code></td>
-<td>Document OCR · grounded search (hooks into KB / Vertex search / Brave)</td>
+<td>Document OCR · <code>/v1/search</code> answers 501 <code>not_supported</code> on this release: no provider adapter that ships with it serves search</td>
 </tr>
 <tr>
 <td><b>Token counting</b></td>
@@ -520,8 +513,8 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 </tr>
 <tr>
 <td><b>Batches</b></td>
-<td><code>POST /-/batches</code> · <code>GET</code> · cancel</td>
-<td>Async large-batch jobs — OpenAI-compatible Batch API</td>
+<td><code>POST /-/batches</code> · <code>GET</code> · cancel (admin token)</td>
+<td>Async chat-completion batches, each item run as the org of the key in <code>x-agentcc-batch-key</code>; held in memory, not the OpenAI Batch API</td>
 </tr>
 <tr>
 <td><b>Files</b></td>
@@ -536,7 +529,7 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 <tr>
 <td><b>Realtime (WebSocket)</b></td>
 <td><code>GET /v1/realtime</code></td>
-<td>OpenAI Realtime voice + text · WebSocket passthrough with per-frame plugins</td>
+<td>Not available on this release: answers 501 to an internal key (no provider adapter that ships with it serves realtime) and 403 to every other key</td>
 </tr>
 <tr>
 <td><b>Streaming speech (WebSocket)</b></td>
@@ -546,7 +539,7 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 <tr>
 <td><b>Assistants API</b></td>
 <td><code>/v1/assistants</code> · create · get · update · delete · list</td>
-<td>Full OpenAI Assistants (Beta) API — native, not simulated</td>
+<td>Full OpenAI Assistants (Beta) API — native, not simulated. <code>assistants.enabled: false</code> turns the assistants, threads and vector-store routes off (404 <code>assistants_disabled</code>)</td>
 </tr>
 <tr>
 <td><b>Threads &amp; Runs</b></td>
@@ -571,7 +564,7 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 <tr>
 <td><b>Scheduled jobs</b></td>
 <td><code>POST /v1/scheduled</code> · list · get · delete</td>
-<td>Cron-like LLM jobs — recurring evals, data-pipeline steps, digest generation</td>
+<td>Answer 501 <code>endpoint_not_configured</code> on this release: the config refuses <code>routing.scheduled.enabled</code></td>
 </tr>
 <tr>
 <td><b>Async jobs</b></td>
@@ -595,18 +588,18 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 </tr>
 <tr>
 <td><b>Admin — keys, orgs, config</b></td>
-<td><code>/-/keys</code> · <code>/-/orgs/{id}/config</code> · <code>/-/keys/{id}/credits</code> · <code>/-/reload</code></td>
-<td>Virtual-key CRUD · per-org config · live reload without restart</td>
+<td><code>/-/keys</code> · <code>/-/orgs/{id}/config</code> · <code>/-/keys/{id}/credits</code> · <code>/-/reload</code> · <code>/-/config</code></td>
+<td>Virtual-key CRUD · per-org config · live reload without restart · this gateway's settings (no secret) and the org config sections it enforces (<code>org_sections_enforced</code>)</td>
 </tr>
 <tr>
 <td><b>Admin — operations</b></td>
-<td><code>/-/metrics</code> · <code>/-/cluster/nodes</code> · <code>/-/shadow/stats</code> · <code>/-/admin/edge/config</code></td>
-<td>Prometheus scrape · Raft cluster introspection · shadow experiment stats · edge mode config</td>
+<td><code>/-/metrics</code> (or <code>prometheus.path</code>) · <code>/-/cluster/nodes</code> · <code>/-/shadow/stats</code> · <code>/-/admin/edge/config</code></td>
+<td>Prometheus scrape · this node's registry entry (membership is per node) · shadow experiment stats · edge mode config</td>
 </tr>
 <tr>
 <td><b>Admin — key rotation</b></td>
 <td><code>/-/admin/providers/{id}/rotation</code> · <code>/rotate</code> · <code>/promote</code> · <code>/rollback</code></td>
-<td>Zero-downtime provider-key rotation with atomic promote + rollback</td>
+<td>Provider-key rotation without a restart: the promote checks the new key with one upstream call, then every new call sends it, on every replica with Redis; rollback cancels a pending rotation. Update the deployment config with the new key before the next restart or rollout</td>
 </tr>
 </table>
 
@@ -680,6 +673,8 @@ guardrails:
     - type: pii            # built-in scanner alongside external
 ```
 
+`${VAR}` is expanded from the environment only in this `config.yaml`, which the operator controls. A guardrail an organization configures through the console or the control plane gives the value itself: a `${...}` in a FutureAGI check's `api_key`, `secret_key` or `base_url`, or in any top-level setting of an external-provider check, is refused, so the gateway never resolves it against its own environment. Anywhere else in a guardrail (a blocklist word, a pattern, an expression, a webhook header, a check name) `${` is plain text.
+
 ### 🔧 Pipeline plugins — 16 processors
 
 Every request flows through an ordered plugin pipeline. Each plugin is optional, configurable, and isolated — plugins can't step on each other.
@@ -689,9 +684,9 @@ Every request flows through an ordered plugin pipeline. Each plugin is optional,
 | `ipacl` | Pre-auth | CIDR-based IP allow/deny |
 | `auth` | Pre-auth | API-key lookup, tenant/org resolution |
 | `rbac` | Post-auth | Role + permission check on endpoint + resource |
-| `ratelimit` | Pre-request | Sliding-window RPM / TPM / per-key / per-tenant |
+| `ratelimit` | Pre-request | Requests per minute per key; an organization's requests and tokens per minute for the whole org, per key, per model and per user (chat completions, completions, Responses, Messages and Gemini requests) |
 | `quota` | Pre-request | Absolute quotas (requests/day, tokens/month) |
-| `budget` | Pre-request | Dollar-cap enforcement across keys / tenants |
+| `budget` | Pre-request | Dollar caps per organization, team, user, key and tag; past a cap a budget blocks, throttles or warns |
 | `credits` | Pre-request | Credit-ledger debit + top-up checks for managed keys |
 | `cache` | Pre-upstream | L1 exact + L2 semantic lookup + writeback |
 | `toolpolicy` | Pre-upstream | Tool-call governance per virtual key |
@@ -699,9 +694,11 @@ Every request flows through an ordered plugin pipeline. Each plugin is optional,
 | `cost` | Post-upstream | Per-request cost calc using LiteLLM pricing DB |
 | `prometheus` | Always | Histogram + counter emission |
 | `otel` | Always | OpenTelemetry spans (W3C Trace Context) |
-| `audit` | Always | Append-only audit log (tamper-evident chain) |
-| `alerting` | Always | Fire alerts on SLO breach / guardrail violation |
+| `audit` | Always | Audit events as JSON lines on stdout with `audit.enabled` (request, budget, guardrail) |
+| `alerting` | Always | Threshold alerts on request, error, token, cost and latency metrics (webhook, Slack, log); an org rule carries a severity and waits its cooldown (default 15m) |
 | `logging` | Always | Structured JSON access log with redaction |
+
+An organization's `ip_acl`, `budgets`, `tool_policy` and `alerting` settings (Gateway > Org Config) run in the `ipacl`, `budget`, `toolpolicy` and `alerting` plugins on every gateway that receives org configs (`control_plane.url` or `admin.token` set), whatever the gateway's own switches for them say; an org's `ip_acl` runs where `server.trusted_proxies` or `server.trusted_hops` is set, or where `ip_acl.enabled` is on. The switches add the gateway's own rules. An org's `cache` settings need the gateway's `cache.enabled`, and its `rate_limiting` settings `rate_limiting.enabled`. `GET /-/config` lists what a gateway enforces (`org_sections_enforced`).
 
 ### 🌐 Provider formats — 10 native (100+ upstreams)
 
@@ -709,7 +706,7 @@ One gateway HTTP endpoint, each provider's native protocol preserved — we don'
 
 | Format | Hosted providers | Self-hosted | Provider-specific features preserved |
 |---|---|---|---|
-| **OpenAI** | OpenAI · Groq · Together · Fireworks · OpenRouter · Perplexity · Mistral · Nebius · DeepInfra · Anyscale · Cerebras · SambaNova · xAI · and any OpenAI-API-compatible service | **vLLM · LM Studio · Ollama · TGI · Llamafile** | streaming, logprobs, tool-calling, structured output, vision, JSON mode |
+| **OpenAI** | OpenAI · Groq · Together · Fireworks · OpenRouter · Perplexity (`api_path_prefix: ""`, as in config.example.yaml) · Mistral · Nebius · DeepInfra · Cerebras · SambaNova · xAI · and any OpenAI-API-compatible service | **vLLM · LM Studio · Ollama · TGI · Llamafile** | streaming, logprobs, tool-calling, structured output, vision, JSON mode |
 | **Azure OpenAI** | Azure OpenAI | — | deployment names, api-version routing, Azure AD + key auth |
 | **Anthropic** | Anthropic · AWS Bedrock (Anthropic) | — | native `/messages` round-trip, cache_control blocks, computer-use, file uploads |
 | **Gemini** | Google AI Studio · generative-language API | — | safety settings, grounding, code-execution tool, multi-modal parts |
@@ -729,7 +726,7 @@ Two-tier: L1 exact-match on the request hash, L2 semantic on the embedding. Firs
 | Tier | Backend | Persistence | Typical use |
 |---|---|---|---|
 | L1 exact | `memory` | in-process | single-replica dev / test |
-| L1 exact | `redis` | shared | **production default** — multi-replica |
+| L1 exact | `redis` | shared | **production default** — multi-replica; one node, Redis Cluster (`mode: cluster`) or Sentinel (`mode: sentinel`), TLS with `tls: true` (never plaintext) |
 | L1 exact | `disk` | local disk | single-node, restart-safe |
 | L1 exact | `s3` | AWS S3 | archival, cold cache |
 | L1 exact | `gcs` | Google Cloud Storage | archival |
@@ -772,15 +769,15 @@ Each subsystem is its own Go package — isolated, tested, independently replace
 </tr>
 <tr>
 <td><b>Async &amp; jobs</b></td>
-<td><code>async</code> · <code>batch</code> · <code>scheduled</code></td>
+<td><code>async</code> · <code>batch</code> · <code>scheduled</code> (its routes answer 501 on this release)</td>
 </tr>
 <tr>
 <td><b>Modern protocols</b></td>
-<td><code>mcp</code> · <code>a2a</code> · <code>realtime</code> · <code>responses</code> · <code>files</code> · <code>video</code></td>
+<td><code>mcp</code> · <code>a2a</code> · <code>realtime</code> · <code>responses</code> · <code>files</code> · <code>video</code> (the realtime and video routes answer 501 on this release)</td>
 </tr>
 <tr>
 <td><b>Deployment</b></td>
-<td><code>cluster</code> (Raft) · <code>edge</code> (edge mode) · <code>config</code></td>
+<td><code>cluster</code> (this node's registry entry) · <code>edge</code> (edge mode) · <code>config</code></td>
 </tr>
 <tr>
 <td><b>Observability</b></td>
@@ -797,17 +794,17 @@ Each subsystem is its own Go package — isolated, tested, independently replace
 | Capability | How it works | Granularity |
 |---|---|---|
 | **Virtual keys** | Gateway-issued keys abstract real provider keys; rotate upstream without app changes | tenant · user · team |
-| **Key rotation** | Zero-downtime: rotate → promote → rollback, all atomic via <code>/-/admin/providers/{id}/rotate</code> | per provider |
+| **Key rotation** | Without a restart: rotate → promote (validated with one upstream call) via <code>/-/admin/providers/{id}/rotate</code>; rollback cancels a pending rotation; update the deployment config with the new key before the next restart or rollout | per provider |
 | **Key-scoped model ACL** | <code>models: [...]</code> / <code>providers: [...]</code> on each key — requests outside the list rejected at the handler | key |
-| **Budgets** | Dollar cap · token cap · request cap, enforced in the `budget` plugin | key · tenant · model |
+| **Budgets** | Dollar caps per period (daily, weekly, monthly or total) with per-model caps, enforced in the `budget` plugin; past a cap a budget blocks (429), throttles to `throttle_rpm` requests a minute (429 `budget_throttled` with `Retry-After`) or warns | org · team · user · key · tag · model |
 | **Credits ledger** | Managed keys charge against a prepaid ledger; balance + top-up visible to admins | key |
-| **Rate limits** | Sliding-window RPM / TPM in the `ratelimit` plugin; sliding-window state via Redis | key · tenant · endpoint |
+| **Rate limits** | RPM and TPM in the `ratelimit` plugin; with Redis (`redis.enabled`) every replica shares the counts over a sliding minute, otherwise each replica counts on its own | key · organization · model · user |
 | **Quotas** | Absolute caps (requests/day, tokens/month) in the `quota` plugin | key · tenant |
-| **IP allowlist** | CIDR ranges in the `ipacl` plugin (runs before auth) | key · tenant |
+| **IP allowlist** | CIDR ranges, checked at the key gate on every route and in the `ipacl` plugin; the client IP is the TCP peer unless `server.trusted_proxies` names the proxies in front, and an organization's list applies where `server.trusted_proxies` or `server.trusted_hops` is set or `ip_acl.enabled` is on | key · tenant |
 | **RBAC** | Roles with permission sets; team hierarchy; route + resource level | org |
 | **Tool-call governance** | `allowed_tools` / `denied_tools` per key; enforced for MCP + function calling | key |
-| **Audit log** | Append-only, tamper-evident chain; every admin + high-risk event | org |
-| **Multi-tenant isolation** | Shared nothing at runtime — separate rate-limit buckets, cache namespaces, audit streams | tenant |
+| **Audit log** | JSON-lines events on stdout (`audit.enabled`): request start and end, budget checks, guardrail triggers; ship them with your log collector | node |
+| **Multi-tenant isolation** | Each organization has its own rate-limit buckets and response-cache keys; stored objects, A2A tasks and MCP sessions belong to the caller's organization | tenant |
 | **SSO** (via Future AGI platform) | SAML 2.0 + OIDC | org |
 
 ### 📡 Observability
@@ -823,12 +820,12 @@ Each subsystem is its own Go package — isolated, tested, independently replace
 | Uptime | `agentcc_uptime_seconds` | Prometheus | yes |
 | Distributed traces | OpenTelemetry spans (W3C Trace Context propagated) | OTLP/gRPC | via OTel collector |
 | Access logs | Structured JSON with request ID + redaction | stdout · Loki · CloudWatch · Datadog | |
-| Audit events | Append-only chain, signed | stdout · S3 · SIEM via webhook | |
-| Response headers | `x-agentcc-provider` · `x-agentcc-cost` · `x-agentcc-cache` · `x-agentcc-latency` | HTTP | per-request |
+| Audit events | JSON lines: request, budget, guardrail | stdout (to a SIEM through your log collector) | |
+| Response headers | `x-agentcc-request-id` · `x-agentcc-trace-id` · `x-agentcc-latency-ms` (every response) · `x-agentcc-provider` · `x-agentcc-cost` · `x-agentcc-cache` | HTTP | per-request |
 
 ### 🧠 Advanced routing & resiliency — 15 strategies
 
-Every request goes through a pluggable router stack. Mix and match — per virtual key, per tenant, or globally.
+Every request goes through a pluggable router stack. Mix and match — per virtual key, per tenant, or globally. For an organization's API keys, the organization's strategy, retry, provider failover, circuit breakers and model map run over the organization's own providers only, with circuit breakers of its own, and never reach the gateway's own providers or keys. Its model fallback chains do too, with one exception: when the organization turned managed models on, a chain's next model can be a managed model, served by the gateway and billed to the organization's credits.
 
 | Strategy | Package | What it does |
 |---|---|---|
@@ -837,15 +834,15 @@ Every request goes through a pluggable router stack. Mix and match — per virtu
 | **Cost-optimized** | `costopt` | Route to the cheapest provider that meets your SLO |
 | **Adaptive** | `adaptive` | Online learning — continuously adjust weights based on success/latency |
 | **Complexity-based** | `complexity` | Route simple queries to small/fast models, complex queries to large models |
-| **Conditional** | `conditional` | Rule-based routing (by user, region, header, model family, prompt length…) |
+| **Conditional** | `conditional` | Rule-based routing (by user, region, header, model family, prompt length…) from the gateway's config file; an organization's `conditional_routes` are not applied on this release |
 | **Provider lock** | `providerlock` | Force specific requests to a specific provider (compliance, BYOC) |
 | **Access groups** | `accessgroups` | Route keys in a group to a dedicated provider pool |
 | **Race (hedged)** | `race` | Send to multiple providers in parallel; return first valid response |
 | **Mirror (shadow)** | `mirror` | Mirror traffic to a second model, compare outputs, no user impact |
-| **Model fallback** | `modelfallback` | `gpt-4o → claude-sonnet → gemini` cascades on error/timeout |
+| **Model fallback** | `modelfallback` | `gpt-4o → claude-sonnet → gemini` cascades on error/timeout; an organization's chains run unless it sets `fallback_enabled: false` |
 | **Failover** | `failover` | Hot-standby provider takes over when primary misbehaves |
 | **Circuit breaker** | `circuitbreaker` | Trip after N errors / M% error rate; auto-recover with half-open probes |
-| **Retry** | `retry` | Configurable backoff (linear, exponential, jittered); idempotency-aware |
+| **Retry** | `retry` | Configurable backoff (linear, exponential, jittered) |
 | **Health monitor** | `healthmonitor` | Active + passive provider health; drives every other strategy above |
 
 ### 🔄 Format translation — cross-provider round-trip
@@ -872,7 +869,7 @@ Provider API keys can be resolved from a secrets vault instead of hardcoded in c
 | Environment variables | `secrets/resolver.go` (built-in) |
 | Files on disk | `secrets/resolver.go` (built-in) |
 
-Combines with provider-key rotation (`POST /-/admin/providers/{id}/rotate` · `/promote` · `/rollback`).
+Combines with provider-key rotation (`POST /-/admin/providers/{id}/rotate` · `/promote` · `/rollback`): the rotation lives until restart, so update the deployment config with the new key before the next restart or rollout.
 
 ### ✨ Other notable capabilities
 
@@ -884,14 +881,14 @@ Combines with provider-key rotation (`POST /-/admin/providers/{id}/rotate` · `/
 | **Hot config reload** | `POST /-/reload` reloads providers / keys / routes |
 | **Cost tracking** | Uses the LiteLLM pricing DB (2 373 models loaded at startup); emits `agentcc_cost_microdollars_total` |
 | **Per-tenant spend sync** | [`internal/tenant/spend_sync.go`](./internal/tenant/spend_sync.go) |
-| **Clustering** | [`internal/cluster/`](./internal/cluster/) |
+| **Node registry** | `GET /-/cluster/nodes` lists the node that answers ([`internal/cluster/`](./internal/cluster/)); membership is per node |
 | **Edge mode** | [`internal/edge/`](./internal/edge/) |
 | **Privacy redactor** | Logs/traces redaction, separate from the PII guardrail ([`internal/privacy/redactor.go`](./internal/privacy/redactor.go)) |
-| **Streaming** | SSE + WebSocket passthrough; plugins can run at boundaries ([`internal/streaming/`](./internal/streaming/)) |
+| **Streaming** | SSE; plugins can run at boundaries ([`internal/streaming/`](./internal/streaming/)). The realtime WebSocket relay answers 501 on this release |
 | **Shadow experiments** | Mirror traffic to a second model, compare results (`/-/shadow/stats`, [`routing/mirror.go`](./internal/routing/mirror.go)) |
 | **AgentCard** | `/.well-known/agent.json` exposed for A2A discovery |
 | **W3C Trace Context** | `traceparent` / `tracestate` handled via the [`otel`](./internal/otel/) subsystem |
-| **Webhooks** | Usage, guardrail violation, budget breach deliveries |
+| **Webhooks** | The platform delivers `request.completed`, `error.occurred`, `guardrail.triggered` and `budget.exceeded` (once per budget level per period, or, when the gateway names no level, once per error code per UTC day) from the request log, signed with the webhook's secret, retried every 30 s with a doubling backoff; email alerts add error-rate, p95-latency and spend thresholds checked every minute |
 | **Structured errors** | OpenAI-compatible `{error: {message, type, code, param}}` shape |
 
 ### 🖥️ Deployment surface
@@ -899,13 +896,12 @@ Combines with provider-key rotation (`POST /-/admin/providers/{id}/rotate` · `/
 | Target | Single-binary | Image size | HA | Notes |
 |---|:---:|---:|:---:|---|
 | 🐳 Docker | ✅ | ~17 MB | — | `ghcr.io/future-agi/agent-command-center:latest` |
-| ☸️ Kubernetes (Helm) | ✅ | — | ✅ Raft | HPA-ready, rolling upgrades, PDBs, liveness/readiness probes |
+| ☸️ Kubernetes (Helm) | ✅ | — | ✅ replicas + Redis | HPA-ready, rolling upgrades, PDBs, liveness/readiness probes |
 | ⚡ Bare metal (systemd) | ✅ | ~17 MB | ✅ | single binary + YAML config |
 | ☁️ AWS | ✅ | — | ✅ | Fargate · EKS · EC2; SigV4 native for Bedrock |
 | ☁️ GCP | ✅ | — | ✅ | Cloud Run · GKE; Vertex auth native |
 | ☁️ Azure | ✅ | — | ✅ | ACI · AKS; Azure OpenAI native auth |
 | 🌊 Edge mode | ✅ | ~17 MB | ✅ | Built-in <code>edge</code> subsystem — forward to central control plane |
-| 🛒 AWS Marketplace | Coming soon | — | — | subscribable AMI |
 | 🔒 Air-gapped / on-prem | ✅ | ~17 MB | ✅ | no phone-home, fully offline |
 | 🖱️ One-click PaaS | via Docker | — | — | Render · Railway · Fly · Northflank |
 
@@ -933,6 +929,46 @@ Or use the official Agent Command Center clients for first-class features (virtu
 | `@agentcc/vercel` | Node 18+ | `npm install @agentcc/vercel` |
 
 Full client source: [`future-agi/agent-command-center-sdk`](https://github.com/future-agi/agent-command-center-sdk).
+
+### 📨 Request and response headers
+
+Request headers the gateway reads (all routes that read them; values over their bound are a 400, never cut):
+
+| Header | Value | What it does |
+|---|---|---|
+| `x-agentcc-trace-id` | string | Trace id; echoed on the response. Generated when absent. |
+| `x-agentcc-session-id` | string, ≤ 255 | Groups requests into a session (logged as `session_id`). |
+| `x-agentcc-session-name` | string, ≤ 255 | Logged as metadata `session_name`. |
+| `x-agentcc-session-path` | string, ≤ 1,024 | Logged as metadata `session_path`, e.g. `/search/rerank`. |
+| `x-agentcc-request-id` | string, ≤ 255 | Your own request id: logged as metadata `client_request_id` and echoed as `x-agentcc-client-request-id`. The response's `x-agentcc-request-id` is always the gateway's own id. |
+| `x-agentcc-user-id` | string | The end user (agent context). |
+| `x-agentcc-metadata` | JSON object | Your dimensions, logged and exported; gateway-owned keys (`org_id`, `key_*`, `cost`, `budget_*`, ...) are dropped. |
+| `x-agentcc-property-<name>` | string, ≤ 1,024 | One dimension: `x-agentcc-property-env: prod` is `"env":"prod"` in `x-agentcc-metadata` (name lower-cased, ≤ 64 characters; the same blocklist). It wins over the same key in `x-agentcc-metadata`; `x-agentcc-request-id`, `-session-name` and `-session-path` win over a property of their key. |
+| `x-agentcc-cache-ttl`, `-cache-namespace`, `-cache-force-refresh` | seconds / string / `true` | Per-request cache controls. |
+| `x-agentcc-provider-lock` | provider id | Pins the provider; only one the key may use. |
+| `x-agentcc-complexity-override` | tier | Picks the complexity tier. |
+| `x-agentcc-timeout` / `x-agentcc-request-timeout` | Go duration / ms | Shortens the request's timeout (never above the server's ceiling). |
+| `x-agentcc-max-attempts`, `-retry-delay-ms`, `-backoff` | see release notes N3 | Tighten the org's retries for this request. |
+| `X-Guardrail-Policy` (alias `x-agentcc-guardrail-policy`) | `log-only`, `disabled` or `strict` | The guardrail mode for this request; the key must allow overrides (`allow_policy_override`), else 403. It takes a mode, not policy ids. `X-Guardrail-Policy` wins when both are sent. |
+| `x-agentcc-config` | JSON object, ≤ 16 KiB | Several of the headers above in one: each key is a header name without `x-agentcc-` (`{"cache-ttl":300,"request-timeout":5000,"property-env":"prod"}`). It also takes the SDK's GatewayConfig sections (`cache`, `retry`, `fallback`, `load_balance`, `guardrails`, `routing`, `mirror`, `timeout`), each a JSON object or null: `cache.ttl`, `cache.namespace` and `cache.force_refresh` are applied as the cache headers; the other sections and cache fields are not read and are named in `x-agentcc-config-ignored`. A string `timeout` is the `x-agentcc-timeout` duration; a numeric one is named, not applied. `cache-ttl` and `cache.ttl` take whole seconds (`300`, `300.0` or `3e2`) or a duration string (`"5m"`); a fraction is refused. A header sent on its own wins. An unknown key, a wrong type, two keys that set the same header, a duplicate key, more than 32 sections and cache fields to name, or a cache field name that is not 1 to 64 letters, digits, `_`, `-` or `.` is a 400 `invalid_agentcc_config` naming it. Each value is then checked as its header is. |
+
+Response headers:
+
+| Header | When |
+|---|---|
+| `x-agentcc-request-id`, `x-agentcc-trace-id`, `x-agentcc-latency-ms` | Every response, errors included. |
+| `x-agentcc-client-request-id` | When the request sent `x-agentcc-request-id`. |
+| `x-agentcc-config-ignored` | When `x-agentcc-config` held GatewayConfig sections or cache fields the gateway does not read: their names, sorted, comma-separated (`cache.strategy,fallback,retry`). |
+| `x-agentcc-provider`, `x-agentcc-model-used` | When a provider served the response (not on an error the gateway answers itself; `x-agentcc-model-used` is not set on embeddings). |
+| `x-agentcc-timeout-ms` | When the route resolved a timeout for a provider call (not on `/v1/messages`). |
+| `x-agentcc-cost`, `x-agentcc-cache`, `x-agentcc-fallback-used`, `x-agentcc-routing-strategy`, `x-ratelimit-*-requests` | When they apply. |
+| `x-agentcc-guardrail-triggered: true`, `x-agentcc-guardrail-action`, `x-agentcc-guardrails-triggered` | When a guardrail check triggered without blocking: the action is `warn` if any check warned, else `log`; the second lists the checks, sorted, comma-separated. A block is a 403 with error type `guardrail_error` instead. |
+
+Retry, failover and circuit-breaker status lists (`routing.retry.on_status_codes`, `routing.failover.on_status_codes`,
+`routing.circuit_breaker.on_status_codes`) match the status the client gets (a provider's 5xx is answered as 502) or
+the provider's own status, so `[503]` matches a provider outage and `[502]` still matches every provider 5xx.
+`on_timeout` retries or fails over a provider timeout. A circuit breaker counts a provider timeout (504, or a
+provider's 408 or 504) as a failure whatever its list.
 
 ---
 
@@ -985,7 +1021,6 @@ See [`config.example.yaml`](./config.example.yaml) for the full reference.
 | ☸️ Kubernetes (Helm) | ✅ | HPA-ready, rolling upgrades |
 | ⚡ Bare metal (systemd) | ✅ | Single binary |
 | ☁️ AWS / GCP / Azure | ✅ | Fargate · Cloud Run · ACI |
-| 🛒 AWS Marketplace | Coming soon | |
 | 🔒 Air-gapped | ✅ | No phone-home |
 
 ---
