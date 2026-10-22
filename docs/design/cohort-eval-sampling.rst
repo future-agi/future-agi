@@ -213,8 +213,16 @@ other product implements stratification or contact-consistent sampling.
 Verification and rollout
 ------------------------
 
-Apply ``tracer/0117_cohort_sampling`` before deploying writers. It is additive,
-contains no backfill of guessed probabilities, and has no enterprise dependency.
+Apply ``tracer/0117_cohort_sampling`` and
+``tracer/0117_sampling_project_db_default`` before deploying writers. They are
+additive, contain no backfill of guessed probabilities, and have no enterprise
+dependency. Pause/drain ingestion while applying both migrations, then resume
+collectors: do not leave writers running between the original field addition
+and the default repair. The project contact-attribute field retains an
+empty-string database default as well as its Django default, so existing Go
+collectors can insert projects outside the ORM after the schema update.
+Collector upserts must preserve any configured contact attribute. The regression
+suite executes the collector's actual INSERT against the Django-migrated schema.
 Keep the private cloud schema-generation source outside Git.
 
 Reproducible commands, using the project's backend environment and Node 22.18::
