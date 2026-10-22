@@ -41,8 +41,16 @@ DASHBOARD_METRIC_TYPES = (
     "annotation_metric",
     "custom_attribute",
     "custom_column",
+    "derived_metric",
 )
-DASHBOARD_METRIC_SOURCES = ("traces", "datasets", "simulation", "both", "all")
+DASHBOARD_METRIC_SOURCES = (
+    "traces",
+    "datasets",
+    "simulation",
+    "both",
+    "all",
+    "derived_metrics",
+)
 
 # Cursor-mode discovery publishes logical definition namespaces instead of
 # forcing every surface through its physical trace/session transport.  Keep
@@ -199,6 +207,7 @@ class DashboardMetricSerializer(StrictInputSerializer):
     output_type = serializers.CharField(required=False, allow_blank=True)
     eval_key = serializers.CharField(required=False, allow_blank=True)
     config_id = serializers.CharField(required=False, allow_blank=True)
+    derived_run_id = serializers.UUIDField(required=False)
     label_id = serializers.CharField(required=False, allow_blank=True)
     attribute_key = _ExactAttributeCharField(required=False, allow_blank=True)
     attribute_type = serializers.ChoiceField(
@@ -238,6 +247,23 @@ class DashboardMetricSerializer(StrictInputSerializer):
                     attrs["aggregation"] = "count"
                 else:
                     raise serializers.ValidationError({"aggregation": error})
+
+        if (
+            attrs.get("type") == "derived_metric"
+            or attrs.get("source") == "derived_metrics"
+        ):
+            if (
+                attrs.get("type") != "derived_metric"
+                or attrs.get("source") != "derived_metrics"
+                or not attrs.get("derived_run_id")
+            ):
+                raise serializers.ValidationError(
+                    "Derived metrics require a saved run and the derived_metrics source."
+                )
+            if attrs.get("aggregation") != "avg" or attrs.get("filters"):
+                raise serializers.ValidationError(
+                    "A saved metric result cannot be re-aggregated or filtered. Create a new run instead."
+                )
 
         property_id = attrs.get("property_id")
         if property_id:
@@ -549,6 +575,20 @@ class DashboardQuerySerializer(StrictInputSerializer):
         simulation_metrics = [
             metric for metric in metrics if metric.get("source") == "simulation"
         ]
+        derived = [
+            metric for metric in metrics if metric.get("source") == "derived_metrics"
+        ]
+        if derived:
+            if (
+                len(derived) != len(metrics)
+                or attrs.get("filters")
+                or attrs.get("breakdowns")
+            ):
+                raise serializers.ValidationError(
+                    "Saved metric runs cannot be mixed with live sources, filters or breakdowns."
+                )
+            return attrs
+
         dataset_workflow = attrs.get("workflow") == "dataset"
         simulation_workflow = attrs.get("workflow") == "simulation"
         if (

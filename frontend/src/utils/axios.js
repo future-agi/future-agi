@@ -1421,6 +1421,7 @@ export const endpoints = {
     getEvalDetails: (observationSpanId, customEvalConfigId) =>
       `${apiPath("/tracer/observation-span/get_evaluation_details/")}?custom_eval_config_id=${customEvalConfigId}&observation_span_id=${observationSpanId}`,
     createEvalTask: () => apiPath("/tracer/eval-task/"),
+    samplingPreview: () => apiPath("/tracer/eval-task/sampling_preview/"),
     getEvalTaskDetails: (id) =>
       withQuery(apiPath("/tracer/eval-task/get_eval_details/"), {
         eval_id: id,
@@ -1773,6 +1774,16 @@ export const endpoints = {
     list: apiPath("/accounts/workspace/list/"),
     create: apiPath("/accounts/workspaces/"),
     switch: apiPath("/accounts/workspace/switch/"),
+  },
+  derivedMetrics: {
+    list: apiPath("/tracer/derived-metrics/"),
+    detail: (id) => apiPath("/tracer/derived-metrics/{id}/", { id }),
+    validate: apiPath("/tracer/derived-metrics/validate/"),
+    preview: (id) => apiPath("/tracer/derived-metrics/{id}/preview/", { id }),
+    runs: (id) => apiPath("/tracer/derived-metrics/{id}/runs/", { id }),
+    run: (id) => apiPath("/tracer/derived-metric-runs/{id}/", { id }),
+    results: (id) => apiPath("/tracer/derived-metric-runs/{id}/results/", { id }),
+    recompute: (id) => apiPath("/tracer/derived-metric-runs/{id}/recompute/", { id }),
   },
   dashboard: {
     list: apiPath("/tracer/dashboard/"),

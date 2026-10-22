@@ -122,6 +122,7 @@ export const NewTaskValidationSchema = () =>
         getNumberValidation("Max Spans is required"),
       ]),
       samplingRate: getNumberValidation("Sampling Rate is required"),
+      samplingPolicy: z.object({}).passthrough().nullable().optional(),
       evalsDetails: z
         .array(z.any())
         .min(1, { message: "At least one evaluation is required" })
@@ -174,7 +175,7 @@ export const NewTaskValidationSchema = () =>
     })
     .refine(
       (data) => {
-        if (data.runType === "historical") {
+        if (data.runType === "historical" && !data.samplingPolicy) {
           return !!data.spansLimit;
         }
         return true;
@@ -199,6 +200,7 @@ export const NewTaskValidationSchema = () =>
             ? Number(data.spansLimit)
             : data?.spansLimit,
         samplingRate: data?.samplingRate,
+        ...(data.samplingPolicy !== undefined ? { samplingPolicy: data.samplingPolicy } : {}),
         evals: data?.evalsDetails,
         runType: data?.runType,
         rowType: data?.rowType ?? "spans",

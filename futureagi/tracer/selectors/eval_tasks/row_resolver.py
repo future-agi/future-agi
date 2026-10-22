@@ -1598,6 +1598,7 @@ def _build_sample_query(
     limit: int | None,
     created_at_floor: datetime | None = None,
     created_at_ceiling: datetime | None = None,
+    source_table: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Sampled-row-ids SQL for the row_type: take the UI list builder's filtered
     id set and wrap it with deterministic hash sampling, a stable order, and the
@@ -1670,6 +1671,10 @@ def _build_sample_query(
     # on arrival time (``created_at``). Injecting the floor into ``ui_filters``
     # would make ``parse_time_range`` apply it to historical ``start_time``.
     builder = get_v2_class(query_type)(project_id=str(project_id), filters=ui_filters)
+    if source_table is not None:
+        if source_table != "sampling_source":
+            raise ValueError("Unsupported internal sampling source")
+        builder.TABLE = source_table
     inner_sql, params = builder.build_id_query(
         created_at_floor=created_at_floor, created_at_ceiling=created_at_ceiling
     )
@@ -1696,7 +1701,7 @@ def _build_sample_query(
         # can't match ids from another project or soft-deleted rows.
         ot_pred = (
             f"AND {id_col} IN "
-            f"(SELECT {src} FROM spans "
+            f"(SELECT {src} FROM {source_table or 'spans'} "
             f"WHERE observation_type IN %(otypes)s "
             f"AND project_id = %(ot_project_id)s AND is_deleted = 0"
             f"{root_pred})"

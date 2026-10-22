@@ -95,6 +95,7 @@ const TAB_TO_ROUTE = {
   traces: { route: "llm-tracing", params: { selectedTab: "trace" } },
   sessions: { route: "sessions", params: {} },
   users: { route: "users", params: {} },
+  query: { route: "query", params: {} },
 };
 
 const ObservePage = React.memo(() => {
@@ -142,7 +143,9 @@ const ObservePage = React.memo(() => {
     // would be replaced by `tab=sessions` (or `tab=users`), wiping the
     // active-view-id needed by Save view.
     if (tab && tab.startsWith("view-")) return;
-    if (currentRouteSegment === "sessions") {
+    if (currentRouteSegment === "query") {
+      setActiveTab("query");
+    } else if (currentRouteSegment === "sessions") {
       setActiveTab("sessions");
     } else if (currentRouteSegment === "users") {
       setActiveTab("users");

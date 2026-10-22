@@ -680,6 +680,28 @@
 - the widget query returns exactly the seeded per-bucket maxima (190, 250, 210) for latency/max
 - chart_config.chart_type round-trips as column and then as line through the widget detail endpoint
 
+### DASH-E2E-017 — an unweighted resolution formula persists, renders on a dashboard and records an alert
+
+**Goal:** Save an unweighted resolution-ratio formula, freeze a run, inspect its dashboard value and record a threshold alert.  
+**Spec:** `flows/dashboards/derived-metric.spec.ts:37`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest two independently identified sessions with explicit numeric outcomes on both root and child spans
+2. create, validate and save a session-level resolution formula through Derived metrics
+3. create a static monitor, preview a closed window and run the saved formula
+4. inspect the persisted result and frozen one-row-per-session evidence
+5. add the saved run to a dashboard through the UI, then reload that dashboard
+6. verify the scoped monitor recorded one critical alert for the exact frozen run window
+
+**Backend state verified:**
+
+- The exact four seeded spans and typed outcomes belong to the minted project in the actor organization/default workspace.
+- The saved version and completed run own exactly two frozen session units, with persisted numerator 1, denominator 2 and value 0.5.
+- The saved dashboard binding and its actual initial/reloaded query responses return the independent expected run value.
+- The actor-scoped monitor records exactly one critical alert for this run window and marks this run as consumed.
+
 ## datasets
 
 ### DATA-E2E-001 — uploaded dataset values can be discovered and filtered
@@ -909,6 +931,30 @@
 - managed mock routing attested before model calls
 - UI POST and stored task retain the custom predicate
 - completed task has exactly the matching span in PG and CH, with mock verdict and usage
+
+### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
+
+**Goal:** Preview and run a contact quota without splitting contacts, including late spans, then edit the quota with clear new-run provenance  
+**Spec:** `flows/evals/cohort-sampling.spec.ts:36`  
+**Tags:** —
+
+**User steps:**
+
+1. seed two sessions with two traces and two spans per trace
+2. choose the project and configure an echo judge through the task editor
+3. preview a closed session quota of one and create a continuous span task
+4. verify the independently hash-ranked contact is the exact evaluated set
+5. ingest a late trace in each contact and verify only the sampled contact expands
+6. pause, edit the quota to two, preview and explicitly Delete & rerun
+7. verify one new cohort with probability one and the exact expanded span set
+
+**Backend state verified:**
+
+- all eight initial spans have two canonical session identities in ClickHouse
+- UI preview returns exactly two eligible contacts, one selected contact and four selected spans
+- created task evaluates exactly the independently hash-ranked contact with probability one half
+- late ingestion extends only the frozen sampled contact and does not rerank its membership
+- edited quota is persisted and visible results have one new cohort with probability one, while old provenance remains archived
 
 ## gateway
 
@@ -1764,6 +1810,28 @@
 - Today lists only the today spans, Yesterday only the yesterday spans, and 7D–12M exactly both days
 - Custom links and views send and keep their stored range verbatim and list no span
 - opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range
+
+### OBS-E2E-052 — an analyst saves a scoped SQL result as a live dashboard query
+
+**Goal:** An analyst runs a project-scoped query, shares its definition with project members, and adds it to a dashboard.  
+**Spec:** `flows/observe/sql-workbench.spec.ts:23`  
+**Tags:** —
+
+**User steps:**
+
+1. send a trace with two independently named spans to a new project
+2. open Observe Query and run a grouped span query using the SQL editor
+3. inspect the exact result table and save a project-shared query
+4. add the saved query to a dashboard using the Query page
+5. open the dashboard and verify it reruns the saved query
+
+**Backend state verified:**
+
+- exactly the two seeded spans exist in ClickHouse FINAL under the created project
+- the created PostgreSQL project belongs to the actor organization and workspace
+- the completed SQL API result equals the two seeded names and counts shown in the UI
+- the saved project query and dashboard widget persist the same scoped query reference
+- the dashboard starts a new personal execution of the saved query and shows the same exact rows
 
 ## prompts
 

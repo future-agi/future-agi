@@ -24319,6 +24319,7 @@ export const DashboardMetricsCatalogQueryApiCategory = {
   annotation_metric: "annotation_metric",
   custom_attribute: "custom_attribute",
   custom_column: "custom_column",
+  derived_metric: "derived_metric",
 } as const;
 
 export type DashboardMetricsCatalogQueryApiRole =
@@ -24457,6 +24458,7 @@ export const DashboardMetricApiType = {
   annotation_metric: "annotation_metric",
   custom_attribute: "custom_attribute",
   custom_column: "custom_column",
+  derived_metric: "derived_metric",
 } as const;
 
 export type DashboardMetricApiSource =
@@ -24468,6 +24470,7 @@ export const DashboardMetricApiSource = {
   simulation: "simulation",
   both: "both",
   all: "all",
+  derived_metrics: "derived_metrics",
 } as const;
 
 export type DashboardMetricApiAggregation =
@@ -24573,6 +24576,7 @@ export interface DashboardMetricApi {
   output_type?: string;
   eval_key?: string;
   config_id?: string;
+  derived_run_id?: string;
   label_id?: string;
   attribute_key?: string;
   attribute_type?: DashboardMetricApiAttributeType;
@@ -24590,6 +24594,7 @@ export const DashboardBreakdownApiType = {
   annotation_metric: "annotation_metric",
   custom_attribute: "custom_attribute",
   custom_column: "custom_column",
+  derived_metric: "derived_metric",
 } as const;
 
 export type DashboardBreakdownApiSource =
@@ -24601,6 +24606,7 @@ export const DashboardBreakdownApiSource = {
   simulation: "simulation",
   both: "both",
   all: "all",
+  derived_metrics: "derived_metrics",
 } as const;
 
 export type DashboardBreakdownApiAttributeType =
@@ -24953,6 +24959,283 @@ export interface ObserveDatasetApi {
   readonly user?: string;
 }
 
+export type DerivedMetricRunApiStatus =
+  (typeof DerivedMetricRunApiStatus)[keyof typeof DerivedMetricRunApiStatus];
+
+export const DerivedMetricRunApiStatus = {
+  queued: "queued",
+  running: "running",
+  complete: "complete",
+  failed: "failed",
+} as const;
+
+export type DerivedMetricFilterApiField =
+  (typeof DerivedMetricFilterApiField)[keyof typeof DerivedMetricFilterApiField];
+
+export const DerivedMetricFilterApiField = {
+  model: "model",
+  provider: "provider",
+  status: "status",
+  name: "name",
+  service_name: "service_name",
+} as const;
+
+export interface DerivedMetricFilterApi {
+  field: DerivedMetricFilterApiField;
+  /** @maxLength 255 */
+  value: string;
+}
+
+export interface DerivedMetricManifestApi {
+  sampling_scope: string;
+  schema_version: number;
+  compiler_version: number;
+  /** @minLength 1 */
+  evaluator_table: string;
+  /** @minLength 1 */
+  definition_hash: string;
+  captured_at: string;
+  /** @minLength 1 */
+  semantics: string;
+}
+
+export interface DerivedMetricRunApi {
+  readonly id?: string;
+  metric_id: string;
+  metric_version: number;
+  window_start: string;
+  window_end: string;
+  as_of: string;
+  /** @maxLength 255 */
+  source_run_id?: string;
+  filters: DerivedMetricFilterApi[];
+  snapshot_id?: string;
+  result_id?: string;
+  lease_expires_at?: string;
+  source_manifest?: DerivedMetricManifestApi;
+  status?: DerivedMetricRunApiStatus;
+  /** @maxLength 300 */
+  error?: string;
+  /**
+   * @minimum 0
+   * @maximum 9223372036854776000
+   */
+  row_count?: number;
+  readonly created_at?: string;
+  completed_at?: string;
+}
+
+export interface DerivedMetricRecomputeApi {
+  confirm?: boolean;
+}
+
+export type DerivedMetricResultApiStatus =
+  (typeof DerivedMetricResultApiStatus)[keyof typeof DerivedMetricResultApiStatus];
+
+export const DerivedMetricResultApiStatus = {
+  ok: "ok",
+  no_data: "no_data",
+  missing_inputs: "missing_inputs",
+  invalid_probability: "invalid_probability",
+  zero_denominator: "zero_denominator",
+  non_finite: "non_finite",
+} as const;
+
+export interface DerivedMetricResultApi {
+  group_key: string;
+  value: number;
+  numerator: number;
+  denominator: number;
+  status: DerivedMetricResultApiStatus;
+  /** @minimum 0 */
+  unit_count: number;
+  /** @minimum 0 */
+  valid_count: number;
+  /** @minimum 0 */
+  missing_count: number;
+  /** @minimum 0 */
+  invalid_probability_count: number;
+}
+
+export interface DerivedMetricResultPageApi {
+  results: DerivedMetricResultApi[];
+  next_cursor: string;
+}
+
+export type DerivedMetricInputApiSource =
+  (typeof DerivedMetricInputApiSource)[keyof typeof DerivedMetricInputApiSource];
+
+export const DerivedMetricInputApiSource = {
+  eval: "eval",
+  span: "span",
+} as const;
+
+export type DerivedMetricInputApiField =
+  (typeof DerivedMetricInputApiField)[keyof typeof DerivedMetricInputApiField];
+
+export const DerivedMetricInputApiField = {
+  latency_ms: "latency_ms",
+  cost: "cost",
+  total_tokens: "total_tokens",
+  prompt_tokens: "prompt_tokens",
+  completion_tokens: "completion_tokens",
+  attribute_number: "attribute_number",
+  attribute_bool: "attribute_bool",
+} as const;
+
+export type DerivedMetricInputApiReducer =
+  (typeof DerivedMetricInputApiReducer)[keyof typeof DerivedMetricInputApiReducer];
+
+export const DerivedMetricInputApiReducer = {
+  mean: "mean",
+  min: "min",
+  max: "max",
+  latest: "latest",
+} as const;
+
+export interface DerivedMetricInputApi {
+  /**
+   * @minLength 1
+   * @pattern ^[a-z][a-z0-9_]{0,39}$
+   */
+  alias: string;
+  source: DerivedMetricInputApiSource;
+  config_id?: string;
+  /** @pattern ^(?:[a-f0-9]{64})?$ */
+  config_hash?: string;
+  field?: DerivedMetricInputApiField;
+  /** @maxLength 160 */
+  attribute_key?: string;
+  reducer?: DerivedMetricInputApiReducer;
+}
+
+export interface DerivedMetricVersionApi {
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  version: number;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  formula: string;
+  inputs: DerivedMetricInputApi[];
+  /**
+   * @minLength 1
+   * @maxLength 16
+   */
+  selection_unit: string;
+  /**
+   * @minLength 1
+   * @maxLength 32
+   */
+  weighting: string;
+  /** @maxLength 160 */
+  cohort_key?: string;
+  filters: DerivedMetricFilterApi[];
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  definition_hash: string;
+  readonly created_at?: string;
+}
+
+export interface DerivedMetricApi {
+  readonly id?: string;
+  readonly project_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 160
+   */
+  name: string;
+  description?: string;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  current_version?: number;
+  definition?: DerivedMetricVersionApi;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+export interface DerivedMetricListApi {
+  results: DerivedMetricApi[];
+  next_cursor: string;
+}
+
+export type DerivedMetricWriteApiSelectionUnit =
+  (typeof DerivedMetricWriteApiSelectionUnit)[keyof typeof DerivedMetricWriteApiSelectionUnit];
+
+export const DerivedMetricWriteApiSelectionUnit = {
+  span: "span",
+  session: "session",
+  user: "user",
+} as const;
+
+export type DerivedMetricWriteApiWeighting =
+  (typeof DerivedMetricWriteApiWeighting)[keyof typeof DerivedMetricWriteApiWeighting];
+
+export const DerivedMetricWriteApiWeighting = {
+  none: "none",
+  inverse_probability: "inverse_probability",
+} as const;
+
+export interface DerivedMetricWriteApi {
+  project_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 160
+   */
+  name: string;
+  /** @maxLength 2000 */
+  description?: string;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  formula: string;
+  inputs: DerivedMetricInputApi[];
+  selection_unit?: DerivedMetricWriteApiSelectionUnit;
+  weighting?: DerivedMetricWriteApiWeighting;
+  /** @maxLength 160 */
+  cohort_key?: string;
+  filters?: DerivedMetricFilterApi[];
+  /** @minimum 1 */
+  expected_version?: number;
+}
+
+export interface DerivedMetricValidationApi {
+  valid: boolean;
+  /** @minLength 1 */
+  kind: string;
+  required_inputs: string[];
+  /** @minLength 1 */
+  semantics: string;
+}
+
+export interface DerivedMetricRunRequestApi {
+  /** @minimum 1 */
+  version?: number;
+  window_start: string;
+  window_end: string;
+  /** Persisted evaluation-task ID (the source eval_task_id), not an execution ID; snapshot and sampling_scope pin the observed evidence. */
+  source_run_id?: string;
+  filters?: DerivedMetricFilterApi[];
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  idempotency_key: string;
+}
+
+export interface DerivedMetricRunsApi {
+  results: DerivedMetricRunApi[];
+  next_cursor: string;
+}
+
 /**
  * Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.
  */
@@ -25105,6 +25388,155 @@ export type EvalTaskApiEvalsDetails = { [key: string]: unknown };
 
 export type EvalTaskApiFailedSpans = { [key: string]: unknown };
 
+export type SamplingPolicyApiSamplingUnit =
+  (typeof SamplingPolicyApiSamplingUnit)[keyof typeof SamplingPolicyApiSamplingUnit];
+
+export const SamplingPolicyApiSamplingUnit = {
+  span: "span",
+  trace: "trace",
+  session: "session",
+  user: "user",
+  attribute: "attribute",
+} as const;
+
+export type SamplingAttributeApiSource =
+  (typeof SamplingAttributeApiSource)[keyof typeof SamplingAttributeApiSource];
+
+export const SamplingAttributeApiSource = {
+  span: "span",
+  resource: "resource",
+  metadata: "metadata",
+} as const;
+
+export interface SamplingAttributeApi {
+  source?: SamplingAttributeApiSource;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  key: string;
+}
+
+export type SamplingPolicyApiMissingId =
+  (typeof SamplingPolicyApiMissingId)[keyof typeof SamplingPolicyApiMissingId];
+
+export const SamplingPolicyApiMissingId = {
+  exclude: "exclude",
+  row: "row",
+} as const;
+
+export type SamplingPolicyApiMode =
+  (typeof SamplingPolicyApiMode)[keyof typeof SamplingPolicyApiMode];
+
+export const SamplingPolicyApiMode = {
+  closed: "closed",
+  live: "live",
+} as const;
+
+export interface SamplingWindowApi {
+  /**
+   * Inclusive ISO 8601 UTC event time.
+   * @minLength 1
+   */
+  start: string;
+  /**
+   * Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).
+   * @minLength 1
+   */
+  end?: string;
+}
+
+export type SamplingPredicateApiSource =
+  (typeof SamplingPredicateApiSource)[keyof typeof SamplingPredicateApiSource];
+
+export const SamplingPredicateApiSource = {
+  span: "span",
+  resource: "resource",
+  metadata: "metadata",
+} as const;
+
+export type SamplingPredicateApiOp =
+  (typeof SamplingPredicateApiOp)[keyof typeof SamplingPredicateApiOp];
+
+export const SamplingPredicateApiOp = {
+  in: "in",
+  not_in: "not_in",
+  exists: "exists",
+  missing: "missing",
+  gt: "gt",
+  gte: "gte",
+  lt: "lt",
+  lte: "lte",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type SamplingPredicateApiValuesItem = { [key: string]: unknown };
+
+export interface SamplingPredicateApi {
+  source?: SamplingPredicateApiSource;
+  /**
+   * @minLength 1
+   * @maxLength 200
+   */
+  key: string;
+  op?: SamplingPredicateApiOp;
+  /** @maxItems 100 */
+  values?: SamplingPredicateApiValuesItem[];
+}
+
+export interface SamplingRuleApi {
+  /**
+   * @minLength 1
+   * @maxLength 80
+   */
+  name?: string;
+  filters?: SamplingPredicateApi[];
+  /**
+   * Percentage with at most six decimal places; closed quotas use exact integer arithmetic.
+   * @minimum 0
+   * @maximum 100
+   */
+  rate?: number;
+  /**
+   * @minimum 0
+   * @maximum 1000000
+   */
+  target_n?: number;
+  /**
+   * @minimum 0
+   * @maximum 1000000
+   */
+  min_n?: number;
+  /**
+   * @minimum 0
+   * @maximum 1000000
+   */
+  max_n?: number;
+  /**
+   * @minimum 0
+   * @maximum 1000000
+   */
+  rare_below?: number;
+}
+
+export interface SamplingPolicyApi {
+  /**
+   * @minimum 1
+   * @maximum 1
+   */
+  version: number;
+  sampling_unit: SamplingPolicyApiSamplingUnit;
+  unit_attribute?: SamplingAttributeApi;
+  missing_id?: SamplingPolicyApiMissingId;
+  mode?: SamplingPolicyApiMode;
+  window: SamplingWindowApi;
+  strata?: SamplingRuleApi[];
+  group_by?: SamplingAttributeApi[];
+  default?: SamplingRuleApi;
+}
+
 export interface EvalTaskApi {
   readonly id?: string;
   project: string;
@@ -25119,6 +25551,7 @@ export interface EvalTaskApi {
    * @maximum 100
    */
   sampling_rate: number;
+  sampling_policy?: SamplingPolicyApi;
   last_run?: string;
   /**
    * @minimum 1
@@ -25415,6 +25848,181 @@ export interface EvalTaskMessageResponseApi {
   result: EvalTaskMessageResultApi;
 }
 
+export type SamplingPreviewRequestApiRowType =
+  (typeof SamplingPreviewRequestApiRowType)[keyof typeof SamplingPreviewRequestApiRowType];
+
+export const SamplingPreviewRequestApiRowType = {
+  spans: "spans",
+  traces: "traces",
+  sessions: "sessions",
+} as const;
+
+/**
+ * Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.
+ */
+export type SamplingPreviewRequestApiFiltersDatePreset =
+  (typeof SamplingPreviewRequestApiFiltersDatePreset)[keyof typeof SamplingPreviewRequestApiFiltersDatePreset];
+
+export const SamplingPreviewRequestApiFiltersDatePreset = {
+  "30m": "30m",
+  "6h": "6h",
+  today: "today",
+  yesterday: "yesterday",
+  "7d": "7d",
+  "30d": "30d",
+  "3m": "3m",
+  "6m": "6m",
+  "12m": "12m",
+  custom: "custom",
+} as const;
+
+export type SamplingPreviewRequestApiFiltersFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof SamplingPreviewRequestApiFiltersFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof SamplingPreviewRequestApiFiltersFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const SamplingPreviewRequestApiFiltersFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type SamplingPreviewRequestApiFiltersFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: SamplingPreviewRequestApiFiltersFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type SamplingPreviewRequestApiFiltersFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: SamplingPreviewRequestApiFiltersFiltersItemFilterConfig;
+};
+
+export type SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfig =
+  {
+    /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+    filter_type: string;
+    /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+    filter_op: string;
+    /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+    filter_value?: unknown;
+    /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+    col_type?: string;
+    /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+    attribute_value_types?: SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem[];
+  };
+
+export type SamplingPreviewRequestApiFiltersSpanAttributesFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfig;
+};
+
+export type SamplingPreviewRequestApiFilters = {
+  /** Project scope for the evaluation task. */
+  project_id?: string;
+  /**
+   * Half-open [start, end) ISO timestamps, normalized to UTC.
+   * @minItems 2
+   * @maxItems 2
+   */
+  date_range?: string[];
+  /** Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced. */
+  date_preset?: SamplingPreviewRequestApiFiltersDatePreset;
+  /** Exclusive lower-bound ISO timestamp for legacy task filters, normalized to UTC. */
+  created_at?: string;
+  /** Trace session id(s) to constrain the task. */
+  session_id?: string[];
+  /** Trace id(s) to constrain linked-source tasks. */
+  trace_id?: string[];
+  /** Observation span id(s) to constrain linked-source tasks. */
+  span_id?: string[];
+  /** Observation span type(s), for example llm, tool, or chain. */
+  observation_type?: string[];
+  filters?: SamplingPreviewRequestApiFiltersFiltersItem[];
+  span_attributes_filters?: SamplingPreviewRequestApiFiltersSpanAttributesFiltersItem[];
+};
+
+export interface SamplingPreviewRequestApi {
+  project: string;
+  row_type?: SamplingPreviewRequestApiRowType;
+  filters?: SamplingPreviewRequestApiFilters;
+  sampling_policy: SamplingPolicyApi;
+  /** @maxItems 50 */
+  evals?: string[];
+}
+
+export interface SamplingPreviewCellApi {
+  /** @minLength 1 */
+  stratum: string;
+  eligible_units: number;
+  eligible_rows: number;
+  expected_units: number;
+  expected_rows: number;
+  selected_units: number;
+  selected_rows: number;
+}
+
+export interface SamplingPreviewResultApi {
+  /** @minLength 1 */
+  policy_version: string;
+  /** @minLength 1 */
+  sampling_unit: string;
+  /** @minLength 1 */
+  mode: string;
+  window: SamplingWindowApi;
+  preview_window: SamplingWindowApi;
+  as_of: string;
+  strata: SamplingPreviewCellApi[];
+  /** @minimum 0 */
+  evaluator_count: number;
+  expected_evaluations: number;
+  selected_evaluations: number;
+  estimated_cost: number;
+  /** @minLength 1 */
+  cost_note: string;
+  /** @minLength 1 */
+  population_note: string;
+}
+
+export interface SamplingPreviewResponseApi {
+  status: boolean;
+  result: SamplingPreviewResultApi;
+}
+
 /**
  * Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.
  */
@@ -25573,6 +26181,7 @@ export const EvalTaskUpdateRequestApiEditType = {
 } as const;
 
 export interface EvalTaskUpdateRequestApi {
+  sampling_policy?: SamplingPolicyApi;
   /**
    * @minLength 1
    * @maxLength 255
@@ -28164,6 +28773,8 @@ export interface ProjectApi {
   source?: ProjectApiSource;
   /** Any valid JSON value. */
   session_config?: ProjectApiSessionConfig;
+  /** @maxLength 200 */
+  sampling_contact_attribute?: string;
   /** Any valid JSON value. */
   tags?: ProjectApiTags;
 }
@@ -28462,6 +29073,19 @@ export interface ProjectListResponseApi {
   result: ProjectListResultApi;
 }
 
+export interface ProjectNameUpdateApi {
+  /** @maxLength 200 */
+  sampling_contact_attribute?: string;
+  project_id: string;
+  /** @minLength 1 */
+  name: string;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  sampling_rate?: number;
+}
+
 export type ProjectDetailResultApiModelType =
   (typeof ProjectDetailResultApiModelType)[keyof typeof ProjectDetailResultApiModelType];
 
@@ -28534,6 +29158,8 @@ export interface ProjectDetailResultApi {
   source?: ProjectDetailResultApiSource;
   /** Any valid JSON value. */
   session_config?: ProjectDetailResultApiSessionConfig;
+  /** @maxLength 200 */
+  sampling_contact_attribute?: string;
   /** Any valid JSON value. */
   tags?: ProjectDetailResultApiTags;
   sampling_rate: number;
@@ -28728,6 +29354,96 @@ export interface GenerateScenarioApi {
   custom_columns?: GenerateScenarioApiCustomColumnsItem[];
   graph?: GenerateScenarioApiGraph;
   generate_graph?: boolean;
+}
+
+export type SQLSavedApiVisibility =
+  (typeof SQLSavedApiVisibility)[keyof typeof SQLSavedApiVisibility];
+
+export const SQLSavedApiVisibility = {
+  private: "private",
+  project: "project",
+} as const;
+
+export type SQLSavedApiChart = { [key: string]: unknown };
+
+export interface SQLSavedApi {
+  readonly id?: string;
+  readonly project_id?: string;
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly sql?: string;
+  readonly visibility?: SQLSavedApiVisibility;
+  readonly chart?: SQLSavedApiChart;
+  readonly window_hours?: number;
+  readonly created_at?: string;
+  readonly created_by_id?: string;
+}
+
+export interface SQLSavedListApi {
+  items: SQLSavedApi[];
+  has_more: boolean;
+}
+
+export type SQLSaveApiVisibility =
+  (typeof SQLSaveApiVisibility)[keyof typeof SQLSaveApiVisibility];
+
+export const SQLSaveApiVisibility = {
+  private: "private",
+  project: "project",
+} as const;
+
+export type SQLChartApiType =
+  (typeof SQLChartApiType)[keyof typeof SQLChartApiType];
+
+export const SQLChartApiType = {
+  table: "table",
+  bar: "bar",
+} as const;
+
+export interface SQLChartApi {
+  type?: SQLChartApiType;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  x?: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  y?: string;
+}
+
+export interface SQLSaveApi {
+  project_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 160
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 32768
+   */
+  sql: string;
+  visibility?: SQLSaveApiVisibility;
+  chart?: SQLChartApi;
+  /**
+   * @minimum 1
+   * @maximum 744
+   */
+  window_hours?: number;
+}
+
+export interface SQLWidgetApi {
+  project_id: string;
+  dashboard_id: string;
+}
+
+export interface SQLWidgetResponseApi {
+  id: string;
+  dashboard_id: string;
 }
 
 export interface SavedViewDefaultTabApi {
@@ -29136,6 +29852,95 @@ export interface SharedLinkResolveErrorApi {
   error?: string;
   attr?: string;
   details?: SharedLinkResolveErrorApiDetails;
+}
+
+export type SQLExecutionApiState =
+  (typeof SQLExecutionApiState)[keyof typeof SQLExecutionApiState];
+
+export const SQLExecutionApiState = {
+  queued: "queued",
+  running: "running",
+  succeeded: "succeeded",
+  failed: "failed",
+  cancelled: "cancelled",
+} as const;
+
+export interface SQLColumnApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  type: string;
+}
+
+export type SQLResultApiRowsItemItem = { [key: string]: unknown };
+
+export interface SQLResultApi {
+  columns?: SQLColumnApi[];
+  rows?: SQLResultApiRowsItemItem[][];
+  truncated?: boolean;
+  row_count?: number;
+  result_bytes?: number;
+  elapsed_ms?: number;
+}
+
+export interface SQLExecutionApi {
+  id: string;
+  project_id: string;
+  /** @minLength 1 */
+  sql: string;
+  state: SQLExecutionApiState;
+  created_at: string;
+  expires_at: string;
+  error: string;
+  result: SQLResultApi;
+  expired: boolean;
+}
+
+export interface SQLHistoryApi {
+  items: SQLExecutionApi[];
+  has_more: boolean;
+}
+
+export interface SQLDatasetApi {
+  available: boolean;
+  unavailable_reason: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  columns: SQLColumnApi[];
+}
+
+export interface SQLCatalogApi {
+  /** @minLength 1 */
+  identity_semantics: string;
+  version: number;
+  datasets: SQLDatasetApi[];
+  max_rows: number;
+  max_window_days: number;
+  can_save: boolean;
+}
+
+export interface SQLRunSavedApi {
+  project_id: string;
+  saved_query_id: string;
+  start?: string;
+  end?: string;
+}
+
+export interface SQLRunApi {
+  project_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 32768
+   */
+  sql: string;
+  start: string;
+  end: string;
+}
+
+export interface SQLProjectApi {
+  project_id: string;
 }
 
 export type TraceAnnotationValueResponseApiAnnotationValue = {
@@ -30586,6 +31391,7 @@ export const UserAlertMonitorApiMetricType = {
   daily_tokens_spent: "daily_tokens_spent",
   monthly_tokens_spent: "monthly_tokens_spent",
   evaluation_metrics: "evaluation_metrics",
+  derived_metric: "derived_metric",
 } as const;
 
 export type UserAlertMonitorApiThresholdOperator =
@@ -30617,6 +31423,7 @@ export interface UserAlertMonitorApi {
   /** @minLength 1 */
   name: string;
   readonly metric_name?: string;
+  notification_emails?: string[];
   readonly created_at?: string;
   readonly updated_at?: string;
   readonly deleted?: boolean;
@@ -30653,7 +31460,7 @@ export interface UserAlertMonitorApi {
   auto_threshold_time_window?: number;
   /** The last time the monitor was checked for alerts. */
   readonly last_checked_at?: string;
-  notification_emails?: string[];
+  readonly last_derived_run_id?: string;
   /** @maxLength 200 */
   slack_webhook_url?: string;
   slack_notes?: string;
@@ -30781,6 +31588,7 @@ export const UserAlertMonitorPreviewGraphApiMetricType = {
   daily_tokens_spent: "daily_tokens_spent",
   monthly_tokens_spent: "monthly_tokens_spent",
   evaluation_metrics: "evaluation_metrics",
+  derived_metric: "derived_metric",
 } as const;
 
 export type UserAlertMonitorPreviewGraphApiThresholdOperator =
@@ -30813,6 +31621,7 @@ export interface UserAlertMonitorPreviewGraphApi {
   project: string;
   name?: string;
   readonly metric_name?: string;
+  notification_emails?: string[];
   readonly created_at?: string;
   readonly updated_at?: string;
   readonly deleted?: boolean;
@@ -30849,7 +31658,7 @@ export interface UserAlertMonitorPreviewGraphApi {
   auto_threshold_time_window?: number;
   /** The last time the monitor was checked for alerts. */
   readonly last_checked_at?: string;
-  notification_emails?: string[];
+  readonly last_derived_run_id?: string;
   /** @maxLength 200 */
   slack_webhook_url?: string;
   slack_notes?: string;
@@ -35755,6 +36564,7 @@ export const TracerDashboardMetricsCategory = {
   annotation_metric: "annotation_metric",
   custom_attribute: "custom_attribute",
   custom_column: "custom_column",
+  derived_metric: "derived_metric",
 } as const;
 
 export type TracerDashboardMetricsRole =
@@ -35827,6 +36637,50 @@ export type TracerDatasetList200 = {
   next?: string;
   previous?: string;
   results: ObserveDatasetApi[];
+};
+
+export type TracerDerivedMetricRunsResultsParams = {
+  rollup?: TracerDerivedMetricRunsResultsRollup;
+  /**
+   * @maxLength 4096
+   */
+  after?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type TracerDerivedMetricRunsResultsRollup =
+  (typeof TracerDerivedMetricRunsResultsRollup)[keyof typeof TracerDerivedMetricRunsResultsRollup];
+
+export const TracerDerivedMetricRunsResultsRollup = {
+  overall: "overall",
+  session: "session",
+  user: "user",
+  cohort: "cohort",
+  day: "day",
+} as const;
+
+export type TracerDerivedMetricsListParams = {
+  project_id?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  before?: string;
+};
+
+export type TracerDerivedMetricsRunsReadParams = {
+  project_id?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  before?: string;
 };
 
 export type TracerEvalTaskListParams = {
@@ -36657,6 +37511,23 @@ export type TracerProjectProjectSdkCode200 = {
   results: ProjectApi[];
 };
 
+export type TracerSavedSqlQueryListParams = {
+  project_id: string;
+  /**
+   * @minimum 0
+   * @maximum 10000
+   */
+  offset?: number;
+};
+
+export type TracerSavedSqlQueryReadParams = {
+  project_id: string;
+};
+
+export type TracerSavedSqlQueryDeleteParams = {
+  project_id: string;
+};
+
 export type TracerSavedViewsListParams = {
   /**
    * A page number within the paginated result set.
@@ -36685,6 +37556,36 @@ export type TracerSharedLinksList200 = {
   previous?: string;
   results: SharedLinkListApi[];
 };
+
+export type TracerSqlQueryListParams = {
+  project_id: string;
+  /**
+   * @minimum 0
+   * @maximum 10000
+   */
+  offset?: number;
+};
+
+export type TracerSqlQueryCatalogParams = {
+  project_id: string;
+};
+
+export type TracerSqlQueryReadParams = {
+  project_id: string;
+};
+
+export type TracerSqlQueryDownloadParams = {
+  project_id: string;
+  file_format: TracerSqlQueryDownloadFileFormat;
+};
+
+export type TracerSqlQueryDownloadFileFormat =
+  (typeof TracerSqlQueryDownloadFileFormat)[keyof typeof TracerSqlQueryDownloadFileFormat];
+
+export const TracerSqlQueryDownloadFileFormat = {
+  csv: "csv",
+  parquet: "parquet",
+} as const;
 
 export type TracerTraceAnnotationGetAnnotationValuesParams = {
   /**

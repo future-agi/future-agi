@@ -1,7 +1,8 @@
 import json
 
-from accounts.serializers.user import UserSerializer
 from rest_framework import serializers
+
+from accounts.serializers.user import UserSerializer
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import (
     AlertTypeChoices,
@@ -85,11 +86,20 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
     )
     name = serializers.CharField(required=True)
     metric_name = serializers.SerializerMethodField()
+    notification_emails = serializers.ListField(
+        child=serializers.EmailField(), required=False, allow_empty=True
+    )
 
     class Meta:
         model = UserAlertMonitor
         fields = "__all__"
-        read_only_fields = ("last_checked_at", "logs", "deleted", "deleted_at")
+        read_only_fields = (
+            "last_checked_at",
+            "last_derived_run_id",
+            "logs",
+            "deleted",
+            "deleted_at",
+        )
 
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
@@ -143,6 +153,42 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
         metric = data.get("metric")
         project = data.get("project")
         threshold_metric_value = data.get("threshold_metric_value")
+
+        if metric_type == MonitorMetricTypeChoices.DERIVED_METRIC.value:
+            from uuid import UUID
+
+            from tracer.models.derived_metric import DerivedMetric
+
+            try:
+                metric_id = UUID(str(metric))
+            except (ValueError, TypeError) as exc:
+                raise serializers.ValidationError(
+                    {"metric": "Select a derived metric."}
+                ) from exc
+            workspace = data.get("workspace") or getattr(
+                self.instance, "workspace", None
+            )
+            if not DerivedMetric.objects.filter(
+                pk=metric_id,
+                project=project,
+                workspace=workspace,
+                organization=data.get("organization"),
+                deleted=False,
+            ).exists():
+                raise serializers.ValidationError(
+                    {
+                        "metric": "Derived metric is not available in this project/workspace."
+                    }
+                )
+            if (
+                data.get("threshold_type") != "static"
+                or data.get("filters")
+                or threshold_metric_value
+            ):
+                raise serializers.ValidationError(
+                    "Derived metrics use static thresholds and the filters frozen into their runs."
+                )
+            return False
 
         if metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
             if not metric:

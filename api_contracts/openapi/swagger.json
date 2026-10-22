@@ -59658,7 +59658,8 @@
                             "eval_metric",
                             "annotation_metric",
                             "custom_attribute",
-                            "custom_column"
+                            "custom_column",
+                            "derived_metric"
                         ],
                         "default": ""
                     },
@@ -60754,6 +60755,468 @@
                 }
             ]
         },
+        "/tracer/derived-metric-runs/{id}/": {
+            "get": {
+                "operationId": "tracer_derived-metric-runs_read",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricRun"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/derived-metric-runs/{id}/recompute/": {
+            "post": {
+                "operationId": "tracer_derived-metric-runs_recompute",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricRecompute"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricRun"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/derived-metric-runs/{id}/results/": {
+            "get": {
+                "operationId": "tracer_derived-metric-runs_results",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "rollup",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "overall",
+                            "session",
+                            "user",
+                            "cohort",
+                            "day"
+                        ],
+                        "default": "overall"
+                    },
+                    {
+                        "name": "after",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 4096
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 50,
+                        "maximum": 100,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricResultPage"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/derived-metrics/": {
+            "get": {
+                "operationId": "tracer_derived-metrics_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 30,
+                        "maximum": 100,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "before",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_derived-metrics_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricWrite"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetric"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/derived-metrics/validate/": {
+            "post": {
+                "operationId": "tracer_derived-metrics_validate_formula",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricWrite"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricValidation"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/derived-metrics/{id}/": {
+            "get": {
+                "operationId": "tracer_derived-metrics_read",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetric"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "put": {
+                "operationId": "tracer_derived-metrics_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricWrite"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetric"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/derived-metrics/{id}/preview/": {
+            "post": {
+                "operationId": "tracer_derived-metrics_preview",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricRunRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricResultPage"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/derived-metrics/{id}/runs/": {
+            "get": {
+                "operationId": "tracer_derived-metrics_runs_read",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 30,
+                        "maximum": 100,
+                        "minimum": 1
+                    },
+                    {
+                        "name": "before",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricRuns"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_derived-metrics_runs_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricRunRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricRun"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/tracer/eval-task/": {
             "get": {
                 "operationId": "tracer_eval-task_list",
@@ -61505,6 +61968,54 @@
                         }
                     },
                     "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/eval-task/sampling_preview/": {
+            "post": {
+                "operationId": "tracer_eval-task_sampling_preview",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SamplingPreviewRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SamplingPreviewResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorResponse"
@@ -67371,7 +67882,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/Project"
+                            "$ref": "#/definitions/ProjectNameUpdate"
                         }
                     }
                 ],
@@ -67379,7 +67890,7 @@
                     "201": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/Project"
+                            "$ref": "#/definitions/ProjectNameUpdate"
                         }
                     },
                     "default": {
@@ -67391,7 +67902,8 @@
                 },
                 "tags": [
                     "tracer"
-                ]
+                ],
+                "x-runtime-request-validation": true
             },
             "parameters": []
         },
@@ -67739,6 +68251,230 @@
                 "tags": [
                     "tracer"
                 ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/saved-sql-query/": {
+            "get": {
+                "operationId": "tracer_saved-sql-query_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 0,
+                        "maximum": 10000,
+                        "minimum": 0
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLSavedList"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_saved-sql-query_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLSave"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLSaved"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/saved-sql-query/{id}/": {
+            "get": {
+                "operationId": "tracer_saved-sql-query_read",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLSaved"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "patch": {
+                "operationId": "tracer_saved-sql-query_partial_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLSave"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLSaved"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "tracer_saved-sql-query_delete",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Deleted"
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/saved-sql-query/{id}/add-widget/": {
+            "post": {
+                "operationId": "tracer_saved-sql-query_add_widget",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLWidget"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLWidgetResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -68360,6 +69096,294 @@
             "parameters": [
                 {
                     "name": "token",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/sql-query/": {
+            "get": {
+                "operationId": "tracer_sql-query_list",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 0,
+                        "maximum": 10000,
+                        "minimum": 0
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLHistory"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/sql-query/catalog/": {
+            "get": {
+                "operationId": "tracer_sql-query_catalog",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLCatalog"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/sql-query/run-saved/": {
+            "post": {
+                "operationId": "tracer_sql-query_run_saved",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLRunSaved"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLExecution"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/sql-query/run/": {
+            "post": {
+                "operationId": "tracer_sql-query_run",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLRun"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLExecution"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/tracer/sql-query/{id}/": {
+            "get": {
+                "operationId": "tracer_sql-query_read",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLExecution"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/sql-query/{id}/cancel/": {
+            "post": {
+                "operationId": "tracer_sql-query_cancel",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SQLProject"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SQLExecution"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/sql-query/{id}/download/": {
+            "get": {
+                "operationId": "tracer_sql-query_download",
+                "description": "Read-only scans; creating a personal execution record grants no write access.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "file_format",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "enum": [
+                            "csv",
+                            "parquet"
+                        ]
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Bounded result download",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
                     "in": "path",
                     "required": true,
                     "type": "string"
@@ -141115,7 +142139,8 @@
                         "eval_metric",
                         "annotation_metric",
                         "custom_attribute",
-                        "custom_column"
+                        "custom_column",
+                        "derived_metric"
                     ],
                     "default": ""
                 },
@@ -141234,7 +142259,8 @@
                         "eval_metric",
                         "annotation_metric",
                         "custom_attribute",
-                        "custom_column"
+                        "custom_column",
+                        "derived_metric"
                     ]
                 },
                 "source": {
@@ -141245,7 +142271,8 @@
                         "datasets",
                         "simulation",
                         "both",
-                        "all"
+                        "all",
+                        "derived_metrics"
                     ],
                     "default": "traces"
                 },
@@ -141289,6 +142316,11 @@
                 "config_id": {
                     "title": "Config id",
                     "type": "string"
+                },
+                "derived_run_id": {
+                    "title": "Derived run id",
+                    "type": "string",
+                    "format": "uuid"
                 },
                 "label_id": {
                     "title": "Label id",
@@ -141434,7 +142466,8 @@
                         "eval_metric",
                         "annotation_metric",
                         "custom_attribute",
-                        "custom_column"
+                        "custom_column",
+                        "derived_metric"
                     ],
                     "default": "system_metric"
                 },
@@ -141446,7 +142479,8 @@
                         "datasets",
                         "simulation",
                         "both",
-                        "all"
+                        "all",
+                        "derived_metrics"
                     ],
                     "default": "traces"
                 },
@@ -142181,6 +143215,867 @@
                 }
             }
         },
+        "DerivedMetricFilter": {
+            "required": [
+                "field",
+                "value"
+            ],
+            "type": "object",
+            "properties": {
+                "field": {
+                    "title": "Field",
+                    "type": "string",
+                    "enum": [
+                        "model",
+                        "provider",
+                        "status",
+                        "name",
+                        "service_name"
+                    ]
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "string",
+                    "maxLength": 255
+                }
+            }
+        },
+        "DerivedMetricManifest": {
+            "required": [
+                "sampling_scope",
+                "schema_version",
+                "compiler_version",
+                "evaluator_table",
+                "definition_hash",
+                "captured_at",
+                "semantics"
+            ],
+            "type": "object",
+            "properties": {
+                "sampling_scope": {
+                    "title": "Sampling scope",
+                    "type": "string"
+                },
+                "schema_version": {
+                    "title": "Schema version",
+                    "type": "integer"
+                },
+                "compiler_version": {
+                    "title": "Compiler version",
+                    "type": "integer"
+                },
+                "evaluator_table": {
+                    "title": "Evaluator table",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "definition_hash": {
+                    "title": "Definition hash",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "captured_at": {
+                    "title": "Captured at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "semantics": {
+                    "title": "Semantics",
+                    "type": "string",
+                    "minLength": 1
+                }
+            },
+            "x-nullable": true
+        },
+        "DerivedMetricRun": {
+            "required": [
+                "metric_id",
+                "metric_version",
+                "window_start",
+                "window_end",
+                "as_of",
+                "filters"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "metric_id": {
+                    "title": "Metric id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "metric_version": {
+                    "title": "Metric version",
+                    "type": "integer"
+                },
+                "window_start": {
+                    "title": "Window start",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "window_end": {
+                    "title": "Window end",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "as_of": {
+                    "title": "As of",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "source_run_id": {
+                    "title": "Source run id",
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricFilter"
+                    }
+                },
+                "snapshot_id": {
+                    "title": "Snapshot id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "result_id": {
+                    "title": "Result id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "lease_expires_at": {
+                    "title": "Lease expires at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "source_manifest": {
+                    "$ref": "#/definitions/DerivedMetricManifest"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "running",
+                        "complete",
+                        "failed"
+                    ]
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "maxLength": 300
+                },
+                "row_count": {
+                    "title": "Row count",
+                    "type": "integer",
+                    "maximum": 9223372036854775807,
+                    "minimum": 0
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "completed_at": {
+                    "title": "Completed at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                }
+            }
+        },
+        "DerivedMetricRecompute": {
+            "type": "object",
+            "properties": {
+                "confirm": {
+                    "title": "Confirm",
+                    "type": "boolean",
+                    "default": true
+                }
+            }
+        },
+        "DerivedMetricResult": {
+            "required": [
+                "group_key",
+                "value",
+                "numerator",
+                "denominator",
+                "status",
+                "unit_count",
+                "valid_count",
+                "missing_count",
+                "invalid_probability_count"
+            ],
+            "type": "object",
+            "properties": {
+                "group_key": {
+                    "title": "Group key",
+                    "type": "string"
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "numerator": {
+                    "title": "Numerator",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "denominator": {
+                    "title": "Denominator",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "no_data",
+                        "missing_inputs",
+                        "invalid_probability",
+                        "zero_denominator",
+                        "non_finite"
+                    ]
+                },
+                "unit_count": {
+                    "title": "Unit count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "valid_count": {
+                    "title": "Valid count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "missing_count": {
+                    "title": "Missing count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "invalid_probability_count": {
+                    "title": "Invalid probability count",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "DerivedMetricResultPage": {
+            "required": [
+                "results",
+                "next_cursor"
+            ],
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricResult"
+                    }
+                },
+                "next_cursor": {
+                    "title": "Next cursor",
+                    "type": "string",
+                    "x-nullable": true
+                }
+            }
+        },
+        "DerivedMetricInput": {
+            "required": [
+                "alias",
+                "source"
+            ],
+            "type": "object",
+            "properties": {
+                "alias": {
+                    "title": "Alias",
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]{0,39}$",
+                    "minLength": 1
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "eval",
+                        "span"
+                    ]
+                },
+                "config_id": {
+                    "title": "Config id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "config_hash": {
+                    "title": "Config hash",
+                    "type": "string",
+                    "pattern": "^(?:[a-f0-9]{64})?$",
+                    "default": ""
+                },
+                "field": {
+                    "title": "Field",
+                    "type": "string",
+                    "enum": [
+                        "latency_ms",
+                        "cost",
+                        "total_tokens",
+                        "prompt_tokens",
+                        "completion_tokens",
+                        "attribute_number",
+                        "attribute_bool"
+                    ]
+                },
+                "attribute_key": {
+                    "title": "Attribute key",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 160
+                },
+                "reducer": {
+                    "title": "Reducer",
+                    "type": "string",
+                    "enum": [
+                        "mean",
+                        "min",
+                        "max",
+                        "latest"
+                    ],
+                    "default": "latest"
+                }
+            }
+        },
+        "DerivedMetricVersion": {
+            "required": [
+                "version",
+                "formula",
+                "inputs",
+                "selection_unit",
+                "weighting",
+                "filters",
+                "definition_hash"
+            ],
+            "type": "object",
+            "properties": {
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "maximum": 2147483647,
+                    "minimum": 0
+                },
+                "formula": {
+                    "title": "Formula",
+                    "type": "string",
+                    "maxLength": 2048,
+                    "minLength": 1
+                },
+                "inputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricInput"
+                    }
+                },
+                "selection_unit": {
+                    "title": "Selection unit",
+                    "type": "string",
+                    "maxLength": 16,
+                    "minLength": 1
+                },
+                "weighting": {
+                    "title": "Weighting",
+                    "type": "string",
+                    "maxLength": 32,
+                    "minLength": 1
+                },
+                "cohort_key": {
+                    "title": "Cohort key",
+                    "type": "string",
+                    "maxLength": 160
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricFilter"
+                    }
+                },
+                "definition_hash": {
+                    "title": "Definition hash",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                }
+            }
+        },
+        "DerivedMetric": {
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 160,
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "current_version": {
+                    "title": "Current version",
+                    "type": "integer",
+                    "maximum": 2147483647,
+                    "minimum": 0
+                },
+                "definition": {
+                    "$ref": "#/definitions/DerivedMetricVersion"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                }
+            }
+        },
+        "DerivedMetricList": {
+            "required": [
+                "results",
+                "next_cursor"
+            ],
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetric"
+                    }
+                },
+                "next_cursor": {
+                    "title": "Next cursor",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "DerivedMetricWrite": {
+            "required": [
+                "project_id",
+                "name",
+                "formula",
+                "inputs"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 160,
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 2000
+                },
+                "formula": {
+                    "title": "Formula",
+                    "type": "string",
+                    "maxLength": 2048,
+                    "minLength": 1
+                },
+                "inputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricInput"
+                    }
+                },
+                "selection_unit": {
+                    "title": "Selection unit",
+                    "type": "string",
+                    "enum": [
+                        "span",
+                        "session",
+                        "user"
+                    ],
+                    "default": "session"
+                },
+                "weighting": {
+                    "title": "Weighting",
+                    "type": "string",
+                    "enum": [
+                        "none",
+                        "inverse_probability"
+                    ],
+                    "default": "none"
+                },
+                "cohort_key": {
+                    "title": "Cohort key",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 160
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricFilter"
+                    },
+                    "default": []
+                },
+                "expected_version": {
+                    "title": "Expected version",
+                    "type": "integer",
+                    "minimum": 1
+                }
+            }
+        },
+        "DerivedMetricValidation": {
+            "required": [
+                "valid",
+                "kind",
+                "required_inputs",
+                "semantics"
+            ],
+            "type": "object",
+            "properties": {
+                "valid": {
+                    "title": "Valid",
+                    "type": "boolean"
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "required_inputs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "semantics": {
+                    "title": "Semantics",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "DerivedMetricRunRequest": {
+            "required": [
+                "window_start",
+                "window_end",
+                "idempotency_key"
+            ],
+            "type": "object",
+            "properties": {
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "window_start": {
+                    "title": "Window start",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "window_end": {
+                    "title": "Window end",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "source_run_id": {
+                    "title": "Source run id",
+                    "description": "Persisted evaluation-task ID (the source eval_task_id), not an execution ID; snapshot and sampling_scope pin the observed evidence.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricFilter"
+                    },
+                    "default": []
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 100,
+                    "minLength": 1
+                }
+            }
+        },
+        "DerivedMetricRuns": {
+            "required": [
+                "results",
+                "next_cursor"
+            ],
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricRun"
+                    }
+                },
+                "next_cursor": {
+                    "title": "Next cursor",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "SamplingAttribute": {
+            "required": [
+                "key"
+            ],
+            "type": "object",
+            "properties": {
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "span",
+                        "resource",
+                        "metadata"
+                    ],
+                    "default": "span"
+                },
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "maxLength": 200,
+                    "minLength": 1
+                }
+            }
+        },
+        "SamplingWindow": {
+            "required": [
+                "start"
+            ],
+            "type": "object",
+            "properties": {
+                "start": {
+                    "title": "Start",
+                    "description": "Inclusive ISO 8601 UTC event time.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "end": {
+                    "title": "End",
+                    "description": "Closed mode: exclusive UTC end, at most 31 days. Live mode: null (ongoing).",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "SamplingPredicate": {
+            "required": [
+                "key"
+            ],
+            "type": "object",
+            "properties": {
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "span",
+                        "resource",
+                        "metadata"
+                    ],
+                    "default": "span"
+                },
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "maxLength": 200,
+                    "minLength": 1
+                },
+                "op": {
+                    "title": "Op",
+                    "type": "string",
+                    "enum": [
+                        "in",
+                        "not_in",
+                        "exists",
+                        "missing",
+                        "gt",
+                        "gte",
+                        "lt",
+                        "lte"
+                    ],
+                    "default": "in"
+                },
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    },
+                    "maxItems": 100
+                }
+            }
+        },
+        "SamplingRule": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 80,
+                    "minLength": 1
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SamplingPredicate"
+                    }
+                },
+                "rate": {
+                    "title": "Rate",
+                    "description": "Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0
+                },
+                "target_n": {
+                    "title": "Target n",
+                    "type": "integer",
+                    "maximum": 1000000,
+                    "minimum": 0
+                },
+                "min_n": {
+                    "title": "Min n",
+                    "type": "integer",
+                    "maximum": 1000000,
+                    "minimum": 0
+                },
+                "max_n": {
+                    "title": "Max n",
+                    "type": "integer",
+                    "maximum": 1000000,
+                    "minimum": 0
+                },
+                "rare_below": {
+                    "title": "Rare below",
+                    "type": "integer",
+                    "maximum": 1000000,
+                    "minimum": 0
+                }
+            }
+        },
+        "SamplingPolicy": {
+            "required": [
+                "version",
+                "sampling_unit",
+                "window"
+            ],
+            "type": "object",
+            "properties": {
+                "version": {
+                    "title": "Version",
+                    "type": "integer",
+                    "maximum": 1,
+                    "minimum": 1
+                },
+                "sampling_unit": {
+                    "title": "Sampling unit",
+                    "type": "string",
+                    "enum": [
+                        "span",
+                        "trace",
+                        "session",
+                        "user",
+                        "attribute"
+                    ]
+                },
+                "unit_attribute": {
+                    "$ref": "#/definitions/SamplingAttribute"
+                },
+                "missing_id": {
+                    "title": "Missing id",
+                    "type": "string",
+                    "enum": [
+                        "exclude",
+                        "row"
+                    ],
+                    "default": "exclude"
+                },
+                "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "enum": [
+                        "closed",
+                        "live"
+                    ],
+                    "default": "closed"
+                },
+                "window": {
+                    "$ref": "#/definitions/SamplingWindow"
+                },
+                "strata": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SamplingRule"
+                    }
+                },
+                "group_by": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SamplingAttribute"
+                    }
+                },
+                "default": {
+                    "$ref": "#/definitions/SamplingRule"
+                }
+            },
+            "x-nullable": true
+        },
         "EvalTask": {
             "required": [
                 "project",
@@ -142426,6 +144321,9 @@
                     "type": "number",
                     "maximum": 100.0,
                     "minimum": 1.0
+                },
+                "sampling_policy": {
+                    "$ref": "#/definitions/SamplingPolicy"
                 },
                 "last_run": {
                     "title": "Last run",
@@ -143274,6 +145172,395 @@
                 }
             }
         },
+        "SamplingPreviewRequest": {
+            "required": [
+                "project",
+                "sampling_policy"
+            ],
+            "type": "object",
+            "properties": {
+                "project": {
+                    "title": "Project",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "row_type": {
+                    "title": "Row type",
+                    "type": "string",
+                    "enum": [
+                        "spans",
+                        "traces",
+                        "sessions"
+                    ],
+                    "default": "spans"
+                },
+                "filters": {
+                    "title": "Filters",
+                    "type": "object",
+                    "x-nullable": true,
+                    "properties": {
+                        "project_id": {
+                            "type": "string",
+                            "x-nullable": true,
+                            "description": "Project scope for the evaluation task."
+                        },
+                        "date_range": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "minItems": 2,
+                            "maxItems": 2,
+                            "description": "Half-open [start, end) ISO timestamps, normalized to UTC."
+                        },
+                        "date_preset": {
+                            "type": "string",
+                            "enum": [
+                                "30m",
+                                "6h",
+                                "today",
+                                "yesterday",
+                                "7d",
+                                "30d",
+                                "3m",
+                                "6m",
+                                "12m",
+                                "custom"
+                            ],
+                            "description": "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced."
+                        },
+                        "created_at": {
+                            "type": "string",
+                            "description": "Exclusive lower-bound ISO timestamp for legacy task filters, normalized to UTC."
+                        },
+                        "session_id": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Trace session id(s) to constrain the task."
+                        },
+                        "trace_id": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Trace id(s) to constrain linked-source tasks."
+                        },
+                        "span_id": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Observation span id(s) to constrain linked-source tasks."
+                        },
+                        "observation_type": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Observation span type(s), for example llm, tool, or chain."
+                        },
+                        "filters": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "column_id": {
+                                        "type": "string",
+                                        "description": "Column or attribute id to filter on."
+                                    },
+                                    "property_id": {
+                                        "type": "string",
+                                        "description": "Optional stable namespaced Property Registry identity."
+                                    },
+                                    "display_name": {
+                                        "type": "string",
+                                        "description": "Optional UI label for chips and saved views."
+                                    },
+                                    "source": {
+                                        "type": "string",
+                                        "description": "Optional source surface for mixed-source filters, for example traces, datasets, or simulation."
+                                    },
+                                    "output_type": {
+                                        "type": "string",
+                                        "description": "Optional metric output type metadata used by eval and annotation filters."
+                                    },
+                                    "filter_config": {
+                                        "type": "object",
+                                        "properties": {
+                                            "filter_type": {
+                                                "type": "string",
+                                                "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
+                                            },
+                                            "filter_op": {
+                                                "type": "string",
+                                                "description": "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null."
+                                            },
+                                            "filter_value": {
+                                                "description": "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type."
+                                            },
+                                            "col_type": {
+                                                "type": "string",
+                                                "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                                            },
+                                            "attribute_value_types": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                        "string",
+                                                        "number",
+                                                        "boolean"
+                                                    ],
+                                                    "x-nullable": true
+                                                },
+                                                "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
+                                            }
+                                        },
+                                        "required": [
+                                            "filter_type",
+                                            "filter_op"
+                                        ],
+                                        "additionalProperties": false
+                                    }
+                                },
+                                "required": [
+                                    "column_id",
+                                    "filter_config"
+                                ],
+                                "additionalProperties": false
+                            }
+                        },
+                        "span_attributes_filters": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "column_id": {
+                                        "type": "string",
+                                        "description": "Column or attribute id to filter on."
+                                    },
+                                    "property_id": {
+                                        "type": "string",
+                                        "description": "Optional stable namespaced Property Registry identity."
+                                    },
+                                    "display_name": {
+                                        "type": "string",
+                                        "description": "Optional UI label for chips and saved views."
+                                    },
+                                    "source": {
+                                        "type": "string",
+                                        "description": "Optional source surface for mixed-source filters, for example traces, datasets, or simulation."
+                                    },
+                                    "output_type": {
+                                        "type": "string",
+                                        "description": "Optional metric output type metadata used by eval and annotation filters."
+                                    },
+                                    "filter_config": {
+                                        "type": "object",
+                                        "properties": {
+                                            "filter_type": {
+                                                "type": "string",
+                                                "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
+                                            },
+                                            "filter_op": {
+                                                "type": "string",
+                                                "description": "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null."
+                                            },
+                                            "filter_value": {
+                                                "description": "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type."
+                                            },
+                                            "col_type": {
+                                                "type": "string",
+                                                "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                                            },
+                                            "attribute_value_types": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                        "string",
+                                                        "number",
+                                                        "boolean"
+                                                    ],
+                                                    "x-nullable": true
+                                                },
+                                                "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
+                                            }
+                                        },
+                                        "required": [
+                                            "filter_type",
+                                            "filter_op"
+                                        ],
+                                        "additionalProperties": false
+                                    }
+                                },
+                                "required": [
+                                    "column_id",
+                                    "filter_config"
+                                ],
+                                "additionalProperties": false
+                            }
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "sampling_policy": {
+                    "$ref": "#/definitions/SamplingPolicy"
+                },
+                "evals": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "default": [],
+                    "maxItems": 50
+                }
+            }
+        },
+        "SamplingPreviewCell": {
+            "required": [
+                "stratum",
+                "eligible_units",
+                "eligible_rows",
+                "expected_units",
+                "expected_rows",
+                "selected_units",
+                "selected_rows"
+            ],
+            "type": "object",
+            "properties": {
+                "stratum": {
+                    "title": "Stratum",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "eligible_units": {
+                    "title": "Eligible units",
+                    "type": "integer"
+                },
+                "eligible_rows": {
+                    "title": "Eligible rows",
+                    "type": "integer"
+                },
+                "expected_units": {
+                    "title": "Expected units",
+                    "type": "number"
+                },
+                "expected_rows": {
+                    "title": "Expected rows",
+                    "type": "number"
+                },
+                "selected_units": {
+                    "title": "Selected units",
+                    "type": "integer"
+                },
+                "selected_rows": {
+                    "title": "Selected rows",
+                    "type": "integer"
+                }
+            }
+        },
+        "SamplingPreviewResult": {
+            "required": [
+                "policy_version",
+                "sampling_unit",
+                "mode",
+                "window",
+                "preview_window",
+                "as_of",
+                "strata",
+                "evaluator_count",
+                "expected_evaluations",
+                "selected_evaluations",
+                "estimated_cost",
+                "cost_note",
+                "population_note"
+            ],
+            "type": "object",
+            "properties": {
+                "policy_version": {
+                    "title": "Policy version",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sampling_unit": {
+                    "title": "Sampling unit",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "window": {
+                    "$ref": "#/definitions/SamplingWindow"
+                },
+                "preview_window": {
+                    "$ref": "#/definitions/SamplingWindow"
+                },
+                "as_of": {
+                    "title": "As of",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "strata": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SamplingPreviewCell"
+                    }
+                },
+                "evaluator_count": {
+                    "title": "Evaluator count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "expected_evaluations": {
+                    "title": "Expected evaluations",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "selected_evaluations": {
+                    "title": "Selected evaluations",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "estimated_cost": {
+                    "title": "Estimated cost",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "cost_note": {
+                    "title": "Cost note",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "population_note": {
+                    "title": "Population note",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "SamplingPreviewResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SamplingPreviewResult"
+                }
+            }
+        },
         "EvalTaskUpdateRequest": {
             "required": [
                 "edit_type",
@@ -143281,6 +145568,9 @@
             ],
             "type": "object",
             "properties": {
+                "sampling_policy": {
+                    "$ref": "#/definitions/SamplingPolicy"
+                },
                 "name": {
                     "title": "Name",
                     "type": "string",
@@ -149540,6 +151830,11 @@
                     "x-json-value": true,
                     "description": "Any valid JSON value."
                 },
+                "sampling_contact_attribute": {
+                    "title": "Sampling contact attribute",
+                    "type": "string",
+                    "maxLength": 200
+                },
                 "tags": {
                     "title": "Tags",
                     "type": "object",
@@ -150234,6 +152529,36 @@
                 }
             }
         },
+        "ProjectNameUpdate": {
+            "required": [
+                "project_id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "sampling_contact_attribute": {
+                    "title": "Sampling contact attribute",
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sampling_rate": {
+                    "title": "Sampling rate",
+                    "type": "number",
+                    "maximum": 1.0,
+                    "minimum": 0.0
+                }
+            }
+        },
         "ProjectDetailResult": {
             "required": [
                 "model_type",
@@ -150334,6 +152659,11 @@
                     "x-nullable": true,
                     "x-json-value": true,
                     "description": "Any valid JSON value."
+                },
+                "sampling_contact_attribute": {
+                    "title": "Sampling contact attribute",
+                    "type": "string",
+                    "maxLength": 200
                 },
                 "tags": {
                     "title": "Tags",
@@ -150695,6 +153025,196 @@
                     "title": "Generate graph",
                     "type": "boolean",
                     "default": true
+                }
+            }
+        },
+        "SQLSaved": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "visibility": {
+                    "title": "Visibility",
+                    "type": "string",
+                    "enum": [
+                        "private",
+                        "project"
+                    ],
+                    "readOnly": true
+                },
+                "chart": {
+                    "title": "Chart",
+                    "type": "object",
+                    "readOnly": true
+                },
+                "window_hours": {
+                    "title": "Window hours",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "created_by_id": {
+                    "title": "Created by id",
+                    "type": "string",
+                    "readOnly": true
+                }
+            }
+        },
+        "SQLSavedList": {
+            "required": [
+                "items",
+                "has_more"
+            ],
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLSaved"
+                    }
+                },
+                "has_more": {
+                    "title": "Has more",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SQLChart": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "table",
+                        "bar"
+                    ],
+                    "default": "table"
+                },
+                "x": {
+                    "title": "X",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                },
+                "y": {
+                    "title": "Y",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                }
+            },
+            "default": {
+                "type": "table"
+            }
+        },
+        "SQLSave": {
+            "required": [
+                "project_id",
+                "name",
+                "sql"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 160,
+                    "minLength": 1
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "maxLength": 32768,
+                    "minLength": 1
+                },
+                "visibility": {
+                    "title": "Visibility",
+                    "type": "string",
+                    "enum": [
+                        "private",
+                        "project"
+                    ],
+                    "default": "private"
+                },
+                "chart": {
+                    "$ref": "#/definitions/SQLChart"
+                },
+                "window_hours": {
+                    "title": "Window hours",
+                    "type": "integer",
+                    "default": 24,
+                    "maximum": 744,
+                    "minimum": 1
+                }
+            }
+        },
+        "SQLWidget": {
+            "required": [
+                "project_id",
+                "dashboard_id"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "dashboard_id": {
+                    "title": "Dashboard id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "SQLWidgetResponse": {
+            "required": [
+                "id",
+                "dashboard_id"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "dashboard_id": {
+                    "title": "Dashboard id",
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },
@@ -151552,6 +154072,293 @@
                             "minLength": 1
                         }
                     }
+                }
+            }
+        },
+        "SQLColumn": {
+            "required": [
+                "name",
+                "type"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "SQLResult": {
+            "type": "object",
+            "properties": {
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLColumn"
+                    }
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object"
+                        }
+                    }
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "type": "boolean"
+                },
+                "row_count": {
+                    "title": "Row count",
+                    "type": "integer"
+                },
+                "result_bytes": {
+                    "title": "Result bytes",
+                    "type": "integer"
+                },
+                "elapsed_ms": {
+                    "title": "Elapsed ms",
+                    "type": "integer"
+                }
+            }
+        },
+        "SQLExecution": {
+            "required": [
+                "id",
+                "project_id",
+                "sql",
+                "state",
+                "created_at",
+                "expires_at",
+                "error",
+                "result",
+                "expired"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "running",
+                        "succeeded",
+                        "failed",
+                        "cancelled"
+                    ]
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "expires_at": {
+                    "title": "Expires at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string"
+                },
+                "result": {
+                    "$ref": "#/definitions/SQLResult"
+                },
+                "expired": {
+                    "title": "Expired",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SQLHistory": {
+            "required": [
+                "items",
+                "has_more"
+            ],
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLExecution"
+                    }
+                },
+                "has_more": {
+                    "title": "Has more",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SQLDataset": {
+            "required": [
+                "available",
+                "unavailable_reason",
+                "name",
+                "description",
+                "columns"
+            ],
+            "type": "object",
+            "properties": {
+                "available": {
+                    "title": "Available",
+                    "type": "boolean"
+                },
+                "unavailable_reason": {
+                    "title": "Unavailable reason",
+                    "type": "string"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "columns": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLColumn"
+                    }
+                }
+            }
+        },
+        "SQLCatalog": {
+            "required": [
+                "identity_semantics",
+                "version",
+                "datasets",
+                "max_rows",
+                "max_window_days",
+                "can_save"
+            ],
+            "type": "object",
+            "properties": {
+                "identity_semantics": {
+                    "title": "Identity semantics",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "integer"
+                },
+                "datasets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SQLDataset"
+                    }
+                },
+                "max_rows": {
+                    "title": "Max rows",
+                    "type": "integer"
+                },
+                "max_window_days": {
+                    "title": "Max window days",
+                    "type": "integer"
+                },
+                "can_save": {
+                    "title": "Can save",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SQLRunSaved": {
+            "required": [
+                "project_id",
+                "saved_query_id"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "saved_query_id": {
+                    "title": "Saved query id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "start": {
+                    "title": "Start",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "end": {
+                    "title": "End",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "SQLRun": {
+            "required": [
+                "project_id",
+                "sql",
+                "start",
+                "end"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sql": {
+                    "title": "Sql",
+                    "type": "string",
+                    "maxLength": 32768,
+                    "minLength": 1
+                },
+                "start": {
+                    "title": "Start",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "end": {
+                    "title": "End",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "SQLProject": {
+            "required": [
+                "project_id"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },
@@ -154933,6 +157740,14 @@
                     "type": "string",
                     "readOnly": true
                 },
+                "notification_emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "email",
+                        "minLength": 1
+                    }
+                },
                 "created_at": {
                     "title": "Created at",
                     "type": "string",
@@ -154971,7 +157786,8 @@
                         "token_usage",
                         "daily_tokens_spent",
                         "monthly_tokens_spent",
-                        "evaluation_metrics"
+                        "evaluation_metrics",
+                        "derived_metric"
                     ]
                 },
                 "metric": {
@@ -155039,15 +157855,12 @@
                     "readOnly": true,
                     "x-nullable": true
                 },
-                "notification_emails": {
-                    "type": "array",
-                    "items": {
-                        "title": "Notification emails",
-                        "type": "string",
-                        "format": "email",
-                        "maxLength": 254,
-                        "minLength": 1
-                    }
+                "last_derived_run_id": {
+                    "title": "Last derived run id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
                 },
                 "slack_webhook_url": {
                     "title": "Slack webhook url",
@@ -155438,6 +158251,14 @@
                     "type": "string",
                     "readOnly": true
                 },
+                "notification_emails": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "email",
+                        "minLength": 1
+                    }
+                },
                 "created_at": {
                     "title": "Created at",
                     "type": "string",
@@ -155476,7 +158297,8 @@
                         "token_usage",
                         "daily_tokens_spent",
                         "monthly_tokens_spent",
-                        "evaluation_metrics"
+                        "evaluation_metrics",
+                        "derived_metric"
                     ]
                 },
                 "metric": {
@@ -155544,15 +158366,12 @@
                     "readOnly": true,
                     "x-nullable": true
                 },
-                "notification_emails": {
-                    "type": "array",
-                    "items": {
-                        "title": "Notification emails",
-                        "type": "string",
-                        "format": "email",
-                        "maxLength": 254,
-                        "minLength": 1
-                    }
+                "last_derived_run_id": {
+                    "title": "Last derived run id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
                 },
                 "slack_webhook_url": {
                     "title": "Slack webhook url",
