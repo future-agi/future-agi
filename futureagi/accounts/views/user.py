@@ -336,6 +336,23 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 .first()
             )
 
+            # One-shot: an existing user who just joined an org from an
+            # invite link lands in that org at this login, then back to normal.
+            _joined_org_id = user.config.pop("post_login_organization_id", None)
+            if _joined_org_id:
+                _joined_membership = (
+                    _OrgMembership.no_workspace_objects.filter(
+                        user=user,
+                        organization_id=_joined_org_id,
+                        is_active=True,
+                        deleted=False,
+                    )
+                    .select_related("organization")
+                    .first()
+                )
+                if _joined_membership:
+                    _first_active_membership = _joined_membership
+
             # Deactivate all previous refresh tokens for this user
             AuthToken.objects.filter(
                 user=user, auth_type=AuthTokenType.REFRESH.value, is_active=True

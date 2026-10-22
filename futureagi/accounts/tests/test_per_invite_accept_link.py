@@ -488,3 +488,62 @@ class TestAcceptLinkPost:
         )
 
         assert r.status_code == 400 and _error(r) == "Both password fields are required."
+
+
+def _login(api_client, user):
+    return api_client.post(
+        "/accounts/token/",
+        {"email": user.email, "password": NEW_PASSWORD},
+        format="json",
+    )
+
+
+@pytest.fixture
+def joined_b_after_a(api_client, two_org_invites):
+    """User set a password on A's link, then joined B from B's link."""
+    user, link_a, link_b = two_org_invites
+    assert (
+        api_client.post(
+            _accept_path(link_a), _set_password_body(), format="json"
+        ).status_code
+        == 200
+    )
+    assert api_client.post(_accept_path(link_b), {}, format="json").status_code == 200
+    return user
+
+
+class TestLoginAfterJoin:
+    def test_password_login_after_join_lands_on_joined_org(
+        self, api_client, org_b, joined_b_after_a
+    ):
+        r = _login(api_client, joined_b_after_a)
+
+        assert r.status_code == 200, r.data
+        joined_b_after_a.refresh_from_db()
+        assert joined_b_after_a.config["currentOrganizationId"] == str(org_b.id)
+        assert "post_login_organization_id" not in joined_b_after_a.config
+
+    def test_next_login_goes_back_to_oldest_org(
+        self, api_client, org_a, joined_b_after_a
+    ):
+        assert _login(api_client, joined_b_after_a).status_code == 200
+
+        r = _login(api_client, joined_b_after_a)
+
+        assert r.status_code == 200, r.data
+        joined_b_after_a.refresh_from_db()
+        assert joined_b_after_a.config["currentOrganizationId"] == str(org_a.id)
+
+    def test_post_login_org_ignored_when_membership_removed(
+        self, api_client, org_a, org_b, joined_b_after_a
+    ):
+        OrganizationMembership.all_objects.filter(
+            user=joined_b_after_a, organization=org_b
+        ).update(is_active=False)
+
+        r = _login(api_client, joined_b_after_a)
+
+        assert r.status_code == 200, r.data
+        joined_b_after_a.refresh_from_db()
+        assert joined_b_after_a.config["currentOrganizationId"] == str(org_a.id)
+        assert "post_login_organization_id" not in joined_b_after_a.config
