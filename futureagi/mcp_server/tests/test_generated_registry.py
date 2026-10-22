@@ -12,6 +12,8 @@ def test_committed_generated_registry_loads_all_tools():
     registry = GeneratedToolRegistry.from_manifest()
 
     assert registry.count() == 109
+    for name in ("run_sql", "get_sql_result", "cancel_sql", "get_sql_catalog"):
+        assert registry.get(name).group == "observability"
     assert registry.get("list_datasets").group == "datasets"
     assert registry.get("get_dashboard").group == "dashboards"
     assert registry.get("get_gateway_config").group == "gateway"

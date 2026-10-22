@@ -248,6 +248,7 @@ class HarnessScenarioProvisionSerializer(serializers.Serializer):
     chosen_evals = serializers.ListField(
         child=serializers.CharField(max_length=2000), required=False
     )
+    agent = serializers.DictField(required=False)
 
     def validate_personas(self, personas):
         keys = [persona["scenario_key"] for persona in personas]
@@ -277,6 +278,7 @@ class HarnessScenarioOperationSerializer(serializers.Serializer):
     chosen_evals = serializers.ListField(
         child=serializers.CharField(max_length=2000), required=False
     )
+    agent = serializers.DictField(required=False)
     run_test_id = serializers.UUIDField(required=False)
     scenario_keys = serializers.ListField(
         child=serializers.CharField(max_length=255), required=False

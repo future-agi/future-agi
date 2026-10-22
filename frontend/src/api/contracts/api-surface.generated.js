@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1081,
+  endpointCount: 1084,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -791,11 +791,15 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/agent-definitions/{agent_id}/": ["get"],
       "/simulate/agent-definitions/{agent_id}/delete/": ["delete"],
       "/simulate/agent-definitions/{agent_id}/edit/": ["put"],
+      "/simulate/agent-definitions/{agent_id}/runs/": ["get"],
       "/simulate/agent-definitions/{agent_id}/versions/": ["get"],
       "/simulate/agent-definitions/{agent_id}/versions/create/": ["post"],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/": ["get"],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/activate/":
         ["post"],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/agent/": [
+        "get",
+      ],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/call-executions/":
         ["get"],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/delete/": [
@@ -1031,6 +1035,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/v3/test-executions/{test_execution_id}/analytics/": ["get"],
       "/simulate/v3/test-executions/{test_execution_id}/calls/": ["get"],
       "/simulate/v3/test-executions/{test_execution_id}/export/": ["post"],
+      "/simulate/v3/test-executions/{test_execution_id}/traces/": ["get"],
     },
     telemetry: {
       "/telemetry/heartbeat/": ["post"],
@@ -2089,11 +2094,15 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/agent-definitions/{agent_id}/": ["get"],
   "/simulate/agent-definitions/{agent_id}/delete/": ["delete"],
   "/simulate/agent-definitions/{agent_id}/edit/": ["put"],
+  "/simulate/agent-definitions/{agent_id}/runs/": ["get"],
   "/simulate/agent-definitions/{agent_id}/versions/": ["get"],
   "/simulate/agent-definitions/{agent_id}/versions/create/": ["post"],
   "/simulate/agent-definitions/{agent_id}/versions/{version_id}/": ["get"],
   "/simulate/agent-definitions/{agent_id}/versions/{version_id}/activate/": [
     "post",
+  ],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/agent/": [
+    "get",
   ],
   "/simulate/agent-definitions/{agent_id}/versions/{version_id}/call-executions/":
     ["get"],
@@ -2326,6 +2335,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/v3/test-executions/{test_execution_id}/analytics/": ["get"],
   "/simulate/v3/test-executions/{test_execution_id}/calls/": ["get"],
   "/simulate/v3/test-executions/{test_execution_id}/export/": ["post"],
+  "/simulate/v3/test-executions/{test_execution_id}/traces/": ["get"],
   "/telemetry/heartbeat/": ["post"],
   "/telemetry/register/": ["post"],
   "/tracer/alerts/": ["get", "post"],
