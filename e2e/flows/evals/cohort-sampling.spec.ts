@@ -117,6 +117,7 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
     await page.getByRole('combobox', { name: /^Selection(?: |$)/ }).click();
     await page.getByRole('option', { name: 'Target units', exact: true }).click();
     await page.getByRole('spinbutton', { name: 'Target units', exact: true }).fill('1');
+    await testInfo.attach('ui-policy-editor', { contentType: 'image/png', body: await page.screenshot({ fullPage: true }) });
 
     const previewResponse = page.waitForResponse(r => r.url().endsWith(PREVIEW) && r.request().method() === 'POST', { timeout: UI_READY });
     await page.getByRole('button', { name: 'Preview sampling policy', exact: true }).click();
@@ -126,6 +127,7 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
     expect(preview.result.strata).toHaveLength(1);
     expect(preview.result.strata[0]).toMatchObject({ eligible_units: 2, selected_units: 1, selected_rows: 4 });
     await expect(page.getByRole('table').filter({ has: page.getByRole('columnheader', { name: 'Eligible units' }) })).toBeVisible({ timeout: UI_READY });
+    await testInfo.attach('ui-preview-counts', { contentType: 'image/png', body: await page.screenshot({ fullPage: true }) });
     const ranked = contacts.map(contact => ({ contact,
       hash: createHash('sha256').update(`${preview.result.policy_version}:session:${contact.canonical}`).digest('hex'),
     })).sort((a, b) => a.hash.localeCompare(b.hash));
@@ -151,6 +153,7 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
       row_type: 'spans', run_type: 'continuous', sampling_policy: { sampling_unit: 'session', mode: 'closed', default: { target_n: 1 } } });
     const taskId = (await createResponse.json() as Created).result.id;
     await expect(page).toHaveURL(new RegExp(`/dashboard/tasks/${taskId}`), { timeout: UI_READY });
+    await testInfo.attach('ui-created-task', { contentType: 'image/png', body: await page.screenshot({ fullPage: true }) });
     const readEntries = () => probe.pg<Entry>(
       'SELECT observation_span_id,status,output_bool,output_metadata FROM tracer_eval_logger WHERE eval_task_id=$1 AND deleted=false ORDER BY observation_span_id', [taskId]);
     let entries: Entry[] = [];
@@ -179,6 +182,7 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
     }, POLL.EVAL_RESULT).toEqual([...chosen.spanIds].sort());
     expect(entries.map(entry => entry.observation_span_id).sort()).toEqual([...chosen.spanIds].sort());
     expect(entries).toHaveLength(6);
+    await testInfo.attach('ui-late-arrival-result', { contentType: 'image/png', body: await page.screenshot({ fullPage: true }) });
     const membership = await probe.pg<{ unit_id: string; inclusion_probability: number }>(
       'SELECT unit_id,inclusion_probability FROM tracer_eval_sampling_member WHERE cohort_id=$1 AND selected=true', [originalCohort]);
     expect(membership).toEqual([{ unit_id: `session:${chosen.canonical}`, inclusion_probability: .5 }]);
@@ -193,6 +197,7 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
     const editedResponse = await editedPreview;
     expect(editedResponse.ok()).toBe(true);
     expect((await editedResponse.json() as Preview).result.strata[0]).toMatchObject({ eligible_units: 2, selected_units: 2, selected_rows: 12 });
+    await testInfo.attach('ui-edited-preview', { contentType: 'image/png', body: await page.screenshot({ fullPage: true }) });
     await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.getByText('Delete Past Data & Start Fresh', { exact: true })).toBeVisible({ timeout: UI_READY });
     await mockModel.assertReady();
@@ -209,6 +214,7 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
     const newCohorts = new Set(entries.map(entry => entry.output_metadata._task_selection.sampling.cohort_id));
     expect(newCohorts.size).toBe(1); expect(newCohorts.has(originalCohort)).toBe(false);
     expect(entries.every(entry => entry.output_metadata._task_selection.sampling.inclusion_probability === 1)).toBe(true);
+    await testInfo.attach('ui-rerun-result', { contentType: 'image/png', body: await page.screenshot({ fullPage: true }) });
     const [stored] = await probe.pg<{ sampling_policy: { default: { target_n: number } } }>('SELECT sampling_policy FROM tracer_eval_task WHERE id=$1', [taskId]);
     expect(stored.sampling_policy.default.target_n).toBe(2);
     const archived = await probe.pg<{ sampling: Sampling }>(
