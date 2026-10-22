@@ -8,6 +8,8 @@
 //   stats    GET experiments/v2/{id}/stats/   views/experiments.py:2404-2413, 2505-2513, 2636-2686
 //   names    GET experiments/v2/suggest-name/ views/experiments.py:6324
 //            GET experiments/v2/validate-name/ views/experiments.py:6360-6363
+//   agents   GET agent-playground/graphs/     agent_playground/serializers/graph.py:29-62
+//            GET agent-playground/graphs/{id}/versions/ agent_playground/serializers/graph_version.py:54-73
 
 export const EXPERIMENT_ID = "6f1c2a5e-8d3b-4c71-9a2e-1b5d7c9e0a11";
 export const DATASET_ID = "2b7e4f10-3c5d-4e6f-8a9b-0c1d2e3f4a51";
@@ -369,6 +371,83 @@ export const rowDiffResponse = {
         status: "pass",
         value_infos: {},
       },
+    },
+  },
+};
+
+// GET /agent-playground/graphs/ -> result (agent_playground/views/graph.py:165-170).
+// Each graph is GraphListSerializer (agent_playground/serializers/graph.py:29-62):
+// the latest version id is `active_version_id` (:38-40, annotated by
+// agent_playground/utils/graph.py:85-102), never `activeVersionId`.
+export const AGENT_GRAPH_PREVIOUS_VERSION_ID =
+  "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e99";
+export const graphListResponse = {
+  status: true,
+  result: {
+    graphs: [
+      {
+        id: AGENT_GRAPH_ID,
+        name: "support-triage-agent",
+        description: "Routes tickets and drafts replies",
+        is_template: false,
+        created_at: "2026-10-01T09:00:00Z",
+        updated_at: "2026-10-20T16:30:00Z",
+        created_by: {
+          id: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c01",
+          name: "Dana Ortiz",
+          email: "dana@example.com",
+        },
+        collaborators: [],
+        active_version_id: AGENT_GRAPH_VERSION_ID,
+        active_version_number: 3,
+        node_count: 2,
+      },
+    ],
+    // common/utils/pagination.py:29-36
+    metadata: {
+      total_count: 1,
+      page_number: 1,
+      page_size: 20,
+      total_pages: 1,
+      next_page: null,
+      previous_page: null,
+    },
+  },
+};
+
+// GET /agent-playground/graphs/{id}/versions/ -> result (agent_playground/views/graph.py:384-414),
+// ordered by -version_number; GraphVersionListSerializer
+// (agent_playground/serializers/graph_version.py:54-73).
+export const graphVersionsResponse = {
+  status: true,
+  result: {
+    versions: [
+      {
+        id: AGENT_GRAPH_VERSION_ID,
+        version_number: 3,
+        status: "active",
+        tags: [],
+        commit_message: "Tighten the refund policy branch",
+        created_at: "2026-10-20T16:30:00Z",
+        global_variables: [],
+      },
+      {
+        id: AGENT_GRAPH_PREVIOUS_VERSION_ID,
+        version_number: 2,
+        status: "inactive",
+        tags: [],
+        commit_message: null,
+        created_at: "2026-10-10T11:00:00Z",
+        global_variables: [],
+      },
+    ],
+    metadata: {
+      total_count: 2,
+      page_number: 1,
+      page_size: 10,
+      total_pages: 1,
+      next_page: null,
+      previous_page: null,
     },
   },
 };
