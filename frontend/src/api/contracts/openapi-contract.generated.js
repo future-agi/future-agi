@@ -63522,6 +63522,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "total_pages",
         "current_page",
         "results",
+        "sub_actors",
       ],
       type: "object",
       properties: {
@@ -63554,6 +63555,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessEnvironment",
           },
+        },
+        sub_actors: {
+          title: "Sub actors",
+          type: "boolean",
         },
       },
     },
@@ -83891,8 +83896,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "system",
             "tool_calls",
             "tool_call_result",
+            "sub_actor",
             "unknown",
           ],
+        },
+        speaker_name: {
+          title: "Speaker name",
+          type: "string",
+          maxLength: 255,
         },
         content: {
           title: "Content",
@@ -86865,8 +86876,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "system",
             "tool_calls",
             "tool_call_result",
+            "sub_actor",
             "unknown",
           ],
+        },
+        speaker_name: {
+          title: "Speaker name",
+          type: "string",
+          maxLength: 255,
         },
         content: {
           title: "Content",

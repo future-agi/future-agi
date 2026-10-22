@@ -656,6 +656,7 @@ class CallTranscript(BaseModel):
         SYSTEM = "system", "System"
         TOOL_CALLS = "tool_calls", "Tool Calls"
         TOOL_CALL_RESULT = "tool_call_result", "Tool Call Result"
+        SUB_ACTOR = "sub_actor", "Sub-actor"
         UNKNOWN = "unknown", "Unknown"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -673,6 +674,7 @@ class CallTranscript(BaseModel):
         default=SpeakerRole.UNKNOWN,
         help_text="Role of the speaker (user or assistant)",
     )
+    speaker_name = models.CharField(max_length=255, blank=True, default="")
 
     content = models.TextField(help_text="Transcript content")
 

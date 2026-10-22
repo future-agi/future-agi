@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from django.conf import settings
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
@@ -139,7 +140,11 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             )
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(self._queryset(request), request, view=self)
-        return paginator.get_paginated_response([environment_row(job) for job in page])
+        response = paginator.get_paginated_response(
+            [environment_row(job) for job in page]
+        )
+        response.data["sub_actors"] = bool(getattr(settings, "ALK_SUB_ACTORS", False))
+        return response
 
     @swagger_auto_schema(responses={200: HarnessEnvironmentDetailSerializer})
     def retrieve(self, request, pk=None):

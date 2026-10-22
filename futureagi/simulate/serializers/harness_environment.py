@@ -77,6 +77,7 @@ class HarnessEnvironmentListResponseSerializer(serializers.Serializer):
     total_pages = serializers.IntegerField()
     current_page = serializers.IntegerField()
     results = HarnessEnvironmentSerializer(many=True)
+    sub_actors = serializers.BooleanField()
 
 
 class HarnessEnvironmentRunLinkSerializer(serializers.Serializer):

@@ -8,7 +8,7 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import {
   ACTOR_LIBRARY, ENTRY_KINDS, PRESSURE_KINDS, MODALITIES,
-  castFor, getPressure, getEntry,
+  actorsFromCast, castFor, getPressure, getEntry,
 } from "src/api/simulate-environments/_fixtures/actors";
 import SideDrawer from "../../components/SideDrawer";
 import SectionCard from "../../components/SectionCard";
@@ -33,13 +33,16 @@ const LOCK_TOOLTIP = "Fork this environment to edit.";
  */
 export default function ActorsPanel({ env, envState, patch, onGo, locked = false }) {
   const [editing, setEditing] = useState(null);
+  // A built environment's own cast, changed through the builder rather than here.
+  const built = env.cast?.subActors ? actorsFromCast(env.cast, envState?.scenarios) : null;
   const cast = envState?.actors || castFor(env);
-  const canEdit = !!patch && !locked;
+  const canEdit = !!patch && !locked && !built;
 
   const inCast = useMemo(() => {
+    if (built) return built;
     const set = new Set(cast);
     return ACTOR_LIBRARY.filter((a) => set.has(a.id));
-  }, [cast]);
+  }, [built, cast]);
 
   const drop = (id) => patch?.({ actors: cast.filter((x) => x !== id) });
 
@@ -52,7 +55,7 @@ export default function ActorsPanel({ env, envState, patch, onGo, locked = false
             {C.headingBlurb}
           </Typography>
         </Box>
-        {patch && (
+        {patch && !built && (
           <MaybeLocked locked={locked}>
             <Button
               variant="contained" color="primary" size="small"
@@ -91,7 +94,7 @@ export default function ActorsPanel({ env, envState, patch, onGo, locked = false
         </Stack>
       </Box>
 
-      <SectionCard title={C.castTitle(inCast.length)} subtitle={C.castSubtitle}>
+      <SectionCard title={C.castTitle(inCast.length)} subtitle={built ? C.builtCastSubtitle : C.castSubtitle}>
         {inCast.length === 0 ? (
           <EmptyState icon={C.emptyIcon} title={C.emptyTitle} body={C.emptyBody} />
         ) : (
@@ -138,8 +141,8 @@ const ACTOR_SHAPE = PropTypes.shape({
 });
 
 ActorsPanel.propTypes = {
-  env: PropTypes.shape({ surface: PropTypes.string }).isRequired,
-  envState: PropTypes.shape({ actors: PropTypes.arrayOf(PropTypes.string) }).isRequired,
+  env: PropTypes.shape({ surface: PropTypes.string, cast: PropTypes.shape({ subActors: PropTypes.array }) }).isRequired,
+  envState: PropTypes.shape({ actors: PropTypes.arrayOf(PropTypes.string), scenarios: PropTypes.array }).isRequired,
   patch: PropTypes.func,
   onGo: PropTypes.func,
   locked: PropTypes.bool,
@@ -181,7 +184,9 @@ function ActorRow({ actor, action, onEdit }) {
         <Box flex={1} minWidth={0} onClick={toggle} sx={{ cursor: "pointer" }}>
           <Stack direction="row" alignItems="center" spacing={0.75}>
             <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>{actor.name}</Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>· {actor.version}</Typography>
+            {actor.version && (
+              <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>· {actor.version}</Typography>
+            )}
             {actor.owner === "system" && (
               <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>· {C.builtIn}</Typography>
             )}
@@ -191,16 +196,18 @@ function ActorRow({ actor, action, onEdit }) {
           </Typography>
         </Box>
 
-        <Chip
-          size="small"
-          label={pressure.label}
-          sx={{
-            height: 20, borderRadius: 0.75, flexShrink: 0, color: pressure.color,
-            border: "1px solid", borderColor: alpha(pressure.color, 0.4), bgcolor: "transparent",
-            display: { xs: "none", md: "flex" },
-            "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: "fontWeightSemiBold" },
-          }}
-        />
+        {actor.pressure && (
+          <Chip
+            size="small"
+            label={pressure.label}
+            sx={{
+              height: 20, borderRadius: 0.75, flexShrink: 0, color: pressure.color,
+              border: "1px solid", borderColor: alpha(pressure.color, 0.4), bgcolor: "transparent",
+              display: { xs: "none", md: "flex" },
+              "& .MuiChip-label": { px: 0.75, typography: "s3", fontWeight: "fontWeightSemiBold" },
+            }}
+          />
+        )}
 
         <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0, display: { xs: "none", md: "flex" } }}>
           {(actor.modalities || []).map((m) => (
@@ -208,9 +215,11 @@ function ActorRow({ actor, action, onEdit }) {
           ))}
         </Stack>
 
-        <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0, display: { xs: "none", lg: "block" }, width: 118 }}>
-          {entry.label.toLowerCase()}
-        </Typography>
+        {actor.entry && (
+          <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0, display: { xs: "none", lg: "block" }, width: 118 }}>
+            {entry.label.toLowerCase()}
+          </Typography>
+        )}
         <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0, display: { xs: "none", sm: "block" } }}>
           {C.usedBy(actor.usedBy)}
         </Typography>
@@ -234,8 +243,8 @@ function ActorRow({ actor, action, onEdit }) {
       <Collapse in={open} unmountOnExit>
         <Stack spacing={1.5} sx={{ px: 2.5, pb: 2, pl: 7 }}>
           <DetailBlock label={C.detail.does} body={actor.blurb} />
-          <DetailBlock label={C.detail.tests} body={actor.tests} />
-          <DetailBlock label={C.detail.entry} body={`${entry.label} - ${entry.blurb}`} />
+          {actor.tests && <DetailBlock label={C.detail.tests} body={actor.tests} />}
+          {actor.entry && <DetailBlock label={C.detail.entry} body={`${entry.label} - ${entry.blurb}`} />}
           <Box>
             <Label>{C.detail.modalities}</Label>
             <Stack direction="row" spacing={0.75} flexWrap="wrap" rowGap={0.75}>
@@ -244,32 +253,36 @@ function ActorRow({ actor, action, onEdit }) {
               ))}
             </Stack>
           </Box>
-          <Box>
-            <Label>{C.detail.traits}</Label>
-            <Stack direction="row" spacing={0.75} flexWrap="wrap" rowGap={0.75}>
-              {(actor.traits || []).map((t) => (
-                <Chip
-                  key={t} size="small" label={t}
-                  sx={{
-                    height: 20, borderRadius: 0.75, color: "text.secondary",
-                    border: "1px solid", borderColor: "divider", bgcolor: "transparent",
-                    "& .MuiChip-label": { px: 0.75, typography: "s3" },
-                  }}
-                />
-              ))}
-            </Stack>
-          </Box>
-          <Box>
-            <Label>{C.detail.versions}</Label>
-            <Stack spacing={0.75}>
-              {(actor.versions || []).map((v) => (
-                <Stack key={v.label} direction="row" spacing={1.5} alignItems="flex-start">
-                  <Typography sx={{ width: 28, flexShrink: 0, typography: "s2", fontWeight: "fontWeightBold" }}>{v.label}</Typography>
-                  <Typography sx={{ typography: "s2", color: "text.secondary" }}>{v.note}</Typography>
-                </Stack>
-              ))}
-            </Stack>
-          </Box>
+          {actor.traits?.length > 0 && (
+            <Box>
+              <Label>{C.detail.traits}</Label>
+              <Stack direction="row" spacing={0.75} flexWrap="wrap" rowGap={0.75}>
+                {(actor.traits || []).map((t) => (
+                  <Chip
+                    key={t} size="small" label={t}
+                    sx={{
+                      height: 20, borderRadius: 0.75, color: "text.secondary",
+                      border: "1px solid", borderColor: "divider", bgcolor: "transparent",
+                      "& .MuiChip-label": { px: 0.75, typography: "s3" },
+                    }}
+                  />
+                ))}
+              </Stack>
+            </Box>
+          )}
+          {actor.versions?.length > 0 && (
+            <Box>
+              <Label>{C.detail.versions}</Label>
+              <Stack spacing={0.75}>
+                {(actor.versions || []).map((v) => (
+                  <Stack key={v.label} direction="row" spacing={1.5} alignItems="flex-start">
+                    <Typography sx={{ width: 28, flexShrink: 0, typography: "s2", fontWeight: "fontWeightBold" }}>{v.label}</Typography>
+                    <Typography sx={{ typography: "s2", color: "text.secondary" }}>{v.note}</Typography>
+                  </Stack>
+                ))}
+              </Stack>
+            </Box>
+          )}
         </Stack>
       </Collapse>
     </Box>

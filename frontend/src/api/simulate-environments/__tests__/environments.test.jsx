@@ -165,7 +165,7 @@ describe("useMyEnvironments", () => {
       wrapper: Wrapper,
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual({ rows: [], total: 0 });
+    expect(result.current.data).toEqual({ rows: [], total: 0, subActors: false });
   });
 
   describe("polling", () => {

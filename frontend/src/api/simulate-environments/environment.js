@@ -112,6 +112,7 @@ export function stageOutputsToWorld(stageOutputs = []) {
   const contract = outputs.find((o) => o?.kind === "contract")?.data || {};
   const environment = outputs.find((o) => o?.kind === "environment")?.data || {};
   const scenariosOut = outputs.find((o) => o?.kind === "scenarios")?.data;
+  const castOut = outputs.find((o) => o?.kind === "cast")?.data;
 
   const tools = (contract.tools || [])
     .map((tool) =>
@@ -138,6 +139,17 @@ export function stageOutputsToWorld(stageOutputs = []) {
     world.seed = { tables: seedTables, services };
   }
   if (scenarios.length) world.scenarios = scenarios;
+  const subActors = (castOut?.sub_actors || [])
+    .map((one) => ({
+      id: one?.id,
+      name: one?.name,
+      role: one?.role || "",
+      channel: one?.channel || "",
+      prompt: one?.behaviour?.prompt || "",
+      origin: one?.origin || "",
+    }))
+    .filter((one) => one.id);
+  if (subActors.length) world.cast = { subActors };
 
   return Object.keys(world).length ? world : null;
 }
@@ -154,6 +166,7 @@ const scenarioFromOutput = (row) => ({
   useCase: row.use_case || "Generated test case",
   expected: "",
   persona: null,
+  subActors: (row.sub_actors || []).map((one) => (typeof one === "string" ? one : one?.id)).filter(Boolean),
 });
 
 // The initial per-env state for an environment that only exists in the harness
@@ -225,6 +238,7 @@ export function harnessJobToEnvironment(item) {
     tools: world.tools,
     rules: world.rules,
     seed: world.seed,
+    cast: world.cast,
     description: world.description,
     evalPreset: world.evalPreset,
   };

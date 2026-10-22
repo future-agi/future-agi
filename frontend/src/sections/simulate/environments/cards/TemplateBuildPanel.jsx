@@ -8,7 +8,7 @@ import {
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
-import { useAdoptTemplate } from "src/api/simulate-environments/environments";
+import { useAdoptTemplate, useSubActorsEnabled } from "src/api/simulate-environments/environments";
 import { packStats } from "../helpers/packStats";
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { seedFromTemplate } from "../workspace/helpers/seedEnvState";
@@ -40,6 +40,7 @@ export default function TemplateBuildPanel({ template, showName = false }) {
   const navigate = useNavigate();
   const [mode, setMode] = useState(BUILD_MODES.CLOUD);
   const adopt = useAdoptTemplate();
+  const subActors = useSubActorsEnabled();
   const adoptEnvironment = useEnvironmentsStore((s) => s.adoptEnvironment);
   const patchEnvState = useEnvironmentsStore((s) => s.patchEnvState);
 
@@ -63,7 +64,10 @@ export default function TemplateBuildPanel({ template, showName = false }) {
     adopt.mutate(template.id, {
       onSuccess: ({ envId }) => {
         const now = new Date().toISOString();
-        adoptEnvironment({ ...template, id: envId, templateId: template.id }, now);
+        adoptEnvironment(
+          { ...template, cast: subActors ? template.cast : undefined, id: envId, templateId: template.id },
+          now,
+        );
         patchEnvState(envId, seedFromTemplate(template, now));
         navigate(paths.dashboard.simulate.environments.detail(envId));
       },
@@ -126,7 +130,7 @@ export default function TemplateBuildPanel({ template, showName = false }) {
               <Button
                 variant="contained" color="primary"
                 onClick={handleAdopt}
-                disabled={adopt.isPending}
+                disabled={adopt.isPending || subActors === undefined}
                 startIcon={<Iconify icon="solar:magic-stick-3-bold" width={16} />}
                 sx={{ typography: "s2", fontWeight: "fontWeightBold", whiteSpace: "nowrap" }}
               >

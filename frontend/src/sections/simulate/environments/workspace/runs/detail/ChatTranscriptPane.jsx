@@ -5,6 +5,7 @@ import { Box, Stack, Typography, Tab, TextField, InputAdornment } from "@mui/mat
 
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
+import { subActorLabel } from "src/components/VoiceDetailDrawerV2/transcriptUtils";
 
 const ROLE_LABEL = { agent: "Assistant", customer: "Customer" };
 
@@ -100,7 +101,7 @@ export default function ChatTranscriptPane({ turns }) {
             <Typography
               sx={{ typography: "s3", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace" }}
             >
-              {turnStamp(s, i)} · {ROLE_LABEL[s.role] || s.role}
+              {turnStamp(s, i)} · {s.role === "sub_actor" ? subActorLabel(s.speakerName) : ROLE_LABEL[s.role] || s.role}
             </Typography>
             {s.text && <Typography sx={{ typography: "s1", mt: 0.25 }}>{s.text}</Typography>}
             {Array.isArray(s.toolCalls) &&
@@ -120,6 +121,7 @@ ChatTranscriptPane.propTypes = {
   turns: PropTypes.arrayOf(
     PropTypes.shape({
       role: PropTypes.string,
+      speakerName: PropTypes.string,
       text: PropTypes.string,
       toolCalls: PropTypes.any,
     }),

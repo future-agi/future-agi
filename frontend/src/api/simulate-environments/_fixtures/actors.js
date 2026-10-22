@@ -156,3 +156,46 @@ export const castFor = (env) => {
 
 export const getPressure = (id) => PRESSURE_KINDS.find((p) => p.id === id) || PRESSURE_KINDS[0];
 export const getEntry = (id) => ENTRY_KINDS.find((e) => e.id === id) || ENTRY_KINDS[0];
+
+// A generic cast per vertical for the prebuilt templates, in the shape a built
+// environment's cast takes. Only channels the template's surface can deliver
+// are kept, so a surface the harness does not reach gets no cast.
+const SURFACES_BY_CHANNEL = {
+  audio_mix: ["voice"],
+  audio_handoff: ["voice"],
+  ivr: ["voice"],
+  thread_message: ["chat"],
+};
+
+const CASTS_BY_DOMAIN = {
+  ecommerce: [
+    { id: "phone_menu", name: "Phone menu", role: "An automated menu that answers and routes the call first", channel: "ivr" },
+    { id: "household_member", name: "Household member", role: "Someone beside the caller who chimes in with order details", channel: "audio_mix" },
+  ],
+  fintech: [
+    { id: "joint_holder", name: "Joint account holder", role: "A second account holder who joins the conversation", channel: "thread_message" },
+  ],
+  travel: [
+    { id: "travel_companion", name: "Travel companion", role: "A fellow traveller who joins the conversation", channel: "thread_message" },
+  ],
+};
+
+export const castForTemplate = ({ domain, surface }) => {
+  const subActors = (CASTS_BY_DOMAIN[domain] || []).filter((one) =>
+    SURFACES_BY_CHANNEL[one.channel].includes(surface),
+  );
+  return subActors.length ? { subActors } : undefined;
+};
+
+// A built environment's cast in the shape the actors panel renders, with how
+// many scenarios bring each one in.
+export const actorsFromCast = (cast, scenarios = []) =>
+  (cast?.subActors || []).map((one) => ({
+    id: one.id,
+    name: one.name || one.id,
+    goal: one.prompt,
+    blurb: one.role,
+    modalities: SURFACES_BY_CHANNEL[one.channel] || [],
+    usedBy: scenarios.filter((row) => (row.subActors || []).includes(one.id)).length,
+    owner: one.origin === "user-added" ? "you" : "system",
+  }));
