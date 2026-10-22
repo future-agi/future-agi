@@ -2343,13 +2343,12 @@ def test_exact_refresh_has_a_dedicated_minimal_temporal_queue():
         execute_sql,
         purge_expired_sql_results,
     )
+    registered_activities = get_activities_for_queue(EXACT_AGGREGATION_TASK_QUEUE)
     admitted_activities = {_ACTIVITY_WRAPPERS[task.name] for task in admitted_tasks}
     assert {_ACTIVITY_REGISTRY[task.name]["queue"] for task in admitted_tasks} == {
         EXACT_AGGREGATION_TASK_QUEUE
     }
-    assert set(get_activities_for_queue(EXACT_AGGREGATION_TASK_QUEUE)) == (
-        admitted_activities
-    )
+    assert set(registered_activities) == admitted_activities
     # Keep the activity registered on the former generic queue during rollout
     # so already-scheduled workflows can finish on an old queue worker. New
     # dispatches are asserted above to target only the admitted queue.
