@@ -120,6 +120,12 @@ type RequestContext struct {
 	// CallerExtrasDropped counts fields left out — non-scalars and
 	// credential-shaped key names.
 	CallerExtrasDropped int
+
+	// CredentialSource is whose credentials the last provider call made for
+	// this request used: "org" for an instance built from the org's own
+	// provider config, "platform" for the gateway's own. "" until a provider
+	// is called. Provider names the routing provider either way.
+	CredentialSource string
 }
 
 type RequestFlags struct {
@@ -185,6 +191,7 @@ func (rc *RequestContext) Release() {
 	rc.CustomMetadataKeys = rc.CustomMetadataKeys[:0]
 	rc.CallerExtras = nil
 	rc.CallerExtrasDropped = 0
+	rc.CredentialSource = ""
 
 	// Reuse maps by clearing them (keeps allocated memory).
 	for k := range rc.Metadata {
@@ -238,6 +245,54 @@ func (rc *RequestContext) Snapshot() *TraceSnapshot {
 		GuardrailResults: grResults,
 		RequestHeaders:   rc.RequestHeaders.Clone(),
 	}
+}
+
+// CloneRequest returns a pooled RequestContext holding a copy of rc's chat
+// request state: identity, request, routing result and metadata, with maps and
+// slices copied and the request struct copied so the clone can rewrite its
+// model. Responses, timings, errors and guardrail results are not copied.
+// Work that runs after the handler has released rc (an async job) runs on the
+// clone, and releases it when done.
+func (rc *RequestContext) CloneRequest() *RequestContext {
+	cp := AcquireRequestContext()
+	cp.RequestID = rc.RequestID
+	cp.TraceID = rc.TraceID
+	cp.Model = rc.Model
+	cp.Provider = rc.Provider
+	if rc.Request != nil {
+		req := *rc.Request
+		cp.Request = &req
+	}
+	cp.IsStream = rc.IsStream
+	for k, v := range rc.Metadata {
+		cp.Metadata[k] = v
+	}
+	cp.SessionID = rc.SessionID
+	cp.UserID = rc.UserID
+	cp.Flags = rc.Flags
+	cp.RequestHeaders = rc.RequestHeaders.Clone()
+	cp.EndpointType = rc.EndpointType
+	if rc.OrgModelMap != nil {
+		cp.OrgModelMap = make(map[string]string, len(rc.OrgModelMap))
+		for k, v := range rc.OrgModelMap {
+			cp.OrgModelMap[k] = v
+		}
+	}
+	if rc.OrgModelFallbacks != nil {
+		cp.OrgModelFallbacks = make(map[string][]string, len(rc.OrgModelFallbacks))
+		for k, v := range rc.OrgModelFallbacks {
+			cp.OrgModelFallbacks[k] = append([]string(nil), v...)
+		}
+	}
+	cp.CustomMetadataKeys = append(cp.CustomMetadataKeys[:0], rc.CustomMetadataKeys...)
+	if rc.CallerExtras != nil {
+		cp.CallerExtras = make(map[string]any, len(rc.CallerExtras))
+		for k, v := range rc.CallerExtras {
+			cp.CallerExtras[k] = v
+		}
+	}
+	cp.CallerExtrasDropped = rc.CallerExtrasDropped
+	return cp
 }
 
 // AddError appends a non-fatal error.

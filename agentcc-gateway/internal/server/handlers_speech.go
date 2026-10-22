@@ -13,6 +13,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
@@ -64,7 +65,7 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 	rc.RequestHeaders = cloneRequestHeaders(r)
 	// Usage is only known when the session ends, so post-plugins run then, not after the dial.
 	rc.IsStream = true
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 	if key := speechClientKey(r); key != "" {
 		rc.Metadata["authorization"] = "Bearer " + key
 	}

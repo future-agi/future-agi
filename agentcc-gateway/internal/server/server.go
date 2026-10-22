@@ -31,6 +31,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
+	"github.com/futureagi/agentcc-gateway/internal/plugins/ipacl"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
 	"github.com/futureagi/agentcc-gateway/internal/realtime"
@@ -48,6 +49,7 @@ type Server struct {
 	cfg              *config.Config
 	configPath       string
 	httpServer       *http.Server
+	router           *Router
 	registry         *providers.Registry
 	engine           *pipeline.Engine
 	handlers         *Handlers
@@ -232,43 +234,11 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	asyncStore := async.NewStore()
 	handlers.asyncStore = asyncStore
 
-	asyncProviderFn := func(ctx context.Context, req *models.ChatCompletionRequest, metadata map[string]string) (*models.ChatCompletionResponse, map[string]string, error) {
-		rc := models.AcquireRequestContext()
-		rc.Model = req.Model
-		rc.Request = req
-		rc.IsStream = false
-		for k, v := range metadata {
-			rc.Metadata[k] = v
-		}
-
-		provider, err := registry.Resolve(req.Model)
-		if err != nil {
-			rc.Release()
-			return nil, nil, fmt.Errorf("no provider for model %q: %w", req.Model, err)
-		}
-		rc.Provider = provider.ID()
-
-		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
-			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
-			if err != nil {
-				return err
-			}
-			callRC.Response = resp
-			callRC.ResolvedModel = resp.Model
-			return nil
-		}
-
-		err = engine.Process(ctx, rc, providerCall)
-		meta := make(map[string]string, len(rc.Metadata))
-		for k, v := range rc.Metadata {
-			meta[k] = v
-		}
-		resp := rc.Response
-		rc.Release()
-		return resp, meta, err
-	}
-
-	asyncWorker := async.NewWorker(asyncStore, asyncProviderFn, async.DefaultMaxWorkers)
+	// Each job carries its own executor, built by the handler that admitted
+	// it (AsyncMiddleware), so it runs on that request's routing. The worker
+	// has no provider of its own; asyncWorkerConfig bounds how much of it one
+	// org may hold.
+	asyncWorker := async.NewWorker(asyncStore, asyncWorkerConfig(cfg))
 	handlers.asyncWorker = asyncWorker
 	s.asyncWorker = asyncWorker
 	asyncWorker.Start()
@@ -377,6 +347,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Build route table.
 	router := NewRouter()
+	s.router = router
 
 	// Proxy endpoints.
 	router.Handle("POST", "/v1/chat/completions", handlers.ChatCompletion)
@@ -627,12 +598,17 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		})
 	}
 
+	// The MCP endpoint and /a2a, when enabled. KeyAuth gates each of these
+	// roots, and every path and method under it, exactly as it gates /v1.
+	var keyGatedRoots []string
+
 	// MCP gateway.
 	if cfg.MCP.Enabled {
 		endpoint := cfg.MCP.Endpoint
 		if endpoint == "" {
 			endpoint = "/mcp"
 		}
+		keyGatedRoots = append(keyGatedRoots, endpoint)
 		mcpServer := mcp.NewServer(mcp.ServerConfig{
 			MaxAgentDepth:   cfg.MCP.MaxAgentDepth,
 			ToolCallTimeout: cfg.MCP.ToolCallTimeout,
@@ -845,7 +821,8 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			Name:        cfg.A2A.Card.Name,
 			Description: cfg.A2A.Card.Description,
 			Version:     cfg.A2A.Card.Version,
-		}, a2aRegistry, a2a.WithPipeline(engine, registry), a2a.WithChatCompletionExecutor(a2aExecutor))
+		}, a2aRegistry, a2a.WithPipeline(engine, registry), a2a.WithChatCompletionExecutor(a2aExecutor),
+			a2a.WithCaller(handlers.a2aCaller))
 
 		// Fetch agent cards in background.
 		go a2aRegistry.FetchCards(context.Background())
@@ -863,6 +840,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		router.Handle("GET", "/.well-known/agent.json", a2aServer.HandleAgentCard)
 		router.Handle("GET", "/v1/.well-known/agent.json", a2aServer.HandleAgentCard)
 		router.Handle("POST", "/a2a", a2aServer.HandleMessage)
+		keyGatedRoots = append(keyGatedRoots, "/a2a")
 		router.Handle("POST", "/v1/a2a", a2aServer.HandleMessage)
 		router.Handle("GET", "/v1/agents", a2aServer.ListAgents)
 
@@ -887,7 +865,27 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// Apply middleware: outermost wraps first.
 	var handler http.Handler = router
 	handler = middleware.Timeout(cfg.Server.MaxRequestTimeout)(handler)
-	handler = middleware.KeyAuth(authKeyStore, authEnabled)(handler)
+	// KeyAuth applies the pipeline's IP rules on every gated path. Its ip_acl
+	// is its own instance, built only when ip_acl is on, as cmd/agentcc builds
+	// the pipeline's. It reads each org's ACL from tenantStore per request and
+	// re-parses one that changed, so it needs no cache invalidation.
+	var gateIPACL *ipacl.Plugin
+	if cfg.IPACL.Enabled {
+		gateIPACL = ipacl.New(cfg.IPACL, tenantStore)
+	}
+	handler = middleware.KeyAuth(authKeyStore, authEnabled, gateIPACL, keyGatedRoots...)(handler)
+	// Every IP rule (KeyAuth's and the pipeline's, through ClientIP) reads the
+	// client IP this resolves: the TCP peer, or with server.trusted_proxies
+	// the X-Forwarded-For entry its trusted proxies vouch for. Load's Validate
+	// refused a config it cannot parse; a config built without Load and
+	// refused here trusts no proxy.
+	clientIPs, err := middleware.NewClientIPResolver(cfg.Server)
+	if err != nil {
+		slog.Error("client IP: trusting no proxy", "error", err)
+		clientIPs = nil
+	}
+	middleware.LogTrustedProxyWarnings(cfg)
+	handler = middleware.TrustedClientIP(clientIPs)(handler)
 	handler = middleware.LicenseAuth(cfg.LicenseAuth, redisstate.NewLicenseStore(redisClient))(handler)
 	handler = middleware.RequestID(handler)
 	if cfg.CORS.Enabled {
@@ -1328,15 +1326,31 @@ func (s *Server) checkAdminAuth(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// a2aCaller is the A2A server's CallerFunc: the A2A caller is the key KeyAuth
+// authenticated, so an A2A task belongs to the same org as that key's jobs,
+// files and stored responses.
+func (h *Handlers) a2aCaller(r *http.Request) (a2a.Caller, bool) {
+	id, ok := h.callerIdentity(r)
+	return a2a.Caller{KeyID: id.KeyID, OrgID: id.OrgID}, ok
+}
+
 // mcpKeyAuth adapts auth.KeyStore to the mcp.KeyAuthenticator interface.
 type mcpKeyAuth struct {
 	keyStore *auth.KeyStore
 }
 
-func (a *mcpKeyAuth) AuthenticateKey(rawKey string) (allowed []string, denied []string, valid bool) {
+// AuthenticateKey returns the key's identity, which owns the MCP sessions it
+// opens, and its tool lists.
+func (a *mcpKeyAuth) AuthenticateKey(rawKey string) (mcp.KeyGrant, bool) {
 	key := a.keyStore.Authenticate(rawKey)
 	if key == nil || !key.IsActive() {
-		return nil, nil, false
+		return mcp.KeyGrant{}, false
 	}
-	return key.AllowedTools, key.DeniedTools, true
+	id := a.keyStore.Identity(key)
+	return mcp.KeyGrant{
+		KeyID:        id.KeyID,
+		OrgID:        id.OrgID,
+		AllowedTools: key.AllowedTools,
+		DeniedTools:  key.DeniedTools,
+	}, true
 }

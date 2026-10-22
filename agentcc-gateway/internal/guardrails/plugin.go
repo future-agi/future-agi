@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/credentials"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
@@ -60,21 +61,25 @@ func (p *GuardrailPlugin) Priority() int { return 50 } // After auth (20), RBAC 
 // ProcessRequest runs pre-stage guardrails.
 func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
 	// 1. Run static engine rules (self-hosted / config.yaml rules).
-	if p.engine != nil && p.engine.PreCount() > 0 {
+	if p.engine != nil && (p.engine.PreCount() > 0 || p.engine.PostCount() > 0) {
+		// X-Guardrail-Policy is checked here, before the provider call, whenever
+		// any static rule is configured, output-only rules included.
 		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
 		if err != nil {
 			return pipeline.ResultError(err)
 		}
 
-		input := &CheckInput{
-			Request:  rc.Request,
-			Metadata: rc.Metadata,
-		}
+		if p.engine.PreCount() > 0 {
+			input := &CheckInput{
+				Request:  rc.Request,
+				Metadata: checkMetadata(rc),
+			}
 
-		result := p.engine.RunPre(ctx, input, keyPolicy, reqPolicy)
-		pluginResult := p.processResult(rc, result)
-		if pluginResult.Action != pipeline.Continue {
-			return pluginResult
+			result := p.engine.RunPre(ctx, input, keyPolicy, reqPolicy)
+			pluginResult := p.processResult(rc, result)
+			if pluginResult.Action != pipeline.Continue {
+				return pluginResult
+			}
 		}
 	}
 
@@ -88,13 +93,16 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 	if p.engine != nil && p.engine.PostCount() > 0 {
 		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
 		if err != nil {
+			// Fail closed: ProcessRequest refuses such a request first, and this
+			// stage drops the response too, so no response leaves without its checks.
+			rc.Response = nil
 			return pipeline.ResultError(err)
 		}
 
 		input := &CheckInput{
 			Request:  rc.Request,
 			Response: rc.Response,
-			Metadata: rc.Metadata,
+			Metadata: checkMetadata(rc),
 		}
 
 		result := p.engine.RunPost(ctx, input, keyPolicy, reqPolicy)
@@ -140,6 +148,9 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 	}
 
 	result := &PipelineResult{}
+	// The request's metadata as the checks get it, copied once, when the
+	// first check runs.
+	var metadata map[string]string
 
 	for name, check := range orgCfg.Guardrails.Checks {
 		if !check.Enabled {
@@ -173,9 +184,12 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 		}
 
 		// Build input.
+		if metadata == nil {
+			metadata = checkMetadata(rc)
+		}
 		input := &CheckInput{
 			Request:  rc.Request,
-			Metadata: rc.Metadata,
+			Metadata: metadata,
 		}
 		if stage == StagePost {
 			input.Response = rc.Response
@@ -235,6 +249,14 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 	}
 
 	return pipeline.ResultContinue()
+}
+
+// checkMetadata is the request's metadata as a check's input carries it: a
+// copy without the caller's credentials (credentials.WithoutCredentials), so
+// no check gets the caller's key, and a check that outlives its timeout never
+// reads the request's own map while the plugin writes it.
+func checkMetadata(rc *models.RequestContext) map[string]string {
+	return credentials.WithoutCredentials(rc.Metadata)
 }
 
 // getGuardrail resolves a guardrail implementation by name.
@@ -406,7 +428,7 @@ func (p *GuardrailPlugin) resolvePolicy(rc *models.RequestContext) (*policy.Poli
 	// Validate that the key allows per-request overrides.
 	if rc.Metadata["key_allow_policy_override"] != "true" {
 		return nil, policy.RequestPolicyNone, models.ErrForbidden(
-			"API key does not allow guardrail policy overrides. Set metadata.allow_policy_override: true",
+			"API key does not allow guardrail policy overrides: per-request overrides are not enabled for this key. Ask an administrator to enable them",
 		)
 	}
 
@@ -419,6 +441,22 @@ func (p *GuardrailPlugin) resolvePolicy(rc *models.RequestContext) (*policy.Poli
 	}
 
 	return merged, rp, nil
+}
+
+// PermittedRequestPolicy is the request's X-Guardrail-Policy when its key has
+// allow_policy_override and the value is valid, and RequestPolicyNone
+// otherwise. ProcessRequest refuses the other cases before the provider call;
+// this is the streaming checker's own guard, so it never takes a policy the
+// key may not choose.
+func PermittedRequestPolicy(metadata map[string]string) policy.RequestPolicy {
+	if metadata["key_allow_policy_override"] != "true" {
+		return policy.RequestPolicyNone
+	}
+	rp, ok := policy.ParseRequestPolicy(metadata["x-guardrail-policy"])
+	if !ok {
+		return policy.RequestPolicyNone
+	}
+	return rp
 }
 
 // mergePolicy merges org-level and key-level policies.

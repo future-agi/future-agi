@@ -10,7 +10,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/futureagi/agentcc-gateway/internal/credentials"
 	"github.com/futureagi/agentcc-gateway/internal/genaifmt"
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/translation"
@@ -42,7 +44,6 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	if prefix := r.URL.Query().Get("provider"); prefix != "" {
 		rc.Model = prefix + "/" + model
 	}
-	rc.RequestHeaders = cloneRequestHeaders(r)
 
 	switch action {
 	case "generateContent":
@@ -59,7 +60,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		rc.IsStream = false
 	}
 
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 
 	// Extract auth from query param, header, or Authorization header.
 	if key := r.URL.Query().Get("key"); key != "" {
@@ -73,6 +74,13 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	} else if authHeader := r.Header.Get("Authorization"); authHeader != "" {
 		rc.Metadata["authorization"] = authHeader
 	}
+
+	// The request's copy of its headers (what the request log and the trace
+	// export read) is taken once the key is read, and without
+	// x-goog-api-key: on this route that header is the gateway key, read
+	// above like ?key=, so the copy never holds it.
+	rc.RequestHeaders = cloneRequestHeaders(r)
+	rc.RequestHeaders.Del("x-goog-api-key")
 
 	// Extract agentcc metadata.
 	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
@@ -128,10 +136,12 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		model = providers.ResolveModelName(upstreamModel)
 	}
 
-	// Collect Google-specific headers to forward (only used on native path).
+	// Collect Google-specific headers to forward (native path only), other
+	// than a credential: the provider sends its own key (the organization's,
+	// or the gateway's).
 	googleHeaders := make(map[string]string)
 	for key := range r.Header {
-		if len(key) > 6 && key[:7] == "X-Goog-" || len(key) > 6 && key[:7] == "x-goog-" {
+		if (len(key) > 6 && key[:7] == "X-Goog-" || len(key) > 6 && key[:7] == "x-goog-") && !credentials.IsHeader(key) {
 			googleHeaders[key] = r.Header.Get(key)
 		}
 	}

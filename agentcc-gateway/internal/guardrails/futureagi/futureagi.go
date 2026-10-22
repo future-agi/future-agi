@@ -6,13 +6,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
+	"github.com/futureagi/agentcc-gateway/internal/mcp/egress"
 )
+
+// defaultBaseURL is the evaluation API a rule calls when it names no base_url
+// and FI_BASE_URL is unset.
+const defaultBaseURL = "https://api.futureagi.com"
+
+// defaultTimeout bounds one evaluation call when the rule sets none.
+const defaultTimeout = 15 * time.Second
 
 // FutureAGIGuardrail calls Future AGI's evaluation API for ML-based guardrail checks.
 type FutureAGIGuardrail struct {
@@ -25,6 +34,11 @@ type FutureAGIGuardrail struct {
 	maxTokens int
 	retry     int
 	client    *http.Client
+	// configErr is why a rule built by New cannot run: an environment
+	// reference in api_key, secret_key or base_url, or no key or eval id.
+	// Check refuses every request while it is set. NewConfigFileRule
+	// (config.yaml rules) never sets it.
+	configErr error
 }
 
 // evalRequest is the payload sent to the evaluation API.
@@ -62,21 +76,99 @@ type evaluation struct {
 	EvalID     string      `json:"evalId"`
 }
 
-// New creates a FutureAGIGuardrail from rule config.
-func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
-	g := &FutureAGIGuardrail{
+func newGuardrail(name string) *FutureAGIGuardrail {
+	return &FutureAGIGuardrail{
 		name:      name,
-		baseURL:   "https://api.futureagi.com",
+		baseURL:   defaultBaseURL,
 		callType:  "protect",
 		maxTokens: 10,
 		retry:     0,
-		client:    &http.Client{Timeout: 15 * time.Second},
+		client:    &http.Client{Timeout: defaultTimeout},
 	}
+}
+
+// New creates a FutureAGIGuardrail from org-pushed config: the per-org rules
+// the dynamic guardrail factory builds. It is the default constructor because
+// it is the safe one: the rule never takes a credential from the gateway
+// process environment.
+//
+//   - A "${" in api_key, secret_key or base_url (the only fields
+//     NewConfigFileRule resolves) is not expanded. The rule is built with a
+//     configuration fault that names the field, never the value. A "${" in
+//     any other field is sent as written.
+//   - A rule without both keys, or without an eval id, is built with a fault
+//     too.
+//
+// Check refuses every request on a rule with a fault and makes no call.
+// FI_BASE_URL replaces the default base_url here too, as for config.yaml rules:
+// it names the operator's own FutureAGI platform (the Helm chart points it at
+// the in-cluster backend), not a credential, and the org's own keys go there.
+// A failed call never names that host to the org (see Check).
+//
+// The org's base_url is caller-controlled, so the evaluation call goes through
+// the gateway's guarded egress dialer (internal/mcp/egress), as an org webhook
+// or external check does: after DNS, on every attempt and every redirect hop,
+// a link-local or cloud-metadata address is always refused and a loopback or
+// private address is refused unless the operator listed it in
+// mcp.egress.private_allow; a redirect to another origin does not carry the
+// org's keys. A nil dialer is the guard with no exceptions. The one
+// destination that is not the org's choice is the operator's own backend,
+// FI_BASE_URL: a rule that names no base_url or the built-in default (what
+// the platform fills in) is sent there, and so is one whose base_url
+// is exactly FI_BASE_URL (a trailing slash aside). That destination is
+// operator configuration, normally an in-cluster address, so it keeps a plain
+// client and needs no listing. Any other base_url, including another path,
+// query or spelling of the same host, goes through the guard.
+func New(name string, cfg map[string]interface{}, dialer *egress.Dialer) *FutureAGIGuardrail {
+	g := newGuardrail(name)
+
+	if field := guardrails.EnvReferenceField(cfg, "api_key", "base_url", "secret_key"); field != "" {
+		g.configErr = fmt.Errorf("futureagi guardrail %q cannot run: %s holds an environment reference (${...}), "+
+			"which org guardrail config may not use; set the value itself", name, field)
+		g.client = dialer.CallbackClient(defaultTimeout) // Check makes no call; guarded all the same
+		return g
+	}
+
+	g.readConfig(cfg, func(s string) string { return s })
+	operatorBackend := g.applyBaseURLEnv()
+	if !operatorBackend {
+		g.client = dialer.CallbackClient(g.client.Timeout)
+	}
+	g.configErr = g.validate()
+
+	return g
+}
+
+// NewConfigFileRule creates a FutureAGIGuardrail from a config.yaml rule,
+// which the operator writes. A whole-string ${NAME} in api_key, secret_key or
+// base_url is read from the gateway process environment, and a rule that
+// names no key falls back to FI_API_KEY and FI_SECRET_KEY. Never use it for
+// config an org pushes: that is New.
+func NewConfigFileRule(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
+	g := newGuardrail(name)
 
 	if cfg == nil {
 		return g
 	}
 
+	g.readConfig(cfg, expandEnv)
+
+	// Fallback to env vars for keys: config.yaml rules only.
+	if g.apiKey == "" {
+		g.apiKey = os.Getenv("FI_API_KEY")
+	}
+	if g.secretKey == "" {
+		g.secretKey = os.Getenv("FI_SECRET_KEY")
+	}
+	g.applyBaseURLEnv()
+
+	return g
+}
+
+// readConfig reads the rule's fields from cfg. resolve maps each api_key,
+// secret_key and base_url value before use: expandEnv for config.yaml rules
+// (NewConfigFileRule), the value itself for org rules (New).
+func (g *FutureAGIGuardrail) readConfig(cfg map[string]interface{}, resolve func(string) string) {
 	if v, ok := cfg["eval_ids"]; ok {
 		switch arr := v.(type) {
 		case []interface{}:
@@ -99,13 +191,13 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 		}
 	}
 	if v, ok := cfg["api_key"].(string); ok {
-		g.apiKey = expandEnv(v)
+		g.apiKey = resolve(v)
 	}
 	if v, ok := cfg["secret_key"].(string); ok {
-		g.secretKey = expandEnv(v)
+		g.secretKey = resolve(v)
 	}
 	if v, ok := cfg["base_url"].(string); ok && v != "" {
-		g.baseURL = expandEnv(v)
+		g.baseURL = resolve(v)
 	}
 	if v, ok := cfg["call_type"].(string); ok && v != "" {
 		g.callType = v
@@ -131,28 +223,58 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 			g.client.Timeout = d
 		}
 	}
-
-	// Fallback to env vars for keys.
-	if g.apiKey == "" {
-		g.apiKey = os.Getenv("FI_API_KEY")
-	}
-	if g.secretKey == "" {
-		g.secretKey = os.Getenv("FI_SECRET_KEY")
-	}
-	if g.baseURL == "https://api.futureagi.com" {
-		if envURL := os.Getenv("FI_BASE_URL"); envURL != "" {
-			g.baseURL = envURL
-		}
-	}
-
-	return g
 }
 
-func (g *FutureAGIGuardrail) Name() string           { return g.name }
+// applyBaseURLEnv replaces the default base URL with FI_BASE_URL when set.
+// It reports whether the rule's calls go to the operator's own backend,
+// FI_BASE_URL: the default was replaced by it, or the rule's base_url is
+// exactly FI_BASE_URL (a trailing slash aside), which yields the same eval
+// URL. FI_BASE_URL is operator configuration (New keeps a plain client for
+// it); any other base_url is the rule's own choice.
+func (g *FutureAGIGuardrail) applyBaseURLEnv() (operatorBackend bool) {
+	envURL := os.Getenv("FI_BASE_URL")
+	if envURL == "" {
+		return false
+	}
+	if g.baseURL == defaultBaseURL {
+		g.baseURL = envURL
+		return true
+	}
+	return strings.TrimRight(g.baseURL, "/") == strings.TrimRight(envURL, "/")
+}
+
+// validate reports why an org rule cannot call the evaluation API: no
+// api_key, no secret_key or no eval id. It names the fields, never a value.
+func (g *FutureAGIGuardrail) validate() error {
+	var missing []string
+	if g.apiKey == "" {
+		missing = append(missing, "api_key")
+	}
+	if g.secretKey == "" {
+		missing = append(missing, "secret_key")
+	}
+	if len(g.evalIDs) == 0 {
+		missing = append(missing, "eval_id or eval_ids")
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("futureagi guardrail %q cannot run: missing %s", g.name, strings.Join(missing, ", "))
+}
+
+func (g *FutureAGIGuardrail) Name() string            { return g.name }
 func (g *FutureAGIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
-// Check evaluates text against the Future AGI evaluation API.
+// Check evaluates text against the Future AGI evaluation API. A rule that New
+// built with a configuration fault refuses before anything else and makes no
+// call: a failure without a score, which triggers at any threshold. A failed
+// call is reported by its kind only (guardrails.CallFailure): the message
+// reaches the caller and the org's request log, and the URL called can be the
+// operator's FI_BASE_URL. The error itself goes to the gateway's log.
 func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
+	if g.configErr != nil {
+		return &guardrails.CheckResult{Pass: false, Message: g.configErr.Error()}
+	}
 	if input == nil {
 		return &guardrails.CheckResult{Pass: true}
 	}
@@ -182,10 +304,11 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 
 	resp, err := g.callAPI(ctx, text)
 	if err != nil {
+		slog.Warn("futureagi guardrail call failed", "guardrail", g.name, "error", err)
 		return &guardrails.CheckResult{
 			Pass:    false,
 			Score:   1.0,
-			Message: fmt.Sprintf("futureagi evaluation failed: %v", err),
+			Message: "futureagi evaluation failed: " + guardrails.CallFailure(err),
 		}
 	}
 
@@ -395,7 +518,8 @@ func IsFutureAGIConfig(cfg map[string]interface{}) bool {
 	return ok && provider == "futureagi"
 }
 
-// expandEnv replaces ${VAR_NAME} with the environment variable value.
+// expandEnv replaces ${VAR_NAME} with the environment variable value. For
+// config.yaml rules only (NewConfigFileRule); New refuses a ${...} instead.
 func expandEnv(s string) string {
 	if strings.HasPrefix(s, "${") && strings.HasSuffix(s, "}") {
 		return os.Getenv(s[2 : len(s)-1])

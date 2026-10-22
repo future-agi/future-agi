@@ -6,14 +6,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
+	"github.com/futureagi/agentcc-gateway/internal/mcp/egress"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
+
+// defaultExternalTimeout bounds one external-provider call when the rule
+// sets none.
+const defaultExternalTimeout = 5 * time.Second
 
 // providerAdapter builds HTTP requests and parses responses for a specific provider.
 type providerAdapter interface {
@@ -27,17 +33,70 @@ type ExternalGuardrail struct {
 	adapter providerAdapter
 	retry   int
 	client  *http.Client
+	// configErr is set by New for org config that holds an environment
+	// reference in a top-level string setting. No adapter is built, and
+	// Check refuses every request.
+	configErr error
 }
 
-// New creates an ExternalGuardrail from rule config.
-func New(name string, cfg map[string]interface{}) *ExternalGuardrail {
-	g := &ExternalGuardrail{
-		name:   name,
-		retry:  0,
-		client: &http.Client{Timeout: 5 * time.Second},
+// New creates an ExternalGuardrail from org-pushed config: the per-org rules
+// the dynamic guardrail factory builds. It is the default constructor because
+// it is the safe one: it never reads the gateway process environment.
+//
+// The adapters read their settings through getStringConfig, which resolves a
+// whole-string ${NAME} in a top-level string, and nothing else: nested values
+// (Gray Swan's rules, Enkrypt's detectors) and lists (Lakera's categories) are
+// sent as written. So a "${" in a top-level string setting is refused: the
+// rule is built with no adapter and a configuration fault that names the
+// field, never the value, and Check refuses every request without a call. A
+// "${" anywhere else is plain text and the rule runs. With no top-level "${",
+// building the adapter reads no environment, because getStringConfig has
+// nothing to resolve.
+//
+// A provider endpoint, base_url or region in org config is caller-controlled,
+// so every call (crowdstrike's OAuth token call too) goes through the
+// gateway's guarded egress dialer (internal/mcp/egress): after DNS, a
+// link-local or cloud-metadata address is always refused, a loopback or
+// private address is refused unless the operator listed it in
+// mcp.egress.private_allow, and every redirect hop is re-checked. A nil
+// dialer is the guard with no exceptions.
+func New(name string, cfg map[string]interface{}, dialer *egress.Dialer) *ExternalGuardrail {
+	guarded := func(timeout time.Duration) *http.Client { return dialer.CallbackClient(timeout) }
+	if field := guardrails.EnvReferenceField(cfg); field != "" {
+		return &ExternalGuardrail{
+			name:   name,
+			client: guarded(defaultExternalTimeout),
+			configErr: fmt.Errorf("external guardrail %q cannot run: %s holds an environment reference (${...}), "+
+				"which org guardrail config may not use; set the value itself", name, field),
+		}
 	}
+	return build(name, cfg, guarded)
+}
+
+// NewConfigFileRule creates an ExternalGuardrail from a config.yaml rule,
+// which the operator writes: a whole-string ${NAME} in a top-level string
+// setting is read from the gateway process environment (getStringConfig).
+// An operator-trusted rule keeps a plain client (a presidio sidecar on
+// localhost works without listing it). Never use it for
+// config an org pushes: that is New.
+func NewConfigFileRule(name string, cfg map[string]interface{}) *ExternalGuardrail {
+	return build(name, cfg, func(timeout time.Duration) *http.Client {
+		return &http.Client{Timeout: timeout}
+	})
+}
+
+// build creates the guardrail and its provider's adapter from cfg. Its client
+// comes from mkClient once the timeout is known: the provider call and
+// crowdstrike's OAuth token call share it, so both go through the same guard.
+func build(name string, cfg map[string]interface{}, mkClient func(time.Duration) *http.Client) *ExternalGuardrail {
+	g := &ExternalGuardrail{
+		name:  name,
+		retry: 0,
+	}
+	timeout := defaultExternalTimeout
 
 	if cfg == nil {
+		g.client = mkClient(timeout)
 		return g
 	}
 
@@ -51,9 +110,10 @@ func New(name string, cfg map[string]interface{}) *ExternalGuardrail {
 	}
 	if v, ok := cfg["timeout"].(string); ok {
 		if d, err := time.ParseDuration(v); err == nil {
-			g.client.Timeout = d
+			timeout = d
 		}
 	}
+	g.client = mkClient(timeout)
 
 	provider, _ := cfg["provider"].(string)
 	switch provider {
@@ -80,7 +140,7 @@ func New(name string, cfg map[string]interface{}) *ExternalGuardrail {
 	case "zscaler":
 		g.adapter = newZscalerAdapter(cfg)
 	case "crowdstrike":
-		g.adapter = newCrowdstrikeAdapter(cfg)
+		g.adapter = newCrowdstrikeAdapter(cfg, g.client)
 	case "aporia":
 		g.adapter = newAporiaAdapter(cfg)
 	case "lasso":
@@ -92,11 +152,19 @@ func New(name string, cfg map[string]interface{}) *ExternalGuardrail {
 	return g
 }
 
-func (g *ExternalGuardrail) Name() string           { return g.name }
+func (g *ExternalGuardrail) Name() string            { return g.name }
 func (g *ExternalGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
-// Check evaluates text against the external provider.
+// Check evaluates text against the external provider. A rule that New built
+// with a configuration fault refuses before anything else and makes no call:
+// a failure without a score, which triggers at any threshold. A failed call is
+// reported by its kind only (guardrails.CallFailure): the message reaches the
+// caller and the org's request log, and a config.yaml rule's endpoint is
+// operator config. The error itself goes to the gateway's log.
 func (g *ExternalGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
+	if g.configErr != nil {
+		return &guardrails.CheckResult{Pass: false, Message: g.configErr.Error()}
+	}
 	if input == nil {
 		return &guardrails.CheckResult{Pass: true}
 	}
@@ -116,10 +184,11 @@ func (g *ExternalGuardrail) Check(ctx context.Context, input *guardrails.CheckIn
 
 	respBody, err := g.callProvider(ctx, text)
 	if err != nil {
+		slog.Warn("external guardrail call failed", "guardrail", g.name, "error", err)
 		return &guardrails.CheckResult{
 			Pass:    false,
 			Score:   1.0,
-			Message: fmt.Sprintf("external guardrail call failed: %v", err),
+			Message: "external guardrail call failed: " + guardrails.CallFailure(err),
 		}
 	}
 
@@ -240,6 +309,9 @@ func IsExternalProviderConfig(cfg map[string]interface{}) bool {
 	return false
 }
 
+// expandEnv replaces a whole-string ${VAR_NAME} with the environment variable
+// value. It runs for config.yaml rules (NewConfigFileRule); New refuses a
+// top-level "${" first, so for org rules it has nothing to resolve.
 func expandEnv(s string) string {
 	if strings.HasPrefix(s, "${") && strings.HasSuffix(s, "}") {
 		return os.Getenv(s[2 : len(s)-1])

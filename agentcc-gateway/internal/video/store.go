@@ -58,12 +58,14 @@ func (s *MemoryStore) Get(id string) (*VideoJob, error) {
 	return v.(*VideoJob), nil
 }
 
+// GetForOrg returns the job only when it belongs to orgID. An orgID of ""
+// is the no-org tenant (single-tenant or org-less keys), not a wildcard.
 func (s *MemoryStore) GetForOrg(id, orgID string) (*VideoJob, error) {
 	job, err := s.Get(id)
 	if err != nil {
 		return nil, err
 	}
-	if job.OrgID != "" && job.OrgID != orgID {
+	if job.OrgID != orgID {
 		return nil, ErrVideoJobForbidden
 	}
 	return job, nil
@@ -79,11 +81,13 @@ func (s *MemoryStore) Delete(id string) error {
 	return nil
 }
 
+// ListByOrg lists the jobs that belong to orgID, with the same "" rule as
+// GetForOrg.
 func (s *MemoryStore) ListByOrg(orgID string, filters VideoListFilters) ([]*VideoJob, int, error) {
 	var all []*VideoJob
 	s.jobs.Range(func(_, v interface{}) bool {
 		job := v.(*VideoJob)
-		if orgID != "" && job.OrgID != orgID {
+		if job.OrgID != orgID {
 			return true
 		}
 		if filters.Status != "" && job.Status != filters.Status {

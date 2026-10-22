@@ -50,10 +50,12 @@ func NewWeaviateBackend(baseURL, className, apiKey string, threshold float64, di
 	return w, nil
 }
 
-func (w *WeaviateBackend) Search(vector []float32, model string) *SearchResult {
+func (w *WeaviateBackend) Search(scope string, vector []float32, model string) *SearchResult {
 	nowUnix := time.Now().Unix()
 
-	// GraphQL nearVector query with where filter.
+	// GraphQL nearVector query with where filter. Every string value goes in as
+	// a quoted literal (graphqlString), so model is always one operand and the
+	// scope filter always applies.
 	gql := map[string]interface{}{
 		"query": `{
 			Get {
@@ -62,7 +64,8 @@ func (w *WeaviateBackend) Search(vector []float32, model string) *SearchResult {
 					where: {
 						operator: And
 						operands: [
-							{path: ["model_name"], operator: Equal, valueText: "` + model + `"},
+							{path: ["` + scopePayloadKey + `"], operator: Equal, valueText: ` + graphqlString(scope) + `},
+							{path: ["model_name"], operator: Equal, valueText: ` + graphqlString(model) + `},
 							{path: ["expires_at"], operator: GreaterThan, valueInt: ` + intStr(nowUnix) + `}
 						]
 					}
@@ -130,7 +133,7 @@ func (w *WeaviateBackend) Search(vector []float32, model string) *SearchResult {
 	}
 }
 
-func (w *WeaviateBackend) Set(key string, vector []float32, model string, resp *models.ChatCompletionResponse, ttl time.Duration) {
+func (w *WeaviateBackend) Set(scope, key string, vector []float32, model string, resp *models.ChatCompletionResponse, ttl time.Duration) {
 	if ttl <= 0 || resp == nil {
 		return
 	}
@@ -146,6 +149,7 @@ func (w *WeaviateBackend) Set(key string, vector []float32, model string, resp *
 		"class":  w.className,
 		"vector": vector,
 		"properties": map[string]interface{}{
+			scopePayloadKey: scope,
 			"cache_key":     key,
 			"model_name":    model,
 			"response_json": string(responseJSON),
@@ -226,6 +230,7 @@ func (w *WeaviateBackend) ensureClass() {
 	}
 	resp.Body.Close()
 	if resp.StatusCode == http.StatusOK {
+		w.ensureScopeProperty()
 		return
 	}
 
@@ -234,6 +239,7 @@ func (w *WeaviateBackend) ensureClass() {
 		"class":      w.className,
 		"vectorizer": "none",
 		"properties": []map[string]interface{}{
+			scopeProperty(),
 			{"name": "cache_key", "dataType": []string{"text"}},
 			{"name": "model_name", "dataType": []string{"text"}},
 			{"name": "response_json", "dataType": []string{"text"}},
@@ -257,6 +263,42 @@ func (w *WeaviateBackend) ensureClass() {
 	slog.Info("weaviate class created", "class", w.className)
 }
 
+// scopeProperty is the schema for the tenant-partition property. Field
+// tokenization makes Equal an exact whole-value match; the scope tokens are
+// alphanumeric anyway, so even a word-tokenized property created by
+// auto-schema matches exactly.
+func scopeProperty() map[string]interface{} {
+	return map[string]interface{}{
+		"name":         scopePayloadKey,
+		"dataType":     []string{"text"},
+		"tokenization": "field",
+	}
+}
+
+// ensureScopeProperty adds the scope property to a class that does not have
+// it yet. Best effort: Weaviate answers 422 when the property is
+// already there. If it is missing and cannot be added, searches filtering on
+// it fail, Search returns nil, and the semantic layer misses; it never serves
+// an unscoped entry.
+func (w *WeaviateBackend) ensureScopeProperty() {
+	data, err := json.Marshal(scopeProperty())
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequest("POST", w.baseURL+"/v1/schema/"+w.className+"/properties", bytes.NewReader(data))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	w.setAuth(req)
+	resp, err := w.client.Do(req)
+	if err != nil {
+		slog.Warn("weaviate: failed to add scope property", "class", w.className, "error", err)
+		return
+	}
+	resp.Body.Close()
+}
+
 func (w *WeaviateBackend) setAuth(req *http.Request) {
 	if w.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+w.apiKey)
@@ -266,6 +308,17 @@ func (w *WeaviateBackend) setAuth(req *http.Request) {
 // Helper functions for building GraphQL queries.
 func vectorJSON(v []float32) string {
 	data, _ := json.Marshal(v)
+	return string(data)
+}
+
+// graphqlString renders s as a GraphQL string literal. GraphQL string escapes
+// are JSON's (\", \\, \n, \uXXXX, ...), so a JSON-encoded string is a valid
+// literal that cannot terminate early.
+func graphqlString(s string) string {
+	data, err := json.Marshal(s)
+	if err != nil {
+		return `""`
+	}
 	return string(data)
 }
 

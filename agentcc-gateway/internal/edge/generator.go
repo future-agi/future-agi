@@ -11,7 +11,7 @@ import (
 // The worker handles:
 // - Geographic routing to the nearest backend region
 // - Weighted load balancing across regions
-// - Edge caching using the Cache API
+// - Edge caching using the Cache API, keyed per caller credential
 // - Header forwarding including auth
 // - SSE streaming passthrough
 func Generate(cfg config.EdgeConfig) string {
@@ -74,19 +74,44 @@ function selectBackend() {
 }
 
 func buildCacheKeyFunc() string {
-	return `// Build a cache key from the request.
+	return `// The credentials the gateway accepts: the Authorization header, the
+// x-api-key header, and for the Gemini routes the x-goog-api-key header and
+// the ?key= query parameter. "" when the request carries none of them.
+function requestCredential(request, url) {
+  const parts = [
+    request.headers.get("authorization") || "",
+    request.headers.get("x-api-key") || "",
+    request.headers.get("x-goog-api-key") || "",
+    url.searchParams.get("key") || "",
+  ];
+  return parts.some(p => p !== "") ? parts.join("\n") : "";
+}
+
+async function sha256Hex(text) {
+  const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// The edge cache key covers the caller's credential, the path and the body,
+// inside the key URL (the Cache API matches on the URL alone): a cached
+// response is only served to a request that presents the credential the
+// gateway accepted when it produced that response. Without a credential there
+// is no key, and the request is never served from or stored in the cache.
 async function buildCacheKey(request, body) {
   const url = new URL(request.url);
-  const encoder = new TextEncoder();
-  const data = encoder.encode(body);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
-  return new Request(url.origin + "/__cache/" + hashHex, {
-    method: "GET",
-    headers: request.headers,
-  });
+  const credential = requestCredential(request, url);
+  if (credential === "") {
+    return null;
+  }
+  const credentialHash = await sha256Hex(credential);
+  const keyHash = await sha256Hex(credentialHash + "\n" + url.pathname + url.search + "\n" + body);
+  return new Request(url.origin + "/__cache/" + keyHash, { method: "GET" });
 }
+
+// x-agentcc-cache values meaning the gateway's own response cache handled the
+// request for this org: the org opted in and the request was cacheable. Any
+// other value ("skip", "skip_org_disabled", none) is never stored at the edge.
+const GATEWAY_CACHEABLE = new Set(["miss", "hit_exact", "hit_semantic"]);
 
 `
 }
@@ -120,11 +145,11 @@ func fetchHandler(cacheEnabled bool) string {
 `)
 
 	if cacheEnabled {
-		b.WriteString(`    // Check edge cache (skip for streaming requests).
-    if (CACHE_ENABLED && !isStream) {
-      const cacheKey = await buildCacheKey(request, body);
-      const cache = caches.default;
-      const cachedResponse = await cache.match(cacheKey);
+		b.WriteString(`    // Check edge cache (skip for streaming requests and for requests with no
+    // credential, which have no cache key).
+    const cacheKey = CACHE_ENABLED && !isStream ? await buildCacheKey(request, body) : null;
+    if (cacheKey) {
+      const cachedResponse = await caches.default.match(cacheKey);
       if (cachedResponse) {
         const resp = new Response(cachedResponse.body, cachedResponse);
         resp.headers.set("x-agentcc-edge-cache", "hit");
@@ -152,14 +177,14 @@ func fetchHandler(cacheEnabled bool) string {
 `)
 
 	if cacheEnabled {
-		b.WriteString(`    // Cache non-streaming successful responses.
-    if (CACHE_ENABLED && !isStream && proxyResponse.ok) {
+		b.WriteString(`    // Cache non-streaming successful responses that the gateway's response
+    // cache handled for the caller's org.
+    if (cacheKey && proxyResponse.ok && GATEWAY_CACHEABLE.has(proxyResponse.headers.get("x-agentcc-cache") || "")) {
       const contentLength = parseInt(proxyResponse.headers.get("content-length") || "0", 10);
       if (contentLength <= CACHE_MAX_SIZE || CACHE_MAX_SIZE === 0) {
         const ttlHeader = proxyResponse.headers.get("x-agentcc-cache-ttl");
         const ttl = ttlHeader ? parseInt(ttlHeader, 10) : CACHE_DEFAULT_TTL;
         if (ttl > 0) {
-          const cacheKey = await buildCacheKey(request, body);
           const responseToCache = proxyResponse.clone();
           const cacheHeaders = new Headers(responseToCache.headers);
           cacheHeaders.set("Cache-Control", "max-age=" + ttl);

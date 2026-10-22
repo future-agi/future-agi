@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/credentials"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
@@ -47,7 +48,7 @@ func NewStreamChecker(
 		keyPolicy:     keyPolicy,
 		requestPolicy: requestPolicy,
 		request:       request,
-		metadata:      metadata,
+		metadata:      credentials.WithoutCredentials(metadata), // as the plugin's checks get it
 		checkInterval: interval,
 		failureAction: action,
 	}

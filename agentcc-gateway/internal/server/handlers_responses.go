@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 )
@@ -49,12 +50,19 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A stored response belongs to the org of the key KeyAuth authenticated,
+	// the same org GetResponse and DeleteResponse check.
+	ownerOrgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
+
 	rc.Model = req.Model
 	rc.IsStream = req.Stream
 	rc.UserID = req.User
 
 	// Extract client IP.
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 
 	// Pass Authorization header for auth plugin.
 	setAuthMetadataFromRequest(rc, r)
@@ -161,11 +169,11 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 	if req.Stream {
 		h.handleResponseStream(ctx, w, rc, rp, body, orgID)
 	} else {
-		h.handleResponseNonStream(ctx, w, rc, rp, body, orgID)
+		h.handleResponseNonStream(ctx, w, rc, rp, body, ownerOrgID)
 	}
 }
 
-func (h *Handlers) handleResponseNonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, rp providers.ResponsesProvider, reqBody []byte, orgID string) {
+func (h *Handlers) handleResponseNonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, rp providers.ResponsesProvider, reqBody []byte, ownerOrgID string) {
 	// Wrap the provider call so it runs through the pipeline engine
 	// (auth, rate limiting, budget, cost, logging, guardrails).
 	var respBody []byte
@@ -238,8 +246,9 @@ func (h *Handlers) handleResponseNonStream(ctx context.Context, w http.ResponseW
 			if parsed.Store != nil {
 				shouldStore = *parsed.Store
 			}
-			if shouldStore {
-				h.responsesStore.Put(parsed.ID, orgID, respBody)
+			if shouldStore && !h.responsesStore.Put(parsed.ID, ownerOrgID, respBody) {
+				slog.Warn("response not stored: its id is held by another org's stored response",
+					"response_id", parsed.ID, "org_id", ownerOrgID)
 			}
 		}
 	}
@@ -353,9 +362,11 @@ func (h *Handlers) GetResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract org ID for scoping.
-	orgID := extractOrgID(r, h)
-
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
+	// Another org's response answers 404, the same as a missing one.
 	stored := h.responsesStore.Get(responseID, orgID)
 	if stored == nil {
 		models.WriteError(w, models.ErrNotFound("response_not_found", "Response not found"))
@@ -385,8 +396,11 @@ func (h *Handlers) DeleteResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orgID := extractOrgID(r, h)
-
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
+	// Another org's response answers 404, the same as a missing one.
 	deleted := h.responsesStore.Delete(responseID, orgID)
 	if !deleted {
 		models.WriteError(w, models.ErrNotFound("response_not_found", "Response not found"))
@@ -399,21 +413,4 @@ func (h *Handlers) DeleteResponse(w http.ResponseWriter, r *http.Request) {
 		"id":      responseID,
 		"deleted": true,
 	})
-}
-
-// extractOrgID extracts the org ID from auth metadata.
-func extractOrgID(r *http.Request, h *Handlers) string {
-	rc := models.AcquireRequestContext()
-	defer rc.Release()
-
-	setAuthMetadataFromRequest(rc, r)
-
-	h.peekKeyOrgID(rc)
-	_, orgCfg := h.resolveOrgConfig(rc)
-	if orgCfg != nil {
-		if v, ok := rc.Metadata["org_id"]; ok {
-			return v
-		}
-	}
-	return ""
 }

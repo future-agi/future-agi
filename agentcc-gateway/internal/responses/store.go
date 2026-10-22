@@ -35,11 +35,16 @@ func NewStore(ttl time.Duration) *Store {
 	}
 }
 
-// Put stores a response.
-func (s *Store) Put(id, orgID string, body []byte) {
+// Put stores a response under orgID and reports whether it did. It never
+// replaces another org's unexpired response under the same id: it stores
+// nothing and returns false.
+func (s *Store) Put(id, orgID string, body []byte) bool {
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if existing := s.responses[id]; existing != nil && existing.OrgID != orgID && now.Before(existing.ExpiresAt) {
+		return false
+	}
 	s.responses[id] = &StoredResponse{
 		ID:        id,
 		OrgID:     orgID,
@@ -47,10 +52,11 @@ func (s *Store) Put(id, orgID string, body []byte) {
 		CreatedAt: now,
 		ExpiresAt: now.Add(s.ttl),
 	}
+	return true
 }
 
-// Get retrieves a response by ID. Returns nil if not found or expired.
-// Enforces org isolation — orgID must match if set.
+// Get retrieves a response by ID. Returns nil if not found, expired, or not
+// stored under orgID exactly: "" is the no-org tenant, not a wildcard.
 func (s *Store) Get(id, orgID string) *StoredResponse {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -61,14 +67,14 @@ func (s *Store) Get(id, orgID string) *StoredResponse {
 	if time.Now().After(r.ExpiresAt) {
 		return nil
 	}
-	if r.OrgID != "" && orgID != "" && r.OrgID != orgID {
+	if r.OrgID != orgID {
 		return nil
 	}
 	return r
 }
 
-// Delete removes a response by ID. Returns true if deleted.
-// Enforces org isolation.
+// Delete removes a response stored under orgID exactly. Returns true if
+// deleted.
 func (s *Store) Delete(id, orgID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -76,7 +82,7 @@ func (s *Store) Delete(id, orgID string) bool {
 	if r == nil {
 		return false
 	}
-	if r.OrgID != "" && orgID != "" && r.OrgID != orgID {
+	if r.OrgID != orgID {
 		return false
 	}
 	delete(s.responses, id)

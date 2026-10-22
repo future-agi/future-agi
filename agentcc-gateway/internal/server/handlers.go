@@ -337,6 +337,42 @@ func (h *Handlers) lookupRequestKey(rc *models.RequestContext) *authpkg.APIKey {
 	return h.keyStore.Lookup(rawKey)
 }
 
+// callerOrgID is the org of the API key that KeyAuth authenticated for this
+// request, as KeyAuth recorded it: the owner of the jobs, files and stored
+// responses that key creates and the only org whose objects it may read. It is
+// "" for keys without an org, for license-authorized requests, and when auth
+// is off (single tenant).
+//
+// When auth is on and KeyAuth authenticated nothing for this request, it
+// writes 401 and returns false: such a request must not fall into the no-org
+// tenant. It never looks the key up again, so a key revoked, expired or
+// re-synced after KeyAuth cannot change the answer.
+func (h *Handlers) callerOrgID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	id, ok := h.callerIdentity(r)
+	if !ok {
+		models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
+		return "", false
+	}
+	return id.OrgID, true
+}
+
+// callerIdentity is the identity of the API key KeyAuth authenticated for this
+// request, under callerOrgID's rule: the zero identity (no key, no org) when
+// auth is off or a license authorized the request, and ok false when auth is
+// on and KeyAuth authenticated nothing. It never looks the key up again.
+func (h *Handlers) callerIdentity(r *http.Request) (authpkg.Identity, bool) {
+	if h.keyStore == nil {
+		return authpkg.Identity{}, true
+	}
+	if id, ok := middleware.KeyIdentity(r.Context()); ok {
+		return id, true
+	}
+	if middleware.IsLicenseAuthorized(r.Context()) {
+		return authpkg.Identity{}, true
+	}
+	return authpkg.Identity{}, false
+}
+
 // peekKeyOrgID does a lightweight key lookup to extract org_id from the API key
 // metadata BEFORE the auth plugin runs. This is needed because resolveOrgConfig
 // depends on rc.Metadata["key_org_id"] which the auth plugin sets — but auth runs
@@ -454,9 +490,16 @@ func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover
 	return h.failover.Load()
 }
 
-func (h *Handlers) resolveFallbackProvider(orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, fallbackModel string) (providers.Provider, string, string, bool) {
+// resolveFallbackProvider resolves a model fallback: the org's own provider
+// for fallbackModel first, then (orgOnly false) the global registry. A key
+// limited to its org's providers (orgOnly) falls back only to a model one of
+// them lists, the rule its primary request was held to.
+func (h *Handlers) resolveFallbackProvider(orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, fallbackModel string, orgOnly bool) (providers.Provider, string, string, bool) {
 	if orgProvider, orgProviderID := h.resolveOrgProvider(orgID, orgCfg, fallbackModel); orgProvider != nil {
 		return orgProvider, orgProviderID, fallbackModel, true
+	}
+	if orgOnly {
+		return nil, "", fallbackModel, false
 	}
 
 	fbResult, fbErr := h.registry.ResolveWithRouting(fallbackModel)
@@ -995,7 +1038,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract client IP for IP ACL and audit.
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 
 	// Pass Authorization header for auth plugin.
 	setAuthMetadataFromRequest(rc, r)
@@ -1102,7 +1145,9 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 2. Provider locking — bypasses all routing if set.
+	// 2. Provider locking — bypasses all routing if set. It can only narrow
+	// the choice: a key limited to its org's providers locks among those
+	// (lockedProvider), never to a global provider.
 	var providerLocked bool
 	var lockedProvider providers.Provider
 	if h.providerLockResolver.IsEnabled() {
@@ -1112,10 +1157,9 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 				models.WriteError(w, models.ErrForbidden(err.Error()))
 				return
 			}
-			p, ok := h.registry.GetProvider(lockTarget)
-			if !ok {
-				models.WriteError(w, models.ErrNotFound("provider_not_found",
-					fmt.Sprintf("Locked provider %q not found", lockTarget)))
+			p, err := h.lockedProvider(ctx, rc, orgID, orgCfg, lockTarget)
+			if err != nil {
+				models.WriteErrorFromError(w, err)
 				return
 			}
 			providerLocked = true
@@ -1176,8 +1220,9 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check for async inference request.
-	if h.AsyncMiddleware(w, r, rc) {
+	// Check for async inference request. The job runs on the provider
+	// resolved above, the one the synchronous path uses.
+	if h.AsyncMiddleware(w, r, rc, provider, orgCfg) {
 		return
 	}
 
@@ -1212,8 +1257,10 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Traffic mirroring (async, fire-and-forget).
-	// Copy request fields before rc is released to the pool.
-	if m := h.mirror.Load(); m != nil && len(rc.Errors) == 0 && !rc.IsStream {
+	// Copy request fields before rc is released to the pool. Mirror targets
+	// are global providers, so a key limited to its org's providers is not
+	// mirrored.
+	if m := h.mirror.Load(); m != nil && len(rc.Errors) == 0 && !rc.IsStream && !h.orgProvidersOnly(ctx, rc) {
 		reqCopy := *rc.Request
 
 		// Build production info for shadow result capture.
@@ -1278,6 +1325,16 @@ func orgProviderError(model, providerID string, err error) *models.APIError {
 		Code:    "provider_unavailable",
 		Message: fmt.Sprintf("model %q is served by your organization's provider %q, but the gateway could not set that provider up; check its configuration.", model, providerID),
 	}
+}
+
+// credentialSourceOf names whose credentials p calls its upstream with, for
+// a request of orgID: "org" when p was built from that org's own provider
+// config, "platform" when it is one of the gateway's own providers.
+func credentialSourceOf(p providers.Provider, orgID string) string {
+	if providers.IsOrgInstance(p, orgID) {
+		return "org"
+	}
+	return "platform"
 }
 
 // orgProvidersOnly reports whether rc's key may use only its org's own
@@ -1375,12 +1432,36 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 }
 
 func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, orgCfg *tenant.OrgConfig) {
+	servingProvider, err := h.runNonStream(ctx, rc, provider, orgCfg)
+	if err != nil {
+		models.WriteErrorFromError(w, err)
+		return
+	}
+
+	if rc.Response == nil {
+		models.WriteError(w, models.ErrInternal("no response from provider"))
+		return
+	}
+
+	h.setAgentccHeadersForProvider(w, rc, servingProvider)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(rc.Response)
+}
+
+// runNonStream runs a non-streaming chat completion through the pipeline on
+// provider, the provider routing resolved for rc, with the org's (or the
+// global) failover and model fallbacks, and leaves the result on rc. It
+// returns the provider instance that served the call (base and org instances
+// can share an ID). The synchronous handler and async jobs both run it, so a
+// job is routed, gated and billed exactly as the same request served synchronously.
+func (h *Handlers) runNonStream(ctx context.Context, rc *models.RequestContext, provider providers.Provider, orgCfg *tenant.OrgConfig) (providers.Provider, error) {
 	// Determine effective failover: org routing config takes priority over global.
 	effectiveFailover := h.effectiveFailover(orgCfg)
+	orgOnly := h.orgProvidersOnly(ctx, rc)
 
-	if effectiveFailover != nil && effectiveFailover.IsEnabled() && h.registry.Router() != nil && h.registry.Router().HasTargets(rc.Model) {
-		h.handleNonStreamWithFailover(ctx, w, rc, effectiveFailover, orgCfg)
-		return
+	if h.useProviderFailover(effectiveFailover, rc.Model, orgOnly) {
+		return h.runNonStreamWithFailover(ctx, rc, effectiveFailover, orgCfg)
 	}
 
 	// Resolve model fallback chain (org-level first, then global).
@@ -1396,6 +1477,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	servingProvider := provider
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
+		rc.CredentialSource = credentialSourceOf(provider, orgID)
 		resp, err := provider.ChatCompletion(ctx, rc.Request)
 		if err == nil {
 			rc.Response = resp
@@ -1408,13 +1490,14 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 		}
 
 		for _, fbModel := range modelChain {
-			fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel)
+			fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel, orgOnly)
 			if !ok {
 				continue
 			}
 
 			rc.Provider = fbProviderID
 			rc.Request.Model = resolvedModel
+			rc.CredentialSource = credentialSourceOf(fbProvider, orgID)
 
 			fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
 			if fbCallErr == nil {
@@ -1431,23 +1514,14 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 		return err
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
-		models.WriteErrorFromError(w, err)
-		return
-	}
-
-	if rc.Response == nil {
-		models.WriteError(w, models.ErrInternal("no response from provider"))
-		return
-	}
-
-	h.setAgentccHeadersForProvider(w, rc, servingProvider)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(rc.Response)
+	err := h.engine.Process(ctx, rc, providerCall)
+	return servingProvider, err
 }
 
-func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, fo *routing.Failover, orgCfg *tenant.OrgConfig) {
+// runNonStreamWithFailover fails over across the global providers that
+// serve rc.Model. Only a key that may use global providers gets here
+// (useProviderFailover), for a synchronous request and an async job alike.
+func (h *Handlers) runNonStreamWithFailover(ctx context.Context, rc *models.RequestContext, fo *routing.Failover, orgCfg *tenant.OrgConfig) (providers.Provider, error) {
 	originalModel := rc.Request.Model
 	orgID := rc.Metadata["org_id"]
 	var servingProvider providers.Provider
@@ -1475,6 +1549,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Request.Model = originalModel
 			}
 
+			rc.CredentialSource = credentialSourceOf(p, orgID)
 			resp, err := p.ChatCompletion(ctx, rc.Request)
 			if err != nil {
 				return err
@@ -1501,13 +1576,14 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 
 			for _, fbModel := range modelChain {
 				// Resolve fallback model: check org providers first, then global registry.
-				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel)
+				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel, false)
 				if !ok {
 					continue
 				}
 
 				rc.Provider = fbProviderID
 				rc.Request.Model = resolvedModel
+				rc.CredentialSource = credentialSourceOf(fbProvider, orgID)
 
 				fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
 				if fbCallErr == nil {
@@ -1536,20 +1612,8 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
-		models.WriteErrorFromError(w, err)
-		return
-	}
-
-	if rc.Response == nil {
-		models.WriteError(w, models.ErrInternal("no response from provider"))
-		return
-	}
-
-	h.setAgentccHeadersForProvider(w, rc, servingProvider)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(rc.Response)
+	err := h.engine.Process(ctx, rc, providerCall)
+	return servingProvider, err
 }
 
 func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, orgCfg *tenant.OrgConfig) {
@@ -1570,6 +1634,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		}
 	}()
 	effectiveFailover := h.effectiveFailover(orgCfg)
+	orgOnly := h.orgProvidersOnly(ctx, rc)
 
 	// callCtx bounds an attempt only until its first chunk. The stream itself
 	// lives on the request context: failover cancels callCtx as soon as the
@@ -1622,7 +1687,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 			for _, fbModel := range modelChain {
 				fallbackModel := fbModel
-				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fallbackModel)
+				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fallbackModel, orgOnly)
 				if !ok {
 					continue
 				}
@@ -1641,7 +1706,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			return firstErr
 		}
 
-		if effectiveFailover != nil && effectiveFailover.IsEnabled() && h.registry.Router() != nil && h.registry.Router().HasTargets(rc.Model) {
+		if h.useProviderFailover(effectiveFailover, rc.Model, orgOnly) {
 			result, err := effectiveFailover.Execute(ctx, rc.Model, func(callCtx context.Context, providerID string, modelOverride string) error {
 				p, ok := h.registry.GetProvider(providerID)
 				if !ok {
@@ -1749,15 +1814,9 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		if keyID := rc.Metadata["auth_key_id"]; keyID != "" && h.policyStore != nil {
 			keyPolicy = h.policyStore.Get(keyID)
 		}
-		rp := policy.RequestPolicyNone
-		if rpStr := rc.Metadata["x-guardrail-policy"]; rpStr != "" {
-			if parsed, ok := policy.ParseRequestPolicy(rpStr); ok {
-				rp = parsed
-			}
-		}
 		streamChecker = guardrails.NewStreamChecker(
 			h.guardrailEngine, h.streamGuardrailCfg,
-			keyPolicy, rp, rc.Request, rc.Metadata,
+			keyPolicy, guardrails.PermittedRequestPolicy(rc.Metadata), rc.Request, rc.Metadata,
 		)
 	}
 
@@ -2212,11 +2271,13 @@ func mergeCallerMetadata(rc *models.RequestContext, raw json.RawMessage) {
 // isBlockedMetadataKey returns true for metadata keys that must not be
 // set by external callers via x-agentcc-metadata header. These keys are
 // reserved for internal use by auth, budget, rate-limiting, and other plugins.
+// "rbac_" is the RBAC plugin's: only it writes rbac_ entries, which the
+// budget plugin and the audit log read.
 func isBlockedMetadataKey(key string) bool {
 	lower := strings.ToLower(key)
 	for _, prefix := range []string{
 		"auth_", "key_", "org_", "budget_", "ratelimit_",
-		"cache_", "guardrail_", "credit_", "credits_",
+		"cache_", "guardrail_", "credit_", "credits_", "rbac_",
 	} {
 		if strings.HasPrefix(lower, prefix) {
 			return true
@@ -2233,36 +2294,6 @@ func isBlockedMetadataKey(key string) bool {
 		return true
 	}
 	return false
-}
-
-// extractClientIP extracts the client IP address from the request.
-// It checks X-Forwarded-For, X-Real-IP, and falls back to RemoteAddr.
-func extractClientIP(r *http.Request) string {
-	// Check X-Forwarded-For (may contain multiple IPs: client, proxy1, proxy2).
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		if ip := strings.TrimSpace(parts[0]); ip != "" {
-			return ip
-		}
-	}
-
-	// Check X-Real-IP.
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-
-	// Fall back to RemoteAddr (strip port).
-	addr := r.RemoteAddr
-	if idx := strings.LastIndex(addr, ":"); idx > 0 {
-		// Handle IPv6 in brackets: [::1]:8080
-		if addr[0] == '[' {
-			if bracketIdx := strings.Index(addr, "]"); bracketIdx > 0 {
-				return addr[1:bracketIdx]
-			}
-		}
-		return addr[:idx]
-	}
-	return addr
 }
 
 // extractBodySessionID extracts session_id from the request body's "metadata"

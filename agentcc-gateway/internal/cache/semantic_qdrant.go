@@ -51,13 +51,19 @@ func NewQdrantBackend(baseURL, collection, apiKey string, threshold float64, dim
 	return q, nil
 }
 
-func (q *QdrantBackend) Search(vector []float32, model string) *SearchResult {
+func (q *QdrantBackend) Search(scope string, vector []float32, model string) *SearchResult {
 	nowUnix := time.Now().Unix()
 
 	body := map[string]interface{}{
 		"vector": vector,
 		"filter": map[string]interface{}{
 			"must": []map[string]interface{}{
+				{
+					// Tenant partition: a point written under another scope, or
+					// with no scope, never matches.
+					"key":   scopePayloadKey,
+					"match": map[string]interface{}{"value": scope},
+				},
 				{
 					"key":   "model",
 					"match": map[string]interface{}{"value": model},
@@ -127,7 +133,7 @@ func (q *QdrantBackend) Search(vector []float32, model string) *SearchResult {
 	}
 }
 
-func (q *QdrantBackend) Set(key string, vector []float32, model string, resp *models.ChatCompletionResponse, ttl time.Duration) {
+func (q *QdrantBackend) Set(scope, key string, vector []float32, model string, resp *models.ChatCompletionResponse, ttl time.Duration) {
 	if ttl <= 0 || resp == nil {
 		return
 	}
@@ -145,10 +151,11 @@ func (q *QdrantBackend) Set(key string, vector []float32, model string, resp *mo
 				"id":     key,
 				"vector": vector,
 				"payload": map[string]interface{}{
-					"model":      model,
-					"cache_key":  key,
-					"response":   string(responseJSON),
-					"expires_at": expiresAt,
+					scopePayloadKey: scope,
+					"model":         model,
+					"cache_key":     key,
+					"response":      string(responseJSON),
+					"expires_at":    expiresAt,
 				},
 			},
 		},
@@ -217,6 +224,7 @@ func (q *QdrantBackend) ensureCollection() error {
 	resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
+		q.ensureScopeIndex()
 		return nil // collection exists
 	}
 
@@ -251,7 +259,37 @@ func (q *QdrantBackend) ensureCollection() error {
 	}
 
 	slog.Info("qdrant collection created", "collection", q.collection, "dims", q.dims)
+	q.ensureScopeIndex()
 	return nil
+}
+
+// ensureScopeIndex creates a keyword payload index on the scope field so the
+// tenant filter on every search stays cheap (and works on clusters that refuse
+// filters on unindexed fields). Best effort: creating an index that already
+// exists is a no-op. If this fails, every search still carries the scope
+// filter: it runs slower, or, on a cluster that refuses filters on unindexed
+// fields, fails and returns a miss. A search never returns an entry stored
+// under another scope.
+func (q *QdrantBackend) ensureScopeIndex() {
+	data, err := json.Marshal(map[string]interface{}{
+		"field_name":   scopePayloadKey,
+		"field_schema": "keyword",
+	})
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequest("PUT", q.baseURL+"/collections/"+q.collection+"/index", bytes.NewReader(data))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	q.setAuth(req)
+	resp, err := q.client.Do(req)
+	if err != nil {
+		slog.Warn("qdrant: failed to create scope payload index", "error", err)
+		return
+	}
+	resp.Body.Close()
 }
 
 func (q *QdrantBackend) setAuth(req *http.Request) {

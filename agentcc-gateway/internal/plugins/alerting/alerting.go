@@ -8,6 +8,7 @@ import (
 	"time"
 
 	alertpkg "github.com/futureagi/agentcc-gateway/internal/alerting"
+	"github.com/futureagi/agentcc-gateway/internal/mcp/egress"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
@@ -18,15 +19,23 @@ type Plugin struct {
 	manager     *alertpkg.Manager
 	enabled     bool
 	tenantStore *tenant.Store
+	// dialer guards the egress of an organization's own alert channels: an
+	// org-set webhook or slack URL is dialled through it, so a link-local or
+	// metadata address is always refused and a loopback or private address is
+	// refused unless the operator listed it. nil is the guard with no exceptions.
+	dialer      *egress.Dialer
 	orgManagers sync.Map // orgID -> *alertpkg.Manager (lazily built per-org managers)
 }
 
-// New creates a new alerting plugin.
-func New(manager *alertpkg.Manager, enabled bool, tenantStore *tenant.Store) *Plugin {
+// New creates a new alerting plugin. dialer guards an organization's own
+// alert channels; the operator's global channels (manager) are built from
+// config.yaml and keep a plain client.
+func New(manager *alertpkg.Manager, enabled bool, tenantStore *tenant.Store, dialer *egress.Dialer) *Plugin {
 	return &Plugin{
 		manager:     manager,
 		enabled:     enabled,
 		tenantStore: tenantStore,
+		dialer:      dialer,
 	}
 }
 
@@ -114,7 +123,10 @@ func (p *Plugin) getOrgManager(orgID string, alertCfg *tenant.AlertingConfig) *a
 		return v.(*alertpkg.Manager)
 	}
 
-	// Build channels from org config.
+	// Build channels from org config. An org's webhook and slack channels
+	// send through the guarded egress client, so an org-set URL reaches only
+	// the addresses the egress guard allows.
+	client := p.dialer.CallbackClient(alertpkg.ChannelTimeout)
 	channels := make(map[string]alertpkg.Channel, len(alertCfg.Channels))
 	for _, ch := range alertCfg.Channels {
 		if ch == nil {
@@ -122,9 +134,9 @@ func (p *Plugin) getOrgManager(orgID string, alertCfg *tenant.AlertingConfig) *a
 		}
 		switch ch.Type {
 		case "webhook":
-			channels[ch.Name] = alertpkg.NewWebhookChannel(ch.URL, ch.Headers)
+			channels[ch.Name] = alertpkg.NewWebhookChannelWithClient(client, ch.URL, ch.Headers)
 		case "slack":
-			channels[ch.Name] = alertpkg.NewSlackChannel(ch.URL)
+			channels[ch.Name] = alertpkg.NewSlackChannelWithClient(client, ch.URL)
 		case "log":
 			channels[ch.Name] = &alertpkg.LogChannel{}
 		default:

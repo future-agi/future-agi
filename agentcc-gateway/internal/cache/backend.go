@@ -20,14 +20,17 @@ type Backend interface {
 }
 
 // SemanticBackend is the pluggable interface for semantic (L2) cache backends.
-// Implementations perform vector similarity search to find semantically similar cached responses.
+// Implementations perform vector similarity search to find semantically similar cached responses,
+// partitioned by scope so that a search never crosses tenants.
 type SemanticBackend interface {
-	// Search finds the most similar cached response for the given vector and model.
-	// Returns nil if no match exceeds the threshold.
-	Search(vector []float32, model string) *SearchResult
+	// Search finds the most similar cached response for the given vector and
+	// model among entries stored under scope. It must never return an entry
+	// stored under a different scope: scope is the tenant boundary (see
+	// OrgScope). Returns nil if no match exceeds the threshold.
+	Search(scope string, vector []float32, model string) *SearchResult
 
-	// Set stores a vector entry.
-	Set(key string, vector []float32, model string, resp *models.ChatCompletionResponse, ttl time.Duration)
+	// Set stores a vector entry under scope.
+	Set(scope, key string, vector []float32, model string, resp *models.ChatCompletionResponse, ttl time.Duration)
 
 	// Len returns the number of entries.
 	Len() int

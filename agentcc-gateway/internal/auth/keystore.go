@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -209,17 +211,34 @@ func NewKeyStore(cfg config.AuthConfig) *KeyStore {
 func (ks *KeyStore) Authenticate(rawKey string) *APIKey {
 	hash := HashKey(rawKey)
 
+	// Status is checked under the lock: Revoke writes it under the same lock.
 	ks.mu.RLock()
 	key, ok := ks.byHash[hash]
+	active := ok && key.IsActive()
 	ks.mu.RUnlock()
 
-	if !ok || !key.IsActive() {
+	if !active {
 		return nil
 	}
 	// Best-effort last-used timestamp — atomic pointer swap, no write lock needed.
 	now := time.Now()
 	key.lastUsedAt.Store(&now)
 	return key
+}
+
+// Identity is what a request may rely on about the key it authenticated with:
+// a copy taken under the store lock, so a later Update cannot change it or race
+// a reader of it.
+type Identity struct {
+	KeyID string
+	OrgID string // the key's metadata org_id; "" for a key with no org
+}
+
+// Identity returns key's identity, read under the store lock.
+func (ks *KeyStore) Identity(key *APIKey) Identity {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	return Identity{KeyID: key.ID, OrgID: key.Metadata["org_id"]}
 }
 
 // Lookup finds a key by its raw value without updating last-used metadata.
@@ -303,14 +322,100 @@ func (ks *KeyStore) Revoke(id string) bool {
 	return true
 }
 
-// Update modifies key metadata.
-func (ks *KeyStore) Update(id string, name, owner *string, models, providers []string, metadata map[string]string) (*APIKey, bool) {
+// ErrKeyNotFound is returned by Update for an unknown key ID.
+var ErrKeyNotFound = errors.New("key not found")
+
+// reservedMetadataKeys are the key metadata names only the platform sets: the
+// authority entries (authorityMetadataKeys) and the key's own fields (type,
+// key_type, id, name and owner). The auth plugin never copies a reserved name
+// as a label; it writes the authority entries from the key itself.
+//
+// The platform sets the authority entries when a key is created and they never
+// change afterwards. Django rejects the same list
+// (RESERVED_KEY_METADATA in futureagi/agentcc/validators.py); a Django test
+// parses this map literal, so keep its shape.
+var reservedMetadataKeys = map[string]struct{}{
+	"org_id":                {},
+	"access_groups":         {},
+	"type":                  {},
+	"key_type":              {},
+	"role":                  {},
+	"allow_policy_override": {},
+	"team":                  {},
+	"id":                    {},
+	"name":                  {},
+	"owner":                 {},
+}
+
+// authorityMetadataKeys are the reserved entries the gateway reads as
+// authority. The auth plugin writes each to the request as key_<name> from the
+// key's own metadata, after the labels, and drops every other reserved name.
+var authorityMetadataKeys = []string{"org_id", "access_groups", "role", "team", "allow_policy_override"}
+
+// IsReservedMetadataKey reports whether name is a reserved key metadata name:
+// one a tenant may not set, and that the auth plugin never copies as a label.
+func IsReservedMetadataKey(name string) bool {
+	_, reserved := reservedMetadataKeys[name]
+	return reserved
+}
+
+// ReservedMetadataKeys returns every reserved key metadata name, sorted.
+func ReservedMetadataKeys() []string {
+	names := make([]string, 0, len(reservedMetadataKeys))
+	for name := range reservedMetadataKeys {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// AuthorityMetadataKeys returns the reserved metadata entries the gateway reads
+// as authority, in a new slice.
+func AuthorityMetadataKeys() []string {
+	return append([]string(nil), authorityMetadataKeys...)
+}
+
+// ReservedMetadataError is returned by Update for a metadata change to a
+// reserved entry. Keys lists them in order.
+type ReservedMetadataError struct {
+	Keys []string
+}
+
+func (e *ReservedMetadataError) Error() string {
+	return fmt.Sprintf("metadata %s cannot be changed on an existing key: it is set when the key is created",
+		strings.Join(e.Keys, ", "))
+}
+
+// reservedChanges returns the reserved entries metadata would change on key,
+// in order. Setting one to the value it already has is not a change.
+func reservedChanges(key *APIKey, metadata map[string]string) []string {
+	var changed []string
+	for k, v := range metadata {
+		if !IsReservedMetadataKey(k) {
+			continue
+		}
+		if current, set := key.Metadata[k]; !set || current != v {
+			changed = append(changed, k)
+		}
+	}
+	sort.Strings(changed)
+	return changed
+}
+
+// Update modifies a key. Metadata is merged into a copy of the key's own, which
+// then replaces it; a change to a reserved entry fails with a
+// *ReservedMetadataError and changes nothing, so an update can never move a key
+// to another org.
+func (ks *KeyStore) Update(id string, name, owner *string, models, providers []string, metadata map[string]string) (*APIKey, error) {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
 	key, ok := ks.byID[id]
 	if !ok {
-		return nil, false
+		return nil, ErrKeyNotFound
+	}
+	if changed := reservedChanges(key, metadata); len(changed) > 0 {
+		return nil, &ReservedMetadataError{Keys: changed}
 	}
 
 	if name != nil {
@@ -326,16 +431,22 @@ func (ks *KeyStore) Update(id string, name, owner *string, models, providers []s
 		key.AllowedProviders = providers
 	}
 	if metadata != nil {
-		if key.Metadata == nil {
-			key.Metadata = make(map[string]string)
+		// Copy on write: in-flight requests range over key.Metadata without
+		// ks.mu (the auth plugin copies it into the request), so Update builds a
+		// new map and swaps it in. Readers keep the map they loaded; it never
+		// changes.
+		merged := make(map[string]string, len(key.Metadata)+len(metadata))
+		for k, v := range key.Metadata {
+			merged[k] = v
 		}
 		for k, v := range metadata {
-			key.Metadata[k] = v
+			merged[k] = v
 		}
+		key.Metadata = merged
 	}
 	key.UpdatedAt = time.Now()
 
-	return key, true
+	return key, nil
 }
 
 // AddCredits adds USD credits to a managed key. Returns the new balance and true, or 0 and false if not found.
@@ -476,7 +587,11 @@ func (ks *KeyStore) LoadFromHashes(keys []SyncedKey) int {
 // Keys loaded from config.yaml (Source="config") are preserved. Keys from a
 // previous sync that are no longer present in the incoming set are removed,
 // ensuring revoked keys in Django don't persist in the Go gateway forever.
-// Returns the number of keys loaded from the incoming set.
+// A key this gateway revoked stays revoked when its hash comes back: the
+// control plane never re-activates a key, so a set that still lists it was
+// read before the revoke reached it (Django revokes a key here before it
+// drops the key from the set). Returns the number of keys loaded from the
+// incoming set.
 func (ks *KeyStore) SyncFromHashes(keys []SyncedKey) int {
 	// Guard: refuse to wipe all keys when the control plane returns an
 	// empty set. This protects against transient errors (DB timeout,
@@ -500,9 +615,14 @@ func (ks *KeyStore) SyncFromHashes(keys []SyncedKey) int {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
-	// Remove all previously synced keys (not from config).
+	// Remove every synced key (not from config), remembering which
+	// of them were revoked.
+	revoked := make(map[string]bool)
 	for hash, key := range ks.byHash {
 		if key.Source == "sync" {
+			if key.Status == "revoked" {
+				revoked[hash] = true
+			}
 			delete(ks.byHash, hash)
 			delete(ks.byID, key.ID)
 		}
@@ -528,6 +648,9 @@ func (ks *KeyStore) SyncFromHashes(keys []SyncedKey) int {
 		}
 
 		key := syncedKeyToAPIKey(sk, id)
+		if revoked[sk.KeyHash] {
+			key.Status = "revoked"
+		}
 
 		ks.byHash[sk.KeyHash] = key
 		ks.byID[id] = key

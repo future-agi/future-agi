@@ -36,6 +36,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/topic"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/validation"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/webhook"
+	"github.com/futureagi/agentcc-gateway/internal/mcp/egress"
 	"github.com/futureagi/agentcc-gateway/internal/metrics"
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
@@ -273,13 +274,13 @@ func main() {
 				continue
 			}
 			if webhook.IsWebhookConfig(rule.Config) {
-				guardrailRegistry[rule.Name] = webhook.New(rule.Name, rule.Config)
+				guardrailRegistry[rule.Name] = webhook.NewConfigFileRule(rule.Name, rule.Config)
 				slog.Info("registered webhook guardrail", "name", rule.Name)
 			} else if expression.IsExpressionConfig(rule.Config) {
 				guardrailRegistry[rule.Name] = expression.New(rule.Name, rule.Config)
 				slog.Info("registered expression guardrail", "name", rule.Name)
 			} else if futureagi.IsFutureAGIConfig(rule.Config) {
-				guardrailRegistry[rule.Name] = futureagi.New(rule.Name, rule.Config)
+				guardrailRegistry[rule.Name] = futureagi.NewConfigFileRule(rule.Name, rule.Config)
 				slog.Info("registered futureagi guardrail", "name", rule.Name)
 			} else if toolperm.IsToolPermConfig(rule.Config) {
 				guardrailRegistry[rule.Name] = toolperm.New(rule.Name, rule.Config)
@@ -288,7 +289,7 @@ func main() {
 				guardrailRegistry[rule.Name] = mcpsec.New(rule.Name, rule.Config)
 				slog.Info("registered MCP security guardrail", "name", rule.Name)
 			} else if external.IsExternalProviderConfig(rule.Config) {
-				guardrailRegistry[rule.Name] = external.New(rule.Name, rule.Config)
+				guardrailRegistry[rule.Name] = external.NewConfigFileRule(rule.Name, rule.Config)
 				slog.Info("registered external guardrail", "name", rule.Name, "provider", rule.Config["provider"])
 			}
 		}
@@ -308,52 +309,21 @@ func main() {
 			}
 		}
 
-		// Dynamic factory creates guardrails from org config for managed mode.
-		dynamicFactory := func(name string, cfg map[string]interface{}) guardrails.Guardrail {
-			switch name {
-			case "pii-detection":
-				return pii.New(cfg)
-			case "content-moderation":
-				return contentmod.New(cfg)
-			case "keyword-blocklist":
-				return blocklist.New(cfg)
-			case "input-validation":
-				return validation.New(cfg)
-			case "prompt-injection":
-				return injection.New(cfg)
-			case "secret-detection":
-				return secrets.New(cfg)
-			case "topic-restriction":
-				return topic.New(cfg)
-			case "language-detection":
-				return language.New(cfg)
-			case "system-prompt-protection":
-				return sysprompt.New(cfg)
-			case "hallucination-detection":
-				return hallucination.New(cfg)
-			case "data-leakage-prevention":
-				return leakage.New(cfg)
-			}
-			if futureagi.IsFutureAGIConfig(cfg) {
-				return futureagi.New(name, cfg)
-			}
-			if webhook.IsWebhookConfig(cfg) {
-				return webhook.New(name, cfg)
-			}
-			if expression.IsExpressionConfig(cfg) {
-				return expression.New(name, cfg)
-			}
-			if toolperm.IsToolPermConfig(cfg) {
-				return toolperm.New(name, cfg)
-			}
-			if mcpsec.IsMCPSecConfig(cfg) {
-				return mcpsec.New(name, cfg)
-			}
-			if external.IsExternalProviderConfig(cfg) {
-				return external.New(name, cfg)
-			}
-			return nil
+		// The guarded egress dialer for the callbacks an org config names (a
+		// webhook or external guardrail endpoint, a FutureAGI eval base_url):
+		// built from the operator list mcp.egress.private_allow, so a loopback
+		// or private (LAN) URL is reached only when the operator listed it, and a
+		// link-local or cloud-metadata URL is always refused. The config.yaml
+		// rules above are operator-trusted and keep a plain client, as does a
+		// FutureAGI eval call to the operator's own FI_BASE_URL.
+		grEgress, err := orgEgressDialer(cfg)
+		if err != nil {
+			slog.Error("guardrail egress dialer", "error", err)
+			os.Exit(1)
 		}
+
+		// Dynamic factory creates guardrails from org config for managed mode.
+		dynamicFactory := newDynamicGuardrailFactory(grEgress)
 
 		guardrailPlugin := guardrails.NewPlugin(grEngine, guardrailRegistry, dynamicFactory, policyStore, tenantStore)
 		plugins = append(plugins, guardrailPlugin)
@@ -527,8 +497,13 @@ func main() {
 	// Create alerting plugin.
 	var alertingPlugin *alertplugin.Plugin
 	if cfg.Alerting.Enabled {
-		alertManager := alertpkg.NewManager(cfg.Alerting)
-		alertingPlugin = alertplugin.New(alertManager, true, tenantStore)
+		var alertManager *alertpkg.Manager
+		var err error
+		alertingPlugin, alertManager, err = newAlertingPlugin(cfg, tenantStore)
+		if err != nil {
+			slog.Error("alerting egress dialer", "error", err)
+			os.Exit(1)
+		}
 		plugins = append(plugins, alertingPlugin)
 		slog.Info("alerting enabled", "rules", alertManager.RuleCount())
 	}
@@ -660,6 +635,86 @@ func main() {
 	// Start returns as soon as the shutdown begins. Wait for the rest of it
 	// (in-flight requests, the last request-log flush) before exiting.
 	<-shutdownDone
+}
+
+// orgEgressDialer builds the guarded egress dialer for the callbacks an org
+// config names (guardrail webhooks, external guardrail services, FutureAGI
+// eval base_urls, alert channels) from the operator's
+// mcp.egress.private_allow. It refuses an entry it cannot parse; config
+// load has refused metadata entries already.
+func orgEgressDialer(cfg *config.Config) (*egress.Dialer, error) {
+	return egress.New(egress.Options{PrivateAllow: cfg.MCP.Egress.PrivateAllow})
+}
+
+// newAlertingPlugin builds the alerting plugin. The operator's global channels
+// (config.yaml, alertManager) keep a plain client; an organization's own
+// alert channels dial through the guarded egress dialer built from the same
+// operator list, mcp.egress.private_allow.
+func newAlertingPlugin(cfg *config.Config, tenantStore *tenant.Store) (*alertplugin.Plugin, *alertpkg.Manager, error) {
+	alertEgress, err := orgEgressDialer(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	alertManager := alertpkg.NewManager(cfg.Alerting)
+	return alertplugin.New(alertManager, true, tenantStore, alertEgress), alertManager, nil
+}
+
+// newDynamicGuardrailFactory returns the factory the guardrail plugin uses to
+// build a guardrail from an org's pushed config (managed mode). An org admin
+// writes that config, so its futureagi and external rules are built with New,
+// which never resolves a ${...} reference and never takes a credential from
+// the gateway process environment. config.yaml rules, which the operator
+// writes, are built with NewConfigFileRule in main's rule loop and may take
+// both from it. The org's webhook and external rules, and a futureagi rule
+// sent anywhere but the operator's FI_BASE_URL, dial through dialer, the
+// guarded egress dialer (orgEgressDialer). A nil dialer is the guard with no
+// exceptions.
+func newDynamicGuardrailFactory(dialer *egress.Dialer) guardrails.DynamicFactory {
+	return func(name string, cfg map[string]interface{}) guardrails.Guardrail {
+		switch name {
+		case "pii-detection":
+			return pii.New(cfg)
+		case "content-moderation":
+			return contentmod.New(cfg)
+		case "keyword-blocklist":
+			return blocklist.New(cfg)
+		case "input-validation":
+			return validation.New(cfg)
+		case "prompt-injection":
+			return injection.New(cfg)
+		case "secret-detection":
+			return secrets.New(cfg)
+		case "topic-restriction":
+			return topic.New(cfg)
+		case "language-detection":
+			return language.New(cfg)
+		case "system-prompt-protection":
+			return sysprompt.New(cfg)
+		case "hallucination-detection":
+			return hallucination.New(cfg)
+		case "data-leakage-prevention":
+			return leakage.New(cfg)
+		}
+		if futureagi.IsFutureAGIConfig(cfg) {
+			return futureagi.New(name, cfg, dialer)
+		}
+		if webhook.IsWebhookConfig(cfg) {
+			return webhook.New(name, cfg, dialer)
+		}
+		if expression.IsExpressionConfig(cfg) {
+			return expression.New(name, cfg)
+		}
+		if toolperm.IsToolPermConfig(cfg) {
+			return toolperm.New(name, cfg)
+		}
+		if mcpsec.IsMCPSecConfig(cfg) {
+			return mcpsec.New(name, cfg)
+		}
+		if external.IsExternalProviderConfig(cfg) {
+			return external.New(name, cfg, dialer)
+		}
+		return nil
+	}
 }
 
 // findRuleConfig extracts the Config map for a named guardrail rule.

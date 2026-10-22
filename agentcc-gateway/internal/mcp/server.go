@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
 // ToolCallGuard validates MCP tool calls before and after execution.
@@ -22,10 +24,19 @@ type ToolCallGuard interface {
 	CheckPost(toolName, serverID string, result *ToolCallResult) string
 }
 
-// KeyAuthenticator looks up an API key from a raw bearer token.
-// Returns allowed tools, denied tools, and whether the key is valid.
+// KeyAuthenticator looks up an API key from a raw bearer token. valid is
+// false for an unknown or inactive key.
 type KeyAuthenticator interface {
-	AuthenticateKey(rawKey string) (allowed []string, denied []string, valid bool)
+	AuthenticateKey(rawKey string) (grant KeyGrant, valid bool)
+}
+
+// KeyGrant is what per-key auth knows about a valid key: who it is, which owns
+// the sessions it opens, and which tools it may use.
+type KeyGrant struct {
+	KeyID        string
+	OrgID        string // "" for a key with no org
+	AllowedTools []string
+	DeniedTools  []string
 }
 
 // contextKey is an unexported type for context keys in this package.
@@ -34,23 +45,24 @@ type contextKey int
 const (
 	ctxKeyAllowedTools contextKey = iota
 	ctxKeyDeniedTools
+	ctxKeySessionOwner
 )
 
 // Server is the MCP server handler for Agentcc.
 // It serves as a gateway: agents connect to Agentcc via MCP, and Agentcc
 // aggregates tools from all upstream MCP servers.
 type Server struct {
-	registry     *Registry
-	sessions     *SessionManager
-	clients      map[string]*Client // server ID → client
-	clientsMu    sync.RWMutex
-	depth        *DepthTracker
-	toolTimeout  time.Duration
-	serverInfo   Implementation
-	sseClients   map[string]chan []byte // session ID → SSE channel
-	sseMu        sync.RWMutex
-	guard        ToolCallGuard    // optional pre/post tool call guardrail
-	keyAuth      KeyAuthenticator // optional per-key tool filtering
+	registry    *Registry
+	sessions    *SessionManager
+	clients     map[string]*Client // server ID → client
+	clientsMu   sync.RWMutex
+	depth       *DepthTracker
+	toolTimeout time.Duration
+	serverInfo  Implementation
+	sseClients  map[string]chan []byte // session ID → SSE channel
+	sseMu       sync.RWMutex
+	guard       ToolCallGuard    // optional pre/post tool call guardrail
+	keyAuth     KeyAuthenticator // optional per-key tool filtering
 }
 
 // ServerConfig holds configuration for the MCP server.
@@ -81,10 +93,10 @@ func NewServer(cfg ServerConfig) *Server {
 	}
 
 	return &Server{
-		registry:   NewRegistry(cfg.Separator),
-		sessions:   NewSessionManager(cfg.SessionTTL),
-		clients:    make(map[string]*Client),
-		depth:      NewDepthTracker(cfg.MaxAgentDepth),
+		registry:    NewRegistry(cfg.Separator),
+		sessions:    NewSessionManager(cfg.SessionTTL),
+		clients:     make(map[string]*Client),
+		depth:       NewDepthTracker(cfg.MaxAgentDepth),
 		toolTimeout: cfg.ToolCallTimeout,
 		serverInfo: Implementation{
 			Name:    "agentcc-gateway",
@@ -162,6 +174,11 @@ func (s *Server) Close() {
 
 // HandlePost handles POST /mcp — the main JSON-RPC endpoint.
 func (s *Server) HandlePost(w http.ResponseWriter, r *http.Request) {
+	req, ok := s.authenticate(w, r)
+	if !ok {
+		return
+	}
+
 	// Parse the JSON-RPC message.
 	var msg Message
 	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
@@ -172,26 +189,6 @@ func (s *Server) HandlePost(w http.ResponseWriter, r *http.Request) {
 	if msg.JSONRPC != "2.0" {
 		writeJSONRPCError(w, msg.ID, ErrCodeInvalidRequest, "expected jsonrpc 2.0")
 		return
-	}
-
-	// Per-key tool filtering: authenticate bearer token and inject allowed/denied tools into context.
-	req := r
-	if s.keyAuth != nil {
-		if rawKey := extractBearerToken(r); rawKey != "" {
-			allowed, denied, valid := s.keyAuth.AuthenticateKey(rawKey)
-			if !valid {
-				writeJSONRPCError(w, msg.ID, ErrCodeInvalidRequest, "invalid or inactive API key")
-				return
-			}
-			ctx := r.Context()
-			if len(allowed) > 0 {
-				ctx = context.WithValue(ctx, ctxKeyAllowedTools, allowed)
-			}
-			if len(denied) > 0 {
-				ctx = context.WithValue(ctx, ctxKeyDeniedTools, denied)
-			}
-			req = r.WithContext(ctx)
-		}
 	}
 
 	// Route by method.
@@ -224,13 +221,19 @@ func (s *Server) HandlePost(w http.ResponseWriter, r *http.Request) {
 
 // HandleSSE handles GET /mcp — opens an SSE stream for server-to-client notifications.
 func (s *Server) HandleSSE(w http.ResponseWriter, r *http.Request) {
-	// Validate session.
+	r, ok := s.authenticate(w, r)
+	if !ok {
+		return
+	}
+
+	// Validate session. Another key's session answers 404, like an unknown
+	// one, and its stream is left attached to its owner.
 	sessionID := r.Header.Get("MCP-Session-Id")
 	if sessionID == "" {
 		http.Error(w, "missing MCP-Session-Id", http.StatusBadRequest)
 		return
 	}
-	session := s.sessions.Get(sessionID)
+	session := s.sessions.Get(sessionID, sessionOwner(r.Context()))
 	if session == nil {
 		http.Error(w, "invalid or expired session", http.StatusNotFound)
 		return
@@ -287,6 +290,56 @@ func (s *Server) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// authenticate applies per-key auth when it is set, which the gateway does
+// whenever request auth is on. Every request must then carry a valid key: one
+// with no key is refused like one with a bad key, never served unfiltered. The
+// key is read the way the gateway's KeyAuth reads it, so the allow and deny
+// lists applied are those of the key the gateway checked. They ride in the
+// returned request's context, with the key's identity: the owner of a session
+// the request opens, and the only owner whose session it may use.
+//
+// A refusal is HTTP 401 with a Bearer challenge, as the MCP authorization spec
+// asks, and creates no session.
+func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
+	if s.keyAuth == nil {
+		return r, true
+	}
+	rawKey := requestAPIKey(r)
+	if rawKey == "" {
+		writeUnauthorized(w, "missing API key")
+		return nil, false
+	}
+	grant, valid := s.keyAuth.AuthenticateKey(rawKey)
+	if !valid {
+		writeUnauthorized(w, "invalid or inactive API key")
+		return nil, false
+	}
+	ctx := context.WithValue(r.Context(), ctxKeySessionOwner, SessionOwner{KeyID: grant.KeyID, OrgID: grant.OrgID})
+	if len(grant.AllowedTools) > 0 {
+		ctx = context.WithValue(ctx, ctxKeyAllowedTools, grant.AllowedTools)
+	}
+	if len(grant.DeniedTools) > 0 {
+		ctx = context.WithValue(ctx, ctxKeyDeniedTools, grant.DeniedTools)
+	}
+	return r.WithContext(ctx), true
+}
+
+// sessionOwner is the key authenticate found on the request: the zero owner
+// when per-key auth is off (single tenant, every session shared).
+func sessionOwner(ctx context.Context) SessionOwner {
+	owner, _ := ctx.Value(ctxKeySessionOwner).(SessionOwner)
+	return owner
+}
+
+// writeUnauthorized answers a request without a valid key. The request has
+// not been parsed, so the JSON-RPC error carries a null id.
+func writeUnauthorized(w http.ResponseWriter, message string) {
+	w.Header().Set("WWW-Authenticate", models.BearerChallenge)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	json.NewEncoder(w).Encode(NewErrorResponse(json.RawMessage("null"), ErrCodeInvalidRequest, message))
+}
+
 // --- Method Handlers ---
 
 func (s *Server) handleInitialize(w http.ResponseWriter, r *http.Request, msg *Message) {
@@ -296,8 +349,8 @@ func (s *Server) handleInitialize(w http.ResponseWriter, r *http.Request, msg *M
 		return
 	}
 
-	// Create session.
-	session := s.sessions.Create(params.ClientInfo, params.Capabilities)
+	// Create the session, owned by the key that opened it.
+	session := s.sessions.Create(sessionOwner(r.Context()), params.ClientInfo, params.Capabilities)
 
 	caps := ServerCapabilities{
 		Tools: &ToolsCapability{ListChanged: true},
@@ -579,14 +632,15 @@ func (s *Server) handlePing(w http.ResponseWriter, msg *Message) {
 }
 
 // validateSession checks the MCP-Session-Id header and returns the session,
-// or writes an error response and returns nil.
+// or writes an error response and returns nil. A session opened by another
+// key is answered like an unknown one.
 func (s *Server) validateSession(w http.ResponseWriter, r *http.Request, msg *Message) *Session {
 	sessionID := r.Header.Get("MCP-Session-Id")
 	if sessionID == "" {
 		writeJSONRPCError(w, msg.ID, ErrCodeInvalidRequest, "missing MCP-Session-Id header")
 		return nil
 	}
-	session := s.sessions.Get(sessionID)
+	session := s.sessions.Get(sessionID, sessionOwner(r.Context()))
 	if session == nil {
 		// Per MCP spec, expired/invalid session → HTTP 404 so client re-initializes.
 		w.WriteHeader(http.StatusNotFound)
@@ -668,13 +722,13 @@ func (s *Server) SessionCount() int {
 
 // TestToolResult is the result of a tool execution playground test.
 type TestToolResult struct {
-	Content        []ContentPart `json:"content,omitempty"`
-	IsError        bool          `json:"is_error"`
-	DurationMs     float64       `json:"duration_ms"`
-	GuardrailPre   string        `json:"guardrail_pre"`   // "pass", "blocked", or "skipped"
-	GuardrailPost  string        `json:"guardrail_post"`  // "pass", "blocked", or "skipped"
-	Error          string        `json:"error,omitempty"`
-	Server         string        `json:"server,omitempty"`
+	Content       []ContentPart `json:"content,omitempty"`
+	IsError       bool          `json:"is_error"`
+	DurationMs    float64       `json:"duration_ms"`
+	GuardrailPre  string        `json:"guardrail_pre"`  // "pass", "blocked", or "skipped"
+	GuardrailPost string        `json:"guardrail_post"` // "pass", "blocked", or "skipped"
+	Error         string        `json:"error,omitempty"`
+	Server        string        `json:"server,omitempty"`
 }
 
 // TestTool executes a tool call for the admin playground (no MCP session required).
@@ -738,17 +792,15 @@ func (s *Server) TestTool(ctx context.Context, toolName string, arguments map[st
 
 // --- Per-Key Tool Filtering Helpers ---
 
-// extractBearerToken extracts the bearer token from the Authorization header.
-func extractBearerToken(r *http.Request) string {
-	auth := r.Header.Get("Authorization")
-	if auth == "" {
-		return ""
+// requestAPIKey returns the API key a request carries, by the rule the
+// gateway's KeyAuth uses in front of this endpoint: the token of an
+// "Authorization: Bearer" header, otherwise the x-api-key header, so the tool
+// lists applied are always those of the key the gateway checked.
+func requestAPIKey(r *http.Request) string {
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimPrefix(auth, "Bearer ")
 	}
-	const prefix = "Bearer "
-	if len(auth) > len(prefix) && strings.EqualFold(auth[:len(prefix)], prefix) {
-		return strings.TrimSpace(auth[len(prefix):])
-	}
-	return ""
+	return r.Header.Get("x-api-key")
 }
 
 // filterToolsByKey filters the tool list based on per-key allowed/denied tools in context.
