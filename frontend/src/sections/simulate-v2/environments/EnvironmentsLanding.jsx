@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import { paths } from "src/routes/paths";
 import {
-  WORLD_TYPES, detectPaste,
+  WORLD_TYPES, detectPaste, PASTE_EXAMPLES,
   prebuiltWorlds, worldTotal,
 } from "./landingData";
 import { newAgentChoicesFor } from "../agents/connect/agentConnectData";
@@ -142,9 +142,8 @@ function ConnectSection({ sectionRef, onPick, onConnect, onTools, onPaste, picke
       />
       <ConnectCatalog
         groups={groups}
-        /* Other ways in sit above and below it, so no All: one group at a time, Code first. */
-        showAll={false}
         detect={detectPaste}
+        examples={PASTE_EXAMPLES}
         onPaste={onPaste}
         pasteHint="a repo, an ID, an MCP URL or a prompt"
         pickedId={pickedId}

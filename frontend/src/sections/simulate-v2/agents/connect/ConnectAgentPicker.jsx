@@ -11,7 +11,7 @@ import { ConnectModeContext, InDrawerContext } from "../../environments/connectM
 import { FlowPanel } from "../../environments/StartEnvironment";
 import ConnectCatalog from "./ConnectCatalog";
 import SetupDrawer from "../../environments/SetupDrawer";
-import { detectAgentPaste, newAgentChoicesFor } from "./agentConnectData";
+import { detectAgentPaste, newAgentChoicesFor, pasteExamplesFor } from "./agentConnectData";
 import HostedAgentFlow from "./HostedAgentFlow";
 import RepoAgentFlow from "./RepoAgentFlow";
 import BuiltinAgentFlow from "./BuiltinAgentFlow";
@@ -185,6 +185,7 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
         pickedId={choice ? picked?.id : null}
         onPick={pickItem}
         detect={detectAgentPaste}
+        examples={pasteExamplesFor(channel)}
         onPaste={(kind, initial, meta) => open(kind, initial, "paste", meta)}
         emptyHint="If it runs somewhere we can call, connect it as an agent endpoint."
         onFallback={() => pickItem(groups.flatMap((g) => g.items).find((it) => it.id === "running"))}
