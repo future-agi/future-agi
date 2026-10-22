@@ -1800,8 +1800,10 @@ export const endpoints = {
     preview: (id) => apiPath("/tracer/derived-metrics/{id}/preview/", { id }),
     runs: (id) => apiPath("/tracer/derived-metrics/{id}/runs/", { id }),
     run: (id) => apiPath("/tracer/derived-metric-runs/{id}/", { id }),
-    results: (id) => apiPath("/tracer/derived-metric-runs/{id}/results/", { id }),
-    recompute: (id) => apiPath("/tracer/derived-metric-runs/{id}/recompute/", { id }),
+    results: (id) =>
+      apiPath("/tracer/derived-metric-runs/{id}/results/", { id }),
+    recompute: (id) =>
+      apiPath("/tracer/derived-metric-runs/{id}/recompute/", { id }),
   },
   dashboard: {
     list: apiPath("/tracer/dashboard/"),
