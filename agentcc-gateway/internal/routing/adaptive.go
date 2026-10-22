@@ -2,18 +2,22 @@ package routing
 
 import (
 	"math"
-	"math/rand"
-	"sync"
+	"math/rand/v2"
 	"sync/atomic"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 )
 
+// adaptiveWeightSnapshot is immutable after publication. Select can therefore
+// read weights without contending with the background recalculation loop.
+type adaptiveWeightSnapshot struct {
+	byProvider map[string]float64
+}
+
 // AdaptiveStrategy dynamically adjusts provider weights based on real-time metrics.
 type AdaptiveStrategy struct {
-	mu              sync.RWMutex
-	weights         map[string]float64
+	weights         atomic.Pointer[adaptiveWeightSnapshot]
 	requestCount    atomic.Int64
 	counter         atomic.Uint64 // for learning-phase round-robin
 	learningReqs    int
@@ -56,7 +60,6 @@ func NewAdaptiveStrategy(cfg config.AdaptiveConfig, tracker *LatencyTracker, hea
 	}
 
 	a := &AdaptiveStrategy{
-		weights:         make(map[string]float64),
 		learningReqs:    learningReqs,
 		minWeight:       minWeight,
 		smoothingFactor: smoothing,
@@ -67,6 +70,7 @@ func NewAdaptiveStrategy(cfg config.AdaptiveConfig, tracker *LatencyTracker, hea
 		updateInterval:  updateInterval,
 		stopCh:          make(chan struct{}),
 	}
+	a.weights.Store(&adaptiveWeightSnapshot{byProvider: make(map[string]float64)})
 
 	go a.updateLoop()
 	return a
@@ -83,24 +87,24 @@ func (a *AdaptiveStrategy) Select(targets []RoutingTarget, tracker *LatencyTrack
 		n := a.counter.Add(1) - 1
 		return int(n % uint64(len(targets))), nil
 	}
+	if len(targets) == 1 {
+		return 0, nil
+	}
 
 	// Active phase: weighted random selection.
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
-	// Compute total weight for available targets.
-	type tw struct {
-		idx    int
-		weight float64
+	snapshot := a.weights.Load()
+	var weights map[string]float64
+	if snapshot != nil {
+		weights = snapshot.byProvider
 	}
-	tws := make([]tw, 0, len(targets))
+
+	// First pass: total weight for available targets.
 	var total float64
-	for i, t := range targets {
-		w := a.weights[t.ProviderID]
+	for _, t := range targets {
+		w := weights[t.ProviderID]
 		if w < a.minWeight {
 			w = a.minWeight
 		}
-		tws = append(tws, tw{idx: i, weight: w})
 		total += w
 	}
 
@@ -111,13 +115,17 @@ func (a *AdaptiveStrategy) Select(targets []RoutingTarget, tracker *LatencyTrack
 	// Weighted random selection.
 	r := rand.Float64() * total
 	var cumulative float64
-	for _, entry := range tws {
-		cumulative += entry.weight
+	for i, t := range targets {
+		w := weights[t.ProviderID]
+		if w < a.minWeight {
+			w = a.minWeight
+		}
+		cumulative += w
 		if r <= cumulative {
-			return entry.idx, nil
+			return i, nil
 		}
 	}
-	return tws[len(tws)-1].idx, nil
+	return len(targets) - 1, nil
 }
 
 // IncrementRequestCount is called by the handler after each request.
@@ -127,10 +135,12 @@ func (a *AdaptiveStrategy) IncrementRequestCount() {
 
 // GetWeights returns a copy of current weights.
 func (a *AdaptiveStrategy) GetWeights() map[string]float64 {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	cpy := make(map[string]float64, len(a.weights))
-	for k, v := range a.weights {
+	snapshot := a.weights.Load()
+	if snapshot == nil {
+		return map[string]float64{}
+	}
+	cpy := make(map[string]float64, len(snapshot.byProvider))
+	for k, v := range snapshot.byProvider {
 		cpy[k] = v
 	}
 	return cpy
@@ -210,14 +220,18 @@ func (a *AdaptiveStrategy) recalculateWeights() {
 		return
 	}
 
-	// Normalize and smooth.
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	// Normalize and smooth. The published snapshot is immutable, so it remains
+	// safe for concurrent readers while the next one is being constructed.
+	oldSnapshot := a.weights.Load()
+	var oldWeights map[string]float64
+	if oldSnapshot != nil {
+		oldWeights = oldSnapshot.byProvider
+	}
 
 	newWeights := make(map[string]float64, len(rawScores))
 	for pid, raw := range rawScores {
 		calculated := raw / totalRaw
-		old := a.weights[pid]
+		old := oldWeights[pid]
 		if old <= 0 {
 			// First time: use calculated directly.
 			newWeights[pid] = calculated
@@ -240,5 +254,5 @@ func (a *AdaptiveStrategy) recalculateWeights() {
 		}
 	}
 
-	a.weights = newWeights
+	a.weights.Store(&adaptiveWeightSnapshot{byProvider: newWeights})
 }
