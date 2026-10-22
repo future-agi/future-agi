@@ -31,11 +31,13 @@ from django.utils import timezone
 from minio.error import S3Error
 
 from simulate.models import (
+    AgentDefinition,
     AgentVersion,
     HarnessAgentBinding,
     HarnessEnvironmentRelease,
     HarnessRunManifest,
     HarnessSuiteRelease,
+    HostedAgentSpec,
     HostedHarnessJob,
     HostedHarnessScenario,
 )
@@ -55,12 +57,19 @@ RUN_MANIFEST_SCHEMA = "futureagi.run-manifest.v1"
 ADAPTATION_RESULT_SCHEMA = "futureagi.adaptation-result.v1"
 RUNTIME_ENGINE = "postgres"
 # What `compose` builds (contract §6); anything else would fail inside the sandbox.
+HOSTED_AGENT = "hosted_agent"
 COMPOSABLE = {
     ("retell_chat", "provider_import"),
     ("retell", "provider_import"),
     ("vapi", "provider_import"),
+    (HOSTED_AGENT, None),
 }
-MODALITY = {"retell_chat": "text", "retell": "voice", "vapi": "voice"}
+MODALITY = {
+    "retell_chat": "text",
+    "retell": "voice",
+    "vapi": "voice",
+    HOSTED_AGENT: "text",
+}
 # Contract §2.4: a normalized binding always carries every field.
 BINDING_FIELDS = frozenset(
     {
@@ -584,17 +593,19 @@ def create_composition(
         raise _error(
             "compose_unsupported",
             f"{connector} agents are not composed; retell_chat, retell and vapi agents "
-            "in provider_import mode are",
+            "in provider_import mode and our hosted agent are",
         )
     _check_modality(agent_version, connector)
     chain = _chain(suite)
+    config = payload["agent"].get("config") or {}
     target_key = "assistant_id" if connector == "vapi" else "agent_id"
     binding = _checked_binding(
         binding,
-        agent=agent_reference(
-            agent_version, connector, payload["agent"].get("config") or {}
-        ),
-        target_id=str((payload["agent"].get("config") or {}).get(target_key) or ""),
+        agent=agent_reference(agent_version, connector, config),
+        # Our hosted agent is its own target: the agent version that holds its spec.
+        target_id=str(agent_version.id)
+        if connector == HOSTED_AGENT
+        else str(config.get(target_key) or ""),
         environment_digest=chain[-1].digest,
         suite_digest=suite.digest,
         proof=binding_proof,
@@ -695,6 +706,106 @@ def create_composition(
             ]
         )
     return job
+
+
+def hosted_agent_binding(
+    agent_version: AgentVersion, config: dict[str, Any], environment_digest: str
+) -> dict[str, Any]:
+    """The canonical binding the platform builds for our own agent (contract §6.4): no
+    adaptation, because no model is needed to bind an agent to the tools it was written for. Its
+    target is the agent version and its provider digest the spec's, exactly as ALK computes it."""
+    return _with_digest(
+        {
+            "schema_version": AGENT_BINDING_SCHEMA,
+            "agent": {
+                **agent_reference(agent_version, HOSTED_AGENT, config),
+                "provider_target_id": str(agent_version.id),
+                "provider_digest": canonical_digest(config),
+            },
+            "environment": {"digest": environment_digest},
+            "mode": "canonical",
+            "agent_tools": [],
+            "tools": [],
+            "fixtures": {},
+            "aliases": {},
+            "rendering": {},
+            "prompt_changes": [],
+        }
+    )
+
+
+@transaction.atomic
+def create_hosted_agent_composition(
+    organization,
+    workspace,
+    *,
+    suite: HarnessSuiteRelease,
+    name: str,
+    instructions: str,
+    model: str,
+    idempotency_key: str,
+) -> HostedHarnessJob:
+    """Our own agent (a new text agent definition and version holding its spec) composed with
+    `suite` through the binding the platform builds for it."""
+    config = {"name": name, "instructions": instructions, "model": model}
+    existing = HostedHarnessJob.no_workspace_objects.filter(
+        organization=organization, idempotency_key=idempotency_key
+    ).first()
+    if existing is not None:
+        if (
+            existing.workspace_id != getattr(workspace, "id", None)
+            or ((existing.payload or {}).get("agent") or {}).get("config") != config
+        ):
+            raise _error(
+                "idempotency_conflict",
+                "the idempotency key was already used for a different request",
+                409,
+            )
+        return existing
+    if suite.organization_id not in (None, organization.id):
+        raise _error("release_not_found", "suite release not found", 404)
+    definition = AgentDefinition.objects.create(
+        agent_name=name,
+        agent_type=MODALITY[HOSTED_AGENT],
+        inbound=True,
+        # The platform's home for an agent's instructions (eval mappings read `agent_prompt` here).
+        description=instructions,
+        model=model,
+        organization=organization,
+        workspace=workspace,
+    )
+    version = definition.create_version(
+        description="Hosted agent spec",
+        commit_message="Created to run on a prebuilt environment",
+        status=AgentVersion.StatusChoices.ACTIVE,
+    )
+    HostedAgentSpec.objects.create(
+        agent_version=version, digest=canonical_digest(config), document=config
+    )
+    chain = _chain(suite)
+    return create_composition(
+        organization,
+        workspace,
+        suite=suite,
+        agent={"connector": HOSTED_AGENT, "config": config},
+        agent_version=version,
+        name=name,
+        idempotency_key=idempotency_key,
+        binding=hosted_agent_binding(version, config, chain[-1].digest),
+        # It calls the environment's tools by their own names (attached servers' tools too).
+        alignment={
+            "mode": "canonical",
+            "admission": [],
+            "mapped": [
+                {"agent_tool": tool["name"], "steps": [tool["name"]]}
+                for tool in chain[-1].tools
+            ],
+            "unsupported": [],
+            "extension_candidates": [],
+            "unscorable": [],
+            "conflicts": [],
+        },
+    )
 
 
 # --- run manifests ---------------------------------------------------------------------------------

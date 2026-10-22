@@ -23,6 +23,7 @@ from .harness_release import (
     HarnessEnvironmentRelease,
     HarnessRunManifest,
     HarnessSuiteRelease,
+    HostedAgentSpec,
 )
 from .eval_config import SimulateEvalConfig
 from .hosted_harness import (
@@ -78,6 +79,7 @@ __all__ = [
     "HarnessEnvironmentRelease",
     "HarnessRunManifest",
     "HarnessSuiteRelease",
+    "HostedAgentSpec",
     "PromptTrial",
     "SimulatorAgent",
     "RunTest",

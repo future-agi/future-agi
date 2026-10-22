@@ -2,7 +2,7 @@
 
 from rest_framework import serializers
 
-from simulate.serializers.harness_job import HarnessAgentSerializer
+from simulate.serializers.harness_job import HOSTED_AGENT_MODELS, HarnessAgentSerializer
 
 
 class HarnessReleaseParentSerializer(serializers.Serializer):
@@ -73,3 +73,18 @@ class HarnessReleaseAgentRequestSerializer(serializers.Serializer):
     agent = HarnessAgentSerializer()
     name = serializers.CharField(max_length=255)
     idempotency_key = serializers.CharField(max_length=255)
+
+
+class HarnessHostedAgentRequestSerializer(serializers.Serializer):
+    """Our own agent on a release suite (contract §6.4): its spec and the suite it runs on."""
+
+    suite_id = serializers.UUIDField()
+    name = serializers.CharField(max_length=255)
+    instructions = serializers.CharField(max_length=65536)
+    model = serializers.ChoiceField(choices=HOSTED_AGENT_MODELS)
+    idempotency_key = serializers.CharField(max_length=255)
+
+
+class HarnessHostedAgentResponseSerializer(serializers.Serializer):
+    id = serializers.UUIDField(help_text="The composition, an environment id.")
+    agent_version_id = serializers.UUIDField()

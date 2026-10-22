@@ -14,6 +14,12 @@ export const createHarnessAdaptation = async (payload) =>
   (await axios.post(apiPath("/simulate/api/harness-adaptations/"), payload))
     .data;
 
+// Takes `{suite_id, name, instructions, model, idempotency_key}` and answers 201 with the composed
+// environment that runs our own agent on the suite (§6.4); there is no adaptation to wait for.
+export const createHarnessHostedAgent = async (payload) =>
+  (await axios.post(apiPath("/simulate/api/harness-hosted-agents/"), payload))
+    .data;
+
 export const getHarnessRunReport = async (id, runId, baseline) =>
   (
     await axios.get(

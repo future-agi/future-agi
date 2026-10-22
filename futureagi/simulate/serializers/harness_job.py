@@ -96,6 +96,11 @@ VOICE_CONNECTORS = ("livekit", "vapi", "retell", "phone")
 # Connectors that reach an already-running agent, so the run carries no source tree.
 PROVIDER_TARGET_CONNECTORS = {"vapi", "retell", "retell_chat", "phone", "livekit"}
 
+# Our own agent (contract §6.4): runs in the harness from a spec, so it has no source either.
+HOSTED_AGENT = "hosted_agent"
+HOSTED_AGENT_CONFIG = ("name", "instructions", "model")
+HOSTED_AGENT_MODELS = ("vertex_ai/gemini-3.7-flash", "vertex_ai/gemini-3.8-flash")
+
 # Mirrors the SDK's own E.164 rule so a malformed number is refused at admission.
 _E164 = re.compile(r"^\+[1-9]\d{6,14}$")
 _PHONE_FIXED_NATIONAL_DIGITS = (("91", 10), ("1", 10))
@@ -123,7 +128,7 @@ TARGET_SYSTEM_PROMPT_MAX_CHARS = 65_536
 
 class HarnessAgentSerializer(serializers.Serializer):
     connector = serializers.ChoiceField(
-        choices=("livekit", "vapi", "retell", "retell_chat", "phone", "auto")
+        choices=("livekit", "vapi", "retell", "retell_chat", "phone", "auto", HOSTED_AGENT)
     )
     mode = serializers.ChoiceField(
         choices=("connect_only", "environment_backed", "provider_import"),
@@ -204,6 +209,8 @@ class HarnessAgentSerializer(serializers.Serializer):
         connector = attrs["connector"]
         mode = attrs.get("mode")
         config = attrs.get("config") or {}
+        if connector == HOSTED_AGENT:
+            return self._validate_hosted_agent(attrs)
         provider_connector = "retell" if connector == "retell_chat" else connector
         # A chat target has no call to place in either direction, so a direction
         # here means the caller has the wrong connector rather than a preference
@@ -330,6 +337,29 @@ class HarnessAgentSerializer(serializers.Serializer):
                     raise serializers.ValidationError(
                         {"config": f"{path_key} must be an absolute safe URL path"}
                     )
+        return attrs
+
+    def _validate_hosted_agent(self, attrs):
+        config = attrs.get("config") or {}
+        if attrs.get("mode") or attrs.get("secret_refs") or attrs.get("call_direction"):
+            raise serializers.ValidationError(
+                {"agent": "our hosted agent takes no mode, credentials or call direction"}
+            )
+        if set(config) != set(HOSTED_AGENT_CONFIG) or not all(
+            isinstance(config[name], str) and config[name].strip()
+            for name in HOSTED_AGENT_CONFIG
+        ):
+            raise serializers.ValidationError(
+                {"config": f"a hosted agent's config is exactly {', '.join(HOSTED_AGENT_CONFIG)}"}
+            )
+        if config["model"] not in HOSTED_AGENT_MODELS:
+            raise serializers.ValidationError(
+                {"config": f"model must be one of {', '.join(HOSTED_AGENT_MODELS)}"}
+            )
+        if len(config["instructions"]) > TARGET_SYSTEM_PROMPT_MAX_CHARS:
+            raise serializers.ValidationError(
+                {"config": "instructions are at most 65536 characters"}
+            )
         return attrs
 
 
@@ -464,13 +494,13 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         runtime = attrs["runtime"]
         agent = attrs["agent"]
         source = attrs.get("source")
-        provider_target_mode = agent.get("mode") in {
-            "connect_only",
-            "provider_import",
-        }
+        provider_target_mode = agent["connector"] == HOSTED_AGENT or agent.get(
+            "mode"
+        ) in {"connect_only", "provider_import"}
+        no_source = PROVIDER_TARGET_CONNECTORS | {HOSTED_AGENT}
         if source is None:
             if (
-                agent["connector"] not in PROVIDER_TARGET_CONNECTORS
+                agent["connector"] not in no_source
                 or not provider_target_mode
             ):
                 raise serializers.ValidationError(
@@ -480,7 +510,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
                 )
             attrs["source"] = {"kind": "provider", "visibility": "public"}
         elif source["kind"] == "provider" and (
-            agent["connector"] not in PROVIDER_TARGET_CONNECTORS
+            agent["connector"] not in no_source
             or not provider_target_mode
         ):
             raise serializers.ValidationError(
@@ -673,10 +703,11 @@ def missing_provider_credentials(agent, detected_connectors=()):
     """
     present = present_provider_aliases(agent)
     connector = agent["connector"]
-    # The platform dials a phone target with its own dialler, so the run needs no
-    # target-provider credential at all. Kept out of ``CONNECTOR_ALIASES`` so an empty
-    # family cannot satisfy ``complete_provider_families`` for every other connector.
-    if connector == "phone":
+    # The platform dials a phone target with its own dialler, and our hosted agent calls its model
+    # on the platform's key, so neither needs a target-provider credential. Kept out of
+    # ``CONNECTOR_ALIASES`` so an empty family cannot satisfy ``complete_provider_families`` for
+    # every other connector.
+    if connector in ("phone", HOSTED_AGENT):
         return []
     if connector != "auto":
         return [alias for alias in CONNECTOR_ALIASES[connector] if alias not in present]
