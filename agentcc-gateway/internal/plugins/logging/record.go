@@ -2,10 +2,12 @@ package logging
 
 import (
 	"encoding/json"
-	"strings"
+	"strconv"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/capability"
 	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/credentials"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/payloads"
 	"github.com/futureagi/agentcc-gateway/internal/privacy"
@@ -144,6 +146,22 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 			if rc.OCRResponse != nil {
 				rec.StatusCode = 200
 			}
+		case "anthropic_count_tokens", "genai_count_tokens", "genai_embed":
+			// The handler passes the provider's answer through as it is, so
+			// rc holds no answer: it records the status it answered with,
+			// the provider's own when the provider refused the call. A
+			// count's tokens stay 0 here (it consumes none); the count is in
+			// the metadata (models.CountedTokensMetadataKey).
+			if status, err := strconv.Atoi(rc.Metadata[models.ResponseStatusMetadataKey]); err == nil && status > 0 {
+				rec.StatusCode = status
+			}
+		}
+	}
+	// A capability call keeps its response on the core's call record, not on
+	// rc.
+	if rec.StatusCode == 0 {
+		if call, ok := capability.CallOf(rc); ok && call.Response() != nil {
+			rec.StatusCode = 200
 		}
 	}
 	if rec.ResolvedModel == "" && rec.StatusCode > 0 {
@@ -260,28 +278,14 @@ func redactChoices(choices []models.Choice, r *privacy.Redactor, mode string) []
 	return out
 }
 
-// sensitiveHeaderKeys never reach a request log. The gateway accepts a
-// credential in each of these, so a missing entry publishes it to everyone
-// with access to the logs — x-goog-api-key was missing, and the GenAI route
-// reads a caller's Google key from it (handlers_genai.go).
-var sensitiveHeaderKeys = map[string]bool{
-	"authorization":                  true,
-	"proxy-authorization":            true,
-	"x-api-key":                      true,
-	"api-key":                        true,
-	"x-goog-api-key":                 true,
-	"x-goog-iam-authorization-token": true,
-	"x-amz-security-token":           true,
-	"x-auth-token":                   true,
-	"cookie":                         true,
-	"set-cookie":                     true,
-	"x-webhook-secret":               true,
-}
-
+// sanitizeHeaders is h as the request log keeps it: the value of every
+// credential header (credentials.IsHeader, the list the trace export never
+// exports) is "***", so the log shows that the header was sent and never
+// what it held.
 func sanitizeHeaders(h map[string][]string) map[string][]string {
 	out := make(map[string][]string, len(h))
 	for k, v := range h {
-		if sensitiveHeaderKeys[strings.ToLower(k)] {
+		if credentials.IsHeader(k) {
 			out[k] = []string{"***"}
 		} else {
 			out[k] = v

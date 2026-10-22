@@ -26,6 +26,9 @@ func SyncKeysFromControlPlane(ctx context.Context, baseURL, adminToken string, k
 	}
 
 	endpoint := baseURL + "/agentcc/api-keys/bulk/"
+	// The sync grace window counts back from here: a key created after this
+	// may be missing from the list however fast the answer comes.
+	fetchedAt := ks.now()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -81,7 +84,7 @@ func SyncKeysFromControlPlane(ctx context.Context, baseURL, adminToken string, k
 		)
 	}
 
-	loaded := ks.SyncFromHashes(keys)
+	loaded := ks.syncFromList(keys, fetchedAt)
 	slog.Info("key sync from control plane completed",
 		"keys_received", len(envelope.Result),
 		"keys_synced", loaded,

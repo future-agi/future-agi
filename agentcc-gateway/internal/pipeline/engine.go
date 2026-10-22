@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -53,6 +54,10 @@ func NewEngine(plugins ...Plugin) *Engine {
 			seq = append(seq, p)
 		}
 	}
+
+	sort.SliceStable(seq, func(i, j int) bool {
+		return postPriority(seq[i]) < postPriority(seq[j])
+	})
 
 	if len(par) > 0 {
 		parNames := make([]string, len(par))
@@ -133,6 +138,34 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 	// will call RunPostPlugins after the stream completes with final usage.
 	if !rc.IsStream {
 		e.RunPostPlugins(ctx, rc)
+	}
+	return nil
+}
+
+// RunRequestPlugins runs the request stage of the plugins named, in
+// priority order, and returns the first error, which it records on rc. It is
+// for a handler that sends the request to the provider without Process (the
+// Assistants API and vector store search proxies, a video job), so the
+// plugins named still refuse a request before the provider gets it: the
+// auth plugin, which writes the key's identity the guardrail plugin reads,
+// and the guardrail plugin. A plugin that short-circuits is passed over:
+// such a handler has no answer to serve in place of the provider's. No
+// post-plugin runs.
+func (e *Engine) RunRequestPlugins(ctx context.Context, rc *models.RequestContext, names ...string) *models.APIError {
+	if e == nil {
+		return nil
+	}
+	for _, p := range e.plugins {
+		if !slices.Contains(names, p.Name()) {
+			continue
+		}
+		start := time.Now()
+		result := p.ProcessRequest(ctx, rc)
+		rc.RecordTiming("pre_"+p.Name(), time.Since(start))
+		if result.Error != nil {
+			rc.AddError(result.Error)
+			return result.Error
+		}
 	}
 	return nil
 }

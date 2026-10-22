@@ -1,0 +1,46 @@
+{
+  "_about": "The budgets section Django pushes after the Budgets page's Set Budget dialog, case by case. futureagi/agentcc/tests/test_budget_push.py posts each case's dialog bodies to the real set-budget view and asserts the push equals the case's value here; plugins/budget/budget_console_test.go decodes the same value through the generated admin contract (unknown fields refused) and runs the budget plugin on it. Edit both together.",
+  "org_block": {
+    "action": "block",
+    "enabled": true,
+    "hard_limit": true,
+    "org_limit": 1e-6,
+    "warn_threshold": 0.8
+  },
+  "org_throttle": {
+    "action": "throttle",
+    "enabled": true,
+    "hard_limit": false,
+    "org_limit": 1e-6,
+    "throttle_rpm": 2,
+    "warn_threshold": 0.8
+  },
+  "org_alert_50": {
+    "action": "warn",
+    "enabled": true,
+    "hard_limit": false,
+    "org_limit": 100,
+    "warn_threshold": 0.5
+  },
+  "hard_limit_later": {
+    "action": "block",
+    "enabled": true,
+    "hard_limit": true,
+    "org_limit": 1e-6,
+    "warn_threshold": 0.9
+  },
+  "org_limit_later": {
+    "action": "block",
+    "enabled": true,
+    "hard_limit": true,
+    "org_limit": 100,
+    "warn_threshold": 0.8
+  },
+  "explicit_off": {
+    "action": "block",
+    "enabled": false,
+    "hard_limit": true,
+    "org_limit": 1e-6,
+    "warn_threshold": 0.8
+  }
+}

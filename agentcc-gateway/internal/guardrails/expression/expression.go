@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/futureagi/agentcc-gateway/internal/credentials"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
 )
 
@@ -100,6 +101,11 @@ func buildEnv(input *guardrails.CheckInput) env {
 	if input.Metadata != nil {
 		metaMap := make(map[string]interface{}, len(input.Metadata))
 		for k, v := range input.Metadata {
+			// An expression never reads a credential (the plugin's copy
+			// already leaves them out).
+			if credentials.IsMetadataKey(k) {
+				continue
+			}
 			metaMap[k] = v
 		}
 		e["metadata"] = metaMap

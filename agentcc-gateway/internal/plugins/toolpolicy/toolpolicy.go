@@ -13,7 +13,7 @@ import (
 )
 
 // Plugin implements tool/function filtering as a pipeline plugin.
-// Priority 60: after guardrails (50), before validation (70).
+// Priority 60: after guardrails (34), before validation (70).
 type Plugin struct {
 	enabled            bool
 	maxToolsPerRequest int
@@ -96,7 +96,7 @@ type toolRef struct {
 }
 
 func (p *Plugin) Name() string  { return "toolpolicy" }
-func (p *Plugin) Priority() int { return 60 } // After guardrails (50), before validation (70).
+func (p *Plugin) Priority() int { return 60 } // After guardrails (34), before validation (70).
 
 // ProcessRequest filters tools based on policy (global → org → per-key).
 func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {

@@ -14,6 +14,13 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
 )
 
+// defaultBaseURL is the evaluation API a rule that names no base_url calls,
+// unless the operator set FI_BASE_URL.
+const defaultBaseURL = "https://api.futureagi.com"
+
+// defaultTimeout bounds one evaluation call when the rule sets none.
+const defaultTimeout = 15 * time.Second
+
 // FutureAGIGuardrail calls Future AGI's evaluation API for ML-based guardrail checks.
 type FutureAGIGuardrail struct {
 	name      string
@@ -25,6 +32,9 @@ type FutureAGIGuardrail struct {
 	maxTokens int
 	retry     int
 	client    *http.Client
+	// configErr is why the rule cannot call the evaluation API (a missing
+	// key or eval id), or nil. Check refuses every request while it is set.
+	configErr error
 }
 
 // evalRequest is the payload sent to the evaluation API.
@@ -62,21 +72,45 @@ type evaluation struct {
 	EvalID     string      `json:"evalId"`
 }
 
-// New creates a FutureAGIGuardrail from rule config.
-func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
+// NewConfigFileRule creates a FutureAGIGuardrail from a rule in the gateway's
+// own config file, the one constructor that reads the environment. A
+// config-file rule is operator-trusted, so a ${VAR} api_key, secret_key or
+// base_url is expanded from the gateway's environment, and it keeps a plain
+// client (a config.yaml rule may name the operator's own evaluation API on a
+// private or loopback address without listing it). A rule that lacks a
+// key or an eval id is still built, so the registry can hold it, but its Check
+// refuses every request; ValidateConfig reports the same fault up front. Only
+// the config.yaml registry loop and ValidateConfig call it: anything an
+// organization configures is built with New (orgconfig.go), which reads no
+// environment and dials through the guarded egress dialer.
+func NewConfigFileRule(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
+	return build(name, cfg, expandEnv, plainClient)
+}
+
+// plainClient is NewConfigFileRule's client, and New's for the operator's own
+// backend (FI_BASE_URL): no egress guard.
+func plainClient(timeout time.Duration, _ bool) *http.Client {
+	return &http.Client{Timeout: timeout}
+}
+
+// build parses a rule into a guardrail. expand resolves each credential and
+// base_url string: NewConfigFileRule expands ${VAR} from the environment; New
+// keeps the value literal. The FI_BASE_URL fallback for an unset base_url is
+// operator configuration (it is never org-controllable and carries no org
+// secret), so both keep it. The client comes from mkClient once the timeout
+// and the destination are known; operatorBackend says the call goes to the
+// operator's FI_BASE_URL rather than to a base_url the rule chose.
+func build(name string, cfg map[string]interface{}, expand func(string) string, mkClient func(timeout time.Duration, operatorBackend bool) *http.Client) *FutureAGIGuardrail {
 	g := &FutureAGIGuardrail{
 		name:      name,
-		baseURL:   "https://api.futureagi.com",
+		baseURL:   defaultBaseURL,
 		callType:  "protect",
 		maxTokens: 10,
 		retry:     0,
-		client:    &http.Client{Timeout: 15 * time.Second},
 	}
+	timeout := defaultTimeout
 
-	if cfg == nil {
-		return g
-	}
-
+	// A nil cfg reads as empty: the rule is built with configErr set.
 	if v, ok := cfg["eval_ids"]; ok {
 		switch arr := v.(type) {
 		case []interface{}:
@@ -99,13 +133,13 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 		}
 	}
 	if v, ok := cfg["api_key"].(string); ok {
-		g.apiKey = expandEnv(v)
+		g.apiKey = expand(v)
 	}
 	if v, ok := cfg["secret_key"].(string); ok {
-		g.secretKey = expandEnv(v)
+		g.secretKey = expand(v)
 	}
 	if v, ok := cfg["base_url"].(string); ok && v != "" {
-		g.baseURL = expandEnv(v)
+		g.baseURL = expand(v)
 	}
 	if v, ok := cfg["call_type"].(string); ok && v != "" {
 		g.callType = v
@@ -128,45 +162,70 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 	}
 	if v, ok := cfg["timeout"].(string); ok {
 		if d, err := time.ParseDuration(v); err == nil {
-			g.client.Timeout = d
+			timeout = d
 		}
 	}
 
-	// Fallback to env vars for keys.
-	if g.apiKey == "" {
-		g.apiKey = os.Getenv("FI_API_KEY")
-	}
-	if g.secretKey == "" {
-		g.secretKey = os.Getenv("FI_SECRET_KEY")
-	}
-	if g.baseURL == "https://api.futureagi.com" {
-		if envURL := os.Getenv("FI_BASE_URL"); envURL != "" {
+	// A rule names its own credentials; the gateway reads no process-wide
+	// key for it.
+	// The evaluation API's address is the operator's to set: FI_BASE_URL
+	// stands in for the built-in default.
+	operatorBackend := false
+	if envURL := os.Getenv("FI_BASE_URL"); envURL != "" {
+		if g.baseURL == defaultBaseURL {
 			g.baseURL = envURL
+			operatorBackend = true
+		} else if strings.TrimRight(g.baseURL, "/") == strings.TrimRight(envURL, "/") {
+			operatorBackend = true
 		}
 	}
+	g.client = mkClient(timeout, operatorBackend)
 
+	g.configErr = g.validate()
 	return g
 }
 
-func (g *FutureAGIGuardrail) Name() string           { return g.name }
-func (g *FutureAGIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
+// ValidateConfig reports why a provider: futureagi rule named name cannot
+// call the evaluation API: api_key or secret_key empty (after ${VAR}
+// expansion, so an unset variable counts as missing) or no eval id in
+// eval_ids or eval_id. It returns nil for a complete rule. Check refuses
+// every request on a rule this rejects. The error names the rule and the
+// missing fields, never a credential.
+func ValidateConfig(name string, cfg map[string]any) error {
+	return NewConfigFileRule(name, cfg).configErr
+}
 
-// Check evaluates text against the Future AGI evaluation API.
-func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
-	if input == nil {
-		return &guardrails.CheckResult{Pass: true}
+// validate is ValidateConfig over the parsed rule.
+func (g *FutureAGIGuardrail) validate() error {
+	var missing []string
+	if g.apiKey == "" {
+		missing = append(missing, "api_key")
 	}
-	if g.apiKey == "" || g.secretKey == "" {
-		return &guardrails.CheckResult{
-			Pass:    true,
-			Message: "futureagi guardrail: missing api_key or secret_key, skipping",
-		}
+	if g.secretKey == "" {
+		missing = append(missing, "secret_key")
 	}
 	if len(g.evalIDs) == 0 {
-		return &guardrails.CheckResult{
-			Pass:    true,
-			Message: "futureagi guardrail: missing eval_id, skipping",
-		}
+		missing = append(missing, "eval_id or eval_ids")
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("futureagi guardrail %q cannot run: missing %s (an unset ${VAR} counts as missing)",
+		g.name, strings.Join(missing, ", "))
+}
+
+func (g *FutureAGIGuardrail) Name() string            { return g.name }
+func (g *FutureAGIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
+
+// Check evaluates text against the Future AGI evaluation API. A rule that
+// ValidateConfig rejects fails closed before anything else, with no call: a
+// failure without a score, which triggers at any threshold.
+func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
+	if g.configErr != nil {
+		return &guardrails.CheckResult{Pass: false, Message: g.configErr.Error()}
+	}
+	if input == nil {
+		return &guardrails.CheckResult{Pass: true}
 	}
 
 	// Determine text to evaluate.
@@ -174,7 +233,7 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 	if input.Response != nil {
 		text = extractOutputText(input)
 	} else {
-		text = extractInputText(input)
+		text = extractInputText(ctx, input)
 	}
 	if text == "" {
 		return &guardrails.CheckResult{Pass: true}
@@ -192,15 +251,17 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 	return parseResult(resp)
 }
 
-// extractInputText concatenates all message contents from the request.
-func extractInputText(input *guardrails.CheckInput) string {
+// extractInputText is the text of the request's messages the service reads.
+func extractInputText(ctx context.Context, input *guardrails.CheckInput) string {
 	if input.Request == nil || len(input.Request.Messages) == 0 {
 		return ""
 	}
+	// Each message's text and its tool calls' arguments
+	// (guardrails.MessageText), so the service reads a value in a tool
+	// call's arguments as it reads one in a message.
 	var parts []string
-	for _, msg := range input.Request.Messages {
-		text := extractContentText(msg.Content)
-		if text != "" {
+	for i := range input.Request.Messages {
+		if text, ok := guardrails.MessageText(ctx, &input.Request.Messages[i]); ok && text != "" {
 			parts = append(parts, text)
 		}
 	}
@@ -290,10 +351,15 @@ func (g *FutureAGIGuardrail) callAPI(ctx context.Context, text string) (*evalRes
 	return nil, fmt.Errorf("failed after %d attempts: %w", attempts, lastErr)
 }
 
+// doRequest makes one evaluation call. A failure that could carry where the
+// gateway connected (the URL, a dial, DNS or proxy address) is reported
+// through guardrails.CallError, which names neither: the message reaches the
+// org whose request is checked, and the base_url may be the operator's
+// FI_BASE_URL.
 func (g *FutureAGIGuardrail) doRequest(ctx context.Context, url string, body []byte) (*evalResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, guardrails.CallError(g.name, err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -302,7 +368,7 @@ func (g *FutureAGIGuardrail) doRequest(ctx context.Context, url string, body []b
 
 	resp, err := g.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, guardrails.CallError(g.name, err)
 	}
 	defer resp.Body.Close()
 
@@ -318,7 +384,7 @@ func (g *FutureAGIGuardrail) doRequest(ctx context.Context, url string, body []b
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
 	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+		return nil, fmt.Errorf("read response: %w", guardrails.CallError(g.name, err))
 	}
 
 	var result evalResponse

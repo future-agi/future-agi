@@ -25,6 +25,7 @@ type Plugin struct {
 
 // orgACLNets holds parsed CIDR networks for a single org.
 type orgACLNets struct {
+	src   *tenant.IPACLConfig // the org ACL these networks were parsed from
 	allow []net.IPNet
 	deny  []net.IPNet
 }
@@ -63,12 +64,49 @@ func (p *Plugin) DenyCount() int { return len(p.deny) }
 
 // ProcessRequest checks the client IP against allow/deny lists (global then per-org).
 func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
-	clientIP := net.ParseIP(rc.Metadata["client_ip"])
+	if err := p.checkACL(net.ParseIP(rc.Metadata["client_ip"]), rc.Metadata[tenant.MetadataKeyOrgID], rc.RequestID); err != nil {
+		return pipeline.ResultError(err)
+	}
+	return pipeline.ResultContinue()
+}
 
+// CheckClient applies every IP rule the request pipeline applies to a key's
+// request: the gateway's ip_acl (this plugin's global lists), the ip_acl of
+// the key's org, then the key's own allowed_ips. It returns nil when ip passes
+// them all, otherwise the pipeline's 403. KeyAuth calls it on every key-gated
+// path, since many of those routes never run the pipeline.
+//
+// A nil p (no IP ACL plugin, see buildIPACLPlugin in cmd/agentcc) applies
+// the key's own allowed_ips. orgID is the key's org and keyAllowedIPs its
+// allowed_ips; both are empty for a request with no key.
+func (p *Plugin) CheckClient(ip net.IP, orgID string, keyAllowedIPs []string, requestID string) *models.APIError {
+	if p != nil {
+		if err := p.checkACL(ip, orgID, requestID); err != nil {
+			return err
+		}
+	}
+	return CheckKeyIP(ip, keyAllowedIPs)
+}
+
+// CheckKeyIP applies a key's allowed_ips: nil when the key has none or ip is in
+// one of them, otherwise a 403. The auth plugin and CheckClient both use it.
+func CheckKeyIP(ip net.IP, allowedIPs []string) *models.APIError {
+	if len(allowedIPs) == 0 {
+		return nil
+	}
+	if ip == nil || !CheckIP(ip, allowedIPs) {
+		return models.ErrForbidden("API key is not authorized from this IP address")
+	}
+	return nil
+}
+
+// checkACL applies the global lists, when ip_acl is enabled, then the ip_acl
+// of orgID when that org enables one.
+func (p *Plugin) checkACL(clientIP net.IP, orgID, requestID string) *models.APIError {
 	// Global ACL check.
 	if p.enabled {
 		if clientIP == nil {
-			return pipeline.ResultError(models.ErrForbidden("Client IP address could not be determined"))
+			return models.ErrForbidden("Client IP address could not be determined")
 		}
 
 		// Deny list takes precedence.
@@ -76,9 +114,9 @@ func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) 
 			slog.Warn("ip_acl: request denied",
 				"ip", clientIP.String(),
 				"reason", "global_deny_list",
-				"request_id", rc.RequestID,
+				"request_id", requestID,
 			)
-			return pipeline.ResultError(models.ErrForbidden("Access denied: IP address is not allowed"))
+			return models.ErrForbidden("Access denied: IP address is not allowed")
 		}
 
 		// If allow list is non-empty, IP must match.
@@ -86,56 +124,59 @@ func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) 
 			slog.Warn("ip_acl: request denied",
 				"ip", clientIP.String(),
 				"reason", "not_in_global_allow_list",
-				"request_id", rc.RequestID,
+				"request_id", requestID,
 			)
-			return pipeline.ResultError(models.ErrForbidden("Access denied: IP address is not allowed"))
+			return models.ErrForbidden("Access denied: IP address is not allowed")
 		}
 	}
 
 	// Per-org ACL check (runs even if global ACL is disabled — org can have its own).
-	if p.tenantStore != nil {
-		orgID := rc.Metadata[tenant.MetadataKeyOrgID]
-		if orgID != "" {
-			orgCfg := p.tenantStore.Get(orgID)
-			if orgCfg != nil && orgCfg.IPACL != nil && orgCfg.IPACL.Enabled {
-				if clientIP == nil {
-					return pipeline.ResultError(models.ErrForbidden("Client IP address could not be determined"))
-				}
-				nets := p.getOrgNets(orgID, orgCfg.IPACL)
+	if p.tenantStore != nil && orgID != "" {
+		orgCfg := p.tenantStore.Get(orgID)
+		if orgCfg != nil && orgCfg.IPACL != nil && orgCfg.IPACL.Enabled {
+			if clientIP == nil {
+				return models.ErrForbidden("Client IP address could not be determined")
+			}
+			nets := p.getOrgNets(orgID, orgCfg.IPACL)
 
-				if p.matchesAny(clientIP, nets.deny) {
-					slog.Warn("ip_acl: request denied by org acl",
-						"ip", clientIP.String(),
-						"org_id", orgID,
-						"reason", "org_deny_list",
-						"request_id", rc.RequestID,
-					)
-					return pipeline.ResultError(models.ErrForbidden("Access denied: IP address is not allowed"))
-				}
+			if p.matchesAny(clientIP, nets.deny) {
+				slog.Warn("ip_acl: request denied by org acl",
+					"ip", clientIP.String(),
+					"org_id", orgID,
+					"reason", "org_deny_list",
+					"request_id", requestID,
+				)
+				return models.ErrForbidden("Access denied: IP address is not allowed")
+			}
 
-				if len(nets.allow) > 0 && !p.matchesAny(clientIP, nets.allow) {
-					slog.Warn("ip_acl: request denied by org acl",
-						"ip", clientIP.String(),
-						"org_id", orgID,
-						"reason", "not_in_org_allow_list",
-						"request_id", rc.RequestID,
-					)
-					return pipeline.ResultError(models.ErrForbidden("Access denied: IP address is not allowed"))
-				}
+			if len(nets.allow) > 0 && !p.matchesAny(clientIP, nets.allow) {
+				slog.Warn("ip_acl: request denied by org acl",
+					"ip", clientIP.String(),
+					"org_id", orgID,
+					"reason", "not_in_org_allow_list",
+					"request_id", requestID,
+				)
+				return models.ErrForbidden("Access denied: IP address is not allowed")
 			}
 		}
 	}
 
-	return pipeline.ResultContinue()
+	return nil
 }
 
-// getOrgNets returns cached parsed CIDR networks for an org, parsing on first access.
+// getOrgNets returns cached parsed CIDR networks for an org's ACL, parsing
+// them when the org has none cached or its ACL is not the one they came from.
+// The tenant store replaces an org's config on every change and never edits
+// it, so a new ACL is a new pointer: the cache follows a change on the next
+// request even where nothing calls InvalidateOrg, as for KeyAuth's instance.
 func (p *Plugin) getOrgNets(orgID string, acl *tenant.IPACLConfig) *orgACLNets {
 	if v, ok := p.orgNets.Load(orgID); ok {
-		return v.(*orgACLNets)
+		if nets := v.(*orgACLNets); nets.src == acl {
+			return nets
+		}
 	}
 
-	nets := &orgACLNets{}
+	nets := &orgACLNets{src: acl}
 	for _, cidr := range acl.Allow {
 		if n := parseCIDROrIP(cidr); n != nil {
 			nets.allow = append(nets.allow, *n)

@@ -14,11 +14,14 @@
 package payloads
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/futureagi/agentcc-gateway/internal/capability"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
@@ -86,14 +89,50 @@ func ForEndpoint(rc *models.RequestContext) (request, response json.RawMessage) 
 		return marshalPtr(rc.RerankRequest), marshalPtr(rc.RerankResponse)
 
 	case "search":
-		return marshalPtr(rc.SearchRequest), marshalPtr(rc.SearchResponse)
+		if call, ok := capability.CallOf(rc); ok {
+			return capabilityPayloads(rc, call)
+		}
+		return retained(capability.RetentionFor(rc, nil), marshalPtr(rc.SearchRequest), marshalPtr(rc.SearchResponse))
 
 	case "ocr":
-		return marshalPtr(rc.OCRRequest), marshal(ocrResponse(rc.OCRResponse))
+		return ocrPayloads(rc)
+
+	case "fetch", "crawl", "documents", "guardrails", "evals", "browser",
+		"sandbox_usage", "speech_session", "video", "payments":
+		if call, ok := capability.CallOf(rc); ok {
+			return capabilityPayloads(rc, call)
+		}
+		return nil, nil
 
 	default:
 		return nil, nil
 	}
+}
+
+// capabilityPayloads are a capability call's request and response as its
+// retention allows: the bodies under full, a
+// description without content under metadata, nothing under none.
+// capability.RetentionFor is the most restrictive of the request's content
+// mode, the served vendor's results_retention and the org's override.
+func capabilityPayloads(rc *models.RequestContext, call *capability.Call) (request, response json.RawMessage) {
+	switch capability.RetentionFor(rc, call.Card()) {
+	case models.ContentModeFull:
+		return call.Request(), call.Response()
+	case models.ContentModeMetadata:
+		return call.MetadataRequest(), call.MetadataResponse()
+	default:
+		return nil, nil
+	}
+}
+
+// retained keeps a capability payload only under full retention: a call
+// with no capability record (the search endpoint's provider adapters) has
+// no card, so its content mode alone decides.
+func retained(mode models.ContentMode, request, response json.RawMessage) (json.RawMessage, json.RawMessage) {
+	if mode != models.ContentModeFull {
+		return nil, nil
+	}
+	return request, response
 }
 
 // embeddingResponse keeps the shape and the usage but drops the vectors. The
@@ -141,11 +180,57 @@ func imageResponse(resp *models.ImageResponse) any {
 	return map[string]any{"created": resp.Created, "data": data}
 }
 
-// ocrResponse keeps the extracted markdown, which is the result, and drops the
-// base64 page images, which are the input rendered back.
-func ocrResponse(resp *models.OCRResponse) any {
-	if resp == nil {
-		return nil
+// ocrPayloads describes an OCR call by its metadata: the model, the
+// document's type and a hash of its reference, the page selection, the
+// provider, and the pages and bytes processed. The document, its URL, its
+// extracted text and its annotation are personal data more often than not
+// (IDs, invoices, medical records), so they are added only when the request's
+// content mode is full and its org opted in (OCRRequest.KeepText).
+func ocrPayloads(rc *models.RequestContext) (request, response json.RawMessage) {
+	req := rc.OCRRequest
+	keepText := req != nil && req.KeepText && rc.Privacy.ContentMode == models.ContentModeFull
+	var refHash string
+	if req != nil {
+		ref := req.Document.Reference()
+		refHash = sha256Hex(ref)
+		doc := map[string]any{"type": req.Document.Type, "ref_sha256": refHash, "ref_bytes": len(ref)}
+		if keepText {
+			doc["ref"] = ElideInlineData(ref)
+		}
+		out := map[string]any{"model": req.Model, "document": doc}
+		if len(req.Pages) > 0 {
+			out["pages"] = req.Pages
+		}
+		request = marshal(out)
+	}
+	if resp := rc.OCRResponse; resp != nil {
+		response = marshal(ocrResponse(resp, rc.Provider, refHash, keepText))
+	}
+	return request, response
+}
+
+// ocrResponse is the metering view of an OCR response, plus, with keepText,
+// the extracted markdown and annotation, with base64 page images replaced by
+// their size (they are the input rendered back).
+func ocrResponse(resp *models.OCRResponse, provider, refHash string, keepText bool) map[string]any {
+	processed, _ := resp.PagesProcessed()
+	out := map[string]any{
+		"model":           resp.Model,
+		"provider":        provider,
+		"pages_processed": processed,
+		"annotated_pages": resp.AnnotatedPages(),
+	}
+	if resp.Object != "" {
+		out["object"] = resp.Object
+	}
+	if refHash != "" {
+		out["document_ref_sha256"] = refHash
+	}
+	if resp.UsageInfo != nil {
+		out["doc_size_bytes"] = resp.UsageInfo.DocSizeBytes
+	}
+	if !keepText {
+		return out
 	}
 	pages := make([]map[string]any, 0, len(resp.Pages))
 	for _, p := range resp.Pages {
@@ -163,18 +248,27 @@ func ocrResponse(resp *models.OCRResponse) any {
 				if img.BBox != nil {
 					entry["bbox"] = img.BBox
 				}
+				if len(img.ImageAnnotation) > 0 {
+					entry["image_annotation"] = img.ImageAnnotation
+				}
 				images = append(images, entry)
 			}
 			page["images"] = images
 		}
 		pages = append(pages, page)
 	}
-	return map[string]any{
-		"object":     resp.Object,
-		"model":      resp.Model,
-		"pages":      pages,
-		"usage_info": resp.UsageInfo,
+	out["pages"] = pages
+	if len(resp.DocumentAnnotation) > 0 {
+		out["document_annotation"] = resp.DocumentAnnotation
 	}
+	return out
+}
+
+// sha256Hex is the hex SHA-256 of s: for a data: URI, of the inline document
+// itself.
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
 
 // marshalPtr exists because a nil pointer inside an `any` is not `== nil`:

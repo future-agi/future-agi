@@ -17,6 +17,10 @@ type crowdstrikeAdapter struct {
 	clientSecret      string
 	baseURL           string
 	severityThreshold int
+	// client is the external guardrail's client, so the OAuth token call
+	// goes through the same guard as the guard-chat call: an org-set
+	// base_url does not reach a loopback or metadata token endpoint.
+	client *http.Client
 
 	mu          sync.Mutex
 	cachedToken string
@@ -54,12 +58,13 @@ type crowdstrikeTokenResponse struct {
 	ExpiresIn   int    `json:"expires_in"`
 }
 
-func newCrowdstrikeAdapter(cfg map[string]interface{}) *crowdstrikeAdapter {
+func newCrowdstrikeAdapter(cfg map[string]interface{}, client *http.Client) *crowdstrikeAdapter {
 	return &crowdstrikeAdapter{
 		clientID:          getStringConfig(cfg, "client_id", ""),
 		clientSecret:      getStringConfig(cfg, "client_secret", ""),
 		baseURL:           getStringConfig(cfg, "base_url", "https://api.crowdstrike.com"),
 		severityThreshold: getIntConfig(cfg, "severity_threshold", 3),
+		client:            client,
 	}
 }
 
@@ -80,8 +85,7 @@ func (a *crowdstrikeAdapter) getToken(ctx context.Context) (string, error) {
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := a.client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -93,7 +97,7 @@ func (a *crowdstrikeAdapter) getToken(ctx context.Context) (string, error) {
 
 	var tokenResp crowdstrikeTokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return "", fmt.Errorf("failed to decode token response: %v", err)
+		return "", fmt.Errorf("failed to decode token response: %w", err)
 	}
 
 	a.cachedToken = tokenResp.AccessToken
@@ -104,7 +108,9 @@ func (a *crowdstrikeAdapter) getToken(ctx context.Context) (string, error) {
 func (a *crowdstrikeAdapter) buildRequest(ctx context.Context, text string) (*http.Request, error) {
 	token, err := a.getToken(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("crowdstrike auth failed: %v", err)
+		// %w keeps a dial, DNS or proxy error findable, so the caller's
+		// guardrails.CallError reports the failure without its address.
+		return nil, fmt.Errorf("crowdstrike auth failed: %w", err)
 	}
 
 	url := strings.TrimRight(a.baseURL, "/") + "/aidr/aiguard/v1/guard_chat_completions"

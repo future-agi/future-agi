@@ -35,9 +35,9 @@ func TestStore_OrgIsolation(t *testing.T) {
 		t.Error("expected nil for different org")
 	}
 
-	// Empty org — visible (no filtering).
-	if got := s.Get("resp_1", ""); got == nil {
-		t.Error("expected response for empty org filter")
+	// Empty org is the no-org tenant, not a wildcard — not visible.
+	if got := s.Get("resp_1", ""); got != nil {
+		t.Error("expected nil for the no-org tenant")
 	}
 }
 
@@ -109,5 +109,76 @@ func TestStore_NotFound(t *testing.T) {
 
 	if s.Delete("nonexistent", "org-1") {
 		t.Error("expected delete to return false for nonexistent")
+	}
+}
+
+// An org id of "" is the no-org tenant (single-tenant or ops keys), not a
+// wildcard: it reaches only responses that have no org, and an org never
+// reaches another org's responses or the no-org ones.
+func TestStore_OrgScopeIsStrict(t *testing.T) {
+	s := NewStore(time.Hour)
+	s.Put("resp_a", "org-a", []byte(`{"id":"resp_a"}`))
+	s.Put("resp_none", "", []byte(`{"id":"resp_none"}`))
+
+	cases := []struct {
+		id, caller string
+		ok         bool
+	}{
+		{"resp_a", "org-a", true},
+		{"resp_none", "", true},
+		{"resp_a", "org-b", false},
+		{"resp_a", "", false},
+		{"resp_none", "org-a", false},
+	}
+	for _, tc := range cases {
+		if got := s.Get(tc.id, tc.caller); (got != nil) != tc.ok {
+			t.Errorf("Get(%s, %q) found=%v, want %v", tc.id, tc.caller, got != nil, tc.ok)
+		}
+		if !tc.ok && s.Delete(tc.id, tc.caller) {
+			t.Errorf("Delete(%s, %q) succeeded, want refused", tc.id, tc.caller)
+		}
+	}
+	if s.Get("resp_a", "org-a") == nil || s.Get("resp_none", "") == nil {
+		t.Fatal("a refused delete removed the response")
+	}
+	if !s.Delete("resp_a", "org-a") || !s.Delete("resp_none", "") {
+		t.Error("owners could not delete their own responses")
+	}
+}
+
+// The response id comes from the upstream provider, which an org can
+// configure, so a Put under another org's id leaves that org's response in
+// place and stores the second org's response beside it, under that org's own
+// copy of the id.
+func TestStore_PutKeepsAnotherOrgsResponse(t *testing.T) {
+	s := NewStore(time.Hour)
+	s.Put("resp_x", "org-a", []byte(`{"owner":"a"}`))
+	s.Put("resp_x", "org-b", []byte(`{"owner":"b"}`))
+
+	if got := s.Get("resp_x", "org-a"); got == nil || string(got.Body) != `{"owner":"a"}` {
+		t.Errorf("org A's response was replaced: %+v", got)
+	}
+	if got := s.Get("resp_x", "org-b"); got == nil || string(got.Body) != `{"owner":"b"}` {
+		t.Errorf("org B reads %+v, want its own response, never org A's", got)
+	}
+
+	// The same org may store under its own id again.
+	s.Put("resp_x", "org-a", []byte(`{"owner":"a","v":2}`))
+	if got := s.Get("resp_x", "org-a"); got == nil || string(got.Body) != `{"owner":"a","v":2}` {
+		t.Errorf("org A could not replace its own response: %+v", got)
+	}
+	if got := s.Get("resp_x", "org-b"); got == nil || string(got.Body) != `{"owner":"b"}` {
+		t.Errorf("org A's replacement changed org B's response: %+v", got)
+	}
+}
+
+// Another org's expired response under the same id never stands in the way.
+func TestStore_PutReusesAnExpiredId(t *testing.T) {
+	s := NewStore(time.Millisecond)
+	s.Put("resp_x", "org-a", []byte(`{"owner":"a"}`))
+	time.Sleep(5 * time.Millisecond)
+	s.Put("resp_x", "org-b", []byte(`{"owner":"b"}`))
+	if got := s.Get("resp_x", "org-b"); got == nil {
+		t.Error("org B could not reuse an expired id")
 	}
 }

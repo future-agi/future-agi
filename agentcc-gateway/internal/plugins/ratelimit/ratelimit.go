@@ -12,32 +12,67 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
+	"github.com/futureagi/agentcc-gateway/internal/redisstate"
 )
 
-// Plugin is a pipeline plugin that enforces request and token rate limits.
+// Plugin is a pipeline plugin that enforces request and token rate limits:
+// each key's RPM (the key's own limit, else its org's per_key_rpm, else the
+// node's global_rpm), each key's own token limit (rate_limit_tpm), and the
+// org's rate_limiting section (orglimits.go).
 type Plugin struct {
 	limiter  Limiter
+	multi    redisstate.MultiLimiter
 	keyStore *auth.KeyStore
 	cfg      config.RateLimitConfig
+
+	// own are the in-memory limiters New made itself, which Stop stops.
+	own      []*RateLimiter
+	stopOnce sync.Once
 
 	noTokenBudgetOnce sync.Once
 }
 
 // New creates a new rate limit plugin.
 // If limiter is nil, an in-memory RateLimiter is created as the default.
+// The org's limits use the limiter too when it can check several counters at
+// once (redisstate.MultiLimiter: the in-memory and the Redis-backed limiter
+// both can); any other limiter gets an in-memory one for the org's limits,
+// which then also counts a key's RPM for the requests of an org with limits
+// (the given limiter counts it for the others). Stop stops the limiters New
+// made; the caller stops its own.
 func New(cfg config.RateLimitConfig, keyStore *auth.KeyStore, limiter Limiter) *Plugin {
+	p := &Plugin{keyStore: keyStore, cfg: cfg}
 	if limiter == nil {
-		limiter = NewRateLimiter()
+		rl := NewRateLimiter()
+		p.own = append(p.own, rl)
+		limiter = rl
 	}
-	return &Plugin{
-		limiter:  limiter,
-		keyStore: keyStore,
-		cfg:      cfg,
+	multi, ok := limiter.(redisstate.MultiLimiter)
+	if !ok {
+		rl := NewRateLimiter()
+		p.own = append(p.own, rl)
+		multi = rl
 	}
+	p.limiter, p.multi = limiter, multi
+	return p
 }
 
-func (p *Plugin) Name() string  { return "ratelimit" }
-func (p *Plugin) Priority() int { return 80 } // After validation (70), before cache (200).
+// Stop stops the cleanup goroutines of the in-memory limiters New made
+// itself; never the limiter the caller passed in. Calling it again does
+// nothing.
+func (p *Plugin) Stop() {
+	p.stopOnce.Do(func() {
+		for _, rl := range p.own {
+			rl.Stop()
+		}
+	})
+}
+
+func (p *Plugin) Name() string { return "ratelimit" }
+
+// Priority 80: after validation (70). The response cache (35) runs before
+// it, so an answer served from the cache is neither counted nor refused here.
+func (p *Plugin) Priority() int { return 80 }
 
 // ProcessRequest checks rate limits and rejects excess requests.
 func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
@@ -48,6 +83,7 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	// Determine key ID and RPM limit.
 	keyID := rc.Metadata["auth_key_id"]
 	rpm := 0
+	source := limitKeyOwn
 
 	if keyID != "" && p.keyStore != nil {
 		// Look up per-key RPM limit.
@@ -59,35 +95,40 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 
 	// Per-org per-key RPM override (from tenant config via handler metadata).
 	if rpm == 0 {
-		if v, ok := rc.Metadata["org_rate_limit_per_key_rpm"]; ok {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				rpm = n
-			}
+		if n := stampedLimit(rc, metaPerKeyRPM); n > 0 {
+			rpm, source = int(n), limitPerKeyRPM
 		}
 	}
 
+	realKeyID := keyID
 	if keyID == "" {
 		keyID = "global"
 	}
 
-	// Fall back to per-org global RPM if per-key is not set.
-	if rpm == 0 {
-		if v, ok := rc.Metadata["org_rate_limit_rpm"]; ok {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				rpm = n
-			}
-		}
+	// The key's own token limit is read before any counter is touched: the
+	// check charges nothing, so a request it refuses spends no request slot
+	// and holds no org token reservation.
+	if res := p.checkTokens(rc, keyID); res.Error != nil {
+		return res
 	}
 
 	// Fall back to gateway-level global RPM.
 	if rpm == 0 {
-		rpm = p.cfg.GlobalRPM
+		rpm, source = p.cfg.GlobalRPM, limitNodeRPM
 	}
 
-	// No request limit set. A token limit is independent of one, so it is
-	// still checked: the two are separate budgets and either may stand alone.
+	// The org's own limits, counted for the whole org (or for each of its
+	// keys, models or users) rather than on this key's counter.
+	if hasOrgLimits(rc) {
+		if orgID := requestOrgID(rc); orgID != "" {
+			return p.processOrg(rc, orgID, keyID, realKeyID, int64(rpm), source)
+		}
+	}
+
+	// If no request limit configured, allow unlimited. The token limit, a
+	// separate budget that may stand alone, was checked above.
 	if rpm == 0 {
-		return p.checkTokens(rc, keyID)
+		return pipeline.ResultContinue()
 	}
 
 	allowed, remaining, resetSeconds := p.limiter.Allow(keyID, rpm)
@@ -98,32 +139,25 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	rc.Metadata["ratelimit_reset"] = strconv.Itoa(resetSeconds)
 
 	if !allowed {
-		return pipeline.ResultError(&models.APIError{
-			Status:  http.StatusTooManyRequests,
-			Type:    "rate_limit_error",
-			Code:    "rate_limit_exceeded",
-			Message: fmt.Sprintf("Rate limit exceeded. Please retry after %d seconds.", resetSeconds),
-		})
+		return pipeline.ResultError(rateLimitExceeded(source, int64(rpm), resetSeconds))
 	}
 
-	return p.checkTokens(rc, keyID)
+	return pipeline.ResultContinue()
 }
 
 // tokenWindowKey namespaces the token budget away from the request budget, so
 // the two counters never share a window.
 func tokenWindowKey(keyID string) string { return "tpm:" + keyID }
 
-// tokenLimit resolves the token-per-minute limit for a request, by the same
-// precedence as RPM: the key's own limit, then the organization's.
-func (p *Plugin) tokenLimit(rc *models.RequestContext, keyID string) int {
+// tokenLimit is the key's own token-per-minute limit (rate_limit_tpm), 0 when
+// it has none. The organization's token limits (global_tpm, all of its keys
+// together, and per_key_tpm) are counted by processOrg (orglimits.go), across
+// the org's keys and, with Redis, across replicas; they are not a fallback
+// for this per-key window.
+func (p *Plugin) tokenLimit(keyID string) int {
 	if keyID != "" && p.keyStore != nil {
 		if key := p.keyStore.Get(keyID); key != nil && key.RateLimitTPM > 0 {
 			return key.RateLimitTPM
-		}
-	}
-	if v, ok := rc.Metadata["org_rate_limit_tpm"]; ok {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return n
 		}
 	}
 	return 0
@@ -131,7 +165,7 @@ func (p *Plugin) tokenLimit(rc *models.RequestContext, keyID string) int {
 
 // checkTokens refuses a request whose token window is already spent.
 func (p *Plugin) checkTokens(rc *models.RequestContext, keyID string) pipeline.PluginResult {
-	tpm := p.tokenLimit(rc, keyID)
+	tpm := p.tokenLimit(keyID)
 	if tpm == 0 {
 		return pipeline.ResultContinue()
 	}
@@ -150,11 +184,14 @@ func (p *Plugin) checkTokens(rc *models.RequestContext, keyID string) pipeline.P
 	rc.Metadata["ratelimit_tokens_remaining"] = strconv.Itoa(remaining)
 
 	if !allowed {
+		field := "rate_limit_tpm"
 		return pipeline.ResultError(&models.APIError{
-			Status:  http.StatusTooManyRequests,
-			Type:    "rate_limit_error",
-			Code:    "token_rate_limit_exceeded",
-			Message: fmt.Sprintf("Token rate limit exceeded. Please retry after %d seconds.", resetSeconds),
+			Status:        http.StatusTooManyRequests,
+			Type:          "rate_limit_error",
+			Code:          "token_rate_limit_exceeded",
+			Message:       fmt.Sprintf("Token rate limit exceeded. Please retry after %d seconds.", resetSeconds),
+			Param:         &field,
+			RetryAfterSec: resetSeconds,
 		})
 	}
 	return pipeline.ResultContinue()
@@ -167,12 +204,23 @@ func (p *Plugin) warnNoTokenBudget() {
 	})
 }
 
-// ProcessResponse charges the tokens the request used against its window.
-// The cost is only known now, which is why the check in ProcessRequest reads
+// ProcessResponse settles the request's token reservation on the tokens it
+// used (orglimits.go), and charges them to the key's own token window. The
+// cost is only known now, which is why the key's check in ProcessRequest reads
 // the window rather than reserving against it.
 func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	if _, ok := rc.Metadata[metaTPMHold]; ok {
+		p.settleTokens(rc)
+	}
+	p.chargeKeyTokens(rc)
+	return pipeline.ResultContinue()
+}
+
+// chargeKeyTokens adds an answered request's tokens to its key's own
+// token window (rate_limit_tpm).
+func (p *Plugin) chargeKeyTokens(rc *models.RequestContext) {
 	if !p.cfg.Enabled {
-		return pipeline.ResultContinue()
+		return
 	}
 
 	// A served cache hit carries the usage of the provider call that filled
@@ -183,21 +231,37 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	// the engine only applies that to cache_status == "hit_exact", so a
 	// conditional or semantic hit would still be charged.
 	if rc.Flags.CacheHit {
-		return pipeline.ResultContinue()
+		return
 	}
 	keyID := rc.Metadata["auth_key_id"]
 	if keyID == "" {
 		keyID = "global"
 	}
-	if p.tokenLimit(rc, keyID) == 0 {
-		return pipeline.ResultContinue()
+	if p.tokenLimit(keyID) == 0 {
+		return
 	}
 	limiter, ok := p.limiter.(TokenLimiter)
 	if !ok {
-		return pipeline.ResultContinue()
+		return
 	}
 	limiter.AddTokens(tokenWindowKey(keyID), tokensUsed(rc))
-	return pipeline.ResultContinue()
+}
+
+// rateLimitExceeded is the 429 for a request the limit refused. It names the
+// limit: param is the field that set it (an org config field such as
+// global_rpm, the key's rate_limit_rpm, or the node's
+// rate_limiting.global_rpm), and Retry-After is when its window rolls.
+func rateLimitExceeded(l limitName, limit int64, resetSeconds int) *models.APIError {
+	field := l.field
+	return &models.APIError{
+		Status: http.StatusTooManyRequests,
+		Type:   "rate_limit_error",
+		Code:   "rate_limit_exceeded",
+		Message: fmt.Sprintf("Rate limit exceeded: %s (%s = %d). Please retry after %d seconds.",
+			l.what, l.field, limit, resetSeconds),
+		Param:         &field,
+		RetryAfterSec: resetSeconds,
+	}
 }
 
 // tokensUsed reports what the answered request cost, from whichever response

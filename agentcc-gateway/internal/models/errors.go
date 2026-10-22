@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 )
 
 // Error types matching OpenAI's error format.
@@ -32,6 +33,8 @@ type ErrorDetail struct {
 	Type    string  `json:"type"`
 	Param   *string `json:"param"`
 	Code    string  `json:"code"`
+	// Metadata is the error's machine-readable detail, omitted when nil.
+	Metadata any `json:"metadata,omitempty"`
 }
 
 // APIError is an error that carries HTTP status and OpenAI error details.
@@ -41,6 +44,17 @@ type APIError struct {
 	Code    string
 	Message string
 	Param   *string
+	// Metadata is written as error.metadata: the PaymentMeta of a payment
+	// or limit refusal (error-402-v1).
+	Metadata any
+	// RetryAfterSec, when positive, is sent as the Retry-After header.
+	RetryAfterSec int
+	// UpstreamStatus is the HTTP status the provider itself answered with,
+	// 0 when the error is the gateway's own or the provider never answered.
+	// Status is what the client gets (an upstream 5xx is a 502); retry,
+	// failover and circuit breaker status lists match either one. Never
+	// written to the client.
+	UpstreamStatus int
 }
 
 func (e *APIError) Error() string {
@@ -89,8 +103,13 @@ func ErrInternal(message string) *APIError {
 	return newAPIError(http.StatusInternalServerError, ErrTypeServer, "internal_error", message)
 }
 
+// ErrUpstreamProvider is a provider's failure the gateway answers as a 502:
+// status is the provider's own HTTP status (0 when it never answered), kept
+// in the code ("provider_<status>") and as UpstreamStatus.
 func ErrUpstreamProvider(status int, message string) *APIError {
-	return newAPIError(http.StatusBadGateway, ErrTypeUpstream, fmt.Sprintf("provider_%d", status), message)
+	e := newAPIError(http.StatusBadGateway, ErrTypeUpstream, fmt.Sprintf("provider_%d", status), message)
+	e.UpstreamStatus = status
+	return e
 }
 
 func ErrGatewayTimeout(message string) *APIError {
@@ -101,23 +120,36 @@ func ErrGuardrailBlocked(code, message string) *APIError {
 	return newAPIError(http.StatusForbidden, ErrTypeGuardrail, code, message)
 }
 
-// WriteError writes an OpenAI-compatible error JSON response.
+// BearerChallenge is the WWW-Authenticate challenge on every 401 the gateway
+// writes. RFC 7235 requires a challenge on a 401, and MCP clients read it to
+// learn that the endpoint wants a bearer token.
+const BearerChallenge = `Bearer realm="agentcc-gateway"`
+
+// WriteError writes an OpenAI-compatible error JSON response. A 401 carries
+// BearerChallenge unless the caller set a challenge of its own.
 //
 // The message is redacted here as well as at construction. Most of this
-// package's errors are built by the constructors above, but 78 sites build an
-// APIError directly — a provider parsing an upstream error body, for one — and
-// those never pass through newAPIError. Redacting at the boundary every
+// package's errors are built by the constructors above, but many sites build
+// an APIError directly — a provider parsing an upstream error body, for one —
+// and those never pass through newAPIError. Redacting at the boundary every
 // response leaves through needs no site to remember.
 func WriteError(w http.ResponseWriter, err *APIError) {
 	resp := ErrorResponse{
 		Error: ErrorDetail{
-			Message: RedactCredentials(err.Message),
-			Type:    err.Type,
-			Code:    err.Code,
-			Param:   err.Param,
+			Message:  RedactCredentials(err.Message),
+			Type:     err.Type,
+			Code:     err.Code,
+			Param:    err.Param,
+			Metadata: err.Metadata,
 		},
 	}
+	if err.RetryAfterSec > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(err.RetryAfterSec))
+	}
 	w.Header().Set("Content-Type", "application/json")
+	if err.Status == http.StatusUnauthorized && w.Header().Get("WWW-Authenticate") == "" {
+		w.Header().Set("WWW-Authenticate", BearerChallenge)
+	}
 	w.WriteHeader(err.Status)
 	json.NewEncoder(w).Encode(resp)
 }

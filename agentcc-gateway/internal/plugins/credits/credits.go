@@ -2,30 +2,40 @@ package credits
 
 import (
 	"context"
-	"fmt"
-	"net/http"
-	"strconv"
 
 	"github.com/futureagi/agentcc-gateway/internal/auth"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 )
 
-// RedisCreditBackend is an optional interface for Redis-backed credit balances.
-type RedisCreditBackend interface {
-	DeductMicros(keyID string, amount int64) (int64, bool)
-	ForceDeductMicros(keyID string, amount int64) (int64, bool)
-	GetBalance(keyID string) (int64, bool)
-	Available() bool
-}
-
-// Plugin is a pipeline plugin that enforces credit balance for managed keys.
-// Pre-request: blocks if balance <= 0.
-// Post-request: deducts actual cost from balance.
+// Plugin is the credits pipeline plugin (pre 510, post after cost).
+//
+// A managed request (billing_mode managed) is held on its org's managed
+// credit before it is dispatched: RESERVE at the request's worst-case cost
+// (reserve.go), refused with error-402-v1 or failing closed with 503. After
+// the call it is settled at what the cost plugin billed, or voided when nothing was
+// billed, and a request finalizer voids a hold nothing settled
+// (settle.go). The org's hot-path ledger is OrgLedger.
+//
+// A managed key (key_type managed) keeps its own prepaid balance, checked
+// and debited per request (keycredits.go).
 type Plugin struct {
 	keyStore    *auth.KeyStore
 	enabled     bool
 	redisCredit RedisCreditBackend // nil = local-only
+
+	// orgLedger holds managed requests; requireOrgCredits off admits them
+	// without a hold (their spend is still settled).
+	orgLedger         *OrgLedger
+	requireOrgCredits bool
+
+	settings Settings
+	// prices, maxOutput and orgMaxTokens are read at call time; nil leaves a
+	// model unpriced, its max output unknown and the org's
+	// default_max_tokens_estimate unset. Set them before the gateway serves.
+	prices       models.PriceLookup
+	maxOutput    func(providerID, model string) int
+	orgMaxTokens func(orgID string) int
 }
 
 // New creates a new credits plugin.
@@ -33,114 +43,83 @@ func New(enabled bool, keyStore *auth.KeyStore) *Plugin {
 	return &Plugin{
 		keyStore: keyStore,
 		enabled:  enabled,
+		settings: DefaultSettings(),
 	}
 }
 
-// SetRedisCredit attaches a Redis-backed credit store for multi-replica support.
+// SetRedisCredit attaches a Redis-backed credit store for managed keys'
+// balances, for multi-replica support.
 func (p *Plugin) SetRedisCredit(rc RedisCreditBackend) {
 	p.redisCredit = rc
 }
 
-func (p *Plugin) Name() string           { return "credits" }
-func (p *Plugin) Priority() int          { return 510 } // After auth (100) and cost (500).
-func (p *Plugin) ShouldSkipOnCacheHit() bool { return true } // No credits deducted on cache hits.
-
-// ProcessRequest checks credit balance for managed keys.
-func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
-	if !p.enabled || p.keyStore == nil {
-		return pipeline.ResultContinue()
-	}
-	if rc.Metadata["key_type"] != "managed" {
-		return pipeline.ResultContinue()
-	}
-
-	keyID := rc.Metadata["auth_key_id"]
-	if keyID == "" {
-		return pipeline.ResultContinue()
-	}
-
-	key := p.keyStore.Get(keyID)
-	if key == nil {
-		return pipeline.ResultContinue()
-	}
-
-	// Check Redis first (cross-replica authoritative), fall back to local.
-	if p.redisCredit != nil && p.redisCredit.Available() {
-		if redisBal, ok := p.redisCredit.GetBalance(keyID); ok {
-			key.SetBalanceMicros(redisBal) // sync local
-			if auth.MicrosToUSD(redisBal) <= 0 {
-				return pipeline.ResultError(&models.APIError{
-					Status:  http.StatusPaymentRequired,
-					Type:    "insufficient_credits",
-					Code:    "payment_required",
-					Message: fmt.Sprintf("Insufficient credits. Current balance: $%.4f. Top up to continue.", auth.MicrosToUSD(redisBal)),
-				})
-			}
-			return pipeline.ResultContinue()
-		}
-	}
-
-	balance := key.BalanceUSD()
-	if balance <= 0 {
-		return pipeline.ResultError(&models.APIError{
-			Status:  http.StatusPaymentRequired,
-			Type:    "insufficient_credits",
-			Code:    "payment_required",
-			Message: fmt.Sprintf("Insufficient credits. Current balance: $%.4f. Top up to continue.", balance),
-		})
-	}
-
-	return pipeline.ResultContinue()
+// SetOrgLedger holds managed requests on their org's ledger. With
+// requireCredits false they are admitted without a hold and only settled.
+func (p *Plugin) SetOrgLedger(l *OrgLedger, requireCredits bool) {
+	p.orgLedger = l
+	p.requireOrgCredits = requireCredits
 }
 
-// ProcessResponse deducts cost from credit balance for managed keys.
-func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
-	if !p.enabled || p.keyStore == nil {
+// SetSettings sets the managed.* values the hot path uses.
+func (p *Plugin) SetSettings(s Settings) { p.settings = s }
+
+// SetPrices sets the price lookup worst-case estimates read, at call time
+// (the gateway's injected Handlers.Deps().Prices).
+func (p *Plugin) SetPrices(prices models.PriceLookup) { p.prices = prices }
+
+// SetMaxOutput sets the lookup of a model's max output tokens; 0 is unknown.
+func (p *Plugin) SetMaxOutput(fn func(providerID, model string) int) { p.maxOutput = fn }
+
+// SetOrgMaxTokens sets the lookup of an org's
+// managed_models.default_max_tokens_estimate; 0 is unset.
+func (p *Plugin) SetOrgMaxTokens(fn func(orgID string) int) { p.orgMaxTokens = fn }
+
+// OrgLedger returns the managed-credit ledger the plugin holds requests on.
+func (p *Plugin) OrgLedger() *OrgLedger { return p.orgLedger }
+
+func (p *Plugin) Name() string  { return "credits" }
+func (p *Plugin) Priority() int { return 510 } // After the cost plugin (500), before the run budget (515).
+
+// ShouldSkipOnCacheHit is false: a request reserved before a cache answered
+// it must still be voided.
+func (p *Plugin) ShouldSkipOnCacheHit() bool { return false }
+
+// orgIDOf is the org a request bills to.
+func orgIDOf(rc *models.RequestContext) string {
+	if id := rc.Metadata["org_id"]; id != "" {
+		return id
+	}
+	return rc.Metadata["key_org_id"]
+}
+
+// isManaged reports whether rc is billed to its org's managed credit.
+func isManaged(rc *models.RequestContext) bool {
+	return rc.Metadata["billing_mode"] == models.BillingModeManaged && orgIDOf(rc) != ""
+}
+
+// ProcessRequest holds a managed request on its org's managed credit, and
+// checks a managed key's own balance.
+func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	if !p.enabled {
 		return pipeline.ResultContinue()
 	}
-	if rc.Metadata["key_type"] != "managed" {
-		return pipeline.ResultContinue()
-	}
-
-	costStr, ok := rc.Metadata["cost"]
-	if !ok || costStr == "" {
-		return pipeline.ResultContinue()
-	}
-
-	costUSD, err := strconv.ParseFloat(costStr, 64)
-	if err != nil || costUSD <= 0 {
-		return pipeline.ResultContinue()
-	}
-
-	keyID := rc.Metadata["auth_key_id"]
-	if keyID == "" {
-		return pipeline.ResultContinue()
-	}
-
-	key := p.keyStore.Get(keyID)
-	if key == nil {
-		return pipeline.ResultContinue()
-	}
-
-	micros := auth.USDToMicros(costUSD)
-
-	// Write-through: unconditionally deduct from Redis (shared), then sync local.
-	// ForceDeductMicros is used because the request already completed — spend
-	// must be recorded even if balance dropped to zero between pre-check and now.
-	if p.redisCredit != nil && p.redisCredit.Available() {
-		if redisBal, ok := p.redisCredit.ForceDeductMicros(keyID, micros); ok {
-			// Sync local balance to match Redis (authoritative source).
-			key.SetBalanceMicros(redisBal)
-			rc.Metadata["credits_used"] = fmt.Sprintf("%.6f", costUSD)
-			rc.Metadata["credits_remaining"] = fmt.Sprintf("%.6f", auth.MicrosToUSD(redisBal))
-			return pipeline.ResultContinue()
+	if p.orgLedger != nil && isManaged(rc) {
+		if apiErr := p.reserve(rc); apiErr != nil {
+			return pipeline.ResultError(apiErr)
 		}
 	}
+	return p.checkKeyBalance(rc)
+}
 
-	// Fallback: local-only deduction.
-	newBalance := key.DeductMicros(micros)
-	rc.Metadata["credits_used"] = fmt.Sprintf("%.6f", costUSD)
-	rc.Metadata["credits_remaining"] = fmt.Sprintf("%.6f", newBalance)
-
-	return pipeline.ResultContinue()
+// ProcessResponse settles or voids a managed request's hold; a request it
+// settled to the org is never also charged to a managed key. Otherwise it
+// debits a managed key's own balance.
+func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	if !p.enabled {
+		return pipeline.ResultContinue()
+	}
+	if p.orgLedger != nil && p.finishManaged(rc) {
+		return pipeline.ResultContinue()
+	}
+	return p.chargeKey(rc)
 }

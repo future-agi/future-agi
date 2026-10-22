@@ -229,11 +229,12 @@ func TestBodiesCoverMultimodalEndpoints(t *testing.T) {
 			wantIn: "best bicycle",
 		},
 		{
+			// OCR payloads are metadata unless the org opted in.
 			endpoint: "ocr",
 			setup: func(rc *models.RequestContext) {
 				rc.OCRResponse = &models.OCRResponse{Pages: []models.OCRPage{{Markdown: "# Invoice"}}}
 			},
-			wantOut: "# Invoice",
+			wantOut: `"pages_processed":1`,
 		},
 		{
 			endpoint: "speech",

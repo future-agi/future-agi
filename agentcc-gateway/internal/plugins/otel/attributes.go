@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/futureagi/agentcc-gateway/internal/credentials"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	otelpkg "github.com/futureagi/agentcc-gateway/internal/otel"
 )
@@ -81,21 +82,6 @@ const (
 	headerValueSeparator = ","
 )
 
-// Never exported, whatever the allowlist says. cloneRequestHeaders copies
-// x-api-key into Authorization, so a live credential is always present and a
-// pattern as ordinary as "x-*" would ship it to the trace backend.
-var headerDenylist = map[string]struct{}{
-	"authorization":        {},
-	"proxy-authorization":  {},
-	"www-authenticate":     {},
-	"cookie":               {},
-	"set-cookie":           {},
-	"api-key":              {},
-	"x-api-key":            {},
-	"x-goog-api-key":       {},
-	"x-amz-security-token": {},
-}
-
 // Allowlist only: a blocklist complete enough for the alternative is one you
 // can only be wrong about once.
 type headerMatcher struct {
@@ -124,9 +110,11 @@ func newHeaderMatcher(patterns []string) *headerMatcher {
 	return m
 }
 
-// match reports whether a lower-cased header name may be exported.
+// match reports whether a lower-cased header name may be exported. A
+// credential header never is, whatever the allowlist says
+// (credentials.IsHeader, the list the request log masks too).
 func (m *headerMatcher) match(name string) bool {
-	if _, denied := headerDenylist[name]; denied {
+	if credentials.IsHeader(name) {
 		return false
 	}
 	if _, ok := m.exact[name]; ok {

@@ -15,7 +15,26 @@ type injectionDetector struct {
 	category string
 	weight   float64
 	patterns []*regexp.Regexp
+	// inInstructions says, per pattern, whether it counts in a system or
+	// developer message (instructionRoles) as well as in a user or tool one.
+	inInstructions []bool
 }
+
+// The roles whose messages the check reads. A user's message and a tool's
+// result (the text of a web page, a document, an email a tool read) are read
+// with every pattern: the result of a tool call is how text someone else
+// wrote reaches an agent. A system or developer message holds the
+// application's own instructions, which say what the model must not do in
+// the very words the patterns look for ("never reveal your system prompt",
+// "if the user asks you to ignore previous instructions, refuse", a "###
+// Instructions" heading). There only the patterns that name text someone
+// else wrote count (inInstructions): a chat-template token or a fake role
+// delimiter, a JSON message that claims the system or developer role, a
+// jailbreak persona and a request to decode hidden text.
+var (
+	readRoles        = map[string]bool{"user": true, "tool": true, "function": true}
+	instructionRoles = map[string]bool{"system": true, "developer": true}
+)
 
 // InjectionGuardrail detects prompt injection and jailbreak attempts.
 type InjectionGuardrail struct {
@@ -71,28 +90,37 @@ func New(cfg map[string]interface{}) *InjectionGuardrail {
 func (g *InjectionGuardrail) Name() string            { return "prompt-injection" }
 func (g *InjectionGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
-// Check evaluates user messages for injection patterns.
+// Check evaluates the request's user and tool messages, and its system and
+// developer messages (readRoles, instructionRoles), for injection patterns.
 func (g *InjectionGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) *guardrails.CheckResult {
 	if input == nil || input.Request == nil {
 		return &guardrails.CheckResult{Pass: true}
 	}
 
-	// Only check user messages (not system or assistant).
-	var texts []string
-	for _, m := range input.Request.Messages {
-		if m.Role != "user" {
+	var texts, instructions []string
+	for i := range input.Request.Messages {
+		m := &input.Request.Messages[i]
+		read, instruction := readRoles[m.Role], instructionRoles[m.Role]
+		if !read && !instruction {
 			continue
 		}
-		if t, ok := extractContentText(m.Content); ok {
+		t, ok := guardrails.ContentText(m.Content)
+		if !ok || t == "" {
+			continue
+		}
+		if read {
 			texts = append(texts, t)
+		} else {
+			instructions = append(instructions, t)
 		}
 	}
 
-	if len(texts) == 0 {
+	if len(texts) == 0 && len(instructions) == 0 {
 		return &guardrails.CheckResult{Pass: true}
 	}
 
 	combined := strings.ToLower(strings.Join(texts, "\n"))
+	instructed := strings.ToLower(strings.Join(instructions, "\n"))
 
 	type categoryMatch struct {
 		category string
@@ -106,10 +134,12 @@ func (g *InjectionGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 	for _, d := range g.detectors {
 		count := 0
 		if d.category == "structured_role_injection" {
-			count = countStructuredRoleInjection(texts)
+			// A JSON message that claims a privileged role is someone
+			// else's text wherever it is.
+			count = countStructuredRoleInjection(texts) + countStructuredRoleInjection(instructions)
 		} else {
-			for _, p := range d.patterns {
-				if p.MatchString(combined) {
+			for i, p := range d.patterns {
+				if p.MatchString(combined) || (instructed != "" && d.inInstructions[i] && p.MatchString(instructed)) {
 					count++
 				}
 			}
@@ -149,32 +179,6 @@ func (g *InjectionGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 			"total_matches": totalWeightedMatches,
 		},
 	}
-}
-
-func extractContentText(raw json.RawMessage) (string, bool) {
-	if len(raw) == 0 {
-		return "", false
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		return s, true
-	}
-	var parts []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(raw, &parts); err == nil {
-		var texts []string
-		for _, p := range parts {
-			if p.Type == "text" && p.Text != "" {
-				texts = append(texts, p.Text)
-			}
-		}
-		if len(texts) > 0 {
-			return strings.Join(texts, " "), true
-		}
-	}
-	return "", false
 }
 
 func countStructuredRoleInjection(texts []string) int {
@@ -346,76 +350,113 @@ func isPrivilegedRole(role string) bool {
 }
 
 func defaultDetectors() []injectionDetector {
+	instructionOverride := []string{
+		`(?i)ignore\s+(all\s+)?previous\s+instructions`,
+		`(?i)ignore\s+(all\s+)?prior\s+instructions`,
+		`(?i)forget\s+(all\s+)?(your\s+)?rules`,
+		`(?i)forget\s+(all\s+)?(your\s+)?instructions`,
+		`(?i)disregard\s+(all\s+)?previous`,
+		`(?i)override\s+(your\s+)?instructions`,
+		`(?i)new\s+instructions?\s*:`,
+		`(?i)you\s+must\s+now\s+follow`,
+		`(?i)from\s+now\s+on\s+you\s+(will|must|should)`,
+	}
+	roleManipulation := []string{
+		`(?i)you\s+are\s+(?:now\s+)?(?:dan|evil|unrestricted|unfiltered)`,
+		`(?i)pretend\s+(?:you\s+are|to\s+be|you're)\s+(?:a|an)?\s*(?:evil|unrestricted|unfiltered)`,
+		`(?i)act\s+as\s+(?:if\s+you\s+have\s+)?no\s+(?:restrictions|rules|filters|guardrails)`,
+		`(?i)jailbreak\s+mode`,
+		`(?i)developer\s+mode\s+(?:enabled|activated|on)`,
+		`(?i)do\s+anything\s+now`,
+		`(?i)bypass\s+(?:your\s+)?(?:filters|safety|restrictions|rules)`,
+		`(?i)without\s+(?:any\s+)?(?:restrictions|limitations|filters|safety)`,
+	}
+	systemPromptExtraction := []string{
+		`(?i)(?:repeat|show|display|print|output|reveal)\s+(?:your\s+)?system\s+prompt`,
+		`(?i)what\s+(?:are|is)\s+your\s+(?:system\s+)?instructions`,
+		`(?i)(?:show|tell)\s+me\s+your\s+(?:system\s+)?prompt`,
+		`(?i)what\s+(?:were\s+you|was\s+your)\s+(?:told|instructed)`,
+		`(?i)(?:output|print)\s+(?:the\s+)?(?:above|initial)\s+(?:text|prompt|instructions)`,
+		`(?i)repeat\s+(?:the\s+)?(?:words\s+)?above`,
+	}
+	delimiterInjection := []string{
+		`(?i)<\/?system>`,
+		`(?i)\[system\]`,
+		`(?i)---\s*(?:system|instructions?|rules?)`,
+		`(?i)###\s*(?:system|instructions?|new\s+context)`,
+		`(?i)\[INST\]`,
+		`(?i)<\|(?:im_start|system|user)\|>`,
+	}
+	encodingBypass := []string{
+		`(?i)base64\s+decode`,
+		`(?i)decode\s+(?:this|the\s+following)\s+base64`,
+		`(?i)(?:rot13|caesar\s+cipher)\s+(?:decode|decrypt)`,
+		`(?i)translate\s+from\s+(?:hex|binary|octal|base64)`,
+	}
 	return []injectionDetector{
 		{
+			// Read in every message the check reads (countStructuredRoleInjection).
 			category: "structured_role_injection",
 			weight:   1.5,
 			patterns: nil,
 		},
 		{
-			category: "instruction_override",
-			weight:   1.5,
-			patterns: compileAll([]string{
-				`(?i)ignore\s+(all\s+)?previous\s+instructions`,
-				`(?i)ignore\s+(all\s+)?prior\s+instructions`,
-				`(?i)forget\s+(all\s+)?(your\s+)?rules`,
-				`(?i)forget\s+(all\s+)?(your\s+)?instructions`,
-				`(?i)disregard\s+(all\s+)?previous`,
-				`(?i)override\s+(your\s+)?instructions`,
-				`(?i)new\s+instructions?\s*:`,
-				`(?i)you\s+must\s+now\s+follow`,
-				`(?i)from\s+now\s+on\s+you\s+(will|must|should)`,
-			}),
+			// A system prompt states its own rules in these words: none
+			// counts in a system or developer message.
+			category:       "instruction_override",
+			weight:         1.5,
+			patterns:       compileAll(instructionOverride),
+			inInstructions: inInstructionsOf(instructionOverride),
 		},
 		{
+			// A jailbreak persona counts in a system or developer message;
+			// the wording a system prompt forbids things in (pretend, act as
+			// if, bypass, without restrictions) does not.
 			category: "role_manipulation",
 			weight:   1.2,
-			patterns: compileAll([]string{
-				`(?i)you\s+are\s+(?:now\s+)?(?:dan|evil|unrestricted|unfiltered)`,
-				`(?i)pretend\s+(?:you\s+are|to\s+be|you're)\s+(?:a|an)?\s*(?:evil|unrestricted|unfiltered)`,
-				`(?i)act\s+as\s+(?:if\s+you\s+have\s+)?no\s+(?:restrictions|rules|filters|guardrails)`,
-				`(?i)jailbreak\s+mode`,
-				`(?i)developer\s+mode\s+(?:enabled|activated|on)`,
-				`(?i)do\s+anything\s+now`,
-				`(?i)bypass\s+(?:your\s+)?(?:filters|safety|restrictions|rules)`,
-				`(?i)without\s+(?:any\s+)?(?:restrictions|limitations|filters|safety)`,
-			}),
+			patterns: compileAll(roleManipulation),
+			inInstructions: inInstructionsOf(roleManipulation,
+				roleManipulation[0], roleManipulation[3], roleManipulation[4], roleManipulation[5]),
 		},
 		{
-			category: "system_prompt_extraction",
-			weight:   1.0,
-			patterns: compileAll([]string{
-				`(?i)(?:repeat|show|display|print|output|reveal)\s+(?:your\s+)?system\s+prompt`,
-				`(?i)what\s+(?:are|is)\s+your\s+(?:system\s+)?instructions`,
-				`(?i)(?:show|tell)\s+me\s+your\s+(?:system\s+)?prompt`,
-				`(?i)what\s+(?:were\s+you|was\s+your)\s+(?:told|instructed)`,
-				`(?i)(?:output|print)\s+(?:the\s+)?(?:above|initial)\s+(?:text|prompt|instructions)`,
-				`(?i)repeat\s+(?:the\s+)?(?:words\s+)?above`,
-			}),
+			// A system prompt says it is not to be revealed: none counts in a
+			// system or developer message.
+			category:       "system_prompt_extraction",
+			weight:         1.0,
+			patterns:       compileAll(systemPromptExtraction),
+			inInstructions: inInstructionsOf(systemPromptExtraction),
 		},
 		{
+			// Chat-template tokens and fake role tags count in a system or
+			// developer message; Markdown headings ("### Instructions",
+			// "--- Rules"), which system prompts are written in, do not.
 			category: "delimiter_injection",
 			weight:   1.0,
-			patterns: compileAll([]string{
-				`(?i)<\/?system>`,
-				`(?i)\[system\]`,
-				`(?i)---\s*(?:system|instructions?|rules?)`,
-				`(?i)###\s*(?:system|instructions?|new\s+context)`,
-				`(?i)\[INST\]`,
-				`(?i)<\|(?:im_start|system|user)\|>`,
-			}),
+			patterns: compileAll(delimiterInjection),
+			inInstructions: inInstructionsOf(delimiterInjection,
+				delimiterInjection[0], delimiterInjection[1], delimiterInjection[4], delimiterInjection[5]),
 		},
 		{
-			category: "encoding_bypass",
-			weight:   1.0,
-			patterns: compileAll([]string{
-				`(?i)base64\s+decode`,
-				`(?i)decode\s+(?:this|the\s+following)\s+base64`,
-				`(?i)(?:rot13|caesar\s+cipher)\s+(?:decode|decrypt)`,
-				`(?i)translate\s+from\s+(?:hex|binary|octal|base64)`,
-			}),
+			category:       "encoding_bypass",
+			weight:         1.0,
+			patterns:       compileAll(encodingBypass),
+			inInstructions: inInstructionsOf(encodingBypass, encodingBypass...),
 		},
 	}
+}
+
+// inInstructionsOf is, for each of patterns, whether it is one of counted,
+// the patterns that count in a system or developer message.
+func inInstructionsOf(patterns []string, counted ...string) []bool {
+	in := make([]bool, len(patterns))
+	for i, p := range patterns {
+		for _, c := range counted {
+			if p == c {
+				in[i] = true
+			}
+		}
+	}
+	return in
 }
 
 func compileAll(patterns []string) []*regexp.Regexp {

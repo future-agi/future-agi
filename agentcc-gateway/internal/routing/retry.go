@@ -5,8 +5,6 @@ import (
 	"errors"
 	"math"
 	"math/rand"
-	"net"
-	"os"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
@@ -56,44 +54,53 @@ func (r *Retryer) IsEnabled() bool {
 	return r != nil && r.cfg.Enabled
 }
 
-// ShouldRetry returns true if the error is retryable.
+// ShouldRetry returns true if the error is retryable: its status or its
+// provider's own status is in the retry list (a list naming 503
+// matches an upstream 503 the gateway answers as 502), or it is a provider
+// timeout and on_timeout is set. A fallback hop the gateway refused
+// (ErrHopSkipped) never is: retrying it would run its admission, and take
+// its hold, again.
 func (r *Retryer) ShouldRetry(err error) bool {
-	if err == nil {
+	if err == nil || IsHopSkipped(err) {
 		return false
 	}
 
 	var apiErr *models.APIError
-	if errors.As(err, &apiErr) {
-		return r.codes[apiErr.Status]
+	if errors.As(err, &apiErr) && matchesStatus(r.codes, apiErr) {
+		return true
 	}
-
-	if r.cfg.OnTimeout {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return true
-		}
-		var netErr net.Error
-		if errors.As(err, &netErr) && netErr.Timeout() {
-			return true
-		}
-		if errors.Is(err, os.ErrDeadlineExceeded) {
-			return true
-		}
-	}
-
-	return false
+	return r.cfg.OnTimeout && isProviderTimeout(err)
 }
 
 // Execute runs fn with retry logic. Returns the number of retries performed and the final error.
 // retries=0 means the first call succeeded (or failed with a non-retryable error).
 func (r *Retryer) Execute(ctx context.Context, fn func() error) (int, error) {
+	return r.ExecuteObserved(ctx, fn, nil)
+}
+
+// ExecuteObserved is Execute that reports every try to onTry as it ends: n is
+// the try's number (0 for the first call), err its result. onTry may be nil.
+// A retryer that is nil or disabled makes one try. The request's retry
+// headers, when ctx carries them (WithRetryOverrides), tighten the number of
+// tries and may choose the delays; they never add tries.
+func (r *Retryer) ExecuteObserved(ctx context.Context, fn func() error, onTry func(n int, err error)) (int, error) {
+	try := func(n int) error {
+		err := fn()
+		if onTry != nil {
+			onTry(n, err)
+		}
+		return err
+	}
 	if !r.IsEnabled() {
-		return 0, fn()
+		return 0, try(0)
 	}
 
+	overrides, _ := RetryOverridesFromContext(ctx)
+	plan := r.planFor(overrides)
 	var lastErr error
-	for attempt := 0; attempt <= r.cfg.MaxRetries; attempt++ {
+	for attempt := 0; attempt <= plan.retries; attempt++ {
 		if attempt > 0 {
-			delay := r.backoff(attempt - 1)
+			delay := plan.delay(attempt - 1)
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
@@ -104,7 +111,7 @@ func (r *Retryer) Execute(ctx context.Context, fn func() error) (int, error) {
 			}
 		}
 
-		err := fn()
+		err := try(attempt)
 		if err == nil {
 			return attempt, nil
 		}
@@ -115,7 +122,7 @@ func (r *Retryer) Execute(ctx context.Context, fn func() error) (int, error) {
 		}
 	}
 
-	return r.cfg.MaxRetries, lastErr
+	return plan.retries, lastErr
 }
 
 // backoff calculates the delay for a given retry attempt using full jitter.

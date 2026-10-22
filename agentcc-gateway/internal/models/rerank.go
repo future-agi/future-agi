@@ -32,3 +32,16 @@ type RerankDocument struct {
 type RerankMeta struct {
 	BilledUnits map[string]int `json:"billed_units,omitempty"`
 }
+
+// RerankSearchUnitsMetadataKey is the request metadata key under which the
+// rerank handler records the search units the upstream billed.
+const RerankSearchUnitsMetadataKey = "search_units"
+
+// SearchUnits is the search units the upstream billed for r, 0 when it
+// reported none.
+func (r *RerankResponse) SearchUnits() int {
+	if r == nil || r.Meta == nil {
+		return 0
+	}
+	return r.Meta.BilledUnits["search_units"]
+}

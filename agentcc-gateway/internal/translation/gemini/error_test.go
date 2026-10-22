@@ -40,6 +40,13 @@ func TestErrorFromCanonical_AllTypes(t *testing.T) {
 			wantGeminiStatus: "RESOURCE_EXHAUSTED",
 		},
 		{
+			// A guardrail's refusal is PERMISSION_DENIED, as the native GenAI
+			// surface writes a 403; UNAVAILABLE says to retry.
+			apiErr:           models.ErrGuardrailBlocked("content_blocked", "Request blocked by guardrail: pii"),
+			wantStatusCode:   http.StatusForbidden,
+			wantGeminiStatus: "PERMISSION_DENIED",
+		},
+		{
 			apiErr:           &models.APIError{Status: http.StatusInternalServerError, Type: models.ErrTypeServer, Message: "internal"},
 			wantStatusCode:   http.StatusInternalServerError,
 			wantGeminiStatus: "INTERNAL",

@@ -27,14 +27,42 @@ type Rule struct {
 	Window    time.Duration
 	Cooldown  time.Duration
 	Channels  []string
-	counter   *WindowCounter
+	// Severity is sent with every alert the rule fires (info, warning or
+	// critical). An operator rule from config.yaml has none.
+	Severity string
+	counter  *WindowCounter
+	cooldown *CooldownState
+}
+
+// CooldownState is when a rule last fired. A rule rebuilt from a new config
+// (an org's rules are rebuilt on every config push) can share its
+// predecessor's state through WithCooldownState, so the rebuild does not
+// restart the cooldown.
+type CooldownState struct {
 	mu        sync.Mutex
 	lastFired time.Time
+}
+
+// NewCooldownState returns the state of a rule that has never fired.
+func NewCooldownState() *CooldownState { return &CooldownState{} }
+
+// claim reports whether a rule with this cooldown may fire at now, and if so
+// records now as its last firing. Concurrent callers past the threshold get
+// one true per cooldown.
+func (s *CooldownState) claim(now time.Time, cooldown time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cooldown > 0 && !s.lastFired.IsZero() && now.Sub(s.lastFired) < cooldown {
+		return false
+	}
+	s.lastFired = now
+	return true
 }
 
 // Alert is the payload sent to channels.
 type Alert struct {
 	Name      string    `json:"alert"`
+	Severity  string    `json:"severity,omitempty"`
 	Metric    string    `json:"metric"`
 	Value     float64   `json:"value"`
 	Threshold float64   `json:"threshold"`
@@ -80,6 +108,7 @@ func NewManager(cfg config.AlertingConfig) *Manager {
 			Cooldown:  rc.Cooldown,
 			Channels:  rc.Channels,
 			counter:   NewWindowCounter(window, 60),
+			cooldown:  NewCooldownState(),
 		})
 	}
 
@@ -108,7 +137,24 @@ func NewRule(name, metric, condition string, threshold float64, window, cooldown
 		Cooldown:  cooldown,
 		Channels:  channels,
 		counter:   NewWindowCounter(window, 60),
+		cooldown:  NewCooldownState(),
 	}
+}
+
+// WithSeverity sets the severity the rule's alerts carry and returns r.
+func (r *Rule) WithSeverity(severity string) *Rule {
+	r.Severity = severity
+	return r
+}
+
+// WithCooldownState makes r read and record its last firing in state, so a
+// rule rebuilt from a new config keeps its predecessor's cooldown. A nil
+// state is ignored. Returns r.
+func (r *Rule) WithCooldownState(state *CooldownState) *Rule {
+	if state != nil {
+		r.cooldown = state
+	}
+	return r
 }
 
 // Record adds a value to a metric across all rules that track it.
@@ -142,17 +188,13 @@ func (m *Manager) Evaluate() {
 			continue
 		}
 
-		// Check cooldown.
-		r.mu.Lock()
-		if r.Cooldown > 0 && !r.lastFired.IsZero() && now.Sub(r.lastFired) < r.Cooldown {
-			r.mu.Unlock()
+		if !r.cooldown.claim(now, r.Cooldown) {
 			continue
 		}
-		r.lastFired = now
-		r.mu.Unlock()
 
 		alert := Alert{
 			Name:      r.Name,
+			Severity:  r.Severity,
 			Metric:    r.Metric,
 			Value:     value,
 			Threshold: r.Threshold,
@@ -293,12 +335,25 @@ type WebhookChannel struct {
 	client  *http.Client
 }
 
-// NewWebhookChannel creates a webhook alert channel.
+// ChannelTimeout bounds one alert delivery.
+const ChannelTimeout = 10 * time.Second
+
+// NewWebhookChannel creates a webhook alert channel with a plain client. The
+// operator's config.yaml channels (NewManager) use it. An organization's
+// channels go through the guarded egress dialer instead
+// (NewWebhookChannelWithClient), so an org-set URL reaches only addresses the
+// egress rules allow.
 func NewWebhookChannel(url string, headers map[string]string) *WebhookChannel {
+	return NewWebhookChannelWithClient(&http.Client{Timeout: ChannelTimeout}, url, headers)
+}
+
+// NewWebhookChannelWithClient creates a webhook alert channel that sends
+// through client, so a caller can give it the guarded egress client.
+func NewWebhookChannelWithClient(client *http.Client, url string, headers map[string]string) *WebhookChannel {
 	return &WebhookChannel{
 		url:     url,
 		headers: headers,
-		client:  &http.Client{Timeout: 10 * time.Second},
+		client:  client,
 	}
 }
 
@@ -332,17 +387,46 @@ type SlackChannel struct {
 	client *http.Client
 }
 
-// NewSlackChannel creates a Slack alert channel.
+// NewSlackChannel creates a Slack alert channel with a plain client (the
+// operator's config.yaml channels). An organization's channels use the
+// guarded egress client through NewSlackChannelWithClient.
 func NewSlackChannel(url string) *SlackChannel {
+	return NewSlackChannelWithClient(&http.Client{Timeout: ChannelTimeout}, url)
+}
+
+// NewSlackChannelWithClient creates a Slack alert channel that sends through
+// client.
+func NewSlackChannelWithClient(client *http.Client, url string) *SlackChannel {
 	return &SlackChannel{
 		url:    url,
-		client: &http.Client{Timeout: 10 * time.Second},
+		client: client,
 	}
 }
 
+// slackEmoji marks a Slack alert by its severity.
+var slackEmoji = map[string]string{
+	"info":     ":information_source:",
+	"warning":  ":warning:",
+	"critical": ":rotating_light:",
+}
+
+// slackText is the Slack message for alert: its severity (when the rule has
+// one), the metric against the threshold, the window and when it fired.
+func slackText(alert Alert) string {
+	emoji := ":rotating_light:"
+	severity := ""
+	if alert.Severity != "" {
+		if e, ok := slackEmoji[alert.Severity]; ok {
+			emoji = e
+		}
+		severity = fmt.Sprintf("\nSeverity: %s", alert.Severity)
+	}
+	return fmt.Sprintf("%s *Alert: %s*%s\nMetric: `%s` = %.2f (threshold: %s %.2f)\nWindow: %s | Fired: %s",
+		emoji, alert.Name, severity, alert.Metric, alert.Value, alert.Condition, alert.Threshold, alert.Window, alert.FiredAt.Format(time.RFC3339))
+}
+
 func (c *SlackChannel) Send(alert Alert) error {
-	text := fmt.Sprintf(":rotating_light: *Alert: %s*\nMetric: `%s` = %.2f (threshold: %s %.2f)\nWindow: %s | Fired: %s",
-		alert.Name, alert.Metric, alert.Value, alert.Condition, alert.Threshold, alert.Window, alert.FiredAt.Format(time.RFC3339))
+	text := slackText(alert)
 
 	payload := map[string]string{"text": text}
 	body, err := json.Marshal(payload)
@@ -367,6 +451,7 @@ type LogChannel struct{}
 func (c *LogChannel) Send(alert Alert) error {
 	slog.Warn("alert fired",
 		"alert", alert.Name,
+		"severity", alert.Severity,
 		"metric", alert.Metric,
 		"value", alert.Value,
 		"threshold", alert.Threshold,
