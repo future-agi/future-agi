@@ -1796,6 +1796,7 @@ export const endpoints = {
     list: apiPath("/tracer/derived-metrics/"),
     detail: (id) => apiPath("/tracer/derived-metrics/{id}/", { id }),
     validate: apiPath("/tracer/derived-metrics/validate/"),
+    evaluators: apiPath("/tracer/derived-metrics/evaluators/"),
     preview: (id) => apiPath("/tracer/derived-metrics/{id}/preview/", { id }),
     runs: (id) => apiPath("/tracer/derived-metrics/{id}/runs/", { id }),
     run: (id) => apiPath("/tracer/derived-metric-runs/{id}/", { id }),

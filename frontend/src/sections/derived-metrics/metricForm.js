@@ -63,3 +63,41 @@ export function metricRequestBody(form, metric) {
     ...(metric ? { expected_version: metric.current_version } : {}),
   };
 }
+
+/**
+ * A weighted metric reads sampled results, which are always stored under the
+ * evaluator's config_hash. An empty hash selects only legacy unversioned results,
+ * so a weighted metric with an unhashed evaluator input could never find a weight.
+ * The server enforces the same rule; this surfaces it before a round trip.
+ * @returns {string[]} one human-readable problem per unmet requirement
+ */
+export function weightedInputProblems(form) {
+  if (form.weighting !== "inverse_probability") return [];
+  const evaluators = form.inputs.filter((input) => input.source === "eval");
+  if (evaluators.length === 0)
+    return [
+      "Inverse-probability weighting needs at least one evaluation input.",
+    ];
+  return evaluators
+    .filter((input) => !input.config_hash)
+    .map(
+      (input) =>
+        `Input "${input.alias}" needs an evaluator selected (or its exact hash entered): an empty hash reads only legacy unversioned results, which are never sampled.`,
+    );
+}
+
+/** Bind an evaluator picked from the project list: BOTH id and persisted hash. */
+export const evaluatorBinding = (evaluator) => ({
+  config_id: evaluator?.id ?? "",
+  config_hash: evaluator?.config_hash ?? "",
+});
+
+/**
+ * An evaluator's persisted hash follows its definition. When the bound hash is
+ * set but no longer equals the listed evaluator's current hash, new results land
+ * under a different hash and this input keeps reading only the older ones.
+ */
+export const evaluatorDrift = (input, listed) =>
+  Boolean(
+    listed && input.config_hash && listed.config_hash !== input.config_hash,
+  );

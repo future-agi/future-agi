@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "src/utils/test-utils";
 import MetricInputs from "../MetricInputs";
 import MetricResults from "../MetricResults";
@@ -121,7 +122,13 @@ describe("derived metric form contract", () => {
         <MetricInputs inputs={inputs} onChange={setInputs} disabled={false} />
       );
     }
-    render(<Form />);
+    // The evaluator picker reads through react-query, which the app always
+    // provides. No project is set, so the picker never issues a request.
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <Form />
+      </QueryClientProvider>,
+    );
     fireEvent.mouseDown(screen.getByLabelText("Input 1 source"));
     fireEvent.click(screen.getByRole("option", { name: "Span field" }));
     expect(screen.getByLabelText("Input 1 attribute key")).toBeInTheDocument();

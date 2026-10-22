@@ -8,9 +8,15 @@ import {
   Typography,
 } from "@mui/material";
 
+import EvaluatorBinding from "./EvaluatorBinding";
 import { newInput } from "./metricForm";
 
-export default function MetricInputs({ inputs, onChange, disabled }) {
+export default function MetricInputs({
+  inputs,
+  onChange,
+  disabled,
+  projectId,
+}) {
   const update = (index, key, value) =>
     onChange(
       inputs.map((input, i) =>
@@ -22,6 +28,10 @@ export default function MetricInputs({ inputs, onChange, disabled }) {
             }
           : input,
       ),
+    );
+  const bind = (index, patch) =>
+    onChange(
+      inputs.map((input, i) => (i === index ? { ...input, ...patch } : input)),
     );
   return (
     <Stack spacing={2}>
@@ -78,25 +88,14 @@ export default function MetricInputs({ inputs, onChange, disabled }) {
           </Stack>
           <Stack direction={{ xs: "column", md: "row" }} gap={1} sx={{ mt: 1 }}>
             {input.source === "eval" ? (
-              <>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label={`Input ${index + 1} evaluator ID`}
-                  value={input.config_id || ""}
-                  disabled={disabled}
-                  onChange={(e) => update(index, "config_id", e.target.value)}
-                />
-                <TextField
-                  fullWidth
-                  size="small"
-                  label={`Input ${index + 1} evaluator hash`}
-                  value={input.config_hash}
-                  disabled={disabled}
-                  onChange={(e) => update(index, "config_hash", e.target.value)}
-                  helperText="Exact persisted config_hash. Empty selects legacy unversioned results only."
-                />
-              </>
+              <EvaluatorBinding
+                index={index}
+                input={input}
+                projectId={projectId}
+                disabled={disabled}
+                onBind={(patch) => bind(index, patch)}
+                onField={(key, value) => update(index, key, value)}
+              />
             ) : (
               <>
                 <TextField
@@ -156,4 +155,5 @@ MetricInputs.propTypes = {
   inputs: PropTypes.array.isRequired,
   onChange: PropTypes.func.isRequired,
   disabled: PropTypes.bool,
+  projectId: PropTypes.string,
 };

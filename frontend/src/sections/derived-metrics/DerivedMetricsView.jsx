@@ -22,7 +22,12 @@ import { paths } from "src/routes/paths";
 import useCanEditDashboard from "src/sections/dashboards/hooks/useCanEditDashboard";
 import MetricInputs from "./MetricInputs";
 import MetricResults from "./MetricResults";
-import { initialForm, formFromMetric, metricRequestBody } from "./metricForm";
+import {
+  initialForm,
+  formFromMetric,
+  metricRequestBody,
+  weightedInputProblems,
+} from "./metricForm";
 
 const localTime = (date) =>
   new Date(date.getTime() - date.getTimezoneOffset() * 60000)
@@ -445,9 +450,15 @@ function MetricEditor({ scope }) {
           </Stack>
           <MetricInputs
             inputs={form.inputs}
+            projectId={form.project_id}
             disabled={isReadOnly}
             onChange={(inputs) => change("inputs", inputs)}
           />
+          {weightedInputProblems(form).map((problem) => (
+            <Alert key={problem} severity="warning">
+              {problem}
+            </Alert>
+          ))}
           <TextField
             label="Formula"
             multiline
