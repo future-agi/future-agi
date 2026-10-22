@@ -15,6 +15,7 @@ import { useSearchParams } from "react-router-dom";
 import CreateKnowledgeBaseDrawer from "../CreateKnowledgeBase/CreateKnowledgeBaseDrawer";
 import EditKnowledgeBaseNameDialog from "./edit-knowledge-base-name-dialog";
 import SyntheticDataDrawer from "src/sections/develop/AddRowDrawer/CreateSyntheticData";
+import PdfPreviewDrawer from "src/components/PdfPreviewDrawer";
 
 const tabOptions = [
   {
@@ -295,6 +296,7 @@ export default function KnowledgeBaseSheetView() {
         datasetId={null}
         refreshGrid={refreshGrid}
       />
+      <PdfPreviewDrawer />
     </>
   );
 }
