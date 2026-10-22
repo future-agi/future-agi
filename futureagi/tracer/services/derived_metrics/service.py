@@ -57,6 +57,52 @@ def _hash(value) -> str:
     ).hexdigest()
 
 
+def list_evaluators(project, search: str = "", limit: int = 50) -> dict:
+    """Project evaluators with the config_hash their current definition persists under."""
+    from tracer.services.eval_tasks.config_hash import resolved_config_hash
+
+    queryset = CustomEvalConfig.objects.filter(
+        project=project, deleted=False
+    ).select_related("eval_template")
+    if search:
+        queryset = queryset.filter(name__icontains=search)
+    rows = list(queryset.order_by("name", "id")[: limit + 1])
+    return {
+        "results": [
+            {
+                "id": config.id,
+                "name": config.name or "",
+                "config_hash": resolved_config_hash(config),
+            }
+            for config in rows[:limit]
+        ],
+        "truncated": len(rows) > limit,
+    }
+
+
+def conflicting_filter_field(filters: list[dict]) -> str | None:
+    """A field pinned to two different exact values can only select nothing."""
+    seen: dict[str, str] = {}
+    for item in filters:
+        if seen.setdefault(item["field"], item["value"]) != item["value"]:
+            return item["field"]
+    return None
+
+
+def require_satisfiable_filters(definition, run_filters: list[dict]) -> None:
+    """A run's filters are ANDed with the version's own; contradictions select nothing."""
+    conflict = conflicting_filter_field([*definition.filters, *run_filters])
+    if conflict:
+        raise MetricInputError(
+            {
+                "filters": (
+                    f"This run's filter on '{conflict}' contradicts the saved version's "
+                    "exact filter, so no span can match. Remove or align it."
+                )
+            }
+        )
+
+
 def validate_definition(data: dict, project) -> dict:
     formula = compile_formula(
         data["formula"], [item["alias"] for item in data["inputs"]]
@@ -78,10 +124,40 @@ def validate_definition(data: dict, project) -> dict:
         raise MetricInputError(
             {"inputs": "One or more evaluators are not available in this project."}
         )
-    if data["weighting"] == "inverse_probability" and not config_ids:
+    if data["weighting"] == "inverse_probability":
+        if not config_ids:
+            raise MetricInputError(
+                {
+                    "weighting": "Weighting requires persisted sampling metadata on an evaluation input."
+                }
+            )
+        unversioned = [
+            item["alias"]
+            for item in data["inputs"]
+            if item["source"] == "eval" and not item.get("config_hash")
+        ]
+        if unversioned:
+            # An empty hash selects only legacy unversioned results. Sampled
+            # results always carry the evaluator's resolved config_hash, so this
+            # combination can never find a weight: every unit would be missing.
+            raise MetricInputError(
+                {
+                    "inputs": (
+                        "Weighted metrics need the exact evaluator config_hash that produced "
+                        "the sampled results; an empty hash selects only legacy unversioned "
+                        "results, which have no sampling metadata. Select the evaluator "
+                        "or enter its hash for: " + ", ".join(unversioned) + "."
+                    )
+                }
+            )
+    conflict = conflicting_filter_field(data.get("filters") or [])
+    if conflict:
         raise MetricInputError(
             {
-                "weighting": "Weighting requires persisted sampling metadata on an evaluation input."
+                "filters": (
+                    f"Filters are combined with AND, so different exact values for "
+                    f"'{conflict}' can never match a span. Keep one value per field."
+                )
             }
         )
     return {
@@ -143,6 +219,7 @@ def create_run(
     ).first()
     if definition is None:
         raise MetricInputError({"version": "Metric version does not exist."})
+    require_satisfiable_filters(definition, data["filters"])
     source_run_id = str(data.get("source_run_id") or "")
     if (
         source_run_id

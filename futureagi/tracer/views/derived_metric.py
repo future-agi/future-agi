@@ -21,6 +21,8 @@ from tracer.models.derived_metric import (
 )
 from tracer.permissions.metrics import MetricWorkspacePermission
 from tracer.serializers.derived_metric import (
+    DerivedMetricEvaluatorPageSerializer,
+    DerivedMetricEvaluatorQuerySerializer,
     DerivedMetricListQuerySerializer,
     DerivedMetricListSerializer,
     DerivedMetricRecomputeSerializer,
@@ -179,6 +181,22 @@ class DerivedMetricViewSet(MetricViewSet):
         except FormulaError as exc:
             raise ValidationError({"formula": str(exc)}) from exc
         return Response(result)
+
+    @validated_request(
+        query_serializer=DerivedMetricEvaluatorQuerySerializer,
+        responses={200: DerivedMetricEvaluatorPageSerializer},
+    )
+    @action(detail=False, methods=["get"], url_path="evaluators")
+    def evaluators(self, request):
+        params = request.validated_query_data
+        project = get_object_or_404(
+            project_queryset_for_request(request), pk=params["project_id"]
+        )
+        return Response(
+            DerivedMetricEvaluatorPageSerializer(
+                service.list_evaluators(project, params["search"], params["limit"])
+            ).data
+        )
 
     @validated_request(
         query_serializer=DerivedMetricListQuerySerializer,

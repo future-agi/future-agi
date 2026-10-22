@@ -269,3 +269,31 @@ class DerivedMetricListSerializer(serializers.Serializer):
 class DerivedMetricRunsSerializer(serializers.Serializer):
     results = DerivedMetricRunSerializer(many=True)
     next_cursor = serializers.UUIDField(allow_null=True)
+
+
+class DerivedMetricEvaluatorQuerySerializer(StrictInputSerializer):
+    project_id = serializers.UUIDField()
+    search = serializers.CharField(
+        max_length=100, required=False, allow_blank=True, default=""
+    )
+    limit = serializers.IntegerField(min_value=1, max_value=100, default=50)
+
+
+class DerivedMetricEvaluatorSerializer(serializers.Serializer):
+    id = serializers.UUIDField(help_text="Evaluator config ID to bind (config_id).")
+    name = serializers.CharField(allow_blank=True)
+    config_hash = serializers.RegexField(
+        r"^[a-f0-9]{64}$",
+        help_text=(
+            "Hash of the evaluator's CURRENT resolved definition: the config_hash that "
+            "new evaluation results are stored under. Results produced under an earlier "
+            "definition carry a different hash."
+        ),
+    )
+
+
+class DerivedMetricEvaluatorPageSerializer(serializers.Serializer):
+    results = DerivedMetricEvaluatorSerializer(many=True)
+    truncated = serializers.BooleanField(
+        help_text="True when more evaluators matched than were returned; narrow the search."
+    )
