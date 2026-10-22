@@ -29,6 +29,7 @@ import {
 } from "src/api/harness/harness";
 import {
   createHarnessAdaptation,
+  createHarnessHostedAgent,
   useHarnessReleases,
 } from "src/api/harness/releases";
 import { paths } from "src/routes/paths";
@@ -44,6 +45,12 @@ const CONNECTORS = [
   { value: "retell_chat", label: "Retell chat" },
   { value: "retell", label: "Retell voice" },
   { value: "vapi", label: "Vapi" },
+];
+
+// Gateway names: the `vertex_ai/` prefix keeps the call on Vertex (the platform's own key).
+const HOSTED_AGENT_MODELS = [
+  { value: "vertex_ai/gemini-3.7-flash", label: "Gemini 3.7 Flash" },
+  { value: "vertex_ai/gemini-3.8-flash", label: "Gemini 3.8 Flash" },
 ];
 
 const originSummary = (origins = {}) =>
@@ -289,7 +296,125 @@ UseReleaseDialog.propTypes = {
   onClose: PropTypes.func.isRequired,
 };
 
-function ReleaseCard({ release, onUse }) {
+// Our own agent: instructions and a model, reaching the environment's tools over MCP. The
+// platform binds it directly, so the environment is ready to run as soon as it is created.
+export function HostedAgentDialog({ release, open, onClose }) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const suites = release?.suites || [];
+  const [suiteId, setSuiteId] = useState(suites[0]?.id || "");
+  const [name, setName] = useState(`${release?.name || "Agent"} (our agent)`);
+  const [instructions, setInstructions] = useState("");
+  const [model, setModel] = useState(HOSTED_AGENT_MODELS[0].value);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [idempotencyKey] = useState(harnessIdempotencyKey);
+  const ready =
+    Boolean(suiteId && name.trim() && instructions.trim()) && !submitting;
+
+  const submit = async () => {
+    setSubmitting(true);
+    setError("");
+    try {
+      const created = await createHarnessHostedAgent({
+        suite_id: suiteId,
+        name: name.trim(),
+        instructions: instructions.trim(),
+        model,
+        idempotency_key: idempotencyKey,
+      });
+      queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
+      navigate(paths.dashboard.simulate.environments.detail(created.id));
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+      <DialogTitle>Run our agent on {release?.name}</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ pt: 1 }}>
+          <TextField
+            select
+            size="small"
+            label="Scenario suite"
+            value={suiteId}
+            onChange={(event) => setSuiteId(event.target.value)}
+          >
+            {suites.map((suite) => (
+              <MenuItem key={suite.id} value={suite.id}>
+                {suite.name} · {suite.scenario_count} scenarios
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            size="small"
+            multiline
+            minRows={6}
+            label="Instructions"
+            placeholder="You are the front desk of …. Use your tools to look things up and make changes."
+            value={instructions}
+            onChange={(event) => setInstructions(event.target.value)}
+          />
+          <TextField
+            select
+            size="small"
+            label="Model"
+            value={model}
+            onChange={(event) => setModel(event.target.value)}
+          >
+            {HOSTED_AGENT_MODELS.map((item) => (
+              <MenuItem key={item.value} value={item.value}>
+                {item.label}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            size="small"
+            label="Environment name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+          <Typography variant="caption" color="text.secondary">
+            Our agent runs in the harness and reaches this environment&apos;s
+            tools over MCP, so there is nothing to connect or adapt. Its model
+            usage counts towards the simulation.
+          </Typography>
+          {error && (
+            <Alert severity="error" variant="outlined">
+              {error}
+            </Alert>
+          )}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button color="inherit" onClick={onClose} disabled={submitting}>
+          Cancel
+        </Button>
+        <Button
+          variant="contained"
+          disabled={!ready}
+          onClick={submit}
+          startIcon={
+            submitting ? <CircularProgress size={14} color="inherit" /> : null
+          }
+        >
+          Create environment
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+HostedAgentDialog.propTypes = {
+  release: PropTypes.object,
+  open: PropTypes.bool,
+  onClose: PropTypes.func.isRequired,
+};
+
+function ReleaseCard({ release, onUse, onHosted }) {
   const tools = release.tools || [];
   const parameters = release.policy?.parameters || [];
   const rules = release.policy?.agent_rules || [];
@@ -326,7 +451,7 @@ function ReleaseCard({ release, onUse }) {
             </Typography>
           ))}
         </Stack>
-        <Box>
+        <Stack direction="row" spacing={1}>
           <Button
             size="small"
             variant="contained"
@@ -336,7 +461,16 @@ function ReleaseCard({ release, onUse }) {
           >
             Use with my agent
           </Button>
-        </Box>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={!release.suites?.length}
+            onClick={() => onHosted(release)}
+            startIcon={<Iconify icon="solar:cpu-bolt-linear" width={16} />}
+          >
+            Run our agent
+          </Button>
+        </Stack>
       </Stack>
     </Paper>
   );
@@ -345,6 +479,7 @@ function ReleaseCard({ release, onUse }) {
 ReleaseCard.propTypes = {
   release: PropTypes.object.isRequired,
   onUse: PropTypes.func.isRequired,
+  onHosted: PropTypes.func.isRequired,
 };
 
 // Released environments: proved worlds and suites a hosted agent can run against without
@@ -352,6 +487,7 @@ ReleaseCard.propTypes = {
 export default function ReleaseGallery({ empty = null }) {
   const { data: releases = [], error, isLoading } = useHarnessReleases();
   const [using, setUsing] = useState(null);
+  const [hosting, setHosting] = useState(null);
 
   if (error) {
     return (
@@ -381,11 +517,23 @@ export default function ReleaseGallery({ empty = null }) {
         }}
       >
         {releases.map((release) => (
-          <ReleaseCard key={release.id} release={release} onUse={setUsing} />
+          <ReleaseCard
+            key={release.id}
+            release={release}
+            onUse={setUsing}
+            onHosted={setHosting}
+          />
         ))}
       </Box>
       {using && (
         <UseReleaseDialog open release={using} onClose={() => setUsing(null)} />
+      )}
+      {hosting && (
+        <HostedAgentDialog
+          open
+          release={hosting}
+          onClose={() => setHosting(null)}
+        />
       )}
     </Box>
   );

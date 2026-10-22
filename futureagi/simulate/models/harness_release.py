@@ -122,6 +122,25 @@ class HarnessAgentBinding(BaseModel):
         ]
 
 
+class HostedAgentSpec(BaseModel):
+    """Our own agent's spec (`fi.alk.harness.hosted_agent.AgentSpec`: name, instructions, model)
+    for one agent version: what its runs execute, and whose digest its binding pins. Kept apart
+    from `configuration_snapshot`, which describes provider agents and is rebuilt from that
+    schema."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    agent_version = models.OneToOneField(
+        "simulate.AgentVersion",
+        on_delete=models.CASCADE,
+        related_name="hosted_agent_spec",
+    )
+    digest = models.CharField(max_length=71)
+    document = models.JSONField()
+
+    class Meta:
+        db_table = "simulate_hosted_agent_spec"
+
+
 class HarnessRunManifest(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(

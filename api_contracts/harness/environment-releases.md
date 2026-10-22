@@ -652,10 +652,11 @@ receipt.
 
 ### 6.4 Our agent over MCP (`hosted_agent`)
 
-A `hosted_agent` run is our own agent: `job.agent.config.spec` is an
+A `hosted_agent` run is our own agent: `job.agent.config` is exactly an
 `AgentSpec` `{name, instructions, model}` (`fi.alk.harness.hosted_agent`;
-`model` is `vertex_ai/gemini-3.7-flash` or `vertex_ai/gemini-3.8-flash`), and
-its digest is the binding's `agent.provider_digest`. Its bundle differs from
+`model` is `vertex_ai/gemini-3.7-flash` or `vertex_ai/gemini-3.8-flash`), with
+no `mode`, `secret_refs`, `call_direction` or source; its digest is the
+binding's `agent.provider_digest`. Its bundle differs from
 the table above in three places: the `tool-server` process is replaced by
 `world-mcp` (`python -m fi.alk.harness.world_mcp`, same directory and user, no
 request binding), the `tools` capability by `world_mcp` (http, health
@@ -682,6 +683,15 @@ any other: a booking scenario fails because nothing was booked, and one that
 needs no tool is judged on its own checks. A trace that could not be read is
 still `evidence_missing`.
 
+**On the platform.** `POST harness-hosted-agents/` (§7.6) creates a `text`
+agent definition (its description is the instructions) with one active
+version, stores the spec as that version's `HostedAgentSpec` (§7.1), and
+composes it with the suite through a canonical binding the platform builds
+itself: `provider_target_id` is the agent version ID and `provider_digest` the
+spec's digest, computed as ALK computes it. There is no adaptation, because no
+model is needed to bind an agent to the tools it was written for. Runs then go
+through the composition like any other (§7.4).
+
 ## 7. Platform
 
 ### 7.1 Storage
@@ -694,6 +704,7 @@ Insert-only, content-addressed rows (`simulate/models/harness_release.py`):
 | `HarnessSuiteRelease` | `(organization, digest)`; `digest` among system releases | name, environment release, parent suite, archive object key, `suite.json`, the personas from `provision.json` |
 | `HarnessAgentBinding` | `(organization, digest)` | agent version, environment release, mode, `binding.json` |
 | `HarnessRunManifest` | one per run job | digest, the frozen manifest |
+| `HostedAgentSpec` | one per agent version | our agent's spec (§6.4) and its digest |
 
 A release with no organization is a system release any organization may
 compose. Archives live at `harness-releases/<organization|system>/<environment|suite>/<64 hex>.tar.gz`.
@@ -721,14 +732,16 @@ whose `metadata.release_composition` holds the environment chain and suite
 came from adaptation, `alignment`, `binding_proof` and the agent's proved
 `trajectories` (§7.5, §7.8). Its `RunTest`
 and scenario rows are created from the suite's personas with the existing
-`provision_alk_sim_run_test` (modality `text` for `retell_chat`, `voice` for
-`retell` and `vapi`); the `RunTest` carries the bound agent version. The rows
+`provision_alk_sim_run_test` (modality `text` for `retell_chat` and
+`hosted_agent`, `voice` for `retell` and `vapi`); the `RunTest` carries the
+bound agent version. The rows
 are indexed from the suite's `scenario.json` documents (number, name,
 instruction, persona, sub-goals) by exact scenario key, so chat and the
 Scenarios tab address them by number and a new scenario reusing a removed one's
 name is a new row. `create_composition` (`services/harness_releases.py`) builds it for
-`retell_chat`, `retell` and `vapi` agents in `provider_import` mode, from a
-given binding document; adaptation is the only producer.
+`retell_chat`, `retell` and `vapi` agents in `provider_import` mode, from the
+binding document adaptation produced, and for our `hosted_agent` from the
+canonical binding the platform builds (§6.4).
 
 `metadata.adaptation`, `adaptation_result`, `release_composition` and
 `run_manifest` are written only by these services; a job request carrying any
@@ -857,6 +870,7 @@ Under `/simulate/api/`, organization-scoped like the other harness routes.
 |---|---|---|
 | `GET harness-releases/` | | `{results: [{id, digest, name, system, parent: {digest, name} or null, tools: [{name, description, mutates_state}], policy: {parameters: [{name, type, default, allowed}], agent_rules: [{id, text}]}, suites: [{id, digest, name, scenario_count, origins: {base, specialized, custom}, policy_profile}]}]}`; system releases and the organization's own |
 | `POST harness-adaptations/` | `{suite_id, agent_version_id, agent, name, idempotency_key}` (the key in the body); `agent` as in a hosted job (`connector` `retell_chat`, `retell` or `vapi`, `mode: "provider_import"`, `config`, `secret_refs`); the agent definition's type must match the connector's modality (400 `agent_modality_mismatch`) | 202, the job (`HarnessJobReadSerializer`); the UI follows it like any harness job |
+| `POST harness-hosted-agents/` | `{suite_id, name, instructions, model, idempotency_key}`; `model` as in §6.4 | 201 `{id, agent_version_id}`: the composition (an environment ID) and the new agent version; the same key with the same spec answers the same composition, with another 409 `idempotency_conflict` |
 | `GET harness-environments/{id}/` | | adds `composition`: `null`, or `{environment: [{digest, name}], suite: {digest, name, parent_digest, policy_profile, unscored_agent_rules: [{id, text}], scenarios: [{key, origin, derived_from}]}, binding: {digest, mode, agent_tools, tools}, agent: {agent_definition_id, agent_version_id, connector, name, version_name}, alignment, binding_proof: {passed, scenarios}}` |
 | `GET harness-environments/{id}/runs/{run_id}/report/` | `?baseline=<run_id>`; a run is named by its test execution ID or its run job ID; the baseline may be a run of another composition in the organization | §7.7; 409 `not_a_composition` for other environments |
 
