@@ -44,7 +44,8 @@ export function validateMockRouting(source: string, evalBackground = false): voi
   requireSafe(same(routes, [...judgeModels, 'turing_flash']) ||
     (!evalBackground && same(routes, judgeModels)), 'unexpected model routes or missing background capability');
   requireSafe(Object.keys(cfg.server).every(k => ['port', 'host', 'read_timeout', 'write_timeout',
-    'idle_timeout', 'shutdown_timeout', 'max_request_body_size', 'default_request_timeout'].includes(k)) &&
+    'idle_timeout', 'shutdown_timeout', 'max_request_body_size', 'default_request_timeout',
+    'max_request_timeout'].includes(k)) &&
     cfg.server.port === 8080 && cfg.server.host === '0.0.0.0', 'unexpected gateway server settings');
   requireSafe(same(Object.keys(cfg.logging), ['level']) &&
     ['debug', 'info', 'warn', 'error'].includes(cfg.logging.level), 'unexpected logging configuration');

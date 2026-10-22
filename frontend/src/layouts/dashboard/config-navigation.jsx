@@ -6,6 +6,8 @@ import {
   useWorkspacesList,
 } from "src/api/workspaces/list";
 import { paths } from "src/routes/paths";
+import { agentsSidebarPath } from "src/sections/agent-playground/agentsTabs";
+import { usePathname } from "src/routes/hooks";
 import { HELP_LINK } from "src/config-global";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
@@ -49,7 +51,6 @@ const ICONS = {
   alerts: icon("ic_alert"),
   falconAI: icon("ic_falcon_ai"),
   simulate: icon("ic_experiment"),
-  agentDefinition: icon("ic_project"),
   scenarios: icon("ic_sessions"),
   simulatorAgent: icon("ic_optimize"),
   test: icon("ic_evaluate"),
@@ -69,6 +70,7 @@ export function useNavData() {
   const effectiveWsRole = currentWorkspaceRole || userDefaultWsRole;
   const isAdmin =
     userOrgRole === "Admin" || effectiveWsRole === "workspace_admin";
+  const agentsPath = agentsSidebarPath(usePathname());
   const data = useMemo(() => {
     const buildItems = [
       {
@@ -93,7 +95,8 @@ export function useNavData() {
       },
       {
         title: "Agents",
-        path: paths.dashboard.agents,
+        path: agentsPath,
+        activePath: paths.dashboard.agents,
         icon: ICONS.agents,
         // eventTrigger: () => {
         //   trackEvent(Events.navigationPromptClicked, {
@@ -214,16 +217,6 @@ export function useNavData() {
             icon: <Iconify icon="solar:server-square-cloud-linear" />,
           },
           {
-            title: "Agent Definition",
-            path: paths.dashboard.simulate.agentDefinition,
-            icon: ICONS.agentDefinition,
-            eventTrigger: () => {
-              trackEvent(Events.navigationAlertDefinitionClicked, {
-                [PropertyName.click]: true,
-              });
-            },
-          },
-          {
             title: "Scenarios",
             path: paths.dashboard.simulate.scenarios,
             icon: ICONS.scenarios,
@@ -282,7 +275,7 @@ export function useNavData() {
     });
 
     return sections;
-  }, [isOwner, isAdmin]);
+  }, [isOwner, isAdmin, agentsPath]);
   return data;
 }
 

@@ -1350,24 +1350,42 @@ def _ingest_hosted_transcript(
                 _store_alk_chat_messages,
             )
 
-            segments = [
-                {
-                    "speaker_role": str(message.get("role") or "unknown"),
-                    "content": str(message.get("content") or ""),
-                    **(
-                        {"tool_calls": message["tool_calls"]}
-                        if message.get("tool_calls")
-                        else {}
-                    ),
-                }
+            # Turns carry the epoch second they were delivered (`at`), on the tool trace's
+            # clock, so turns and tool calls are measured from one base into one timeline.
+            def sent_at(message: dict) -> float | None:
+                value = message.get("at")
+                return value if isinstance(value, (int, float)) and value > 0 else None
+
+            messages = [
+                message
                 for message in messages
                 if isinstance(message, dict) and message.get("content") is not None
             ]
+            sent = [at for at in map(sent_at, messages) if at is not None]
+            if sent:
+                call_start = _epoch_seconds(call.started_at)
+                base_time = (
+                    call_start
+                    if call_start is not None and call_start <= min(sent)
+                    else min(sent)
+                )
+            segments = []
+            for message in messages:
+                segment = {
+                    "speaker_role": str(message.get("role") or "unknown"),
+                    "content": str(message.get("content") or ""),
+                }
+                if message.get("tool_calls"):
+                    segment["tool_calls"] = message["tool_calls"]
+                at = sent_at(message)
+                if base_time is not None and at is not None:
+                    segment["start_time_ms"] = int(round((at - base_time) * 1000))
+                segments.append(segment)
             ChatMessageModel.objects.filter(call_execution=call).delete()
             CallTranscript.objects.filter(call_execution=call).delete()
             if segments:
                 _store_alk_chat_messages(call, segments)
-            return None
+            return base_time
         rows: list[CallTranscript] = []
         if isinstance(messages, list):
             # The v2 transcript carries absolute speech timing

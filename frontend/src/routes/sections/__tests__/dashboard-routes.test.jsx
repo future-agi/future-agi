@@ -28,3 +28,16 @@ describe("dashboard route registry", () => {
     expect(findChildRoute(optimizeRoute, ":optimizeId")).toBeTruthy();
   });
 });
+
+describe("old Agent Definition link", () => {
+  it("opens Connected agents, and keeps the old agent pages under it", () => {
+    const [dashboardRoute] = dashboardRoutes(null, null, { isCloud: true });
+    const simulate = findChildRoute(dashboardRoute, "simulate");
+    const list = findChildRoute(simulate, "agent-definitions");
+    expect(list.element.props.to).toBe("/dashboard/agents/connected");
+    expect(list.element.props.replace).toBe(true);
+    expect(
+      findChildRoute(simulate, "agent-definitions/:agentDefinitionId"),
+    ).toBeTruthy();
+  });
+});

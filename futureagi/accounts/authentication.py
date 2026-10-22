@@ -206,6 +206,12 @@ class APIKeyAuthentication(BaseAuthentication):
                 deleted=False,
             )
 
+            # An ingest key lives inside a customer's untrusted process and may
+            # only write spans to the collector; refused before a user is chosen
+            # so it can never act as the organisation's system user.
+            if org_api_key.type == "ingest":
+                raise AuthenticationFailed("ingest keys cannot call the API")
+
             # Validate that the API key has a valid organization
             if not org_api_key.organization:
                 raise AuthenticationFailed("API key has no organization")
@@ -690,6 +696,11 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
 
         if not org_api_key.organization:
             raise AuthenticationFailed("API key has no organization")
+
+        # Same refusal as the parent class: an ingest key may only write spans
+        # to the collector, even if a user was attached to it.
+        if org_api_key.type == "ingest":
+            raise AuthenticationFailed("ingest keys cannot call the API")
 
         # Resolve user (same logic as parent class)
         if org_api_key.type == "system":

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
-import { Box, Button, Stack } from "@mui/material";
+import { Alert, Box, Button, Stack } from "@mui/material";
 import {
   useNavigate,
   useParams,
@@ -28,6 +28,7 @@ import {
 } from "src/api/simulate-environments/runs";
 import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
@@ -48,22 +49,26 @@ import useWorkspaceTab from "./helpers/useWorkspaceTab";
 import { gapsByTab, counts } from "./helpers/workspaceGaps";
 import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
+import { blockedReason } from "./runBlocked";
 
 const EXECUTION_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/runs/:testId/:executionId`,
   end: false,
 };
 
-// The named reason a run is blocked, in the designer's order: an agent first,
-// then scenarios, then evals, then a generic fallback. Only read when the header
-// button is disabled, so it never shows for a runnable environment.
-// Evals are intentionally not a run blocker — canRun needs only an agent and
-// scenarios, so a run without evals is allowed (it just isn't scored).
-const blockedReason = (envState) => {
-  if (!envState.agent) return WORKSPACE_COPY.runBlocked.agent;
-  if (!envState.scenarios?.length) return WORKSPACE_COPY.runBlocked.scenarios;
-  return WORKSPACE_COPY.runBlocked.generic;
-};
+
+// Why the platform left observability off; the Environment builds either way.
+function refusalReason(refusal) {
+  if (refusal.code === "agent_not_stored") return "the agent's code could not be read";
+  if (refusal.code === "bound") {
+    return "the run uses an existing agent; turn it on from the agent page";
+  }
+  const details = refusal.details && typeof refusal.details === "object" ? refusal.details : {};
+  const messages = Object.values(details)
+    .map((list) => (Array.isArray(list) ? list[0] : undefined))
+    .filter((message) => typeof message === "string" && message);
+  return messages.length ? messages.join("; ") : "the project could not be created";
+}
 
 /**
  * The environment workspace at `environments/:envId`.
@@ -197,6 +202,14 @@ export default function EnvironmentWorkspace() {
     />
   );
 
+  const refusal = jobQuery.data?.job?.metadata?.observability_refusal;
+  const refusalLine =
+    refusal && typeof refusal === "object" && !Array.isArray(refusal) ? (
+      <Alert severity="warning" role="status" sx={{ mx: 2, mt: 2 }}>
+        {`Observability was not turned on: ${refusalReason(refusal)}`}
+      </Alert>
+    ) : null;
+
   const executionMatch = useMatch(EXECUTION_PATTERN);
 
   if (notFound) {
@@ -250,9 +263,12 @@ export default function EnvironmentWorkspace() {
     );
   }
 
-  // Still resolving the id — a blank centred box, never a flash of "not found".
+  // Still resolving the id. Until the job loads the page can't tell a build
+  // from a built environment, so it shows the app's loader (the same one the
+  // route shows while its code loads), never a blank page or a flash of
+  // "not found".
   if (!env) {
-    return <Box sx={{ height: "100%", minHeight: 420, display: "grid", placeItems: "center" }} />;
+    return <LoadingScreen />;
   }
 
   // Still deriving OR terminally failed: the workspace header over the two-pane
@@ -273,6 +289,7 @@ export default function EnvironmentWorkspace() {
           locked
         />
         {creditBanner}
+        {refusalLine}
         <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
           <BuildingStage
             progress={progress}
@@ -400,14 +417,27 @@ export default function EnvironmentWorkspace() {
         }
       : undefined;
 
+  // A backed env's tabs all read the detail. Until it lands, or if it fails,
+  // the job poll alone would fill them with a guessed channel, no agent, zero
+  // counts and sample cards, so the tab area waits for it or offers a retry.
+  const detailFailed = backed && !backedDetail && evalDetailQuery.isError;
+  const detailLoading = backed && !backedDetail && !detailFailed;
+  // Run needs the details too: without them the page can't show what a run
+  // would test against, so it waits for them like the tabs do.
+  const detailBlock = detailFailed
+    ? WORKSPACE_COPY.runBlocked.detailFailed
+    : detailLoading
+      ? WORKSPACE_COPY.runBlocked.detailLoading
+      : null;
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <WorkspaceHeader
         env={displayEnv}
         envState={envState}
         patch={patch}
-        canRun={runnable && !runMutation.isPending}
-        runBlockedReason={blockedReason(envState)}
+        canRun={runnable && !runMutation.isPending && !detailBlock}
+        runBlockedReason={detailBlock || blockedReason(envState, env, backed, runMutation.isPending)}
         locked={locked}
         backed={source === "harness"}
         onFork={onFork}
@@ -415,9 +445,10 @@ export default function EnvironmentWorkspace() {
         selectionActive={selectionActive}
       />
       {creditBanner}
+      {refusalLine}
 
       <SystemBanners env={env} envState={envState} patch={patch} />
-      <VersionBar env={env} envState={envState} />
+      {!detailLoading && !detailFailed && <VersionBar env={env} envState={envState} />}
 
       {/* A template-seeded env is read-only until forked — the banner states the
           lock and offers the fork. */}
@@ -441,6 +472,22 @@ export default function EnvironmentWorkspace() {
             />
           )}
         >
+          {detailFailed ? (
+            <EmptyState
+              icon="solar:danger-triangle-linear"
+              title={WORKSPACE_COPY.detailError.title}
+              body={WORKSPACE_COPY.detailError.body}
+              action={
+                // While the retry is in flight the query is no longer in error,
+                // so the loading state below takes over from this one.
+                <Button variant="outlined" size="small" onClick={() => evalDetailQuery.refetch()}>
+                  {WORKSPACE_COPY.detailError.retry}
+                </Button>
+              }
+            />
+          ) : detailLoading ? (
+            <LoadingScreen />
+          ) : (
           <WorkspacePanels
             env={displayEnv}
             envState={envState}
@@ -458,7 +505,9 @@ export default function EnvironmentWorkspace() {
             graphData={graphData}
             onStartRun={startRun}
             canRun={runnable && !runMutation.isPending}
+            runBlockedReason={blockedReason(envState, env, backed, runMutation.isPending)}
           />
+          )}
         </ChatSplitPane>
       </Box>
     </Box>
