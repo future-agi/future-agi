@@ -421,6 +421,30 @@ func TestCountersKeepTheAccountingIdentity(t *testing.T) {
 	}
 }
 
+// A build interrupted by the end of the load window is the end of the load, not
+// an invalid batch; a real build failure or an out-of-order batch still is.
+func TestBatchStopNamesTheRealReason(t *testing.T) {
+	open := context.Background()
+	closed, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, tc := range []struct {
+		name      string
+		ctx       context.Context
+		b         builtBatch
+		generated int64
+		want      string
+	}{
+		{"in-order", open, builtBatch{seq: 8, n: 4}, 8, ""},
+		{"cancelled-build", closed, builtBatch{seq: 8, n: 4, err: context.Canceled}, 8, "duration-or-cancel"},
+		{"failed-build", open, builtBatch{seq: 8, n: 4, err: errors.New("marshal")}, 8, "invalid-or-oversized-batch"},
+		{"out-of-order", open, builtBatch{seq: 12, n: 4}, 8, "invalid-or-oversized-batch"},
+	} {
+		if got := batchStop(tc.ctx, tc.b, tc.generated); got != tc.want {
+			t.Fatalf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestClientDoesNotFollowRedirectOrProxy(t *testing.T) {
 	var contacted atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { contacted.Add(1) }))

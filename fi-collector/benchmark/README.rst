@@ -369,8 +369,9 @@ Span counters satisfy, and every run checks (``accounting_error`` otherwise)::
     unacknowledged = whole_request_rejected + ambiguous
     requests = sum(request_outcomes)
 
-``generated_spans`` counts spans taken from the build pipeline, including the final
-batch refused by local byte/duration limits. ``success_status_spans`` (HTTP 200 /
+``generated_spans`` counts spans built by the pipeline, including the final batch
+refused by local byte/duration limits but not a build cut short by the end of the
+load window. ``success_status_spans`` (HTTP 200 /
 gRPC OK) does NOT imply a valid OTLP response. ``accepted_spans`` and
 ``acknowledged_spans`` intentionally have the same value: what the collector claims
 to have accepted, not a durable commit. ``response_statuses`` counts requests by

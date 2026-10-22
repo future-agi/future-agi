@@ -225,11 +225,17 @@ produce:
 			r.StopReason = "duration-or-cancel"
 			break produce
 		}
+		if stop := batchStop(loadCtx, b, generated); stop != "" {
+			// A batch that was never built is not generated.
+			<-sem
+			r.StopReason = stop
+			break
+		}
 		generated += int64(b.n)
 		s.mu.Lock()
 		s.counters.Generated = generated
 		s.mu.Unlock()
-		if b.err != nil || b.seq != generated-int64(b.n) || b.batch.uncompressed > 16<<20 {
+		if b.batch.uncompressed > 16<<20 {
 			<-sem
 			r.StopReason = "invalid-or-oversized-batch"
 			break
@@ -397,6 +403,19 @@ func (c Config) buildPipeline(ctx context.Context, start time.Time) (<-chan chan
 		}
 	}()
 	return pipe, workers
+}
+
+// batchStop is why a batch taken from the build pipeline cannot be dispatched,
+// or "" when it can. A build that failed because the load window closed (or the
+// run was cancelled) is the end of the load, not an invalid batch.
+func batchStop(loadCtx context.Context, b builtBatch, generated int64) string {
+	switch {
+	case b.err != nil && loadCtx.Err() != nil:
+		return "duration-or-cancel"
+	case b.err != nil || b.seq != generated:
+		return "invalid-or-oversized-batch"
+	}
+	return ""
 }
 
 func downgrade(status string) string {
