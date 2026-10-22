@@ -249,9 +249,8 @@ serialisation: per 500-span mixed request, between 19x and 38x in repeated
 runs of ``BenchmarkBuildRequest`` on one heavily loaded 10-core development
 machine, where one build worker reached about 2,000-3,000 spans/s with gzip (JSON
 or protobuf) against 57,000-100,000 spans/s for protobuf alone. Those numbers come
-from a contended
-shared host and are not a generator capacity figure; gzip profiles need
-proportionally more generator cores or several generator processes.
+from a contended shared host and are not a generator capacity figure; gzip
+profiles need proportionally more generator cores or several generator processes.
 Each run owns one deterministic namespace; multiple generators need distinct run
 IDs and their combined rates must be summed explicitly rather than assuming a
 single run met a cluster target.
