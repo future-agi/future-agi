@@ -176,6 +176,28 @@ if [ -z "${AGENTCC_WEBHOOK_SECRET:-}" ]; then
   export AGENTCC_WEBHOOK_SECRET
 fi
 
+# The gateway refuses to start on an empty, placeholder or published admin token (and,
+# being in this container, would take the API and UI down with it), and the
+# API's admin endpoints refuse one. The token holds no state and both ends run
+# here, so an empty one, a CHANGEME- placeholder or the default the compose file
+# publishes is replaced by a random one for this start. Set a stable one in
+# .env to call the admin API from outside. The dev-only opt-in keeps it as is.
+admin_token_needs_replacing() {
+  case "${AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN:-}" in
+    1 | [Tt] | [Tt][Rr][Uu][Ee]) return 1 ;;
+  esac
+  case "${AGENTCC_ADMIN_TOKEN:-}" in
+    "" | CHANGEME-* | local-dev-only-admin-token-replace-me) return 0 ;;
+  esac
+  return 1
+}
+if admin_token_needs_replacing; then
+  AGENTCC_ADMIN_TOKEN=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+  AGENTCC_CONTROL_PLANE_TOKEN=$AGENTCC_ADMIN_TOKEN
+  export AGENTCC_ADMIN_TOKEN AGENTCC_CONTROL_PLANE_TOKEN
+  echo "[start] AGENTCC_ADMIN_TOKEN is empty or the published default: using a random one for this start (set one in .env to call the admin API from outside this container)"
+fi
+
 # Every probe in this container (the bootstrap's wait for the API and the
 # healthcheck) asks for 127.0.0.1:8000. An ALLOWED_HOSTS that names only the
 # public host names would answer them 400, and the app would never be ready.
