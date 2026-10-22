@@ -20,7 +20,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  CardContent,
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
@@ -36,6 +35,7 @@ import {
   useDeleteCustomProperty,
 } from "./hooks/useCustomProperties";
 import CreateEditPropertyDialog from "./CreateEditPropertyDialog";
+import { hasStoredDefault } from "./customPropertyForm";
 
 const TYPE_ICONS = {
   string: "mdi:format-text",
@@ -56,6 +56,10 @@ const CustomPropertySection = () => {
   const updateMutation = useUpdateCustomProperty();
   const deleteMutation = useDeleteCustomProperty();
 
+  // A Default is not applied anywhere: the column appears only to show a
+  // stored one, labelled as such.
+  const anyStoredDefault = (properties || []).some(hasStoredDefault);
+
   const filteredProperties = useMemo(() => {
     if (!properties) return [];
     if (!searchQuery.trim()) return properties;
@@ -75,7 +79,9 @@ const CustomPropertySection = () => {
       },
       onError: (err) => {
         enqueueSnackbar(
-          err?.response?.data?.message || "Failed to create property",
+          err?.message ||
+            err?.response?.data?.message ||
+            "Failed to create property",
           { variant: "error" },
         );
       },
@@ -90,7 +96,9 @@ const CustomPropertySection = () => {
       },
       onError: (err) => {
         enqueueSnackbar(
-          err?.response?.data?.message || "Failed to update property",
+          err?.message ||
+            err?.response?.data?.message ||
+            "Failed to update property",
           { variant: "error" },
         );
       },
@@ -226,7 +234,9 @@ const CustomPropertySection = () => {
                   <TableCell>Type</TableCell>
                   <TableCell>Required</TableCell>
                   <TableCell>Allowed Values</TableCell>
-                  <TableCell>Default</TableCell>
+                  {anyStoredDefault && (
+                    <TableCell>Stored default (not applied)</TableCell>
+                  )}
                   <TableCell align="right">Actions</TableCell>
                 </TableRow>
               </TableHead>
@@ -303,17 +313,19 @@ const CustomPropertySection = () => {
                         </Typography>
                       )}
                     </TableCell>
-                    <TableCell>
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ fontFamily: "monospace" }}
-                      >
-                        {prop.default_value != null
-                          ? String(prop.default_value)
-                          : "\u2014"}
-                      </Typography>
-                    </TableCell>
+                    {anyStoredDefault && (
+                      <TableCell>
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          sx={{ fontFamily: "monospace" }}
+                        >
+                          {hasStoredDefault(prop)
+                            ? String(prop.default_value)
+                            : "\u2014"}
+                        </Typography>
+                      </TableCell>
+                    )}
                     <TableCell align="right">
                       <Stack
                         direction="row"
@@ -347,49 +359,6 @@ const CustomPropertySection = () => {
             {filteredProperties.length !== 1 ? "ies" : "y"}
           </Typography>
         </>
-      )}
-
-      {/* Preview card */}
-      {filteredProperties.length > 0 && (
-        <Card sx={{ mt: 3 }}>
-          <CardContent>
-            <Typography variant="subtitle2" mb={1}>
-              Log Preview
-            </Typography>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              display="block"
-              mb={1.5}
-            >
-              This is how custom properties would appear in a request log entry:
-            </Typography>
-            <Box
-              sx={{
-                bgcolor: "action.hover",
-                borderRadius: 1,
-                p: 2,
-                fontFamily: "monospace",
-                fontSize: "0.8rem",
-              }}
-            >
-              <pre style={{ margin: 0 }}>
-                {JSON.stringify(
-                  Object.fromEntries(
-                    filteredProperties.map((p) => [
-                      p.name,
-                      p.default_value != null
-                        ? p.default_value
-                        : `<${p.property_type}>`,
-                    ]),
-                  ),
-                  null,
-                  2,
-                )}
-              </pre>
-            </Box>
-          </CardContent>
-        </Card>
       )}
 
       <CreateEditPropertyDialog

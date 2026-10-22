@@ -3,6 +3,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 import RoutingConfigView from "./RoutingConfigView";
+import {
+  ADMIN_LEVELS,
+  NOT_ADMIN_LEVELS,
+  expectAdminOnly,
+  expectEditable,
+} from "../testing/adminOnly";
+
+// The gateway admin role check (useGatewayAdmin): saving is Owner or Admin only.
+// The cases below run as an Admin unless one says otherwise.
+let mockOrgLevel = 8;
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ orgLevel: mockOrgLevel }),
+}));
 
 const mockUpdateMutate = vi.fn();
 
@@ -27,7 +40,40 @@ async function save(user) {
 
 describe("RoutingConfigView", () => {
   beforeEach(() => {
+    mockOrgLevel = 8;
     mockUpdateMutate.mockClear();
+  });
+
+  it.each(NOT_ADMIN_LEVELS)(
+    "%s sees Save Routing Config disabled",
+    async (_who, level) => {
+      mockOrgLevel = level;
+      const user = userEvent.setup();
+      render(
+        <RoutingConfigView
+          config={{ routing: { strategy: "weighted" } }}
+          gatewayId="default"
+        />,
+      );
+      await user.click(screen.getByRole("checkbox"));
+      expectAdminOnly(
+        screen.getByRole("button", { name: "Save Routing Config" }),
+      );
+      expect(mockUpdateMutate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(ADMIN_LEVELS)("%s can save routing", async (_who, level) => {
+    mockOrgLevel = level;
+    const user = userEvent.setup();
+    render(
+      <RoutingConfigView
+        config={{ routing: { strategy: "weighted" } }}
+        gatewayId="default"
+      />,
+    );
+    await user.click(screen.getByRole("checkbox"));
+    expectEditable(screen.getByRole("button", { name: "Save Routing Config" }));
   });
 
   it("saves a picked strategy under the key the gateway contract has", async () => {
@@ -48,9 +94,16 @@ describe("RoutingConfigView", () => {
 
     await user.click(screen.getByLabelText("Default Strategy"));
 
+    // None is the unset strategy (the first provider by ID), never written.
     expect(
       screen.getAllByRole("option").map((option) => option.textContent),
-    ).toEqual(["Round Robin", "Weighted", "Least Latency", "Cost Optimized"]);
+    ).toEqual([
+      "None: first provider by ID",
+      "Round Robin",
+      "Weighted",
+      "Least Latency",
+      "Cost Optimized",
+    ]);
   });
 
   it("keeps a stored strategy when another field changes", async () => {
@@ -62,10 +115,15 @@ describe("RoutingConfigView", () => {
       />,
     );
 
+    expect(screen.getByLabelText("Default Strategy")).toHaveTextContent(
+      "Weighted",
+    );
     await user.click(screen.getByRole("checkbox"));
     const routing = await save(user);
 
-    expect(routing.strategy).toBe("weighted");
+    // update-config merges the patch into the stored config, so a save that
+    // leaves strategy out keeps the stored one as it is.
+    expect(routing).not.toHaveProperty("strategy");
     expect(routing.failover.enabled).toBe(true);
   });
 });

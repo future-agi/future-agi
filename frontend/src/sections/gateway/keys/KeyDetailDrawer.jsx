@@ -23,6 +23,8 @@ import { useTheme } from "@mui/material/styles";
 import { useNavigate } from "react-router-dom";
 import { useApiKeyDetail, useRevokeApiKey } from "./hooks/useApiKeys";
 import EditKeyDialog from "./EditKeyDialog";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 import { useAnalyticsOverview } from "../analytics/hooks/useAnalyticsOverview";
 import { useAnalyticsUsage } from "../analytics/hooks/useAnalyticsUsage";
 import { val } from "../utils/analyticsHelpers";
@@ -61,6 +63,8 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
 
   const { data: keyData, isLoading } = useApiKeyDetail(open ? keyId : null);
   const revokeMutation = useRevokeApiKey();
+  // Editing and revoking a key are Owner or Admin only (useGatewayAdmin).
+  const { canEdit } = useGatewayAdmin();
 
   // Per-key analytics: last 7 days — only fetch once keyData is loaded
   const resolvedKeyId = keyData?.gatewayKeyId;
@@ -195,13 +199,17 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
                   variant="outlined"
                 />
                 {keyData.status === "active" && (
-                  <IconButton
-                    onClick={() => setEditOpen(true)}
-                    size="small"
-                    title="Edit"
-                  >
-                    <Iconify icon="mdi:pencil-outline" width={18} />
-                  </IconButton>
+                  <GatewayAdminOnly allowed={canEdit}>
+                    <IconButton
+                      onClick={() => setEditOpen(true)}
+                      size="small"
+                      title="Edit"
+                      aria-label="Edit"
+                      disabled={!canEdit}
+                    >
+                      <Iconify icon="mdi:pencil-outline" width={18} />
+                    </IconButton>
+                  </GatewayAdminOnly>
                 )}
                 <IconButton onClick={onClose} size="small">
                   <Iconify icon="mdi:close" width={18} />
@@ -397,14 +405,17 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
             {!isRevoked && !isExpired && (
               <>
                 <Divider />
-                <Button
-                  color="error"
-                  variant="outlined"
-                  fullWidth
-                  onClick={() => setConfirmOpen(true)}
-                >
-                  Revoke Key
-                </Button>
+                <GatewayAdminOnly allowed={canEdit} display="block">
+                  <Button
+                    color="error"
+                    variant="outlined"
+                    fullWidth
+                    onClick={() => setConfirmOpen(true)}
+                    disabled={!canEdit}
+                  >
+                    Revoke Key
+                  </Button>
+                </GatewayAdminOnly>
               </>
             )}
           </Stack>

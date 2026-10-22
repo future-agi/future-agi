@@ -19,16 +19,30 @@ const STATUS_MAP = {
   healthy: { label: "Healthy", color: "success" },
   degraded: { label: "Degraded", color: "warning" },
   unhealthy: { label: "Unhealthy", color: "error" },
+  not_pushed: { label: "Not pushed", color: "error" },
   unknown: { label: "Unknown", color: "default" },
 };
 
+// The status the providers action derives comes first: a
+// degraded provider is still healthy (status != unhealthy), so `healthy`
+// alone cannot tell it apart. A provider the config push leaves out
+// (pushed: false) is never shown with a health chip.
 function getProviderStatus(provider) {
   if (!provider) return STATUS_MAP.unknown;
+  if (provider.pushed === false) return STATUS_MAP.not_pushed;
   if (provider.status) return STATUS_MAP[provider.status] || STATUS_MAP.unknown;
   if (provider.healthy === true) return STATUS_MAP.healthy;
   if (provider.healthy === false) return STATUS_MAP.unhealthy;
   return STATUS_MAP.unknown;
 }
+
+// How the status is derived (views/gateway.py providers).
+const THRESHOLDS_TEXT =
+  "Status comes from your organization's own requests to each provider in the last 24 hours: " +
+  "Unhealthy at 50% failed or more, Degraded at 10% or more, counted from 5 requests; " +
+  "fewer than 5 requests read as Healthy. Guardrail blocks and requests served by managed " +
+  "models are not counted. The gateway's circuit breakers belong to the operator's " +
+  "providers and are not shown here.";
 
 function formatLatency(ms) {
   if (ms == null) return "\u2014";
@@ -76,6 +90,13 @@ const ProviderHealthTable = ({ providerHealth, orgConfig }) => {
 
   return (
     <Card>
+      <Typography
+        variant="body2"
+        color="text.secondary"
+        sx={{ px: 2, pt: 2, pb: 1 }}
+      >
+        {THRESHOLDS_TEXT}
+      </Typography>
       <TableContainer>
         <Table>
           <TableHead>
@@ -83,9 +104,8 @@ const ProviderHealthTable = ({ providerHealth, orgConfig }) => {
               <TableCell>Provider</TableCell>
               <TableCell>Status</TableCell>
               <TableCell>Models</TableCell>
-              <TableCell>Latency (P50)</TableCell>
-              <TableCell>Error Rate</TableCell>
-              <TableCell>Circuit Breaker</TableCell>
+              <TableCell>Avg Latency (24 h)</TableCell>
+              <TableCell>Error Rate (24 h)</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -103,14 +123,9 @@ const ProviderHealthTable = ({ providerHealth, orgConfig }) => {
               const modelCount = Array.isArray(models)
                 ? models.length
                 : p.modelCount ?? p.model_count ?? null;
-              const rawLatency =
-                p.latencyP50 ??
-                p.latency_p50 ??
-                p.latencyEwmaMs ??
-                p.latency_ewma_ms ??
-                p.avg_latency ??
-                null;
-              // Treat 0 as no data (EWMA starts at 0 when no requests tracked)
+              // The org's average latency over the last 24 h; 0 means no
+              // requests in the window.
+              const rawLatency = p.avg_latency ?? null;
               const latency = rawLatency === 0 ? null : rawLatency;
 
               // Error rate: compute from errorCount/requestCount or use errorRate/success_rate
@@ -123,12 +138,7 @@ const ProviderHealthTable = ({ providerHealth, orgConfig }) => {
                 errorRate = (errCount / reqCount) * 100;
               }
 
-              const circuitState =
-                p.circuitState ??
-                p.circuit_state ??
-                p.circuitBreakerState ??
-                p.circuit_breaker_state ??
-                null;
+              const statusReason = p.status_reason || "";
 
               return (
                 <TableRow
@@ -147,12 +157,19 @@ const ProviderHealthTable = ({ providerHealth, orgConfig }) => {
                     </Typography>
                   </TableCell>
                   <TableCell>
-                    <Chip
-                      label={status.label}
-                      color={status.color}
-                      size="small"
-                      variant="outlined"
-                    />
+                    <Stack spacing={0.5} alignItems="flex-start">
+                      <Chip
+                        label={status.label}
+                        color={status.color}
+                        size="small"
+                        variant="outlined"
+                      />
+                      {statusReason && (
+                        <Typography variant="caption" color="text.secondary">
+                          {statusReason}
+                        </Typography>
+                      )}
+                    </Stack>
                   </TableCell>
                   <TableCell>
                     {Array.isArray(models) && models.length > 0 ? (
@@ -184,11 +201,6 @@ const ProviderHealthTable = ({ providerHealth, orgConfig }) => {
                       {errorRate != null
                         ? `${Number(errorRate).toFixed(1)}%`
                         : "\u2014"}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" color="text.secondary">
-                      {circuitState ?? "\u2014"}
                     </Typography>
                   </TableCell>
                 </TableRow>

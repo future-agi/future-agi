@@ -138,6 +138,9 @@ const GatewayKeys = lazyWithRetry(
 const GatewayProviders = lazyWithRetry(
   () => import("src/pages/dashboard/gateway/GatewayProviders"),
 );
+const GatewayModels = lazyWithRetry(
+  () => import("src/pages/dashboard/gateway/GatewayModels"),
+);
 const GatewayGuardrails = lazyWithRetry(
   () => import("src/pages/dashboard/gateway/GatewayGuardrails"),
 );
@@ -165,6 +168,11 @@ const GatewayFallbacks = lazyWithRetry(
 const GatewayMCP = lazyWithRetry(
   () => import("src/pages/dashboard/gateway/GatewayMCP"),
 );
+// The Runs, Run detail, Billing & Credits, Policies, Playground and
+// Capabilities pages (pages/dashboard/gateway) are placeholders, hidden for
+// the launch: they have no route, so their URLs go to the app's 404. Route a
+// page again only with its real content, and give it its nav entry
+// (layouts/dashboard/config-navigation.jsx) in the same change.
 const ObserveList = lazyWithRetry(
   () => import("src/pages/dashboard/projects/ObserveList"),
 );
@@ -438,6 +446,7 @@ function ModelDetailDefaultRedirect() {
   const { id } = useParams();
   return <Navigate to={`/dashboard/models/${id}/performance`} replace />;
 }
+
 const QueueDetailPage = lazyWithRetry(
   () => import("src/pages/dashboard/annotations/queue-detail"),
 );
@@ -1593,6 +1602,8 @@ export const dashboardRoutes = (
             { path: "keys", element: <GatewayKeys /> },
             { path: "providers", element: <GatewayProviders /> },
             { path: "providers/:tab", element: <GatewayProviders /> },
+            { path: "models", element: <GatewayModels /> },
+            { path: "models/:tab", element: <GatewayModels /> },
             { path: "guardrails", element: <GatewayGuardrails /> },
             { path: "guardrails/:tab", element: <GatewayGuardrails /> },
             { path: "budgets", element: <GatewayBudgets /> },

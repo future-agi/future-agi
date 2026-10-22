@@ -1,79 +1,53 @@
-import React, { useState, useCallback } from "react";
-import { Box, Stack, Tab, Tabs, Card, Skeleton, Alert } from "@mui/material";
-import { useNavigate, useParams } from "react-router-dom";
+import React, { useCallback } from "react";
+import { Box, Tab, Tabs } from "@mui/material";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
+import { paths } from "src/routes/paths";
 import SectionHeader from "../components/SectionHeader";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
-import {
-  useGatewayConfig,
-  useReloadConfig,
-} from "../providers/hooks/useGatewayConfig";
+import { useReloadConfig } from "../providers/hooks/useGatewayConfig";
 import { useGatewayContext } from "../context/useGatewayContext";
-import {
-  useMCPStatus,
-  useMCPTools,
-  useMCPResources,
-  useMCPPrompts,
-} from "./hooks/useMCPConfig";
+import { useMCPStatus } from "./hooks/useMCPConfig";
+import MCPStatusBanner from "./MCPStatusBanner";
+import MCPOffState from "./MCPOffState";
+import { MCP_TABS, MCP_TAB_PARAM, resolveMCPTabIndex } from "./tabs";
+import { isMCPTurnedOff } from "./utils";
 
-import MCPOverviewTab from "./MCPOverviewTab";
-import MCPToolsTab from "./MCPToolsTab";
-import MCPServersTab from "./MCPServersTab";
-import MCPGuardrailsTab from "./MCPGuardrailsTab";
-import MCPPlaygroundTab from "./MCPPlaygroundTab";
-import MCPResourcesTab from "./MCPResourcesTab";
-import MCPPromptsTab from "./MCPPromptsTab";
-import AddMCPServerDialog from "./AddMCPServerDialog";
-
-const TAB_SLUGS = [
-  "overview",
-  "tools",
-  "servers",
-  "resources",
-  "prompts",
-  "guardrails",
-  "playground",
-];
-
-function tabSlugToIndex(slug) {
-  const idx = TAB_SLUGS.indexOf(slug);
-  return idx >= 0 ? idx : 0;
-}
-
+// The MCP page: header, status banner and tab bar. The open tab lives in the
+// query string (`?tab=<slug>`); a link that still carries it in the path
+// (`/gateway/mcp/<slug>`) opens the same tab. On a deployment that runs with
+// MCP off the page shows that state instead of the banner and tabs.
 const MCPManagementSection = () => {
-  const { tab: tabSlug } = useParams();
+  const { tab: pathSlug } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const tab = tabSlugToIndex(tabSlug);
-
-  const handleTabChange = useCallback(
-    (_, newIndex) => {
-      if (newIndex === 0) {
-        navigate("/dashboard/gateway/mcp", { replace: true });
-      } else {
-        navigate(`/dashboard/gateway/mcp/${TAB_SLUGS[newIndex]}`, {
-          replace: true,
-        });
-      }
-    },
-    [navigate],
+  const tabIndex = resolveMCPTabIndex(
+    searchParams.get(MCP_TAB_PARAM) ?? pathSlug,
   );
+  const { Content } = MCP_TABS[tabIndex];
 
-  const [addServerOpen, setAddServerOpen] = useState(false);
-  const [editServer, setEditServer] = useState(null);
-
-  const { gatewayId, isLoading: gwLoading } = useGatewayContext();
-
-  const { data: config, isLoading: configLoading } =
-    useGatewayConfig(gatewayId);
-  const { data: mcpStatus, isLoading: statusLoading } = useMCPStatus(gatewayId);
-  const { data: mcpTools, isLoading: toolsLoading } = useMCPTools(gatewayId);
-  const { data: mcpResources, isLoading: resourcesLoading } =
-    useMCPResources(gatewayId);
-  const { data: mcpPrompts, isLoading: promptsLoading } =
-    useMCPPrompts(gatewayId);
+  // GatewayGuard renders this page only once the gateway id is known.
+  const { gatewayId } = useGatewayContext();
+  const { data: mcpStatus, isError: statusError } = useMCPStatus(gatewayId);
+  const mcpOff = !statusError && isMCPTurnedOff(mcpStatus);
   const reloadMutation = useReloadConfig();
 
-  const isLoading = gwLoading || configLoading || statusLoading;
+  const handleTabChange = useCallback(
+    (_, index) => {
+      const params = new URLSearchParams(searchParams);
+      if (index === 0) params.delete(MCP_TAB_PARAM);
+      else params.set(MCP_TAB_PARAM, MCP_TABS[index].slug);
+      const search = params.toString();
+      navigate(
+        {
+          pathname: paths.dashboard.gateway.mcp,
+          search: search ? `?${search}` : "",
+        },
+        { replace: true },
+      );
+    },
+    [navigate, searchParams],
+  );
 
   const handleReload = () => {
     if (!gatewayId) return;
@@ -87,139 +61,56 @@ const MCPManagementSection = () => {
     });
   };
 
-  const handleEditServer = (serverId, serverConfig) => {
-    setEditServer({ serverId, config: serverConfig });
-    setAddServerOpen(true);
-  };
-
-  const handleCloseDialog = () => {
-    setAddServerOpen(false);
-    setEditServer(null);
-  };
-
-  if (isLoading) {
-    return (
-      <Box p={3}>
-        <Stack direction="row" justifyContent="space-between" mb={3}>
-          <Skeleton width={220} height={40} />
-          <Stack direction="row" spacing={1}>
-            <Skeleton width={120} height={36} variant="rounded" />
-            <Skeleton width={120} height={36} variant="rounded" />
-          </Stack>
-        </Stack>
-        <Skeleton width="50%" height={40} sx={{ mb: 3 }} />
-        <Card>
-          {[...Array(4)].map((_, i) => (
-            <Stack
-              key={i}
-              direction="row"
-              spacing={2}
-              sx={{
-                px: 2,
-                py: 1.5,
-                borderBottom: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              <Skeleton width="20%" height={20} />
-              <Skeleton width="15%" height={20} />
-              <Skeleton width="25%" height={20} />
-              <Skeleton width="15%" height={20} />
-            </Stack>
-          ))}
-        </Card>
-      </Box>
-    );
-  }
-
-  const mcpConfig = config?.mcp || {};
-  const mcpEnabled = mcpConfig.enabled !== false;
-
   return (
     <Box p={3}>
+      {/* With MCP off there is nothing to manage or reload on this page. */}
       <SectionHeader
         icon={GATEWAY_ICONS.mcp}
         title="MCP Tools"
-        subtitle="Manage Model Context Protocol servers, tools, and guardrails"
-        actions={[
-          {
-            label: "Add Server",
-            variant: "contained",
-            size: "small",
-            icon: "mdi:plus",
-            onClick: () => setAddServerOpen(true),
-          },
-          {
-            label: reloadMutation.isPending ? "Reloading..." : "Reload Config",
-            variant: "outlined",
-            size: "small",
-            icon: "mdi:refresh",
-            onClick: handleReload,
-            disabled: reloadMutation.isPending,
-          },
-        ]}
+        subtitle={
+          mcpOff
+            ? undefined
+            : "Manage Model Context Protocol servers, tools, and guardrails"
+        }
+        actions={
+          mcpOff
+            ? undefined
+            : [
+                {
+                  label: reloadMutation.isPending
+                    ? "Reloading..."
+                    : "Reload Config",
+                  variant: "outlined",
+                  size: "small",
+                  icon: "mdi:refresh",
+                  onClick: handleReload,
+                  disabled: reloadMutation.isPending,
+                },
+              ]
+        }
       />
 
-      {!mcpEnabled && (
-        <Alert severity="info" sx={{ mb: 3 }}>
-          MCP is not enabled in the gateway configuration. Add an MCP server to
-          get started, or enable the &quot;mcp.enabled&quot; flag in the gateway
-          config.
-        </Alert>
-      )}
+      {mcpOff ? (
+        <MCPOffState />
+      ) : (
+        <>
+          <MCPStatusBanner status={mcpStatus} isError={statusError} />
 
-      <Tabs
-        value={tab}
-        onChange={handleTabChange}
-        sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
-      >
-        <Tab label="Overview" />
-        <Tab label="Tools" />
-        <Tab label="Servers" />
-        <Tab label="Resources" />
-        <Tab label="Prompts" />
-        <Tab label="Guardrails" />
-        <Tab label="Playground" />
-      </Tabs>
+          <Tabs
+            value={tabIndex}
+            onChange={handleTabChange}
+            variant="scrollable"
+            scrollButtons="auto"
+            sx={{ mb: 3, borderBottom: 1, borderColor: "divider" }}
+          >
+            {MCP_TABS.map((tab) => (
+              <Tab key={tab.slug} label={tab.label} />
+            ))}
+          </Tabs>
 
-      {tab === 0 && <MCPOverviewTab mcpStatus={mcpStatus} />}
-      {tab === 1 && (
-        <MCPToolsTab mcpTools={mcpTools} isLoading={toolsLoading} />
+          <Content gatewayId={gatewayId} />
+        </>
       )}
-      {tab === 2 && (
-        <MCPServersTab
-          config={config}
-          mcpStatus={mcpStatus}
-          gatewayId={gatewayId}
-          onEditServer={handleEditServer}
-        />
-      )}
-      {tab === 3 && (
-        <MCPResourcesTab
-          mcpResources={mcpResources}
-          isLoading={resourcesLoading}
-        />
-      )}
-      {tab === 4 && (
-        <MCPPromptsTab mcpPrompts={mcpPrompts} isLoading={promptsLoading} />
-      )}
-      {tab === 5 && (
-        <MCPGuardrailsTab
-          config={config}
-          mcpStatus={mcpStatus}
-          gatewayId={gatewayId}
-        />
-      )}
-      {tab === 6 && (
-        <MCPPlaygroundTab mcpTools={mcpTools} gatewayId={gatewayId} />
-      )}
-
-      <AddMCPServerDialog
-        open={addServerOpen}
-        onClose={handleCloseDialog}
-        gatewayId={gatewayId}
-        editServer={editServer}
-      />
     </Box>
   );
 };

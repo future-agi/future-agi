@@ -76,10 +76,6 @@ const GuardrailAnalyticsTab = ({ gatewayId }) => {
   });
 
   const trendList = Array.isArray(trends) ? trends : [];
-  const avgLatency =
-    overview?.avg_guardrail_latency_ms ??
-    overview?.avgGuardrailLatencyMs ??
-    overview?.avg_latency;
 
   const chartOptions = useMemo(
     () => ({
@@ -184,7 +180,7 @@ const GuardrailAnalyticsTab = ({ gatewayId }) => {
 
       {/* KPI Cards */}
       <Grid container spacing={2}>
-        <Grid item xs={6} sm={3}>
+        <Grid item xs={6} sm={4}>
           <Card>
             <CardContent sx={{ textAlign: "center" }}>
               <Typography variant="caption" color="text.secondary">
@@ -198,7 +194,7 @@ const GuardrailAnalyticsTab = ({ gatewayId }) => {
             </CardContent>
           </Card>
         </Grid>
-        <Grid item xs={6} sm={3}>
+        <Grid item xs={6} sm={4}>
           <Card>
             <CardContent sx={{ textAlign: "center" }}>
               <Typography variant="caption" color="text.secondary">
@@ -210,7 +206,7 @@ const GuardrailAnalyticsTab = ({ gatewayId }) => {
             </CardContent>
           </Card>
         </Grid>
-        <Grid item xs={6} sm={3}>
+        <Grid item xs={6} sm={4}>
           <Card>
             <CardContent sx={{ textAlign: "center" }}>
               <Typography variant="caption" color="text.secondary">
@@ -222,20 +218,8 @@ const GuardrailAnalyticsTab = ({ gatewayId }) => {
             </CardContent>
           </Card>
         </Grid>
-        <Grid item xs={6} sm={3}>
-          <Card>
-            <CardContent sx={{ textAlign: "center" }}>
-              <Typography variant="caption" color="text.secondary">
-                Avg Latency
-              </Typography>
-              <Typography variant="h4">
-                {avgLatency != null
-                  ? `${Number(avgLatency).toFixed(0)}ms`
-                  : "\u2014"}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
+        {/* No Avg Latency card: the gateway records no per-check latency,
+            so the average would always read 0 ms. */}
       </Grid>
 
       {/* Trends chart */}

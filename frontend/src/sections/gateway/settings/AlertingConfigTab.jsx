@@ -19,8 +19,16 @@ import { Icon } from "@iconify/react";
 import {
   ALERT_CHANNEL_TYPE_OPTIONS,
   ALERT_METRIC_OPTIONS,
+  ALERT_SEVERITY_OPTIONS,
+  DEFAULT_ALERT_COOLDOWN,
   DEFAULT_ALERT_METRIC,
+  DEFAULT_ALERT_SEVERITY,
+  DEFAULT_ALERT_WINDOW,
+  GATEWAY_EMPTY_ALERT_WINDOW,
+  effectiveAlertSeverity,
+  isAlertDuration,
 } from "../constants/alerting";
+import SecretField, { isMaskedSecret } from "../components/SecretField";
 
 const CONDITIONS = [
   { value: ">=", label: ">=" },
@@ -29,6 +37,10 @@ const CONDITIONS = [
   { value: "<", label: "<" },
   { value: "==", label: "==" },
 ];
+
+// A stored duration the gateway cannot read (it falls back to its default).
+const durationInvalid = (value) =>
+  typeof value === "string" && value.trim() !== "" && !isAlertDuration(value);
 
 const AlertingConfigTab = ({ alerting, onChange }) => {
   const config = alerting || {};
@@ -50,8 +62,9 @@ const AlertingConfigTab = ({ alerting, onChange }) => {
         metric: DEFAULT_ALERT_METRIC,
         condition: ">=",
         threshold: 10,
-        window: "5m",
-        cooldown: "15m",
+        window: DEFAULT_ALERT_WINDOW,
+        cooldown: DEFAULT_ALERT_COOLDOWN,
+        severity: DEFAULT_ALERT_SEVERITY,
         channels: [],
       },
     ]);
@@ -108,8 +121,10 @@ const AlertingConfigTab = ({ alerting, onChange }) => {
       </Stack>
 
       <Alert severity="info" sx={{ mb: 2 }}>
-        Configure per-organization alert rules and notification channels. Alerts
-        fire when metrics exceed thresholds within a time window.
+        Configure per-organization alert rules and notification channels. A rule
+        fires when its metric over the window meets the condition, sends its
+        severity to each channel, then waits its cooldown (default{" "}
+        {DEFAULT_ALERT_COOLDOWN}) before it can fire again.
       </Alert>
 
       <FormControlLabel
@@ -175,22 +190,39 @@ const AlertingConfigTab = ({ alerting, onChange }) => {
                       </MenuItem>
                     ))}
                   </TextField>
-                  {(ch.type === "webhook" || ch.type === "slack") && (
-                    <TextField
-                      size="small"
-                      label="URL"
-                      value={ch.url || ""}
-                      onChange={(e) =>
-                        handleChannelChange(idx, "url", e.target.value)
-                      }
-                      sx={{ flex: 1, minWidth: 250 }}
-                      placeholder={
-                        ch.type === "slack"
-                          ? "https://hooks.slack.com/..."
-                          : "https://..."
-                      }
-                    />
-                  )}
+                  {(ch.type === "webhook" || ch.type === "slack") &&
+                    (isMaskedSecret(ch.url) ? (
+                      // A URL that carries a credential (a Slack incoming
+                      // webhook, a token in its path or query) is stored
+                      // write-only and reads back as a mask: dots with
+                      // Replace, never the mask as a value. Leaving it, or a
+                      // blank after Replace, keeps the stored URL.
+                      <SecretField
+                        label="URL"
+                        value={ch.url}
+                        onChange={(value) =>
+                          handleChannelChange(idx, "url", value)
+                        }
+                        removable={false}
+                        helperText="Stored and never shown. Replace to change it, or leave it to keep."
+                        sx={{ flex: 1, minWidth: 250 }}
+                      />
+                    ) : (
+                      <TextField
+                        size="small"
+                        label="URL"
+                        value={ch.url || ""}
+                        onChange={(e) =>
+                          handleChannelChange(idx, "url", e.target.value)
+                        }
+                        sx={{ flex: 1, minWidth: 250 }}
+                        placeholder={
+                          ch.type === "slack"
+                            ? "https://hooks.slack.com/..."
+                            : "https://..."
+                        }
+                      />
+                    ))}
                   <IconButton
                     size="small"
                     onClick={() => handleRemoveChannel(idx)}
@@ -326,23 +358,51 @@ const AlertingConfigTab = ({ alerting, onChange }) => {
                     <TextField
                       size="small"
                       label="Window"
-                      value={rule.window || "5m"}
+                      value={rule.window ?? ""}
                       onChange={(e) =>
                         handleRuleChange(idx, "window", e.target.value)
                       }
-                      sx={{ width: 90 }}
-                      helperText="e.g. 5m"
+                      placeholder={GATEWAY_EMPTY_ALERT_WINDOW}
+                      sx={{ width: 120 }}
+                      error={durationInvalid(rule.window)}
+                      helperText={
+                        durationInvalid(rule.window)
+                          ? "Not a duration"
+                          : `e.g. 5m (empty: ${GATEWAY_EMPTY_ALERT_WINDOW})`
+                      }
                     />
                     <TextField
                       size="small"
                       label="Cooldown"
-                      value={rule.cooldown || "15m"}
+                      value={rule.cooldown ?? ""}
                       onChange={(e) =>
                         handleRuleChange(idx, "cooldown", e.target.value)
                       }
-                      sx={{ width: 100 }}
-                      helperText="e.g. 15m"
+                      placeholder={DEFAULT_ALERT_COOLDOWN}
+                      sx={{ width: 130 }}
+                      error={durationInvalid(rule.cooldown)}
+                      helperText={
+                        durationInvalid(rule.cooldown)
+                          ? `Not a duration: the gateway uses ${DEFAULT_ALERT_COOLDOWN}`
+                          : `e.g. 1h (empty: ${DEFAULT_ALERT_COOLDOWN})`
+                      }
                     />
+                    <TextField
+                      select
+                      size="small"
+                      label="Severity"
+                      value={effectiveAlertSeverity(rule.severity)}
+                      onChange={(e) =>
+                        handleRuleChange(idx, "severity", e.target.value)
+                      }
+                      sx={{ width: 120 }}
+                    >
+                      {ALERT_SEVERITY_OPTIONS.map((sv) => (
+                        <MenuItem key={sv.value} value={sv.value}>
+                          {sv.label}
+                        </MenuItem>
+                      ))}
+                    </TextField>
                     <IconButton
                       size="small"
                       onClick={() => handleRemoveRule(idx)}

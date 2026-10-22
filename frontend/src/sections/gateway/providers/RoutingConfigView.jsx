@@ -16,26 +16,93 @@ import {
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { useUpdateConfig } from "./hooks/useGatewayConfig";
+import {
+  NO_ROUTING_STRATEGY,
+  retryOnTimeout,
+  ROUTING_STRATEGY_CHOICES,
+  routingStrategyChoice,
+} from "../fallbacks/fallbackSwitches";
 import { useOrgConfig, useCreateOrgConfig } from "./hooks/useOrgConfig";
 import OrgConfigEditor from "../../gateway/settings/OrgConfigEditor";
-import {
-  DEFAULT_ROUTING_STRATEGY,
-  ROUTING_STRATEGY_OPTIONS,
-} from "../constants/routing";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
+
+// Status codes either list can match (a list matches the
+// upstream's status or the gateway's).
+const STATUS_CODE_OPTIONS = ["429", "500", "502", "503", "504"];
+
+// A status-code list: chips, typed codes, and a sentence saying what it
+// drives.
+const StatusCodeList = ({
+  label,
+  helper,
+  value,
+  onChange,
+  disabled,
+  testId,
+}) => (
+  <Box data-testid={testId}>
+    <Autocomplete
+      multiple
+      freeSolo
+      options={STATUS_CODE_OPTIONS}
+      value={value}
+      onChange={(_, val) => onChange(val)}
+      disabled={disabled}
+      renderTags={(tags, getTagProps) =>
+        tags.map((option, index) => (
+          <Chip
+            label={option}
+            size="small"
+            {...getTagProps({ index })}
+            key={option}
+          />
+        ))
+      }
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label={label}
+          placeholder="Type code + Enter"
+          size="small"
+          helperText={helper}
+        />
+      )}
+    />
+  </Box>
+);
+
+StatusCodeList.propTypes = {
+  label: PropTypes.string.isRequired,
+  helper: PropTypes.string.isRequired,
+  value: PropTypes.arrayOf(PropTypes.string).isRequired,
+  onChange: PropTypes.func.isRequired,
+  disabled: PropTypes.bool,
+  testId: PropTypes.string,
+};
+
+const codesOf = (section) =>
+  (section?.on_status_codes ?? section?.onStatusCodes ?? []).map(String);
 
 const RoutingConfigView = ({ config, gatewayId }) => {
   const routing = config?.routing || {};
   const failover = routing?.failover || {};
+  const retry = routing?.retry || {};
   const rateLimit = config?.rate_limiting ?? config?.rateLimiting ?? {};
 
-  const [strategy, setStrategy] = useState(DEFAULT_ROUTING_STRATEGY);
+  const [strategy, setStrategy] = useState(NO_ROUTING_STRATEGY);
+  const [strategyDirty, setStrategyDirty] = useState(false);
   const [failoverEnabled, setFailoverEnabled] = useState(false);
   const [maxAttempts, setMaxAttempts] = useState("3");
+  const [failoverCodes, setFailoverCodes] = useState([]);
   const [retryCodes, setRetryCodes] = useState([]);
+  const [retryTimeout, setRetryTimeout] = useState(false);
+  const [retryDirty, setRetryDirty] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
 
   const updateConfig = useUpdateConfig();
+  const { canEdit } = useGatewayAdmin();
   const { data: activeConfig } = useOrgConfig();
   const createMutation = useCreateOrgConfig();
 
@@ -46,14 +113,16 @@ const RoutingConfigView = ({ config, gatewayId }) => {
   };
 
   useEffect(() => {
-    setStrategy(routing?.strategy ?? DEFAULT_ROUTING_STRATEGY);
+    setStrategy(routingStrategyChoice(routing));
+    setStrategyDirty(false);
     setFailoverEnabled(failover?.enabled ?? false);
     setMaxAttempts(
       String(failover?.max_attempts ?? failover?.maxAttempts ?? 3),
     );
-    setRetryCodes(
-      (failover?.on_status_codes ?? failover?.onStatusCodes ?? []).map(String),
-    );
+    setFailoverCodes(codesOf(failover));
+    setRetryCodes(codesOf(retry));
+    setRetryTimeout(retryOnTimeout(routing));
+    setRetryDirty(false);
     setDirty(false);
   }, [config]);
 
@@ -62,17 +131,44 @@ const RoutingConfigView = ({ config, gatewayId }) => {
     setDirty(true);
   };
 
+  const handleRetryChange = (setter) => (value) => {
+    setter(value);
+    setRetryDirty(true);
+    setDirty(true);
+  };
+
+  const handleStrategyChange = (value) => {
+    setStrategy(value);
+    setStrategyDirty(true);
+    setDirty(true);
+  };
+
   const handleSave = () => {
     const routingPatch = {
       routing: {
-        strategy,
         failover: {
           enabled: failoverEnabled,
           max_attempts: Number(maxAttempts),
-          on_status_codes: retryCodes.map(Number),
+          on_status_codes: failoverCodes.map(Number),
         },
       },
     };
+    // Sent only when the strategy changed, so a save of the other fields
+    // never sets one; None sends null, which update-config's merge patch
+    // reads as "delete the stored strategy".
+    if (strategyDirty) {
+      routingPatch.routing.strategy =
+        strategy === NO_ROUTING_STRATEGY ? null : strategy;
+    }
+    // Sent only when a retry field changed. update-config deep-merges the
+    // patch into the stored config, so retry.enabled and the backoff fields
+    // stay as stored without being sent here.
+    if (retryDirty) {
+      routingPatch.routing.retry = {
+        on_status_codes: retryCodes.map(Number),
+        on_timeout: retryTimeout,
+      };
+    }
 
     updateConfig.mutate(
       { gatewayId, config: routingPatch },
@@ -103,10 +199,10 @@ const RoutingConfigView = ({ config, gatewayId }) => {
             select
             fullWidth
             value={strategy}
-            onChange={(e) => handleChange(setStrategy)(e.target.value)}
+            onChange={(e) => handleStrategyChange(e.target.value)}
             size="small"
           >
-            {ROUTING_STRATEGY_OPTIONS.map((s) => (
+            {ROUTING_STRATEGY_CHOICES.map((s) => (
               <MenuItem key={s.value} value={s.value}>
                 {s.label}
               </MenuItem>
@@ -143,32 +239,55 @@ const RoutingConfigView = ({ config, gatewayId }) => {
               disabled={!failoverEnabled}
               sx={{ maxWidth: 200 }}
             />
-            <Autocomplete
-              multiple
-              freeSolo
-              options={["429", "500", "502", "503", "504"]}
-              value={retryCodes}
-              onChange={(_, val) => handleChange(setRetryCodes)(val)}
+            <StatusCodeList
+              testId="routing-failover-codes"
+              label="Failover on Status Codes"
+              helper="Failures with these codes move a request to another of your providers that serves the model, and down its model fallback chain. Empty: 429, 500, 502, 503 and 504."
+              value={failoverCodes}
+              onChange={handleChange(setFailoverCodes)}
               disabled={!failoverEnabled}
-              renderTags={(value, getTagProps) =>
-                value.map((option, index) => (
-                  <Chip
-                    label={option}
-                    size="small"
-                    {...getTagProps({ index })}
-                    key={option}
-                  />
-                ))
-              }
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="Retry on Status Codes"
-                  placeholder="Type code + Enter"
-                  size="small"
-                />
-              )}
             />
+          </Stack>
+        </CardContent>
+      </Card>
+
+      {/* Retry */}
+      <Card>
+        <CardContent>
+          <Typography variant="h6" mb={0.5}>
+            Retry
+          </Typography>
+          <Typography variant="body2" color="text.secondary" mb={1.5}>
+            Retries run when Retry is turned on (Fallbacks page:{" "}
+            {retry?.enabled ? "on" : "off"}).
+          </Typography>
+          <Stack spacing={2}>
+            <StatusCodeList
+              testId="routing-retry-codes"
+              label="Retry on Status Codes"
+              helper="Failures with these codes retry the same provider before the request fails over. Empty: 429, 500, 502, 503 and 504."
+              value={retryCodes}
+              onChange={handleRetryChange(setRetryCodes)}
+            />
+            <Stack direction="row" alignItems="center" spacing={2}>
+              <Switch
+                checked={retryTimeout}
+                onChange={(e) =>
+                  handleRetryChange(setRetryTimeout)(e.target.checked)
+                }
+                size="small"
+                inputProps={{
+                  role: "switch",
+                  "aria-label": "Retry on Timeout",
+                }}
+              />
+              <Stack>
+                <Typography variant="body2">Retry on Timeout</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Retries a provider call that timed out.
+                </Typography>
+              </Stack>
+            </Stack>
           </Stack>
         </CardContent>
       </Card>
@@ -186,13 +305,15 @@ const RoutingConfigView = ({ config, gatewayId }) => {
       {/* Save */}
       {dirty && (
         <Box display="flex" justifyContent="flex-end">
-          <Button
-            variant="contained"
-            onClick={handleSave}
-            disabled={updateConfig.isPending}
-          >
-            {updateConfig.isPending ? "Saving..." : "Save Routing Config"}
-          </Button>
+          <GatewayAdminOnly allowed={canEdit}>
+            <Button
+              variant="contained"
+              onClick={handleSave}
+              disabled={updateConfig.isPending || !canEdit}
+            >
+              {updateConfig.isPending ? "Saving..." : "Save Routing Config"}
+            </Button>
+          </GatewayAdminOnly>
         </Box>
       )}
 
@@ -216,9 +337,8 @@ const RoutingConfigView = ({ config, gatewayId }) => {
             </Button>
           </Stack>
           <Typography variant="body2" color="text.secondary" mb={1.5}>
-            Per-organization routing features: complexity-based routing, fastest
-            response mode, adaptive routing, scheduled completions, provider
-            locking, and model access groups.
+            Per-organization routing features: complexity-based routing,
+            adaptive routing and provider locking.
           </Typography>
           <Stack spacing={1}>
             <InfoLine
@@ -230,26 +350,12 @@ const RoutingConfigView = ({ config, gatewayId }) => {
               value={routing?.adaptive?.enabled ? "Enabled" : "Disabled"}
             />
             <InfoLine
-              label="Scheduled Completions"
-              value={routing?.scheduled?.enabled ? "Enabled" : "Disabled"}
-            />
-            <InfoLine
               label="Provider Locking"
               value={
                 routing?.provider_lock?.enabled ??
                 routing?.providerLock?.enabled
                   ? "Enabled"
                   : "Disabled"
-              }
-            />
-            <InfoLine
-              label="Access Groups"
-              value={
-                Object.keys(
-                  routing?.access_groups ?? routing?.accessGroups ?? {},
-                ).length > 0
-                  ? `${Object.keys(routing?.access_groups ?? routing?.accessGroups ?? {}).length} groups`
-                  : "None"
               }
             />
           </Stack>

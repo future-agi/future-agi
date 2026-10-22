@@ -589,6 +589,10 @@ export function useWorkspaceSettingsNav(workspaceId) {
   };
 }
 
+// Playground, Capabilities, Policies, Runs and Billing & Credits have no
+// entry yet: their pages are placeholders, hidden for the launch along with
+// their routes (routes/sections/dashboard.jsx). Add an entry back with its
+// page's real content.
 export function useNavGatewayData() {
   return [
     {
@@ -607,6 +611,11 @@ export function useNavGatewayData() {
           title: "Providers",
           path: paths.dashboard.gateway.providers,
           iconName: "mdi:cloud-cog-outline",
+        },
+        {
+          title: "Models",
+          path: paths.dashboard.gateway.models,
+          iconName: "mdi:cube-outline",
         },
         {
           title: "API Keys",

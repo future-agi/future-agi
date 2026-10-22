@@ -21,11 +21,14 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import FallbackChainEditor from "./FallbackChainEditor";
-import { useAvailableModels } from "../hooks/useAvailableModels";
 import {
-  DEFAULT_ROUTING_STRATEGY,
-  ROUTING_STRATEGY_OPTIONS,
-} from "../constants/routing";
+  fallbackChainsOn,
+  NO_ROUTING_STRATEGY,
+  retryOnTimeout,
+  ROUTING_STRATEGY_CHOICES,
+  routingStrategyChoice,
+} from "../fallbacks/fallbackSwitches";
+import { useAvailableModels } from "../hooks/useAvailableModels";
 
 // ---------- Section wrapper for collapsible cards ----------
 const ConfigSection = ({
@@ -95,8 +98,17 @@ const RoutingConfigTab = ({ routing, onChange }) => {
     onChange({ ...config, [section]: { ...current, [field]: value } });
   };
 
+  // None clears the stored strategy (the org's keys then use the first of
+  // its providers by ID); clicking the chosen button again changes nothing.
   const handleStrategyChange = (_, value) => {
-    if (value) handleChange("strategy", value);
+    if (!value) return;
+    if (value === NO_ROUTING_STRATEGY) {
+      const rest = { ...config };
+      delete rest.strategy;
+      onChange(rest);
+      return;
+    }
+    handleChange("strategy", value);
   };
 
   // Fallback chain handlers
@@ -184,30 +196,6 @@ const RoutingConfigTab = ({ routing, onChange }) => {
     const current = [...(providerLock[listField] || [])];
     current.splice(idx, 1);
     handleNestedChange("provider_lock", listField, current);
-  };
-
-  // Conditional routes config
-  const conditionalRoutes =
-    config.conditional_routes || config.conditionalRoutes || [];
-
-  const handleAddConditionalRoute = () => {
-    const routes = [
-      ...conditionalRoutes,
-      { field: "", operator: "$eq", value: "", target: "" },
-    ];
-    handleChange("conditional_routes", routes);
-  };
-
-  const handleConditionalRouteChange = (idx, field, value) => {
-    const routes = [...conditionalRoutes];
-    routes[idx] = { ...routes[idx], [field]: value };
-    handleChange("conditional_routes", routes);
-  };
-
-  const handleRemoveConditionalRoute = (idx) => {
-    const routes = [...conditionalRoutes];
-    routes.splice(idx, 1);
-    handleChange("conditional_routes", routes);
   };
 
   // Circuit breaker config
@@ -358,18 +346,18 @@ const RoutingConfigTab = ({ routing, onChange }) => {
       {/* ===================== BASIC STRATEGY ===================== */}
       <ConfigSection
         title="Routing Strategy"
-        subtitle="Select load balancing strategy and default model"
+        subtitle="How requests are spread across your providers that serve a model"
         icon="mdi:swap-horizontal"
         defaultOpen
       >
         <ToggleButtonGroup
-          value={config.strategy || DEFAULT_ROUTING_STRATEGY}
+          value={routingStrategyChoice(config)}
           exclusive
           onChange={handleStrategyChange}
           size="small"
           sx={{ mb: 2 }}
         >
-          {ROUTING_STRATEGY_OPTIONS.map((s) => (
+          {ROUTING_STRATEGY_CHOICES.map((s) => (
             <ToggleButton key={s.value} value={s.value}>
               {s.label}
             </ToggleButton>
@@ -381,9 +369,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
             control={
               <Switch
                 size="small"
-                checked={
-                  config.fallback_enabled ?? config.fallbackEnabled ?? false
-                }
+                checked={fallbackChainsOn(config)}
                 onChange={(e) =>
                   handleChange("fallback_enabled", e.target.checked)
                 }
@@ -391,23 +377,13 @@ const RoutingConfigTab = ({ routing, onChange }) => {
             }
             label={<Typography variant="body2">Fallback Enabled</Typography>}
           />
-          <TextField
-            select
-            size="small"
-            label="Default Model"
-            value={config.default_model || config.defaultModel || ""}
-            onChange={(e) => handleChange("default_model", e.target.value)}
-            sx={{ minWidth: 200 }}
-          >
-            <MenuItem value="">
-              <em>None</em>
-            </MenuItem>
-            {availableModels.map((m) => (
-              <MenuItem key={m} value={m}>
-                {m}
-              </MenuItem>
-            ))}
-          </TextField>
+          <Typography variant="caption" color="text.secondary">
+            Until you turn it on or off, fallback chains run whenever one
+            exists. For your organization&apos;s API keys, strategy, retry,
+            provider failover and circuit breakers use only your own providers;
+            a model fallback can go to a managed model when your organization
+            turned managed models on (billed to its credits).
+          </Typography>
         </Stack>
       </ConfigSection>
 
@@ -1171,119 +1147,6 @@ const RoutingConfigTab = ({ routing, onChange }) => {
       <Divider sx={{ my: 1 }} />
       <Typography variant="subtitle1">Reliability & Advanced</Typography>
 
-      {/* ===================== CONDITIONAL ROUTES ===================== */}
-      <ConfigSection
-        title="Conditional Routes"
-        subtitle="Route requests to specific targets based on metadata field matching"
-        icon="mdi:source-branch"
-      >
-        <Stack spacing={2}>
-          <Alert severity="info" variant="outlined" sx={{ mb: 1 }}>
-            Define rules to route requests based on metadata fields. Rules are
-            evaluated in order; first match wins.
-          </Alert>
-
-          {conditionalRoutes.length === 0 && (
-            <Typography variant="body2" color="text.secondary">
-              No conditional routes defined. Add rules to route based on
-              metadata fields like model, user, or custom properties.
-            </Typography>
-          )}
-
-          {conditionalRoutes.map((route, idx) => (
-            <Card key={idx} variant="outlined" sx={{ p: 1.5 }}>
-              <Stack
-                direction="row"
-                spacing={1.5}
-                alignItems="center"
-                flexWrap="wrap"
-              >
-                <TextField
-                  size="small"
-                  label="Field"
-                  value={route.field || ""}
-                  onChange={(e) =>
-                    handleConditionalRouteChange(idx, "field", e.target.value)
-                  }
-                  sx={{ width: 160 }}
-                  helperText="e.g. model, user, metadata.env"
-                />
-                <TextField
-                  select
-                  size="small"
-                  label="Operator"
-                  value={route.operator || "$eq"}
-                  onChange={(e) =>
-                    handleConditionalRouteChange(
-                      idx,
-                      "operator",
-                      e.target.value,
-                    )
-                  }
-                  sx={{ width: 120 }}
-                >
-                  {["$eq", "$ne", "$in", "$regex", "$gt", "$lt"].map((op) => (
-                    <MenuItem key={op} value={op}>
-                      {op}
-                    </MenuItem>
-                  ))}
-                </TextField>
-                <TextField
-                  size="small"
-                  label="Value"
-                  value={
-                    typeof route.value === "object"
-                      ? JSON.stringify(route.value)
-                      : route.value || ""
-                  }
-                  onChange={(e) => {
-                    let val = e.target.value;
-                    if (route.operator === "$in") {
-                      try {
-                        val = JSON.parse(val);
-                      } catch {
-                        /* keep as string */
-                      }
-                    }
-                    handleConditionalRouteChange(idx, "value", val);
-                  }}
-                  sx={{ width: 180 }}
-                  helperText={route.operator === "$in" ? '["a","b"]' : ""}
-                />
-                <TextField
-                  size="small"
-                  label="Target Provider"
-                  value={route.target || ""}
-                  onChange={(e) =>
-                    handleConditionalRouteChange(idx, "target", e.target.value)
-                  }
-                  sx={{ width: 160 }}
-                />
-                <IconButton
-                  size="small"
-                  onClick={() => handleRemoveConditionalRoute(idx)}
-                >
-                  <Iconify
-                    icon="mdi:delete-outline"
-                    width={18}
-                    color="error.main"
-                  />
-                </IconButton>
-              </Stack>
-            </Card>
-          ))}
-
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={handleAddConditionalRoute}
-            startIcon={<Iconify icon="mdi:plus" width={16} />}
-          >
-            Add Route Rule
-          </Button>
-        </Stack>
-      </ConfigSection>
-
       {/* ===================== CIRCUIT BREAKER ===================== */}
       <ConfigSection
         title="Circuit Breaker"
@@ -1498,9 +1361,7 @@ const RoutingConfigTab = ({ routing, onChange }) => {
                 control={
                   <Switch
                     size="small"
-                    checked={
-                      retryConfig.on_timeout ?? retryConfig.onTimeout ?? true
-                    }
+                    checked={retryOnTimeout(config)}
                     onChange={(e) =>
                       handleNestedChange(
                         "retry",

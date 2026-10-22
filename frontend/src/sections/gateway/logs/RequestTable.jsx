@@ -27,6 +27,7 @@ import {
   CUSTOM_COLUMN_TEXT_WIDTH,
 } from "./columns/columnModel";
 import MetadataCell from "./columns/MetadataCell";
+import GatewayCell from "./columns/GatewayCell";
 import ClippedColumnLabel from "./columns/ClippedColumnLabel";
 
 // ---------------------------------------------------------------------------
@@ -213,6 +214,22 @@ function renderBuiltinCell(colKey, log, ctx) {
   }
 }
 
+function renderCell(col, log, ctx) {
+  if (col.kind === "metadata") {
+    return (
+      <MetadataCell key={col.id} metadata={log.metadata} name={col.name} />
+    );
+  }
+  if (col.kind === "gateway") {
+    return <GatewayCell key={col.id} column={col.key} log={log} />;
+  }
+  return (
+    <React.Fragment key={col.id}>
+      {renderBuiltinCell(col.key, log, ctx)}
+    </React.Fragment>
+  );
+}
+
 const RequestRow = React.memo(function RequestRow({ log, columns, onClick }) {
   const latencyMs = log.latency_ms;
   const guardrailTriggered = log.guardrail_triggered;
@@ -254,15 +271,7 @@ const RequestRow = React.memo(function RequestRow({ log, columns, onClick }) {
         }),
       }}
     >
-      {columns.map((col) =>
-        col.kind === "metadata" ? (
-          <MetadataCell key={col.id} metadata={log.metadata} name={col.name} />
-        ) : (
-          <React.Fragment key={col.id}>
-            {renderBuiltinCell(col.key, log, ctx)}
-          </React.Fragment>
-        ),
-      )}
+      {columns.map((col) => renderCell(col, log, ctx))}
     </TableRow>
   );
 });

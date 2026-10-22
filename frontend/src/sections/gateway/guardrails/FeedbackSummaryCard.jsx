@@ -30,6 +30,7 @@ function normalizeSummaryItem(item) {
       item.falsePositiveCount ?? item.false_positive_count ?? 0,
     falseNegativeCount:
       item.falseNegativeCount ?? item.false_negative_count ?? 0,
+    unsureCount: item.unsureCount ?? item.unsure_count ?? 0,
   };
 }
 
@@ -75,8 +76,17 @@ const FeedbackSummaryCard = () => {
   return (
     <Card>
       <CardContent>
-        <Typography variant="subtitle1" mb={2}>
+        <Typography variant="subtitle1" mb={0.5}>
           Feedback Summary by Check
+        </Typography>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          display="block"
+          mb={2}
+        >
+          One answer per reviewer per check on each request: an edited answer
+          counts once.
         </Typography>
         <TableContainer>
           <Table size="small">
@@ -87,6 +97,7 @@ const FeedbackSummaryCard = () => {
                 <TableCell align="right">Correct</TableCell>
                 <TableCell align="right">False Positive</TableCell>
                 <TableCell align="right">False Negative</TableCell>
+                <TableCell align="right">Unsure</TableCell>
                 <TableCell>Accuracy</TableCell>
               </TableRow>
             </TableHead>
@@ -125,6 +136,13 @@ const FeedbackSummaryCard = () => {
                       <Chip
                         label={item.falseNegativeCount || 0}
                         color="error"
+                        size="small"
+                        variant="outlined"
+                      />
+                    </TableCell>
+                    <TableCell align="right">
+                      <Chip
+                        label={item.unsureCount || 0}
                         size="small"
                         variant="outlined"
                       />

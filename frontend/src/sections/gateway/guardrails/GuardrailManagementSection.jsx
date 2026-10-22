@@ -33,16 +33,22 @@ import { enqueueSnackbar } from "notistack";
 import { useQuery } from "@tanstack/react-query";
 import axiosInstance, { endpoints, createQueryString } from "src/utils/axios";
 import { useToggleGuardrail } from "../providers/hooks/useGatewayConfig";
-import {
-  useOrgConfig,
-  useCreateOrgConfig,
-} from "../providers/hooks/useOrgConfig";
+import { useOrgConfig } from "../providers/hooks/useOrgConfig";
 import { useGatewayContext } from "../context/useGatewayContext";
+import {
+  buildConfigPatch,
+  guardrailsForSave,
+  isStoredChecksMap,
+  useConfigPatch,
+} from "../hooks/useConfigPatch";
 
 import EditGuardrailDialog from "./EditGuardrailDialog";
 import GuardrailAnalyticsTab from "./GuardrailAnalyticsTab";
 import FeedbackSummaryCard from "./FeedbackSummaryCard";
+import RequestRoutesCard from "./RequestRoutesCard";
 import GuardrailConfigTab from "../settings/GuardrailConfigTab";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 
 // Tab slug <-> index mapping
 const TAB_SLUGS = [
@@ -135,6 +141,18 @@ const GUARDRAIL_TYPE_MAP = {
   "input-validation": "Rule-based",
 };
 
+// The checks that read the model's answer. The gateway runs an org's check at
+// its type's stage and never receives the stage saved with a rule, so every
+// other check reads the request only.
+const ANSWER_CHECKS = new Set([
+  "data-leakage-prevention",
+  "hallucination-detection",
+]);
+
+function readsTheAnswer(name) {
+  return ANSWER_CHECKS.has((name || "").toLowerCase());
+}
+
 function getGuardrailType(name) {
   const normalizedName = (name || "").toLowerCase();
 
@@ -147,9 +165,12 @@ function getGuardrailType(name) {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-const OverviewTab = ({ guardrails, gatewayId }) => {
+const OverviewTab = ({ guardrails, gatewayId, storedAsChecksMap }) => {
   const activeCount = guardrails.filter((g) => g.enabled !== false).length;
   const toggleGuardrail = useToggleGuardrail();
+  // Switching a check on or off and editing one write the org's gateway
+  // config: Owner or Admin only (useGatewayAdmin).
+  const { canEdit } = useGatewayAdmin();
   const [editTarget, setEditTarget] = useState(null);
 
   const handleToggle = (g) => {
@@ -249,12 +270,17 @@ const OverviewTab = ({ guardrails, gatewayId }) => {
                     </Typography>
                   </TableCell>
                   <TableCell>
-                    <Switch
-                      size="small"
-                      checked={g.enabled !== false}
-                      onChange={() => handleToggle(g)}
-                      disabled={toggleGuardrail.isPending}
-                    />
+                    <GatewayAdminOnly allowed={canEdit}>
+                      <Switch
+                        size="small"
+                        checked={g.enabled !== false}
+                        onChange={() => handleToggle(g)}
+                        disabled={toggleGuardrail.isPending || !canEdit}
+                        inputProps={{
+                          "aria-label": `Turn ${g.name || `guardrail ${idx + 1}`} on or off`,
+                        }}
+                      />
+                    </GatewayAdminOnly>
                   </TableCell>
                   <TableCell>
                     <Chip
@@ -267,27 +293,25 @@ const OverviewTab = ({ guardrails, gatewayId }) => {
                   <TableCell>
                     <Chip
                       label={
-                        (g.phase || g.stage || "pre") === "pre"
-                          ? "Before LLM"
-                          : "After LLM"
+                        readsTheAnswer(g.name) ? "After LLM" : "Before LLM"
                       }
                       size="small"
                       variant="outlined"
-                      color={
-                        (g.phase || g.stage || "pre") === "pre"
-                          ? "info"
-                          : "secondary"
-                      }
+                      color={readsTheAnswer(g.name) ? "secondary" : "info"}
                     />
                   </TableCell>
                   <TableCell align="right">
-                    <IconButton
-                      size="small"
-                      onClick={() => setEditTarget(g)}
-                      title="Edit"
-                    >
-                      <Iconify icon="mdi:pencil-outline" width={18} />
-                    </IconButton>
+                    <GatewayAdminOnly allowed={canEdit}>
+                      <IconButton
+                        size="small"
+                        onClick={() => setEditTarget(g)}
+                        title="Edit"
+                        aria-label={`Edit ${g.name || `guardrail ${idx + 1}`}`}
+                        disabled={!canEdit}
+                      >
+                        <Iconify icon="mdi:pencil-outline" width={18} />
+                      </IconButton>
+                    </GatewayAdminOnly>
                   </TableCell>
                 </TableRow>
               ))}
@@ -304,12 +328,24 @@ const OverviewTab = ({ guardrails, gatewayId }) => {
           </Table>
         </TableContainer>
       </Card>
+      <RequestRoutesCard />
+      {guardrails.some((g) => readsTheAnswer(g.name)) && (
+        <Typography variant="caption" color="text.secondary">
+          After LLM checks read the text of the model&apos;s answer, not the
+          prompt, on chat, completions, Anthropic Messages, Gemini and Responses
+          requests, streamed or not. On a stream they read the answer when the
+          stream ends, and a blocked stream ends with the guardrail&apos;s
+          error. A background Responses request is refused when an After LLM
+          check would block it.
+        </Typography>
+      )}
 
       <EditGuardrailDialog
         open={Boolean(editTarget)}
         onClose={() => setEditTarget(null)}
         guardrail={editTarget}
         gatewayId={gatewayId}
+        storedAsChecksMap={storedAsChecksMap}
       />
     </Stack>
   );
@@ -318,42 +354,18 @@ const OverviewTab = ({ guardrails, gatewayId }) => {
 OverviewTab.propTypes = {
   guardrails: PropTypes.array.isRequired,
   gatewayId: PropTypes.string,
+  // The section is stored as a checks map: its checks are edited as the map
+  // stores them (EditGuardrailDialog).
+  storedAsChecksMap: PropTypes.bool,
 };
 
-/**
- * Convert checks object map back to rules array for saving to org config.
- * Preserves original rule names via _originalName field.
- */
-function checksToRules(guardrailObj) {
-  if (!guardrailObj || !guardrailObj.checks) return guardrailObj;
-  const checks = guardrailObj.checks;
-  if (typeof checks !== "object" || Array.isArray(checks)) return guardrailObj;
-
-  // Reverse map: catalog name → org-config name
-  const CATALOG_TO_RULE = {
-    "pii-detection": "pii-detector",
-    "secret-detection": "secrets-detector",
-    "prompt-injection": "injection-detector",
-  };
-
-  const rules = Object.entries(checks).map(([catalogName, cfg]) => ({
-    name: cfg._originalName || CATALOG_TO_RULE[catalogName] || catalogName,
-    stage: cfg.stage || cfg.phase || "pre",
-    mode: cfg.mode || "sync",
-    action: cfg.action || "block",
-    threshold: cfg.confidence_threshold ?? cfg.confidenceThreshold ?? 0.8,
-    enabled: cfg.enabled !== false,
-    config: cfg.config || {},
-  }));
-
-  // eslint-disable-next-line no-unused-vars
-  const { checks: _, ...rest } = guardrailObj;
-  return { ...rest, rules };
-}
-
-const ConfigTab = () => {
+const ConfigTab = ({ gatewayId }) => {
+  const { canEdit } = useGatewayAdmin();
   const { data: orgConfig, isLoading } = useOrgConfig();
-  const createOrgConfig = useCreateOrgConfig();
+  const saveConfig = useConfigPatch({
+    action: "Saving guardrails",
+    successMessage: "Guardrails saved",
+  });
   const [localGuardrails, setLocalGuardrails] = useState(null);
   const [dirty, setDirty] = useState(false);
 
@@ -366,13 +378,15 @@ const ConfigTab = () => {
   };
 
   const handleSave = () => {
-    // Convert checks back to rules format for org config storage
-    const toSave = checksToRules(localGuardrails) || localGuardrails;
-    createOrgConfig.mutate(
+    const saved = orgConfig?.guardrails || {};
+    const toSave = guardrailsForSave(localGuardrails, saved);
+    saveConfig.mutate(
       {
-        providers: orgConfig?.providers || {},
-        guardrails: toSave,
-        routing: orgConfig?.routing || {},
+        gatewayId,
+        patch: buildConfigPatch({ guardrails: saved }, { guardrails: toSave }, [
+          "guardrails",
+        ]),
+        saved: { guardrails: saved },
       },
       {
         onSuccess: () => {
@@ -408,14 +422,16 @@ const ConfigTab = () => {
               <Button size="small" color="inherit" onClick={handleReset}>
                 Reset
               </Button>
-              <Button
-                size="small"
-                variant="contained"
-                onClick={handleSave}
-                disabled={createOrgConfig.isPending}
-              >
-                {createOrgConfig.isPending ? "Saving..." : "Save & Activate"}
-              </Button>
+              <GatewayAdminOnly allowed={canEdit}>
+                <Button
+                  size="small"
+                  variant="contained"
+                  onClick={handleSave}
+                  disabled={saveConfig.isPending || !canEdit}
+                >
+                  {saveConfig.isPending ? "Saving..." : "Save & Activate"}
+                </Button>
+              </GatewayAdminOnly>
             </Stack>
           }
         >
@@ -423,9 +439,17 @@ const ConfigTab = () => {
           gateway.
         </Alert>
       )}
-      <GuardrailConfigTab guardrails={guardrailData} onChange={handleChange} />
+      <GuardrailConfigTab
+        guardrails={guardrailData}
+        saved={orgConfig?.guardrails}
+        onChange={handleChange}
+      />
     </Stack>
   );
+};
+
+ConfigTab.propTypes = {
+  gatewayId: PropTypes.string,
 };
 
 const EXAMPLE_PROMPTS = [
@@ -448,7 +472,73 @@ const EXAMPLE_PROMPTS = [
   },
 ];
 
+// What a test-playground answer says happened: blocked is a 403
+// with error.type guardrail_error, warned a 2xx with
+// x-agentcc-guardrail-triggered: true (its action and check names come only
+// from x-agentcc-guardrail-action and x-agentcc-guardrails-triggered), and
+// any other non-2xx is an error, never a pass.
+function playgroundOutcome(r) {
+  const code = r?.status_code;
+  const ok = typeof code === "number" && code >= 200 && code < 300;
+  if (r?.blocked) {
+    return {
+      kind: "blocked",
+      label: `Blocked (${code})`,
+      short: "Blocked",
+      color: "error",
+    };
+  }
+  if (!ok) {
+    return {
+      kind: "error",
+      label: `Error (${code})`,
+      short: `Error ${code}`,
+      color: "error",
+    };
+  }
+  if (r?.warned) {
+    if (r.guardrail_action === "warn") {
+      return {
+        kind: "warned",
+        label: `Warned (${code})`,
+        short: "Warned",
+        color: "warning",
+      };
+    }
+    if (r.guardrail_action === "log") {
+      return {
+        kind: "logged",
+        label: `Logged (${code})`,
+        short: "Logged",
+        color: "info",
+      };
+    }
+    return {
+      kind: "triggered",
+      label: `Triggered (${code})`,
+      short: "Triggered",
+      color: "warning",
+    };
+  }
+  return {
+    kind: "passed",
+    label: `Passed (${code})`,
+    short: "Passed",
+    color: "success",
+  };
+}
+
+function errorMessageOf(body) {
+  const error = body && typeof body === "object" ? body.error : null;
+  if (error && typeof error === "object" && error.message) return error.message;
+  if (typeof error === "string") return error;
+  return "";
+}
+
 const PlaygroundTab = ({ gatewayId }) => {
+  // The test runs through the gateway's admin path (test-playground):
+  // Owner or Admin only (useGatewayAdmin).
+  const { canEdit } = useGatewayAdmin();
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("");
   const [result, setResult] = useState(null);
@@ -474,8 +564,7 @@ const PlaygroundTab = ({ gatewayId }) => {
           prompt,
           model: r.model,
           statusCode: r.status_code,
-          blocked: r.blocked,
-          warned: r.warned,
+          outcome: playgroundOutcome(r),
           time: new Date(),
         },
         ...prev.slice(0, 19),
@@ -499,6 +588,11 @@ const PlaygroundTab = ({ gatewayId }) => {
   const guardrailHeaders =
     result?.guardrailHeaders ?? result?.guardrail_headers ?? {};
   const hasGuardrailHeaders = Object.keys(guardrailHeaders).length > 0;
+  const outcome = result && !result.error ? playgroundOutcome(result) : null;
+  const checkNames = Array.isArray(result?.triggered_checks)
+    ? result.triggered_checks.join(", ")
+    : "";
+  const failure = errorMessageOf(body);
 
   return (
     <Stack spacing={2}>
@@ -510,7 +604,12 @@ const PlaygroundTab = ({ gatewayId }) => {
           </Typography>
           <Typography variant="body2" color="text.secondary" mb={2}>
             Send a real request through the gateway to test which guardrails
-            fire. Blocked requests return 403/446, warnings return 246.
+            fire. A block answers HTTP 403 with error type guardrail_error. A
+            check that warns or logs lets the request through: the answer
+            carries x-agentcc-guardrail-triggered: true, with
+            x-agentcc-guardrail-action (warn or log) and
+            x-agentcc-guardrails-triggered (the check names) when the gateway
+            sends them.
           </Typography>
 
           {/* Example prompts */}
@@ -544,20 +643,22 @@ const PlaygroundTab = ({ gatewayId }) => {
               onChange={(e) => setModel(e.target.value)}
               sx={{ width: 240 }}
             />
-            <Button
-              variant="contained"
-              onClick={handleTest}
-              disabled={!prompt.trim() || loading}
-              startIcon={
-                loading ? (
-                  <CircularProgress size={16} color="inherit" />
-                ) : (
-                  <Iconify icon="mdi:play" width={18} />
-                )
-              }
-            >
-              {loading ? "Running..." : "Run Test"}
-            </Button>
+            <GatewayAdminOnly allowed={canEdit}>
+              <Button
+                variant="contained"
+                onClick={handleTest}
+                disabled={!prompt.trim() || loading || !canEdit}
+                startIcon={
+                  loading ? (
+                    <CircularProgress size={16} color="inherit" />
+                  ) : (
+                    <Iconify icon="mdi:play" width={18} />
+                  )
+                }
+              >
+                {loading ? "Running..." : "Run Test"}
+              </Button>
+            </GatewayAdminOnly>
           </Stack>
         </CardContent>
       </Card>
@@ -568,48 +669,49 @@ const PlaygroundTab = ({ gatewayId }) => {
           <CardContent>
             <Stack direction="row" spacing={2} alignItems="center" mb={2}>
               <Typography variant="h6">Result</Typography>
-              <Chip
-                label={
-                  result.blocked
-                    ? "BLOCKED (446)"
-                    : result.warned
-                      ? "WARNING (246)"
-                      : `OK (${statusCode})`
-                }
-                color={
-                  result.blocked
-                    ? "error"
-                    : result.warned
-                      ? "warning"
-                      : "success"
-                }
-                size="small"
-              />
+              <Chip label={outcome.label} color={outcome.color} size="small" />
               {result.model && (
                 <Chip label={result.model} size="small" variant="outlined" />
               )}
             </Stack>
 
-            {result.blocked && (
+            {outcome.kind === "blocked" && (
               <Alert severity="error" sx={{ mb: 2 }}>
-                Request was blocked by guardrails. The prompt triggered one or
-                more guardrail rules configured to block.
+                Request was blocked by guardrails: a rule configured to block
+                refused the prompt or the model&apos;s answer.
               </Alert>
             )}
-            {result.warned && (
+            {outcome.kind === "error" && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {`The request failed with HTTP ${statusCode}${failure ? `: ${failure}` : ""}. No guardrail blocked it.`}
+              </Alert>
+            )}
+            {outcome.kind === "warned" && (
               <Alert severity="warning" sx={{ mb: 2 }}>
-                Request completed with warnings. One or more guardrails flagged
-                the content but allowed it through.
+                {checkNames
+                  ? `A guardrail warned and let the request through: ${checkNames}.`
+                  : "A guardrail warned and let the request through. This gateway does not name the checks."}
               </Alert>
             )}
-            {!result.blocked &&
-              !result.warned &&
-              statusCode >= 200 &&
-              statusCode < 300 && (
-                <Alert severity="success" sx={{ mb: 2 }}>
-                  Request passed all guardrails and completed successfully.
-                </Alert>
-              )}
+            {outcome.kind === "logged" && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                {checkNames
+                  ? `A guardrail logged the request and let it through: ${checkNames}.`
+                  : "A guardrail logged the request and let it through. This gateway does not name the checks."}
+              </Alert>
+            )}
+            {outcome.kind === "triggered" && (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                {checkNames
+                  ? `A guardrail triggered and let the request through: ${checkNames}.`
+                  : "A guardrail triggered and let the request through. This gateway does not name the checks."}
+              </Alert>
+            )}
+            {outcome.kind === "passed" && (
+              <Alert severity="success" sx={{ mb: 2 }}>
+                {`No guardrail triggered. The request completed (HTTP ${statusCode}).`}
+              </Alert>
+            )}
 
             {/* Guardrail headers */}
             {hasGuardrailHeaders && (
@@ -714,16 +816,8 @@ const PlaygroundTab = ({ gatewayId }) => {
                     </TableCell>
                     <TableCell>
                       <Chip
-                        label={
-                          h.blocked
-                            ? "Blocked"
-                            : h.warned
-                              ? "Warning"
-                              : `${h.status_code || "OK"}`
-                        }
-                        color={
-                          h.blocked ? "error" : h.warned ? "warning" : "success"
-                        }
+                        label={h.outcome.short}
+                        color={h.outcome.color}
                         size="small"
                       />
                     </TableCell>
@@ -741,6 +835,32 @@ const PlaygroundTab = ({ gatewayId }) => {
 PlaygroundTab.propTypes = {
   gatewayId: PropTypes.string,
 };
+
+// The strongest action a logged request's checks took (block, then warn,
+// then log), from its guardrail_results; the chip is coloured by it.
+const LOG_ACTIONS = [
+  { action: "block", label: "Blocked", color: "error" },
+  { action: "warn", label: "Warned", color: "warning" },
+  { action: "log", label: "Logged", color: "info" },
+];
+
+function guardrailLogChip(log) {
+  const results = Array.isArray(log?.guardrail_results)
+    ? log.guardrail_results
+    : [];
+  const actions = new Set(
+    results.map((r) => (typeof r?.action === "string" ? r.action : "")),
+  );
+  const strongest = LOG_ACTIONS.find((a) => actions.has(a.action));
+  const code = log?.status_code;
+  if (!strongest) {
+    return { label: code ? String(code) : "\u2014", color: "default" };
+  }
+  return {
+    label: code ? `${strongest.label} (${code})` : strongest.label,
+    color: strongest.color,
+  };
+}
 
 const LogsTab = ({ gatewayId }) => {
   const navigate = useNavigate();
@@ -766,9 +886,7 @@ const LogsTab = ({ gatewayId }) => {
   const logList = Array.isArray(logs) ? logs : logs?.results || [];
 
   if (isLoading) {
-    return (
-      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
-    );
+    return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
   }
 
   return (
@@ -810,14 +928,8 @@ const LogsTab = ({ gatewayId }) => {
                 </TableCell>
                 <TableCell>
                   <Chip
-                    label={log.status_code || "\u2014"}
-                    color={
-                      log.status_code === 246
-                        ? "warning"
-                        : log.status_code === 446
-                          ? "error"
-                          : "default"
-                    }
+                    label={guardrailLogChip(log).label}
+                    color={guardrailLogChip(log).color}
                     size="small"
                   />
                 </TableCell>
@@ -919,9 +1031,13 @@ const GuardrailManagementSection = () => {
       </Tabs>
 
       {tab === 0 && (
-        <OverviewTab guardrails={guardrails} gatewayId={gatewayId} />
+        <OverviewTab
+          guardrails={guardrails}
+          gatewayId={gatewayId}
+          storedAsChecksMap={isStoredChecksMap(orgConfig?.guardrails)}
+        />
       )}
-      {tab === 1 && <ConfigTab />}
+      {tab === 1 && <ConfigTab gatewayId={gatewayId} />}
       {tab === 2 && <GuardrailAnalyticsTab gatewayId={gatewayId} />}
       {tab === 3 && <FeedbackSummaryCard />}
       {tab === 4 && <PlaygroundTab gatewayId={gatewayId} />}

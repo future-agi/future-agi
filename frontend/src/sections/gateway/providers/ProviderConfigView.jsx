@@ -15,11 +15,14 @@ import { enqueueSnackbar } from "notistack";
 import { useRemoveProvider } from "./hooks/useGatewayConfig";
 import ConfirmDialog from "../components/ConfirmDialog";
 import AddProviderDialog from "./AddProviderDialog";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 
 const ProviderConfigView = ({ config, orgConfig, gatewayId }) => {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [editTarget, setEditTarget] = useState(null);
   const removeProvider = useRemoveProvider();
+  const { canEdit } = useGatewayAdmin();
   // Try gateway config first, fall back to org config providers
   const providers = config?.providers || orgConfig?.providers;
 
@@ -58,23 +61,31 @@ const ProviderConfigView = ({ config, orgConfig, gatewayId }) => {
             >
               <Typography variant="h6">{name}</Typography>
               <Stack direction="row" spacing={0.5}>
-                <IconButton
-                  size="small"
-                  onClick={() =>
-                    setEditTarget({ name, config: providerConfig })
-                  }
-                  title="Edit provider"
-                >
-                  <Iconify icon="mdi:pencil-outline" width={18} />
-                </IconButton>
-                <IconButton
-                  size="small"
-                  color="error"
-                  onClick={() => setDeleteTarget(name)}
-                  title="Remove provider"
-                >
-                  <Iconify icon="mdi:delete-outline" width={18} />
-                </IconButton>
+                <GatewayAdminOnly allowed={canEdit}>
+                  <IconButton
+                    size="small"
+                    onClick={() =>
+                      setEditTarget({ name, config: providerConfig })
+                    }
+                    title="Edit provider"
+                    aria-label={`Edit provider ${name}`}
+                    disabled={!canEdit}
+                  >
+                    <Iconify icon="mdi:pencil-outline" width={18} />
+                  </IconButton>
+                </GatewayAdminOnly>
+                <GatewayAdminOnly allowed={canEdit}>
+                  <IconButton
+                    size="small"
+                    color="error"
+                    onClick={() => setDeleteTarget(name)}
+                    title="Remove provider"
+                    aria-label={`Remove provider ${name}`}
+                    disabled={!canEdit}
+                  >
+                    <Iconify icon="mdi:delete-outline" width={18} />
+                  </IconButton>
+                </GatewayAdminOnly>
               </Stack>
             </Stack>
 

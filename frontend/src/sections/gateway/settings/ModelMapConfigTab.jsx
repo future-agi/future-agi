@@ -48,9 +48,24 @@ const ModelMapConfigTab = ({ modelMap, onChange }) => {
 
       <Paper variant="outlined" sx={{ p: 2 }}>
         <Alert severity="info" sx={{ mb: 2 }}>
-          Map model names to specific providers. When a request uses a mapped
-          model name, it routes to the specified provider instead of the default
-          registry lookup.
+          <Typography variant="body2" sx={{ mb: 0.5 }}>
+            Map a model name to a provider. For your organization&apos;s API
+            keys, a mapped name goes only to the provider you map it to, and
+            only when that is one of your organization&apos;s own providers
+            (enabled, with a key); a name mapped to any other provider is not
+            used.
+          </Typography>
+          <Typography variant="body2" sx={{ mb: 0.5 }}>
+            If that provider lists exactly one model, the request is sent as
+            that model, so the name can be an alias (for example fast mapped to
+            a provider that lists gpt-4o-mini). Otherwise the request is sent
+            under the name it used.
+          </Typography>
+          <Typography variant="body2">
+            A model with no mapping goes to the first of your providers that
+            lists it, sorted by provider ID, unless a routing strategy spreads
+            it across them.
+          </Typography>
         </Alert>
 
         {entries.length === 0 && (
