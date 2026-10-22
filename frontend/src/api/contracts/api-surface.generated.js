@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1092,
+  endpointCount: 1093,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -1079,6 +1079,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/derived-metric-runs/{id}/recompute/": ["post"],
       "/tracer/derived-metric-runs/{id}/results/": ["get"],
       "/tracer/derived-metrics/": ["get", "post"],
+      "/tracer/derived-metrics/evaluators/": ["get"],
       "/tracer/derived-metrics/validate/": ["post"],
       "/tracer/derived-metrics/{id}/": ["get", "put"],
       "/tracer/derived-metrics/{id}/preview/": ["post"],
@@ -2383,6 +2384,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/derived-metric-runs/{id}/recompute/": ["post"],
   "/tracer/derived-metric-runs/{id}/results/": ["get"],
   "/tracer/derived-metrics/": ["get", "post"],
+  "/tracer/derived-metrics/evaluators/": ["get"],
   "/tracer/derived-metrics/validate/": ["post"],
   "/tracer/derived-metrics/{id}/": ["get", "put"],
   "/tracer/derived-metrics/{id}/preview/": ["post"],

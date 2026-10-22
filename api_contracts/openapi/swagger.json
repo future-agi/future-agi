@@ -61136,6 +61136,58 @@
             },
             "parameters": []
         },
+        "/tracer/derived-metrics/evaluators/": {
+            "get": {
+                "operationId": "tracer_derived-metrics_evaluators",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "search",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 100
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 50,
+                        "maximum": 100,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricEvaluatorPage"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
         "/tracer/derived-metrics/validate/": {
             "post": {
                 "operationId": "tracer_derived-metrics_validate_formula",
@@ -144886,6 +144938,53 @@
                     "title": "Expected version",
                     "type": "integer",
                     "minimum": 1
+                }
+            }
+        },
+        "DerivedMetricEvaluator": {
+            "required": [
+                "id",
+                "name",
+                "config_hash"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "description": "Evaluator config ID to bind (config_id).",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                },
+                "config_hash": {
+                    "title": "Config hash",
+                    "description": "Hash of the evaluator's CURRENT resolved definition: the config_hash that new evaluation results are stored under. Results produced under an earlier definition carry a different hash.",
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$",
+                    "minLength": 1
+                }
+            }
+        },
+        "DerivedMetricEvaluatorPage": {
+            "required": [
+                "results",
+                "truncated"
+            ],
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricEvaluator"
+                    }
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "description": "True when more evaluators matched than were returned; narrow the search.",
+                    "type": "boolean"
                 }
             }
         },

@@ -53115,6 +53115,54 @@ export const TracerDerivedMetricsCreateBody = zod.object({
   expected_version: zod.number().min(1).optional(),
 });
 
+export const tracerDerivedMetricsEvaluatorsQuerySearchDefault = ``;
+export const tracerDerivedMetricsEvaluatorsQuerySearchMax = 100;
+
+export const tracerDerivedMetricsEvaluatorsQueryLimitDefault = 50;
+export const tracerDerivedMetricsEvaluatorsQueryLimitMax = 100;
+
+export const TracerDerivedMetricsEvaluatorsQueryParams = zod.object({
+  project_id: zod.string().uuid(),
+  search: zod
+    .string()
+    .max(tracerDerivedMetricsEvaluatorsQuerySearchMax)
+    .default(tracerDerivedMetricsEvaluatorsQuerySearchDefault),
+  limit: zod
+    .number()
+    .min(1)
+    .max(tracerDerivedMetricsEvaluatorsQueryLimitMax)
+    .default(tracerDerivedMetricsEvaluatorsQueryLimitDefault),
+});
+
+export const tracerDerivedMetricsEvaluatorsResponseResultsItemConfigHashRegExp =
+  new RegExp("^[a-f0-9]{64}$");
+
+export const TracerDerivedMetricsEvaluatorsResponse = zod.object({
+  results: zod.array(
+    zod.object({
+      id: zod
+        .string()
+        .uuid()
+        .describe("Evaluator config ID to bind (config_id)."),
+      name: zod.string(),
+      config_hash: zod
+        .string()
+        .min(1)
+        .regex(
+          tracerDerivedMetricsEvaluatorsResponseResultsItemConfigHashRegExp,
+        )
+        .describe(
+          "Hash of the evaluator's CURRENT resolved definition: the config_hash that new evaluation results are stored under. Results produced under an earlier definition carry a different hash.",
+        ),
+    }),
+  ),
+  truncated: zod
+    .boolean()
+    .describe(
+      "True when more evaluators matched than were returned; narrow the search.",
+    ),
+});
+
 export const tracerDerivedMetricsValidateFormulaBodyNameMax = 160;
 
 export const tracerDerivedMetricsValidateFormulaBodyDescriptionDefault = ``;

@@ -25565,6 +25565,24 @@ export interface DerivedMetricWriteApi {
   expected_version?: number;
 }
 
+export interface DerivedMetricEvaluatorApi {
+  /** Evaluator config ID to bind (config_id). */
+  id: string;
+  name: string;
+  /**
+   * Hash of the evaluator's CURRENT resolved definition: the config_hash that new evaluation results are stored under. Results produced under an earlier definition carry a different hash.
+   * @minLength 1
+   * @pattern ^[a-f0-9]{64}$
+   */
+  config_hash: string;
+}
+
+export interface DerivedMetricEvaluatorPageApi {
+  results: DerivedMetricEvaluatorApi[];
+  /** True when more evaluators matched than were returned; narrow the search. */
+  truncated: boolean;
+}
+
 export interface DerivedMetricValidationApi {
   valid: boolean;
   /** @minLength 1 */
@@ -37042,6 +37060,19 @@ export type TracerDerivedMetricsListParams = {
    */
   limit?: number;
   before?: string;
+};
+
+export type TracerDerivedMetricsEvaluatorsParams = {
+  project_id: string;
+  /**
+   * @maxLength 100
+   */
+  search?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
 };
 
 export type TracerDerivedMetricsRunsReadParams = {

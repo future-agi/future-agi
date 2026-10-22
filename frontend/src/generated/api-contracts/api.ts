@@ -398,6 +398,7 @@ import type {
   DeploymentRegistrationApi,
   DeploymentRegistrationResponseApi,
   DerivedMetricApi,
+  DerivedMetricEvaluatorPageApi,
   DerivedMetricListApi,
   DerivedMetricRecomputeApi,
   DerivedMetricResultPageApi,
@@ -1326,6 +1327,7 @@ import type {
   TracerDatasetList200,
   TracerDatasetListParams,
   TracerDerivedMetricRunsResultsParams,
+  TracerDerivedMetricsEvaluatorsParams,
   TracerDerivedMetricsListParams,
   TracerDerivedMetricsRunsReadParams,
   TracerEvalTaskGetEvalDetails200,
@@ -70781,6 +70783,64 @@ export const tracerDerivedMetricsCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(derivedMetricWriteApi),
+    },
+  );
+};
+
+export type tracerDerivedMetricsEvaluatorsResponse200 = {
+  data: DerivedMetricEvaluatorPageApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsEvaluatorsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricsEvaluatorsResponseSuccess =
+  tracerDerivedMetricsEvaluatorsResponse200 & {
+    headers: Headers;
+  };
+export type tracerDerivedMetricsEvaluatorsResponseError =
+  tracerDerivedMetricsEvaluatorsResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerDerivedMetricsEvaluatorsResponse =
+  | tracerDerivedMetricsEvaluatorsResponseSuccess
+  | tracerDerivedMetricsEvaluatorsResponseError;
+
+export const getTracerDerivedMetricsEvaluatorsUrl = (
+  params: TracerDerivedMetricsEvaluatorsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/derived-metrics/evaluators/?${stringifiedParams}`
+    : `/tracer/derived-metrics/evaluators/`;
+};
+
+export const tracerDerivedMetricsEvaluators = async (
+  params: TracerDerivedMetricsEvaluatorsParams,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsEvaluatorsResponse> => {
+  return apiMutator<tracerDerivedMetricsEvaluatorsResponse>(
+    getTracerDerivedMetricsEvaluatorsUrl(params),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
