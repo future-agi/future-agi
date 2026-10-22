@@ -466,8 +466,6 @@ export default function RunDetail({
           {tab === "analytics" && (
             <RunAnalytics
               executionId={executionId}
-              env={env}
-              executionStatus={executionStatus}
               onOpenCall={(task) =>
                 showCall({ task, source: "analytics", page: null })
               }

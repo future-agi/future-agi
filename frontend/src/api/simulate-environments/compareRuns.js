@@ -1,7 +1,6 @@
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
-import { listRunTestExecutions, mapExecutions } from "./runs";
 import { compareRunsKeyPrefix } from "./runEvals";
 
 /**
@@ -53,52 +52,4 @@ export function useCompareRuns(
     staleTime: 1000 * 60 * 5,
     meta: { errorHandled: true },
   });
-}
-
-const FINISHED_RUNS_PAGE = 50;
-
-/**
- * The runs a comparison can be made against: the environment's completed runs,
- * newest first, read a page at a time as summaries (no call counts). A finished
- * run doesn't change, so the list is not polled.
- */
-export function useFinishedRuns(env, { enabled = true } = {}) {
-  const runTestId = env?.platform?.runTestId;
-  const query = useInfiniteQuery({
-    queryKey: ["run-test-executions", runTestId, "finished"],
-    queryFn: ({ pageParam }) =>
-      listRunTestExecutions(runTestId, {
-        page: pageParam + 1,
-        limit: FINISHED_RUNS_PAGE,
-        summary: true,
-      }).then((payload) => ({
-        runs: mapExecutions(payload, pageParam * FINISHED_RUNS_PAGE),
-        count: payload?.count ?? 0,
-      })),
-    initialPageParam: 0,
-    getNextPageParam: (last, pages) =>
-      pages.length * FINISHED_RUNS_PAGE < last.count ? pages.length : undefined,
-    enabled: Boolean(runTestId) && enabled,
-    staleTime: 1000 * 60,
-  });
-  const seen = new Set();
-  const runs = (query.data?.pages ?? [])
-    .flatMap((page) => page.runs)
-    .filter((run) => {
-      // A run started while paging shifts the pages by one.
-      if (seen.has(run.executionId)) return false;
-      seen.add(run.executionId);
-      return run.runState === "finished";
-    });
-  return {
-    runs,
-    hasMore: Boolean(query.hasNextPage),
-    loadMore: () => query.fetchNextPage(),
-    isLoadingMore: query.isFetchingNextPage,
-    // A failed list read again counts as loading, not as failed.
-    isLoading: query.isFetching && !query.data,
-    isFetched: query.isFetched,
-    isError: query.isError && !query.isFetching,
-    refetch: () => query.refetch(),
-  };
 }

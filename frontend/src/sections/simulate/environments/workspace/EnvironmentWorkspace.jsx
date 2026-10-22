@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
 import { Box, Button, Stack } from "@mui/material";
 import {
@@ -29,6 +29,7 @@ import {
 import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
 import { environmentVersionsKey } from "src/api/simulate-environments/versions";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
@@ -349,17 +350,20 @@ export default function EnvironmentWorkspace() {
             alone doesn't say whether a backend exists, so `backed` (same
             `source === "harness"` test WorkspacePanels/EvalsStep use) rides
             along the same context route, so RunDetail can gate the real API
-            picker on it. */}
-        <Outlet
-          context={{
-            env,
-            envState,
-            backed,
-            onStartRun: startRun,
-            runStarting: runMutation.isPending,
-            creditBanner,
-          }}
-        />
+            picker on it. Its own Suspense lets the dialog close while the
+            lazy run page loads. */}
+        <Suspense fallback={<LoadingScreen />}>
+          <Outlet
+            context={{
+              env,
+              envState,
+              backed,
+              onStartRun: startRun,
+              runStarting: runMutation.isPending,
+              creditBanner,
+            }}
+          />
+        </Suspense>
         {runDialogEl}
       </Box>
     );

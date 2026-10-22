@@ -479,22 +479,26 @@ export const DRAFTS_COPY = {
     "Unsaved changes aren't part of this run. Save them first to include them.",
 };
 
-// Comparing a run with another run of the same environment, scenario by
-// scenario, on pass rates over trials.
+// Comparing two runs of the same environment, picked on the Runs tab, scenario
+// by scenario, on pass rates over trials.
 export const COMPARE_COPY = {
   heading: "Compare runs",
   subtitle: (margin) =>
     `Pass rate over trials, per scenario. Changes within ±${margin} points are not meaningful; evals are shown for context only.`,
-  picker: "Compare against",
-  previousRun: "Previous run",
-  thisRun: "This run",
+  pick: "Select 2 finished runs to compare",
+  picked: (count) =>
+    count < 2
+      ? `${count} of 2 selected`
+      : "2 of 2 selected. Clear one to pick another",
+  selectRun: (label) => `Select ${label}`,
+  onlyFinished: "Only finished runs can be compared",
+  atCap: "2 runs already selected",
+  compare: "Compare",
+  clear: "Clear",
   loading: "Comparing runs…",
-  error: "Couldn't compare these runs. Try another run.",
-  nothingBefore: "There is no earlier run to compare against.",
-  unfinished: "Compare is available when this run finishes.",
+  error: "Couldn't compare these runs. Close this and select two other runs.",
   versions: (label, pieces) => `${label}: ${pieces || "before versioning"}`,
-  beforeVersioning: "before versioning",
-  pieces: { agent: "Agent", environment: "Env", suite: "Scenarios" },
+  pieces: { agent: "Agent", environment: "Environment", suite: "Scenarios" },
   verdicts: {
     improved: "Improved",
     regressed: "Regressed",
@@ -511,14 +515,12 @@ export const COMPARE_COPY = {
   newInComparedHint: "Only in the compared run",
   notApplicableHint: "Not in this run",
   notRunInComparedHint: "Not in the compared run",
-  removed: (reason, label) =>
-    [reason, label ? `in Scenarios ${label}` : null].filter(Boolean).join(" "),
-  loadMore: "Load older runs",
-  loadingMore: "Loading older runs…",
-  noOlderRuns: "No older runs",
-  loadingRuns: "Loading runs…",
-  runsError: "Couldn't load runs. Try again",
-  noOtherRuns: "No other finished runs",
+  removed: (reason, label) => {
+    const detail = (reason || "").replace(/^removed\s*/, "");
+    if (label)
+      return `Removed in Scenarios ${label}${detail ? ` (${detail})` : ""}`;
+    return reason ? reason.charAt(0).toUpperCase() + reason.slice(1) : null;
+  },
   criteriaHint: (names) => `Sub-goal changed: ${names.join(", ")}`,
   columns: {
     scenario: "Scenario",
