@@ -1,0 +1,81 @@
+{
+  "data": {
+    "id": "anthropic/claude-sonnet-5.5",
+    "name": "Claude Sonnet 5.5",
+    "created": 1790000000,
+    "architecture": {
+      "input_modalities": ["text"],
+      "output_modalities": ["text"]
+    },
+    "endpoints": [
+      {
+        "name": "DeepInfra | anthropic/claude-sonnet-5.5",
+        "model_name": "Claude Sonnet 5.5",
+        "context_length": 200000,
+        "pricing": {
+          "prompt": "0.0000025",
+          "completion": "0.000012"
+        },
+        "provider_name": "DeepInfra",
+        "tag": "deepinfra",
+        "quantization": null,
+        "max_completion_tokens": 64000,
+        "max_prompt_tokens": null,
+        "supported_parameters": ["tools", "structured_outputs", "reasoning"],
+        "status": 0,
+        "uptime_last_30m": 99.5
+      },
+      {
+        "name": "Anthropic | anthropic/claude-sonnet-5.5",
+        "model_name": "Claude Sonnet 5.5",
+        "context_length": 200000,
+        "pricing": {
+          "prompt": "0.000003",
+          "completion": "0.000015"
+        },
+        "provider_name": "Anthropic",
+        "tag": "anthropic",
+        "quantization": null,
+        "max_completion_tokens": 64000,
+        "max_prompt_tokens": null,
+        "supported_parameters": ["tools", "structured_outputs", "reasoning"],
+        "status": 0,
+        "uptime_last_30m": 99.9
+      },
+      {
+        "name": "Google Vertex | anthropic/claude-sonnet-5.5",
+        "model_name": "Claude Sonnet 5.5",
+        "context_length": 200000,
+        "pricing": {
+          "prompt": "0.000003",
+          "completion": "0.000015"
+        },
+        "provider_name": "Google Vertex",
+        "tag": "google-vertex",
+        "quantization": null,
+        "max_completion_tokens": 64000,
+        "max_prompt_tokens": null,
+        "supported_parameters": ["tools", "structured_outputs", "reasoning"],
+        "status": 0,
+        "uptime_last_30m": 98.0
+      },
+      {
+        "name": "Together | anthropic/claude-sonnet-5.5",
+        "model_name": "Claude Sonnet 5.5",
+        "context_length": 200000,
+        "pricing": {
+          "prompt": "0.000004",
+          "completion": "0.00002"
+        },
+        "provider_name": "Together",
+        "tag": "together",
+        "quantization": null,
+        "max_completion_tokens": 64000,
+        "max_prompt_tokens": null,
+        "supported_parameters": ["tools", "structured_outputs", "reasoning"],
+        "status": 0,
+        "uptime_last_30m": 99.9
+      }
+    ]
+  }
+}

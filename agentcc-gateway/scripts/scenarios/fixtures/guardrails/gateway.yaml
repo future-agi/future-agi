@@ -1,0 +1,67 @@
+# Guardrails scenario gateway config (scripts/scenarios/03_unconfigured_routes.sh), rendered
+# by scn_up like config/base.yaml (same placeholders; scn_up appends redis:).
+# It is base.yaml with guardrails on and no YAML rules, so the FutureAGI checks
+# the scenario pushes in org config run through the dynamic guardrail factory.
+#
+# Every key and token below is a fake value for the local mock upstream.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  keys:
+    - name: "acme-app"
+      key: "scn-test-key-acme"
+      owner: "acme"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+providers:
+  # FutureAGI-credentialed and managed: opted-in orgs may use it, billed.
+  openrouter:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-managed-upstream"
+    api_format: "openai"
+    type: "openrouter"
+    managed: true
+    auto_discover: false
+  # FutureAGI-credentialed but not managed: customer keys may never reach it.
+  operator-openai:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-operator-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["gpt-4o"]
+managed:
+  markup_percent: 5
+  require_credits: true
+  catalog_refresh: 1m
+routing:
+  provider_lock:
+    enabled: true
+cost_tracking:
+  enabled: true
+logging:
+  level: "info"
+  request_logging:
+    enabled: true
+# The mock stands in for Django: request logs reach its /__logs. No org or
+# key sync runs (sync_on_startup false, no interval).
+control_plane:
+  url: "@@MOCK_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  sync_on_startup: false
+  sync_interval: 0s
+# Guardrails on, with no YAML rules: only the org-config checks run.
+guardrails:
+  enabled: true
+# The operator's egress exception for org-config callbacks: the name
+# "localhost" only, so an org check reaches the mock as http://localhost:<port>
+# and is refused it as http://127.0.0.1:<port> (an entry for a name matches the
+# name dialled, never the address it resolves to).
+mcp:
+  egress:
+    private_allow:
+      - "localhost"

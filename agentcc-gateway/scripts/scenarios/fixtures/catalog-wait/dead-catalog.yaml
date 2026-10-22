@@ -1,0 +1,31 @@
+# Catalog-wait scenario template (02_mock_account_and_catalog_wait.sh), rendered by scn_up like
+# config/base.yaml. Two managed OpenRouter-type providers: `openrouter`, the
+# mock, whose catalog goes live on the first refresh, and `openrouter-dead`,
+# whose base URL is a closed port (127.0.0.1:1), so its catalog never loads
+# and it stays on the bundled snapshot. Every key is a fake value.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+providers:
+  openrouter:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-managed-upstream"
+    api_format: "openai"
+    type: "openrouter"
+    managed: true
+    auto_discover: false
+  openrouter-dead:
+    base_url: "http://127.0.0.1:1/api"
+    api_key: "scn-test-dead-upstream"
+    api_format: "openai"
+    type: "openrouter"
+    managed: true
+    auto_discover: false
+managed:
+  markup_percent: 5
+  require_credits: true
+  catalog_refresh: 1m
+logging:
+  level: "info"

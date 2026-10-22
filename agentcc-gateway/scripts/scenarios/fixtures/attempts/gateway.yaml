@@ -1,0 +1,79 @@
+# Attempts scenario gateway config (scripts/scenarios/11_attempts.sh), rendered
+# by scn_up like config/base.yaml (same placeholders; scn_up appends redis:).
+# The mock serves fixtures/attempts/mock, whose catalog adds mock/ok-1, mock/ok-2
+# and mock/fail-503 to the common one.
+#
+# Two keys of org-acme:
+# - scn-test-key-acme (byok) reaches the managed OpenRouter provider once the
+#   org opts in. Its requests are in the request log.
+# - scn-test-key-attempts-internal (internal) is the only kind of key provider
+#   failover, and so retries, run for. It reaches mock-a and mock-b, which
+#   both serve mock/ok-1. The request log leaves internal keys out, so the
+#   script reads their attempts from the gateway's debug log.
+# Every key and token below is a fake value for the local mock upstream.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  keys:
+    - name: "acme-app"
+      key: "scn-test-key-acme"
+      owner: "acme"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+    - name: "attempts-internal"
+      key: "scn-test-key-attempts-internal"
+      owner: "acme"
+      key_type: "internal"
+      metadata:
+        org_id: "org-acme"
+providers:
+  # FutureAGI-credentialed and managed: opted-in orgs may use it, billed.
+  openrouter:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-managed-upstream"
+    api_format: "openai"
+    type: "openrouter"
+    managed: true
+    auto_discover: false
+  mock-a:
+    base_url: "@@MOCK_URL@@"
+    api_key: "scn-test-attempts-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["mock/ok-1"]
+  mock-b:
+    base_url: "@@MOCK_URL@@"
+    api_key: "scn-test-attempts-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["mock/ok-1"]
+managed:
+  markup_percent: 5
+  require_credits: true
+  catalog_refresh: 1m
+routing:
+  # Least latency picks the first target until either has a latency.
+  default_strategy: "least-latency"
+  targets:
+    "mock/ok-1":
+      - provider: "mock-a"
+        weight: 1
+      - provider: "mock-b"
+        weight: 1
+cost_tracking:
+  enabled: true
+logging:
+  level: "debug"
+  request_logging:
+    enabled: true
+# The mock stands in for Django: request logs reach its /__logs.
+control_plane:
+  url: "@@MOCK_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  sync_on_startup: false
+  sync_interval: 0s

@@ -1,0 +1,28 @@
+# secrets-lint.sh fixture: nothing here may be reported.
+# Keys in comments pass: sk-ant-api03-EXAMPLEEXAMPLEEXAMPLE0000
+#   api_key: "sk-proj-EXAMPLEEXAMPLEEXAMPLE0000"
+providers:
+  openai:
+    api_key: "${OPENAI_API_KEY}" # sk-EXAMPLEEXAMPLEEXAMPLE0000 in a trailing comment
+  anthropic:
+    api_key: ${ANTHROPIC_API_KEY}
+  gemini:
+    # A *_ref key names where the secret lives; its value is not a secret.
+    api_key_ref: "vault://gateway/gemini/AIzaEXAMPLE0000000000000000000000000000"
+  bedrock:
+    secret_ref: |
+      AKIAIOSFODNN7EXAMPLE
+auth:
+  keys:
+    - name: placeholder
+      key: "sk-..."
+      note: "use # to start a comment, not sk-"
+license_auth:
+  public_key: |
+    -----BEGIN PUBLIC KEY-----
+    <your-activation-public-key-here>
+    -----END PUBLIC KEY-----
+  # A private key belongs in a file:
+  #   -----BEGIN PRIVATE KEY-----
+# A `#` with no space before it is part of the value, not a comment.
+url: https://example.com/docs#keys

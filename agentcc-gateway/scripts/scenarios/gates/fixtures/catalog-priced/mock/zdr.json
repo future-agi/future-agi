@@ -1,0 +1,19 @@
+{
+  "data": [
+    {
+      "name": "Anthropic | anthropic/claude-sonnet-5.5",
+      "model_id": "anthropic/claude-sonnet-5.5",
+      "model_name": "Claude Sonnet 5.5",
+      "context_length": 1000000,
+      "pricing": { "prompt": "0.000002", "completion": "0.00001" },
+      "provider_name": "Anthropic",
+      "tag": "anthropic",
+      "quantization": null,
+      "max_completion_tokens": 64000,
+      "max_prompt_tokens": null,
+      "supported_parameters": ["tools", "structured_outputs", "reasoning"],
+      "status": 0,
+      "uptime_last_30m": 100
+    }
+  ]
+}

@@ -1,0 +1,369 @@
+{
+  "about": "Rollout fixture: ids whose buckets fnv1a32(org + id) % 100 are precomputed (FNV-1a 32-bit over the UTF-8 bytes of the org id followed by the sticky id, no separator; offset 2166136261, prime 16777619). Each list holds 40 ids, exactly 20 with bucket below percent. keys: sticky_by=key, used by 17_rollout.sh (the gateway never honours a client x-request-id). sessions: sticky_by=session, used by gates/rollout_session.sh. Every key is a fake value for the local mock upstream. TestRolloutDistributionFixtureBuckets checks every bucket against the gateway's tenant.RolloutBucket.",
+  "org": "org-rollout",
+  "percent": 50,
+  "keys": [
+    {
+      "id": "rollout-key-01",
+      "bucket": 0,
+      "key": "scn-test-key-rollout-01"
+    },
+    {
+      "id": "rollout-key-02",
+      "bucket": 57,
+      "key": "scn-test-key-rollout-02"
+    },
+    {
+      "id": "rollout-key-03",
+      "bucket": 38,
+      "key": "scn-test-key-rollout-03"
+    },
+    {
+      "id": "rollout-key-04",
+      "bucket": 43,
+      "key": "scn-test-key-rollout-04"
+    },
+    {
+      "id": "rollout-key-05",
+      "bucket": 24,
+      "key": "scn-test-key-rollout-05"
+    },
+    {
+      "id": "rollout-key-06",
+      "bucket": 81,
+      "key": "scn-test-key-rollout-06"
+    },
+    {
+      "id": "rollout-key-07",
+      "bucket": 62,
+      "key": "scn-test-key-rollout-07"
+    },
+    {
+      "id": "rollout-key-08",
+      "bucket": 67,
+      "key": "scn-test-key-rollout-08"
+    },
+    {
+      "id": "rollout-key-09",
+      "bucket": 48,
+      "key": "scn-test-key-rollout-09"
+    },
+    {
+      "id": "rollout-key-10",
+      "bucket": 78,
+      "key": "scn-test-key-rollout-10"
+    },
+    {
+      "id": "rollout-key-11",
+      "bucket": 97,
+      "key": "scn-test-key-rollout-11"
+    },
+    {
+      "id": "rollout-key-12",
+      "bucket": 40,
+      "key": "scn-test-key-rollout-12"
+    },
+    {
+      "id": "rollout-key-13",
+      "bucket": 59,
+      "key": "scn-test-key-rollout-13"
+    },
+    {
+      "id": "rollout-key-14",
+      "bucket": 54,
+      "key": "scn-test-key-rollout-14"
+    },
+    {
+      "id": "rollout-key-15",
+      "bucket": 73,
+      "key": "scn-test-key-rollout-15"
+    },
+    {
+      "id": "rollout-key-16",
+      "bucket": 16,
+      "key": "scn-test-key-rollout-16"
+    },
+    {
+      "id": "rollout-key-17",
+      "bucket": 35,
+      "key": "scn-test-key-rollout-17"
+    },
+    {
+      "id": "rollout-key-18",
+      "bucket": 26,
+      "key": "scn-test-key-rollout-18"
+    },
+    {
+      "id": "rollout-key-19",
+      "bucket": 45,
+      "key": "scn-test-key-rollout-19"
+    },
+    {
+      "id": "rollout-key-20",
+      "bucket": 69,
+      "key": "scn-test-key-rollout-20"
+    },
+    {
+      "id": "rollout-key-21",
+      "bucket": 50,
+      "key": "scn-test-key-rollout-21"
+    },
+    {
+      "id": "rollout-key-22",
+      "bucket": 31,
+      "key": "scn-test-key-rollout-22"
+    },
+    {
+      "id": "rollout-key-23",
+      "bucket": 12,
+      "key": "scn-test-key-rollout-23"
+    },
+    {
+      "id": "rollout-key-24",
+      "bucket": 93,
+      "key": "scn-test-key-rollout-24"
+    },
+    {
+      "id": "rollout-key-25",
+      "bucket": 74,
+      "key": "scn-test-key-rollout-25"
+    },
+    {
+      "id": "rollout-key-26",
+      "bucket": 55,
+      "key": "scn-test-key-rollout-26"
+    },
+    {
+      "id": "rollout-key-27",
+      "bucket": 36,
+      "key": "scn-test-key-rollout-27"
+    },
+    {
+      "id": "rollout-key-28",
+      "bucket": 21,
+      "key": "scn-test-key-rollout-28"
+    },
+    {
+      "id": "rollout-key-29",
+      "bucket": 2,
+      "key": "scn-test-key-rollout-29"
+    },
+    {
+      "id": "rollout-key-30",
+      "bucket": 60,
+      "key": "scn-test-key-rollout-30"
+    },
+    {
+      "id": "rollout-key-31",
+      "bucket": 79,
+      "key": "scn-test-key-rollout-31"
+    },
+    {
+      "id": "rollout-key-32",
+      "bucket": 98,
+      "key": "scn-test-key-rollout-32"
+    },
+    {
+      "id": "rollout-key-33",
+      "bucket": 17,
+      "key": "scn-test-key-rollout-33"
+    },
+    {
+      "id": "rollout-key-34",
+      "bucket": 84,
+      "key": "scn-test-key-rollout-34"
+    },
+    {
+      "id": "rollout-key-35",
+      "bucket": 3,
+      "key": "scn-test-key-rollout-35"
+    },
+    {
+      "id": "rollout-key-36",
+      "bucket": 22,
+      "key": "scn-test-key-rollout-36"
+    },
+    {
+      "id": "rollout-key-37",
+      "bucket": 41,
+      "key": "scn-test-key-rollout-37"
+    },
+    {
+      "id": "rollout-key-38",
+      "bucket": 12,
+      "key": "scn-test-key-rollout-38"
+    },
+    {
+      "id": "rollout-key-40",
+      "bucket": 51,
+      "key": "scn-test-key-rollout-40"
+    },
+    {
+      "id": "rollout-key-42",
+      "bucket": 89,
+      "key": "scn-test-key-rollout-42"
+    }
+  ],
+  "sessions": [
+    {
+      "id": "rollout-session-01",
+      "bucket": 61
+    },
+    {
+      "id": "rollout-session-02",
+      "bucket": 4
+    },
+    {
+      "id": "rollout-session-03",
+      "bucket": 23
+    },
+    {
+      "id": "rollout-session-04",
+      "bucket": 66
+    },
+    {
+      "id": "rollout-session-05",
+      "bucket": 85
+    },
+    {
+      "id": "rollout-session-06",
+      "bucket": 28
+    },
+    {
+      "id": "rollout-session-07",
+      "bucket": 47
+    },
+    {
+      "id": "rollout-session-08",
+      "bucket": 90
+    },
+    {
+      "id": "rollout-session-09",
+      "bucket": 9
+    },
+    {
+      "id": "rollout-session-10",
+      "bucket": 43
+    },
+    {
+      "id": "rollout-session-11",
+      "bucket": 24
+    },
+    {
+      "id": "rollout-session-12",
+      "bucket": 81
+    },
+    {
+      "id": "rollout-session-13",
+      "bucket": 62
+    },
+    {
+      "id": "rollout-session-14",
+      "bucket": 19
+    },
+    {
+      "id": "rollout-session-15",
+      "bucket": 0
+    },
+    {
+      "id": "rollout-session-16",
+      "bucket": 57
+    },
+    {
+      "id": "rollout-session-17",
+      "bucket": 38
+    },
+    {
+      "id": "rollout-session-18",
+      "bucket": 95
+    },
+    {
+      "id": "rollout-session-19",
+      "bucket": 76
+    },
+    {
+      "id": "rollout-session-20",
+      "bucket": 88
+    },
+    {
+      "id": "rollout-session-21",
+      "bucket": 7
+    },
+    {
+      "id": "rollout-session-22",
+      "bucket": 26
+    },
+    {
+      "id": "rollout-session-23",
+      "bucket": 45
+    },
+    {
+      "id": "rollout-session-24",
+      "bucket": 64
+    },
+    {
+      "id": "rollout-session-25",
+      "bucket": 83
+    },
+    {
+      "id": "rollout-session-26",
+      "bucket": 2
+    },
+    {
+      "id": "rollout-session-27",
+      "bucket": 21
+    },
+    {
+      "id": "rollout-session-28",
+      "bucket": 36
+    },
+    {
+      "id": "rollout-session-29",
+      "bucket": 55
+    },
+    {
+      "id": "rollout-session-30",
+      "bucket": 33
+    },
+    {
+      "id": "rollout-session-31",
+      "bucket": 14
+    },
+    {
+      "id": "rollout-session-32",
+      "bucket": 95
+    },
+    {
+      "id": "rollout-session-33",
+      "bucket": 76
+    },
+    {
+      "id": "rollout-session-34",
+      "bucket": 9
+    },
+    {
+      "id": "rollout-session-35",
+      "bucket": 90
+    },
+    {
+      "id": "rollout-session-36",
+      "bucket": 71
+    },
+    {
+      "id": "rollout-session-37",
+      "bucket": 52
+    },
+    {
+      "id": "rollout-session-38",
+      "bucket": 81
+    },
+    {
+      "id": "rollout-session-39",
+      "bucket": 62
+    },
+    {
+      "id": "rollout-session-40",
+      "bucket": 2
+    }
+  ]
+}

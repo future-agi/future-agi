@@ -1,0 +1,24 @@
+{
+  "data": [
+    {
+      "id": "google/gemini-2.5-flash-image",
+      "name": "Gemini 2.5 Flash Image (shut down 2026-10-02 per catalog/deprecations.json)",
+      "created": 1750000000,
+      "context_length": 32768,
+      "architecture": { "input_modalities": ["text", "image"], "output_modalities": ["text", "image"] },
+      "pricing": { "prompt": "0.0000003", "completion": "0.0000025" },
+      "top_provider": { "max_completion_tokens": 8192 },
+      "supported_parameters": []
+    },
+    {
+      "id": "google/gemini-3.1-flash-image",
+      "name": "Gemini 3.1 Flash Image (its replacement)",
+      "created": 1790000000,
+      "context_length": 32768,
+      "architecture": { "input_modalities": ["text", "image"], "output_modalities": ["text", "image"] },
+      "pricing": { "prompt": "0.0000003", "completion": "0.0000025" },
+      "top_provider": { "max_completion_tokens": 8192 },
+      "supported_parameters": []
+    }
+  ]
+}

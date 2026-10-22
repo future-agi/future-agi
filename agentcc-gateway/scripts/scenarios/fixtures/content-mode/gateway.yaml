@@ -1,0 +1,71 @@
+# Content-mode scenario gateway config (scripts/scenarios/34_content_mode.sh), rendered
+# by scn_up like config/base.yaml (same placeholders; scn_up appends redis:).
+# It is base.yaml with request bodies captured (include_bodies), so the
+# request log can show what each content mode keeps and drops, and with one
+# warn-action keyword guardrail.
+#
+# Every key and token below is a fake value for the local mock upstream.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  keys:
+    - name: "acme-app"
+      key: "scn-test-key-acme"
+      owner: "acme"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+providers:
+  # FutureAGI-credentialed and managed: opted-in orgs may use it, billed.
+  openrouter:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-managed-upstream"
+    api_format: "openai"
+    type: "openrouter"
+    managed: true
+    auto_discover: false
+  # FutureAGI-credentialed but not managed: customer keys may never reach it.
+  operator-openai:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-operator-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["gpt-4o"]
+managed:
+  markup_percent: 5
+  require_credits: true
+  catalog_refresh: 1m
+routing:
+  provider_lock:
+    enabled: true
+cost_tracking:
+  enabled: true
+logging:
+  level: "info"
+  request_logging:
+    enabled: true
+    # Capture bodies and headers; the content mode decides what the log keeps.
+    include_bodies: true
+# A warn-action guardrail that quotes the matched word from the prompt in its
+# message, which reaches the log as metadata.guardrail_warnings (check 5).
+guardrails:
+  enabled: true
+  rules:
+    - name: "keyword-blocklist"
+      stage: "pre"
+      mode: "sync"
+      action: "warn"
+      threshold: 0.5
+      config:
+        words: ["cmflaggedword"]
+# The mock stands in for Django: request logs reach its /__logs. No org or
+# key sync runs (sync_on_startup false, no interval).
+control_plane:
+  url: "@@MOCK_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  sync_on_startup: false
+  sync_interval: 0s

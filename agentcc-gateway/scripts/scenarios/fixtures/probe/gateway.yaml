@@ -1,0 +1,23 @@
+# 71_probe.sh's gateway config. The script fills in the mock ports,
+# then lib_mcp.sh's scn_mcp_gateway_template adds the fixed test state key
+# under `mcp:`, then lib.sh's _scn_render_config fills base.yaml's
+# placeholders. No provider and no API key are configured: the scenario makes
+# no model call. Every token below is a fake value for the local mocks.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+logging:
+  level: "debug" # the inline-credential check reads the debug log too
+mcp:
+  enabled: true
+  egress:
+    # The operator's exceptions: the three MCP mocks and the mock
+    # upstream, each by its loopback port. Nothing else on loopback, and no
+    # private range, is reachable.
+    private_allow:
+      - "127.0.0.1:@@PROBE_MAIN_PORT@@"
+      - "127.0.0.1:@@PROBE_LEGACY_PORT@@"
+      - "127.0.0.1:@@PROBE_SSE_PORT@@"
+      - "127.0.0.1:@@PROBE_MOCK_PORT@@"

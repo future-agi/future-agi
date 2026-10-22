@@ -1,0 +1,43 @@
+# strategy_inputs.sh, part 2: the adaptive strategy over two
+# targets of ONE provider, so only per-model health can tell them apart:
+# the provider-level health and latency the strategy falls back to are the
+# same for both. Rendered by scn_up like config/base.yaml.
+# Every key and token below is a fake value for the local mock upstream.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  keys:
+    - name: "gate-internal"
+      key: "scn-test-key-gate-internal"
+      owner: "acme"
+      key_type: "internal"
+providers:
+  # The node's own credentials (config.yaml, internal key): its attempts feed
+  # per-model health. The mock fails mock/fail-503 with 503.
+  ad:
+    base_url: "@@MOCK_URL@@"
+    api_key: "scn-test-gate-adaptive-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["mock/fail-503", "mock/ok-1"]
+routing:
+  default_strategy: "adaptive"
+  adaptive:
+    learning_requests: 10
+    min_weight: 0.0001 # exploration: 0.01% of selections
+  targets:
+    "gate/adaptive":
+      - provider: "ad"
+        model_override: "mock/fail-503"
+        priority: 0
+      - provider: "ad"
+        model_override: "mock/ok-1"
+        priority: 1
+cost_tracking:
+  enabled: true
+logging:
+  level: "info"

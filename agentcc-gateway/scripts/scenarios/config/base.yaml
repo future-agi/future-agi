@@ -1,0 +1,61 @@
+# Scenario gateway config, rendered by scn_up (scripts/scenarios/lib.sh).
+#
+# scn_up replaces each @@NAME@@ placeholder: GATEWAY_PORT, GATEWAY_URL,
+# MOCK_URL, ADMIN_TOKEN, SCN_DIR, SCN_ROOT, RUN. It then appends a `redis:`
+# block when SCN_REDIS is set and an `otel:` block when SCN_OTEL_EXPORTER is
+# set, so a template must not define those two top-level keys itself.
+# Placeholders go inside quoted strings, so the template stays valid YAML;
+# the listen port comes from AGENTCC_PORT, which scn_up sets.
+# The gateway expands $VAR references in its config file, so keep `$` out.
+#
+# Every key and token below is a fake value for the local mock upstream.
+server:
+  port: 18910 # replaced by AGENTCC_PORT
+  host: "127.0.0.1"
+admin:
+  token: "@@ADMIN_TOKEN@@"
+auth:
+  enabled: true
+  keys:
+    - name: "acme-app"
+      key: "scn-test-key-acme"
+      owner: "acme"
+      key_type: "byok"
+      metadata:
+        org_id: "org-acme"
+providers:
+  # FutureAGI-credentialed and managed: opted-in orgs may use it, billed.
+  openrouter:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-managed-upstream"
+    api_format: "openai"
+    type: "openrouter"
+    managed: true
+    auto_discover: false
+  # FutureAGI-credentialed but not managed: customer keys may never reach it.
+  operator-openai:
+    base_url: "@@MOCK_URL@@/api"
+    api_key: "scn-test-operator-upstream"
+    api_format: "openai"
+    auto_discover: false
+    models: ["gpt-4o"]
+managed:
+  markup_percent: 5
+  require_credits: true
+  catalog_refresh: 1m
+routing:
+  provider_lock:
+    enabled: true
+cost_tracking:
+  enabled: true
+logging:
+  level: "info"
+  request_logging:
+    enabled: true
+# The mock stands in for Django: request logs reach its /__logs. No org or
+# key sync runs (sync_on_startup false, no interval).
+control_plane:
+  url: "@@MOCK_URL@@"
+  admin_token: "@@ADMIN_TOKEN@@"
+  sync_on_startup: false
+  sync_interval: 0s

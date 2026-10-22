@@ -1,0 +1,40 @@
+[
+  {
+    "name": "echo",
+    "title": "Echo",
+    "description": "Returns its arguments as text.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "text": { "type": "string" } },
+      "required": ["text"]
+    },
+    "annotations": { "readOnlyHint": true },
+    "price_usd": 0.001
+  },
+  {
+    "name": "get_weather",
+    "title": "Weather",
+    "description": "Canned weather for a city.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "city": { "type": "string" } },
+      "required": ["city"]
+    },
+    "annotations": { "readOnlyHint": true, "openWorldHint": true },
+    "price_usd": 0.0025,
+    "result": {
+      "content": [{ "type": "text", "text": "Sunny, 21 C" }],
+      "structuredContent": { "sky": "sunny", "celsius": 21 }
+    }
+  },
+  {
+    "name": "delete_file",
+    "description": "Pretends to delete a file.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "path": { "type": "string" } },
+      "required": ["path"]
+    },
+    "annotations": { "destructiveHint": true }
+  }
+]

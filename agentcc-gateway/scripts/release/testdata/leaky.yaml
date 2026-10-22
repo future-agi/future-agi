@@ -1,0 +1,27 @@
+# secrets-lint.sh fixture: every non-comment value below is shaped like a
+# provider key and must be reported, each on its own line. The keys are fake
+# (each holds EXAMPLE, which the repo's gitleaks config allows).
+providers:
+  anthropic:
+    api_key: "sk-ant-api03-EXAMPLEEXAMPLEEXAMPLE0000"
+  openai:
+    api_key: sk-proj-EXAMPLEEXAMPLEEXAMPLE0000
+  gemini:
+    api_key: 'key="AIzaEXAMPLE0000000000000000000000000000"'
+  bedrock:
+    access_key_id: AKIAIOSFODNN7EXAMPLE
+integrations:
+  slack_bot_token: "xoxb-EXAMPLE-000000000000"
+  github_token: ghp_EXAMPLE00000000000000000000000000000
+  github_fine_grained: github_pat_EXAMPLE000000000000000_0000000000
+  # A `#` inside a quoted value does not start a comment.
+  webhook_secret: "prefix # sk-EXAMPLEEXAMPLEEXAMPLE0000"
+  headers:
+    - "Bearer sk-svcacct-EXAMPLEEXAMPLEEXAMPLE0000"
+tls:
+  client_key: |
+    -----BEGIN PRIVATE KEY-----
+    EXAMPLE
+    -----END PRIVATE KEY-----
+# The default of an env reference is a literal and is scanned.
+fallback_key: "${OPENAI_API_KEY:-sk-EXAMPLEEXAMPLEEXAMPLE0000}"
