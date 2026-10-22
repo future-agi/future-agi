@@ -216,7 +216,10 @@ Sealing:
    not full policy coverage. State outcomes (code checks) and policy verdicts
    (judged sub-goals) are separate checkpoints of the same scenario.
 2. Checks every folder is listed, each `scenario.json`'s `scenario_key` equals
-   its `key`, and each origin matches its files against the parent suite.
+   its `key`, and each origin matches its files against the parent suite. A
+   `simulator_prompt.md` must have `{{ persona }}` and `{{ instruction }}` slots
+   (`suite_simulator_prompt_invalid`): it is the simulated person for every
+   scenario, filled with that scenario's persona and task.
 3. Copies the environment's world, writes the profile into
    `environment_policy`, and runs `prove()` on every scenario: ready, solvable,
    not vacuous, and no step assumed rather than executed. Any failure refuses
@@ -492,9 +495,12 @@ environments keep their path. It refuses, before writing anything:
 - any verification failure from §2.5 (`check_run_inputs`);
 - a suite without a PostgreSQL proof (`suite_runtime_unproved`);
 - a job connector that differs from the binding's, or a provider target other
-  than the binding's `agent.provider_target_id` (`run_inputs_mismatch`);
+  than the binding's `agent.provider_target_id` (`run_inputs_mismatch`); for
+  `hosted_agent`, a `job.agent.config.spec` whose digest is not the binding's
+  `agent.provider_digest`;
 - a combination it does not compose (`compose_unsupported`). It composes
-  `canonical` and `tool_routed` bindings on `retell_chat`, `retell` and `vapi`.
+  `canonical` and `tool_routed` bindings on `retell_chat`, `retell` and `vapi`,
+  and `canonical` bindings on `hosted_agent` (§6.4).
 
 The bundle it writes is an ordinary sealed `environment-bundle.v2`, so
 everything from bundle preflight on is unchanged. Composition is
@@ -632,6 +638,38 @@ admission}]`, the binding's `agent_tools`). Bundles without
 `per_tool` and a PostgreSQL capability (preflight). The provision receipt's
 metadata carries the admission list; the world secret never appears in a
 receipt.
+
+### 6.4 Our agent over MCP (`hosted_agent`)
+
+A `hosted_agent` run is our own agent: `job.agent.config.spec` is an
+`AgentSpec` `{name, instructions, model}` (`fi.alk.harness.hosted_agent`;
+`model` is `vertex_ai/gemini-3.7-flash` or `vertex_ai/gemini-3.8-flash`), and
+its digest is the binding's `agent.provider_digest`. Its bundle differs from
+the table above in three places: the `tool-server` process is replaced by
+`world-mcp` (`python -m fi.alk.harness.world_mcp`, same directory and user, no
+request binding), the `tools` capability by `world_mcp` (http, health
+`/healthz`), and there is no `metadata.provider_import`. `contract.json` has
+`modality` `chat`.
+
+`world-mcp` serves `/mcp`, stateless Streamable HTTP with JSON responses:
+`tools/list` is the release's tools plus the attached servers' (§2.1.1), and
+`tools/call` runs one canonical call through `WorldTools`, unvalidated so that
+every call, malformed or not, is answered and traced by the environment. A
+refused or failed call is a result with `isError` and the reason as text. It
+restarts with every lease.
+
+The agent runs in the chat worker, not in a bundle process, because it calls
+the model through Agent Command Center on the platform's key: an
+OpenAI-compatible tool loop, one tool call at a time, tool-call ids returned
+unchanged, at most 12 rounds of tool calls per turn. Its token use is billed in
+`text_call` with the simulator's. It reports nothing about its calls; the
+runner clears `_alk_tool_trace` before the conversation and reads it after.
+
+**No calls.** When the runner wrote and read the trace itself (a `hosted_agent`
+run, or a request-bound provider run), a scenario with no calls is graded like
+any other: a booking scenario fails because nothing was booked, and one that
+needs no tool is judged on its own checks. A trace that could not be read is
+still `evidence_missing`.
 
 ## 7. Platform
 
