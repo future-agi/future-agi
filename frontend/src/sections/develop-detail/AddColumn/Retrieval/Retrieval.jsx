@@ -119,7 +119,7 @@ export const RetrievalChild = ({
         data,
       ),
     onSuccess: () => {
-      enqueueSnackbar("API Call column updated successfully", {
+      enqueueSnackbar("Vector DB column updated successfully", {
         variant: "success",
       });
       promptToRerunDependents(editId);

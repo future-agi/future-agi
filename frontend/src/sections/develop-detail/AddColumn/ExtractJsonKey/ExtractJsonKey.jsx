@@ -116,7 +116,7 @@ export const ExtractJsonKeyChild = ({
         data,
       ),
     onSuccess: () => {
-      enqueueSnackbar("API Call column updated successfully", {
+      enqueueSnackbar("Extract JSON column updated successfully", {
         variant: "success",
       });
       promptToRerunDependents(editId);

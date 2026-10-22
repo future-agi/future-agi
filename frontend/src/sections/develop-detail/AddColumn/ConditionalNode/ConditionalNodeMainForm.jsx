@@ -210,7 +210,7 @@ const ConditionalNodeMainForm = ({
         data,
       ),
     onSuccess: () => {
-      enqueueSnackbar("API Call column updated successfully", {
+      enqueueSnackbar("Conditional column updated successfully", {
         variant: "success",
       });
       promptToRerunDependents(editId);

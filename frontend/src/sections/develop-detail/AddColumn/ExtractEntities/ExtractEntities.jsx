@@ -97,7 +97,7 @@ export const ExtractEntitiesChild = ({
         data,
       ),
     onSuccess: () => {
-      enqueueSnackbar("API Call column updated successfully", {
+      enqueueSnackbar("Extract Entities column updated successfully", {
         variant: "success",
       });
       promptToRerunDependents(editId);

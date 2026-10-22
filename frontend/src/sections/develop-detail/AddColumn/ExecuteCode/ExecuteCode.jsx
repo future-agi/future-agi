@@ -90,7 +90,7 @@ export const ExecuteCodeChild = ({
         data,
       ),
     onSuccess: () => {
-      enqueueSnackbar("API Call column updated successfully", {
+      enqueueSnackbar("Execute Code column updated successfully", {
         variant: "success",
       });
       promptToRerunDependents(editId);
