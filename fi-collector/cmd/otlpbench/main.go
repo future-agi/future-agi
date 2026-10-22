@@ -1,4 +1,4 @@
-// otlpbench sends bounded OTLP/HTTP traffic and independently verifies storage.
+// otlpbench sends bounded OTLP traffic and independently verifies storage.
 package main
 
 import (
@@ -16,6 +16,9 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/ingestbench"
 )
 
+// warnings receives loud operator warnings; tests may replace it.
+var warnings io.Writer = os.Stderr
+
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -26,62 +29,91 @@ func main() {
 }
 
 func command(ctx context.Context, args []string, stdout io.Writer) error {
-	if len(args) > 0 && args[0] == "report" {
-		if len(args) != 2 {
-			return fmt.Errorf("usage: otlpbench report result.json")
+	if len(args) > 0 {
+		switch args[0] {
+		case "report":
+			if len(args) != 2 {
+				return fmt.Errorf("usage: otlpbench report result.json")
+			}
+			var result ingestbench.Result
+			if err := readJSON(args[1], &result); err != nil {
+				return err
+			}
+			return ingestbench.Report(stdout, result)
+		case "size":
+			if len(args) != 2 {
+				return fmt.Errorf("usage: otlpbench size measured-sizing-inputs.json")
+			}
+			var input ingestbench.SizingInput
+			if err := readJSON(args[1], &input); err != nil {
+				return err
+			}
+			result, err := ingestbench.Size(input)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(stdout).Encode(result)
+		case "verify":
+			return verifyCommand(ctx, args[1:], stdout)
+		case "collector-budget":
+			return budgetCommand(ctx, args[1:], stdout)
 		}
-		var result ingestbench.Result
-		if err := readJSON(args[1], &result); err != nil {
-			return err
-		}
-		return ingestbench.Report(stdout, result)
-	}
-	if len(args) > 0 && args[0] == "size" {
-		if len(args) != 2 {
-			return fmt.Errorf("usage: otlpbench size measured-sizing-inputs.json")
-		}
-		var input ingestbench.SizingInput
-		if err := readJSON(args[1], &input); err != nil {
-			return err
-		}
-		result, err := ingestbench.Size(input)
-		if err != nil {
-			return err
-		}
-		return json.NewEncoder(stdout).Encode(result)
 	}
 	c := ingestbench.DefaultConfig()
 	c.RunID = ingestbench.NewRunID()
 	f := flag.NewFlagSet("otlpbench", flag.ContinueOnError)
 	f.SetOutput(stdout)
 	f.StringVar(&c.RunID, "run-id", c.RunID, "unique 16-lowercase-hex run namespace (reuse is refused)")
-	f.StringVar(&c.Endpoint, "endpoint", c.Endpoint, "full collector OTLP/HTTP traces URL")
+	f.StringVar(&c.Endpoint, "endpoint", c.Endpoint, "collector OTLP endpoint: the full OTLP/HTTP traces URL, or http(s)://host:port for --encoding grpc")
+	f.StringVar(&c.Encoding, "encoding", c.Encoding, "wire path: protobuf (OTLP/HTTP protobuf), json (OTLP/HTTP JSON) or grpc (OTLP/gRPC)")
+	f.BoolVar(&c.Gzip, "gzip", c.Gzip, "gzip-compress request bodies (HTTP) or messages (gRPC), as SDK exporters usually do")
 	f.StringVar(&c.ClickHouseURL, "ch-url", c.ClickHouseURL, "independent read-only ClickHouse HTTP endpoint")
 	f.StringVar(&c.Database, "database", c.Database, "ClickHouse database")
 	f.StringVar(&c.Table, "table", c.Table, "logical spans table (distributed table for a cluster)")
 	f.StringVar(&c.ProjectID, "project-id", "", "dedicated test project UUID")
 	f.StringVar(&c.ProjectName, "project-name", "", "project_name resolved by collector auth")
 	f.StringVar(&c.Profile, "profile-label", c.Profile, "descriptive label only; never changes load settings")
-	f.StringVar(&c.Payload, "payload", c.Payload, "small|medium|large|mixed synthetic text sizes")
+	f.StringVar(&c.Payload, "payload", c.Payload, "small|medium|large|mixed: median synthetic text size class (lognormal sizes around it)")
+	f.Int64Var(&c.Seed, "seed", c.Seed, "workload seed; the same seed gives the same span bytes for the same sequence and timestamp")
+	f.Float64Var(&c.ErrorRate, "error-rate", c.ErrorRate, "fraction of spans with ERROR status, 0..1")
+	f.IntVar(&c.TreeDepth, "tree-depth", c.TreeDepth, "maximum span depth below the root")
+	f.IntVar(&c.FanOut, "fan-out", c.FanOut, "children per span in the k-ary trace layout")
+	f.Float64Var(&c.CohortVariantFraction, "cohort-variant-fraction", c.CohortVariantFraction, "fraction of sessions in the variant cohort, 0..1")
+	f.Float64Var(&c.BytesPerToken, "bytes-per-token", c.BytesPerToken, "text bytes per synthetic LLM token")
+	f.IntVar(&c.TextPoolBlocks, "text-pool-blocks", c.TextPoolBlocks, "distinct text blocks in the seeded text pool")
 	f.Int64Var(&c.Rate, "rate", c.Rate, "target SPANS per second, including children")
 	f.DurationVar(&c.Duration, "duration", c.Duration, "load scheduling duration")
 	f.DurationVar(&c.MaxDuration, "max-duration", c.MaxDuration, "hard load duration ceiling, max 24h")
-	f.Int64Var(&c.MaxBytes, "max-bytes", c.MaxBytes, "hard cumulative uncompressed OTLP request body byte ceiling")
+	f.Int64Var(&c.MaxBytes, "max-bytes", c.MaxBytes, "hard cumulative UNCOMPRESSED OTLP request body byte ceiling")
 	f.IntVar(&c.BatchSize, "batch-size", c.BatchSize, "spans per OTLP request")
 	f.IntVar(&c.Concurrency, "concurrency", c.Concurrency, "maximum in-flight OTLP requests, no unbounded queue")
-	f.Int64Var(&c.SpansPerTrace, "spans-per-trace", c.SpansPerTrace, "one root plus N-1 children")
+	f.Int64Var(&c.SpansPerTrace, "spans-per-trace", c.SpansPerTrace, "spans per trace, one root plus N-1 descendants")
 	f.Int64Var(&c.TracesPerSession, "traces-per-session", c.TracesPerSession, "consecutive traces per synthetic session")
 	f.DurationVar(&c.Timeout, "request-timeout", c.Timeout, "per-request timeout, <= 1m")
 	f.DurationVar(&c.Settle, "settle", c.Settle, "quiet settle window before independent verification, <= 10m")
 	f.DurationVar(&c.PollInterval, "poll-interval", c.PollInterval, "sample visibility polling period, >= 100ms")
-	f.Int64Var(&c.VerifyChunk, "verify-chunk", c.VerifyChunk, "exact distinct verification chunk size (bounded CH memory)")
+	f.Int64Var(&c.VerifyChunk, "verify-chunk", c.VerifyChunk, "exact distinct verification chunk size in spans (bounded CH memory)")
+	f.DurationVar(&c.VerifyTimeout, "verify-timeout", c.VerifyTimeout, "whole verification budget; 0 derives one from the run size")
+	f.DurationVar(&c.VerifyQueryTimeout, "verify-query-timeout", c.VerifyQueryTimeout, "per chunk query limit (server and client); 0 derives one from the chunk size")
+	f.IntVar(&c.VerifyQueryRetries, "verify-query-retries", c.VerifyQueryRetries, "retries of a failed read-only verification query")
+	f.Int64Var(&c.VerifyMaxMemory, "verify-max-memory", c.VerifyMaxMemory, "per-query max_memory_usage in bytes; 0 means 1 GiB")
+	f.StringVar(&c.VerifyCheckpoint, "verify-checkpoint", "", "new file for resumable verification progress (see 'otlpbench verify')")
+	f.StringVar(&c.CollectorHealthURL, "collector-health-url", "", "collector admin /healthz URL, read for its build revision and admission limits")
+	f.Int64Var(&c.CollectorMaxPendingRows, "declared-collector-max-pending-rows", 0, "the collector's max_pending_rows when /healthz is not reachable")
+	f.BoolVar(&c.DirectProbes.Enabled, "direct-probes", c.DirectProbes.Enabled, "measure direct ClickHouse reads (trace, session, attribute filter) during load and after settle")
+	f.DurationVar(&c.DirectProbes.Interval, "direct-probe-interval", c.DirectProbes.Interval, "direct probe round period during load, >= 500ms")
+	f.DurationVar(&c.DirectProbes.MinAge, "direct-probe-min-age", c.DirectProbes.MinAge, "only probe traces acknowledged at least this long ago")
+	f.IntVar(&c.DirectProbes.AfterSettleSamples, "direct-probe-after-settle", c.DirectProbes.AfterSettleSamples, "direct probe rounds after the settle window")
+	f.DurationVar(&c.DirectProbes.QueryTimeout, "direct-probe-timeout", c.DirectProbes.QueryTimeout, "per direct probe query limit")
 	f.BoolVar(&c.Execute, "execute", false, "send traffic; omitted means offline dry run")
 	f.BoolVar(&c.AllowUnauth, "allow-unauthenticated-fixture", false, "only for isolated test servers, not the production binary")
 	f.StringVar(&c.ConfirmRemote, "confirm-remote", "", "must equal run-id for each non-loopback target")
 	f.StringVar(&c.ConfirmLoad, "confirm-load", "", "must equal run-id above smoke rate/duration/byte ceilings")
 	f.StringVar(&c.Environment, "environment", c.Environment, "e.g. isolated-local, provisioned-staging or mock; do not imply production")
 	f.StringVar(&c.Topology, "topology", c.Topology, "e.g. single-node or 3-shards-2-replicas")
-	f.StringVar(&c.Revision, "revision", "", "tested collector/backend git revision or immutable image digest")
+	f.StringVar(&c.Revision, "revision", "", "git revision or image digest of the SYSTEM UNDER TEST (collector/backend), checked against /healthz when available")
+	f.StringVar(&c.GeneratorRevision, "generator-revision", "", "git revision of this benchmark checkout, when the binary has no VCS stamp")
+	f.StringVar(&c.SUTNotes, "sut-notes", "", "free-text description of the system under test (no secrets)")
 	allowHosts := f.String("allow-hosts", "", "comma-separated exact non-loopback hostnames, no wildcard")
 	containers := f.String("containers", "", "comma-separated explicit container names for read-only docker stats")
 	nodes := f.String("nodes", "", "JSON array of named ClickHouse node HTTP URLs for resource measurements")
@@ -114,7 +146,7 @@ func command(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	options := ingestbench.Options{}
+	options := ingestbench.Options{CommandLine: append([]string{"otlpbench"}, args...), Warn: warnings}
 	// An offline plan does not need credentials or contact any target.
 	if c.Execute {
 		var err error
@@ -147,9 +179,9 @@ func command(ctx context.Context, args []string, stdout io.Writer) error {
 			options.ResourceWriter = resources
 		}
 	}
-	// The context also bounds settle + verification + resource probes after the
-	// load ends. In-flight requests cannot extend the load without limit.
-	ctx, cancel := context.WithTimeout(ctx, c.MaxDuration+c.Settle+12*time.Minute)
+	// The context also bounds settle, probes, verification and resource reads
+	// after the load ends. In-flight requests cannot extend the load without limit.
+	ctx, cancel := context.WithTimeout(ctx, c.MaxDuration+c.Settle+c.VerifyBudget()+c.DirectProbeBudget()+5*time.Minute)
 	defer cancel()
 	result, runErr := ingestbench.Run(ctx, c, options)
 	if output != nil {
@@ -175,6 +207,117 @@ func command(ctx context.Context, args []string, stdout io.Writer) error {
 		return fmt.Errorf("benchmark did not complete the requested profile without errors; inspect the written result")
 	}
 	return nil
+}
+
+// ResumedVerification is the artifact of 'otlpbench verify'.
+type ResumedVerification struct {
+	SchemaVersion string                   `json:"schema_version"`
+	Kind          string                   `json:"kind"`
+	RunID         string                   `json:"run_id"`
+	CommandLine   []string                 `json:"command_line"`
+	Verification  ingestbench.Verification `json:"verification"`
+}
+
+func verifyCommand(ctx context.Context, args []string, stdout io.Writer) error {
+	f := flag.NewFlagSet("otlpbench verify", flag.ContinueOnError)
+	f.SetOutput(stdout)
+	checkpoint := f.String("checkpoint", "", "verification checkpoint written by --verify-checkpoint (updated in place as chunks finish)")
+	out := f.String("out", "", "new path for the verification result; refuses overwriting")
+	chEnv := f.String("ch-headers-env", "", "env variable containing read-only ClickHouse auth headers")
+	confirmRemote := f.String("confirm-remote", "", "must equal the run ID when the ClickHouse URL is not loopback")
+	timeout := f.Duration("verify-timeout", 0, "budget for this resume; 0 keeps the run's budget")
+	queryTimeout := f.Duration("verify-query-timeout", 0, "per chunk query limit; 0 keeps the run's limit")
+	retries := f.Int("verify-query-retries", -1, "retries per failed query; -1 keeps the run's setting")
+	if err := f.Parse(args); err != nil {
+		return err
+	}
+	if *checkpoint == "" || *out == "" || len(f.Args()) != 0 {
+		return fmt.Errorf("usage: otlpbench verify --checkpoint path --out new-result.json [--ch-headers-env NAME]")
+	}
+	if *timeout < 0 || *timeout > 72*time.Hour || *queryTimeout < 0 || *queryTimeout > time.Hour || *retries > 10 {
+		return fmt.Errorf("verify-timeout <= 72h, verify-query-timeout <= 1h, verify-query-retries <= 10")
+	}
+	headers, err := ingestbench.HeadersFromEnv(*chEnv)
+	if err != nil {
+		return err
+	}
+	output, err := os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fmt.Errorf("create output (existing files are never overwritten): %w", err)
+	}
+	defer output.Close()
+	cfg, v, err := ingestbench.ResumeVerification(ctx, *checkpoint, headers, func(c *ingestbench.Config) {
+		c.Execute, c.ConfirmRemote = true, *confirmRemote
+		if *timeout > 0 {
+			c.VerifyTimeout = *timeout
+		}
+		if *queryTimeout > 0 {
+			c.VerifyQueryTimeout = *queryTimeout
+		}
+		if *retries >= 0 {
+			c.VerifyQueryRetries = *retries
+		}
+	})
+	if err != nil {
+		return err
+	}
+	doc := ResumedVerification{SchemaVersion: ingestbench.SchemaVersion, Kind: "resumed-verification", RunID: cfg.RunID,
+		CommandLine: ingestbench.RedactArgs(append([]string{"otlpbench", "verify"}, args...)), Verification: v}
+	enc := json.NewEncoder(io.MultiWriter(output, stdout))
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(doc); err != nil {
+		return err
+	}
+	if err := output.Sync(); err != nil {
+		return err
+	}
+	if !v.Complete {
+		return fmt.Errorf("verification is still incomplete (%s); rerun 'otlpbench verify' with the same checkpoint to continue", v.Error)
+	}
+	return nil
+}
+
+// budgetCommand compares a profile's heuristic row budget with the collector.
+// Without --collector-health-url it makes no network request.
+func budgetCommand(ctx context.Context, args []string, stdout io.Writer) error {
+	c := ingestbench.DefaultConfig()
+	f := flag.NewFlagSet("otlpbench collector-budget", flag.ContinueOnError)
+	f.SetOutput(stdout)
+	f.Int64Var(&c.Rate, "rate", c.Rate, "target spans per second")
+	f.IntVar(&c.BatchSize, "batch-size", c.BatchSize, "spans per request")
+	f.IntVar(&c.Concurrency, "concurrency", c.Concurrency, "in-flight requests")
+	health := f.String("collector-health-url", "", "collector admin /healthz URL (read-only GET); omitted means no network request")
+	declared := f.Int64("declared-collector-max-pending-rows", 0, "collector max_pending_rows when /healthz is not reachable")
+	allowHosts := f.String("allow-hosts", "", "comma-separated exact non-loopback hostnames")
+	if err := f.Parse(args); err != nil {
+		return err
+	}
+	if len(f.Args()) != 0 || c.Rate < 1 || c.BatchSize < 1 || c.Concurrency < 1 || *declared < 0 {
+		return fmt.Errorf("usage: otlpbench collector-budget --rate N --batch-size N --concurrency N [--collector-health-url URL]")
+	}
+	var info ingestbench.CollectorInfo
+	if *health != "" {
+		c.RunID = ingestbench.NewRunID()
+		if *allowHosts != "" {
+			c.AllowHosts = strings.Split(*allowHosts, ",")
+		}
+		if err := c.CheckURL(*health); err != nil {
+			return err
+		}
+		client := c.HTTPClient()
+		defer client.CloseIdleConnections()
+		info = ingestbench.FetchCollectorHealth(ctx, client, *health)
+		if info.Error != "" {
+			fmt.Fprintf(warnings, "\n*** WARNING: collector health: %s ***\n", info.Error)
+		}
+	}
+	info.Budget = ingestbench.CheckBudget(c.Rate, c.BatchSize, c.Concurrency, info.Limits, *declared)
+	for _, w := range info.Budget.Warnings() {
+		fmt.Fprintf(warnings, "\n*** WARNING: %s ***\n\n", w)
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(info)
 }
 
 func readJSON(path string, out any) error {

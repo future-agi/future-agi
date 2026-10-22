@@ -17,7 +17,18 @@ import (
 	"github.com/google/uuid"
 )
 
-const SchemaVersion = "fi.otlpbench.v1"
+// SchemaVersion changes whenever the meaning of a counter changes. v2 splits
+// whole-request rejections and ambiguous failures out of "unacknowledged",
+// decomposes missing spans by acknowledgement outcome and adds provenance.
+const SchemaVersion = "fi.otlpbench.v2"
+
+// Wire encodings of the measured path. protobuf and grpc are what production SDK
+// exporters use; json is kept for browser-style clients and debugging.
+const (
+	EncodingJSON     = "json"
+	EncodingProtobuf = "protobuf"
+	EncodingGRPC     = "grpc"
+)
 
 // Config contains no credentials. Header values are supplied separately at runtime.
 type Config struct {
@@ -53,6 +64,41 @@ type Config struct {
 	ReadProbes       []ReadProbe   `json:"read_probes,omitempty"`
 	Nodes            []Node        `json:"nodes,omitempty"`
 	Containers       []string      `json:"containers,omitempty"`
+
+	// Wire path. Encoding is json, protobuf or grpc; Gzip compresses the request
+	// body (HTTP) or message (gRPC). Both are recorded in the report.
+	Encoding string `json:"encoding"`
+	Gzip     bool   `json:"gzip"`
+
+	// Synthetic workload model (see payload.go). The same seed gives the same
+	// bytes for the same sequence number and timestamp.
+	Seed                  int64   `json:"seed"`
+	ErrorRate             float64 `json:"error_rate"`
+	TreeDepth             int     `json:"tree_depth"`
+	FanOut                int     `json:"fan_out"`
+	CohortVariantFraction float64 `json:"cohort_variant_fraction"`
+	BytesPerToken         float64 `json:"bytes_per_token"`
+	TextPoolBlocks        int     `json:"text_pool_blocks"`
+
+	// Verification budget. Zero means derive a default from the run size.
+	VerifyTimeout      time.Duration `json:"verify_timeout_ns"`
+	VerifyQueryTimeout time.Duration `json:"verify_query_timeout_ns"`
+	VerifyQueryRetries int           `json:"verify_query_retries"`
+	VerifyMaxMemory    int64         `json:"verify_query_max_memory_bytes"`
+	// VerifyCheckpoint is a local path, deliberately not recorded in results.
+	VerifyCheckpoint string `json:"-"`
+
+	// The collector under test. The admin /healthz URL, when given, is read for the
+	// build and admission limits; a declared row budget is used when it is not.
+	CollectorHealthURL      string `json:"collector_health_url,omitempty"`
+	CollectorMaxPendingRows int64  `json:"declared_collector_max_pending_rows,omitempty"`
+
+	DirectProbes DirectProbeConfig `json:"direct_probes"`
+
+	// GeneratorRevision is the git revision of this benchmark checkout; Revision
+	// (above) is the revision of the SYSTEM UNDER TEST. They are different things.
+	GeneratorRevision string `json:"generator_revision,omitempty"`
+	SUTNotes          string `json:"system_under_test_notes,omitempty"`
 }
 
 func DefaultConfig() Config {
@@ -63,6 +109,10 @@ func DefaultConfig() Config {
 		BatchSize: 100, Concurrency: 2, SpansPerTrace: 8, TracesPerSession: 4,
 		Timeout: 10 * time.Second, Settle: 15 * time.Second, PollInterval: time.Second,
 		VerifyChunk: 65536, Environment: "unclassified", Topology: "single-node",
+		Encoding: EncodingProtobuf, Seed: 8687, ErrorRate: 0.01, TreeDepth: 4, FanOut: 4,
+		CohortVariantFraction: 0.5, BytesPerToken: 4, TextPoolBlocks: 1024,
+		VerifyQueryRetries: 2,
+		DirectProbes:       DirectProbeConfig{Enabled: true, Interval: 2 * time.Second, MinAge: 10 * time.Second, AfterSettleSamples: 10, QueryTimeout: 10 * time.Second},
 	}
 }
 
@@ -103,10 +153,38 @@ func (c Config) Validate() error {
 	if c.Payload != "small" && c.Payload != "medium" && c.Payload != "large" && c.Payload != "mixed" {
 		return fmt.Errorf("payload must be small, medium, large or mixed")
 	}
-	// Bound allocation before constructing any OTLP request (including a dry-run).
+	if c.Encoding != EncodingJSON && c.Encoding != EncodingProtobuf && c.Encoding != EncodingGRPC {
+		return fmt.Errorf("encoding must be json, protobuf or grpc")
+	}
+	if c.Encoding == EncodingGRPC {
+		if _, _, err := grpcTarget(c.Endpoint); err != nil {
+			return err
+		}
+	}
+	if !(c.ErrorRate >= 0 && c.ErrorRate <= 1) || !(c.CohortVariantFraction >= 0 && c.CohortVariantFraction <= 1) {
+		return fmt.Errorf("error-rate and cohort-variant-fraction must be within 0..1")
+	}
+	if c.TreeDepth < 1 || c.TreeDepth > 64 || c.FanOut < 1 || c.FanOut > 64 || !(c.BytesPerToken >= 1 && c.BytesPerToken <= 16) || c.TextPoolBlocks < 1 || c.TextPoolBlocks > 65536 {
+		return fmt.Errorf("tree-depth and fan-out must be 1..64, bytes-per-token 1..16 and text-pool-blocks 1..65536")
+	}
+	if c.VerifyTimeout < 0 || c.VerifyTimeout > 72*time.Hour || c.VerifyQueryTimeout < 0 || c.VerifyQueryTimeout > time.Hour || c.VerifyQueryRetries < 0 || c.VerifyQueryRetries > 10 || (c.VerifyMaxMemory != 0 && (c.VerifyMaxMemory < 64<<20 || c.VerifyMaxMemory > 256<<30)) {
+		return fmt.Errorf("verify-timeout <= 72h, verify-query-timeout <= 1h, verify-query-retries 0..10, verify-max-memory 0 (default) or 64MiB..256GiB")
+	}
+	if c.CollectorMaxPendingRows < 0 {
+		return fmt.Errorf("declared collector max pending rows must not be negative")
+	}
+	if err := c.DirectProbes.validate(); err != nil {
+		return err
+	}
+	if (c.PlannedSpans()+int64(c.BatchSize)-1)/int64(c.BatchSize) > maxLedgerRequests {
+		return fmt.Errorf("the plan needs more than %d export requests; raise batch-size", maxLedgerRequests)
+	}
+	// Bound allocation before constructing any OTLP request (including a
+	// dry-run): the first batch's text sizes are computed without building it.
 	var previewBytes int64
 	for i := int64(0); i < int64(c.BatchSize); i++ {
-		previewBytes += int64(len(c.payload(i))) + 4096
+		p := c.plan(i)
+		previewBytes += int64(p.inputBytes+p.outputBytes) + 4096
 	}
 	if previewBytes > 16<<20 {
 		return fmt.Errorf("batch-size/payload can exceed 16MiB; reduce batch-size")
@@ -118,6 +196,9 @@ func (c Config) Validate() error {
 		return fmt.Errorf("load above smoke limits requires --confirm-load matching --run-id")
 	}
 	endpoints := []string{c.Endpoint, c.ClickHouseURL}
+	if c.CollectorHealthURL != "" {
+		endpoints = append(endpoints, c.CollectorHealthURL)
+	}
 	for _, p := range c.ReadProbes {
 		if err := p.validate(); err != nil {
 			return err
@@ -199,3 +280,27 @@ func (c Config) client() *http.Client {
 	}
 	return &http.Client{Transport: transport, Timeout: c.Timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
+
+// VerifyBudget is the verification time budget for a run of this plan.
+func (c Config) VerifyBudget() time.Duration {
+	return c.effectiveVerifyTimeout(c.PlannedSpans())
+}
+
+// DirectProbeBudget bounds the after-settle direct probe rounds.
+func (c Config) DirectProbeBudget() time.Duration {
+	if !c.DirectProbes.Enabled {
+		return 0
+	}
+	perQuery := c.DirectProbes.QueryTimeout
+	if perQuery == 0 {
+		perQuery = 10 * time.Second
+	}
+	return time.Duration(c.DirectProbes.AfterSettleSamples*len(directProbes)) * (perQuery + 10*time.Second)
+}
+
+// CheckURL applies the endpoint safety rules (loopback or an approved host,
+// no credentials in the URL) to one URL.
+func (c Config) CheckURL(raw string) error { return c.validateURL(raw) }
+
+// HTTPClient is the proxy-free, redirect-free client the benchmark uses.
+func (c Config) HTTPClient() *http.Client { return c.client() }

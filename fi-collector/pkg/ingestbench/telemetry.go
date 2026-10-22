@@ -18,7 +18,17 @@ type telemetryEvent struct {
 	At             time.Time         `json:"at"`
 	ElapsedSeconds float64           `json:"elapsed_seconds"`
 	Counters       *Counters         `json:"counters,omitempty"`
+	InFlightSpans  *int64            `json:"in_flight_spans,omitempty"`
 	Resource       *ResourceSnapshot `json:"resource,omitempty"`
+}
+
+// snapshot returns the counters and the attempted spans whose request has not
+// finished yet (attempted minus every outcome class).
+func (s *runState) snapshot() (Counters, int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.counters
+	return c, c.Attempted - c.Acknowledged - c.PartialRejected - c.WholeRequestRejected - c.Ambiguous
 }
 
 func startTelemetry(ctx context.Context, c Config, ch clickHouse, s *runState, writer io.Writer) (func(), func() error) {
@@ -46,21 +56,15 @@ func startTelemetry(ctx context.Context, c Config, ch clickHouse, s *runState, w
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
-			s.mu.Lock()
-			counters := s.counters
-			s.mu.Unlock()
-			counters.Unacknowledged = counters.Attempted - counters.Acknowledged - counters.PartialRejected
-			if err := write(telemetryEvent{Kind: "progress", Counters: &counters}); err != nil {
+			counters, inFlight := s.snapshot()
+			if err := write(telemetryEvent{Kind: "progress", Counters: &counters, InFlightSpans: &inFlight}); err != nil {
 				errors <- err
 				return
 			}
 			select {
 			case <-progressCtx.Done():
-				s.mu.Lock()
-				counters = s.counters
-				s.mu.Unlock()
-				counters.Unacknowledged = counters.Attempted - counters.Acknowledged - counters.PartialRejected
-				if err := write(telemetryEvent{Kind: "progress-final", Counters: &counters}); err != nil {
+				counters, inFlight = s.snapshot()
+				if err := write(telemetryEvent{Kind: "progress-final", Counters: &counters, InFlightSpans: &inFlight}); err != nil {
 					errors <- err
 				}
 				return

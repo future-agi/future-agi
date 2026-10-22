@@ -16,7 +16,7 @@ func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("fixture 
 func TestTelemetryIsVersionedAndCarriesFinalCounts(t *testing.T) {
 	var out bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &runState{counters: Counters{Generated: 12, Attempted: 12, Acknowledged: 10, PartialRejected: 1}}
+	s := &runState{counters: Counters{Generated: 12, Attempted: 12, Acknowledged: 8, PartialRejected: 1, WholeRequestRejected: 1, RejectedRetryable: 1, Unacknowledged: 1}}
 	stop, wait := startTelemetry(ctx, testConfig(), clickHouse{}, s, &out)
 	stop()
 	cancel()
@@ -39,7 +39,7 @@ func TestTelemetryIsVersionedAndCarriesFinalCounts(t *testing.T) {
 		}
 		if event.Kind == "progress-final" {
 			foundFinal = true
-			if event.Counters.Attempted != 12 || event.Counters.Unacknowledged != 1 {
+			if event.Counters.Attempted != 12 || event.Counters.Unacknowledged != 1 || event.Counters.WholeRequestRejected != 1 || event.InFlightSpans == nil || *event.InFlightSpans != 2 {
 				t.Fatal("incorrect final counter snapshot")
 			}
 		}

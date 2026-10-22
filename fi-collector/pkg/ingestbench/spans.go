@@ -1,10 +1,11 @@
 package ingestbench
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"math/rand"
 	"strconv"
 	"time"
 
@@ -13,28 +14,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 )
-
-// Payload sizes are synthetic input+output UTF-8 bytes, not measured customer
-// distributions or full wire sizes. A fixed seed avoids unrealistically uniform
-// compression while making every run reproducible without storing prompts.
-var payloads = makePayloads()
-
-func makePayloads() map[string]string {
-	rng := rand.New(rand.NewSource(8687))
-	alphabet := "abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-_"
-	out := map[string]string{}
-	for _, size := range []struct {
-		name string
-		n    int
-	}{{"small", 512}, {"medium", 4096}, {"large", 32768}} {
-		b := make([]byte, size.n)
-		for i := range b {
-			b[i] = alphabet[rng.Intn(len(alphabet))]
-		}
-		out[size.name] = string(b)
-	}
-	return out
-}
 
 func (c Config) ids(seq int64) (pcommon.TraceID, pcommon.SpanID) {
 	var trace pcommon.TraceID
@@ -51,25 +30,29 @@ func (c Config) traceString(seq int64) string {
 	return uuid.UUID(trace).String()
 }
 
-func spanID(seq int64) string { return fmt.Sprintf("%016x", seq+1) }
-
-func (c Config) payload(seq int64) string {
-	name := c.Payload
-	if name == "mixed" {
-		// 70% small, 25% medium, 5% large, repeatable in every 20 spans.
-		switch seq % 20 {
-		case 14, 15, 16, 17, 18:
-			name = "medium"
-		case 19:
-			name = "large"
-		default:
-			name = "small"
-		}
+// namespaceBounds are the lowest and highest stored trace IDs of this run's
+// namespace (trace ordinal 0 and the maximum ordinal), inclusive.
+func (c Config) namespaceBounds() (string, string) {
+	var lo, hi [16]byte
+	prefix, _ := hex.DecodeString(c.RunID)
+	copy(lo[:8], prefix)
+	copy(hi[:8], prefix)
+	for i := 8; i < 16; i++ {
+		hi[i] = 0xff
 	}
-	return payloads[name]
+	return uuid.UUID(lo).String(), uuid.UUID(hi).String()
 }
 
-func (c Config) batch(start int64, n int, now time.Time) ([]byte, error) {
+func spanID(seq int64) string { return fmt.Sprintf("%016x", seq+1) }
+
+func sessionName(runID string, session int64) string {
+	return fmt.Sprintf("bench-%s-%d", runID, session)
+}
+
+// batch builds the spans [start, start+n). The structure, sizes and text of
+// each span depend only on the config (seed included) and the sequence number;
+// timestamps derive from now.
+func (c Config) batch(start int64, n int, now time.Time) (ptrace.Traces, []spanPlan) {
 	traces := ptrace.NewTraces()
 	rs := traces.ResourceSpans().AppendEmpty()
 	ra := rs.Resource().Attributes()
@@ -78,47 +61,105 @@ func (c Config) batch(start int64, n int, now time.Time) ([]byte, error) {
 	ra.PutStr("fi.project_id", c.ProjectID)
 	ra.PutStr("fi.project_type", "OBSERVE")
 	ss := rs.ScopeSpans().AppendEmpty()
-	ss.Scope().SetName("fi.otlpbench.v1")
+	ss.Scope().SetName("fi.otlpbench")
+	ss.Scope().SetVersion(SchemaVersion)
 	spans := ss.Spans()
 	spans.EnsureCapacity(n)
+	plans := make([]spanPlan, 0, n)
 	for i := 0; i < n; i++ {
 		seq := start + int64(i)
+		p := c.plan(seq)
+		plans = append(plans, p)
 		traceID, sid := c.ids(seq)
 		sp := spans.AppendEmpty()
 		sp.SetTraceID(traceID)
 		sp.SetSpanID(sid)
+		if p.parent >= 0 {
+			_, parent := c.ids(seq - p.position + p.parent)
+			sp.SetParentSpanID(parent)
+		}
 		sp.SetKind(ptrace.SpanKindInternal)
-		sp.SetStartTimestamp(pcommon.NewTimestampFromTime(now.Add(-200 * time.Millisecond)))
+		sp.SetStartTimestamp(pcommon.NewTimestampFromTime(now.Add(-p.duration)))
 		sp.SetEndTimestamp(pcommon.NewTimestampFromTime(now))
 		a := sp.Attributes()
 		a.PutStr("benchmark.run_id", c.RunID)
 		a.PutStr("benchmark.seq", strconv.FormatInt(seq, 10))
-		a.PutStr("session.id", fmt.Sprintf("bench-%s-%d", c.RunID, seq/(c.SpansPerTrace*c.TracesPerSession)))
-		a.PutStr("user.id", fmt.Sprintf("synthetic-user-%d", seq/(c.SpansPerTrace*c.TracesPerSession)%1000))
-		a.PutStr("benchmark.cohort", []string{"control", "variant"}[seq%2])
-		if seq%c.SpansPerTrace == 0 {
-			sp.SetName("synthetic.agent")
-			a.PutStr("openinference.span.kind", "AGENT")
-		} else {
-			_, parent := c.ids(seq - seq%c.SpansPerTrace)
-			sp.SetParentSpanID(parent)
+		a.PutStr("benchmark.cohort", p.cohort)
+		a.PutStr("benchmark.payload_class", p.class)
+		a.PutStr("session.id", sessionName(c.RunID, p.session))
+		a.PutStr("user.id", "synthetic-user-"+strconv.FormatInt(p.user, 10))
+		a.PutStr("openinference.span.kind", p.kind)
+		switch p.kind {
+		case "AGENT":
+			sp.SetName("synthetic.agent.run")
+		case "CHAIN":
+			sp.SetName("synthetic.chain.step")
+		case "TOOL":
+			sp.SetName("synthetic.tool.call")
+			a.PutStr("tool.name", "synthetic_tool_"+strconv.FormatInt(seq%7, 10))
+		case "RETRIEVER":
+			sp.SetName("synthetic.retrieval")
+		default:
 			sp.SetName("synthetic.generation")
-			a.PutStr("openinference.span.kind", "LLM")
+			a.PutStr("gen_ai.system", "synthetic")
+			a.PutStr("gen_ai.request.model", p.model)
+			a.PutStr("gen_ai.operation.name", "chat")
+			a.PutInt("gen_ai.usage.input_tokens", p.inputTokens)
+			a.PutInt("gen_ai.usage.output_tokens", p.outputTokens)
 		}
-		a.PutStr("gen_ai.system", "synthetic")
-		a.PutStr("gen_ai.request.model", "benchmark-model")
-		a.PutStr("gen_ai.operation.name", "chat")
-		a.PutInt("gen_ai.usage.input_tokens", 256+seq%512)
-		a.PutInt("gen_ai.usage.output_tokens", 64+seq%128)
-		payload := c.payload(seq)
-		a.PutStr("input.value", payload[:len(payload)*3/4])
-		a.PutStr("output.value", payload[len(payload)*3/4:])
-		if seq%100 == 99 {
+		a.PutStr("input.value", c.text(seq, 1, p.inputBytes))
+		a.PutStr("output.value", c.text(seq, 2, p.outputBytes))
+		if p.isError {
 			sp.Status().SetCode(ptrace.StatusCodeError)
-			sp.Status().SetMessage("synthetic tool timeout")
+			sp.Status().SetMessage(p.errorMessage)
 		} else {
 			sp.Status().SetCode(ptrace.StatusCodeOk)
 		}
 	}
-	return ptraceotlp.NewExportRequestFromTraces(traces).MarshalJSON()
+	return traces, plans
+}
+
+// encodedBatch is one export request ready to send.
+type encodedBatch struct {
+	request      ptraceotlp.ExportRequest // gRPC
+	body         []byte                   // HTTP body as sent (compressed when gzip)
+	uncompressed int                      // serialised size before compression
+}
+
+// buildRequest generates and encodes spans [start, start+n) in the configured
+// encoding. For gRPC the request is sent as a message; its protobuf size is the
+// uncompressed size and the transport reports the wire size.
+func (c Config) buildRequest(start int64, n int, now time.Time) (encodedBatch, []spanPlan, error) {
+	traces, plans := c.batch(start, n, now)
+	req := ptraceotlp.NewExportRequestFromTraces(traces)
+	var raw []byte
+	var err error
+	switch c.Encoding {
+	case EncodingGRPC:
+		raw, err = req.MarshalProto()
+		return encodedBatch{request: req, uncompressed: len(raw)}, plans, err
+	case EncodingJSON:
+		raw, err = req.MarshalJSON()
+	case EncodingProtobuf:
+		raw, err = req.MarshalProto()
+	default:
+		return encodedBatch{}, nil, fmt.Errorf("unknown encoding %q", c.Encoding)
+	}
+	if err != nil {
+		return encodedBatch{}, nil, err
+	}
+	out := encodedBatch{body: raw, uncompressed: len(raw)}
+	if c.Gzip {
+		var buf bytes.Buffer
+		buf.Grow(len(raw)/3 + 64)
+		zw := gzip.NewWriter(&buf)
+		if _, err := zw.Write(raw); err != nil {
+			return encodedBatch{}, nil, err
+		}
+		if err := zw.Close(); err != nil {
+			return encodedBatch{}, nil, err
+		}
+		out.body = buf.Bytes()
+	}
+	return out, plans, nil
 }

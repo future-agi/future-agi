@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 func testConfig() Config {
@@ -20,6 +26,7 @@ func testConfig() Config {
 	c.RunID = "0123456789abcdef"
 	c.ProjectID = "11111111-1111-4111-8111-111111111111"
 	c.ProjectName = "isolated-benchmark"
+	c.Revision = "in-process-test-build"
 	return c
 }
 
@@ -38,6 +45,7 @@ func TestSafetyValidation(t *testing.T) {
 		{"userinfo", func(c *Config) { c.Endpoint = "http://user:secret@127.0.0.1:4318" }},
 		{"token-query", func(c *Config) { c.Endpoint += "?api_key=secret" }},
 		{"remote-ch", func(c *Config) { c.ClickHouseURL = "http://example.invalid:8123" }},
+		{"remote-health", func(c *Config) { c.CollectorHealthURL = "http://example.invalid:9464/healthz" }},
 		{"remote-node", func(c *Config) { c.Nodes = []Node{{Name: "n", URL: "http://example.invalid:8123"}} }},
 		{"identifier", func(c *Config) { c.Table = "spans; DROP TABLE spans" }},
 		{"zero-rate", func(c *Config) { c.Rate = 0 }},
@@ -49,6 +57,22 @@ func TestSafetyValidation(t *testing.T) {
 		{"zero-spans-per-trace", func(c *Config) { c.SpansPerTrace = 0 }},
 		{"run-injection", func(c *Config) { c.RunID = "bad' OR 1=1 --" }},
 		{"zero-run", func(c *Config) { c.RunID = "0000000000000000" }},
+		{"encoding", func(c *Config) { c.Encoding = "thrift" }},
+		{"grpc-with-path", func(c *Config) { c.Encoding = EncodingGRPC }},
+		{"error-rate", func(c *Config) { c.ErrorRate = 1.5 }},
+		{"error-rate-nan", func(c *Config) { c.ErrorRate = math.NaN() }},
+		{"cohort", func(c *Config) { c.CohortVariantFraction = -0.1 }},
+		{"tree-depth", func(c *Config) { c.TreeDepth = 0 }},
+		{"fan-out", func(c *Config) { c.FanOut = 0 }},
+		{"bytes-per-token", func(c *Config) { c.BytesPerToken = 0 }},
+		{"pool", func(c *Config) { c.TextPoolBlocks = 0 }},
+		{"verify-memory", func(c *Config) { c.VerifyMaxMemory = 1 }},
+		{"verify-retries", func(c *Config) { c.VerifyQueryRetries = 11 }},
+		{"verify-timeout", func(c *Config) { c.VerifyTimeout = 73 * time.Hour }},
+		{"direct-interval", func(c *Config) { c.DirectProbes.Interval = time.Millisecond }},
+		{"ledger", func(c *Config) {
+			c.Rate, c.Duration, c.MaxDuration, c.BatchSize = 1000000, 24*time.Hour, 24*time.Hour, 1
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := testConfig()
@@ -65,6 +89,11 @@ func TestSafetyValidation(t *testing.T) {
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	c = testConfig()
+	c.Encoding, c.Endpoint = EncodingGRPC, "http://127.0.0.1:4317"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestDryRunMakesNoNetworkRequests(t *testing.T) {
@@ -72,25 +101,26 @@ func TestDryRunMakesNoNetworkRequests(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
 	defer srv.Close()
 	c := testConfig()
-	c.Endpoint, c.ClickHouseURL = srv.URL, srv.URL
-	r, err := Run(context.Background(), c, Options{})
+	c.Endpoint, c.ClickHouseURL, c.CollectorHealthURL = srv.URL, srv.URL, srv.URL
+	r, err := Run(context.Background(), c, Options{CommandLine: []string{"otlpbench", "--rate", "100"}})
 	if err != nil || calls.Load() != 0 || r.Status != "dry-run" || r.PlannedSpans != 500 || r.Counters.Attempted != 0 {
 		t.Fatalf("dry run: %+v %v calls=%d", r.Counters, err, calls.Load())
 	}
+	if len(r.Provenance.CommandLine) != 3 || r.Provenance.Host.LogicalCPUs == 0 || r.Provenance.Generator.GoVersion == "" {
+		t.Fatalf("provenance missing from the plan: %+v", r.Provenance)
+	}
 }
 
-func TestSpanIdentityPayloadAndBatchDeterminism(t *testing.T) {
+func spansOf(t *testing.T, traces ptrace.Traces) ptrace.SpanSlice {
+	t.Helper()
+	return traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans()
+}
+
+func TestSpanIdentityTreeAndBatchDeterminism(t *testing.T) {
 	c := testConfig()
 	now := time.Unix(1700000000, 0)
-	whole, err := c.batch(0, 80, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := ptraceotlp.NewExportRequest()
-	if err := req.UnmarshalJSON(whole); err != nil {
-		t.Fatal(err)
-	}
-	spans := req.Traces().ResourceSpans().At(0).ScopeSpans().At(0).Spans()
+	whole, plans := c.batch(0, 80, now)
+	spans := spansOf(t, whole)
 	seen := map[string]bool{}
 	for i := 0; i < spans.Len(); i++ {
 		sp := spans.At(i)
@@ -98,27 +128,32 @@ func TestSpanIdentityPayloadAndBatchDeterminism(t *testing.T) {
 			t.Fatal("duplicate span ID")
 		}
 		seen[sp.SpanID().String()] = true
-		if i%8 == 0 && !sp.ParentSpanID().IsEmpty() {
-			t.Fatal("root has parent")
-		}
-		if i%8 != 0 && sp.ParentSpanID() != spans.At(i-i%8).SpanID() {
-			t.Fatal("wrong root parent")
-		}
-		if sp.TraceID() != spans.At(i-i%8).TraceID() {
+		root := i - i%8
+		if sp.TraceID() != spans.At(root).TraceID() {
 			t.Fatal("wrong trace grouping")
 		}
-		part, _ := c.batch(int64(i), 1, now)
-		one := ptraceotlp.NewExportRequest()
-		if err := one.UnmarshalJSON(part); err != nil {
-			t.Fatal(err)
+		p := plans[i]
+		if i%8 == 0 {
+			if !sp.ParentSpanID().IsEmpty() || p.depth != 0 || p.kind != "AGENT" {
+				t.Fatal("root has a parent or is not an agent span")
+			}
+		} else {
+			// The parent is an earlier span of the same trace and the depth
+			// never exceeds the configured tree depth.
+			if sp.ParentSpanID() != spans.At(root+int(p.parent)).SpanID() || p.parent >= p.position || p.depth > c.TreeDepth || p.depth != plans[root+int(p.parent)].depth+1 {
+				t.Fatalf("span %d: parent %d depth %d", i, p.parent, p.depth)
+			}
 		}
-		single := one.Traces().ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
+		part, _ := c.batch(int64(i), 1, now)
+		single := spansOf(t, part).At(0)
 		if sp.TraceID() != single.TraceID() || sp.SpanID() != single.SpanID() || sp.ParentSpanID() != single.ParentSpanID() {
 			t.Fatal("IDs depend on batch boundary")
 		}
-	}
-	if len(c.payload(0)) != 512 || len(c.payload(14)) != 4096 || len(c.payload(19)) != 32768 {
-		t.Fatal("wrong mixed distribution")
+		in, _ := sp.Attributes().Get("input.value")
+		one, _ := single.Attributes().Get("input.value")
+		if in.Str() != one.Str() {
+			t.Fatal("text depends on batch boundary")
+		}
 	}
 	other := c
 	other.RunID = "1123456789abcdef"
@@ -133,39 +168,256 @@ func TestSpanIdentityPayloadAndBatchDeterminism(t *testing.T) {
 	if session0.Str() != session31.Str() || session0.Str() == session32.Str() {
 		t.Fatal("wrong session grouping")
 	}
+	// Depth cap: a chain (fan-out 1) deeper than the cap reattaches spans.
+	chain := testConfig()
+	chain.FanOut, chain.TreeDepth, chain.SpansPerTrace = 1, 3, 10
+	for pos := int64(1); pos < 10; pos++ {
+		if p := chain.plan(pos); p.depth > 3 || p.depth < 1 {
+			t.Fatalf("depth cap violated at %d: %+v", pos, p)
+		}
+	}
 }
 
-func TestOTLPResponseAccounting(t *testing.T) {
+// B7: the same seed gives the same bytes; another seed gives other bytes;
+// span texts are distinct and drawn from a size distribution, not one string.
+func TestSeededWorkloadIsReproducibleAndVaried(t *testing.T) {
+	c := testConfig()
+	c.Encoding = EncodingProtobuf
+	now := time.Unix(1700000000, 0)
+	a, _, err := c.buildRequest(0, 200, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, _ := c.buildRequest(0, 200, now)
+	if !bytes.Equal(a.body, b.body) {
+		t.Fatal("same seed produced different bytes")
+	}
+	other := c
+	other.Seed++
+	d, _, _ := other.buildRequest(0, 200, now)
+	if bytes.Equal(a.body, d.body) {
+		t.Fatal("seed has no effect")
+	}
+	traces, plans := c.batch(0, 2000, now)
+	spans := spansOf(t, traces)
+	texts := map[string]bool{}
+	sizes := map[int]bool{}
+	var errorsSeen, variant int
+	acc := newWorkloadAccumulator()
+	acc.addSpans(c, plans)
+	for i := 0; i < spans.Len(); i++ {
+		in, _ := spans.At(i).Attributes().Get("input.value")
+		texts[in.Str()] = true
+		sizes[len(in.Str())] = true
+		if len(in.Str()) != plans[i].inputBytes || int64(len(in.Str())) > maxSpanTextBytes(c.Payload) {
+			t.Fatalf("span %d text %d bytes, planned %d", i, len(in.Str()), plans[i].inputBytes)
+		}
+		if spans.At(i).Status().Code() == ptrace.StatusCodeError {
+			errorsSeen++
+		}
+		if plans[i].cohort == "variant" {
+			variant++
+		}
+	}
+	if len(texts) < 1990 || len(sizes) < 50 {
+		t.Fatalf("payload text is not varied: %d distinct texts, %d distinct sizes", len(texts), len(sizes))
+	}
+	if errorsSeen == 0 || errorsSeen > 60 {
+		t.Fatalf("error rate 1%% realised as %d of 2000", errorsSeen)
+	}
+	if variant < 500 || variant > 1500 {
+		t.Fatalf("cohort split 50%% realised as %d of 2000", variant)
+	}
+	stats := acc.stats(c)
+	if stats.Spans != 2000 || stats.ErrorSpans != int64(errorsSeen) || stats.SpansByKind["AGENT"] != 250 || stats.InputBytes.P99 <= stats.InputBytes.P50 || stats.Traces != 250 || stats.Sessions != 63 {
+		t.Fatalf("realised distribution wrong: %+v", stats)
+	}
+	if stats.SpansByPayloadClass["small"] < stats.SpansByPayloadClass["medium"] || stats.SpansByPayloadClass["large"] == 0 {
+		t.Fatalf("mixed classes: %+v", stats.SpansByPayloadClass)
+	}
+	// Changing the error rate changes errors only, not sizes or structure.
+	noErrors := c
+	noErrors.ErrorRate = 0
+	for seq := int64(0); seq < 200; seq++ {
+		p, q := c.plan(seq), noErrors.plan(seq)
+		if q.isError || p.inputBytes != q.inputBytes || p.kind != q.kind {
+			t.Fatalf("error rate leaks into other draws at %d", seq)
+		}
+	}
+}
+
+func TestValueHistogramBoundsAreUpperEdges(t *testing.T) {
+	h := &valueHistogram{}
+	for v := int64(1); v <= 1000; v++ {
+		h.add(v)
+	}
+	d := h.summary()
+	if d.Count != 1000 || d.Min != 1 || d.Max != 1000 || d.P50 < 500 || d.P50 > 532 || d.P99 < 990 || d.P99 > 1000 || d.Mean != 500.5 {
+		t.Fatalf("distribution %+v", d)
+	}
+	for _, v := range []int64{0, 15, 16, 17, 1 << 20, 1<<40 + 12345} {
+		if up := histogramUpper(histogramBucket(v)); up < v || float64(up-v) > float64(v)/16+1 {
+			t.Fatalf("bucket of %d has upper edge %d", v, up)
+		}
+	}
+}
+
+func classifyFixture(t *testing.T, status int, header http.Header, body []byte, contentType string, n int) exportOutcome {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for k, v := range header {
+			w.Header()[k] = v
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.WriteHeader(status)
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+	c := testConfig()
+	c.Endpoint = srv.URL
+	if strings.Contains(contentType, "json") {
+		c.Encoding = EncodingJSON
+	}
+	e := &httpExporter{cfg: c, client: c.client()}
+	o, _ := e.export(context.Background(), encodedBatch{body: []byte("{}"), uncompressed: 2}, n)
+	return o
+}
+
+// B2: every response maps to exactly one outcome class.
+func TestHTTPResponsesClassifyIntoOneOutcome(t *testing.T) {
+	partial := ptraceotlp.NewExportResponse()
+	partial.PartialSuccess().SetRejectedSpans(3)
+	partial.PartialSuccess().SetErrorMessage("queue full")
+	partialProto, _ := partial.MarshalProto()
 	for _, tc := range []struct {
-		name                           string
-		status                         int
-		body                           string
-		ack, rejected, errors, partial int64
+		name        string
+		status      int
+		header      http.Header
+		body        string
+		contentType string
+		class       outcomeClass
+		rejected    int64
+		hint        bool
 	}{
-		{"success", 200, `{}`, 10, 0, 0, 0},
-		{"partial", 200, `{"partialSuccess":{"rejectedSpans":"3","errorMessage":"queue full"}}`, 7, 3, 0, 1},
-		{"all-rejected", 200, `{"partialSuccess":{"rejectedSpans":10}}`, 0, 10, 0, 1},
-		{"warning", 200, `{"partialSuccess":{"errorMessage":"warning"}}`, 10, 0, 0, 1},
-		{"invalid-rejected", 200, `{"partialSuccess":{"rejectedSpans":"11"}}`, 0, 0, 1, 0},
-		{"negative-rejected", 200, `{"partialSuccess":{"rejectedSpans":"-1"}}`, 0, 0, 1, 0},
-		{"malformed", 200, `<html>login</html>`, 0, 0, 1, 0},
-		{"empty", 200, ``, 0, 0, 1, 0},
-		{"throttle", 429, `{}`, 0, 0, 1, 0},
-		{"server-error", 503, `{}`, 0, 0, 1, 0},
+		{"success", 200, nil, `{}`, "application/json", outcomeAcknowledged, 0, false},
+		{"partial", 200, nil, `{"partialSuccess":{"rejectedSpans":"3","errorMessage":"queue full"}}`, "application/json", outcomePartial, 3, false},
+		{"partial-protobuf", 200, nil, string(partialProto), "application/x-protobuf", outcomePartial, 3, false},
+		{"all-rejected", 200, nil, `{"partialSuccess":{"rejectedSpans":10}}`, "application/json", outcomePartial, 10, false},
+		{"warning", 200, nil, `{"partialSuccess":{"errorMessage":"warning"}}`, "application/json", outcomeAcknowledged, 0, false},
+		{"invalid-rejected", 200, nil, `{"partialSuccess":{"rejectedSpans":"11"}}`, "application/json", outcomeAmbiguous, 0, false},
+		{"negative-rejected", 200, nil, `{"partialSuccess":{"rejectedSpans":"-1"}}`, "application/json", outcomeAmbiguous, 0, false},
+		{"malformed", 200, nil, `<html>login</html>`, "application/json", outcomeAmbiguous, 0, false},
+		{"wrong-media-type", 200, nil, `{}`, "text/html", outcomeAmbiguous, 0, false},
+		{"accepted-202", 202, nil, `{}`, "application/json", outcomeAmbiguous, 0, false},
+		{"throttle-with-retry-after", 429, http.Header{"Retry-After": {"2"}}, `{}`, "application/json", outcomeRejectedRetryable, 0, true},
+		{"busy-with-retry-after-date", 503, http.Header{"Retry-After": {time.Now().Add(time.Minute).UTC().Format(http.TimeFormat)}}, `{}`, "application/json", outcomeRejectedRetryable, 0, true},
+		{"busy-without-hint", 503, nil, `{}`, "application/json", outcomeRejectedRetryable, 0, false},
+		{"oversize", 413, nil, `{}`, "application/json", outcomeRejectedNonRetryable, 0, false},
+		{"bad-request", 400, nil, `{}`, "application/json", outcomeRejectedNonRetryable, 0, false},
+		{"unauthorized", 401, nil, `{}`, "application/json", outcomeRejectedNonRetryable, 0, false},
+		{"internal", 500, nil, `{}`, "application/json", outcomeAmbiguous, 0, false},
+		{"bad-gateway", 502, nil, `{}`, "application/json", outcomeAmbiguous, 0, false},
+		{"gateway-timeout", 504, nil, `{}`, "application/json", outcomeAmbiguous, 0, false},
+		{"redirect", 307, http.Header{"Location": {"http://127.0.0.1:1/"}}, ``, "application/json", outcomeAmbiguous, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(tc.status)
-				_, _ = w.Write([]byte(tc.body))
-			}))
-			defer srv.Close()
-			s := &runState{statuses: map[int]int64{}, samples: map[int64]lagSample{}}
-			s.send(context.Background(), testConfig().client(), srv.URL, nil, 0, 10, []byte(`{}`), true)
-			if s.counters.Attempted != 10 || s.counters.Acknowledged != tc.ack || s.counters.Accepted != tc.ack || s.counters.PartialRejected != tc.rejected || s.counters.RequestErrors != tc.errors || s.counters.PartialResponses != tc.partial {
-				t.Fatalf("wrong accounting: %+v", s.counters)
+			o := classifyFixture(t, tc.status, tc.header, []byte(tc.body), tc.contentType, 10)
+			if o.class != tc.class || o.rejected != tc.rejected || o.retryHint != tc.hint {
+				t.Fatalf("got class %s rejected %d hint %t", o.class, o.rejected, o.retryHint)
+			}
+			s := newRunState(testConfig())
+			s.counters.Attempted, s.counters.Requests = 10, 1
+			s.finish(0, 10, 2, 2, o, time.Millisecond)
+			if err := s.counters.CheckIdentity(); err != nil {
+				t.Fatalf("%v: %+v", err, s.counters)
 			}
 		})
+	}
+	// A transport failure is ambiguous: the request may have been processed.
+	c := testConfig()
+	c.Endpoint = "http://127.0.0.1:1/v1/traces"
+	e := &httpExporter{cfg: c, client: c.client()}
+	if o, _ := e.export(context.Background(), encodedBatch{body: []byte("{}")}, 1); o.class != outcomeAmbiguous || o.statusLabel != "transport-error" {
+		t.Fatalf("transport error: %+v", o)
+	}
+}
+
+func TestGRPCStatusesClassifyIntoOneOutcome(t *testing.T) {
+	retry, _ := status.New(codes.ResourceExhausted, "busy").WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(time.Second)})
+	for _, tc := range []struct {
+		name  string
+		err   error
+		class outcomeClass
+		hint  bool
+	}{
+		{"ok", nil, outcomeAcknowledged, false},
+		{"busy-with-retry-info", retry.Err(), outcomeRejectedRetryable, true},
+		{"quota-without-retry-info", status.Error(codes.ResourceExhausted, "quota"), outcomeRejectedNonRetryable, false},
+		{"oversize", status.Error(codes.InvalidArgument, "too big"), outcomeRejectedNonRetryable, false},
+		{"unauthenticated", status.Error(codes.Unauthenticated, "no key"), outcomeRejectedNonRetryable, false},
+		{"unavailable", status.Error(codes.Unavailable, "conn refused"), outcomeAmbiguous, false},
+		{"deadline", status.Error(codes.DeadlineExceeded, "slow"), outcomeAmbiguous, false},
+		{"internal", status.Error(codes.Internal, "boom"), outcomeAmbiguous, false},
+		{"not-a-status", errors.New("eof"), outcomeAmbiguous, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := classifyGRPC(tc.err, 0, false, 10)
+			if o.class != tc.class || o.retryHint != tc.hint {
+				t.Fatalf("got %s hint %t", o.class, o.retryHint)
+			}
+			if tc.hint && o.retryAfter != time.Second {
+				t.Fatalf("retry delay %s", o.retryAfter)
+			}
+		})
+	}
+	if o := classifyGRPC(nil, 4, true, 10); o.class != outcomePartial || o.rejected != 4 {
+		t.Fatalf("partial: %+v", o)
+	}
+	if o := classifyGRPC(nil, 11, false, 10); o.class != outcomeAmbiguous {
+		t.Fatalf("impossible partial count accepted: %+v", o)
+	}
+}
+
+// B2: the counters keep the accounting identity over a mix of outcomes and
+// report whole-request rejections separately from partial rejections.
+func TestCountersKeepTheAccountingIdentity(t *testing.T) {
+	s := newRunState(testConfig())
+	outcomes := []exportOutcome{
+		{class: outcomeAcknowledged, statusLabel: "http:200", successStatus: true},
+		{class: outcomePartial, rejected: 30, statusLabel: "http:200", successStatus: true},
+		{class: outcomeRejectedRetryable, retryHint: true, retryAfter: time.Second, statusLabel: "http:503"},
+		{class: outcomeRejectedRetryable, statusLabel: "http:429"},
+		{class: outcomeRejectedNonRetryable, statusLabel: "http:413"},
+		{class: outcomeAmbiguous, statusLabel: "transport-error"},
+	}
+	for i, o := range outcomes {
+		seq := int64(i * 100)
+		s.counters.Attempted += 100
+		s.counters.Requests++
+		s.finish(seq, 100, 1000, 900, o, time.Millisecond)
+	}
+	c := s.counters
+	if err := c.CheckIdentity(); err != nil {
+		t.Fatal(err)
+	}
+	if c.Acknowledged != 170 || c.PartialRejected != 30 || c.WholeRequestRejected != 300 || c.RejectedRetryable != 200 || c.RejectedNonRetryable != 100 || c.Ambiguous != 100 || c.Unacknowledged != 400 {
+		t.Fatalf("counters %+v", c)
+	}
+	if c.RequestOutcomes != (RequestOutcomes{Acknowledged: 1, PartialRejection: 1, RejectedRetryable: 2, RejectedWithRetryHint: 1, RejectedNonRetryable: 1, Ambiguous: 1}) || c.RequestErrors != 4 || c.SuccessStatus != 200 {
+		t.Fatalf("request outcomes %+v errors %d", c.RequestOutcomes, c.RequestErrors)
+	}
+	broken := c
+	broken.Ambiguous--
+	if broken.CheckIdentity() == nil {
+		t.Fatal("broken identity accepted")
+	}
+	snap := s.ledger.snapshot()
+	back, err := ledgerFromSnapshot(snap)
+	if err != nil || back.class(1) != outcomePartial || back.partial[1] != 30 || back.class(5) != outcomeAmbiguous {
+		t.Fatalf("ledger round trip: %v %+v", err, snap)
+	}
+	if s.ledger.record(0, exportOutcome{class: outcomeAcknowledged}) == nil {
+		t.Fatal("a request recorded twice")
 	}
 }
 
@@ -210,14 +462,14 @@ func TestReportDoesNotClaimUnverifiedLossOrAppLatency(t *testing.T) {
 	if err := Report(&out, r); err != nil {
 		t.Fatal(err)
 	}
-	for _, phrase := range []string{"No zero-loss conclusion", "not-configured", "not traces", "Neither is certified"} {
+	for _, phrase := range []string{"No zero-loss conclusion", "not-configured", "not traces", "Neither is certified", "Wire path: protobuf", "acknowledged-but-missing (DATA LOSS)", "Whole-request rejected"} {
 		if !strings.Contains(out.String(), phrase) {
 			t.Fatalf("missing honesty qualifier %q", phrase)
 		}
 	}
-	r.SchemaVersion = "future-version"
+	r.SchemaVersion = "fi.otlpbench.v1"
 	if Report(&out, r) == nil {
-		t.Fatal("accepted unsupported schema")
+		t.Fatal("accepted an older schema whose counters mean something else")
 	}
 }
 
@@ -253,5 +505,100 @@ func TestCredentialHeadersAreNotPersisted(t *testing.T) {
 	t.Setenv("BENCH_TEST_HEADERS", `{"Host":"attacker.invalid"}`)
 	if _, err := HeadersFromEnv("BENCH_TEST_HEADERS"); err == nil {
 		t.Fatal("Host override accepted")
+	}
+}
+
+// B10: the recorded command line keeps flags and environment variable NAMES
+// but never credential values.
+func TestCommandLineIsRedacted(t *testing.T) {
+	got := RedactArgs([]string{"otlpbench", "--otlp-headers-env", "BENCH_OTLP_HEADERS", "--api-key", "hunter2", "--password=hunter3",
+		"--endpoint", "http://user:hunter4@127.0.0.1:4318/v1/traces?api_key=hunter5&x=1", "TOKEN=hunter6", "--rate", "100"})
+	joined := strings.Join(got, " ")
+	for _, secret := range []string{"hunter2", "hunter3", "hunter4", "hunter5", "hunter6"} {
+		if strings.Contains(joined, secret) {
+			t.Fatalf("secret %s recorded: %s", secret, joined)
+		}
+	}
+	for _, kept := range []string{"BENCH_OTLP_HEADERS", "--rate 100", "127.0.0.1:4318", "x=1"} {
+		if !strings.Contains(joined, kept) {
+			t.Fatalf("%q lost: %s", kept, joined)
+		}
+	}
+}
+
+// B10: the system under test is the collector's reported build when known,
+// never the generator's revision, and a conflicting declaration is loud.
+func TestSystemUnderTestRevision(t *testing.T) {
+	sut, warnings := resolveSUT("abc1234", CollectorInfo{Build: map[string]any{"vcs_revision": "abc1234def5678", "vcs_modified": "false"}}, "")
+	if sut.Revision != "abc1234def5678" || sut.RevisionsAgree == nil || !*sut.RevisionsAgree || len(warnings) != 0 {
+		t.Fatalf("agreeing revisions: %+v %v", sut, warnings)
+	}
+	sut, warnings = resolveSUT("fff0000", CollectorInfo{Build: map[string]any{"configured_revision": "abc1234def5678"}}, "")
+	if sut.RevisionsAgree == nil || *sut.RevisionsAgree || len(warnings) != 1 || !strings.Contains(sut.RevisionSource, "CONFLICTS") {
+		t.Fatalf("conflict not flagged: %+v %v", sut, warnings)
+	}
+	sut, _ = resolveSUT("", CollectorInfo{}, "")
+	if sut.Revision != "" {
+		t.Fatalf("revision invented: %+v", sut)
+	}
+}
+
+// B5: the documented profiles need far more than the default 20,000-row
+// budget, and the check says so; a batch over the budget is called out.
+func TestCollectorBudgetCheck(t *testing.T) {
+	sustained := CheckBudget(15000, 500, 16, nil, 0)
+	if sustained.Sufficient || sustained.AvailablePendingRows != 20000 || sustained.RequiredPendingRows != 43000 || !strings.Contains(sustained.Source, "NOT observed") {
+		t.Fatalf("sustained: %+v", sustained)
+	}
+	burst := CheckBudget(60000, 500, 32, &CollectorLimits{MaxPendingRows: 100000, BatchMaxRows: 5000, BatchMaxAgeMS: 5000}, 0)
+	if burst.Sufficient || burst.RequiredPendingRows != 141000 || burst.Source != "collector /healthz" || len(burst.Warnings()) != 1 {
+		t.Fatalf("burst: %+v", burst)
+	}
+	raised := CheckBudget(60000, 500, 32, &CollectorLimits{MaxPendingRows: 141000, BatchMaxRows: 5000, BatchMaxAgeMS: 5000}, 0)
+	if !raised.Sufficient || len(raised.Warnings()) != 0 {
+		t.Fatalf("raised budget: %+v", raised)
+	}
+	smoke := CheckBudget(100, 100, 2, nil, 0)
+	if !smoke.Sufficient || len(smoke.Warnings()) != 0 {
+		t.Fatalf("smoke: %+v", smoke)
+	}
+	oversize := CheckBudget(100, 30, 1, nil, 16)
+	if oversize.BatchFits || !strings.Contains(strings.Join(oversize.Warnings(), " "), "non-retryable") {
+		t.Fatalf("oversize: %+v", oversize)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"ok","build":{"vcs_revision":"0123456"},"limits":{"max_pending_rows":64,"batch_max_rows":5000,"batch_max_age_ms":5000}}`))
+	}))
+	defer srv.Close()
+	info := FetchCollectorHealth(context.Background(), testConfig().client(), srv.URL)
+	if info.Error != "" || info.Limits == nil || info.Limits.MaxPendingRows != 64 || collectorRevision(info.Build) != "0123456" {
+		t.Fatalf("health: %+v", info)
+	}
+}
+
+// BenchmarkBuildRequest measures the generator's own cost per export request
+// (span planning, text assembly, serialisation and compression), so a run can
+// tell a generator bottleneck from a collector one.
+func BenchmarkBuildRequest(b *testing.B) {
+	for _, tc := range []struct {
+		encoding string
+		gzip     bool
+	}{{EncodingProtobuf, false}, {EncodingProtobuf, true}, {EncodingJSON, true}, {EncodingGRPC, false}} {
+		b.Run(tc.encoding+map[bool]string{true: "-gzip", false: ""}[tc.gzip], func(b *testing.B) {
+			c := testConfig()
+			c.Encoding, c.Gzip = tc.encoding, tc.gzip
+			c.BatchSize = 500
+			now := time.Unix(1700000000, 0)
+			var spans int64
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, _, err := c.buildRequest(int64(i)*500, 500, now); err != nil {
+					b.Fatal(err)
+				}
+				spans += 500
+			}
+			b.ReportMetric(float64(spans)/b.Elapsed().Seconds(), "spans/s")
+		})
 	}
 }
