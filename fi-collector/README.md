@@ -160,9 +160,17 @@ the litellm table nor custom pricing applies, the span's cost is 0.
 - `async_insert` defaults **off**. Enabling it changes acknowledgement/durability
   semantics and is disallowed with the observed catalog path in current startup
   validation. Record the actual settings in any benchmark.
-- The admin listener currently exposes `/healthz` with writer statistics. The
-  stock binary does not expose the `/metrics` endpoint claimed by older docs.
-  `/healthz` is not a loss detector or a proof that every acknowledged span landed.
+- The admin listener (`:9464`) exposes `/healthz` with writer statistics, a
+  `build` object (Go version, VCS revision when the binary was built from a git
+  checkout, and `FI_BUILD_REVISION` when set) and the admission `limits` in force
+  (`max_pending_rows`, `batch_max_rows`, `batch_max_age_ms`, gRPC and HTTP size
+  caps) so a benchmark can record the revision and budget it measured instead of
+  assuming them. The stock binary does not expose the `/metrics` endpoint claimed
+  by older docs. `/healthz` is not a loss detector or a proof that every
+  acknowledged span landed.
+- OTLP/HTTP accepts `Content-Encoding: gzip` (and identity). The 16 MiB cap applies
+  to the compressed bytes read and to the decoded bytes; any other coding gets 415.
+  gRPC accepts gzip-compressed messages, bounded by the gRPC receive limit.
 
 ## End-to-end benchmark and current evidence
 

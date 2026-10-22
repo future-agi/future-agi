@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/server"
 )
 
 type routingStub struct{ snapshot auth.RoutingSnapshot }
@@ -42,5 +46,45 @@ func TestHealthBodyReportsSimulationRouting(t *testing.T) {
 	}
 	if _, present := plain["simulation_routing"]; present || plain["status"] != "unhealthy" {
 		t.Fatalf("body = %s", raw)
+	}
+}
+
+func TestAdminHealthReportsBuildAndAdmissionLimits(t *testing.T) {
+	t.Setenv("FI_BUILD_REVISION", "0123456789abcdef0123456789abcdef01234567")
+	writer, err := chwriter.New(chwriter.Config{URL: "http://127.0.0.1:1", DeadLetterFile: t.TempDir() + "/dl.jsonl"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	srv := server.New(server.Config{MaxPendingRows: 321, BatchMaxRows: 17}, writer, nil, nil, nil)
+	rec := httptest.NewRecorder()
+	adminHandler(writer, nil, srv.Limits()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("healthz = %d", rec.Code)
+	}
+	var body struct {
+		Status string         `json:"status"`
+		Build  map[string]any `json:"build"`
+		Limits struct {
+			MaxPendingRows   int   `json:"max_pending_rows"`
+			BatchMaxRows     int   `json:"batch_max_rows"`
+			BatchMaxAgeMS    int64 `json:"batch_max_age_ms"`
+			MaxHTTPBodyBytes int   `json:"max_http_body_bytes"`
+		} `json:"limits"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Status != "ok" || body.Limits.MaxPendingRows != 321 || body.Limits.BatchMaxRows != 17 || body.Limits.BatchMaxAgeMS != 5000 || body.Limits.MaxHTTPBodyBytes != 16<<20 {
+		t.Fatalf("limits not reported as in force: %s", rec.Body.String())
+	}
+	if body.Build["configured_revision"] != "0123456789abcdef0123456789abcdef01234567" || body.Build["go_version"] == "" {
+		t.Fatalf("build identity missing: %v", body.Build)
+	}
+	// The default budget is reported, not a zero that a reader could take for unlimited.
+	rec = httptest.NewRecorder()
+	adminHandler(writer, nil, server.New(server.Config{}, writer, nil, nil, nil).Limits()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"max_pending_rows":20000`)) {
+		t.Fatalf("default budget not reported: %s", rec.Body.String())
 	}
 }

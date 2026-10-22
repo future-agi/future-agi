@@ -28,6 +28,8 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -175,7 +177,7 @@ func main() {
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
 	// Admin HTTP server — internal only, health check endpoint.
-	go runAdmin(":9464", writer, authenticator, log)
+	go runAdmin(":9464", writer, authenticator, srv.Limits(), log)
 
 	startAuthWatchers(ctx, authenticator)
 
@@ -405,20 +407,57 @@ func healthBody(status string, stats chwriter.Stats, router routingReporter) map
 	return body
 }
 
-// runAdmin serves /healthz for container health checks.
-func runAdmin(addr string, w *chwriter.Writer, router routingReporter, log *slog.Logger) {
+// buildInfo identifies the running binary so a benchmark report can name the
+// revision it measured. The VCS fields are present only when the binary was built
+// from a git checkout with VCS stamping; a container build without .git sets
+// FI_BUILD_REVISION instead. Nothing here is secret.
+func buildInfo(getenv func(string) string) map[string]any {
+	info := map[string]any{"go_version": runtime.Version()}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if bi.Main.Path != "" {
+			info["module"] = bi.Main.Path
+		}
+		for _, setting := range bi.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				info["vcs_revision"] = setting.Value
+			case "vcs.time":
+				info["vcs_time"] = setting.Value
+			case "vcs.modified":
+				info["vcs_modified"] = setting.Value
+			}
+		}
+	}
+	if v := getenv("FI_BUILD_REVISION"); v != "" {
+		info["configured_revision"] = v
+	}
+	return info
+}
+
+// adminHandler serves /healthz: writer statistics, the simulation routing
+// counters, the build the binary identifies as, and the admission limits in
+// force.
+func adminHandler(w *chwriter.Writer, router routingReporter, limits server.Limits) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
 		s := w.Snapshot()
 		denom := s.BatchesInserted + s.BatchesFailed
+		code, status := 200, "ok"
 		if denom > 100 && s.BatchesFailed*2 > denom {
-			rw.WriteHeader(503)
-			_ = json.NewEncoder(rw).Encode(healthBody("unhealthy", s, router))
-			return
+			code, status = 503, "unhealthy"
 		}
-		rw.WriteHeader(200)
-		_ = json.NewEncoder(rw).Encode(healthBody("ok", s, router))
+		body := healthBody(status, s, router)
+		body["build"] = buildInfo(os.Getenv)
+		body["limits"] = limits
+		rw.WriteHeader(code)
+		_ = json.NewEncoder(rw).Encode(body)
 	})
+	return mux
+}
+
+// runAdmin serves /healthz for container health checks.
+func runAdmin(addr string, w *chwriter.Writer, router routingReporter, limits server.Limits, log *slog.Logger) {
+	mux := adminHandler(w, router, limits)
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Warn("admin server stopped", "err", err)

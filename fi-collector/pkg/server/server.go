@@ -15,6 +15,8 @@
 package server
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -38,6 +40,10 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	// Registers the gzip compressor: without it a gRPC exporter configured with
+	// compression=gzip is refused as Unimplemented. The decompressed size is
+	// still bounded by MaxRecvMsgSize.
+	_ "google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -215,6 +221,28 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		stopCh:  make(chan struct{}),
 	}
 	return s
+}
+
+// Limits are the admission limits in force after defaults, reported by the
+// admin endpoint so a benchmark can check the target's budget instead of assuming
+// it.
+type Limits struct {
+	MaxPendingRows   int   `json:"max_pending_rows"`
+	BatchMaxRows     int   `json:"batch_max_rows"`
+	BatchMaxAgeMS    int64 `json:"batch_max_age_ms"`
+	GRPCMaxRecvMiB   int   `json:"grpc_max_recv_mib"`
+	MaxHTTPBodyBytes int   `json:"max_http_body_bytes"`
+}
+
+// Limits returns the effective limits of this server.
+func (s *Server) Limits() Limits {
+	return Limits{
+		MaxPendingRows:   s.cfg.MaxPendingRows,
+		BatchMaxRows:     s.cfg.BatchMaxRows,
+		BatchMaxAgeMS:    s.cfg.BatchMaxAge.Milliseconds(),
+		GRPCMaxRecvMiB:   s.cfg.GRPCMaxRecvMiB,
+		MaxHTTPBodyBytes: maxOTLPHTTPBodyBytes,
+	}
 }
 
 // Run blocks until ctx is cancelled or a serve error occurs. On shutdown
@@ -429,6 +457,41 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 // would let a single client consume memory unboundedly.
 const maxOTLPHTTPBodyBytes = 16 << 20
 
+// readOTLPBody returns the decoded body of an OTLP/HTTP request. The only
+// supported content codings are identity and gzip, the one OTLP exporters use.
+// The size cap applies to the bytes read from the wire AND to the decoded bytes,
+// so a few KiB of compressed zeros cannot expand into unbounded memory. On error
+// the returned status is the one to answer with.
+func readOTLPBody(r *http.Request) ([]byte, int, error) {
+	encoding := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding")))
+	if encoding != "" && encoding != "identity" && encoding != "gzip" {
+		return nil, http.StatusUnsupportedMediaType, fmt.Errorf("unsupported content encoding %q; use gzip or identity", encoding)
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxOTLPHTTPBodyBytes+1))
+	if err != nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("read body: %w", err)
+	}
+	if len(raw) > maxOTLPHTTPBodyBytes {
+		return nil, http.StatusRequestEntityTooLarge, errors.New("payload too large")
+	}
+	if encoding != "gzip" {
+		return raw, http.StatusOK, nil
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, http.StatusBadRequest, errors.New("invalid gzip body")
+	}
+	defer zr.Close()
+	body, err := io.ReadAll(io.LimitReader(zr, maxOTLPHTTPBodyBytes+1))
+	if err != nil {
+		return nil, http.StatusBadRequest, errors.New("invalid gzip body")
+	}
+	if len(body) > maxOTLPHTTPBodyBytes {
+		return nil, http.StatusRequestEntityTooLarge, errors.New("payload too large after decompression")
+	}
+	return body, http.StatusOK, nil
+}
+
 // handleHTTPTraces implements POST /v1/traces per the OTLP/HTTP wire spec
 // (https://opentelemetry.io/docs/specs/otlp/#otlphttp). Accepts both
 // `application/x-protobuf` and `application/json`. Any other method or
@@ -456,17 +519,18 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	}
 	ct = trimSpace(ct)
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxOTLPHTTPBodyBytes+1))
+	body, code, err := readOTLPBody(r)
 	if err != nil {
-		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if len(body) > maxOTLPHTTPBodyBytes {
-		// Mirror the gRPC-side over-cap log so an HTTP exporter's drop is
-		// equally visible server-side.
-		s.log.Error("http body over size cap, request rejected",
-			"path", r.URL.Path, "max_bytes", maxOTLPHTTPBodyBytes)
-		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
+		if code == http.StatusRequestEntityTooLarge {
+			// Mirror the gRPC-side over-cap log so an HTTP exporter's drop is
+			// equally visible server-side.
+			s.log.Error("http body over size cap, request rejected",
+				"path", r.URL.Path, "max_bytes", maxOTLPHTTPBodyBytes)
+		}
+		if code == http.StatusUnsupportedMediaType {
+			w.Header().Set("Accept-Encoding", "gzip, identity")
+		}
+		http.Error(w, err.Error(), code)
 		return
 	}
 
