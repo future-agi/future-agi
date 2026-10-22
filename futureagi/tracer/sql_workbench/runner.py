@@ -82,10 +82,16 @@ def connection_config():
         verify=True,
         connect_timeout=3,
         send_receive_timeout=MAX_SECONDS + 2,
-        # readonly=1 profiles reject even client-supplied setting assignments.
-        # Verify server-side ceilings below, then send settings-free reads.
+        # readonly=1 profiles reject client-supplied setting assignments; the
+        # provisioned profile exempts only additional_table_filters. Verify the
+        # server-side ceilings below, then send reads carrying that one filter.
         client_name="futureagi-sql-workbench",
     )
+
+
+PROFILE_MESSAGE = (
+    "The SQL service account needs the documented locked read-only resource profile."
+)
 
 
 def verify_profile(client):
@@ -115,9 +121,7 @@ def verify_profile(client):
         else:
             valid = 0 < int(actual) <= expected
         if not valid:
-            raise QueryUnavailable(
-                "The SQL service account needs the documented locked read-only resource profile."
-            )
+            raise QueryUnavailable(PROFILE_MESSAGE)
 
 
 def cell(value):
@@ -136,9 +140,23 @@ def cell(value):
     return json.dumps(value, default=str, ensure_ascii=False)
 
 
-def run(compiled_sql, query_id, cancelled):
+def run(compiled_sql, query_id, cancelled, *, table_filters):
+    """Execute one compiled query on the dedicated locked connection.
+
+    ``table_filters`` is the scope's ``additional_table_filters`` map. It is the
+    only per-query setting sent; the provisioned profile marks just that setting
+    CHANGEABLE_IN_READONLY, so ClickHouse applies the scope's ownership filter
+    to every read of each physical source, independently of the AST rewrite.
+    """
     from clickhouse_driver import Client
 
+    if (
+        not isinstance(table_filters, str)
+        or not table_filters.startswith("{'")
+        or not table_filters.endswith("'}")
+    ):
+        # Fail closed: never run a user query without the server-side barrier.
+        raise QueryUnavailable("SQL scope filters are missing.")
     client = Client(**connection_config())
     stop = threading.Event()
     aborted = threading.Event()
@@ -174,7 +192,10 @@ def run(compiled_sql, query_id, cancelled):
         # Native cancellation targets THIS connection, not KILL QUERY/admin SQL.
         # Server/socket limits bound the read independently of Temporal timeouts.
         stream = client.execute_iter(
-            compiled_sql, query_id=str(query_id), with_column_types=True
+            compiled_sql,
+            query_id=str(query_id),
+            with_column_types=True,
+            settings={"additional_table_filters": table_filters},
         )
         # execute_iter has sent the query; only the main thread reads packets.
         # Client.cancel() is intentionally forbidden: it drains receive_result().
@@ -215,6 +236,9 @@ def run(compiled_sql, query_id, cancelled):
             raise QueryUnavailable(
                 "SQL catalog source unavailable. Apply its schema and read-only grants."
             ) from exc
+        if getattr(exc, "code", None) == 164:
+            # READONLY: the profile does not allow the per-query scope filter.
+            raise QueryUnavailable(PROFILE_MESSAGE) from exc
         raise
     finally:
         stop.set()

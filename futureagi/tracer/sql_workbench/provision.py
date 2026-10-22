@@ -127,6 +127,9 @@ def service_access_ddl(
         for key, value in QUERY_SETTINGS.items()
     )
     profile += ", max_concurrent_queries_for_user = 2 READONLY"
+    # The one setting the runner sends: the scope's per-query ownership filter.
+    # Every other setting stays immutable under readonly = 1.
+    profile += ", additional_table_filters CHANGEABLE_IN_READONLY"
     statements = [
         f"CREATE USER {principal} IDENTIFIED WITH sha256_hash BY '{password_hash}' HOST IP '{network}' SETTINGS {profile}"
     ]

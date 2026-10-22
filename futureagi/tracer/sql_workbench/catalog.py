@@ -225,6 +225,73 @@ def ownership_predicates(scope: Scope) -> dict[str, str]:
     }
 
 
+# Every relation the provisioned service principal may be granted: the six
+# sources and the optional derived-metrics view with its two tables.
+DERIVED_METRIC_RELATIONS = (
+    "derived_metrics",
+    "derived_metric_results",
+    "derived_metric_commits",
+)
+
+
+def intrinsic_ownership(scope: Scope) -> dict[str, str]:
+    """Per physical relation: ownership columns that never change across versions.
+
+    Sent as ClickHouse ``additional_table_filters``, a server-side second
+    barrier that applies to every read of a listed table in one query,
+    independently of the AST rewrite: ``x IN <table>`` reads, views, joins,
+    scalar subqueries and FINAL included (checked on the owned 25.3 server by
+    ``test_server_table_filters_block_unscoped_sql_under_the_locked_profile``).
+    Deletion flags and event times are deliberately absent: a filter that hid
+    the newest (deleted) version before FINAL could surface an older one.
+
+    Derived-metric relations are always listed, even when the feature is off,
+    because an operator may have granted them; a key for a table that does not
+    exist is ignored by the server. ``<table>_local`` keys cover the shard
+    tables behind a Distributed source on a cluster installation.
+    """
+    project = f"toUUID('{scope.project_id}')"
+    org = f"toUUID('{scope.organization_id}')"
+    workspace = f"toUUID('{scope.workspace_id}')"
+    configs = ", ".join(f"toUUID('{value}')" for value in scope.eval_config_ids)
+    tenant = f"org_id = {org} AND workspace_id = {workspace} AND project_id = {project}"
+    result = {
+        "spans": f"project_id = {project} AND org_id = {org}",
+        "traces": f"project_id = {project}",
+        "trace_sessions": f"project_id = {project}",
+        "end_users": f"project_id = {project} AND organization_id = {org}",
+        # No eval relation is readable unless this query was scoped to the
+        # project's configurations; either evaluation store may be granted.
+        "tracer_eval_logger": (
+            f"custom_eval_config_id IN ({configs})" if configs else "0"
+        ),
+        "model_hub_score": (
+            f"organization_id = {org} AND workspace_id = {workspace} "
+            f"AND tracer_project_id = {project}"
+        ),
+        **dict.fromkeys(DERIVED_METRIC_RELATIONS, tenant),
+    }
+    result["tracer_eval_logger_v2"] = result["tracer_eval_logger"]
+    return result
+
+
+def additional_table_filters(scope: Scope) -> str:
+    """The per-query ``additional_table_filters`` map with database-qualified keys."""
+
+    def quoted(text):
+        return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+    filters = {}
+    for table, predicate in intrinsic_ownership(scope).items():
+        for name in (table, f"{table}_local"):
+            filters[f"{scope.database}.{name}"] = predicate
+    return (
+        "{"
+        + ", ".join(f"{quoted(key)}: {quoted(value)}" for key, value in filters.items())
+        + "}"
+    )
+
+
 def sources(scope: Scope) -> dict[str, str]:
     """Only canonical UUIDs and datetimes enter these server-authored templates."""
     from datetime import timezone

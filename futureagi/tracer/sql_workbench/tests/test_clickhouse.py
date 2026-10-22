@@ -281,12 +281,13 @@ def test_real_join_cte_union_and_subquery_cannot_expand_tenant_scope(scoped_clic
     ]
 
 
-def test_real_locked_service_profile_and_settings_free_execution(
+def test_real_locked_service_profile_executes_with_only_the_scope_filter(
     scoped_clickhouse, monkeypatch
 ):
     import ipaddress
     import secrets
     from django.test import override_settings
+    from tracer.sql_workbench.catalog import additional_table_filters
     from tracer.sql_workbench.provision import service_access_ddl
     from tracer.sql_workbench.runner import run
 
@@ -332,6 +333,7 @@ def test_real_locked_service_profile_and_settings_free_execution(
                 compile_query("SELECT count() AS n FROM spans", scope),
                 uuid4(),
                 lambda: False,
+                table_filters=additional_table_filters(scope),
             )
         assert result["rows"] == [[1]]
         assert result["truncated"] is False
@@ -455,6 +457,13 @@ def test_e2e_only_bootstrap_is_idempotent_on_real_clickhouse(scoped_clickhouse):
         )
         assert reader.execute(
             compile_query("SELECT count() AS n FROM spans", scope)
+        ) == [(1,)]
+        # The bootstrapped account accepts exactly the runner's scope filter.
+        from tracer.sql_workbench.catalog import additional_table_filters
+
+        assert reader.execute(
+            f"SELECT count() FROM {scope.database}.spans",
+            settings={"additional_table_filters": additional_table_filters(scope)},
         ) == [(1,)]
         with pytest.raises(ServerException):
             reader.execute("SET max_result_rows=0")
@@ -731,3 +740,295 @@ def test_reviewed_boolean_combinator_and_date_queries_execute(scoped_clickhouse)
             scope,
         )
     ) == [(0.0, 0.0)]
+
+
+def _sibling(name):
+    """Load a sibling test module's corpus without relying on import paths."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).with_name(f"{name}.py")
+    spec = importlib.util.spec_from_file_location(f"_sql_workbench_{name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _service_principal(client, scope, *, extra_grants=()):
+    """An ephemeral locked service principal, as provision_sql_service emits it."""
+    import ipaddress
+    import secrets
+
+    from tracer.sql_workbench.provision import service_access_ddl
+
+    principal = f"sql_test_{uuid4().hex[:12]}"
+    password = secrets.token_urlsafe(32)
+    address = ipaddress.ip_address(
+        str(
+            client.execute(
+                "SELECT address FROM system.processes WHERE query_id=currentQueryID()"
+            )[0][0]
+        )
+    )
+    address = getattr(address, "ipv4_mapped", None) or address
+    statements = service_access_ddl(
+        database=scope.database,
+        principal=principal,
+        password=password,
+        cidr=f"{address}/{32 if address.version == 4 else 128}",
+        eval_table=scope.eval_table,
+    )
+    statements += [f"GRANT SELECT ON {grant} TO {principal}" for grant in extra_grants]
+    return principal, password, statements
+
+
+def _service_settings(client, database):
+    return {
+        "CH25_HOST": client.connection.host,
+        "CH25_TCP_PORT": client.connection.port,
+        "CH25_DATABASE": database,
+        "CH25_USER": client.connection.user,
+    }
+
+
+def _string_values(rows):
+    for row in rows:
+        for value in row:
+            if isinstance(value, (list, tuple)):
+                yield from _string_values([value])
+            elif isinstance(value, dict):
+                yield from (str(item) for pair in value.items() for item in pair)
+            else:
+                yield str(value)
+
+
+def test_adversarial_corpus_never_returns_foreign_rows(scoped_clickhouse):
+    """Compile, then execute, every corpus query against two real tenants.
+
+    This exercises the AST barrier alone: the executing connection is the
+    unrestricted test account whose current database is the source database,
+    with no server-side table filter, so an unscoped ``IN spans`` or
+    ``FROM spans`` would resolve to the physical table and return the other
+    tenant's rows. A one-column probe table holds a foreign sentinel, which
+    turns ``x IN <table>`` into a membership oracle; the raw oracles are run
+    once unscoped to prove they would leak.
+    """
+    from clickhouse_driver.errors import ServerException
+
+    from conftest import _ch_test_native_client
+    from tracer.sql_workbench.catalog import CatalogUnavailable
+    from tracer.sql_workbench.compiler import UnsafeQuery
+
+    client, scope, ids = scoped_clickhouse
+    database = scope.database
+    compiler_cases = _sibling("test_compiler")
+    fuzz = _sibling("test_compiler_fuzz")
+    sentinel = f"foreign-sentinel-{uuid4().hex}"
+    client.execute(
+        f"CREATE TABLE {database}.sql_probe_foreign (v String) ENGINE=MergeTree ORDER BY v"
+    )
+    try:
+        client.execute(
+            f"INSERT INTO {database}.sql_probe_foreign VALUES", [(sentinel,)]
+        )
+        stored = set()
+        for table in TABLES:
+            stored |= set(
+                _string_values(client.execute(f"SELECT * FROM {database}.{table}"))
+            )
+        visible = set()
+        for dataset in [
+            "spans",
+            "traces",
+            "sessions",
+            "users",
+            "eval_results",
+            "annotations",
+        ]:
+            visible |= set(
+                _string_values(
+                    client.execute(compile_query(f"SELECT * FROM {dataset}", scope))
+                )
+            )
+        # Distinctive values the tenant must never see (UUIDs, names, sentinel).
+        foreign = {
+            value
+            for value in stored - visible
+            if len(value) >= 6 and not value.replace(".", "").replace("-", "").isdigit()
+        } | {sentinel, "leak"}
+        assert {"tenant-1", "foreign-org", "null-org"} <= foreign
+        oracles = [
+            f"SELECT name FROM spans WHERE '{sentinel}' IN sql_probe_foreign",
+            f"SELECT name FROM spans WHERE '{sentinel}' IN (sql_probe_foreign)",
+            f"SELECT name FROM spans WHERE '{sentinel}' GLOBAL IN sql_probe_foreign",
+            f"SELECT name FROM spans WHERE '{sentinel}' IN {database}.sql_probe_foreign",
+            f"SELECT if('{sentinel}' IN sql_probe_foreign, 'leak', name) FROM spans",
+            f"SELECT name FROM spans WHERE NOT '{sentinel}' NOT IN sql_probe_foreign",
+            "SELECT name FROM spans WHERE (project_id, org_id, id, trace_id, trace_session_id, end_user_id, name, start_time, end_time, latency_ms, status, model, provider, total_tokens, cost, attrs_string, attrs_number, is_deleted, _version) IN spans",
+        ]
+        with _ch_test_native_client(
+            database=database, owned_database=database
+        ) as executor:
+            # Control: run unscoped, each oracle does read the foreign rows.
+            for oracle in oracles:
+                assert foreign & set(_string_values(executor.execute(oracle))), oracle
+            corpus = (
+                compiler_cases.VALID_QUERIES
+                + compiler_cases.ADVERSARIAL_QUERIES
+                + compiler_cases.IN_TABLE_BYPASSES
+                + compiler_cases.TABLE_NAME_FUNCTIONS
+                + compiler_cases.CLAUSE_SWEEP
+                + compiler_cases.REVIEWED_GRAMMAR
+                + compiler_cases.GRAMMAR_ESCAPES
+                + [sql for sql, _ in fuzz.variants()]
+                + oracles
+            )
+            outcomes = {"rejected": 0, "executed": 0, "server_error": 0}
+            for query in corpus:
+                try:
+                    compiled = compile_query(query, scope)
+                except (UnsafeQuery, CatalogUnavailable):
+                    outcomes["rejected"] += 1
+                    continue
+                assert query not in oracles, f"membership oracle compiled: {query}"
+                try:
+                    rows = executor.execute(compiled)
+                except ServerException:
+                    outcomes["server_error"] += 1
+                    continue
+                outcomes["executed"] += 1
+                leaked = foreign & set(_string_values(rows))
+                assert not leaked, f"{query!r} returned foreign values {leaked}"
+        print(f"live adversarial corpus: {len(corpus)} queries, {outcomes}")
+        assert outcomes["executed"] >= len(compiler_cases.VALID_QUERIES)
+    finally:
+        client.execute(f"DROP TABLE {database}.sql_probe_foreign SYNC")
+
+
+def test_server_table_filters_block_unscoped_sql_under_the_locked_profile(
+    scoped_clickhouse, monkeypatch
+):
+    """Second barrier: raw, unscoped SQL through the runner still sees one scope.
+
+    The SQL below bypasses the compiler on purpose, standing in for an AST
+    bypass: raw physical reads (bare and database-qualified), IN-table and
+    function-form IN oracles over an exact foreign row, alias and CTE names on
+    the right of IN, and a read through a view. The test account's control
+    reads show the foreign rows exist. A 1,000-configuration scope checks that
+    the largest admitted filter map is accepted by the server.
+    """
+    from dataclasses import replace
+
+    from clickhouse_driver import Client
+    from clickhouse_driver.errors import ServerException
+    from django.test import override_settings
+
+    from conftest import _ch_test_native_client
+    from tracer.sql_workbench.catalog import additional_table_filters
+    from tracer.sql_workbench.runner import run
+
+    client, scope, ids = scoped_clickhouse
+    database = scope.database
+    project = f"toUUID('{scope.project_id}')"
+    view = f"{database}.sql_probe_spans_view"
+    client.execute(
+        f"CREATE VIEW {view} AS SELECT project_id, id, name FROM {database}.spans"
+    )
+    principal, password, statements = _service_principal(
+        client, scope, extra_grants=[view]
+    )
+    created = False
+    try:
+        for statement in statements:
+            client.execute(statement)
+            created = True
+        foreign_session = client.execute(
+            f"SELECT project_id, trace_session_id, external_session_id, first_seen, is_deleted, _version FROM {database}.trace_sessions WHERE project_id != %(p)s",
+            {"p": scope.project_id},
+        )[0]
+        row = (
+            f"(toUUID('{foreign_session[0]}'), toUUID('{foreign_session[1]}'), "
+            f"'{foreign_session[2]}', toDateTime64('"
+            f"{foreign_session[3].strftime('%Y-%m-%d %H:%M:%S.%f')}', 6, 'UTC'), "
+            f"{foreign_session[4]}, {foreign_session[5]})"
+        )
+        session = f"toUUID('{foreign_session[1]}')"
+        config = scope.eval_config_ids[0]
+        raw = [
+            f"SELECT count() FROM spans WHERE project_id != {project}",
+            f"SELECT count() FROM {database}.spans WHERE project_id != {project}",
+            f"SELECT count() FROM `{database}`.`traces` WHERE project_id != {project}",
+            f"SELECT count() FROM end_users WHERE project_id != {project}",
+            "SELECT count() FROM model_hub_score WHERE value IN ('value-1', 'null-scope', 'foreign-scope')",
+            f"SELECT count() FROM tracer_eval_logger_v2 WHERE custom_eval_config_id != toUUID('{config}')",
+            f"SELECT count() FROM {view} WHERE project_id != {project}",
+            f"SELECT count() FROM spans FINAL WHERE project_id != {project}",
+            f"SELECT {session} IN (SELECT trace_session_id FROM trace_sessions)",
+            f"SELECT {row} IN trace_sessions",
+            f"SELECT {row} IN (trace_sessions)",
+            f"SELECT {row} IN {database}.trace_sessions",
+            f"SELECT {row} GLOBAL IN trace_sessions",
+            f"SELECT in({row}, trace_sessions)",
+            f"SELECT NOT {row} NOT IN trace_sessions",
+            f"SELECT {row} IN t FROM trace_sessions AS t WHERE project_id = {project}",
+            f"WITH c AS (SELECT trace_session_id FROM trace_sessions) SELECT {session} IN c",
+            f"SELECT count() FROM spans WHERE {session} IN (SELECT trace_session_id FROM trace_sessions) AND project_id != {project}",
+            f"SELECT EXISTS (SELECT 1 FROM trace_sessions WHERE trace_session_id = {session})",
+            f"SELECT (SELECT count() FROM traces WHERE project_id != {project})",
+        ]
+        with _ch_test_native_client(
+            database=database, owned_database=database
+        ) as unrestricted:
+            for sql in raw:
+                assert unrestricted.execute(sql)[0][0], f"control has no foreign row: {sql}"
+        monkeypatch.setenv("SQL_WORKBENCH_CH_USER", principal)
+        monkeypatch.setenv("SQL_WORKBENCH_CH_PASSWORD", password)
+        monkeypatch.setenv("SQL_WORKBENCH_CH_SECURE", "false")
+        many = replace(
+            scope, eval_config_ids=(config, *(uuid4() for _ in range(999)))
+        )
+        with override_settings(CLICKHOUSE_V2=_service_settings(client, database)):
+            for filters in (additional_table_filters(scope), additional_table_filters(many)):
+                for sql in raw:
+                    result = run(sql, uuid4(), lambda: False, table_filters=filters)
+                    assert result["rows"] in ([[0]], [[False]]), (sql, result["rows"])
+                own = run(
+                    f"SELECT name FROM {database}.spans ORDER BY name",
+                    uuid4(),
+                    lambda: False,
+                    table_filters=filters,
+                )
+                assert own["rows"] == [["tenant-0"]]
+                evals = run(
+                    "SELECT count() FROM tracer_eval_logger_v2",
+                    uuid4(),
+                    lambda: False,
+                    table_filters=filters,
+                )
+                # The owned config's rows only (one tenant-0 session score plus
+                # the four adversarial target rows the fixture adds to it).
+                assert evals["rows"] == [[5]]
+        # Only the filter is changeable: every other per-query setting is refused.
+        reader = Client(
+            host=client.connection.host,
+            port=client.connection.port,
+            database=database,
+            user=principal,
+            password=password,
+        )
+        try:
+            for setting in [
+                {"max_threads": 64},
+                {"readonly": 0},
+                {"max_execution_time": 0},
+                {"max_rows_to_read": 0},
+            ]:
+                with pytest.raises(ServerException) as denied:
+                    reader.execute("SELECT 1", settings=setting)
+                assert denied.value.code == 164
+        finally:
+            reader.disconnect()
+    finally:
+        if created:
+            client.execute(f"DROP USER {principal}")
+        client.execute(f"DROP VIEW {view} SYNC")

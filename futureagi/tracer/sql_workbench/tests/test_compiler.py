@@ -562,3 +562,65 @@ def test_compiled_text_is_bounded_by_the_profile_query_size(scope):
         compile_query(
             " UNION ALL ".join(["SELECT count() FROM eval_results"] * 6), many
         )
+
+
+def test_additional_table_filters_cover_every_grantable_relation(scope):
+    from dataclasses import replace
+
+    from tracer.sql_workbench.catalog import (
+        DERIVED_METRIC_RELATIONS,
+        additional_table_filters,
+        intrinsic_ownership,
+        ownership_predicates,
+    )
+    from tracer.sql_workbench.provision import service_access_ddl
+
+    enabled = replace(scope, derived_metrics_enabled=True)
+    filters = intrinsic_ownership(enabled)
+    physical = {
+        table.name
+        for text in sources(enabled).values()
+        for table in sqlglot.parse_one(text, read="clickhouse").find_all(exp.Table)
+        if table.name != "__sql_eval_candidates"
+    }
+    granted = set()
+    for eval_table in ("tracer_eval_logger", "tracer_eval_logger_v2"):
+        for statement in service_access_ddl(
+            database="analytics",
+            principal="sql_service",
+            password="secret" * 5,
+            cidr="10.3.0.0/24",
+            eval_table=eval_table,
+            include_derived_metrics=True,
+        )[1:]:
+            granted.add(statement.split(" ON analytics.")[1].split(" ")[0])
+    # Every table a source reads and every relation the service principal can
+    # ever be granted carries a filter, whether or not the feature is enabled.
+    assert physical | granted | set(ownership_predicates(enabled)) <= set(filters)
+    assert intrinsic_ownership(scope) == filters
+    assert set(DERIVED_METRIC_RELATIONS) <= set(filters)
+    for predicate in filters.values():
+        # Never a deletion flag or event time: FINAL-safe, intrinsic ownership.
+        assert "deleted" not in predicate and "created_at" not in predicate
+        assert "project_id = toUUID(" in predicate or "custom_eval_config_id IN (" in (
+            predicate
+        )
+    assert filters["tracer_eval_logger_v2"] == filters["tracer_eval_logger"]
+    assert (
+        intrinsic_ownership(replace(scope, eval_config_ids=()))["tracer_eval_logger"]
+        == "0"
+    )
+    rendered = additional_table_filters(enabled)
+    assert rendered.startswith("{'analytics.spans': 'project_id = toUUID(\\'")
+    for table in filters:
+        assert f"'analytics.{table}': " in rendered
+        assert f"'analytics.{table}_local': " in rendered
+    # The ClickHouse map literal parses back to exactly these predicates.
+    parsed = sqlglot.parse_one(f"SELECT {rendered}", read="clickhouse").expressions[0]
+    keys = [key.this for key in parsed.args["keys"].expressions]
+    values = [value.this for value in parsed.args["values"].expressions]
+    assert dict(zip(keys, values, strict=True)) == {
+        f"analytics.{name}": predicate
+        for table, predicate in filters.items()
+        for name in (table, f"{table}_local")
+    }

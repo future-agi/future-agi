@@ -9,7 +9,7 @@ from tracer.models.sql_query import SQLExecution
 
 from .access import Actor, authorize
 from .compiler import compile_query
-from .catalog import CatalogUnavailable
+from .catalog import CatalogUnavailable, additional_table_filters
 from .runner import QueryCancelled, QueryUnavailable, run
 from .service import query_scope
 
@@ -34,16 +34,17 @@ def execute_sql(job_id):
     actor = Actor(job.created_by_id, job.organization_id, job.workspace_id)
     try:
         project = authorize(actor, job.project_id)
-        sql = compile_query(
-            job.sql, query_scope(actor, project, job.start, job.end, job.sql)
-        )
+        scope = query_scope(actor, project, job.start, job.end, job.sql)
+        sql = compile_query(job.sql, scope)
 
         def cancelled():
             return not SQLExecution.objects.filter(
                 id=job_id, state="running", deadline__gt=timezone.now()
             ).exists()
 
-        result = run(sql, job.id, cancelled)
+        result = run(
+            sql, job.id, cancelled, table_filters=additional_table_filters(scope)
+        )
         # Revocation during execution must not publish a previously admitted result.
         authorize(actor, job.project_id)
         SQLExecution.objects.filter(id=job_id, state="running").update(
