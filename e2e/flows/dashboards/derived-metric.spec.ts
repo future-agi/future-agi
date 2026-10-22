@@ -1,4 +1,4 @@
-import { request } from '@playwright/test';
+import { request, type Locator } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
 import { sendTrace, type SeededTrace } from '../../lib/otlp';
 import { POLL } from '../../lib/state-probe';
@@ -69,6 +69,13 @@ test('DASH-E2E-017: an unweighted resolution formula persists, renders on a dash
   const start = BigInt(Date.now() - 5 * 60_000) * 1_000_000n;
   const traces: SeededTrace[] = [];
   const resultReads = new Set<string>();
+  // Additive UI evidence only: never asserts, and neither a slow render nor a
+  // failed capture can fail the flow. `ready` is a best-effort settle, not a check.
+  const screenshot = async (name: string, ready?: Locator) => {
+    if (ready) await ready.first().waitFor({ state: 'visible', timeout: 5_000 }).catch(() => undefined);
+    const body = await page.screenshot({ fullPage: true }).catch(() => null);
+    if (body) await testInfo.attach(name, { body, contentType: 'image/png' });
+  };
   page.on('request', outgoing => {
     const pathname = new URL(outgoing.url()).pathname;
     if (outgoing.method() === 'GET' && /\/derived-metric-runs\/[^/]+\/results\/$/.test(pathname)) resultReads.add(pathname);
@@ -131,6 +138,7 @@ test('DASH-E2E-017: an unweighted resolution formula persists, renders on a dash
       const validation = page.waitForResponse(r => new URL(r.url()).pathname.endsWith(`${METRICS}validate/`) && r.request().method() === 'POST', { timeout: UI_READY });
       await page.getByRole('button', { name: 'Validate formula', exact: true }).click();
       expect((await validation).status()).toBe(200);
+      await screenshot('ui-formula-validated', page.getByText(/^One contribution per selection unit/));
       const saving = page.waitForResponse(r => new URL(r.url()).pathname.endsWith(METRICS) && r.request().method() === 'POST', { timeout: UI_READY });
       await page.getByRole('button', { name: 'Save metric', exact: true }).click();
       const response = await saving;
@@ -152,12 +160,14 @@ test('DASH-E2E-017: an unweighted resolution formula persists, renders on a dash
       const creating = page.waitForResponse(r => new URL(r.url()).pathname.endsWith(MONITORS) && r.request().method() === 'POST', { timeout: UI_READY });
       await page.getByRole('button', { name: 'Create monitor', exact: true }).click();
       expect((await creating).status()).toBe(200);
+      await screenshot('ui-monitor-state', page.getByText(/^Monitor created\./));
       const previewing = page.waitForResponse(r => new URL(r.url()).pathname.endsWith(`${METRICS}${metric.id}/preview/`), { timeout: UI_READY });
       await page.getByRole('button', { name: 'Preview window', exact: true }).click();
       const previewResponse = await previewing;
       expect(previewResponse.status()).toBe(200);
       const preview: ResultPage = await previewResponse.json();
       expect(preview.results.map(row => [row.value, row.numerator, row.denominator, row.status])).toEqual([[0.5, 1, 2, 'ok']]);
+      await screenshot('ui-preview', page.getByText('Preview only — inputs have not been frozen yet.', { exact: true }));
     }, { timeout: UI_READY });
 
     const runId = await test.step('UI: run and persist the saved formula', async () => {
@@ -206,6 +216,7 @@ test('DASH-E2E-017: an unweighted resolution formula persists, renders on a dash
       await expect(page.getByRole('table', { name: 'Metric results' }).locator('tbody td'))
         .toHaveText(['All units', '0.5', '1', '2', 'ok', '2', '2', '0', '0'], { timeout: UI_READY });
       expect([...resultReads].some(pathname => pathname.endsWith(`${RUNS}${runId}/results/`))).toBe(true);
+      await screenshot('ui-persisted-result');
     }, { timeout: UI_READY });
 
     const dashboardQuery = () => page.waitForResponse(r => {
@@ -224,6 +235,7 @@ test('DASH-E2E-017: an unweighted resolution formula persists, renders on a dash
       expect(body.result.metrics.map(metricResult => metricResult.series.flatMap(series => series.data.map(point => point.value))))
         .toEqual([[EXPECTED_DASHBOARD_VALUE]]);
       await expect(page.getByRole('heading', { name: new RegExp(`^${String(EXPECTED_DASHBOARD_VALUE).replace('.', '\\.')}0*$`) })).toBeVisible({ timeout: UI_READY });
+      await screenshot('ui-dashboard-widget');
       return new URL(page.url()).pathname.split('/').at(-1)!;
     }, { timeout: UI_READY });
 
