@@ -20,10 +20,10 @@
     <tr>
       <td style="background-color:#0a0a0a; border:1px solid #27272a; border-radius:12px; padding: 20px 22px;">
         <p style="margin:0 0 12px 0; font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace; font-size:10px; font-weight:500; letter-spacing:0.14em; text-transform:uppercase; color:#a1a1aa;">
-          <span style="display:inline-block; width:5px; height:5px; background:#fafafa; border-radius:50%; margin-right:8px; vertical-align:middle;"></span>Activate your account
+          <span style="display:inline-block; width:5px; height:5px; background:#fafafa; border-radius:50%; margin-right:8px; vertical-align:middle;"></span>{% if existing_user %}Join with your account{% else %}Activate your account{% endif %}
         </p>
         <p style="margin:0; font-family:'Inter',sans-serif; font-size:14px; line-height:1.6; color:#d4d4d8;">
-          Click below to set your password and enter the workspace. Link expires in 7 days.
+          {% if existing_user %}Click below to join {{ org_name }} with your existing account. Link expires in 7 days.{% else %}Click below to set your password and enter the workspace. Link expires in 7 days.{% endif %}
         </p>
       </td>
     </tr>
@@ -61,6 +61,6 @@
   </table>
 
   <p style="font-family:'Inter',sans-serif; font-size:12px; line-height:1.6; color:#71717a; margin:28px 0 0 0;">
-    Not expecting this? Ignore the email — no account will be created.
+    {% if existing_user %}Not expecting this? Ignore the email and nothing will change.{% else %}Not expecting this? Ignore the email — no account will be created.{% endif %}
   </p>
 {% endblock %}

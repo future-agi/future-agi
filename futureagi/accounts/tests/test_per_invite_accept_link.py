@@ -547,3 +547,43 @@ class TestLoginAfterJoin:
         joined_b_after_a.refresh_from_db()
         assert joined_b_after_a.config["currentOrganizationId"] == str(org_a.id)
         assert "post_login_organization_id" not in joined_b_after_a.config
+
+
+class TestFinalReviewFixes:
+    def test_invite_email_to_existing_user_does_not_ask_for_a_password(
+        self, owner_b, invited_user, other_invite, sent_emails
+    ):
+        from django.template.loader import render_to_string
+
+        invited_user.is_active = True
+        invited_user.save(update_fields=["is_active"])
+
+        response = _owner_client(owner_b).post(
+            "/accounts/organization/invite/resend/",
+            {"invite_id": str(other_invite.id)},
+            format="json",
+        )
+        assert response.status_code == 200, response.data
+
+        email = sent_emails[-1]
+        html = render_to_string(email["template"], email["context"])
+        assert email["context"]["existing_user"] is True
+        assert "set your password" not in html
+        assert "with your existing account" in html
+
+    def test_invite_email_to_new_user_still_asks_for_a_password(
+        self, owner_a, invited_user, pending_invite, sent_emails
+    ):
+        from django.template.loader import render_to_string
+
+        response = _owner_client(owner_a).post(
+            "/accounts/organization/invite/resend/",
+            {"invite_id": str(pending_invite.id)},
+            format="json",
+        )
+        assert response.status_code == 200, response.data
+
+        email = sent_emails[-1]
+        html = render_to_string(email["template"], email["context"])
+        assert email["context"]["existing_user"] is False
+        assert "set your password" in html

@@ -529,7 +529,10 @@ def send_invite_email(email, organization, inviter, invite=None):
         existing = User.objects.filter(email__iexact=email).first()
         if existing and invite is not None and invite.status == InviteStatus.PENDING:
             template = "invite_user.html"
-            extra_context = {"invite_link": build_invite_accept_link(existing, invite)}
+            extra_context = {
+                "invite_link": build_invite_accept_link(existing, invite),
+                "existing_user": existing.is_active,
+            }
         elif existing:
             template = "existing_user_invite.html"
             extra_context = {}
