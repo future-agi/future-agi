@@ -448,6 +448,8 @@ def _platform_simulator_material() -> dict[str, str]:
         "ALK_VOICEMAIL_SCENARIOS",
         "ALK_HARNESS_WORKERS_AT_ONCE",
         "ALK_VALIDATION_INSTANCES",
+        # The guest waits this long for the build; unset, it falls back to its own default.
+        "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
@@ -2359,6 +2361,7 @@ class HostedHarnessGateway:
                     "ALK_SIMULATOR_FUNDING",
                     "ALK_HARNESS_MODEL",
                     "ALK_HARNESS_WORKERS_AT_ONCE",
+                    "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
                     "AGENTCC_BASE_URL",
                     "AGENTCC_API_KEY",
                     "ALK_CLAUDE_GATEWAY_URL",

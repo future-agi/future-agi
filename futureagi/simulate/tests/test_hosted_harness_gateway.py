@@ -271,6 +271,13 @@ def test_caller_barge_in_rate_comes_from_platform_configuration(monkeypatch):
     assert values["HARNESS_CALLER_BARGE_IN_RATE"] == "0.2"
 
 
+def test_authoring_duration_cap_reaches_the_sandbox(monkeypatch):
+    monkeypatch.setenv("ALK_HARNESS", "gemini")
+    monkeypatch.setenv("ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", "5400")
+    values = _platform_simulator_material()
+    assert values["ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS"] == "5400"
+
+
 def test_a_deployment_catalogue_overrides_the_platform_clips(monkeypatch, tmp_path):
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-service-key")
@@ -1822,6 +1829,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "AGENTCC_BASE_URL": "https://gateway.example.test",
         "AGENTCC_API_KEY": "harness-virtual-key",
         "DEEPGRAM_API_KEY": "platform-simulator-deepgram",
+        "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS": "3600",
     }
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
@@ -1837,6 +1845,8 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
 
     assert attempt.state == HostedHarnessAttempt.State.RUNNING
     assert attempt.provider_ref == "sandbox-1"
+    exports = client.sandbox.process.session_request.env
+    assert exports["ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS"] == "3600"
     assert (
         client.params.cpu_units,
         client.params.memory_mb,
