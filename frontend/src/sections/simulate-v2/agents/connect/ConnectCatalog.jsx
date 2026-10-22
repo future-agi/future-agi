@@ -6,17 +6,17 @@ import Iconify from "src/components/iconify";
 import { LogoTile } from "../../environments/LandingBits";
 import { PANEL_SX, focusRing } from "../../environments/landingStyles";
 import { Detection } from "../../environments/ConnectDirectory";
-import ChipCard from "../../environments/ChipCard";
 
 /**
  * Every way to connect an agent — asked as one question first.
  *
- * It opens on "where does your agent run?": one card per group, each saying
- * what you'll need and what you get, so the first click is an easy one
- * (feedback, Oct 2026: 46 equal rows left people unsure what to do). A card
- * opens its short list; each row says the step it starts and has a Connect
- * button. Code lists where the code lives — the framework is worked out from
- * the code, so frameworks fold under one line.
+ * It opens on "where does your agent run?": one card per group with its
+ * options in it, so the first click is the choice itself (feedback, Oct
+ * 2026: 46 equal rows left people unsure what to do; a card that only opened
+ * a list was a click too many). Each option says the step it starts and has
+ * Connect; a card with more than four says "Show all N". Code lists where
+ * the code lives — the framework is worked out from the code, so frameworks
+ * fold under one line, with our SDK as the other way in.
  *
  * The box above does two jobs: type a name and every way in is searched;
  * paste a repo, an ID, a URL or a prompt and it says what that is and opens
@@ -24,10 +24,8 @@ import ChipCard from "../../environments/ChipCard";
  */
 export default function ConnectCatalog({ groups, pickedId, onPick, detect, onPaste, emptyHint, onFallback, compact = false, pasteHint = "a repo, an ID, a URL or a prompt", examples = [] }) {
   const [query, setQuery] = useState("");
-  /* null: the cards. A group id: that group's list. */
-  const [filter, setFilter] = useState(null);
-  /* Frameworks under Code, opened on request. */
-  const [unfolded, setUnfolded] = useState(false);
+  /* Cards showing every option, not just their first few. */
+  const [expanded, setExpanded] = useState({});
   const inputRef = useRef(null);
 
   const items = useMemo(() => groups.flatMap((g) => g.items.map((it) => ({ ...it, group: g }))), [groups]);
@@ -49,7 +47,6 @@ export default function ConnectCatalog({ groups, pickedId, onPick, detect, onPas
   const matches = useMemo(() => (searching
     ? items.filter((it) => `${it.name} ${it.need} ${it.next || ""} ${it.group.title}`.toLowerCase().includes(q))
     : []), [items, q, searching]);
-  const group = filter ? groups.find((g) => g.id === filter) || null : null;
   /* A framework searched for by name: it's read from the code, so the
      repository it lives in comes first, our SDK after. */
   const frameworkHit = matches.find((it) => it.fold && it.kind === "framework") || null;
@@ -171,47 +168,25 @@ export default function ConnectCatalog({ groups, pickedId, onPick, detect, onPas
             </>
           )}
         </Box>
-      ) : !group ? (
-        /* ── the question first: where does it run? ── */
+      ) : (
+        /* ── where does it run? — each card carries its own options ── */
         <Stack spacing={1}>
           <Typography sx={{ typography: "s2", fontWeight: 700 }}>
             {found ? (found.blocked ? "Pick where your agent runs" : "Not what you meant? Pick where your agent runs") : "Where does your agent run today?"}
           </Typography>
           <Box
             sx={(t) => ({
-              display: "grid", gap: 1, gridTemplateColumns: "1fr",
+              display: "grid", gap: 1, gridTemplateColumns: "1fr", alignItems: "start",
               [t.breakpoints.up("sm")]: { gridTemplateColumns: "1fr 1fr" },
               [t.breakpoints.up(compact ? "lg" : "md")]: { gridTemplateColumns: "repeat(3, 1fr)" },
             })}
           >
-            {groups.map((g) => <GroupCard key={g.id} group={g} onOpen={() => { setFilter(g.id); setUnfolded(false); }} />)}
-          </Box>
-        </Stack>
-      ) : (
-        /* ── one group's short list ── */
-        <Stack spacing={1}>
-          <Stack direction="row" alignItems="center" flexWrap="wrap" gap={0.75}>
-            <ButtonBase
-              onClick={() => setFilter(null)}
-              sx={{ gap: 0.5, px: 0.5, py: 0.25, mr: 0.5, borderRadius: 0.75, typography: "s2", fontWeight: 600, color: "text.secondary", "&:hover": { color: "text.primary" }, "&.Mui-focusVisible": focusRing }}
-            >
-              <Iconify icon="solar:arrow-left-linear" width={14} />
-              All ways in
-            </ButtonBase>
             {groups.map((g) => (
-              <ChipCard key={g.id} label={g.card?.title || g.title} on={filter === g.id} onClick={() => { setFilter(g.id); setUnfolded(false); }} />
+              <GroupCard
+                key={g.id} group={g} pickedId={pickedId} onPick={onPick}
+                expanded={!!expanded[g.id]} onExpand={(on) => setExpanded((cur) => ({ ...cur, [g.id]: on }))}
+              />
             ))}
-          </Stack>
-          <Box sx={{ ...PANEL_SX, overflow: "hidden" }}>
-            <Section title={group.card?.title || group.title} reach={group.reach} compact={compact}>
-              {group.items.filter((it) => !it.fold || unfolded).map((it) => (
-                <CatalogRow key={it.id} item={it} selected={pickedId === it.id} onPick={onPick} />
-              ))}
-            </Section>
-            {/* Frameworks are worked out from the code — one line, opened on request. */}
-            {group.items.some((it) => it.fold) && !unfolded && (
-              <FoldNote items={group.items.filter((it) => it.fold)} onOpen={() => setUnfolded(true)} />
-            )}
           </Box>
         </Stack>
       )}
@@ -261,70 +236,61 @@ function Section({ title, reach, compact, children }) {
 }
 Section.propTypes = { title: PropTypes.string, reach: PropTypes.string, compact: PropTypes.bool, children: PropTypes.node };
 
-/* One answer to "where does it run": what's in it, what you'll need, what you get. */
-function GroupCard({ group, onOpen }) {
-  const card = group.card || {};
-  const shown = group.items.filter((it) => !it.fold);
-  const logos = shown.slice(0, 3);
-  const names = shown.slice(0, 3).map((it) => it.name);
-  const more = group.items.length - names.length;
-  return (
-    <ButtonBase
-      onClick={onOpen}
-      sx={{
-        ...PANEL_SX, display: "flex", flexDirection: "column", alignItems: "stretch", textAlign: "left",
-        px: 1.75, py: 1.5, gap: 1,
-        transition: "border-color .12s ease, background-color .12s ease",
-        "&:hover": { borderColor: (t) => alpha(t.palette.text.primary, 0.3), bgcolor: (t) => alpha(t.palette.text.primary, 0.02) },
-        "&:hover .card-go": { color: "text.primary", transform: "translateX(2px)" },
-        "&.Mui-focusVisible": focusRing,
-      }}
-    >
-      <Stack direction="row" alignItems="center" spacing={0.75}>
-        {logos.map((it) => <LogoTile key={it.id} logo={it.logo} icon={it.icon} size={24} />)}
-        <Box flex={1} />
-        <Iconify className="card-go" icon="solar:arrow-right-linear" width={16} sx={{ color: "text.disabled", transition: "color .12s ease, transform .15s cubic-bezier(.16,1,.3,1)" }} />
-      </Stack>
-      <Box>
-        <Typography sx={{ typography: "s1", fontWeight: 700 }}>{card.title || group.title}</Typography>
-        <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>
-          {card.sub || `${names.join(", ")}${more > 0 ? ` +${more}` : ""}`}
-        </Typography>
-      </Box>
-      <Box sx={{ borderTop: "1px solid", borderColor: "divider", pt: 0.875, display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 1, rowGap: 0.25 }}>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Needs</Typography>
-        <Typography sx={{ typography: "s3", color: "text.secondary" }}>{card.need || "—"}</Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>You get</Typography>
-        <Typography sx={{ typography: "s3", color: "text.secondary" }}>{card.gets || group.reach}</Typography>
-      </Box>
-    </ButtonBase>
-  );
-}
-GroupCard.propTypes = { group: PropTypes.object.isRequired, onOpen: PropTypes.func.isRequired };
+/* The options a card shows before "Show all". */
+const FIRST = 4;
 
-/* The frameworks Code works out by itself, as one line. */
-function FoldNote({ items, onOpen }) {
-  const names = items.filter((it) => it.kind === "framework").slice(0, 3).map((it) => it.name);
-  const rest = items.filter((it) => it.kind === "framework").length - names.length;
+/*
+  One answer to "where does it run", with its options in it — one click on
+  GitHub or Vapi opens the setup. What you get is said once, on the card.
+*/
+function GroupCard({ group, pickedId, onPick, expanded, onExpand }) {
+  const card = group.card || {};
+  const options = group.items.filter((it) => !it.fold);
+  const folded = group.items.filter((it) => it.fold && it.kind === "framework");
+  const shown = expanded ? options : options.slice(0, FIRST);
+  const hidden = options.length - FIRST;
   return (
-    <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} spacing={1} sx={{ px: 2, py: 1.25, borderTop: "1px solid", borderColor: "divider" }}>
-      <Iconify icon="solar:magic-stick-3-linear" width={16} sx={{ color: "text.secondary", flexShrink: 0 }} />
-      <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>
-        {`We work out the framework from the code — ${names.join(", ")}${rest > 0 ? ` and ${rest} more` : ""}. No need to pick it.`}
-      </Typography>
-      <ButtonBase
-        onClick={onOpen}
-        sx={{ px: 0.75, py: 0.25, borderRadius: 0.75, typography: "s2", fontWeight: 600, color: "text.primary", flexShrink: 0, "&:hover": { textDecoration: "underline" }, "&.Mui-focusVisible": focusRing }}
-      >
-        Connect through our SDK instead
-      </ButtonBase>
-    </Stack>
+    <Box sx={{ ...PANEL_SX, overflow: "hidden" }}>
+      <Box sx={{ px: 1.75, pt: 1.5, pb: 0.75 }}>
+        <Typography component="h3" sx={{ typography: "s1", fontWeight: 700 }}>{card.title || group.title}</Typography>
+        <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>{card.gets || group.reach}</Typography>
+      </Box>
+      <Stack sx={{ px: 0.75, pb: 0.75 }}>
+        {shown.map((it) => <CatalogRow key={it.id} item={it} selected={pickedId === it.id} onPick={onPick} dense />)}
+      </Stack>
+      {hidden > 0 && (
+        <ButtonBase
+          onClick={() => onExpand(!expanded)}
+          sx={{ width: "100%", justifyContent: "flex-start", gap: 0.5, px: 1.75, py: 1, borderTop: "1px solid", borderColor: "divider", typography: "s3", fontWeight: 600, color: "text.secondary", "&:hover": { color: "text.primary" }, "&.Mui-focusVisible": focusRing }}
+        >
+          <Iconify icon={expanded ? "eva:arrow-ios-upward-fill" : "eva:arrow-ios-downward-fill"} width={14} />
+          {expanded ? "Show fewer" : `Show all ${options.length}`}
+        </ButtonBase>
+      )}
+      {/* Frameworks are worked out from the code — one line, and our SDK as the other way. */}
+      {folded.length > 0 && (
+        <Box sx={{ px: 1.75, py: 1, borderTop: "1px solid", borderColor: "divider" }}>
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            {`We work out the framework — ${folded.slice(0, 3).map((it) => it.name).join(", ")} and ${folded.length - 3} more.`}
+          </Typography>
+          <ButtonBase
+            onClick={() => onPick(folded[0])}
+            sx={{ mt: 0.25, borderRadius: 0.5, typography: "s3", fontWeight: 600, color: "text.primary", "&:hover": { textDecoration: "underline" }, "&.Mui-focusVisible": focusRing }}
+          >
+            Connect through our SDK instead
+          </ButtonBase>
+        </Box>
+      )}
+    </Box>
   );
 }
-FoldNote.propTypes = { items: PropTypes.array.isRequired, onOpen: PropTypes.func.isRequired };
+GroupCard.propTypes = {
+  group: PropTypes.object.isRequired, pickedId: PropTypes.string, onPick: PropTypes.func.isRequired,
+  expanded: PropTypes.bool, onExpand: PropTypes.func.isRequired,
+};
 
 /* One way in: what it is, the step it starts, and Connect. */
-function CatalogRow({ item, selected, onPick, showGroup }) {
+function CatalogRow({ item, selected, onPick, showGroup, dense = false }) {
   const inert = !!(item.soon || item.later);
   return (
     <ButtonBase
@@ -342,7 +308,7 @@ function CatalogRow({ item, selected, onPick, showGroup }) {
         "&.Mui-disabled": { opacity: 0.55 },
       }}
     >
-      <LogoTile logo={item.logo} icon={item.icon} muted={inert} />
+      <LogoTile logo={item.logo} icon={item.icon} muted={inert} size={dense ? 28 : 32} />
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Typography noWrap sx={{ typography: "s2_1", fontWeight: 600, color: inert ? "text.secondary" : "text.primary" }}>{item.name}</Typography>
         <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>
@@ -366,4 +332,4 @@ function CatalogRow({ item, selected, onPick, showGroup }) {
     </ButtonBase>
   );
 }
-CatalogRow.propTypes = { item: PropTypes.object.isRequired, selected: PropTypes.bool, onPick: PropTypes.func.isRequired, showGroup: PropTypes.bool };
+CatalogRow.propTypes = { item: PropTypes.object.isRequired, selected: PropTypes.bool, onPick: PropTypes.func.isRequired, showGroup: PropTypes.bool, dense: PropTypes.bool };

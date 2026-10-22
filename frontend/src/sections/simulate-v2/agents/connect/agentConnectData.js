@@ -97,12 +97,12 @@ export const AGENT_CONNECT_GROUPS = [
     reach: "Anything we can call, upload or phone — and agents connected for testing only.",
     items: [
       { id: "upload", name: "Upload a folder", fix: "Patch", icon: "solar:upload-minimalistic-linear", need: "Folder or .zip, up to 200 MB", kind: "upload" },
+      { id: "running", name: "Agent endpoint", fix: "Suggested change", icon: "solar:global-linear", need: "HTTP or WebSocket URL", kind: "running", channels: ["chat", "voice"] },
+      { id: "phone", name: "Phone number", fix: "Suggested change", icon: "solar:phone-calling-rounded-linear", need: "Any agent you can call", kind: "phone", channels: ["voice"] },
       /* LiveKit Agents is a code framework (under Repo and SDK); a running
          agent can still be connected by its LiveKit project, for testing —
          its fixes end as a suggested change. */
       { id: "livekit", name: "LiveKit project", fix: "Suggested change", logo: "livekit", need: "Test only · server URL · agent name", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "livekit" } },
-      { id: "running", name: "Agent endpoint", fix: "Suggested change", icon: "solar:global-linear", need: "HTTP or WebSocket URL", kind: "running", channels: ["chat", "voice"] },
-      { id: "phone", name: "Phone number", fix: "Suggested change", icon: "solar:phone-calling-rounded-linear", need: "Any agent you can call", kind: "phone", channels: ["voice"] },
       ...closedItems,
     ],
   },
