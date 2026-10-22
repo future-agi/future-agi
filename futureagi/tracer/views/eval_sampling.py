@@ -11,15 +11,51 @@ from tracer.serializers.eval_sampling import (
 )
 from tracer.services.eval_tasks.sampling.policy import (
     InvalidSamplingPolicy,
+    policy_task_filters,
     population_changed,
+)
+from tracer.services.eval_tasks.sampling.preview_guard import (
+    PreviewGuardUnavailable,
+    PreviewThrottled,
+    preview_slot,
 )
 from tracer.services.eval_tasks.sampling.service import (
     SamplingPreviewTooLarge,
     preview_policy,
 )
 from tracer.services.filter_principal_context import (
+    FilterPrincipalContextError,
     bind_request_my_annotations_principal,
 )
+
+_UNAVAILABLE = (
+    "Sampling preview exceeded its read budget or is unavailable. "
+    "Narrow the window and retry."
+)
+
+
+def _dependency_unavailable(exc: Exception) -> bool:
+    """Only genuine read pressure or an unreachable dependency is a 503."""
+
+    from tracer.selectors.eval_tasks.row_resolver import EvalTaskReadBudgetExceeded
+
+    if isinstance(exc, EvalTaskReadBudgetExceeded | OSError | RuntimeError):
+        return True
+    try:
+        from clickhouse_driver.errors import Error as ClickHouseDriverError
+    except ImportError:  # pragma: no cover - the driver is a runtime dependency
+        return False
+    return isinstance(exc, ClickHouseDriverError)
+
+
+def _error(message: str, status_code: int, **headers):
+    from rest_framework.response import Response
+
+    return Response(
+        build_error_envelope(message, status_code=status_code),
+        status=status_code,
+        headers=headers or None,
+    )
 
 
 class SamplingPreviewMixin:
@@ -55,6 +91,8 @@ class SamplingPreviewMixin:
         responses={
             200: SamplingPreviewResponseSerializer,
             400: ApiErrorResponseSerializer,
+            429: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
             503: ApiErrorResponseSerializer,
         },
     )
@@ -74,9 +112,14 @@ class SamplingPreviewMixin:
             return self._gm.bad_request(
                 "Evaluators must belong to the selected project."
             )
-        filters = bind_request_my_annotations_principal(
-            request, data.get("filters") or {}
-        )
+        try:
+            filters = bind_request_my_annotations_principal(
+                request, data.get("filters") or {}
+            )
+            # The policy window is the population's only event-time range.
+            filters = policy_task_filters(filters)
+        except (FilterPrincipalContextError, InvalidSamplingPolicy) as exc:
+            return self._gm.bad_request(str(exc))
         filters["project_id"] = str(project.id)
         task = EvalTask(
             project=project,
@@ -87,21 +130,31 @@ class SamplingPreviewMixin:
             filters=filters,
             sampling_policy=data["sampling_policy"],
         )
+        from tracer.selectors.eval_tasks.row_resolver import (
+            EvalTaskSelectionRejected,
+        )
+
+        actor = f"{project.organization_id}:{getattr(request.user, 'pk', '')}"
         try:
-            result = preview_policy(task, evaluator_count=len(eval_ids))
-        except (InvalidSamplingPolicy, SamplingPreviewTooLarge) as exc:
+            with preview_slot(actor):
+                result = preview_policy(task, evaluator_count=len(eval_ids))
+        except PreviewThrottled as exc:
+            return _error(str(exc), 429, **{"Retry-After": str(exc.retry_after)})
+        except PreviewGuardUnavailable:
+            return _error(_UNAVAILABLE, 503)
+        except (
+            InvalidSamplingPolicy,
+            SamplingPreviewTooLarge,
+            EvalTaskSelectionRejected,
+        ) as exc:
+            # Validation, unsupported filters, oversized identities and read
+            # ceilings are deterministic for this request: fix the request.
             return self._gm.bad_request(str(exc))
-        except Exception:
+        except Exception as exc:
             import logging
 
             logging.getLogger(__name__).exception("sampling.preview_failed")
-            from rest_framework.response import Response
-
-            return Response(
-                build_error_envelope(
-                    "Sampling preview exceeded its read budget or is unavailable. Narrow the window and retry.",
-                    status_code=503,
-                ),
-                status=503,
-            )
+            if _dependency_unavailable(exc):
+                return _error(_UNAVAILABLE, 503)
+            return _error("Sampling preview failed unexpectedly.", 500)
         return self._gm.success_response(result)
