@@ -486,7 +486,7 @@ func TestReportDoesNotClaimUnverifiedLossOrAppLatency(t *testing.T) {
 	if err := Report(&out, r); err != nil {
 		t.Fatal(err)
 	}
-	for _, phrase := range []string{"No zero-loss conclusion", "not-configured", "not traces", "Neither is certified", "Wire path: protobuf", "acknowledged-but-missing (DATA LOSS)", "Whole-request rejected"} {
+	for _, phrase := range []string{"No zero-loss conclusion", "not-configured", "not traces", "Neither is certified", "Wire path: protobuf", "acknowledged-but-missing (DATA LOSS)", "Whole-request rejected", "server memory not reported"} {
 		if !strings.Contains(out.String(), phrase) {
 			t.Fatalf("missing honesty qualifier %q", phrase)
 		}
@@ -591,12 +591,15 @@ func TestCollectorBudgetCheck(t *testing.T) {
 		t.Fatalf("oversize: %+v", oversize)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"status":"ok","build":{"vcs_revision":"0123456"},"limits":{"max_pending_rows":64,"batch_max_rows":5000,"batch_max_age_ms":5000}}`))
+		_, _ = w.Write([]byte(`{"status":"ok","build":{"vcs_revision":"0123456"},"runtime":{"num_cpu":8,"gomaxprocs":4},"limits":{"max_pending_rows":64,"batch_max_rows":5000,"batch_max_age_ms":5000}}`))
 	}))
 	defer srv.Close()
 	info := FetchCollectorHealth(context.Background(), testConfig().client(), srv.URL)
 	if info.Error != "" || info.Limits == nil || info.Limits.MaxPendingRows != 64 || collectorRevision(info.Build) != "0123456" {
 		t.Fatalf("health: %+v", info)
+	}
+	if info.Runtime["num_cpu"] != float64(8) || info.Runtime["gomaxprocs"] != float64(4) {
+		t.Fatalf("collector runtime hardware not recorded: %+v", info.Runtime)
 	}
 }
 

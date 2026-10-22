@@ -31,8 +31,9 @@ Shipped:
 * Direct ClickHouse read probes (trace by ID, session by ID, attribute filter)
   during load and after settle, separate from authenticated application API probes.
 * Provenance: redacted command line, generator build and host hardware,
-  ClickHouse version/table keys/clusters, the collector's ``/healthz`` build and
-  admission limits, and the revision of the system under test.
+  ClickHouse version/table keys/clusters and server memory/CPU limits, the
+  collector's ``/healthz`` build, runtime CPUs and admission limits, and the
+  revision of the system under test.
 * A collector budget check that warns loudly when the target's
   ``max_pending_rows`` is smaller than the profile needs.
 * Offline-by-default planning, local smoke and explicit full-scale profiles;
@@ -544,10 +545,14 @@ changed) and a separate ``run.json.telemetry.jsonl`` stream. ``provenance`` reco
 * ``generator_host``: OS, kernel, architecture, CPU model, logical CPUs,
   GOMAXPROCS and memory of the LOAD GENERATOR host (not the collector).
 * ``clickhouse``: version, timezone, uptime, the spans table's engine, sorting,
-  primary and partition keys, ``system.clusters`` shard/replica counts, and the
-  declared topology.
-* ``collector``: the ``/healthz`` status, build and admission limits (or the
-  declared budget), and the budget check.
+  primary and partition keys, ``system.clusters`` shard/replica counts, the
+  declared topology, and ``server_hardware``: the memory (``OSMemoryTotal``),
+  cgroup CPU and memory limits and ``max_threads`` that the server answering the
+  verification connection reports about itself (one node of a cluster; a metric
+  the server does not report is left out, never recorded as zero).
+* ``collector``: the ``/healthz`` status, build, ``runtime`` (logical CPUs,
+  ``GOMAXPROCS`` and any Go memory limit of the collector process) and admission
+  limits (or the declared budget), and the budget check.
 * ``system_under_test``: the revision, its source, and whether a declared
   ``--revision`` agrees with what the collector reports (a conflict is a warning).
 

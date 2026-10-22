@@ -274,6 +274,12 @@ func Report(w io.Writer, r Result) error {
 	fmt.Fprintf(w, "Wire path: %s%s\n", r.Config.Encoding, map[bool]string{true: " + gzip", false: ""}[r.Config.Gzip])
 	sut := r.Provenance.SUT
 	fmt.Fprintf(w, "System under test revision: %s (source: %s)\n", orUnknown(sut.Revision), orUnknown(sut.RevisionSource))
+	chInfo := r.Provenance.ClickHouse
+	fmt.Fprintf(w, "ClickHouse: version %s; server memory %s; cgroup CPU limit %s; max_threads %s\n", orUnknown(chInfo.Version),
+		reportedBytes(chInfo.Hardware.OSMemoryBytes), reportedNumber(chInfo.Hardware.CGroupMaxCPU), orUnknown(chInfo.Hardware.MaxThreads))
+	if rt := r.Provenance.Collector.Runtime; rt != nil {
+		fmt.Fprintf(w, "Collector runtime: num_cpu %v, gomaxprocs %v\n", rt["num_cpu"], rt["gomaxprocs"])
+	}
 	fmt.Fprintf(w, "Target: %d spans/s for %.3fs = %d spans (not traces)\n", r.Config.Rate, r.Config.Duration.Seconds(), r.PlannedSpans)
 	fmt.Fprintf(w, "Generated: %d  Attempted: %d  Acknowledged: %d\n", c.Generated, c.Attempted, c.Acknowledged)
 	fmt.Fprintf(w, "Partial rejected: %d  Whole-request rejected: %d (retryable %d, non-retryable %d)  Ambiguous: %d\n",
@@ -341,6 +347,20 @@ func Report(w io.Writer, r Result) error {
 		fmt.Fprintln(w, "- "+note)
 	}
 	return nil
+}
+
+func reportedBytes(n uint64) string {
+	if n == 0 {
+		return "not reported"
+	}
+	return fmt.Sprintf("%d bytes", n)
+}
+
+func reportedNumber(v float64) string {
+	if v == 0 {
+		return "not reported"
+	}
+	return fmt.Sprintf("%g", v)
 }
 
 func orUnknown(s string) string {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/url"
 	"os"
 	"os/exec"
@@ -59,16 +60,70 @@ type ClusterInfo struct {
 }
 
 type ClickHouseInfo struct {
-	Version          string        `json:"version,omitempty"`
-	Timezone         string        `json:"timezone,omitempty"`
-	UptimeSeconds    uint64        `json:"uptime_seconds,omitempty"`
-	TableEngine      string        `json:"table_engine,omitempty"`
-	SortingKey       string        `json:"sorting_key,omitempty"`
-	PrimaryKey       string        `json:"primary_key,omitempty"`
-	PartitionKey     string        `json:"partition_key,omitempty"`
-	Clusters         []ClusterInfo `json:"clusters"`
-	DeclaredTopology string        `json:"declared_topology"`
-	Error            string        `json:"error,omitempty"`
+	Version          string             `json:"version,omitempty"`
+	Timezone         string             `json:"timezone,omitempty"`
+	UptimeSeconds    uint64             `json:"uptime_seconds,omitempty"`
+	TableEngine      string             `json:"table_engine,omitempty"`
+	SortingKey       string             `json:"sorting_key,omitempty"`
+	PrimaryKey       string             `json:"primary_key,omitempty"`
+	PartitionKey     string             `json:"partition_key,omitempty"`
+	Clusters         []ClusterInfo      `json:"clusters"`
+	DeclaredTopology string             `json:"declared_topology"`
+	Hardware         ClickHouseHardware `json:"server_hardware"`
+	Error            string             `json:"error,omitempty"`
+}
+
+// ClickHouseHardware is what the ClickHouse server reports about the machine
+// (or container) it runs on. Zero values are omitted: they mean the server did
+// not report the metric (for example no cgroup limit), never a measured zero.
+type ClickHouseHardware struct {
+	Scope             string  `json:"scope"`
+	OSMemoryBytes     uint64  `json:"os_memory_total_bytes,omitempty"`
+	CGroupMaxCPU      float64 `json:"cgroup_max_cpu,omitempty"`
+	CGroupMemoryBytes uint64  `json:"cgroup_memory_total_bytes,omitempty"`
+	MaxThreads        string  `json:"max_threads_setting,omitempty"`
+	Error             string  `json:"error,omitempty"`
+}
+
+// clickHouseHardwareQuery reads the server's own view of its memory and CPU
+// limits from system tables (read-only).
+const clickHouseHardwareQuery = "SELECT (SELECT value FROM system.settings WHERE name = 'max_threads') AS max_threads," +
+	" sumIf(value, metric = 'OSMemoryTotal') AS os_memory_total, sumIf(value, metric = 'CGroupMaxCPU') AS cgroup_max_cpu," +
+	" sumIf(value, metric = 'CGroupMemoryTotal') AS cgroup_memory_total" +
+	" FROM system.asynchronous_metrics WHERE metric IN ('OSMemoryTotal', 'CGroupMaxCPU', 'CGroupMemoryTotal')"
+
+func clickHouseHardware(ctx context.Context, ch clickHouse) ClickHouseHardware {
+	h := ClickHouseHardware{Scope: "the ClickHouse server answering the verification connection (one node of a cluster)"}
+	body, err := ch.query(ctx, clickHouseHardwareQuery, nil)
+	if err != nil {
+		h.Error = err.Error()
+		return h
+	}
+	var row struct {
+		MaxThreads  *string  `json:"max_threads"`
+		OSMemory    *float64 `json:"os_memory_total"`
+		CGroupCPU   *float64 `json:"cgroup_max_cpu"`
+		CGroupBytes *float64 `json:"cgroup_memory_total"`
+	}
+	if decodeOne(body, &row) != nil || row.MaxThreads == nil || row.OSMemory == nil || row.CGroupCPU == nil || row.CGroupBytes == nil {
+		h.Error = "invalid server hardware response"
+		return h
+	}
+	h.MaxThreads = strings.Trim(*row.MaxThreads, "'")
+	h.OSMemoryBytes, h.CGroupMaxCPU, h.CGroupMemoryBytes = byteCount(*row.OSMemory), max(0, *row.CGroupCPU), byteCount(*row.CGroupBytes)
+	if h.OSMemoryBytes == 0 {
+		h.Error = "the server does not report OSMemoryTotal"
+	}
+	return h
+}
+
+// byteCount converts a reported byte metric, treating values that cannot be a
+// real size (negative, not finite or beyond int64) as not reported.
+func byteCount(v float64) uint64 {
+	if !(v > 0) || v >= math.MaxInt64 {
+		return 0
+	}
+	return uint64(v)
 }
 
 type SUTInfo struct {
@@ -241,6 +296,7 @@ func clickHouseInfo(ctx context.Context, ch clickHouse) ClickHouseInfo {
 		return info
 	}
 	info.Version, info.Timezone, info.UptimeSeconds = server.Version, server.Timezone, server.Uptime
+	info.Hardware = clickHouseHardware(ctx, ch)
 	body, err = ch.query(ctx, "SELECT engine, sorting_key, primary_key, partition_key FROM system.tables WHERE database = {db:String} AND name = {table:String}", map[string]string{"db": ch.cfg.Database, "table": ch.cfg.Table})
 	if err == nil {
 		var table struct {

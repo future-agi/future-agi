@@ -27,6 +27,7 @@ type CollectorInfo struct {
 	HealthURL              string           `json:"health_url,omitempty"`
 	Status                 string           `json:"health_status,omitempty"`
 	Build                  map[string]any   `json:"build,omitempty"`
+	Runtime                map[string]any   `json:"runtime,omitempty"`
 	Limits                 *CollectorLimits `json:"limits,omitempty"`
 	DeclaredMaxPendingRows int64            `json:"declared_max_pending_rows,omitempty"`
 	Budget                 BudgetCheck      `json:"budget_check"`
@@ -110,15 +111,16 @@ func FetchCollectorHealth(ctx context.Context, client *http.Client, healthURL st
 		return info
 	}
 	var health struct {
-		Status string           `json:"status"`
-		Build  map[string]any   `json:"build"`
-		Limits *CollectorLimits `json:"limits"`
+		Status  string           `json:"status"`
+		Build   map[string]any   `json:"build"`
+		Runtime map[string]any   `json:"runtime"`
+		Limits  *CollectorLimits `json:"limits"`
 	}
 	if err := json.Unmarshal(body, &health); err != nil {
 		info.Error = fmt.Sprintf("collector health HTTP %d is not JSON", resp.StatusCode)
 		return info
 	}
-	info.Status, info.Build, info.Limits = health.Status, health.Build, health.Limits
+	info.Status, info.Build, info.Runtime, info.Limits = health.Status, health.Build, health.Runtime, health.Limits
 	if info.Limits == nil {
 		info.Error = "collector /healthz does not report limits (collector predates limit reporting)"
 	}

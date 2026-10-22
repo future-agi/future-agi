@@ -117,7 +117,7 @@ func TestLiveClickHouseCollectorPipeline(t *testing.T) {
 	if r.Status != "measured-profile-complete" || r.Verification.DistinctExpected != 20 || r.Lag.Latency.Count == 0 {
 		t.Fatalf("real pipeline verification failed: status=%s counters=%+v verification=%+v lag=%+v", r.Status, r.Counters, r.Verification, r.Lag)
 	}
-	if r.Provenance.ClickHouse.Version == "" || r.Provenance.ClickHouse.TableEngine == "" {
+	if p := r.Provenance.ClickHouse; p.Version == "" || p.TableEngine == "" || p.Hardware.Error != "" || p.Hardware.OSMemoryBytes == 0 || p.Hardware.MaxThreads == "" {
 		t.Fatalf("ClickHouse provenance missing: %+v", r.Provenance.ClickHouse)
 	}
 	for _, d := range r.DirectReads {

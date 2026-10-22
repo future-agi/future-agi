@@ -124,6 +124,8 @@ func (m *mockStorage) serve(w http.ResponseWriter, r *http.Request) {
 	case strings.Contains(query, "FROM system.tables"):
 		_ = enc.Encode(map[string]any{"engine": "MockMergeTree", "sorting_key": "trace_id, id", "primary_key": "trace_id", "partition_key": ""})
 	case strings.Contains(query, "FROM system.clusters"):
+	case strings.HasPrefix(query, clickHouseHardwareQuery):
+		_ = enc.Encode(map[string]any{"max_threads": "'auto(4)'", "os_memory_total": 8 << 30, "cgroup_max_cpu": 0, "cgroup_memory_total": 0})
 	case strings.Contains(query, "trace_id IN {traces:Array(String)}") && strings.Contains(query, "count() AS rows"):
 		n := 0
 		for _, row := range m.matching(q) {
@@ -393,6 +395,10 @@ func TestMockCollectorPipelineAndIndependentLossDetection(t *testing.T) {
 				}
 				if r.Provenance.SUT.Revision != "in-process-test-build" || r.Provenance.ClickHouse.Version != "mock" || r.Workload.Spans != 12 {
 					t.Fatalf("provenance/workload missing: %+v %+v", r.Provenance, r.Workload)
+				}
+				// The database server's own hardware view; unreported limits stay unset.
+				if hw := r.Provenance.ClickHouse.Hardware; hw.Error != "" || hw.OSMemoryBytes != 8<<30 || hw.MaxThreads != "auto(4)" || hw.CGroupMaxCPU != 0 || hw.CGroupMemoryBytes != 0 {
+					t.Fatalf("ClickHouse hardware provenance: %+v", hw)
 				}
 				if path := os.Getenv("OTLPBENCH_MOCK_RESULT"); path != "" {
 					f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
