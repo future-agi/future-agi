@@ -1,12 +1,11 @@
 from rest_framework import serializers
 
-from tfc.utils.serializer_fields import JsonValueField
-
 from tfc.utils.api_serializers import (
     ApiErrorResponseSerializer,
     EmptyRequestSerializer,
     StrictInputSerializer,
 )
+from tfc.utils.serializer_fields import JsonValueField
 
 API_FORMAT_HELP_TEXT = (
     "Gateway protocol adapter name. This intentionally remains a string because "
@@ -32,6 +31,15 @@ class AgentccEmptyRequestSerializer(EmptyRequestSerializer):
     """No-body AgentCC action request; rejects any submitted body fields."""
 
 
+LAST_HEALTH_CHECK_HELP_TEXT = (
+    "When a member of the org last ran Check Health (ISO 8601), or null when "
+    "no check is recorded."
+)
+LAST_HEALTH_CHECK_STATUS_HELP_TEXT = (
+    "What the org's last health check found: healthy or unreachable."
+)
+
+
 class GatewaySummaryResultSerializer(serializers.Serializer):
     id = serializers.CharField()
     name = serializers.CharField()
@@ -39,6 +47,12 @@ class GatewaySummaryResultSerializer(serializers.Serializer):
     status = serializers.CharField()
     provider_count = serializers.IntegerField(required=False)
     model_count = serializers.IntegerField(required=False)
+    last_health_check = serializers.DateTimeField(
+        required=False, allow_null=True, help_text=LAST_HEALTH_CHECK_HELP_TEXT
+    )
+    last_health_check_status = serializers.CharField(
+        required=False, allow_null=True, help_text=LAST_HEALTH_CHECK_STATUS_HELP_TEXT
+    )
 
 
 class GatewayDetailResponseSerializer(serializers.Serializer):
@@ -73,6 +87,19 @@ class GatewayHealthResultSerializer(serializers.Serializer):
     providers = GatewayConfiguredProvidersSerializer()
     provider_count = serializers.IntegerField()
     model_count = serializers.IntegerField()
+    org_configs_pushed = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "Whether this check re-pushed every org's config to the gateway. "
+            "Only an Owner or Admin's check does, at most once per 5 minutes."
+        ),
+    )
+    last_health_check = serializers.DateTimeField(
+        required=False, allow_null=True, help_text=LAST_HEALTH_CHECK_HELP_TEXT
+    )
+    last_health_check_status = serializers.CharField(
+        required=False, allow_null=True, help_text=LAST_HEALTH_CHECK_STATUS_HELP_TEXT
+    )
 
 
 class GatewayHealthResponseSerializer(serializers.Serializer):
@@ -104,6 +131,58 @@ class GatewayStatusSerializer(serializers.Serializer):
     status = serializers.CharField()
 
 
+# The blocks of the gateway's GET /-/config the config action passes through
+# unchanged. A block the gateway does not report is absent from the result.
+class GatewayServerSettingsSerializer(serializers.Serializer):
+    host = serializers.CharField(required=False, allow_blank=True)
+    port = serializers.IntegerField(required=False)
+    read_timeout_ms = serializers.IntegerField(required=False)
+    write_timeout_ms = serializers.IntegerField(required=False)
+    idle_timeout_ms = serializers.IntegerField(required=False)
+    max_request_timeout_ms = serializers.IntegerField(required=False)
+
+
+class GatewayLoggingSettingsSerializer(serializers.Serializer):
+    level = serializers.CharField(required=False, allow_blank=True)
+    request_logging = serializers.BooleanField(required=False)
+    include_bodies = serializers.BooleanField(required=False)
+    content_mode = serializers.CharField(required=False, allow_blank=True)
+
+
+class GatewayGuardrailPipelineSerializer(serializers.Serializer):
+    """How the gateway node runs an organization's guardrail checks (GET
+    /-/config guardrail_pipeline). An org's own fail_open and pipeline_mode
+    are stored, not read; the console shows these values in their place."""
+
+    enabled = serializers.BooleanField(
+        help_text="guardrails.enabled on the node: without it no org check runs."
+    )
+    fail_open = serializers.BooleanField(
+        help_text=(
+            "The node's guardrails.fail_open: an org check that errors or "
+            "times out lets the request through when true."
+        )
+    )
+    mode = serializers.CharField(
+        help_text=(
+            "sequential: org checks run in turn and the first block stops the rest."
+        )
+    )
+
+
+class GatewayBatchSettingsSerializer(serializers.Serializer):
+    storage = serializers.CharField(
+        required=False, help_text="Where batches live: memory (the node's)."
+    )
+    default_max_concurrency = serializers.IntegerField(
+        required=False,
+        help_text="The concurrency a submission that sets none runs at.",
+    )
+    max_body_bytes = serializers.IntegerField(
+        required=False, help_text="The largest submit body the gateway reads."
+    )
+
+
 class GatewayConfigResultSerializer(serializers.Serializer):
     id = serializers.UUIDField(required=False)
     organization = serializers.UUIDField(required=False)
@@ -123,6 +202,9 @@ class GatewayConfigResultSerializer(serializers.Serializer):
     audit = serializers.JSONField(required=False)
     model_database = serializers.JSONField(required=False)
     model_map = serializers.JSONField(required=False)
+    managed_models = serializers.JSONField(required=False)
+    tools = serializers.JSONField(required=False)
+    identity = serializers.JSONField(required=False)
     is_active = serializers.BooleanField(required=False)
     created_by = serializers.UUIDField(required=False, allow_null=True)
     change_description = serializers.CharField(
@@ -130,8 +212,43 @@ class GatewayConfigResultSerializer(serializers.Serializer):
     )
     created_at = serializers.DateTimeField(required=False)
     updated_at = serializers.DateTimeField(required=False)
+    secrets_set = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=(
+            "JSON pointers of the infrastructure secrets stored in the active "
+            "org config. Each one reads as a mask, never its value."
+        ),
+    )
     providers = serializers.DictField(child=GatewayConfigProviderSerializer())
     gateway = GatewayStatusSerializer()
+    server = GatewayServerSettingsSerializer(required=False)
+    logging = GatewayLoggingSettingsSerializer(required=False)
+    batch = GatewayBatchSettingsSerializer(required=False)
+    org_sections_enforced = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=(
+            "The org config sections this gateway node enforces, from alerting, "
+            "budgets, cache, ip_acl, rate_limiting and tool_policy. Absent: the "
+            "gateway did not say."
+        ),
+    )
+    guardrail_pipeline = GatewayGuardrailPipelineSerializer(required=False)
+    org_sections_not_enforced = serializers.DictField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=(
+            "Org config section -> the reason this gateway node gives for not "
+            "enforcing it. Absent: no such section, or the gateway did not say."
+        ),
+    )
+    last_health_check = serializers.DateTimeField(
+        required=False, allow_null=True, help_text=LAST_HEALTH_CHECK_HELP_TEXT
+    )
+    last_health_check_status = serializers.CharField(
+        required=False, allow_null=True, help_text=LAST_HEALTH_CHECK_STATUS_HELP_TEXT
+    )
 
 
 class GatewayConfigResponseSerializer(serializers.Serializer):
@@ -139,8 +256,19 @@ class GatewayConfigResponseSerializer(serializers.Serializer):
     result = GatewayConfigResultSerializer()
 
 
+_BATCH_ORG_HELP_TEXT = (
+    "The organization the batch runs as: every item is a request "
+    "authenticated by a key minted for it."
+)
+
+
 class GatewayBatchSubmitResultSerializer(serializers.Serializer):
     batch_id = serializers.CharField()
+    org_id = serializers.CharField(help_text=_BATCH_ORG_HELP_TEXT)
+    key_id = serializers.CharField(
+        required=False,
+        help_text="The gateway id of the key the batch's items run as.",
+    )
     status = serializers.CharField()
     total = serializers.IntegerField()
     max_concurrency = serializers.IntegerField()
@@ -157,13 +285,32 @@ class GatewayBatchSummarySerializer(serializers.Serializer):
 
 
 class GatewayBatchDetailResultSerializer(GatewayBatchSubmitResultSerializer):
+    max_concurrency = serializers.IntegerField(
+        required=False,
+        help_text="Absent when the gateway does not hold the batch (see error).",
+    )
     completed_at = serializers.DateTimeField(required=False)
     results = serializers.ListField(child=serializers.JSONField(), required=False)
     summary = GatewayBatchSummarySerializer(required=False)
+    outcome = serializers.CharField(
+        required=False,
+        help_text=(
+            "unknown: the gateway lost the batch before it was seen to end "
+            "(status failed)."
+        ),
+    )
+    error = serializers.CharField(
+        required=False,
+        help_text=(
+            "Set when the gateway does not hold the batch: the answer is the "
+            "status recorded when it finished, without results or summary."
+        ),
+    )
 
 
 class GatewayBatchCancelResultSerializer(serializers.Serializer):
     batch_id = serializers.CharField()
+    org_id = serializers.CharField(help_text=_BATCH_ORG_HELP_TEXT)
     status = serializers.CharField()
 
 
@@ -199,6 +346,21 @@ class GatewayProviderStatusSerializer(serializers.Serializer):
     request_count = serializers.IntegerField(required=False)
     avg_latency = serializers.FloatField(required=False)
     error_rate = serializers.FloatField(required=False)
+    status_reason = serializers.CharField(
+        required=False,
+        help_text=(
+            "Why the status is what it is: the org's own error rate over the "
+            "last 24 h (unhealthy at 50% or more, degraded at 10% or more, "
+            "both from 5 requests), or why the provider is not pushed."
+        ),
+    )
+    pushed = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "Whether the config push sends this provider to the gateway. "
+            "False for a stored credential the push cannot use."
+        ),
+    )
 
 
 class GatewayProvidersResultSerializer(serializers.Serializer):
@@ -219,10 +381,13 @@ class GatewayMCPStatusResultSerializer(serializers.Serializer):
     servers = serializers.ListField(
         child=serializers.JSONField(),
         help_text=(
-            "Gateway MCP server statuses are adapter-specific objects; the "
-            "Django fallback normalizes configured servers to objects with id "
-            "and status."
+            "The gateway's MCP server statuses (mcp-admin-status-v1, keyed by "
+            "server_id), limited to the org's own servers."
         ),
+    )
+    # Why MCP reads as disabled when the gateway's status call failed.
+    reason = serializers.ChoiceField(
+        choices=("gateway_mcp_disabled", "gateway_unreachable"), required=False
     )
 
 
@@ -262,8 +427,29 @@ class GatewayPlaygroundTestResultSerializer(serializers.Serializer):
     body = serializers.JSONField()
     guardrail_headers = serializers.DictField(child=serializers.CharField())
     model = serializers.CharField()
-    blocked = serializers.BooleanField()
-    warned = serializers.BooleanField()
+    blocked = serializers.BooleanField(
+        help_text="HTTP 403 with error.type guardrail_error: a check blocked."
+    )
+    warned = serializers.BooleanField(
+        help_text=(
+            "A 2xx with x-agentcc-guardrail-triggered: true: a check warned or "
+            "logged and the request went through."
+        )
+    )
+    guardrail_action = serializers.ChoiceField(
+        choices=("warn", "log"),
+        required=False,
+        allow_null=True,
+        help_text="x-agentcc-guardrail-action on a warned answer, when sent.",
+    )
+    triggered_checks = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=(
+            "The check names in x-agentcc-guardrails-triggered on a warned "
+            "answer; empty when the gateway does not send the header."
+        ),
+    )
 
 
 class GatewayPlaygroundTestResponseSerializer(serializers.Serializer):
@@ -282,6 +468,9 @@ class GatewayMutationResultSerializer(serializers.Serializer):
     budget = serializers.CharField(required=False, allow_blank=True)
     server = serializers.CharField(required=False, allow_blank=True)
     enabled = serializers.BooleanField(required=False)
+    # update-config: the writer's warnings, e.g. {code, param, message} for a
+    # routing key the gateway does not run.
+    warnings = serializers.ListField(child=serializers.DictField(), required=False)
 
 
 class GatewayMutationResponseSerializer(serializers.Serializer):
@@ -290,31 +479,55 @@ class GatewayMutationResponseSerializer(serializers.Serializer):
 
 
 class GatewayConfigPatchRequestSerializer(serializers.Serializer):
+    """update-config takes each section as an RFC 7386 merge patch: a null
+    value deletes that key from the stored section (see
+    agentcc.services.org_config_writer.deep_merge), so a value directly under a
+    section may be null. A whole section may not."""
+
     guardrails = serializers.DictField(
-        child=serializers.JSONField(), required=False
+        child=JsonValueField(allow_null=True), required=False
     )
-    routing = serializers.DictField(child=serializers.JSONField(), required=False)
-    cache = serializers.DictField(child=serializers.JSONField(), required=False)
+    routing = serializers.DictField(
+        child=JsonValueField(allow_null=True), required=False
+    )
+    cache = serializers.DictField(child=JsonValueField(allow_null=True), required=False)
     rate_limiting = serializers.DictField(
-        child=serializers.JSONField(), required=False
+        child=JsonValueField(allow_null=True), required=False
     )
-    budgets = serializers.DictField(child=serializers.JSONField(), required=False)
+    budgets = serializers.DictField(
+        child=JsonValueField(allow_null=True), required=False
+    )
     cost_tracking = serializers.DictField(
-        child=serializers.JSONField(), required=False
+        child=JsonValueField(allow_null=True), required=False
     )
-    ip_acl = serializers.DictField(child=serializers.JSONField(), required=False)
-    alerting = serializers.DictField(child=serializers.JSONField(), required=False)
-    privacy = serializers.DictField(child=serializers.JSONField(), required=False)
+    ip_acl = serializers.DictField(
+        child=JsonValueField(allow_null=True), required=False
+    )
+    alerting = serializers.DictField(
+        child=JsonValueField(allow_null=True), required=False
+    )
+    privacy = serializers.DictField(
+        child=JsonValueField(allow_null=True), required=False
+    )
     tool_policy = serializers.DictField(
-        child=serializers.JSONField(), required=False
+        child=JsonValueField(allow_null=True), required=False
     )
-    mcp = serializers.DictField(child=serializers.JSONField(), required=False)
-    a2a = serializers.DictField(child=serializers.JSONField(), required=False)
-    audit = serializers.DictField(child=serializers.JSONField(), required=False)
+    mcp = serializers.DictField(child=JsonValueField(allow_null=True), required=False)
+    a2a = serializers.DictField(child=JsonValueField(allow_null=True), required=False)
+    audit = serializers.DictField(child=JsonValueField(allow_null=True), required=False)
     model_database = serializers.DictField(
-        child=serializers.JSONField(), required=False
+        child=JsonValueField(allow_null=True), required=False
     )
-    model_map = serializers.DictField(child=serializers.JSONField(), required=False)
+    model_map = serializers.DictField(
+        child=JsonValueField(allow_null=True), required=False
+    )
+    managed_models = serializers.DictField(
+        child=JsonValueField(allow_null=True), required=False
+    )
+    tools = serializers.DictField(child=JsonValueField(allow_null=True), required=False)
+    identity = serializers.DictField(
+        child=JsonValueField(allow_null=True), required=False
+    )
 
 
 class GatewayProviderUpdateRequestSerializer(serializers.Serializer):
@@ -471,6 +684,9 @@ class OrgConfigBulkItemSerializer(serializers.Serializer):
     audit = serializers.JSONField()
     model_database = serializers.JSONField()
     model_map = serializers.JSONField()
+    managed_models = serializers.JSONField(required=False)
+    tools = serializers.JSONField(required=False)
+    identity = serializers.JSONField(required=False)
 
 
 class OrgConfigBulkResponseSerializer(serializers.Serializer):

@@ -594,6 +594,278 @@ class TestAuthBridgeKeyIdsAndSync:
 
 
 @pytest.mark.integration
+class TestKeyOrgBinding:
+    """A key's org_id is its Django organization's, whatever its metadata says.
+
+    The gateway reads metadata.org_id to pick the org whose config, provider
+    credentials, budgets and guardrails a key uses, so Django always sets it from
+    the key's own organization.
+    """
+
+    AUTHORITY = {
+        "type": "internal",
+        "key_type": "managed",
+        "access_groups": "internal",
+        "allow_policy_override": "true",
+        "role": "admin",
+        "team": "platform-admins",
+    }
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_update_key_sends_the_keys_own_org(
+        self, mock_get_client, organization, workspace
+    ):
+        other_org = Organization.objects.create(name="Rebind Target Org")
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="key_rebind",
+            name="rebind",
+            organization=organization,
+            workspace=workspace,
+            metadata={"org_id": str(organization.id)},
+        )
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        auth_bridge.update_key(
+            key, metadata={"org_id": str(other_org.id), "env": "prod", **self.AUTHORITY}
+        )
+
+        sent = mock_client.update_key.call_args.kwargs["metadata"]
+        assert sent == {"org_id": str(organization.id), "env": "prod"}
+        key.refresh_from_db()
+        assert key.metadata == {"org_id": str(organization.id), "env": "prod"}
+        assert key.organization_id == organization.id
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_update_key_without_metadata_leaves_metadata_alone(
+        self, mock_get_client, organization, workspace
+    ):
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="key_rename",
+            name="rename",
+            organization=organization,
+            workspace=workspace,
+            metadata={"env": "prod"},
+        )
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        auth_bridge.update_key(key, name="renamed")
+
+        assert mock_client.update_key.call_args.kwargs == {"name": "renamed"}
+        key.refresh_from_db()
+        assert key.metadata == {"env": "prod"}
+
+    def test_gateway_payload_overrides_a_stored_org_id(self, organization, workspace):
+        other_org = Organization.objects.create(name="Stored Rebind Org")
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="key_stored_rebind",
+            name="stored-rebind",
+            organization=organization,
+            workspace=workspace,
+            key_hash="3" * 64,
+            metadata={"org_id": str(other_org.id), "service": "infra"},
+        )
+
+        payload = auth_bridge.gateway_key_payload(key)
+
+        assert payload["metadata"] == {
+            "org_id": str(organization.id),
+            "service": "infra",
+        }
+
+    def test_gateway_payload_drops_reserved_authority_keys(
+        self, organization, workspace
+    ):
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="key_stored_authority",
+            name="stored-authority",
+            organization=organization,
+            workspace=workspace,
+            key_hash="4" * 64,
+            metadata={"env": "prod", "tag:team": "infra", **self.AUTHORITY},
+        )
+
+        payload = auth_bridge.gateway_key_payload(key)
+
+        assert payload["metadata"] == {
+            "env": "prod",
+            "tag:team": "infra",
+            "org_id": str(organization.id),
+        }
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_provision_key_binds_the_key_to_its_org(
+        self, mock_get_client, organization, user
+    ):
+        other_org = Organization.objects.create(name="Provision Rebind Org")
+        mock_client = MagicMock()
+        mock_client.create_key.return_value = {
+            "id": "key_provisioned",
+            "key": "sk-agentcc-provisioned",
+            "key_prefix": "sk-agentcc-p...",
+        }
+        mock_get_client.return_value = mock_client
+
+        api_key, _ = auth_bridge.provision_key(
+            name="provisioned",
+            user=user,
+            metadata={"org_id": str(other_org.id), "env": "prod", **self.AUTHORITY},
+            organization=organization,
+        )
+
+        sent = mock_client.create_key.call_args.kwargs["metadata"]
+        assert sent == {"org_id": str(organization.id), "env": "prod"}
+        assert api_key.metadata == sent
+        assert api_key.organization_id == organization.id
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_sync_never_moves_a_key_to_the_org_its_gateway_copy_names(
+        self, mock_get_client, organization, workspace
+    ):
+        other_org = Organization.objects.create(name="Sync Rebind Org")
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="key_synced_rebind",
+            name="synced-rebind",
+            organization=organization,
+            workspace=workspace,
+            key_hash="5" * 64,
+            key_prefix="sk-agentcc-5...",
+            metadata={"org_id": str(other_org.id)},
+        )
+        mock_client = MagicMock()
+        mock_client.list_keys.return_value = {
+            "data": [
+                {
+                    "id": "key_synced_rebind",
+                    "key_prefix": "sk-agentcc-5...",
+                    "status": "active",
+                    "metadata": {"org_id": str(other_org.id)},
+                }
+            ]
+        }
+        mock_get_client.return_value = mock_client
+
+        with structlog.testing.capture_logs() as logs:
+            auth_bridge.sync_keys(org=other_org)
+
+        key.refresh_from_db()
+        assert key.organization_id == organization.id
+        (mismatch,) = [log for log in logs if log["event"] == "sync_keys_org_mismatch"]
+        assert mismatch["gateway_key_id"] == "key_synced_rebind"
+
+
+@pytest.mark.integration
+class TestDeletedKeyRevocation:
+    """A deleted key must not keep working on the gateway, and a key sync must
+    not bring it back."""
+
+    @staticmethod
+    def _key(organization, workspace, gateway_key_id, **fields):
+        return AgentccAPIKey.objects.create(
+            gateway_key_id=gateway_key_id,
+            name=gateway_key_id,
+            organization=organization,
+            workspace=workspace,
+            key_hash="8" * 64,
+            key_prefix="sk-agentcc-8...",
+            metadata={"org_id": str(organization.id)},
+            **fields,
+        )
+
+    @staticmethod
+    def _gateway_lists(mock_client, organization, gateway_key_id, **fields):
+        mock_client.list_keys.return_value = {
+            "data": [
+                {
+                    "id": gateway_key_id,
+                    "key_prefix": "sk-agentcc-8...",
+                    "status": "active",
+                    "metadata": {"org_id": str(organization.id)},
+                    **fields,
+                }
+            ]
+        }
+        mock_client.import_keys.return_value = {"loaded": 0}
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_sync_revokes_a_key_whose_delete_could_not_reach_the_gateway(
+        self, mock_get_client, organization, workspace
+    ):
+        key = self._key(organization, workspace, "key_delete_unreachable")
+        mock_client = MagicMock()
+        mock_client.revoke_key.side_effect = GatewayClientError("Cannot connect")
+        mock_get_client.return_value = mock_client
+
+        with pytest.raises(GatewayClientError):
+            auth_bridge.delete_key(key)
+
+        mock_client.revoke_key.side_effect = None
+        mock_client.revoke_key.reset_mock()
+        self._gateway_lists(mock_client, organization, "key_delete_unreachable")
+        auth_bridge.sync_keys(org=organization)
+
+        mock_client.revoke_key.assert_called_once_with("key_delete_unreachable")
+        key.refresh_from_db()
+        assert key.status == AgentccAPIKey.REVOKED and not key.deleted
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_sync_revokes_a_deleted_key_instead_of_adopting_it(
+        self, mock_get_client, organization, workspace
+    ):
+        # A deleted row that is still active while the gateway still holds the key.
+        key = self._key(organization, workspace, "key_deleted_on_dev")
+        key.delete()
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        self._gateway_lists(mock_client, organization, "key_deleted_on_dev")
+
+        count = auth_bridge.sync_keys(org=organization)
+
+        mock_client.revoke_key.assert_called_once_with("key_deleted_on_dev")
+        assert count == 0
+        assert not AgentccAPIKey.no_workspace_objects.filter(
+            gateway_key_id="key_deleted_on_dev"
+        ).exists()
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_sync_leaves_a_revoked_copy_of_a_deleted_key_alone(
+        self, mock_get_client, organization, workspace
+    ):
+        key = self._key(organization, workspace, "key_deleted_revoked")
+        key.delete()
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        self._gateway_lists(
+            mock_client, organization, "key_deleted_revoked", status="revoked"
+        )
+
+        auth_bridge.sync_keys(org=organization)
+
+        mock_client.revoke_key.assert_not_called()
+        assert not AgentccAPIKey.no_workspace_objects.filter(
+            gateway_key_id="key_deleted_revoked"
+        ).exists()
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_sync_does_not_revoke_another_key_that_reuses_a_deleted_keys_id(
+        self, mock_get_client, organization, workspace
+    ):
+        # The gateway key under this ID has another prefix, so it is another key.
+        key = self._key(organization, workspace, "key_reissued")
+        key.delete()
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        self._gateway_lists(
+            mock_client, organization, "key_reissued", key_prefix="sk-agentcc-9..."
+        )
+
+        auth_bridge.sync_keys(org=organization)
+
+        mock_client.revoke_key.assert_not_called()
+
+
+@pytest.mark.integration
 class TestLogIngestion:
     """Tests for log_ingestion service."""
 
@@ -633,6 +905,56 @@ class TestLogIngestion:
     def test_ingest_empty_logs(self):
         count = ingest_request_logs([])
         assert count == 0
+
+    def test_ingest_attributes_each_entry_to_its_own_org(self, organization):
+        """The gateway flushes every org's logs in one batch; each row lands in
+        its own org and is billed to it."""
+        from agentcc.models import AgentccRequestLog
+
+        other = Organization.objects.create(name="Other Organization")
+        AgentccAPIKey.objects.create(
+            gateway_key_id="key-org-a", name="a", organization=organization
+        )
+        AgentccAPIKey.objects.create(
+            gateway_key_id="key-org-b", name="b", organization=other
+        )
+        logs = [
+            {
+                "request_id": "mix-a1",
+                "model": "m",
+                "cost": 0.5,
+                "auth_key_id": "key-org-a",
+            },
+            {
+                "request_id": "mix-b1",
+                "model": "m",
+                "cost": 7.0,
+                "auth_key_id": "key-org-b",
+            },
+            {
+                "request_id": "mix-a2",
+                "model": "m",
+                "metadata": {"org_id": str(organization.id)},
+            },
+            {
+                "request_id": "mix-none",
+                "model": "m",
+                "metadata": {"org_id": "not-a-uuid"},
+            },
+        ]
+
+        assert ingest_request_logs(logs) == 3
+
+        rows = dict(
+            AgentccRequestLog.no_workspace_objects.filter(
+                request_id__startswith="mix-"
+            ).values_list("request_id", "organization_id")
+        )
+        assert rows == {
+            "mix-a1": organization.id,
+            "mix-a2": organization.id,
+            "mix-b1": other.id,
+        }
 
     @patch("agentcc.services.webhook_delivery.deliver_webhook_events")
     def test_ingest_creates_request_completed_webhook_events(

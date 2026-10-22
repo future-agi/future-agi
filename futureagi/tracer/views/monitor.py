@@ -13,11 +13,13 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
+
 from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import (
     BaseModelViewSetMixin,
     BaseModelViewSetMixinWithUserOrg,
+    request_workspace_q,
 )
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -89,21 +91,9 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         return getattr(user, "organization", None)
 
     def _workspace_scope_q(self, field_name="workspace"):
-        workspace = getattr(self.request, "workspace", None)
-        if not workspace:
-            return Q()
-        if getattr(workspace, "is_default", False):
-            return (
-                Q(**{field_name: workspace})
-                | Q(
-                    **{
-                        f"{field_name}__is_default": True,
-                        f"{field_name}__organization": workspace.organization,
-                    }
-                )
-                | Q(**{f"{field_name}__isnull": True})
-            )
-        return Q(**{field_name: workspace})
+        # The mixins' rule: with no workspace, the workspaces the user can
+        # access, never every workspace of the org.
+        return request_workspace_q(self.request, field_name)
 
     def _visible_observe_projects(self):
         organization = self._current_organization()
@@ -897,6 +887,8 @@ class UserAlertMonitorLogView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
     serializer_class = UserAlertMonitorLogSerializer
+    # A log row's organization is its alert monitor's.
+    organization_lookup = "alert__organization"
 
     def _current_organization(self):
         return (
@@ -904,35 +896,15 @@ class UserAlertMonitorLogView(BaseModelViewSetMixin, ModelViewSet):
             or self.request.user.organization
         )
 
+    # A log row has no workspace of its own, so the mixin cannot narrow it;
+    # these apply the mixins' rule through the log's alert monitor. With no
+    # workspace that is the workspaces the user can access, never every
+    # workspace of the org.
     def _workspace_scope_q(self):
-        workspace = getattr(self.request, "workspace", None)
-        if not workspace:
-            return Q()
-        if getattr(workspace, "is_default", False):
-            return (
-                Q(alert__workspace=workspace)
-                | Q(
-                    alert__workspace__is_default=True,
-                    alert__workspace__organization=workspace.organization,
-                )
-                | Q(alert__workspace__isnull=True)
-            )
-        return Q(alert__workspace=workspace)
+        return request_workspace_q(self.request, "alert__workspace")
 
     def _alert_workspace_scope_q(self):
-        workspace = getattr(self.request, "workspace", None)
-        if not workspace:
-            return Q()
-        if getattr(workspace, "is_default", False):
-            return (
-                Q(workspace=workspace)
-                | Q(
-                    workspace__is_default=True,
-                    workspace__organization=workspace.organization,
-                )
-                | Q(workspace__isnull=True)
-            )
-        return Q(workspace=workspace)
+        return request_workspace_q(self.request, "workspace")
 
     def _visible_alert_queryset(self):
         return UserAlertMonitor.objects.filter(

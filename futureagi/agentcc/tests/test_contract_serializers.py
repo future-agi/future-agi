@@ -1,3 +1,5 @@
+import pytest
+
 from agentcc.serializers.contracts import (
     AgentccEmptyRequestSerializer,
     AgentccErrorResponseSerializer,
@@ -35,17 +37,39 @@ def test_agentcc_empty_request_serializer_rejects_non_empty_body():
     assert "non_field_errors" in serializer.errors
 
 
-def test_gateway_mcp_status_accepts_normalized_fallback_servers():
+def test_gateway_mcp_status_accepts_gateway_server_statuses():
+    # The items are the gateway's own (mcp-admin-status-v1, by server_id);
+    # Django builds no fallback items.
     serializer = GatewayMCPStatusResponseSerializer(
         data={
             "status": True,
             "result": {
                 "enabled": True,
                 "sessions": 0,
+                "tools": 2,
+                "resources": 0,
+                "prompts": 0,
+                "servers": [{"server_id": "github", "healthy": True, "tool_count": 2}],
+            },
+        }
+    )
+
+    assert serializer.is_valid(), serializer.errors
+
+
+@pytest.mark.parametrize("reason", ["gateway_mcp_disabled", "gateway_unreachable"])
+def test_gateway_mcp_status_disabled_carries_a_reason(reason):
+    serializer = GatewayMCPStatusResponseSerializer(
+        data={
+            "status": True,
+            "result": {
+                "enabled": False,
+                "reason": reason,
+                "sessions": 0,
                 "tools": 0,
                 "resources": 0,
                 "prompts": 0,
-                "servers": [{"id": "github", "status": "configured"}],
+                "servers": [],
             },
         }
     )

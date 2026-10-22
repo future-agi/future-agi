@@ -60,11 +60,6 @@ def _vertex_sdk_missing(provider, model_name) -> bool:
     )
 
 
-def _restore_plain_key_config_for_save(ai_model):
-    if ai_model.key_config:
-        ai_model.key_config = ai_model.actual_json
-
-
 def _custom_ai_model_queryset(request):
     return CustomAIModel.no_workspace_objects.filter(
         organization=get_request_organization(request),
@@ -359,7 +354,6 @@ class CustomAIModelDetailsView(APIView):
                 ai_model.output_token_cost = output_token_cost
             if new_model_name:
                 ai_model.user_model_id = new_model_name
-            _restore_plain_key_config_for_save(ai_model)
             ai_model.save()
 
             ai_model_serializer = CustomAIModelSerializer(ai_model)
@@ -404,7 +398,6 @@ class UpdateMetricCustomAIModelView(APIView):
                 .get()
             )
             ai_model.default_metric = new_metrics
-            _restore_plain_key_config_for_save(ai_model)
             ai_model.save()
 
             return Response(
@@ -441,7 +434,6 @@ class UpdateBaselineDatasetCustomAIModelView(APIView):
             ai_model = _custom_ai_model_queryset(request).get(id=ai_model_id)
             ai_model.baseline_model_environment = environment
             ai_model.baseline_model_version = version
-            _restore_plain_key_config_for_save(ai_model)
             ai_model.save()
 
             return Response(
@@ -548,7 +540,7 @@ class EditCustomModel(APIView):
             )
             if api_keys:
                 keys = api_keys.masked_actual_key
-                data.update({"key" if api_keys.actual_key else "config_json": keys})
+                data.update({"key" if api_keys.key else "config_json": keys})
             return self._gm.success_response(data)
 
         except CustomAIModel.DoesNotExist:
@@ -624,8 +616,6 @@ class EditCustomModel(APIView):
                 model.key_config = config_json
             elif key:
                 model.key_config = {"key": key}
-            else:
-                _restore_plain_key_config_for_save(model)
             model.save()
 
             return self._gm.success_response("Model updated Successfully")

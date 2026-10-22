@@ -3,6 +3,7 @@ import os
 
 import structlog
 from rest_framework.permissions import AllowAny
+from rest_framework.status import HTTP_503_SERVICE_UNAVAILABLE
 from rest_framework.views import APIView
 
 from agentcc.serializers.contracts import (
@@ -10,7 +11,7 @@ from agentcc.serializers.contracts import (
     WebhookIngestResponseSerializer,
     WebhookLogsRequestSerializer,
 )
-from agentcc.services.log_ingestion import ingest_request_logs
+from agentcc.services.log_ingestion import LogIngestionError, ingest_request_logs
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
@@ -29,6 +30,7 @@ class GatewayWebhookView(APIView):
         responses={
             200: WebhookIngestResponseSerializer,
             400: AgentccErrorResponseSerializer,
+            503: AgentccErrorResponseSerializer,
         },
         reject_unknown_fields=True,
     )
@@ -47,6 +49,12 @@ class GatewayWebhookView(APIView):
         try:
             count = ingest_request_logs(logs)
             return self._gm.success_response({"ingested": count})
+        except LogIngestionError as e:
+            # Part of the batch was not stored. The gateway redelivers a batch
+            # on a 5xx (it drops one on a 4xx), and ingestion is replay-safe,
+            # so the retry stores only what is missing.
+            logger.warning("webhook_ingestion_partial", error=str(e))
+            return self._gm.custom_error_response(HTTP_503_SERVICE_UNAVAILABLE, str(e))
         except Exception as e:
             logger.exception("webhook_ingestion_error", error=str(e))
             return self._gm.bad_request(str(e))

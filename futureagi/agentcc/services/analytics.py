@@ -8,14 +8,17 @@ and returns a plain Python dictionary ready for JSON serialization.
 
 import math
 from collections import defaultdict
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from functools import partial
 
 from django.db.models import (
     Avg,
     Count,
+    DateTimeField,
     DecimalField,
     FloatField,
+    Func,
     IntegerField,
     Max,
     Min,
@@ -52,15 +55,53 @@ TRUNC_MAP = {
     "month": TruncMonth,
 }
 
+# Fixed-width buckets, in seconds, aligned to the Unix epoch (so to UTC
+# midnight): the sizes the console sends for a range (analytics/UsageCharts.jsx,
+# LatencyAnalytics.jsx and ErrorAnalytics.jsx computeGranularity: 5m up to 6 h,
+# 15m up to 24 h, 1h up to 7 d, 6h up to 30 d, else 1d; KeyDetailDrawer.jsx 1h).
+FIXED_BUCKET_SECONDS = {
+    "5m": 5 * 60,
+    "15m": 15 * 60,
+    "1h": 60 * 60,
+    "6h": 6 * 60 * 60,
+    "1d": 24 * 60 * 60,
+}
+
 GRANULARITY_DELTA = {
     "minute": timedelta(minutes=1),
     "hour": timedelta(hours=1),
     "day": timedelta(days=1),
     "week": timedelta(weeks=1),
     "month": timedelta(days=30),  # approximate for bucket filling
+    **{name: timedelta(seconds=size) for name, size in FIXED_BUCKET_SECONDS.items()},
 }
 
-ALLOWED_GRANULARITIES = set(TRUNC_MAP.keys())
+ALLOWED_GRANULARITIES = set(TRUNC_MAP) | set(FIXED_BUCKET_SECONDS)
+DEFAULT_GRANULARITY = "hour"
+
+
+class InvalidGranularity(ValueError):
+    """A granularity the analytics endpoints do not bucket by (answered as 400)."""
+
+    def __init__(self, granularity):
+        allowed = ", ".join([*FIXED_BUCKET_SECONDS, *TRUNC_MAP])
+        super().__init__(
+            f"Unknown granularity '{str(granularity)[:32]}'. Use one of: {allowed}."
+        )
+
+
+class EpochBucket(Func):
+    """A timestamp floored to a fixed number of seconds since the Unix epoch."""
+
+    template = (
+        "TO_TIMESTAMP(FLOOR(EXTRACT(EPOCH FROM %(expressions)s) / %(seconds)d)"
+        " * %(seconds)d)"
+    )
+    output_field = DateTimeField()
+
+    def __init__(self, expression, seconds):
+        super().__init__(expression, seconds=int(seconds))
+
 
 MAX_PERCENTILE_SAMPLE = 50_000
 
@@ -79,16 +120,18 @@ USAGE_SUMMED_FIELDS = (
 )
 
 
-def parse_time_range(query_params):
+def parse_time_range(query_params, validate_granularity=True):
     """Parse start, end, granularity from query params.
 
-    Returns (period_start, period_end, granularity).
+    Returns (period_start, period_end, granularity). An absent granularity is
+    hour. An unknown one raises InvalidGranularity, or, for an endpoint that
+    does not bucket (validate_granularity=False), is ignored.
     """
     now = timezone.now()
 
     raw_start = query_params.get("start")
     raw_end = query_params.get("end")
-    granularity = query_params.get("granularity", "hour")
+    granularity = query_params.get("granularity") or DEFAULT_GRANULARITY
 
     period_start = _parse_dt(raw_start, now - timedelta(hours=24))
     period_end = _parse_dt(raw_end, now)
@@ -98,7 +141,9 @@ def parse_time_range(query_params):
         period_start, period_end = period_end, period_start
 
     if granularity not in ALLOWED_GRANULARITIES:
-        granularity = "hour"
+        if validate_granularity:
+            raise InvalidGranularity(granularity)
+        granularity = DEFAULT_GRANULARITY
 
     return period_start, period_end, granularity
 
@@ -110,14 +155,21 @@ def _parse_dt(raw, default):
     if dt is None:
         return default
     if dt.tzinfo is None:
-        from datetime import timezone as dt_tz
-
-        dt = dt.replace(tzinfo=dt_tz.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 
 def get_trunc_class(granularity):
-    return TRUNC_MAP.get(granularity, TruncHour)
+    """The bucket expression for a granularity: called with the field name."""
+    check_granularity(granularity)
+    if granularity in FIXED_BUCKET_SECONDS:
+        return partial(EpochBucket, seconds=FIXED_BUCKET_SECONDS[granularity])
+    return TRUNC_MAP[granularity]
+
+
+def check_granularity(granularity):
+    if granularity not in ALLOWED_GRANULARITIES:
+        raise InvalidGranularity(granularity)
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +180,7 @@ def get_trunc_class(granularity):
 def _compute_percentiles(values_list, percentiles=(0.50, 0.90, 0.95, 0.99)):
     """Compute percentiles from a sorted list of numeric values."""
     if not values_list:
-        return {p: 0.0 for p in percentiles}
+        return dict.fromkeys(percentiles, 0.0)
     n = len(values_list)
     result = {}
     for p in percentiles:
@@ -205,9 +257,7 @@ def _fold_small_usage_groups(rows, group_by):
 
     ranked = sorted(totals, key=totals.get, reverse=True)
     kept = set(
-        [name for name in ranked if not _folds_into_other(name)][
-            :MAX_USAGE_TAG_GROUPS
-        ]
+        [name for name in ranked if not _folds_into_other(name)][:MAX_USAGE_TAG_GROUPS]
     )
     folded, other = [], {}
     for row in rows:
@@ -235,6 +285,10 @@ def _fold_small_usage_groups(rows, group_by):
 
 def _truncate_dt(dt, granularity):
     """Truncate a datetime to the start of its bucket."""
+    seconds = FIXED_BUCKET_SECONDS.get(granularity)
+    if seconds:
+        floored = math.floor(dt.timestamp() / seconds) * seconds
+        return datetime.fromtimestamp(floored, tz=UTC)
     if granularity == "minute":
         return dt.replace(second=0, microsecond=0)
     elif granularity == "hour":
@@ -384,21 +438,23 @@ def get_usage_timeseries(
         started_at__gte=period_start, started_at__lte=period_end
     )
 
-    base_annotate = dict(
-        request_count=Count("id"),
-        total_tokens=Coalesce(
+    base_annotate = {
+        "request_count": Count("id"),
+        "total_tokens": Coalesce(
             Sum("total_tokens"), Value(0), output_field=IntegerField()
         ),
-        input_tokens=Coalesce(
+        "input_tokens": Coalesce(
             Sum("input_tokens"), Value(0), output_field=IntegerField()
         ),
-        output_tokens=Coalesce(
+        "output_tokens": Coalesce(
             Sum("output_tokens"), Value(0), output_field=IntegerField()
         ),
-        total_cost=Coalesce(Sum("cost"), Value(0), output_field=DecimalField()),
-        error_count=Count("id", filter=Q(is_error=True)),
-        avg_latency_ms=Coalesce(Avg("latency_ms"), Value(0), output_field=FloatField()),
-    )
+        "total_cost": Coalesce(Sum("cost"), Value(0), output_field=DecimalField()),
+        "error_count": Count("id", filter=Q(is_error=True)),
+        "avg_latency_ms": Coalesce(
+            Avg("latency_ms"), Value(0), output_field=FloatField()
+        ),
+    }
 
     allowed_groups = {"model", "provider", *TAG_GROUPS}
     if group_by and group_by in allowed_groups:
@@ -1035,8 +1091,6 @@ def get_guardrail_rules(queryset, start, end):
 
 def get_guardrail_trends(queryset, start, end, granularity="hour"):
     """Time-bucketed guardrail trigger counts."""
-    if granularity not in ALLOWED_GRANULARITIES:
-        granularity = "hour"
     trunc_cls = get_trunc_class(granularity)
 
     qs = queryset.filter(

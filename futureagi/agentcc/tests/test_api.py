@@ -6,6 +6,7 @@ Includes Phase 5.2 tests for advanced filters, search, sessions, and export.
 """
 
 import json
+import secrets
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
@@ -26,7 +27,10 @@ from agentcc.models import (
     AgentccRequestLog,
 )
 from agentcc.services import analytics as analytics_service
+from agentcc.services import auth_bridge
+from agentcc.services.gateway_client import GatewayClientError
 from integrations.services.credentials import CredentialManager
+from tfc.utils.error_codes import get_error_message
 
 
 @pytest.fixture
@@ -35,7 +39,8 @@ def gateway_id():
     return "default"
 
 
-AGENTCC_TEST_ADMIN_TOKEN = "agentcc-admin-secret"
+# Generated per run: a published literal is refused (agentcc/admin_token.py).
+AGENTCC_TEST_ADMIN_TOKEN = secrets.token_hex(32)
 
 
 @pytest.mark.integration
@@ -1063,13 +1068,17 @@ class TestAgentccAPIKeyAPI:
             status.HTTP_403_FORBIDDEN,
         ]
 
-    def test_destroy_api_key_removes_row(self, auth_client, organization, workspace):
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_destroy_api_key_removes_row(
+        self, mock_get_client, auth_client, organization, workspace
+    ):
         key = AgentccAPIKey.objects.create(
             gateway_key_id="gw-destroy",
             name="destroy-me",
             organization=organization,
             workspace=workspace,
         )
+        mock_get_client.return_value = MagicMock()
 
         response = auth_client.delete(f"/agentcc/api-keys/{key.id}/")
 
@@ -1196,6 +1205,134 @@ class TestAgentccAPIKeyAPI:
 
 @pytest.mark.integration
 @pytest.mark.api
+class TestAgentccAPIKeyDelete:
+    """DELETE /agentcc/api-keys/{id}/ revokes the key on the gateway, so it
+    stops working now rather than at the gateway's next key sync."""
+
+    @staticmethod
+    def _key(organization, workspace, gateway_key_id="gw-delete"):
+        return AgentccAPIKey.objects.create(
+            gateway_key_id=gateway_key_id,
+            name="delete-me",
+            organization=organization,
+            workspace=workspace,
+            key_hash="7" * 64,
+            key_prefix="sk-agentcc-7...",
+            metadata={"org_id": str(organization.id)},
+        )
+
+    @staticmethod
+    def _row(key):
+        # Unfiltered: the default managers hide deleted rows.
+        return AgentccAPIKey._base_manager.get(id=key.id)
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_delete_revokes_the_key_on_the_gateway(
+        self, mock_get_client, auth_client, organization, workspace
+    ):
+        key = self._key(organization, workspace)
+        seen = {}
+
+        def _revoke(gateway_key_id):
+            row = self._row(key)
+            seen.update(id=gateway_key_id, status=row.status, deleted=row.deleted)
+            return {"status": "revoked"}
+
+        mock_client = MagicMock()
+        mock_client.revoke_key.side_effect = _revoke
+        mock_get_client.return_value = mock_client
+
+        response = auth_client.delete(f"/agentcc/api-keys/{key.id}/")
+
+        assert response.status_code == status.HTTP_204_NO_CONTENT, response.content
+        # Revoked here before the gateway call, so no key sync can hand it back.
+        assert seen == {"id": "gw-delete", "status": "revoked", "deleted": False}
+        row = self._row(key)
+        assert row.deleted and row.status == AgentccAPIKey.REVOKED
+        assert not auth_bridge.gateway_loadable_keys().filter(id=key.id).exists()
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            GatewayClientError("Cannot connect to gateway at http://gw: refused"),
+            GatewayClientError("Gateway request timed out: read"),
+            GatewayClientError("Gateway returned 500: boom", status_code=500),
+            GatewayClientError("Gateway returned 401: unauthorized", status_code=401),
+        ],
+        ids=["unreachable", "timeout", "server-error", "bad-admin-token"],
+    )
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_delete_fails_loudly_when_the_gateway_cannot_revoke(
+        self, mock_get_client, auth_client, organization, workspace, error
+    ):
+        key = self._key(organization, workspace)
+        mock_client = MagicMock()
+        mock_client.revoke_key.side_effect = error
+        mock_get_client.return_value = mock_client
+
+        response = auth_client.delete(f"/agentcc/api-keys/{key.id}/")
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.json()["result"] == get_error_message(
+            "AGENTCC_KEY_DELETE_GATEWAY_UNREACHABLE"
+        )
+        # Not deleted, so the caller can retry; revoked, so the gateway's next
+        # key pull leaves it out and sync_keys revokes it there.
+        row = self._row(key)
+        assert not row.deleted and row.status == AgentccAPIKey.REVOKED
+        assert not auth_bridge.gateway_loadable_keys().filter(id=key.id).exists()
+        listed = auth_client.get("/agentcc/api-keys/").json()["result"]
+        assert [k["status"] for k in listed if k["id"] == str(key.id)] == ["revoked"]
+
+        # Once the gateway answers, deleting again revokes there and deletes.
+        mock_client.revoke_key.side_effect = None
+        mock_client.revoke_key.return_value = {"status": "revoked"}
+        response = auth_client.delete(f"/agentcc/api-keys/{key.id}/")
+
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+        assert mock_client.revoke_key.call_count == 2
+        assert self._row(key).deleted
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_delete_of_a_key_the_gateway_does_not_hold(
+        self, mock_get_client, auth_client, organization, workspace
+    ):
+        key = self._key(organization, workspace)
+        mock_client = MagicMock()
+        mock_client.revoke_key.side_effect = GatewayClientError(
+            "Gateway returned 404: key_not_found", status_code=404
+        )
+        mock_get_client.return_value = mock_client
+
+        response = auth_client.delete(f"/agentcc/api-keys/{key.id}/")
+
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+        assert self._row(key).deleted
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_delete_of_another_orgs_key_is_404_and_revokes_nothing(
+        self, mock_get_client, auth_client
+    ):
+        foreign_org = Organization.objects.create(name="Delete Foreign Org")
+        foreign = AgentccAPIKey.no_workspace_objects.create(
+            gateway_key_id="gw-foreign-delete",
+            name="foreign",
+            organization=foreign_org,
+            workspace=None,
+        )
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        response = auth_client.delete(f"/agentcc/api-keys/{foreign.id}/")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        mock_client.revoke_key.assert_not_called()
+        row = self._row(foreign)
+        assert not row.deleted and row.status == AgentccAPIKey.ACTIVE
+
+
+@pytest.mark.integration
+@pytest.mark.api
 class TestAgentccAPIKeyBulkAPI:
     """Tests for the gateway startup /agentcc/api-keys/bulk/ endpoint."""
 
@@ -1288,6 +1425,196 @@ class TestAgentccAPIKeyBulkAPI:
             "tags": '["startup","sync"]',
             "org_id": str(organization.id),
         }
+
+
+# Named one by one, so a name dropped from the validators' list fails here.
+RESERVED_KEY_METADATA = [
+    "org_id",
+    "type",
+    "key_type",
+    "access_groups",
+    "allow_policy_override",
+    "role",
+    "team",
+    "id",
+    "name",
+    "owner",
+]
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestAgentccAPIKeyReservedMetadata:
+    """A tenant cannot set the key metadata the gateway reads as authority."""
+
+    @pytest.mark.parametrize("reserved", RESERVED_KEY_METADATA)
+    @patch("agentcc.views.api_key.auth_bridge")
+    def test_create_rejects_reserved_metadata(self, mock_bridge, auth_client, reserved):
+        mock_bridge.provision_key.side_effect = AssertionError("reached the bridge")
+
+        response = auth_client.post(
+            "/agentcc/api-keys/",
+            {"name": "reserved-key", "metadata": {reserved: "x", "env": "prod"}},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        message = str(response.json()["result"])
+        assert message.endswith(f"cannot be set on an API key: {reserved}."), message
+        mock_bridge.provision_key.assert_not_called()
+
+    @pytest.mark.parametrize("reserved", RESERVED_KEY_METADATA)
+    @patch("agentcc.views.api_key.auth_bridge")
+    def test_update_rejects_reserved_metadata(
+        self, mock_bridge, auth_client, organization, workspace, reserved
+    ):
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id=f"gw-reserved-{reserved}",
+            name="reserved",
+            organization=organization,
+            workspace=workspace,
+            metadata={"env": "prod"},
+        )
+        mock_bridge.update_key.side_effect = AssertionError("reached the bridge")
+
+        response = auth_client.patch(
+            f"/agentcc/api-keys/{key.id}/",
+            {"metadata": {reserved: "x"}},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        message = str(response.json()["result"])
+        assert message.endswith(f"cannot be set on an API key: {reserved}."), message
+        mock_bridge.update_key.assert_not_called()
+        key.refresh_from_db()
+        assert key.metadata == {"env": "prod"}
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_a_tenant_cannot_rebind_its_key_to_another_org(
+        self, mock_get_client, auth_client, organization, workspace
+    ):
+        other_org = Organization.objects.create(name="Rebind Victim Org")
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="gw-rebind",
+            name="rebind",
+            organization=organization,
+            workspace=workspace,
+            key_hash="6" * 64,
+            metadata={"org_id": str(organization.id)},
+        )
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        response = auth_client.patch(
+            f"/agentcc/api-keys/{key.id}/",
+            {"metadata": {"org_id": str(other_org.id)}},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        message = str(response.json()["result"])
+        assert "reserved" in message and "org_id" in message, message
+        mock_client.update_key.assert_not_called()
+        key.refresh_from_db()
+        assert key.metadata == {"org_id": str(organization.id)}
+
+        # Labels still go through, and the gateway gets the key's own org.
+        response = auth_client.patch(
+            f"/agentcc/api-keys/{key.id}/",
+            {"metadata": {"env": "prod", "service": "infra"}},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        sent = mock_client.update_key.call_args.kwargs["metadata"]
+        assert sent == {
+            "env": "prod",
+            "service": "infra",
+            "org_id": str(organization.id),
+        }
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_a_client_can_write_back_the_metadata_it_read(
+        self, mock_get_client, auth_client, organization
+    ):
+        """Responses carry the key's org_id, so read, edit a label, write back."""
+        mock_client = MagicMock()
+        mock_client.create_key.return_value = {
+            "id": "gw-roundtrip",
+            "key": "sk-agentcc-roundtrip",
+            "key_prefix": "sk-agentcc-ro",
+        }
+        mock_get_client.return_value = mock_client
+        created = auth_client.post(
+            "/agentcc/api-keys/",
+            {"name": "roundtrip", "metadata": {"env": "dev"}},
+            format="json",
+        )
+        assert created.status_code == status.HTTP_201_CREATED, created.json()
+        key_id = created.json()["result"]["id"]
+
+        metadata = auth_client.get(f"/agentcc/api-keys/{key_id}/").json()["result"][
+            "metadata"
+        ]
+        assert metadata == {"env": "dev", "org_id": str(organization.id)}
+        metadata["env"] = "prod"
+        response = auth_client.patch(
+            f"/agentcc/api-keys/{key_id}/", {"metadata": metadata}, format="json"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        sent = mock_client.update_key.call_args.kwargs["metadata"]
+        assert sent == {"env": "prod", "org_id": str(organization.id)}
+
+    @patch("agentcc.services.auth_bridge.get_gateway_client")
+    def test_create_accepts_the_org_id_of_the_org_it_is_created_in(
+        self, mock_get_client, auth_client, organization
+    ):
+        mock_client = MagicMock()
+        mock_client.create_key.return_value = {
+            "id": "gw-own-org-create",
+            "key": "sk-agentcc-own-org",
+            "key_prefix": "sk-agentcc-ow",
+        }
+        mock_get_client.return_value = mock_client
+
+        response = auth_client.post(
+            "/agentcc/api-keys/",
+            {
+                "name": "own-org-create",
+                "metadata": {"org_id": str(organization.id), "env": "dev"},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED, response.json()
+        sent = mock_client.create_key.call_args.kwargs["metadata"]
+        assert sent == {"env": "dev", "org_id": str(organization.id)}
+
+    @patch("agentcc.views.api_key.auth_bridge")
+    def test_the_keys_own_org_id_does_not_let_other_reserved_entries_through(
+        self, mock_bridge, auth_client, organization, workspace
+    ):
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="gw-own-org-plus-type",
+            name="own-org",
+            organization=organization,
+            workspace=workspace,
+            metadata={"org_id": str(organization.id)},
+        )
+        mock_bridge.update_key.side_effect = AssertionError("reached the bridge")
+
+        response = auth_client.patch(
+            f"/agentcc/api-keys/{key.id}/",
+            {"metadata": {"org_id": str(organization.id), "type": "internal"}},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        message = str(response.json()["result"])
+        assert message.endswith("cannot be set on an API key: type."), message
+        mock_bridge.update_key.assert_not_called()
 
 
 @pytest.mark.integration
@@ -2428,12 +2755,13 @@ class TestAnalyticsUsageTimeseries:
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["result"]["granularity"] == "day"
 
-    def test_usage_invalid_granularity_defaults(self, auth_client, analytics_logs):
+    def test_usage_invalid_granularity_answers_400(self, auth_client, analytics_logs):
+        # An unknown granularity answers 400.
         response = auth_client.get(
             "/agentcc/analytics/usage-timeseries/?granularity=invalid"
         )
-        assert response.status_code == status.HTTP_200_OK
-        assert response.json()["result"]["granularity"] == "hour"
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "granularity" in str(response.json()).lower()
 
 
 @pytest.mark.integration

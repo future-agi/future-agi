@@ -3,9 +3,11 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from django.db.models import DecimalField, Sum, Value
 from django.db.models.functions import Coalesce
+from rest_framework.permissions import BasePermission
 from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
 
+from accounts.authentication import APIKeyAuthentication
 from agentcc.models import AgentccRequestLog
 from agentcc.permissions import IsAdminToken
 from agentcc.serializers.contracts import (
@@ -36,10 +38,39 @@ def _period_start(period):
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
+class _AdminTokenOrSessionAuthentication(APIKeyAuthentication):
+    """The gateway's admin token is left to IsAdminToken and never decoded as
+    a user token; any other credential goes through the console's own
+    authenticator (which resolves and checks the request's organization)."""
+
+    def authenticate(self, request):
+        if IsAdminToken().has_permission(request, None):
+            return None
+        return super().authenticate(request)
+
+    def authenticate_header(self, request):
+        # No WWW-Authenticate challenge: a refused caller gets 403.
+        return None
+
+
+class _OrganizationSession(BasePermission):
+    """A signed-in console user acting on an organization they belong to."""
+
+    def has_permission(self, request, view):
+        user = getattr(request, "user", None)
+        return bool(
+            user is not None
+            and user.is_authenticated
+            and getattr(request, "organization", None) is not None
+        )
+
+
 class SpendSummaryView(APIView):
     """
-    Returns aggregated spend data so the gateway can seed budget counters
-    on startup.  Authenticated by admin token (not user JWT).
+    Returns aggregated spend data: the gateway seeds its budget counters
+    from it on startup (admin token: every org), and the console's Budgets
+    page reads its own organization's spend for each budget's period (a
+    signed-in user: that organization only, present even at $0).
 
     GET /agentcc/spend-summary/?period=monthly
 
@@ -61,8 +92,8 @@ class SpendSummaryView(APIView):
     }
     """
 
-    authentication_classes = []
-    permission_classes = [IsAdminToken]
+    authentication_classes = [_AdminTokenOrSessionAuthentication]
+    permission_classes = [IsAdminToken | _OrganizationSession]
     renderer_classes = [JSONRenderer]
     _gm = GeneralMethods()
 
@@ -83,6 +114,14 @@ class SpendSummaryView(APIView):
                 started_at__gte=start,
                 deleted=False,
             )
+            # A console session reads its own organization only.
+            session_org = (
+                None
+                if IsAdminToken().has_permission(request, self)
+                else getattr(request, "organization", None)
+            )
+            if session_org is not None:
+                logs = logs.filter(organization_id=session_org.id)
 
             cost_sum = Coalesce(Sum("cost"), Value(0), output_field=DecimalField())
 
@@ -94,6 +133,13 @@ class SpendSummaryView(APIView):
             )
 
             result = {}
+            if session_org is not None:
+                result[str(session_org.id)] = {
+                    "total_spend": 0.0,
+                    "per_key": {},
+                    "per_user": {},
+                    "per_model": {},
+                }
             for row in org_rows:
                 org_str = str(row["organization_id"])
                 result[org_str] = {

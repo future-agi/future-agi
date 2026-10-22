@@ -6,6 +6,12 @@
 # from ee.usage.models.usage import SubscriptionResourceLimit
 # from ee.usage.models.usage import UsageLog
 
+from ee.usage.models.managed_credits import (
+    ImmutableLedgerEntryError,
+    ManagedCreditAccount,
+    ManagedCreditEntry,
+)
+
 # Deployment telemetry receiver models moved to ee.cloud.telemetry.models.
 # Import conditionally for backward compat on cloud deployments.
 try:

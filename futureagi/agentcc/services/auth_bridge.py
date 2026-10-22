@@ -11,6 +11,7 @@ from agentcc.services.gateway_client import (
     _stringify_metadata,
     get_gateway_client,
 )
+from agentcc.validators import RESERVED_KEY_METADATA
 
 if TYPE_CHECKING:
     from accounts.models import Organization
@@ -44,14 +45,33 @@ def gateway_loadable_keys(
     return _live_keys(org).exclude(key_hash="")
 
 
+def bound_key_metadata(metadata, organization_id):
+    """Key metadata as the gateway may hold it, bound to ``organization_id``.
+
+    org_id is always the key's own organization, never a stored or supplied
+    value, and the other reserved entries are dropped: the gateway reads them
+    as authority (see ``RESERVED_KEY_METADATA``), so none of them comes from
+    stored or supplied metadata.
+    """
+    bound = {
+        key: value
+        for key, value in (metadata if isinstance(metadata, dict) else {}).items()
+        if key not in RESERVED_KEY_METADATA
+    }
+    if organization_id:
+        bound["org_id"] = str(organization_id)
+    return bound
+
+
 def gateway_key_payload(key):
     """A stored key as the gateway loads it by hash (its ``SyncedKey``).
 
     Startup sync pulls these from the bulk endpoint and Sync pushes them; the
     raw key never leaves Django.
     """
-    metadata = _stringify_metadata(key.metadata or {})
-    metadata.setdefault("org_id", str(key.organization_id))
+    metadata = _stringify_metadata(
+        bound_key_metadata(key.metadata, key.organization_id)
+    )
     return {
         "id": key.gateway_key_id,
         "name": key.name,
@@ -95,9 +115,7 @@ def provision_key(
     """
     org = organization or (user.organization if user else None)
 
-    gw_metadata = dict(metadata or {})
-    if org:
-        gw_metadata["org_id"] = str(org.id)
+    gw_metadata = bound_key_metadata(metadata, org.id if org else None)
 
     client = get_gateway_client()
     result = client.create_key(
@@ -163,6 +181,10 @@ def update_key(api_key, **kwargs):
     Update an API key on the Go gateway and update the local record.
     Accepted kwargs: name, owner, models, providers, metadata.
     """
+    if "metadata" in kwargs:
+        kwargs["metadata"] = bound_key_metadata(
+            kwargs["metadata"], api_key.organization_id
+        )
     client = get_gateway_client()
     gw_kwargs = {}
     field_map = {
@@ -216,12 +238,47 @@ def revoke_key(api_key):
     return api_key, gateway_failed
 
 
+def delete_key(api_key):
+    """Revoke an API key on the gateway, then soft-delete it here.
+
+    The row is marked REVOKED first, so from then on no key sync hands the key
+    back to the gateway. Then the gateway revokes it, so it stops working on
+    its next request rather than at the gateway's next key sync. A 404 means
+    the gateway does not hold the key, which leaves nothing to revoke there.
+
+    Any other gateway failure is raised, and the row stays REVOKED but not
+    deleted: the caller reports it, the gateway drops the key at its next key
+    sync or restart, ``sync_keys`` revokes it there, and deleting it again
+    retries the revoke.
+    """
+    if api_key.status != AgentccAPIKey.REVOKED:
+        api_key.status = AgentccAPIKey.REVOKED
+        api_key.save(update_fields=["status", "updated_at"])
+
+    if api_key.gateway_key_id:
+        try:
+            get_gateway_client().revoke_key(api_key.gateway_key_id)
+        except GatewayClientError as e:
+            if e.status_code != 404:
+                logger.warning(
+                    "gateway_revoke_failed_on_delete",
+                    key_id=api_key.gateway_key_id,
+                    status_code=e.status_code,
+                    error=str(e),
+                )
+                raise
+
+    api_key.delete()
+    return api_key
+
+
 def sync_keys(org=None):
     """
     Bidirectional sync between Go gateway and Django DB.
     - Keys on gateway but not in Django → create local record
     - Keys in Django but not on gateway → push them to the gateway (by hash)
-    - Keys revoked in Django but active on gateway → revoke on the gateway
+    - Keys revoked or deleted in Django but active on gateway → revoke on the
+      gateway
     Django is the source of truth; the gateway is ephemeral.
 
     Only syncs keys belonging to the given org (matched via metadata.org_id).
@@ -255,9 +312,27 @@ def sync_keys(org=None):
             gateway_key_id__in=all_gw_ids,
         )
     }
+    # Keys deleted here that a gateway still holds are revoked there, never
+    # adopted as gateway-only keys. Matched on ID and display prefix. The base
+    # manager, because the others hide deleted rows and filter by workspace.
+    deleted_keys = set(
+        AgentccAPIKey._base_manager.filter(
+            gateway_key_id__in=set(all_gw_ids) - set(existing_keys),
+            deleted=True,
+        )
+        .exclude(key_prefix="")
+        .values_list("gateway_key_id", "key_prefix")
+    )
 
     for gk in org_gateway_keys:
         gateway_key_id = gk.get("id", "")
+        if (gateway_key_id, gk.get("key_prefix", "")) in deleted_keys:
+            if gk.get("status", "active") != "revoked":
+                client.revoke_key(gateway_key_id)
+                logger.warning(
+                    "sync_keys_revoked_deleted_key", gateway_key_id=gateway_key_id
+                )
+            continue
         gateway_key_ids.add(gateway_key_id)
         org_key_count += 1
 
@@ -289,8 +364,13 @@ def sync_keys(org=None):
                 # A revoke the gateway missed (it was unreachable at the time).
                 client.revoke_key(gateway_key_id)
             if org and local_key.organization_id != org.id:
-                local_key.organization = org
-                update_fields.append("organization")
+                # Django owns a key's org: the row stays with its own org, and
+                # the gateway gets the row's org back at its next key sync.
+                logger.warning(
+                    "sync_keys_org_mismatch",
+                    gateway_key_id=gateway_key_id,
+                    hint="run manage.py agentcc_check_key_org",
+                )
             if update_fields:
                 update_fields.append("updated_at")
                 local_key.save(update_fields=update_fields)

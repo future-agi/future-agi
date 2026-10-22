@@ -1,6 +1,5 @@
 import logging
 import smtplib
-from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -12,22 +11,62 @@ logger = logging.getLogger(__name__)
 
 
 def send_alert_email(alert, event_type, context=None, recipient_override=None):
-    """Send an alert email using the configured provider.
+    """Send one alert email for ``event_type`` now.
 
-    Args:
-        alert: AgentccEmailAlert instance.
-        event_type: The event type string that triggered this alert.
-        context: Optional dict with event-specific details.
-        recipient_override: Optional single email address for test sends.
+    Kept for callers outside the dispatcher. It neither checks nor spends the
+    cooldown: alert_dispatcher.dispatch_pending owns the cooldown and
+    last_triggered_at for real alerts, and the console's Send test uses
+    send_test_email.
 
-    Returns:
-        dict with success status and any error message.
+    Returns a dict with success and, on failure, error.
     """
     recipients = [recipient_override] if recipient_override else alert.recipients
+    subject = f"[Agentcc] Alert: {event_label(event_type)}"
+    body = _render_email_body(alert.name, event_type, context or {})
+    return deliver_email(alert, recipients, subject, body)
+
+
+def send_test_email(alert, recipient_override=None):
+    """The console's Send test: always sent, never in or against the cooldown."""
+    recipients = [recipient_override] if recipient_override else alert.recipients
+    body = _render_email_body(
+        alert.name,
+        "test.email",
+        {"message": "This is a test email from Agentcc Gateway."},
+    )
+    return deliver_email(alert, recipients, "[Agentcc] Alert: Test Email", body)
+
+
+def send_alert_digest(alert, pending):
+    """Send an alert's pending events (alert_dispatcher state) as one email."""
+    event_types = sorted(pending)
+    labels = [event_label(event) for event in event_types]
+    if len(labels) == 1:
+        subject = f"[Agentcc] Alert: {labels[0]}"
+    else:
+        subject = f"[Agentcc] Alert: {alert.name}: {', '.join(labels)}"
+    body = _render_digest_body(
+        alert, [(event, pending[event]) for event in event_types]
+    )
+    return deliver_email(alert, alert.recipients, subject, body)
+
+
+def event_label(event_type):
+    from agentcc.models.email_alert import AgentccEmailAlert
+
+    labels = dict(AgentccEmailAlert.EVENT_CHOICES)
+    labels["test.email"] = "Test Email"
+    return labels.get(event_type) or str(event_type).replace(".", " ").title()
+
+
+def deliver_email(alert, recipients, subject, body):
+    """Send one email through the alert's stored provider (SMTP, SendGrid, Resend).
+
+    Never raises: a provider failure comes back as {"success": False, "error"}.
+    """
     if not recipients:
         return {"success": False, "error": "No recipients configured."}
 
-    # Decrypt provider config
     config = {}
     if alert.encrypted_config:
         try:
@@ -35,35 +74,72 @@ def send_alert_email(alert, event_type, context=None, recipient_override=None):
         except Exception:
             return {"success": False, "error": "Invalid provider configuration."}
 
-    # Check cooldown
-    if not recipient_override and alert.last_triggered_at:
-        elapsed = (datetime.now(timezone.utc) - alert.last_triggered_at).total_seconds()
-        if elapsed < alert.cooldown_minutes * 60:
-            return {"success": False, "error": "Alert is in cooldown period."}
-
-    subject = f"[Agentcc] Alert: {event_type.replace('.', ' ').title()}"
-    body = _render_email_body(alert.name, event_type, context or {})
-
     try:
         if alert.provider == "sendgrid":
-            result = _send_via_sendgrid(config, recipients, subject, body)
-        elif alert.provider == "resend":
-            result = _send_via_resend(config, recipients, subject, body)
-        elif alert.provider == "smtp":
-            result = _send_via_smtp(config, recipients, subject, body)
-        else:
-            return {"success": False, "error": f"Unknown provider: {alert.provider}"}
-
-        # Update last_triggered_at on success (skip for test sends)
-        if result.get("success") and not recipient_override:
-            alert.last_triggered_at = datetime.now(timezone.utc)
-            alert.save(update_fields=["last_triggered_at"])
-
-        return result
-
+            return _send_via_sendgrid(config, recipients, subject, body)
+        if alert.provider == "resend":
+            return _send_via_resend(config, recipients, subject, body)
+        if alert.provider == "smtp":
+            return _send_via_smtp(config, recipients, subject, body)
+        return {"success": False, "error": f"Unknown provider: {alert.provider}"}
     except Exception as e:
-        logger.exception("Failed to send alert email")
-        return {"success": False, "error": str(e)}
+        logger.warning(
+            "alert_email_provider_failed",
+            extra={"alert_id": str(alert.id), "provider": alert.provider},
+            exc_info=True,
+        )
+        return {"success": False, "error": f"{type(e).__name__}: {e}"}
+
+
+def _render_digest_body(alert, items):
+    """The HTML body for one or more pending events (ASCII-only template)."""
+    import html
+
+    from agentcc.services.alert_dispatcher import THRESHOLD_EVENTS
+
+    sections = []
+    for event_type, item in items:
+        # A threshold event is recorded once per minute while it holds.
+        count_label = (
+            "Checks over threshold" if event_type in THRESHOLD_EVENTS else "Occurrences"
+        )
+        rows = {
+            "Event": f"{event_label(event_type)} ({event_type})",
+            count_label: item.get("count") or 1,
+            "First seen (UTC)": item.get("first_at") or "",
+            "Last seen (UTC)": item.get("last_at") or "",
+            **(item.get("context") or {}),
+        }
+        cells = "".join(
+            f"<tr><td style='padding:4px 8px;font-weight:bold'>{html.escape(str(k))}</td>"
+            f"<td style='padding:4px 8px'>{html.escape(str(v))}</td></tr>"
+            for k, v in rows.items()
+            if v not in ("", None)
+        )
+        sections.append(
+            f"<table style='margin-top:12px;border-collapse:collapse'>{cells}</table>"
+        )
+    cooldown = (
+        f"At most one email every {alert.cooldown_minutes} minutes for this alert;"
+        " events in between are sent together in the next email."
+        if alert.cooldown_minutes > 0
+        else "This alert has no cooldown."
+    )
+    return f"""
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto">
+        <div style="background:#1a1a2e;color:#fff;padding:16px 24px;border-radius:8px 8px 0 0">
+            <h2 style="margin:0;font-size:18px">Agentcc Gateway Alert</h2>
+        </div>
+        <div style="padding:24px;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 8px 8px">
+            <p style="margin:0 0 8px"><strong>Alert:</strong> {html.escape(str(alert.name))}</p>
+            {"".join(sections)}
+            <hr style="margin:16px 0;border:none;border-top:1px solid #e0e0e0">
+            <p style="color:#888;font-size:12px;margin:0">
+                {html.escape(cooldown)} Manage alerts in Gateway Settings.
+            </p>
+        </div>
+    </div>
+    """
 
 
 def _render_email_body(alert_name, event_type, context):

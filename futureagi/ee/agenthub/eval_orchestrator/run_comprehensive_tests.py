@@ -12,11 +12,11 @@ Prerequisites:
     2. Gateway configured:   text-quality server in agentcc-gateway/config.yaml
     3. AgentccOrgConfig:       MCP enabled for ORG_ID
 
-Run:
+Run (the backend container already carries the gateway's AGENTCC_ADMIN_TOKEN;
+the gateway refuses to start on a published example token):
     docker exec backend bash -c \\
         "cd /app/backend && \\
          AGENTCC_GATEWAY_URL=http://agentcc-gateway:8080 \\
-         AGENTCC_ADMIN_TOKEN=agentcc-admin-secret \\
          PYTHONPATH=/app/backend \\
          python agentic_eval/agenthub/eval_orchestrator/run_comprehensive_tests.py"
 """

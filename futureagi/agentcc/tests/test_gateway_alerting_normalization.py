@@ -21,7 +21,8 @@ class TestGatewayAlertingNormalization:
     @patch("agentcc.services.config_push._assemble_providers", return_value={})
     def test_build_payload_strips_ui_only_rule_fields(self, _mock_providers):
         # Exactly what Monitoring → Create Alert Rule stores today: a name-keyed
-        # object whose entries carry `severity` and `enabled`.
+        # object whose entries carry `severity` and `enabled`. `enabled` is
+        # UI-only; `severity` is pushed (contract AlertRuleConfig.severity).
         config = AgentccOrgConfig(
             alerting={
                 "enabled": True,
@@ -48,6 +49,7 @@ class TestGatewayAlertingNormalization:
                 "condition": ">",
                 "threshold": 10.0,
                 "window": "5m",
+                "severity": "warning",
             }
         ]
 
