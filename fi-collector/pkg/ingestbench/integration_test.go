@@ -713,6 +713,61 @@ func TestDirectProbesWithoutACandidateAreReportedAsSkipped(t *testing.T) {
 	}
 }
 
+// B9: a direct query cut off by the end of its phase is counted as censored,
+// neither as a success (no latency sample) nor as a database error. A probe that
+// also completed queries is "measured-with-censoring"; one whose only query was
+// cut off is "window-censored".
+func TestDirectProbeCutOffByThePhaseIsCensored(t *testing.T) {
+	for _, answeredFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("answered-round-first-%t", answeredFirst), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			release := make(chan struct{})
+			var answering atomic.Bool
+			answering.Store(answeredFirst)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Consume the query first: only then does the server watch the
+				// connection and see the client abandon the request.
+				_, _ = io.Copy(io.Discard, r.Body)
+				if answering.Load() {
+					fmt.Fprint(w, `{"rows":1,"payload_bytes":10}`)
+					return
+				}
+				cancel() // the phase ends while ClickHouse is still answering
+				select {
+				case <-r.Context().Done():
+				case <-release:
+				}
+			}))
+			defer srv.Close()
+			// Runs before srv.Close, which waits for the handler to return.
+			defer close(release)
+			c := testConfig()
+			c.ClickHouseURL = srv.URL
+			d := newDirectRunner(clickHouse{cfg: c, client: c.readClient()}, time.Now())
+			if answeredFirst {
+				d.round(ctx, "during-load", candidate{seq: 0, ok: true})
+				answering.Store(false)
+			}
+			d.round(ctx, "during-load", candidate{seq: 0, ok: true})
+			wantStatus, wantSuccesses := "window-censored", int64(0)
+			if answeredFirst {
+				wantStatus, wantSuccesses = "measured-with-censoring", 1
+			}
+			for _, r := range d.results() {
+				if r.Phase != "during-load" || r.Name != "trace-by-id" {
+					continue
+				}
+				if r.Status != wantStatus || r.Censored != 1 || r.Successes != wantSuccesses || r.Errors != 0 || r.Latency.Count != wantSuccesses || r.FailureLatency.Count != 0 {
+					t.Fatalf("cut-off query misreported: %+v", r)
+				}
+				return
+			}
+			t.Fatal("trace probe result missing")
+		})
+	}
+}
+
 // B4: the namespace scan reads each toStartOfHour key bucket once: windows tile
 // the run window without gaps or overlap and none crosses a clock hour.
 func TestNamespaceWindowsTileTheRunInsideClockHours(t *testing.T) {

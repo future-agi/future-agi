@@ -479,8 +479,11 @@ across the run), each with ``--direct-probe-timeout``, ``readonly=2`` and the
 query cache explicitly off. During-load and after-settle phases are reported
 separately with success/error counts, latency percentiles, rows returned, how
 many results were non-empty (``skipped-no-candidate`` when no acknowledged request
-was old enough in any round) and, for the trace and session probes, the payload text
-bytes each query read (``payload_text_bytes_read``). Results are aggregated
+was old enough in any round; a query cut off by the end of its phase is counted in
+``window_censored_queries``, never as a success or an error, and the probe is
+``measured-with-censoring``, or ``window-censored`` when no query completed) and,
+for the trace and session probes, the payload text bytes each query read
+(``payload_text_bytes_read``). Results are aggregated
 server-side, so the latency covers reading the payload columns but not
 transferring them to a client. A probe with no acknowledged candidate is counted as
 skipped, never as a success. These numbers are database latency for these queries,

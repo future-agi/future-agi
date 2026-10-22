@@ -32,14 +32,17 @@ func (d DirectProbeConfig) validate() error {
 
 // DirectReadResult is one probe in one phase.
 type DirectReadResult struct {
-	Name           string       `json:"name"`
-	Phase          string       `json:"phase"`
-	Kind           string       `json:"kind"`
-	Status         string       `json:"status"`
-	Query          string       `json:"query"`
-	Successes      int64        `json:"successes"`
-	Errors         int64        `json:"errors"`
-	Skipped        int64        `json:"skipped_no_candidate"`
+	Name      string `json:"name"`
+	Phase     string `json:"phase"`
+	Kind      string `json:"kind"`
+	Status    string `json:"status"`
+	Query     string `json:"query"`
+	Successes int64  `json:"successes"`
+	Errors    int64  `json:"errors"`
+	Skipped   int64  `json:"skipped_no_candidate"`
+	// Censored counts queries cut off because their phase ended (the load
+	// window closed or the run was cancelled): neither a success nor a failure.
+	Censored       int64        `json:"window_censored_queries"`
 	NonEmpty       int64        `json:"non_empty_results"`
 	Latency        Percentiles  `json:"successful_query_latency"`
 	FailureLatency Percentiles  `json:"failed_query_latency"`
@@ -149,6 +152,9 @@ func (d *directRunner) round(ctx context.Context, phase string, cand candidate) 
 		}
 		if err != nil && ctx.Err() != nil {
 			// The phase ended while the query ran: not a database failure.
+			d.mu.Lock()
+			a.result.Censored++
+			d.mu.Unlock()
 			return
 		}
 		d.mu.Lock()
@@ -191,8 +197,15 @@ func (d *directRunner) results() []DirectReadResult {
 			switch {
 			case r.Errors > 0:
 				r.Status = "errors"
+			case r.Successes > 0 && r.Censored > 0:
+				// As for application probes: measured, and one query was cut
+				// off by the end of its phase.
+				r.Status = "measured-with-censoring"
 			case r.Successes > 0:
 				r.Status = "measured"
+			case r.Censored > 0:
+				// Every query that ran was cut off by the end of its phase.
+				r.Status = "window-censored"
 			case r.Skipped > 0:
 				// Every round lacked an acknowledged request old enough to read.
 				r.Status = "skipped-no-candidate"
