@@ -1,15 +1,16 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Box, Button, Dialog, IconButton, Stack, Typography } from "@mui/material";
-import Iconify from "src/components/iconify";
+import { Box, Typography } from "@mui/material";
 import { useSimStore, useConnectedAgents } from "../store";
 import { mainEnvOf, agentStatusOf } from "../_mock/agentLifecycle";
 import { baseRunOf, buildImprovement } from "../_mock/improvementStart";
 import { productionAgentVersion } from "../_mock/versions";
 import { isComingSoon } from "../_mock/rsiModel";
-import { clickable, focusRing } from "../components/clickable";
 import ImprovementSetup from "../run/fixmyagent/ImprovementSetup";
+import SideDrawer from "../components/SideDrawer";
+import AgentPicker from "./AgentPicker";
+import { agentSourceOf } from "../_mock/agentRegistry";
 import { improvementPath } from "./improvementNav";
 
 /*
@@ -54,55 +55,53 @@ export default function NewImprovement({ open, onClose }) {
     navigate(improvementPath(env.id, record.id));
   };
 
-  if (picked && env) {
-    return (
-      <ImprovementSetup
-        open={open}
-        onClose={close}
-        preset={{ agentKey: picked.key, envId: env.id, fromGoal: true }}
-        onStart={start}
+  /*
+    One drawer, one form: the agent first, and everything else appears below
+    it once it's picked. The picker is the dashboards' filter-attribute one —
+    search, agent types and sources on the left, a row per agent — and the
+    main environment is said under the field once one is picked.
+  */
+  const typeOf = (c) => (c.main?.env?.surface === "voice" ? "Voice" : "Chat");
+  const pickerChoices = useMemo(() => [...choices]
+    .map((c) => ({
+      key: c.agent.key,
+      name: c.agent.name,
+      type: typeOf(c),
+      /* Where it lives, without its connection state ("GitHub · app not installed" is GitHub). */
+      source: String(agentSourceOf(c.agent).label || "").split(" · ")[0],
+      version: c.agent.production || "—",
+      envs: (c.agent.usedIn || []).length,
+      off: !!c.status && c.status.status !== "connected",
+      offReason: c.status?.label,
+    }))
+    .sort((a, b) => Number(a.off) - Number(b.off) || a.name.localeCompare(b.name)), [choices]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pickedChoice = choices.find((c) => c.agent.key === picked?.key) || null;
+  const envCount = (c) => (c.agent.usedIn || []).length;
+  const agentField = (
+    <Box>
+      <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>Agent</Typography>
+      <AgentPicker
+        choices={pickerChoices}
+        value={picked?.key || null}
+        onChange={(key) => setPicked(choices.find((c) => c.agent.key === key)?.agent || null)}
       />
-    );
-  }
+      {pickedChoice && (
+        <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>
+          {`${typeOf(pickedChoice)} · in production ${pickedChoice.agent.production || "—"} · runs in ${pickedChoice.main?.envName || "its main environment"}${envCount(pickedChoice) > 1 ? ` · ${envCount(pickedChoice) - 1} more ${envCount(pickedChoice) === 2 ? "environment" : "environments"}` : ""}`}
+        </Typography>
+      )}
+    </Box>
+  );
 
   return (
-    <Dialog open={open} onClose={close} maxWidth={false} PaperProps={{ sx: { width: 520, maxWidth: "calc(100% - 32px)", borderRadius: 1.5, backgroundImage: "none" } }}>
-      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider" }}>
-        <Box flex={1}>
-          <Typography sx={{ typography: "s1", fontWeight: 700 }}>New improvement</Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Which agent? It runs in that agent&apos;s main environment.</Typography>
-        </Box>
-        <IconButton size="small" onClick={close} aria-label="Close"><Iconify icon="eva:close-fill" width={17} /></IconButton>
-      </Stack>
-      <Stack sx={{ py: 0.75, maxHeight: "60vh", overflowY: "auto" }}>
-        {choices.length === 0 && (
-          <Typography sx={{ typography: "s2", color: "text.secondary", px: 2.5, py: 2 }}>
-            No agent has an environment yet. Build one for an agent first — an improvement is proven there.
-          </Typography>
-        )}
-        {choices.map(({ agent, main: m, status }) => {
-          const off = status && status.status !== "connected";
-          return (
-            <Stack
-              key={agent.key} direction="row" alignItems="center" spacing={1.5}
-              {...clickable(off ? null : () => setPicked(agent), { disabled: off })}
-              sx={{ ...focusRing, px: 2.5, py: 1.125, cursor: off ? "default" : "pointer", opacity: off ? 0.55 : 1, "&:hover": off ? undefined : { bgcolor: "action.hover" } }}
-            >
-              <Box flex={1} minWidth={0}>
-                <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{agent.name}</Typography>
-                <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-                  {off ? `${status.label}${status.reason ? ` — ${status.reason}` : ""}` : `In production ${agent.production || "—"} · main environment ${m?.envName || "—"}${(agent.usedIn || []).length > 1 ? ` · ${agent.usedIn.length - 1} more` : ""}`}
-                </Typography>
-              </Box>
-              {!off && <Iconify icon="solar:alt-arrow-right-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />}
-            </Stack>
-          );
-        })}
-      </Stack>
-      <Stack direction="row" justifyContent="flex-end" sx={{ px: 2.5, py: 1.5, borderTop: "1px solid", borderColor: "divider" }}>
-        <Button onClick={close} sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}>Cancel</Button>
-      </Stack>
-    </Dialog>
+    <SideDrawer open={open} onClose={close} width={{ xs: "100%", sm: 640 }}>
+      <ImprovementSetup
+        bare open={open} onClose={close}
+        agentField={agentField}
+        preset={picked && env ? { agentKey: picked.key, envId: env.id, fromGoal: true } : { fromGoal: true }}
+        onStart={start}
+      />
+    </SideDrawer>
   );
 }
 NewImprovement.propTypes = { open: PropTypes.bool, onClose: PropTypes.func.isRequired };

@@ -425,25 +425,37 @@ const diagnosisFor = ({ env, tasks, extra }) => {
   what it completes.
 */
 const OUTCOME_VERBS = [
-  [/book|reserve|schedule/i, "Booking success rate"],
-  [/refund/i, "Refund completion rate"],
-  [/cancel/i, "Cancellation completion rate"],
-  [/transfer|escalat|handoff/i, "Resolution without transfer", true],
-  [/order|purchase|checkout/i, "Order completion rate"],
-  [/update|change|modify|reschedul/i, "Change success rate"],
+  [/^(book|reserve|schedule)/i, "booking success rate", false],
+  [/^refund/i, "refund completion rate", false],
+  [/^cancel/i, "cancellation completion rate", false],
+  [/^(transfer|escalat|handoff)/i, "Resolution without transfer", true],
+  [/^(order|purchase|checkout)/i, "order completion rate", false],
+  [/^(update|change|modify|reschedul)/i, "change success rate", false],
 ];
+/* Words in a tool's name that aren't what it acts on. */
+const OUTCOME_FILLER = new Set(["to", "a", "the", "for", "on", "of", "new", "existing", "human", "agent", "request", "api"]);
+/*
+  Named after what the tool acts on, in its own words — book_pickup is
+  "Pickup booking success rate", not a generic "Booking" — with the
+  definition said where the goal is picked.
+*/
 export const outcomeMetricsOf = (env) => {
   const out = new Map();
   (env?.tools || []).forEach((t) => {
-    const hit = OUTCOME_VERBS.find(([re]) => re.test(t.name));
-    if (!hit || out.has(hit[1])) return;
-    const [, label, inverse] = hit;
+    const parts = String(t.name || "").split(/[_\-.\s]+/).filter(Boolean);
+    const hitAt = parts.findIndex((p) => OUTCOME_VERBS.some(([re]) => re.test(p)));
+    if (hitAt < 0) return;
+    const [, base, inverse] = OUTCOME_VERBS.find(([re]) => re.test(parts[hitAt]));
+    const object = parts.filter((p, i) => i !== hitAt && !OUTCOME_FILLER.has(p.toLowerCase())).join(" ");
+    const label = inverse ? base : object ? `${object.charAt(0).toUpperCase()}${object.slice(1)} ${base}` : `${base.charAt(0).toUpperCase()}${base.slice(1)}`;
+    if (out.has(label)) return;
     out.set(label, {
       id: `outcome:${t.name}`,
       label,
+      tool: t.name,
       note: inverse
-        ? `Share of conversations that end without ${t.name} being called`
-        : `Share of conversations where ${t.name} returned success`,
+        ? `Conversations that end without ${t.name} being called`
+        : `Conversations where ${t.name} returned success`,
     });
   });
   return [...out.values()];

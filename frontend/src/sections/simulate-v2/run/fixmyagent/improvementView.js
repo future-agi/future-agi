@@ -21,7 +21,7 @@ export const METHODS = [
   { id: "protegi", label: "Gradient", note: "Reads what failed and edits toward it, a few causes at a time" },
   { id: "metaprompt", label: "Rewrite", note: "A stronger model rewrites the prompt each round — the cheapest" },
   { id: "promptwizard", label: "Explore", note: "Mutate, critique, refine — strays furthest from today's prompt" },
-  { id: "bayesian", label: "Few-shot search", note: "Searches examples and phrasing — needs more runs to win" },
+  { id: "bayesian", label: "Few-shot", note: "Searches examples and phrasing — needs more runs to win" },
   { id: "random_search", label: "Random baseline", note: "Simple variations — the baseline the others have to beat" },
 ];
 export const DEFAULT_METHOD = "gepa";

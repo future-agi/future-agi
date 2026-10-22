@@ -8,10 +8,12 @@ import {
 import Iconify from "src/components/iconify";
 import { clickable, focusRing } from "../../components/clickable";
 import { connectedAgentPath } from "../../improvements/improvementNav";
-import { useSimStore, useConnectedAgents } from "../../store";
+import { useSimStore, useConnectedAgents, useEnvState } from "../../store";
 import { agentDefinitionOf } from "../../_mock/agentRegistry";
 import { getEval } from "../../_mock/evals";
 import { evalReliabilityLine, evalReliabilityOf } from "../../_mock/evalReliability";
+import AddEvalsDrawer from "../../workspace/evals/AddEvalsDrawer";
+import { useAppliedEvals } from "../../workspace/evals/useAppliedEvals";
 import { agentVersions, currentAgentVersion, productionAgentVersion } from "../../_mock/versions";
 import { improverModelsText, limitRows, OPTIMIZER_MODELS, SAME_AS_PLANNER } from "../../_mock/optimizationRuns";
 import { OPTIMIZERS, goalWords, improvementRunName } from "../../_mock/optimizer";
@@ -25,10 +27,11 @@ import { rereadFor, textSearchDefault } from "../../_mock/improvementPolicy";
 import { recordOutsideChange } from "../../_mock/nudgeEffects";
 import { creditsForUsd, creditsLabel } from "../../_mock/metering";
 
-const ACCENT = "#7857FC";
+/* Selected reads in white, as the product's other choices do — purple is for actions, not state. */
+const selectedBg = (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05);
 /* "Raise the pass rate", "Raise booking success rate", "Raise Policy adherence". */
 const WARN = "#CA8A04";
-const goalText = (g) => (g.id === "pass-rate" ? "Raise the pass rate" : `Raise ${g.group === "outcome" ? g.label.toLowerCase() : g.label}`);
+const goalText = (g) => (g.id === "pass-rate" ? "Raise the pass rate" : `Raise ${g.group === "outcome" ? `${g.label.charAt(0).toLowerCase()}${g.label.slice(1)}` : g.label}`);
 const fieldLabel = { typography: "s2", fontWeight: 700, mb: 0.875 };
 const selectSx = { height: 34, typography: "s2", "& .MuiSelect-select": { typography: "s2", py: 0.75 } };
 
@@ -73,11 +76,11 @@ function ModelPicker({ title, hint, value, onChange, same = null }) {
                 onClick={() => onChange(m.id)}
                 sx={{
                   height: 27, borderRadius: 0.75, border: "1px solid",
-                  borderColor: active ? ACCENT : "divider",
-                  bgcolor: (t) => (active ? alpha(ACCENT, t.palette.mode === "dark" ? 0.12 : 0.06) : "transparent"),
+                  borderColor: active ? "text.primary" : "divider",
+                  bgcolor: (t) => (active ? selectedBg(t) : "transparent"),
                   color: active ? "text.primary" : "text.secondary",
                   "& .MuiChip-label": { px: 1.125, typography: "s2", fontWeight: 600 },
-                  "&:hover": { bgcolor: (t) => alpha(ACCENT, t.palette.mode === "dark" ? 0.12 : 0.06) },
+                  "&:hover": { bgcolor: selectedBg },
                 }}
               />
             </Tooltip>
@@ -89,13 +92,18 @@ function ModelPicker({ title, hint, value, onChange, same = null }) {
 }
 ModelPicker.propTypes = { title: PropTypes.string, hint: PropTypes.string, value: PropTypes.string, onChange: PropTypes.func, same: PropTypes.string };
 
-export default function ImprovementSetup({ open, onClose, preset, tasks, included = [], onStart }) {
+export default function ImprovementSetup({ open, onClose, preset, tasks, included = [], onStart, bare = false, onBack = null, agentField = null }) {
   const navigate = useNavigate();
   const { state, commit } = useSimStore();
   const { agents } = useConnectedAgents();
 
   const main = state.myEnvironments.find((e) => e.id === preset?.envId) || null;
   const es = main ? state.byEnv[main.id] : null;
+  /* Evaluations added from the goal menu go on the environment, the same way its Evaluations step adds them. */
+  const { envState: evalEnvState, patch: patchEnv } = useEnvState(main?.id);
+  const { appliedIds, add: addEvals, slotsLeft } = useAppliedEvals(evalEnvState, patchEnv);
+  const [addingEval, setAddingEval] = useState(false);
+  const ADD_EVAL = "__add_eval";
   const agent = agents.find((a) => a.key === preset?.agentKey) || null;
 
   const [name, setName] = useState("");
@@ -125,6 +133,14 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
     setGoal("pass-rate");
     setBudget(null);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* Another agent picked in the same drawer: its own name, goals and environments. */
+  useEffect(() => {
+    if (!open || !main) return;
+    setName(improvementRunName(es, null));
+    setGoal("pass-rate");
+    setAlsoIn([]);
+    setAcrossLineage(false);
+  }, [main?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const limits = useMemo(() => limitsOf(state, preset?.agentKey), [state, preset?.agentKey]);
   /* A voice agent searches in text; its finalists are confirmed as real calls. */
@@ -221,18 +237,30 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 1.5, backgroundImage: "none" } }}>
-      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider" }}>
+    <SetupFrame bare={bare} open={open} onClose={onClose}>
+      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
+        {onBack && (
+          <IconButton size="small" onClick={onBack} aria-label="Back to agents" sx={{ ml: -0.75 }}>
+            <Iconify icon="solar:alt-arrow-left-linear" width={17} />
+          </IconButton>
+        )}
         <Box flex={1}>
           <Typography sx={{ typography: "s1", fontWeight: 700 }}>{preset?.fromGoal ? "New improvement" : "Run self improvement"}</Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {`Searches for a better ${agent?.name ? `${agent.name}` : "agent"}, scored by this environment`}
+            {main ? `Searches for a better ${agent?.name ? `${agent.name}` : "agent"}, scored by this environment` : "Pick the agent to improve — it runs in that agent's main environment."}
           </Typography>
         </Box>
         <IconButton size="small" onClick={onClose}><Iconify icon="eva:close-fill" width={17} /></IconButton>
       </Stack>
 
-      <Stack spacing={2.5} sx={{ px: 2.5, py: 2.5, maxHeight: "62vh", overflowY: "auto" }}>
+      <Stack spacing={2.5} sx={{ px: 2.5, py: 2.5, overflowY: "auto", ...(bare ? { flex: 1, minHeight: 0 } : { maxHeight: "62vh" }) }}>
+        {agentField}
+        {!main && agentField && (
+          <Typography sx={{ typography: "s3", color: "text.subtitle", mt: "-12px !important" }}>
+            Its goals, budget and cost show here once it&apos;s picked.
+          </Typography>
+        )}
+        {main && (<>
         <Box>
           <Typography sx={fieldLabel}>Name</Typography>
           <TextField size="small" fullWidth value={name} onChange={(e) => setName(e.target.value)} sx={{ "& .MuiInputBase-input": { typography: "s2" } }} />
@@ -265,13 +293,13 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
                           sx={{
                             ...focusRing,
                             px: 1.5, py: 1.125, borderRadius: 1, cursor: "pointer", flex: "1 1 46%", minWidth: 190,
-                            border: "1px solid", borderColor: active ? ACCENT : "divider",
-                            bgcolor: (t) => (active ? alpha(ACCENT, t.palette.mode === "dark" ? 0.1 : 0.05) : "transparent"),
-                            "&:hover": { borderColor: active ? ACCENT : "text.disabled" },
+                            border: "1px solid", borderColor: active ? "text.primary" : "divider",
+                            bgcolor: (t) => (active ? selectedBg(t) : "transparent"),
+                            "&:hover": { borderColor: active ? "text.primary" : "text.disabled" },
                           }}
                         >
                           <Stack direction="row" alignItems="center" spacing={0.75}>
-                            <Iconify icon={active ? "solar:check-circle-bold" : "solar:circle-linear"} width={14} sx={{ color: active ? ACCENT : "text.disabled" }} />
+                            <Iconify icon={active ? "solar:check-circle-bold" : "solar:circle-linear"} width={14} sx={{ color: active ? "text.primary" : "text.disabled" }} />
                             {/* How many runs it tries is in Cost below — set by the budget, not the card. */}
                             {/* One name for the method everywhere: plain words, the optimiser's in brackets. */}
                             <Typography sx={{ typography: "s2", fontWeight: 700 }}>{`${methodLabelOf(o.id)} search (${o.label})`}</Typography>
@@ -299,21 +327,33 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
           )}
         </Box>
 
+        </>)}
+
         {/* The two things the search can't guess — what to aim at, what it may spend. */}
         {main && (
           <Box>
             <Stack direction="row" spacing={1.5}>
               <Box flex={1} minWidth={0}>
                 <Typography sx={fieldLabel}>Goal</Typography>
-                <Select size="small" fullWidth value={goalOf.id} onChange={(e) => setGoal(e.target.value)} sx={selectSx} renderValue={() => goalText(goalOf)}>
+                <Select
+                  size="small" fullWidth value={goalOf.id} sx={selectSx} renderValue={() => goalText(goalOf)}
+                  onChange={(e) => (e.target.value === ADD_EVAL ? setAddingEval(true) : setGoal(e.target.value))}
+                  MenuProps={{ PaperProps: { sx: { maxHeight: 460 } } }}
+                >
                   {[["rate", null], ["outcome", "Outcomes · from tool calls"], ["eval", "Evaluations"]].flatMap(([group, title]) => {
                     const list = goals.filter((g) => g.group === group);
-                    if (!list.length) return [];
+                    if (!list.length && group !== "eval") return [];
                     return [
                       ...(title ? [<ListSubheader key={group} sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", lineHeight: "28px" }}>{title}</ListSubheader>] : []),
                       ...list.map((g) => (
                         <MenuItem key={g.id} value={g.id} sx={{ typography: "s2", gap: 2 }}>
-                          <Box component="span" sx={{ flex: 1, minWidth: 0 }}>{goalText(g)}</Box>
+                          <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
+                            <Box component="span" sx={{ display: "block" }}>{goalText(g)}</Box>
+                            {/* What an outcome counts — read off its tool's calls. */}
+                            {g.group === "outcome" && g.note && (
+                              <Box component="span" sx={{ display: "block", typography: "s3", color: "text.subtitle" }}>{g.note}</Box>
+                            )}
+                          </Box>
                           {g.reliability && (
                             <Box component="span" sx={{ typography: "s3", fontVariantNumeric: "tabular-nums", color: g.reliability.tier === "unreliable" ? WARN : "text.subtitle", flexShrink: 0 }}>
                               {g.reliability.measured ? `κ ${g.reliability.kappa.toFixed(2)} · ${g.reliability.label}` : g.reliability.label}
@@ -321,6 +361,18 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
                           )}
                         </MenuItem>
                       )),
+                      /* Your own evaluation: the environment's add-evaluations flow, then it's here to pick. */
+                      ...(group === "eval" ? [
+                        <MenuItem key={ADD_EVAL} value={ADD_EVAL} disabled={slotsLeft <= 0} sx={{ typography: "s2", gap: 1, color: "text.secondary" }}>
+                          <Iconify icon="mingcute:add-line" width={14} />
+                          <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
+                            <Box component="span" sx={{ display: "block", fontWeight: 600, color: "text.primary" }}>Add an evaluation</Box>
+                            <Box component="span" sx={{ display: "block", typography: "s3", color: "text.subtitle" }}>
+                              {slotsLeft <= 0 ? "This environment has all the evaluations it can take" : `From the library, or your own — added to ${main?.name || "this environment"}`}
+                            </Box>
+                          </Box>
+                        </MenuItem>,
+                      ] : []),
                     ];
                   })}
                 </Select>
@@ -422,7 +474,7 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
         )}
       </Stack>
 
-      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider" }}>
+      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}>
         <Typography sx={{ typography: "s3", color: blocked ? "#DC2626" : "text.subtitle", flex: 1 }}>
           {blocked || (main && !searchTasks ? `${main.name} has no scenarios to run yet.` : today ? "It runs the environment on today's version first. Nothing ships on its own — a winner comes back as a draft." : "Nothing ships on its own — a winner comes back as a draft.")}
         </Typography>
@@ -435,14 +487,47 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
           Start improvement
         </Button>
       </Stack>
+      {main && (
+        <AddEvalsDrawer
+          open={addingEval}
+          onClose={() => setAddingEval(false)}
+          env={main}
+          envState={evalEnvState}
+          existingIds={appliedIds}
+          slotsLeft={slotsLeft}
+          onAdd={(entries) => {
+            addEvals(entries);
+            /* The first one added becomes the goal. */
+            if (entries[0]?.id) setGoal(entries[0].id);
+            setAddingEval(false);
+          }}
+        />
+      )}
+    </SetupFrame>
+  );
+}
+
+/* A dialog where it opens over a drawer; the drawer's own body where it is the drawer. */
+function SetupFrame({ bare, open, onClose, children }) {
+  if (bare) return <Stack sx={{ height: "100%", minHeight: 0 }}>{children}</Stack>;
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 1.5, backgroundImage: "none" } }}>
+      {children}
     </Dialog>
   );
 }
+SetupFrame.propTypes = { bare: PropTypes.bool, open: PropTypes.bool, onClose: PropTypes.func, children: PropTypes.node };
 
 ImprovementSetup.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func.isRequired,
-  preset: PropTypes.shape({ agentKey: PropTypes.string, envId: PropTypes.string, fromGoal: PropTypes.bool }).isRequired,
+  /* Rendered as the body of a drawer it sits in, not a dialog of its own. */
+  bare: PropTypes.bool,
+  /* Back to the step before (New improvement's agent list). */
+  onBack: PropTypes.func,
+  /* The agent picker, first in the form, when the agent is chosen here. */
+  agentField: PropTypes.node,
+  preset: PropTypes.shape({ agentKey: PropTypes.string, envId: PropTypes.string, fromGoal: PropTypes.bool }),
   tasks: PropTypes.array,
   /* The diagnosis changes ticked in Fix my agent. */
   included: PropTypes.array,
