@@ -240,6 +240,23 @@ class TestPins:
         assert _secret_paths(payload) == []
         assert _secret_paths({"metadata": {"Api-Key": "x"}}) == ["metadata.Api-Key"]
 
+    def test_a_run_leaves_the_builder_chat_state_behind(self, user, workspace, storage):
+        environment = _versioned(user, workspace, "runs-chat-state", storage)
+        payload = json.loads(json.dumps(environment.payload))
+        payload["metadata"]["conversation_checkpoints"] = {
+            "conv-1": {"draft_basis": {"token": "abc123"}}
+        }
+        payload["metadata"]["draft_saves"] = {"key-1": {"pieces": {}}}
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload=payload
+        )
+        environment.refresh_from_db()
+
+        metadata = _run(environment).payload["metadata"]
+
+        assert "conversation_checkpoints" not in metadata
+        assert "draft_saves" not in metadata
+
     def test_the_test_execution_records_the_pinned_agent(
         self, user, workspace, storage
     ):

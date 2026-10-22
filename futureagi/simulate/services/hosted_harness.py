@@ -464,6 +464,8 @@ def create_selected_harness_run(
             "sandbox_runtime",
             "default_pairs",
             "default_pair_sealed",
+            "conversation_checkpoints",
+            "draft_saves",
         ):
             child_metadata.pop(key, None)
         child_metadata.update(

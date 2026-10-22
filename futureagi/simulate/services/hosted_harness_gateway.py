@@ -1922,7 +1922,9 @@ class HostedHarnessGateway:
             )
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
-                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
+                json.dumps(
+                    guest_job_document(payload), sort_keys=True, separators=(",", ":")
+                ).encode(),
                 "/work/job.json",
             )
             authoring_secrets_arg = ""
@@ -2935,7 +2937,11 @@ class HostedHarnessGateway:
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(workspace_archive, "/work/conversation.tar.gz")
             sandbox.fs.upload_file(
-                json.dumps(job.payload, sort_keys=True, separators=(",", ":")).encode(),
+                json.dumps(
+                    guest_job_document(job.payload),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode(),
                 "/work/job.json",
             )
             sandbox.fs.upload_file(
@@ -4611,6 +4617,22 @@ def _provider_import_authoring_material(
     return ({secret_name: value} if value else {}), connector
 
 
+# Builder-chat state the server keeps on the job; ALK rejects its basis ``token``.
+_SERVER_ONLY_METADATA = ("conversation_checkpoints", "draft_saves")
+
+
+def guest_job_document(payload: dict[str, Any]) -> dict[str, Any]:
+    """A copy of the job payload without metadata only the server reads."""
+    document = dict(payload)
+    if isinstance(document.get("metadata"), dict):
+        document["metadata"] = {
+            key: value
+            for key, value in document["metadata"].items()
+            if key not in _SERVER_ONLY_METADATA
+        }
+    return document
+
+
 def prepare_dispatch_payload(
     payload: dict[str, Any],
     secrets_map: dict[str, str],
@@ -4626,7 +4648,7 @@ def prepare_dispatch_payload(
     API keys and secret values remain exclusively in ``secrets.json`` and the stored job payload is
     never mutated.
     """
-    dispatched = dict(payload)
+    dispatched = guest_job_document(payload)
     agent = dict(dispatched.get("agent") or {})
     # The secret values remain exclusively in the one-shot secrets file, but ALK's
     # bundle preflight still needs to know which environment names were resolved.
