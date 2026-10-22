@@ -12,7 +12,6 @@ import {
   IconButton,
   Typography,
 } from "@mui/material";
-import { LoadingButton } from "@mui/lab";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "src/components/snackbar";
@@ -32,7 +31,6 @@ const RerunDependentColumns = ({ dataset: datasetId }) => {
   const { rerunDependentColumns, setRerunDependentColumns } =
     useRerunDependentColumnsStore();
   const [selectedIds, setSelectedIds] = useState([]);
-  const [isRerunning, setIsRerunning] = useState(false);
 
   useEffect(() => {
     setSelectedIds(
@@ -41,9 +39,7 @@ const RerunDependentColumns = ({ dataset: datasetId }) => {
   }, [rerunDependentColumns]);
 
   const onClose = () => {
-    if (!isRerunning) {
-      setRerunDependentColumns(null);
-    }
+    setRerunDependentColumns(null);
   };
 
   const toggleColumn = (columnId) => {
@@ -65,43 +61,49 @@ const RerunDependentColumns = ({ dataset: datasetId }) => {
     return response?.data?.result?.column_config ?? [];
   };
 
-  const onConfirm = async () => {
-    const selectedDependents = rerunDependentColumns.dependents.filter(
-      (column) => selectedIds.includes(column.id),
+  const onConfirm = () => {
+    const { sourceColumn, dependents } = rerunDependentColumns;
+    const selectedDependents = dependents.filter((column) =>
+      selectedIds.includes(column.id),
     );
 
-    if (!selectedDependents.length) {
-      setRerunDependentColumns(null);
-      return;
-    }
+    // Close at once: the chain lasts as long as its slowest column, so it
+    // runs in the background and reports progress through snackbars.
+    setRerunDependentColumns(null);
+    if (!selectedDependents.length) return;
 
-    setIsRerunning(true);
-    try {
-      await rerunDependentColumnsInOrder({
-        sourceColumnId: rerunDependentColumns.sourceColumn.id,
-        dependentColumns: selectedDependents,
-        fetchColumns,
-        rerunColumn: (column) =>
-          axios.post(
-            endpoints.develop.addColumns.updateDynamicColumn(column.id),
-            { operation_type: column.operationType },
-          ),
+    enqueueSnackbar(
+      `Selected columns will rerun after ${sourceColumn.name || "the updated column"} finishes`,
+      { variant: "info" },
+    );
+    rerunDependentColumnsInOrder({
+      sourceColumnId: sourceColumn.id,
+      dependentColumns: selectedDependents,
+      fetchColumns,
+      rerunColumn: async (column) => {
+        await axios.post(
+          endpoints.develop.addColumns.updateDynamicColumn(column.id),
+          { operation_type: column.operationType },
+        );
+        enqueueSnackbar(`Rerunning ${column.name}`, { variant: "info" });
+        // Let the grid show the column as running and poll it.
+        refreshGrid();
+      },
+    })
+      .then(() => {
+        enqueueSnackbar("Dependent columns rerun successfully", {
+          variant: "success",
+        });
+        refreshGrid();
+      })
+      .catch((error) => {
+        enqueueSnackbar(
+          error?.response?.data?.message ||
+            error?.message ||
+            "Failed to rerun dependent columns",
+          { variant: "error" },
+        );
       });
-      enqueueSnackbar("Dependent columns rerun successfully", {
-        variant: "success",
-      });
-      setRerunDependentColumns(null);
-      refreshGrid();
-    } catch (error) {
-      enqueueSnackbar(
-        error?.response?.data?.message ||
-          error?.message ||
-          "Failed to rerun dependent columns",
-        { variant: "error" },
-      );
-    } finally {
-      setIsRerunning(false);
-    }
   };
 
   return (
@@ -124,7 +126,7 @@ const RerunDependentColumns = ({ dataset: datasetId }) => {
         <Typography component="span" variant="h6">
           Rerun dependent columns?
         </Typography>
-        <IconButton aria-label="Close" onClick={onClose} disabled={isRerunning}>
+        <IconButton aria-label="Close" onClick={onClose}>
           <Iconify icon="mdi:close" />
         </IconButton>
       </DialogTitle>
@@ -144,7 +146,6 @@ const RerunDependentColumns = ({ dataset: datasetId }) => {
                 <Checkbox
                   checked={selectedIds.includes(column.id)}
                   onChange={() => toggleColumn(column.id)}
-                  disabled={isRerunning}
                 />
               }
               label={column.name}
@@ -153,23 +154,17 @@ const RerunDependentColumns = ({ dataset: datasetId }) => {
         </Box>
       </DialogContent>
       <DialogActions sx={{ padding: 2 }}>
-        <Button
-          onClick={onClose}
-          variant="outlined"
-          size="small"
-          disabled={isRerunning}
-        >
+        <Button onClick={onClose} variant="outlined" size="small">
           Skip
         </Button>
-        <LoadingButton
+        <Button
           onClick={onConfirm}
           variant="contained"
           size="small"
-          loading={isRerunning}
           disabled={!selectedIds.length}
         >
           Rerun selected
-        </LoadingButton>
+        </Button>
       </DialogActions>
     </Dialog>
   );

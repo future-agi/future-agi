@@ -252,6 +252,40 @@ describe("waitForColumnCompletion", () => {
     expect(wait).toHaveBeenCalledWith(1);
   });
 
+  it("keeps waiting for a column that runs longer than ten minutes", async () => {
+    // e.g. LLM classification over a few thousand rows at concurrency 5.
+    let waited = 0;
+    const fetchColumns = vi.fn(async () => [
+      { ...source, status: waited >= 700_000 ? "Completed" : "Running" },
+    ]);
+
+    await expect(
+      waitForColumnCompletion({
+        columnId: source.id,
+        fetchColumns,
+        wait: async (duration) => {
+          waited += duration;
+        },
+      }),
+    ).resolves.toMatchObject({ status: "Completed" });
+  });
+
+  it("gives up after the backend's one-hour activity limit", async () => {
+    let waited = 0;
+    const fetchColumns = vi.fn(async () => [{ ...source, status: "Running" }]);
+
+    await expect(
+      waitForColumnCompletion({
+        columnId: source.id,
+        fetchColumns,
+        wait: async (duration) => {
+          waited += duration;
+        },
+      }),
+    ).rejects.toThrow("Timed out waiting for column");
+    expect(waited).toBe(60 * 60 * 1000);
+  });
+
   it("stops when the column fails", async () => {
     await expect(
       waitForColumnCompletion({

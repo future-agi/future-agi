@@ -19,6 +19,10 @@ const RUNNING_COLUMN_STATUSES = new Set([
 
 const FAILED_COLUMN_STATUSES = new Set(["Cancelled", "Error", "Failed"]);
 
+// The backend activities that run these columns allow time_limit=3600
+// (model_hub/views/dynamic_columns.py), so wait up to an hour per column.
+const COLUMN_RUN_TIMEOUT_MS = 60 * 60 * 1000;
+
 const getColumnId = (column) =>
   String(column?.field ?? column?.id ?? column?.col?.id ?? "");
 
@@ -340,7 +344,7 @@ export const waitForColumnCompletion = async ({
   columnId,
   fetchColumns,
   pollInterval = 1500,
-  maxAttempts = 400,
+  maxAttempts = Math.ceil(COLUMN_RUN_TIMEOUT_MS / pollInterval) + 1,
   wait = (duration) =>
     new Promise((resolve) => {
       setTimeout(resolve, duration);

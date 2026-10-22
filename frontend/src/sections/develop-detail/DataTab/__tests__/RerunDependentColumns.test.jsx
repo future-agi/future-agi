@@ -53,6 +53,21 @@ const openDialog = () => {
   });
 };
 
+const completedColumns = {
+  data: {
+    result: {
+      column_config: [
+        { id: "source-id", name: "Source", status: "Completed" },
+        {
+          id: "dependent-id",
+          name: "Dependent",
+          status: "Completed",
+        },
+      ],
+    },
+  },
+};
+
 describe("RerunDependentColumns", () => {
   beforeEach(() => {
     mocks.enqueueSnackbar.mockReset();
@@ -76,20 +91,7 @@ describe("RerunDependentColumns", () => {
   });
 
   it("reruns a selected dependent with its operation type", async () => {
-    mocks.getColumns.mockResolvedValue({
-      data: {
-        result: {
-          column_config: [
-            { id: "source-id", name: "Source", status: "Completed" },
-            {
-              id: "dependent-id",
-              name: "Dependent",
-              status: "Completed",
-            },
-          ],
-        },
-      },
-    });
+    mocks.getColumns.mockResolvedValue(completedColumns);
     mocks.post.mockResolvedValue({ data: { status: true } });
     openDialog();
     render(<RerunDependentColumns dataset="dataset-id" />);
@@ -103,28 +105,66 @@ describe("RerunDependentColumns", () => {
       ),
     );
     await waitFor(() =>
-      expect(
-        useRerunDependentColumnsStore.getState().rerunDependentColumns,
-      ).toBeNull(),
+      expect(mocks.enqueueSnackbar).toHaveBeenCalledWith(
+        "Dependent columns rerun successfully",
+        { variant: "success" },
+      ),
     );
-    expect(mocks.refreshGrid).toHaveBeenCalledTimes(1);
+    // Once after the dependent starts, so the grid shows it running, and
+    // once when the chain is done.
+    expect(mocks.refreshGrid).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the dialog open and reports an error when a rerun fails", async () => {
-    mocks.getColumns.mockResolvedValue({
-      data: {
-        result: {
-          column_config: [
-            { id: "source-id", name: "Source", status: "Completed" },
-            {
-              id: "dependent-id",
-              name: "Dependent",
-              status: "Completed",
-            },
-          ],
-        },
-      },
+  it("closes once confirmed and finishes the chain in the background", async () => {
+    let finishSource;
+    mocks.getColumns
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishSource = resolve;
+          }),
+      )
+      .mockResolvedValue(completedColumns);
+    mocks.post.mockResolvedValue({ data: { status: true } });
+    openDialog();
+    render(<RerunDependentColumns dataset="dataset-id" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Rerun selected" }));
+
+    // The source column is still running, and the page is no longer blocked.
+    expect(
+      useRerunDependentColumnsStore.getState().rerunDependentColumns,
+    ).toBeNull();
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(mocks.enqueueSnackbar).toHaveBeenCalledWith(
+      "Selected columns will rerun after Source finishes",
+      { variant: "info" },
+    );
+    expect(mocks.post).not.toHaveBeenCalled();
+
+    finishSource(completedColumns);
+
+    await waitFor(() =>
+      expect(mocks.post).toHaveBeenCalledWith(
+        "/model-hub/columns/dependent-id/rerun-operation/",
+        { operation_type: "classify" },
+      ),
+    );
+    expect(mocks.enqueueSnackbar).toHaveBeenCalledWith("Rerunning Dependent", {
+      variant: "info",
     });
+    await waitFor(() =>
+      expect(mocks.enqueueSnackbar).toHaveBeenCalledWith(
+        "Dependent columns rerun successfully",
+        { variant: "success" },
+      ),
+    );
+  });
+
+  it("reports an error when a dependent rerun fails", async () => {
+    mocks.getColumns.mockResolvedValue(completedColumns);
     mocks.post.mockRejectedValue({
       response: { data: { message: "Dependent rerun failed" } },
     });
@@ -139,10 +179,10 @@ describe("RerunDependentColumns", () => {
         { variant: "error" },
       ),
     );
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(
-      useRerunDependentColumnsStore.getState().rerunDependentColumns,
-    ).not.toBeNull();
+    expect(mocks.enqueueSnackbar).not.toHaveBeenCalledWith(
+      "Dependent columns rerun successfully",
+      { variant: "success" },
+    );
     expect(mocks.refreshGrid).not.toHaveBeenCalled();
   });
 });
