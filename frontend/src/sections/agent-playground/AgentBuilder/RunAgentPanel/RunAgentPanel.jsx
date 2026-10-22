@@ -2,7 +2,10 @@ import { Box } from "@mui/material";
 import React, { useCallback, useRef, useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import { AgentGraph } from "src/components/AgentGraph";
-import { START_ID, END_ID } from "src/components/AgentGraph/layoutUtils";
+import {
+  isSelectableExecutionNode,
+  isSkippedExecutionStatus,
+} from "src/components/AgentGraph/nodeUtils";
 import useResolvedExecution from "../../hooks/useResolvedExecution";
 import { useWorkflowRunStoreShallow } from "../../store";
 import NodeOutputDetail from "./NodeOutputDetail";
@@ -34,9 +37,10 @@ export default function RunAgentPanel({
   useEffect(() => {
     if (!executionData?.nodes?.length || selectedNodeId) return;
 
-    const executedNodes = executionData.nodes.filter(
-      (n) => n.nodeExecution || n.node_execution,
-    );
+    const executedNodes = executionData.nodes.filter((n) => {
+      const exec = n.nodeExecution || n.node_execution;
+      return exec && !isSkippedExecutionStatus(exec.status);
+    });
     if (executedNodes.length === 0) return;
 
     if (isRunning) {
@@ -46,9 +50,10 @@ export default function RunAgentPanel({
       // On completion, select the last executed node
       const lastNode = executedNodes[executedNodes.length - 1];
       if (lastNode.subGraph?.nodes?.length) {
-        const executedInner = lastNode.subGraph.nodes.filter(
-          (n) => n.nodeExecution || n.node_execution,
-        );
+        const executedInner = lastNode.subGraph.nodes.filter((n) => {
+          const exec = n.nodeExecution || n.node_execution;
+          return exec && !isSkippedExecutionStatus(exec.status);
+        });
         if (executedInner.length > 0) {
           const lastInner = executedInner[executedInner.length - 1];
           setSelectedNodeId(`${lastNode.id}__${lastInner.id}`);
@@ -107,7 +112,7 @@ export default function RunAgentPanel({
   };
 
   const handleGraphNodeClick = useCallback((_event, node) => {
-    if (node.id === START_ID || node.id === END_ID) return;
+    if (!isSelectableExecutionNode(node)) return;
     setSelectedNodeId(node.id);
   }, []);
 
