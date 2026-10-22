@@ -266,9 +266,16 @@ export const HELD_SHARE = 0.35;
   improvements only: `inconclusiveOut`).
 */
 export const isInconclusive = (t) => !!t && (t.reproduce === "inconclusive" || t.reproduce === "not-reproduced" || (!!t.fromIssue && t.status === "flaky"));
-export const splitIssueScenarios = (all = [], seed = "split", { groupOf = (t) => t.id, inconclusiveOut = false } = {}) => {
+/*
+  Environment scenarios held back with a fix (new improvements): the rest of
+  the suite's scenarios that fail today the way the issue does — a tool the
+  issue's scenarios skip, or a claim with no tool behind it. A handful of the
+  issue's own scenarios can't prove a fix; these widen the set it's proven on.
+*/
+export const ENV_HELD_MAX = 8;
+export const splitIssueScenarios = (all = [], seed = "split", { groupOf = (t) => t.id, inconclusiveOut = false, sameFailure = false } = {}) => {
   const issue = all.filter((t) => t.fromIssue);
-  const rest = all.filter((t) => !t.fromIssue);
+  const others = all.filter((t) => !t.fromIssue);
   const failing = (t) => t.status !== "unmeasured" && passShareOf(t) < 1 && !(inconclusiveOut && isInconclusive(t));
   const groups = new Map();
   issue.forEach((t) => {
@@ -283,6 +290,16 @@ export const splitIssueScenarios = (all = [], seed = "split", { groupOf = (t) =>
   const heldN = Math.min(Math.round(dealt.length * HELD_SHARE), Math.max(0, dealt.length - 1));
   const heldGroups = dealt.slice(0, heldN);
   const trainGroups = dealt.slice(heldN);
+  const issueFailing = issue.filter(failing);
+  const skipped = new Set(issueFailing.flatMap((t) => t.callLog?.missing || []));
+  const claims = issueFailing.some((t) => t.callLog?.unsupportedClaim);
+  const failsSameWay = (t) => (t.callLog?.missing || []).some((m) => skipped.has(m)) || (claims && !!t.callLog?.unsupportedClaim);
+  const envHeld = sameFailure && heldN
+    ? shuffle(others.filter((t) => !t.proposed && failing(t) && !isInconclusive(t) && failsSameWay(t)), r)
+      .slice(0, ENV_HELD_MAX)
+    : [];
+  const envHeldIds = new Set(envHeld.map((t) => t.id));
+  const rest = others.filter((t) => !envHeldIds.has(t.id));
   /* One fresh variation per held-back group: the same failure, worded anew. */
   const fresh = heldGroups.map(([g, list]) => {
     const rep = list.find(failing) || list[0];
@@ -302,8 +319,8 @@ export const splitIssueScenarios = (all = [], seed = "split", { groupOf = (t) =>
     /* The target set alone — the reproducing groups not held back. New
        improvements keep it apart from the rest of the suite. */
     target: trainGroups.flatMap(([, list]) => list),
-    held: [...heldGroups.flatMap(([, list]) => list), ...fresh],
-    groups: { reproducing: dealt.length, held: heldN, train: trainGroups.length, fresh: fresh.length },
+    held: [...heldGroups.flatMap(([, list]) => list), ...fresh, ...envHeld.map((t) => ({ ...t, envHeld: true }))],
+    groups: { reproducing: dealt.length, held: heldN, train: trainGroups.length, fresh: fresh.length, ...(sameFailure && { envHeld: envHeld.length }) },
     thin: heldN === 0,
   };
 };
@@ -792,7 +809,7 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
   const goalMode = !!rsi && !issueFix;
   const goalTarget = (t) => failsGoal(t, cfg.goal);
   const issueSplit = issueFix
-    ? splitIssueScenarios(scope.tasks, `${env?.id || seed}-split-issue`, { groupOf, inconclusiveOut: !!rsi })
+    ? splitIssueScenarios(scope.tasks, `${env?.id || seed}-split-issue`, { groupOf, inconclusiveOut: !!rsi, sameFailure: !!rsi })
     : goalMode
       ? splitGoalScenarios(scope.tasks, `${env?.id || seed}-split-goal`, { groupOf, isTarget: goalTarget, holdable: scope.holdable })
       : null;
@@ -1113,10 +1130,10 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     the same streams the single re-score always used, so its numbers read
     exactly as before.
   */
-  const scoreHeld = (f, i) => {
+  const scoreHeld = (f, i, stream = null) => {
     const winning = pool.filter((p) => f.picks.includes(p.id));
-    const key = i === 0 ? `${seed}:held` : `${seed}:held:f${f.n}`;
-    const rh = rng(hashSeed(i === 0 ? `${seed}-held` : `${seed}-held-f${f.n}`));
+    const key = stream ? `${seed}:held:${stream}` : i === 0 ? `${seed}:held` : `${seed}:held:f${f.n}`;
+    const rh = rng(hashSeed(stream ? `${seed}-held-${stream}` : i === 0 ? `${seed}-held` : `${seed}-held-f${f.n}`));
     const per = {};
     heldMeasured.forEach((t) => {
       const helped = winning.some((p) => generalisesTo(p, t));
@@ -1143,7 +1160,8 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       Drawn by hash, so the search's own streams are untouched. Older
       records read must-pass scenarios off the held-back set.
     */
-    const mustPassFails = rsi
+    /* A confirmation re-runs the held-back set only — must-pass already ran. */
+    const mustPassFails = rsi && !stream
       ? mustPassMeasured
         .filter((t) => passShareOf(t) >= 1 && hashSeed(`${key}:mp:${t.id}`) % 100 < 3)
         .map((t) => ({ id: t.id, title: t.title, critical: !!t.critical, repeated: repeatsOnRerun(`${key}:mp:${t.id}`) }))
@@ -1157,7 +1175,7 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     const hollow = hollowOf(f).length > 0;
     const issueHeldFixed = heldIssueTargets.filter((t) => per[t.id] === "fixed").length;
     /* Once in each other environment picked; each must-pass set there holds. */
-    const envs = rsi && (cfg.otherEnvs || []).length ? cfg.otherEnvs.map((e) => otherEnvRun(`${key}:f${f.n}`, e)) : null;
+    const envs = rsi && !stream && (cfg.otherEnvs || []).length ? cfg.otherEnvs.map((e) => otherEnvRun(`${key}:f${f.n}`, e)) : null;
     const envBroke = (envs || []).find((e) => !e.held);
     /* The acceptance rule, as the verdict reads it. */
     const why = blockers.length ? "a must-pass scenario failed again on a re-run"
@@ -1180,13 +1198,21 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
   /* The winner is the best finalist that passes; none passing, the search's
      pick stands so the verdict can say why. */
   const chosen = scored.find((x) => x.accepted) || scored[0] || null;
+  /*
+    The held-back run that picked the winner can't also prove it — the best
+    of three on one run flatters whichever got lucky. The winner runs on the
+    held-back set once more, on fresh draws, and the verdict reads that run
+    (new improvements).
+  */
+  const confirm = rsi && chosen?.accepted && heldMeasured.length && !issueSplit?.thin ? scoreHeld(chosen.trial, 0, "confirm") : null;
+  const proof = confirm || chosen;
   const winner = chosen?.trial || null;
   const winning = winner ? pool.filter((p) => winner.picks.includes(p.id)) : [];
   const shallower = winner && winner === pick && top && pick.n !== top.n ? { over: top.n, gap: top.score - pick.score } : null;
   const topOverall = trials.reduce((a, t) => (t.score > a.score ? t : a), trials[0]);
   const hollow = winner ? hollowOf(winner) : [];
-  const heldPerScenario = chosen ? chosen.per : Object.fromEntries(heldMeasured.map((t) => [t.id, passShareOf(t) >= 1 ? "same" : "still-failing"]));
-  const heldScore = chosen ? chosen.score : scoreOf(heldMeasured, heldPerScenario);
+  const heldPerScenario = proof ? proof.per : Object.fromEntries(heldMeasured.map((t) => [t.id, passShareOf(t) >= 1 ? "same" : "still-failing"]));
+  const heldScore = proof ? proof.score : scoreOf(heldMeasured, heldPerScenario);
   const heldBlockers = chosen ? chosen.blockers : [];
 
   /* A candidate that adds a tool parameter can't be proven on this
@@ -1220,6 +1246,7 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       id: t.id, title: t.title, critical: !!t.critical,
       ...(t.fromIssue && { fromIssue: t.fromIssue, before: t.status, groupId: t.groupId || groupOf(t) }),
       ...(t.fresh && { fresh: true }),
+      ...(t.envHeld && { envHeld: true, before: t.status }),
     })),
     heldBase,
     heldScore,
@@ -1242,7 +1269,19 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       ...(x.envs && { envs: x.envs }),
       ...(x.repeats && { repeats: x.repeats }),
       ...(x.fullRegression && { fullRegression: true }),
+      ...(x === chosen && confirm && { confirmScore: confirm.score }),
     })),
+    /* The winner's second held-back run, after the pick — what proves it. */
+    ...(confirm && {
+      confirm: {
+        selectionScore: chosen.score,
+        score: confirm.score,
+        lift: confirm.lift,
+        held: confirm.accepted,
+        why: confirm.why,
+        ...(issueFix && { selectionIssueFixed: chosen.issueHeldFixed, issueFixed: confirm.issueHeldFixed }),
+      },
+    }),
     /* The three sets, for the proof. */
     split: issueSplit
       ? { kind: issueFix ? "issue" : "goal", ...issueSplit.groups, thin: issueSplit.thin }

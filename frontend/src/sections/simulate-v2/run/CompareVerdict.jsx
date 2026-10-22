@@ -5,7 +5,7 @@ import { Box, Stack, Typography, Button, Checkbox, Collapse, Tooltip, FormContro
 import Iconify from "src/components/iconify";
 import { neutralCheckboxSx } from "../components/primitives";
 import { textTone } from "../components/textTone";
-import { NO_CHANGE_POINTS, PAIR_FLOOR } from "../_mock/pairs";
+import { noiseBandText, PAIR_FLOOR } from "../_mock/pairs";
 import { clickable, focusRing } from "../components/clickable";
 
 /* Red is for regressions only. Everything else stays neutral. */
@@ -53,7 +53,7 @@ export default function CompareVerdict({
 }) {
   const [pinsOpen, setPinsOpen] = useState(false);
   if (!read) return null;
-  const { counts, interval: iv, label, fixes, warnings, trend, selfNoise } = read;
+  const { counts, interval: iv, label, fixes, warnings, trend, band } = read;
   const floor = label.id === "rows";
   const side = label.id === "side";
   const inconclusive = label.id === "inconclusive" || floor;
@@ -84,7 +84,7 @@ export default function CompareVerdict({
           </Typography>
         ) : (
           <Stack direction="row" alignItems="center" spacing={1.25} sx={{ flexWrap: "wrap", rowGap: 0.75 }}>
-            <Tooltip arrow title={`${label.note} Improved or Regressed when the 95% interval excludes zero; No meaningful change when it sits inside ±${NO_CHANGE_POINTS} points; Inconclusive otherwise.`}>
+            <Tooltip arrow title={`${label.note} Improved or Regressed when the 95% interval excludes zero${band && band.source !== "estimate" && band.source !== "default" ? " and the change beats the noise" : ""}; No meaningful change when it sits inside the noise; Inconclusive otherwise. ${noiseBandText(band) || ""}`}>
               <Stack
                 direction="row" alignItems="center" spacing={0.5}
                 sx={{
@@ -110,13 +110,11 @@ export default function CompareVerdict({
                 `95% interval ${signed(iv.lo)} to ${signed(iv.hi)} pts${measuredNote}${unmeasured > 0 ? ` · ${unmeasured} not measured` : ""}.`,
                 `${head}${rest.length ? ` · ${rest.join(" · ")}` : ""}.`,
                 envHeadline?.text ? `${envHeadline.text}.` : null,
-                selfNoise
-                  ? `Self-run noise: ${selfNoise.agent} against itself disagreed on ${selfNoise.disagreed} of ${selfNoise.n} scenarios (±${selfNoise.noise} pts) — ${Math.abs(iv.delta) > selfNoise.noise ? "this change beats it" : "this change is inside it"}.`
-                  : `No self-run yet — a flip counts only when it beats the simulator's own noise.`,
+                band ? `${noiseBandText(band)} This change is ${Math.abs(iv.delta) > band.points ? "outside" : "inside"} it.` : null,
               ].filter(Boolean).join(" ")}
             >
               <Typography sx={{ typography: "s2", color: "text.secondary", fontVariantNumeric: "tabular-nums", cursor: "default", borderBottom: "1px dotted", borderColor: "text.disabled" }}>
-                {`pass rate, on ${iv.n} of ${read.total} scenarios`}
+                {`pass rate, on ${iv.n} of ${read.total} scenarios${band ? ` · noise ±${band.points}` : ""}`}
               </Typography>
             </Tooltip>
             <Box flex={1} />

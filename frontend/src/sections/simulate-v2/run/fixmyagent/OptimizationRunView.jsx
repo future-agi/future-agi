@@ -7,7 +7,7 @@ import { clickable, focusRing } from "../../components/clickable";
 import { RunTraceLog } from "../../components/RunTrace";
 import ImprovementProgress from "./ImprovementProgress";
 import { searchTrace, blockingVerdict, KIND_SURFACE, rejectedFor, compatFailed, staticFailed, diagnosisSummaryOf, paretoPool, goalWords, triedLabelOf } from "../../_mock/optimizer";
-import { staleSince, optimizationVerdict, OPTIMIZER_MODELS, OPT_STATUS, DEFAULT_LIMITS, improvementOutcome, improvementTotalSpend, issueLine, limitRows, searchSpend, judgeFor, ladderOf, improvementPhaseOf, TRACE_STEP_MS, statusOf, settlePending, reproduceStepsOf, reproduceMsOf } from "../../_mock/optimizationRuns";
+import { heldSplitText, staleSince, optimizationVerdict, OPTIMIZER_MODELS, OPT_STATUS, DEFAULT_LIMITS, improvementOutcome, improvementTotalSpend, issueLine, limitRows, searchSpend, judgeFor, ladderOf, improvementPhaseOf, TRACE_STEP_MS, statusOf, settlePending, reproduceStepsOf, reproduceMsOf } from "../../_mock/optimizationRuns";
 import { proofKindOf, fixDepthOf } from "../../_mock/rsiModel";
 import { membersChanged, proposalMembers, uncheckedChannelNotes } from "../../_mock/improvementPolicy";
 import { improvementScenariosNotIn, addImprovementScenariosPatch } from "../../_mock/improvementScenarios";
@@ -515,6 +515,7 @@ export default function OptimizationRunView({
               rows={[
                 diag?.surface && ["Changed", `${diag.surface.label.charAt(0).toUpperCase()}${diag.surface.label.slice(1)}`],
                 issueLine(outcome.issue, outcome.held, { thin: outcome.thin }) && ["Issue scenarios", issueLine(outcome.issue, outcome.held, { thin: outcome.thin })],
+                outcome.strength && ["Strength", `${outcome.strength.label} — ${outcome.strength.note}`],
                 ["Proof", proof ? proofDisplay(proof).line : "Run by Future AGI"],
                 /* Everything it spent — reproducing, the search, a coding agent's attempts. */
                 ["Spent", `${creditsLabel(improvementTotalSpend(record, env?.surface, { attempts: attemptsNow }))}${record.budget ? ` of ${creditsLabel(record.budget)}` : ""}`],
@@ -597,7 +598,7 @@ export default function OptimizationRunView({
                 sub={result.split?.thin
                   ? "too few groups reproduced to hold any back"
                   : `${result.heldBase}% → ${outcome.heldScore}%${result.noise ? ` · noise ±${result.noise}` : ""}`}
-                hint={`Scenarios the search never saw — ${result.heldMeasured} here${result.split?.kind === "issue" ? `: ${result.split.held} of ${result.split.reproducing} reproducing groups + ${result.split.fresh} fresh` : ""}. This is the number worth quoting; the target score is what the search was allowed to fit to. Noise is what two runs of the same agent differ by; a gain has to clear it.`}
+                hint={`Scenarios the search never saw — ${result.heldMeasured} here${heldSplitText(result.split) ? `: ${heldSplitText(result.split)}` : ""}.${result.confirm ? ` Measured on a re-run after the pick (${result.confirm.selectionScore}% when picked) — the run that picks a winner can't also prove it.` : ""} This is the number worth quoting; the target score is what the search was allowed to fit to. Noise is what two runs of the same agent differ by; a gain has to clear it.`}
               />
               <Metric label="Target" value={signedPts((shipped || winner).score - result.base)} sub={`${result.base}% → ${(shipped || winner).score}%`} hint={`The ${result.trainMeasured} scenarios the search tuned on and saw in full.`} />
               <Metric

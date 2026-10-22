@@ -4,7 +4,7 @@
   constraint checked — so a reviewer who never opened Future AGI can judge
   the change where they review it.
 */
-import { REPEATS } from "../../_mock/optimizationRuns";
+import { heldSplitText, REPEATS } from "../../_mock/optimizationRuns";
 import { TRUST_TIERS, proofKindOf } from "../../_mock/rsiModel";
 import { scenarioTitle } from "../../_mock/scenarios";
 
@@ -67,9 +67,10 @@ export const proofMarkdown = ({ record, outcome, name, agent, members, channelNo
     `## Proof · ${name || record.name} (${record.id})`,
     "",
     `**${outcome.headline}**`,
+    ...(outcome.strength ? ["", `${outcome.strength.label}: ${outcome.strength.note}.`] : []),
     "",
     /* The numbers of what ships — the search's pick, or a chosen run once verified. */
-    `Held back, never seen by the search: ${r.heldBase}% → ${outcome.heldScore ?? r.heldScore}% on ${r.heldMeasured} scenarios. Target: ${r.base}% → ${outcome.train?.to ?? winner?.score ?? r.base}%.${outcome.gap != null ? ` Overfit gap: ${outcome.gap} pts.` : ""}`,
+    `Held back, never seen by the search: ${r.heldBase}% → ${outcome.heldScore ?? r.heldScore}% on ${r.heldMeasured} scenarios${r.confirm ? `, on a re-run after the pick (${r.confirm.selectionScore}% when picked)` : ""}. Target: ${r.base}% → ${outcome.train?.to ?? winner?.score ?? r.base}%.${outcome.gap != null ? ` Overfit gap: ${outcome.gap} pts.` : ""}`,
     "",
     `Proof: ${proofLabelLine(proofOf(record, agent)) || "Run by Future AGI"}.`,
     ...(identity ? [`Measured on ${identity} — the environment version held fixed, only the agent changed.`] : []),
@@ -77,13 +78,13 @@ export const proofMarkdown = ({ record, outcome, name, agent, members, channelNo
     ...(r.split?.kind === "issue"
       ? [r.split.thin
         ? "Held-back check is thin: too few of the issue's scenario groups reproduced to hold any back."
-        : `Held back: ${r.split.held} of ${r.split.reproducing} reproducing scenario groups plus ${r.split.fresh} fresh ${r.split.fresh === 1 ? "variation" : "variations"} — whole groups, so no near-copy was among the targets.`]
+        : `Held back: ${heldSplitText(r.split)} — whole groups, so no near-copy was among the targets.`]
       : r.split?.kind === "goal"
         ? [r.split.thin
           ? "Held-back check is thin: too few scenario groups fail the goal to hold any back."
-          : `Held back: ${r.split.held} of ${r.split.reproducing} scenario groups failing the goal plus ${r.split.fresh} fresh ${r.split.fresh === 1 ? "variation" : "variations"} — whole groups, so no near-copy was among the targets.`]
+          : `Held back: ${heldSplitText(r.split)} — whole groups, so no near-copy was among the targets.`]
         : []),
-    ...((r.finalists || []).length ? [`Finalists scored once on the held-back set: ${r.finalists.map((f) => `Run ${f.n} ${f.heldScore}%${f.winner ? " (winner)" : f.accepted ? "" : ` (${f.why})`}`).join(", ")}.`] : []),
+    ...((r.finalists || []).length ? [`Finalists ${r.confirm ? "ranked on one held-back run" : "scored once on the held-back set"}: ${r.finalists.map((f) => `Run ${f.n} ${f.heldScore}%${f.winner ? " (winner)" : f.accepted ? "" : ` (${f.why})`}`).join(", ")}.`] : []),
     /* Newer records: what deeper proof a code change got, and the noise it had to clear. */
     ...(r.calibration ? [`Run-to-run noise: ${record.baseAgentVersion || "the current version"} ran twice against itself — ${r.calibration.disagreed} of ${r.calibration.scenarios} scenarios disagreed, so a gain had to clear ±${r.noise} pts and a flip on those had to repeat.`] : []),
     ...((r.finalists || []).find((f) => f.winner)?.fullRegression ? [`Code change → ${(r.finalists || []).find((f) => f.winner).repeats} repeats per finalist and the full regression set${winner?.repoTests ? `, and ${winner.repoTests.command} passed` : ""}.`] : []),

@@ -50,6 +50,7 @@ export default function ImprovementDecision({ record, env, envState, onClose, on
   const heldNow = outcome.heldScore ?? result?.heldScore;
   const projected = !!outcome.chosen?.projected;
   const unverified = !!outcome.chosen && !outcome.chosen.verified;
+  const confirm = result?.confirm || null;
 
   return (
     <Stack sx={{ height: "100%" }}>
@@ -77,9 +78,20 @@ export default function ImprovementDecision({ record, env, envState, onClose, on
           <Box>
             <Typography sx={head}>Evidence</Typography>
             <Sheet>
+              {outcome.strength && (
+                <Line k="Strength" hint="How much the held-back result is worth: proven, likely, or too few scenarios to tell." v={outcome.strength.label} sub={`${outcome.strength.note.charAt(0).toUpperCase()}${outcome.strength.note.slice(1)}.`} />
+              )}
+              {confirm && !projected && (
+                <Line
+                  k="Held back · at the pick"
+                  hint="The held-back run the finalists were ranked on. It picks the winner, so it can't also prove it."
+                  v={`${result.heldBase}% → ${confirm.selectionScore}%`}
+                  d={{ pts: confirm.selectionScore - result.heldBase, quiet: true }}
+                />
+              )}
               <Line
-                k="Held-back scenarios"
-                hint={projected ? "Projected from the search's pick — this run hasn't been scored on the held-back set yet. Verify it to measure it." : "Scenarios kept out of the search — the number worth quoting."}
+                k={confirm && !projected ? "Held back · re-run" : "Held-back scenarios"}
+                hint={projected ? "Projected from the search's pick — this run hasn't been scored on the held-back set yet. Verify it to measure it." : confirm ? "The winner ran on the held-back set again after it was picked — the number worth quoting." : "Scenarios kept out of the search — the number worth quoting."}
                 v={thin ? "Too few held back" : `${result.heldBase}% → ${heldNow}%${projected ? " · projected" : ""}`}
                 d={thin ? null : { pts: heldNow - result.heldBase }}
               />
@@ -126,7 +138,9 @@ export default function ImprovementDecision({ record, env, envState, onClose, on
                 ? unverified
                   ? `Run ${shipped.n} was chosen over the search's pick. It can't ship until it's verified on the full suite${projected ? " — its held-back result is projected until then" : ""}.`
                   : `Run ${shipped.n} was chosen over the search's pick and verified on the full suite.`
-                : "Finalists are scored once on held-back scenarios; of those that pass, the highest target score is kept."}
+                : confirm
+                  ? `Finalists are ranked on one held-back run; of those that pass, the highest target score is kept. Run ${shipped.n} then ran on the held-back set again — ${confirm.held ? "it held" : "it didn't hold"}.`
+                  : "Finalists are scored once on held-back scenarios; of those that pass, the highest target score is kept."}
             </Typography>
           </Box>
         )}
@@ -207,7 +221,7 @@ Sheet.propTypes = { children: PropTypes.node };
   One fact: label, value and — when it moved — the change, coloured for
   better or worse as the runs table colours its deltas.
 */
-function Line({ k, v, d, hint, last }) {
+function Line({ k, v, sub, d, hint, last }) {
   const pts = d?.pts;
   /* Only a points change is coloured; a value turns red only when something broke. */
   const tone = d?.quiet ? "text.subtitle" : pts < 0 ? RED : GREEN;
@@ -221,11 +235,14 @@ function Line({ k, v, d, hint, last }) {
           </Tooltip>
         )}
       </Stack>
-      <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1, ...num, color: d?.alarm ? RED : "text.primary" }}>{v}</Typography>
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Typography sx={{ typography: "s2", fontWeight: 600, ...num, color: d?.alarm ? RED : "text.primary" }}>{v}</Typography>
+        {sub && <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{sub}</Typography>}
+      </Box>
       {pts != null && pts !== 0 && (
         <Typography sx={{ typography: "s3", fontWeight: 600, color: tone, ...num }}>{`${pts > 0 ? "↑" : "↓"} ${Math.abs(pts)} pts`}</Typography>
       )}
     </Stack>
   );
 }
-Line.propTypes = { k: PropTypes.string, v: PropTypes.node, d: PropTypes.object, hint: PropTypes.string, last: PropTypes.bool };
+Line.propTypes = { k: PropTypes.string, v: PropTypes.node, sub: PropTypes.string, d: PropTypes.object, hint: PropTypes.string, last: PropTypes.bool };

@@ -579,7 +579,7 @@ function Verdict({ outcome, result, targetNow }) {
   const projected = !!outcome.chosen?.projected;
   const effect = outcome.effect || null;
   const cells = [
-    result?.winner && { k: "Held back", v: thin ? "Too few to measure" : `${result.heldBase}% → ${heldNow}%`, sub: projected ? "projected" : "never seen by the search", pts: thin || !lift ? null : lift },
+    result?.winner && { k: "Held back", v: thin ? "Too few to measure" : `${result.heldBase}% → ${heldNow}%`, sub: projected ? "projected" : result.confirm ? "re-run after the pick" : "never seen by the search", pts: thin || !lift ? null : lift },
     result?.winner && targetLift != null && { k: "Target", v: `${result.base}% → ${targetNow}%`, sub: "on the scenarios it was tuned on", pts: targetLift || null },
     result?.winner && outcome.gap != null && !thin && { k: "Overfit gap", v: `${outcome.gap} pts`, sub: "between target and held back" },
     result?.winner && effect && { k: "Cost · latency", v: `${outcome.costKnown === false ? "—" : signedPct(effect.cost)} · ${signedPct(effect.latency)}`, sub: outcome.costKnown === false ? "cost not measured" : "per conversation" },
@@ -590,6 +590,13 @@ function Verdict({ outcome, result, targetNow }) {
   return (
     <Box sx={{ mb: 2, flexShrink: 0, border: "1px solid", borderColor: "divider", borderRadius: 1.5, bgcolor: "background.paper", overflow: "hidden" }}>
       <Typography sx={{ px: 2, py: 1, typography: "s1", fontWeight: 600, lineHeight: 1.45 }}>{outcome.headline}</Typography>
+      {/* What the held-back result is worth, so a count never reads as proof on its own. */}
+      {outcome.strength && (
+        <Typography sx={{ px: 2, mt: -0.75, pb: 1, typography: "s2", color: "text.secondary" }}>
+          <Box component="span" sx={{ fontWeight: 700, color: "text.primary" }}>{outcome.strength.label}</Box>
+          {` · ${outcome.strength.note.charAt(0).toUpperCase()}${outcome.strength.note.slice(1)}.`}
+        </Typography>
+      )}
 
       {/* ── the numbers, side by side ── */}
       {cells.length > 0 && (

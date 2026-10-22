@@ -63,7 +63,8 @@ const COUNT_WORD = {
   new: "new", "not-applicable": "stale", archived: "archived", removed: "removed",
 };
 
-/** Points either side of zero inside which a change isn't meaningful. */
+/** Points either side of zero inside which a change isn't meaningful — only
+    until a comparison has a measured noise band (noiseBandOf). */
 export const NO_CHANGE_POINTS = 10;
 /** Below this many comparable pairs there is no aggregate — rows only. A display rule, not a gate. */
 export const PAIR_FLOOR = 10;
@@ -309,12 +310,42 @@ export const pairedInterval = (diffs) => {
 };
 
 /** Improved / Regressed / No meaningful change / Inconclusive — or none below the floor. */
-export const verdictLabelOf = (iv) => {
+export const verdictLabelOf = (iv, band = NO_CHANGE_POINTS) => {
   if (!iv || iv.n < PAIR_FLOOR) return { id: "rows", label: "Rows only", note: `Fewer than ${PAIR_FLOOR} comparable pairs — no aggregate; read the rows.` };
   if (iv.lo > 0) return { id: "improved", label: "Improved", note: "The whole interval is above zero." };
   if (iv.hi < 0) return { id: "regressed", label: "Regressed", note: "The whole interval is below zero." };
-  if (iv.lo >= -NO_CHANGE_POINTS && iv.hi <= NO_CHANGE_POINTS) return { id: "same", label: "No meaningful change", note: `The whole interval sits inside ±${NO_CHANGE_POINTS} points.` };
-  return { id: "inconclusive", label: "Inconclusive", note: `The interval crosses zero and reaches past ±${NO_CHANGE_POINTS} points.` };
+  if (iv.lo >= -band && iv.hi <= band) return { id: "same", label: "No meaningful change", note: `The whole interval sits inside the ±${band}-point noise.` };
+  return { id: "inconclusive", label: "Inconclusive", note: `The interval crosses zero and reaches past the ±${band}-point noise.` };
+};
+
+/**
+ * The band inside which a change isn't meaningful — measured, not assumed:
+ * the run-to-run noise Reproduce found by running this agent version twice
+ * for an improvement, else two finished runs of it against each other, else
+ * an estimate from the pairs and repeats (two runs of 32 scenarios at three
+ * repeats differ by about ±14 on chance alone).
+ */
+export const noiseBandOf = (env, envState, key, { n = 0, ka = 1, kb = 1, skipId = null } = {}) => {
+  const rec = (envState?.optimizations || [])
+    .filter((o) => o.result?.calibration && key?.agent && o.baseAgentVersion === key.agent)
+    .sort((x, y) => Date.parse(y.createdAt || 0) - Date.parse(x.createdAt || 0))[0];
+  if (rec) {
+    const c = rec.result.calibration;
+    return { points: Math.max(1, Math.round(rec.result.noise)), source: "reproduce", agent: key.agent, improvement: rec.name || rec.id, disagreed: c.disagreed, n: c.scenarios };
+  }
+  const self = selfNoiseOf(env, envState, key, skipId);
+  if (self) return { points: Math.max(1, Math.round(self.noise)), source: "self", agent: self.agent, disagreed: self.disagreed, n: self.n };
+  if (!n) return { points: NO_CHANGE_POINTS, source: "default" };
+  return { points: Math.max(1, Math.round(100 * Z95 * Math.sqrt(0.25 * (1 / (n * ka) + 1 / (n * kb))))), source: "estimate", n, ka, kb };
+};
+
+/** Where a noise band came from, in a sentence. */
+export const noiseBandText = (band) => {
+  if (!band) return null;
+  if (band.source === "reproduce") return `Noise ±${band.points} pts, measured when “${band.improvement}” reproduced its failures: ${band.agent} ran twice and ${band.disagreed} of ${band.n} scenarios disagreed.`;
+  if (band.source === "self") return `Noise ±${band.points} pts, measured by running ${band.agent} against itself: ${band.disagreed} of ${band.n} scenarios disagreed.`;
+  if (band.source === "estimate") return `Noise ±${band.points} pts, estimated from ${band.n} pairs at ${band.ka === band.kb ? `${band.ka}` : `${band.ka} and ${band.kb}`} ${band.ka === 1 && band.kb === 1 ? "repeat" : "repeats"} — run this version twice to measure it.`;
+  return `Noise ±${band.points} pts by default.`;
 };
 
 /* Predicted half-width for n pairs at kA/kB trials, from a paired variance. */
@@ -435,6 +466,7 @@ export const comparisonOf = (runs, env, envState, opts = {}) => {
   const otherVersion = relation !== "unrelated" && differentVersions(a._key, b._key);
   const sideBySide = relation === "unrelated" || otherVersion;
   const selfNoise = sideBySide || a._env || a._key.agent === b._key.agent ? null : selfNoiseOf(env, envState, a._key, b.id);
+  const band = sideBySide ? null : noiseBandOf(env, envState, a._key, { n: iv.n, ka: a._key.repeats || 1, kb: b._key.repeats || 1, skipId: b.id });
   const read = relation === "unrelated"
     ? { id: "side", label: "Side by side", note: "Unrelated environments share no scenarios — no verdict." }
     : otherVersion
@@ -445,11 +477,12 @@ export const comparisonOf = (runs, env, envState, opts = {}) => {
           ? "Different environments — runs are compared only on the same environment version, so these sit side by side with no verdict."
           : `Environment ${a._key.snapshot || "—"} and ${b._key.snapshot || "—"} — runs are comparable only on the same environment version. Re-run one agent on the other's version to compare them.`,
       }
-      : verdictLabelOf(iv);
-  /* A change counts only when it beats the noise measured by running the
-     baseline's version against itself. Inside it, the read is Inconclusive. */
-  const label = selfNoise && (read.id === "improved" || read.id === "regressed") && Math.abs(iv.delta) <= selfNoise.noise
-    ? { id: "inconclusive", label: "Inconclusive", note: `Within the noise measured by running ${selfNoise.agent} against itself (±${selfNoise.noise} pts).` }
+      : verdictLabelOf(iv, band?.points);
+  /* A change counts only when it beats the noise measured for the
+     baseline's version. Inside it, the read is Inconclusive. */
+  const measuredBand = band && (band.source === "reproduce" || band.source === "self");
+  const label = measuredBand && (read.id === "improved" || read.id === "regressed") && Math.abs(iv.delta) <= band.points
+    ? { id: "inconclusive", label: "Inconclusive", note: `Within the run-to-run noise measured for ${band.agent} (±${band.points} pts).` }
     : read;
 
   /* Run-level mismatches, each with its offer (AC-14.12). */
@@ -550,7 +583,7 @@ export const comparisonOf = (runs, env, envState, opts = {}) => {
     pairs, byId: new Map(pairs.map((p) => [p.id, p])),
     counts, total,
     sentence: countsSentence(counts, total),
-    interval: iv, label, warnings, fixes, trend, selfNoise,
+    interval: iv, label, warnings, fixes, trend, selfNoise, band,
     excludeRechecked: !!opts.excludeRechecked,
   };
 };

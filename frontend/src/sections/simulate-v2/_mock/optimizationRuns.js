@@ -135,6 +135,15 @@ export const optimizationVerdict = (record) => {
   /* Too few reproduced to hold any back: there is no held-back number to
      read a gap, a gain or a regression from — the issue line says so. */
   if (r.split?.thin) return null;
+  /* Passed the held-back set when it was picked, then not on the run that proves it. */
+  if (r.confirm && !r.confirm.held) {
+    const n = r.winner?.n;
+    return {
+      tone: "#DC2626",
+      title: `Run ${n} didn't hold on a re-run`,
+      body: `It scored ${r.confirm.selectionScore}% on the held-back set when it was picked and ${r.confirm.score}% when that set ran again: ${r.confirm.why}. A result that holds once can be luck — the pick is never its own proof.`,
+    };
+  }
   if (r.heldBase >= 100) {
     const broke = (r.heldTasks || []).filter((t) => r.heldPerScenario?.[t.id] === "broke");
     return r.heldScore < r.heldBase
@@ -496,7 +505,12 @@ export const projectedHeld = (result, candidate) => {
   return Math.round(result.heldBase + lift * share);
 };
 
-export const improvementOutcome = (rec, { model } = {}) => {
+/* A verdict of no safe improvement has nothing to rate. */
+export const improvementOutcome = (rec, opts) => {
+  const out = outcomeOf(rec, opts);
+  return out?.strength && out.ending?.key === "no-fix" ? { ...out, strength: null } : out;
+};
+const outcomeOf = (rec, { model } = {}) => {
   /* An ending still playing its Reproducing phase reads as running; once
      that phase has passed it reads as its ending, saved or not yet. */
   const settled = statusOf(rec);
@@ -697,6 +711,7 @@ export const improvementOutcome = (rec, { model } = {}) => {
   const blocking = blockingVerdict(r)
     || (soft?.tone === "#DC2626" && !(fixesIssue && r.heldScore >= r.heldBase) ? soft : null);
   const base = {
+    strength: chosen ? null : proofStrength(r, issue, held),
     held, effect, costKnown, checks, issue, noise: r.noise, stoppedEarly: r.stoppedEarly, shallower: r.shallower,
     train: shipped ? { from: r.base, to: shipped.score } : null,
     /* Target score minus held-back score — how much the change fitted the
@@ -782,6 +797,48 @@ export const suggestedFixOf = (record) => {
   if (!r) return [];
   if (r.winner?.proposals?.length) return r.winner.proposals;
   return [...(r.pool || [])].sort((a, b) => (b.addresses?.length || 0) - (a.addresses?.length || 0)).slice(0, 2);
+};
+
+/*
+  How much the held-back result is worth: proven, likely, or too few to tell.
+  "Fixed 3 of 4" reads as proof whatever the size of the set; this says what
+  it's worth. Read off the winner's re-run after the pick (new improvements).
+*/
+export const PROVEN_MIN = 5;
+export const TELL_MIN = 4;
+export const proofStrength = (r, issue, held) => {
+  if (!r?.rsi || !r.winner) return null;
+  if (r.split?.thin) return { key: "few", label: "Too few to tell", note: "nothing could be held back, so this rests on scenarios the search saw" };
+  /* What it had to fix where it never looked: the issue's held-back scenarios
+     and the environment's that fail the same way — else every failing one. */
+  const envT = (r.heldTasks || []).filter((t) => t.envHeld && t.before !== "passed");
+  const envFixed = envT.filter((t) => r.heldPerScenario?.[t.id] === "fixed").length;
+  const n = issue ? issue.held + envT.length : held?.failingBefore || 0;
+  const fixed = issue ? issue.heldFixed + envFixed : held?.fixed || 0;
+  const parts = issue && envT.length ? ` (${issue.heldFixed} of ${issue.held} from the issue, ${envFixed} of ${envT.length} elsewhere that fail the same way)` : "";
+  const of = `fixed ${fixed} of ${n} failing ${n === 1 ? "scenario" : "scenarios"} it never saw${parts}`;
+  if (n < TELL_MIN) return { key: "few", label: "Too few to tell", note: `${of} — it takes ${TELL_MIN} or more to tell` };
+  const lift = r.heldScore - r.heldBase;
+  const noise = r.noise || 0;
+  const share = fixed / n;
+  /* Older improvements weren't re-run after the pick: likely at best. */
+  const confirmed = !!r.confirm?.held;
+  const rerun = r.confirm ? (confirmed ? ", and again on a re-run after the pick" : ", but not on the re-run after the pick") : ", on the same run that picked it";
+  if (confirmed && fixed >= PROVEN_MIN && share >= 0.75 && (issue || lift >= 2 * noise)) {
+    return { key: "proven", label: "Proven", note: `${of}${rerun}` };
+  }
+  if ((confirmed || !r.confirm) && fixed >= 2 && share >= 0.5 && (issue || lift > noise)) {
+    const short = !r.confirm ? "a re-run after the pick" : fixed < PROVEN_MIN ? `${PROVEN_MIN} fixed` : "three in four fixed";
+    return { key: "likely", label: "Likely", note: `${of}${rerun} — ${short} would prove it` };
+  }
+  return { key: "none", label: "Not proven", note: `${of}${rerun}` };
+};
+
+/* What was held back, said once for the proof, the receipt and the hints. */
+export const heldSplitText = (split) => {
+  if (!split || split.thin || !["issue", "goal"].includes(split.kind)) return null;
+  const env = split.envHeld ? ` + ${split.envHeld} environment ${split.envHeld === 1 ? "scenario" : "scenarios"} failing the same way` : "";
+  return `${split.held} of ${split.reproducing} ${split.kind === "issue" ? "reproducing" : "failing"} groups + ${split.fresh} fresh${env}`;
 };
 
 /* A fix judged on its issue first: Fix on an Error Feed issue, or on an issue

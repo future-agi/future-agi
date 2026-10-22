@@ -2,7 +2,7 @@
   The receipt — every check an improvement made, in order, in plain words.
   Written by Future AGI, never by the model proposing the changes.
 */
-import { judgeFor, REPEATS } from "../../_mock/optimizationRuns";
+import { heldSplitText, judgeFor, REPEATS } from "../../_mock/optimizationRuns";
 import { TIERS } from "../../_mock/improverAttempts";
 import { proofDisplay } from "./proofBlock";
 
@@ -21,10 +21,10 @@ export const receiptOf = (record, outcome, { attempts = [], identity = null, env
     ...(r.mustPassMeasured != null ? [["Scenario sets", `${r.trainMeasured} target, seen in full · ${r.heldMeasured} held back, never shown · ${r.mustPassMeasured} must-pass, pass or fail only`]] : []),
     ...(record.reproduce ? [["Failure reproduced", `Reproduced on ${record.reproduce.reproduced} of ${record.reproduce.total} scenarios · ${record.reproduce.inconclusive || 0} inconclusive`]] : []),
     ...(record.proof ? [["Proof kind", record.proof.kind === "prompt-only" ? proofDisplay(record.proof).line : `${record.proof.label} · ${record.proof.tierLabel}${record.proof.kind === "live" ? " — tools reached your real systems" : ""}`]] : []),
-    ...(r.split?.kind === "issue" ? [["Held back", r.split.thin ? "none — held-back check is thin" : `${r.split.held} of ${r.split.reproducing} reproducing groups + ${r.split.fresh} fresh variations`]] : []),
+    ...(r.split?.kind === "issue" ? [["Held back", r.split.thin ? "none — held-back check is thin" : heldSplitText(r.split)]] : []),
     ["Baseline measured", `${r.base}% on the target scenarios, ${r.heldBase}% held back · run-to-run noise ±${r.noise || 0} pts`],
     ...(stamped && r.calibration ? [["Run-to-run noise · baseline run twice", `Ran ${r.calibration.version || record.baseAgentVersion || "the current version"} twice: ${r.calibration.disagreed} of ${r.calibration.scenarios} scenarios disagreed, so a change on one of those counts only when it shows up on more than one repeat · noise ±${r.noise} pts`]] : []),
-    ...(stamped && r.goal ? [["Targets", `${r.goalTargets} ${r.goalTargets === 1 ? "scenario falls" : "scenarios fall"} short of ${r.goal.id === "pass-rate" ? "the pass rate" : r.goal.label}${r.split?.kind === "goal" ? ` · ${r.split.thin ? "none held back — thin" : `${r.split.held} of ${r.split.reproducing} failing groups held back + ${r.split.fresh} fresh variations`}` : ""}`]] : []),
+    ...(stamped && r.goal ? [["Targets", `${r.goalTargets} ${r.goalTargets === 1 ? "scenario falls" : "scenarios fall"} short of ${r.goal.id === "pass-rate" ? "the pass rate" : r.goal.label}${r.split?.kind === "goal" ? ` · ${r.split.thin ? "none held back — thin" : `${heldSplitText(r.split)} held back`}` : ""}`]] : []),
     ["Runs proposed", `${r.trials.length} by ${proposer}${r.stoppedEarly ? ` · stopped after ${r.stoppedEarly.after} with no gain` : ""}`],
     ["Runs judged", `by ${judgeFor(record.model)} — a different model family`],
     stamped
@@ -35,7 +35,8 @@ export const receiptOf = (record, outcome, { attempts = [], identity = null, env
     ...(r.textSearch ? [["Searched in text", "runs as text conversations · finalists as real calls"]] : []),
     ...(r.winner ? [
       ["Finalists scored once", (r.finalists || []).length ? r.finalists.map((f) => `Run ${f.n} ${f.heldScore}%${f.winner ? " · winner" : ""}`).join(" · ") : `${r.heldBase}% → ${r.heldScore}%`],
-      ["Held-back set", `${r.heldBase}% → ${r.heldScore}% on ${r.heldMeasured} scenarios`],
+      ...(r.confirm ? [["Re-run after the pick", `Run ${r.winner.n} on the held-back set again: ${r.confirm.selectionScore}% at the pick, ${r.confirm.score}% on the re-run · ${r.confirm.held ? "held" : `didn't hold — ${r.confirm.why}`}`]] : []),
+      ["Held-back set", `${r.heldBase}% → ${r.heldScore}% on ${r.heldMeasured} scenarios${r.confirm ? " · the re-run" : ""}`],
       ["Must-pass set", `${r.mustPass?.total ?? "—"} scenarios · ${(r.heldBlockers || []).length ? `${r.heldBlockers.length} failed again on a re-run` : "none failed twice"}${(r.flakyToday || []).length ? ` · ${r.flakyToday.length} flaky, not counted` : ""}`],
       ["Repeats", stamped && (r.finalists || []).find((f) => f.winner)?.fullRegression
         ? `each scenario ${r.repeats || REPEATS}× · code change → ${(r.finalists || []).find((f) => f.winner).repeats} repeats per finalist and the full regression set`
