@@ -25,7 +25,9 @@ import WinnerDrawer from "../run/WinnerDrawer";
 import { improvementRowsOf } from "./improvementRows";
 import { chartRunOf, trialRowsFor } from "./improvementRunsData";
 import StatusPill from "./ImprovementStatusPill";
-import { agentDefinitionOf } from "../_mock/agentRegistry";
+import { agentDefinitionOf, envAgentKey } from "../_mock/agentRegistry";
+import { versionNumber } from "../_mock/versions";
+import { isGitAgent, versionNameOf } from "../_mock/codeRefs";
 import ImprovementStages from "./ImprovementStages";
 
 const RED = "#DC2626";
@@ -116,6 +118,17 @@ export default function ImprovementRunsView({ env, envState, record, patch, onBa
   const summaries = useMemo(() => trialSummaries(env, envState).filter((t) => t.selfImprovementId === record.id), [env, envState, record.id]);
   const envRuns = useMemo(() => runSummaries(env, envState), [env, envState]);
   const startRun = envRuns.find((r) => r.id === record.fromRunId) || null;
+  /* Production may have moved on since this fix started: its proof is against
+     the version it started from, so a fix still waiting to ship says so. */
+  const behind = useMemo(() => {
+    const regAgent = envState?.agent ? agents.find((a) => a.key === envAgentKey(envState.agent, env.id)) : null;
+    const base = record.baseAgentVersion || startRun?.agentVersion || null;
+    const prod = regAgent?.production || null;
+    if (!regAgent || !base || !prod || base === prod || versionNumber(prod) <= versionNumber(base)) return null;
+    const since = regAgent.versions.filter((v) => versionNumber(v.label) > versionNumber(base) && versionNumber(v.label) <= versionNumber(prod) && !v.pendingDraft && v.kind !== "credentials").length;
+    if (!since) return null;
+    return { since, base: versionNameOf(regAgent, base).main, prod: versionNameOf(regAgent, prod).main, git: isGitAgent(regAgent) };
+  }, [agents, envState, env.id, record.baseAgentVersion, startRun]);
   /* Required ones are marked — only they weigh like a pass/fail signal. */
   const evals = useMemo(() => {
     const required = new Set(requiredEvalIds(envState?.evals || []));
@@ -282,6 +295,21 @@ export default function ImprovementRunsView({ env, envState, record, patch, onBa
           ) : null)}
         </Stack>
       </Box>
+
+      {/* Fell behind production while it waited — re-check before shipping. */}
+      {behind && !running && !["released", "watching", "resolved"].includes(row?.status?.key) && (
+        <Stack direction="row" spacing={1.25} sx={{ mb: 1.5, px: 2, py: 1.125, flexShrink: 0, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
+          <Iconify icon="solar:history-linear" width={16} sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }} />
+          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
+              {behind.git
+                ? `main has moved on ${behind.since} commit${behind.since === 1 ? "" : "s"} since this fix started.`
+                : `${behind.prod} is in production now — ${behind.since} version${behind.since === 1 ? "" : "s"} after this fix started.`}
+            </Box>
+            {` Its proof is on ${behind.base}; production is ${behind.prod}. Re-check it there before it ${behind.git ? "is merged" : "ships"} — a change that held then may not hold now.`}
+          </Typography>
+        </Stack>
+      )}
 
       {/* The verdict first: what it found, the held-back figure, the
           constraints. While it runs, the stage it's in takes that place. */}
@@ -519,13 +547,15 @@ export default function ImprovementRunsView({ env, envState, record, patch, onBa
 }
 
 /*
-  The improvement's verdict above its chart (RSI PRD, Flow 5): the sentence,
-  then the numbers — held-back change, target change, overfit gap, cost and
-  latency — then each constraint, passed or not, with what was measured.
-  Colour only on the change and on a broken constraint.
+  The improvement's verdict above its chart (RSI PRD, Flow 5), compact: the
+  sentence; the numbers side by side — held-back change, target change,
+  overfit gap, cost and latency; then the constraints as one line — how many
+  passed, any that didn't named in red — with the full checklist a click
+  away. Colour only on the change and on a broken constraint.
 */
 const signedPct = (n) => `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(Math.round(n * 10) / 10)}%`;
 function Verdict({ outcome, result, targetNow }) {
+  const [allChecks, setAllChecks] = useState(false);
   if (!result?.winner && !outcome.headline) return null;
   const thin = !!result?.split?.thin;
   const heldNow = outcome.heldScore ?? result?.heldScore;
@@ -534,43 +564,81 @@ function Verdict({ outcome, result, targetNow }) {
   const checks = outcome.checks || [];
   const projected = !!outcome.chosen?.projected;
   const effect = outcome.effect || null;
-  const rows = [
-    result?.winner && ["Held back", thin ? "Too few held back to measure" : `${result.heldBase}% → ${heldNow}%${projected ? " · projected" : ""}`, thin || !lift ? null : lift],
-    result?.winner && targetLift != null && ["Target", `${result.base}% → ${targetNow}% on the scenarios it was tuned on`, targetLift || null],
-    result?.winner && outcome.gap != null && !thin && ["Overfit gap", `${outcome.gap} pts between target and held back`, null],
-    result?.winner && effect && ["Cost and latency", `${outcome.costKnown === false ? "Cost not measured" : `Cost per conversation ${signedPct(effect.cost)}`} · latency ${signedPct(effect.latency)}`, null],
+  const cells = [
+    result?.winner && { k: "Held back", v: thin ? "Too few to measure" : `${result.heldBase}% → ${heldNow}%`, sub: projected ? "projected" : "never seen by the search", pts: thin || !lift ? null : lift },
+    result?.winner && targetLift != null && { k: "Target", v: `${result.base}% → ${targetNow}%`, sub: "on the scenarios it was tuned on", pts: targetLift || null },
+    result?.winner && outcome.gap != null && !thin && { k: "Overfit gap", v: `${outcome.gap} pts`, sub: "between target and held back" },
+    result?.winner && effect && { k: "Cost · latency", v: `${outcome.costKnown === false ? "—" : signedPct(effect.cost)} · ${signedPct(effect.latency)}`, sub: outcome.costKnown === false ? "cost not measured" : "per conversation" },
   ].filter(Boolean);
+  const failed = checks.filter((c) => c.pass === false);
+  const passed = checks.filter((c) => c.pass === true).length;
+  const line = { typography: "s3", color: "text.subtitle" };
   return (
-    <Box sx={{ mb: 2, flexShrink: 0, border: "1px solid", borderColor: "divider", borderRadius: 1.5, bgcolor: "background.paper" }}>
-      <Typography sx={{ px: 2, py: 1.25, typography: "s1", fontWeight: 600, lineHeight: 1.45 }}>{outcome.headline}</Typography>
-      {rows.map(([k, v, pts]) => (
-        <Stack key={k} direction="row" alignItems="center" spacing={2} sx={{ px: 2, py: 0.875, borderTop: "1px solid", borderColor: "divider" }}>
-          <Typography sx={{ typography: "s2", color: "text.subtitle", width: 140, flexShrink: 0 }}>{k}</Typography>
-          <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1, minWidth: 0, fontVariantNumeric: "tabular-nums" }}>{v}</Typography>
-          {!!pts && (
-            <Typography sx={{ typography: "s3", fontWeight: 600, fontVariantNumeric: "tabular-nums", color: pts > 0 ? "#16A34A" : RED }}>
-              {`${pts > 0 ? "▲" : "▼"} ${Math.abs(pts)} pts`}
-            </Typography>
-          )}
-        </Stack>
-      ))}
-      {/* Each constraint, passed or not — the checklist, not a count. */}
-      {checks.length > 0 && (
-        <Stack direction="row" alignItems="flex-start" spacing={2} sx={{ px: 2, py: 0.875, borderTop: "1px solid", borderColor: "divider" }}>
-          <Typography sx={{ typography: "s2", color: "text.subtitle", width: 140, flexShrink: 0 }}>Constraints</Typography>
-          <Box sx={{ flex: 1, minWidth: 0, display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" }, columnGap: 3, rowGap: 0.5 }}>
-            {checks.map((c) => (
-              <Stack key={c.id} direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
-                <Iconify
-                  icon={c.pass === null ? "solar:question-circle-linear" : c.pass ? "solar:check-circle-linear" : "solar:close-circle-bold"}
-                  width={14} sx={{ color: c.pass === false ? RED : c.pass === null ? "text.disabled" : "text.secondary", flexShrink: 0 }}
-                />
-                <Typography noWrap sx={{ typography: "s2", fontWeight: 600, color: c.pass === false ? RED : "text.primary", flexShrink: 0 }}>{c.label}</Typography>
-                <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", minWidth: 0 }}>{c.actual}</Typography>
+    <Box sx={{ mb: 2, flexShrink: 0, border: "1px solid", borderColor: "divider", borderRadius: 1.5, bgcolor: "background.paper", overflow: "hidden" }}>
+      <Typography sx={{ px: 2, py: 1, typography: "s1", fontWeight: 600, lineHeight: 1.45 }}>{outcome.headline}</Typography>
+
+      {/* ── the numbers, side by side ── */}
+      {cells.length > 0 && (
+        <Box sx={{
+          display: "grid", gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", md: `repeat(${cells.length}, minmax(0, 1fr))` },
+          borderTop: "1px solid", borderColor: "divider",
+          "& > *": { borderColor: "divider", borderStyle: "solid", borderWidth: 0 },
+          "& > *:not(:first-of-type)": { borderLeftWidth: 1 },
+        }}>
+          {cells.map((c) => (
+            <Box key={c.k} sx={{ px: 2, py: 0.875, minWidth: 0 }}>
+              <Typography noWrap sx={line}>{c.k}</Typography>
+              <Stack direction="row" alignItems="baseline" spacing={0.75} sx={{ minWidth: 0 }}>
+                <Typography noWrap sx={{ typography: "s1", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{c.v}</Typography>
+                {!!c.pts && (
+                  <Typography noWrap sx={{ typography: "s3", fontWeight: 600, fontVariantNumeric: "tabular-nums", color: c.pts > 0 ? "#16A34A" : RED }}>
+                    {`${c.pts > 0 ? "▲" : "▼"} ${Math.abs(c.pts)} pts`}
+                  </Typography>
+                )}
               </Stack>
-            ))}
-          </Box>
-        </Stack>
+              <Typography noWrap sx={line}>{c.sub}</Typography>
+            </Box>
+          ))}
+        </Box>
+      )}
+
+      {/* ── the constraints: one line, the failures named, the rest on demand ── */}
+      {checks.length > 0 && (
+        <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+          <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 0.75, minWidth: 0 }}>
+            <Iconify
+              icon={failed.length ? "solar:close-circle-bold" : "solar:check-circle-linear"}
+              width={14} sx={{ color: failed.length ? RED : "text.secondary", flexShrink: 0 }}
+            />
+            <Typography noWrap sx={{ typography: "s2", fontWeight: 600, flexShrink: 0 }}>
+              {`Constraints · ${passed} of ${checks.length} passed`}
+            </Typography>
+            <Typography noWrap sx={{ typography: "s2", color: RED, flex: 1, minWidth: 0 }}>
+              {failed.map((c) => `${c.label}${c.actual ? ` (${c.actual})` : ""}`).join(" · ")}
+            </Typography>
+            <Button
+              size="small" onClick={() => setAllChecks((o) => !o)}
+              endIcon={<Iconify icon={allChecks ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"} width={12} />}
+              sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", flexShrink: 0, minWidth: 0 }}
+            >
+              {allChecks ? "Hide" : "Show all"}
+            </Button>
+          </Stack>
+          {allChecks && (
+            <Box sx={{ px: 2, pb: 1, pl: 4.25, display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" }, columnGap: 3, rowGap: 0.5 }}>
+              {checks.map((c) => (
+                <Stack key={c.id} direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
+                  <Iconify
+                    icon={c.pass === null ? "solar:question-circle-linear" : c.pass ? "solar:check-circle-linear" : "solar:close-circle-bold"}
+                    width={14} sx={{ color: c.pass === false ? RED : c.pass === null ? "text.disabled" : "text.secondary", flexShrink: 0 }}
+                  />
+                  <Typography noWrap sx={{ typography: "s2", fontWeight: 600, color: c.pass === false ? RED : "text.primary", flexShrink: 0 }}>{c.label}</Typography>
+                  <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", minWidth: 0 }}>{c.actual}</Typography>
+                </Stack>
+              ))}
+            </Box>
+          )}
+        </Box>
       )}
     </Box>
   );

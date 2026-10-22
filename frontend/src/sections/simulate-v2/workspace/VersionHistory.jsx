@@ -3,11 +3,12 @@ import { useState } from "react";
 import { alpha } from "@mui/material/styles";
 import { Box, Button, Menu, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { agentVersions, currentAgentVersion } from "../_mock/versions";
+import { agentVersions, currentAgentVersion, defaultAgentVersionOf, isCredentialsVersion, productionAgentVersion } from "../_mock/versions";
 import { releasedNote } from "../agents/versionRelease";
 import { useOptionalSimStore } from "../store";
 import { versionHistoryOf } from "../_mock/nudgeEffects";
 import { snapshotHistoryOf, SNAPSHOT_KIND_LABEL } from "../_mock/envSnapshot";
+import { envVersionNameOf } from "../_mock/codeRefs";
 import { ago } from "../agents/agentViewUtils";
 import useEnvViewAs from "./useEnvViewAs";
 import { clickable, focusRing } from "../components/clickable";
@@ -17,7 +18,19 @@ import { contractWordingIn } from "../_mock/rlContract";
 const ACCENT = "#7857FC";
 const MONO = "ui-monospace, Menlo, monospace";
 const runs = (n) => `${n} run${n === 1 ? "" : "s"}`;
-const PART_NAME = { env: "World and contract", set: "Scenarios", catalog: "Sub-goals", eval: "Evaluations", caller: "Simulated caller" };
+const PART_NAME = { env: "World and contract", set: "Scenarios", catalog: "Sub-goals", eval: "Evaluations", caller: "Simulated caller", creds: "Credentials" };
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+const defaultName = (d) => (d === "production" ? "production" : d);
+
+/* What the harness found when a version reached this environment. */
+const checkLine = (v, check) => {
+  /* Its own note already says it behaves as its base. */
+  if (isCredentialsVersion(v)) return null;
+  if (!check) return null;
+  const untested = check.untested ? ` · ${plural(check.untested, "new rule")} nothing tests yet` : "";
+  if (check.result === "none") return `Checked here · no changes needed${untested}`;
+  return `Checked here · ${[check.tools && plural(check.tools, "tool change"), check.rules && plural(check.rules, "rule change")].filter(Boolean).join(" and ") || "changes"} to review${untested}`;
+};
 
 /**
  * Version history: one list of environment versions, newest first.
@@ -48,6 +61,18 @@ export default function VersionHistoryMenu({ anchor, onClose, env, envState, pat
     return v?.note ? { ...row, summary: releasedNote(v, v.status !== "draft" || releasedHere.has(v.label)) } : row;
   });
   const activeAgent = currentAgentVersion(envState)?.label;
+  /* The agent side of history: each version with what the check found here,
+     and every change of this environment's default — newest first. */
+  const versionsByLabel = new Map(agentVersions(envState).map((v) => [v.label, v]));
+  const checks = new Map((envState?.agentChecks || []).map((c) => [c.version, c]));
+  const production = productionAgentVersion(envState)?.label;
+  const def = defaultAgentVersionOf(envState);
+  /* A code agent's versions read as commits. */
+  const nm = (l) => (l === "production" ? l : envVersionNameOf(envState, l, env?.id).main);
+  const agentRows = [
+    ...agents.map((row) => ({ type: "version", at: row.at, row, check: checkLine(versionsByLabel.get(row.label), checks.get(row.label)) })),
+    ...(envState?.agentDefaultChanges || []).map((c) => ({ type: "default", at: c.at, c })),
+  ].sort((a, b) => (Date.parse(b.at || "") || 0) - (Date.parse(a.at || "") || 0));
   const { viewAs, setViewAs } = useEnvViewAs(env, envState);
   const [open, setOpen] = useState(null);
   const [rollbackTo, setRollbackTo] = useState(null);
@@ -80,7 +105,7 @@ export default function VersionHistoryMenu({ anchor, onClose, env, envState, pat
           Version history
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
-          One environment version covers the world, scenarios, sub-goals, evaluations and simulated caller — any change to them is the next version. An agent change never is.
+          One environment version covers the world, scenarios, sub-goals, evaluations, simulated caller and credentials — any change to them is the next version (a credentials-only change is a minor one, like v7.1). An agent change never is.
         </Typography>
       </Box>
 
@@ -171,16 +196,26 @@ export default function VersionHistoryMenu({ anchor, onClose, env, envState, pat
       </Stack>
 
       {/* ── agent ── */}
-      <Section title="Agent" note="The test subject — every change is a new version" />
-      {agents.length ? agents.map((v) => (
+      <Section
+        title="Agent"
+        note={agents.length ? (def === "production" ? `Default: production (${nm(production)})` : `Default: ${nm(def)} · ${nm(production)} is in production`) : "The test subject — every change is a new version"}
+      />
+      {agents.length ? agentRows.map((r) => (r.type === "default" ? (
         <Line
-          key={v.label}
-          label={`Agent ${v.label}`}
-          badges={[v.label === activeAgent && { label: "testing", tone: ACCENT }].filter(Boolean)}
-          summary={v.summary}
-          meta={`${runs(v.runs)} · ${ago(v.at)}`}
+          key={`default-${r.c.at}`}
+          label="Default"
+          summary={`Changed from ${nm(defaultName(r.c.from))} to ${nm(defaultName(r.c.to))}${r.c.production && r.c.to !== "production" ? ` · ${nm(r.c.production)} was in production` : ""}`}
+          meta={`${r.c.by || "You"} · ${ago(r.c.at)}`}
         />
-      )) : <Empty text="No agent connected yet." />}
+      ) : (
+        <Line
+          key={r.row.label}
+          label={`Agent ${nm(r.row.label)}`}
+          badges={[r.row.label === activeAgent && { label: "testing", tone: ACCENT }].filter(Boolean)}
+          summary={r.check ? `${String(r.row.summary || "").replace(/\.?\s*$/, ".")} ${r.check}.` : r.row.summary}
+          meta={`${runs(r.row.runs)} · ${ago(r.row.at)}`}
+        />
+      ))) : <Empty text="No agent connected yet." />}
     </Menu>
     {patch && (
       <RollbackDialog

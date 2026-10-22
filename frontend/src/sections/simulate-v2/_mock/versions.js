@@ -247,8 +247,61 @@ const firstAgentVersion = () => ({
   createdAt: new Date().toISOString(),
 });
 
-/** The number in a version label — what phrasing and pinning key off. */
-export const versionNumber = (label) => parseInt(String(label || "").replace(/\D/g, ""), 10) || 1;
+/** The number in a version label — what phrasing, pinning and ordering key
+    off. A credentials-only version reads "v5.1" and sorts right after v5. */
+export const versionNumber = (label) => {
+  const m = /(\d+)(?:\.(\d+))?/.exec(String(label || ""));
+  if (!m) return 1;
+  return (parseInt(m[1], 10) || 1) + (m[2] ? parseInt(m[2], 10) / 1000 : 0);
+};
+
+/** The whole number of a label — "v5.1" → 5. New versions count from it. */
+export const majorOf = (label) => Math.floor(versionNumber(label));
+
+/** The next whole version after every label given — "v6" after v5 and v5.1. */
+export const nextMajorLabel = (labels) => `v${Math.max(0, ...labels.map(majorOf)) + 1}`;
+
+/*
+  Credentials are versioned together with what holds them (team decision):
+  replacing a key makes a version. But a key doesn't change how anything
+  behaves, so it's a minor one — v5 → v5.1 — that carries nothing to check:
+  no card, no rebuild, and it counts as the same behaviour as its base.
+*/
+export const isCredentialsVersion = (v) => v?.kind === "credentials";
+
+/** "v5.1" when credentials change on v5 (or "v5.2" after v5.1). */
+export const nextCredentialsLabel = (labels, baseLabel) => {
+  const major = majorOf(baseLabel);
+  const minors = labels.filter((l) => majorOf(l) === major).map((l) => Math.round((versionNumber(l) - major) * 1000));
+  return `v${major}.${Math.max(0, ...minors) + 1}`;
+};
+
+/**
+ * The version record a credentials change makes: on top of `baseLabel` (the
+ * version in production), numbered as its minor, carrying what moved — by
+ * reference, never a value. `what` reads "API key reference replaced".
+ */
+export const credentialsVersionRecord = (versions, baseLabel, { what, at = new Date().toISOString() } = {}) => {
+  const label = nextCredentialsLabel((versions || []).map((v) => v.label), baseLabel);
+  return {
+    id: `agent-${label}`,
+    label,
+    kind: "credentials",
+    sameAs: behaviourLabelOf(versions, baseLabel),
+    note: `Credentials only — ${what || "credentials changed"}. Behaves as ${behaviourLabelOf(versions, baseLabel)}, so there's nothing to check or rebuild.`,
+    reach: "credentials",
+    origin: "credentials",
+    createdAt: at,
+    applied: [],
+    basedOnVersion: baseLabel,
+  };
+};
+
+/** The version whose behaviour `label` has — itself, or a credentials version's base. */
+export const behaviourLabelOf = (versions, label) => {
+  const v = (versions || []).find((x) => x.label === label);
+  return isCredentialsVersion(v) ? v.sameAs || `v${majorOf(label)}` : label;
+};
 
 /** Every agent version this environment knows about, oldest first. No agent,
     no versions — never an invented v1 for a run to pin. */
@@ -283,6 +336,9 @@ export const productionAgentVersion = (envState) => {
 /** Is the environment held on one version rather than following production? */
 export const isAgentPinned = (envState) => !!envState?.agentVersionPinned && !!envState?.activeAgentVersion
   && agentVersions(envState).some((v) => v.label === envState.activeAgentVersion);
+
+/** The environment's default agent version: "production" (follows it) or the label it's held on. */
+export const defaultAgentVersionOf = (envState) => (isAgentPinned(envState) ? envState.activeAgentVersion : "production");
 
 /** The one the next run will use — the pin if there is one, else production.
     Undefined when there's no agent. */
@@ -339,7 +395,7 @@ export const nextAgentVersion = (envState, {
 } = {}) => {
   const list = agentVersions(envState);
   /* Numbered past the highest label, not the count — a count can collide. */
-  const n = Math.max(0, ...list.map((v) => versionNumber(v.label))) + 1;
+  const n = Math.max(0, ...list.map((v) => majorOf(v.label))) + 1;
   return {
     /* Only when this version's tools are known to differ; otherwise it
        inherits the tools of the version it was built on. */

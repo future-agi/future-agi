@@ -1,19 +1,22 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Box,
   Button,
-  Checkbox,
   CircularProgress,
   MenuItem,
   Select,
   Stack,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
-import { githubAccountsLabel, installedRepos, useIntegrations } from "../_mock/integrations";
+import { githubAccountsLabel, installedRepos, scannedAgentSource, useIntegrations } from "../_mock/integrations";
+import { agentIdOf, agentRecordFromSource } from "../_mock/agentRegistry";
+import { useConnectedAgents } from "../store";
+import { paths } from "src/routes/paths";
 import BrandMark from "./BrandMark";
+import FoundAgentsList from "../agents/connect/FoundAgentsList";
 import GithubInstallDialog from "./GithubInstallDialog";
 import { HintLine } from "../agents/connect/replicationBits";
 import { clickable, focusRing } from "../components/clickable";
@@ -28,6 +31,8 @@ const MONO = "ui-monospace, Menlo, monospace";
 export default function GithubRepoPicker({ repo, agentId, onPick, onManual, showAgents = true, manualLinks = true }) {
   const integrations = useIntegrations();
   const repos = installedRepos(integrations);
+  const navigate = useNavigate();
+  const { agents: connected } = useConnectedAgents();
   const [installOpen, setInstallOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
 
@@ -69,16 +74,10 @@ export default function GithubRepoPicker({ repo, agentId, onPick, onManual, show
               <Typography sx={{ typography: "s2", fontWeight: 700 }}>
                 Install the GitHub App to pick the agent
               </Typography>
-              <Typography component="div" sx={{ typography: "s3", color: integrations.githubRequests?.length ? "text.secondary" : "text.subtitle" }}>
-                {integrations.githubRequests?.length ? (
-                  <HintLine hint="Or install it on another account.">
-                    {`Waiting for an owner of ${integrations.githubRequests[0].account} to approve`}
-                  </HintLine>
-                ) : (
-                  <HintLine hint="We scan the repositories you choose and find the agents in them. We ask for write access at your first draft pull request.">
-                    Read only — we find the agents in your repos.
-                  </HintLine>
-                )}
+              <Typography component="div" sx={{ typography: "s3", color: "text.subtitle" }}>
+                <HintLine hint="We scan the repositories you choose and find the agents in them. We ask for write access at your first draft pull request.">
+                  Read only — we find the agents in your repos.
+                </HintLine>
               </Typography>
             </Box>
             <Button
@@ -215,70 +214,13 @@ export default function GithubRepoPicker({ repo, agentId, onPick, onManual, show
               />
             </Box>
           ) : (
-            <Box>
-              <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>
-                {current.agents.length === 1
-                  ? "We found 1 agent"
-                  : `We found ${current.agents.length} agents — which one do you mean?`}
-              </Typography>
-              <Stack spacing={0.75}>
-                {current.agents.map((a) => {
-                  const on = a.id === agentId;
-                  return (
-                    <Stack
-                      key={a.id}
-                      direction="row"
-                      alignItems="center"
-                      spacing={1.25}
-                      {...clickable(() => onPick({ repo: current.name, agent: a }), { role: "radio", checked: on })}
-                      sx={{
-                        ...focusRing,
-                        px: 1.5,
-                        py: 1.125,
-                        borderRadius: 1,
-                        cursor: "pointer",
-                        border: "1px solid",
-                        borderColor: on ? "text.primary" : "divider",
-                        bgcolor: (t) =>
-                          on
-                            ? alpha(
-                                t.palette.text.primary,
-                                t.palette.mode === "dark" ? 0.06 : 0.03,
-                              )
-                            : "transparent",
-                      }}
-                    >
-                      {/* The row is the target; the checkbox says which one is chosen. */}
-                      <Checkbox
-                        size="small"
-                        checked={on}
-                        tabIndex={-1}
-                        inputProps={{ "aria-label": `Choose ${a.name}` }}
-                        sx={{ p: 0, flexShrink: 0 }}
-                      />
-                      <Box flex={1} minWidth={0}>
-                        <Typography
-                          noWrap
-                          sx={{ typography: "s2", fontWeight: 600 }}
-                        >
-                          {a.name}
-                        </Typography>
-                        <Typography
-                          noWrap
-                          sx={{ typography: "s3", color: "text.subtitle" }}
-                        >
-                          {`${a.framework} · `}
-                          <Box component="span" sx={{ fontFamily: MONO }}>
-                            {a.entry}
-                          </Box>
-                          {` · ${a.tools} tools · ${a.prompts.length} prompt file${a.prompts.length === 1 ? "" : "s"}`}
-                        </Typography>
-                      </Box>
-                    </Stack>
-                  );
-                })}
-              </Stack>
-            </Box>
+            <FoundAgentsList
+              agents={current.agents} agentId={agentId}
+              onPick={(a) => onPick({ repo: current.name, agent: a })}
+              /* One already in Agents opens there — never connected twice. */
+              connectedOf={(a) => connected.find((x) => x.key === agentRecordFromSource(scannedAgentSource(current, a)).key) || null}
+              onOpenConnected={(rec) => navigate(`${paths.dashboard.agents}/connected/${agentIdOf(rec.key)}`)}
+            />
           ))}
         {manualLinks && (
           <ManualLink

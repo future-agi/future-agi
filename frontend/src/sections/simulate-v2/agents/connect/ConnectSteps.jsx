@@ -17,7 +17,9 @@ export default function ConnectSteps({ title, subtitle, steps, active, onBack, n
   const single = steps.length <= 1;
   const showHead = !(inDrawer && single);
   return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, bgcolor: "background.paper", overflow: "hidden" }}>
+    /* `clip`, not `hidden`: hidden would make this the scroll box and stop
+       the footer sticking to the drawer's edge. */
+    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, bgcolor: "background.paper", overflow: "clip" }}>
       {showHead && (
       <Box sx={{ px: 2.5, pt: inDrawer ? 1.25 : 1.75, pb: inDrawer ? 1.25 : 1.5, borderBottom: "1px solid", borderColor: "divider" }}>
         {!inDrawer && <Typography sx={{ typography: "s1", fontWeight: 600 }}>{title}</Typography>}
@@ -41,9 +43,14 @@ export default function ConnectSteps({ title, subtitle, steps, active, onBack, n
         {children}
       </Box>
 
+      {/* In a drawer the submit row stays pinned to its bottom edge while a
+          long form (a monorepo's agents) scrolls behind it. */}
       <Stack
         direction="row" alignItems="center" spacing={2}
-        sx={{ px: 2.5, py: 1.5, borderTop: "1px solid", borderColor: "divider" }}
+        sx={{
+          px: 2.5, py: 1.5, borderTop: "1px solid", borderColor: "divider",
+          ...(inDrawer && { position: "sticky", bottom: 0, zIndex: 2, bgcolor: "background.paper" }),
+        }}
       >
         {onBack ? (
           <Button

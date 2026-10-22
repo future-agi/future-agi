@@ -44,7 +44,6 @@ export default function GithubInstallWindow() {
 
   const meta = account ? accountOf(account) : null;
   const existing = account ? installationFor(account) : null;
-  const member = meta?.kind === "Organization" && meta.role !== "owner";
   const accountName = meta?.kind === "Personal account" ? "your personal account" : account;
   const ready = access === "all" || repos.length > 0;
 
@@ -65,7 +64,8 @@ export default function GithubInstallWindow() {
   const url = step === "authorize" ? "github.com/login/oauth/authorize?client_id=future-agi"
     : configure || existing ? (meta?.kind === "Organization" ? `github.com/organizations/${account}/settings/installations` : "github.com/settings/installations")
       : step === "repos" ? "github.com/apps/future-agi/installations/new/permissions" : "github.com/apps/future-agi/installations/new";
-  const steps = member ? ["Account", "Repositories"] : ["Account", "Repositories", "Authorize"];
+  /* Every account installs straight away — no owner approval in between. */
+  const steps = ["Account", "Repositories", "Authorize"];
 
   if (sent) {
     return (
@@ -87,10 +87,10 @@ export default function GithubInstallWindow() {
               <Button size="small" onClick={() => (configure ? cancel() : setStep("account"))} sx={btnQuiet}>{configure ? "Cancel" : "Back"}</Button>
               <Button
                 size="small" variant="contained" color="primary" disabled={!ready}
-                onClick={() => (existing ? finish("update") : member ? finish("request") : setStep("authorize"))}
+                onClick={() => (existing ? finish("update") : setStep("authorize"))}
                 sx={{ typography: "s2", fontWeight: 700 }}
               >
-                {existing ? "Save" : member ? "Request" : "Install"}
+                {existing ? "Save" : "Install"}
               </Button>
             </>
           )}
@@ -109,7 +109,7 @@ export default function GithubInstallWindow() {
         <Typography sx={{ typography: "m3", fontWeight: 700 }}>
           {step === "authorize" ? "Authorize Future AGI"
             : configure || existing ? "Configure Future AGI"
-              : step === "repos" ? (member ? `Request Future AGI for ${account}` : `Install Future AGI on ${accountName}`)
+              : step === "repos" ? `Install Future AGI on ${accountName}`
                 : "Install Future AGI"}
         </Typography>
       </Stack>
@@ -127,7 +127,7 @@ export default function GithubInstallWindow() {
                   <Box flex={1} minWidth={0}>
                     <Typography sx={{ typography: "s2", fontWeight: 600 }}>{a.login}</Typography>
                     <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                      {[a.kind, a.kind === "Organization" ? (a.role === "owner" ? "you're an owner" : "you're a member") : null, n ? `${n} repositories` : "no repositories"].filter(Boolean).join(" · ")}
+                      {[a.kind, n ? `${n} repositories` : "no repositories"].filter(Boolean).join(" · ")}
                     </Typography>
                   </Box>
                   <Button size="small" variant="outlined" onClick={() => pick(a.login)} sx={btnOutline}>
@@ -143,9 +143,6 @@ export default function GithubInstallWindow() {
       {step === "repos" && (
         <>
           <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.5 }}>{`${meta?.kind} · ${account}`}</Typography>
-          {member && (
-            <Note>{`Only owners of ${account} can install apps. Your request — with the repositories below — goes to them by email.`}</Note>
-          )}
           <Label>Repository access</Label>
           <Stack spacing={0.75}>
             {[
@@ -272,16 +269,6 @@ function Avatar({ login, org }) {
   );
 }
 Avatar.propTypes = { login: PropTypes.string, org: PropTypes.bool };
-
-function Note({ children }) {
-  return (
-    <Stack direction="row" spacing={1} alignItems="flex-start" sx={{ mb: 1.75, px: 1.25, py: 1, borderRadius: 1, bgcolor: "background.neutral" }}>
-      <Iconify icon="solar:info-circle-linear" width={15} sx={{ color: "text.secondary", mt: 0.25, flexShrink: 0 }} />
-      <Typography sx={{ typography: "s3", color: "text.secondary" }}>{children}</Typography>
-    </Stack>
-  );
-}
-Note.propTypes = { children: PropTypes.node };
 
 function Label({ children }) {
   return <Typography sx={{ typography: "s3", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: "text.subtitle", mb: 0.75 }}>{children}</Typography>;

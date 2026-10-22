@@ -15,6 +15,7 @@ import { SectionHead } from "./LandingBits";
 import { PANEL_SX, focusRing } from "./landingStyles";
 import { buildableAgentsOf, useBuildForAgent } from "./worldSource";
 import { fitsEnvChannel } from "../_mock/agentSwitch";
+import { isGitAgent, versionNameOf } from "../_mock/codeRefs";
 
 /*
   Choosing the agent an environment belongs to (RSI PRD Flow 2, step 1:
@@ -38,7 +39,9 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const metaLine = (a) => {
   const src = agentSourceOf(a);
   const envs = a.usedIn?.length || 0;
-  return [src.label, `${a.production || a.latest || "v1"} in production`, envs ? plural(envs, "environment") : "No environment yet"].join(" · ");
+  /* A code agent's production version reads as its commit. */
+  const prod = a.production || a.latest || "v1";
+  return [src.label, `${isGitAgent(a) ? versionNameOf(a, prod).main : prod} in production`, envs ? plural(envs, "environment") : "No environment yet"].join(" · ");
 };
 
 /* ── Your agents (landing) ──────────────────────────────────────────────── */

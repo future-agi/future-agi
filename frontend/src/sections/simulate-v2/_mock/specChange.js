@@ -20,8 +20,9 @@ export { touchingChangeOf, proposedWordingOf } from "./nudgeEffects";
 
 /* ── which questions are still open ──────────────────────────────────────── */
 
+/* A new rule nothing tests holds no sub-goal back, so Compare has nothing to wait on for it. */
 const openRuleNudges = (envState, agentVersion) => openNudgesOf(envState)
-  .filter((n) => n.kind === "rule" && (!agentVersion || n.agentVersion === agentVersion));
+  .filter((n) => n.kind === "rule" && !n.newRule && (!agentVersion || n.agentVersion === agentVersion));
 
 /** Whether the rule question for this version has been answered (or dismissed). */
 export const isAnswered = (envState, ruleId, agentVersion) => !openRuleNudges(envState, agentVersion).some((n) => n.ruleId === ruleId);

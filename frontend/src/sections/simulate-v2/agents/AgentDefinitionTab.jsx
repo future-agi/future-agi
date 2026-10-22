@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
+import { isGitAgent, versionNameOf } from "../_mock/codeRefs";
 import AgentFilesTab from "./AgentFilesTab";
 import AgentMembersCard from "./AgentMembersCard";
 import { memberAreasOf } from "./agentDefinitionSummary";
@@ -23,6 +24,9 @@ export default function AgentDefinitionTab({
 }) {
   const version = agent.versions.find((v) => v.label === label);
   const code = isCodeAgent(agent);
+  /* A code agent's version reads as its commit: "main @ 3f9a2c1" here, the hash in the file tree. */
+  const nameOf = (l) => versionNameOf(agent, l).main;
+  const shortOf = (l) => versionNameOf(agent, l).ref?.sha || l;
   const config = configRowsOf({ agent, definition, source });
   const memberAreas = memberAreasOf({ agent, definition, source });
 
@@ -30,7 +34,7 @@ export default function AgentDefinitionTab({
     <Stack spacing={2}>
       <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
         {"Read-only record of "}
-        <Box component="span" sx={{ fontFamily: MONO, color: "text.primary" }}>{`${label}${label === latest ? " (latest)" : ""}`}</Box>
+        <Box component="span" sx={{ fontFamily: MONO, color: "text.primary" }}>{`${nameOf(label)}${label === latest && !isGitAgent(agent) ? " (latest)" : ""}`}</Box>
         {source.kind === "endpoint" ? " · an endpoint shows what the agent does, not how it's set up" : source.kind === "traces" ? " · read from its traces" : ` · read from ${source.label}`}
       </Typography>
 
@@ -94,8 +98,8 @@ export default function AgentDefinitionTab({
         <AgentFilesTab
           files={files}
           prevFiles={prevFiles}
-          label={label}
-          prevLabel={prevLabel}
+          label={shortOf(label)}
+          prevLabel={prevLabel ? shortOf(prevLabel) : prevLabel}
           sourceKind={source.kind}
           focusPath={focusPath}
           diffOn={diffOn}

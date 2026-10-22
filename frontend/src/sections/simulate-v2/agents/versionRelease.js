@@ -14,7 +14,7 @@
 */
 import { improvementRunName } from "../_mock/optimizer";
 import { releasePatch } from "../_mock/releaseFix";
-import { agentVersions, nextAgentVersion, versionNumber } from "../_mock/versions";
+import { agentVersions, majorOf, nextAgentVersion, versionNumber } from "../_mock/versions";
 
 /** How a draft left Future AGI, as the version history says it. */
 export const DRAFT_SOURCE_LABEL = {
@@ -124,7 +124,7 @@ const POINTERS = ["commit", "bundle", "fagiPrompts", "tools"];
 /** The version record "Roll back to {target}" mints. `toolsOf(label)` gives a version's tools, when known. */
 export const rollbackVersionRecord = (agent, targetLabel, { toolsOf, at = new Date().toISOString() } = {}) => {
   const versions = agent?.versions || [];
-  const n = Math.max(0, ...versions.map((v) => versionNumber(v.label))) + 1;
+  const n = Math.max(0, ...versions.map((v) => majorOf(v.label))) + 1;
   /* Each pointer as it stood at the target — set there or on a version before it. */
   const upTo = versions.filter((v) => versionNumber(v.label) <= versionNumber(targetLabel)).reverse();
   const pointers = Object.fromEntries(POINTERS

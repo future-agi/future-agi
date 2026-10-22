@@ -1,4 +1,6 @@
 import PropTypes from "prop-types";
+import { isCredentialsVersion } from "../_mock/versions";
+import { isGitAgent, versionNameOf } from "../_mock/codeRefs";
 import { useEffect, useState } from "react";
 import { Box, MenuItem, Select, Stack, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
@@ -7,7 +9,7 @@ import ReactApexChart from "../components/SafeApexChart";
 import { useOptionalSimStore } from "../store";
 import { runIdentityOf } from "../_mock/runIdentity";
 import { agentStatusOf, isComingSoon } from "../_mock/rsiModel";
-import { MONO, ago, passRate, plural } from "./agentViewUtils";
+import { MONO, ago, passRate, plural, showsSetup } from "./agentViewUtils";
 import { QuietTag } from "./AgentBits";
 import { clickable, focusRing } from "../components/clickable";
 import FitDataTable from "../components/FitDataTable";
@@ -28,16 +30,22 @@ const rateTone = (r) => (r == null ? "text.disabled" : r >= 80 ? "#16A34A" : r >
  */
 export default function AgentOverviewTab({
   agent, runs, inProgress, scopedRuns, statsOf, production, improvements,
-  scopeEnv, onSwitch, onOpenRun, onTab,
+  scopeEnv, onSwitch, onOpenRun, onTab, fresh = false,
 }) {
   const scoped = scopedRuns || runs;
+  /* Just connected, nothing set up: the Next steps card above is the page. */
+  if (fresh) return null;
   return (
     <Stack spacing={2.5}>
       <KpiStrip
         agent={agent} runs={scoped} anyRuns={(runs || []).length > 0} statsOf={statsOf} scopeEnv={scopeEnv} production={production} improvements={improvements}
         onSwitch={onSwitch} onOpenRun={onOpenRun} onTab={onTab}
       />
-      <RecentRuns agent={agent} runs={runs} inProgress={inProgress || []} onOpenRun={onOpenRun} />
+      {/* No environment and no runs while Next steps is up: its "Build an
+          environment" already says it — an empty list would repeat it. */}
+      {!(showsSetup(agent) && !agent.usedIn.length && !(runs || []).length && !(inProgress || []).length) && (
+        <RecentRuns agent={agent} runs={runs} inProgress={inProgress || []} onOpenRun={onOpenRun} />
+      )}
     </Stack>
   );
 }
@@ -46,6 +54,7 @@ AgentOverviewTab.propTypes = {
   scopedRuns: PropTypes.array, statsOf: PropTypes.func, production: PropTypes.object, improvements: PropTypes.object,
   scopeEnv: PropTypes.object, scopeEnvVersion: PropTypes.string, scopes: PropTypes.array,
   onScopeEnv: PropTypes.func, onSwitch: PropTypes.func, onOpenRun: PropTypes.func, onTab: PropTypes.func,
+  fresh: PropTypes.bool,
 };
 
 /* ── three numbers and the next step ───────────────────────────────────────── */
@@ -70,11 +79,21 @@ function KpiStrip({ agent, runs, anyRuns, statsOf, scopeEnv, production, improve
      kind improvements can't run on yet. */
   const stopped = ["archived", "deleted"].includes(agentStatusOf(agent).status) || isComingSoon(agent);
 
+  /* A code agent's versions read as commits ("main @ 3f9a2c1"); others by number. */
+  const git = isGitAgent(agent);
+  const nm = (l) => versionNameOf(agent, l).main;
+  const latestRef = git ? versionNameOf(agent, agent.latest).ref : null;
   /* The one next step — the first of these that applies. */
   const next = behind
-    ? { text: `${running.envName} still tests ${running.running} — ${agent.production} is in production.`, label: "Follow production", onClick: () => onSwitch(running.envId) }
+    ? { text: `${running.envName}'s default is still ${nm(running.running)} — ${nm(agent.production)} is in production.`, label: "Default to production", onClick: () => onSwitch(running.envId) }
     : !latestStats && agent.latest !== agent.production && agent.usedIn.length
-      ? { text: `${agent.latest} is a draft that hasn't run yet — test it before it's released.`, label: "See versions", onClick: () => onTab("versions") }
+      ? {
+        text: latestRef
+          ? `A fix is waiting on ${latestRef.branch} (${latestRef.sha}) and hasn't run yet — test it before it's merged.`
+          : `${agent.latest} is a draft that hasn't run yet — test it before it's released.`,
+        label: git ? "See commits" : "See versions",
+        onClick: () => onTab("versions"),
+      }
       : failing && lastRun
         ? { text: `${failing} in ${lastRun.ordinal ? `Run ${lastRun.ordinal}` : "the last run"}.`, label: "Open run", onClick: () => onOpenRun(lastRun) }
         : null;
@@ -89,15 +108,16 @@ function KpiStrip({ agent, runs, anyRuns, statsOf, scopeEnv, production, improve
         {/* The version in production; its real calls live in its Observe project. */}
         <Kpi
           label="In production"
-          value={agent.production || "—"}
+          value={agent.production ? nm(agent.production) : "—"}
           mono
-          sub={prod.project ? `Observe project: ${prod.project.name} · linked` : "Observe project not linked"}
+          /* A link nobody confirmed reads as a suggestion — Next steps confirms it. */
+          sub={prod.project ? `Observe project: ${prod.project.name} · ${agent.values?.observeChosenAt || prod.project.how === "watching" ? "linked" : "suggested"}` : "Observe project not linked"}
           action={prod.project
             ? { label: "Open in Observe", onClick: prod.onOpenProject }
             : { label: "Link a project", onClick: prod.onLink }}
         />
         <Kpi
-          label={lastRun ? <>Last simulation · <Box component="span" sx={{ fontFamily: MONO }}>{lastRun.agentVersion}</Box></> : "Last simulation"}
+          label={lastRun ? <>Last simulation · <Box component="span" sx={{ fontFamily: MONO }}>{nm(lastRun.agentVersion)}</Box></> : "Last simulation"}
           value={lastRate == null ? "—" : `${lastRate}%`}
           tone={rateTone(lastRate)}
           sub={lastRun
@@ -189,13 +209,25 @@ export function PassRateCard({ agent, statsOf, scopeEnv, scopeEnvVersion, scopes
     const id = requestAnimationFrame(() => setChartReady(true));
     return () => cancelAnimationFrame(id);
   }, []);
-  const all = agent.versions.map((v) => ({ v, s: statsOf(v.label) }));
-  const series = all.filter((x, i) => x.s || i === all.length - 1);
+  /* A credentials-only version behaves as its base, so it's measured with
+     it — one bar "v5 · v5.1" — rather than as a version of its own. */
+  const all = agent.versions
+    .reduce((groups, v) => {
+      const base = isCredentialsVersion(v) && groups.find((g) => g.labels.includes(v.sameAs || v.basedOnVersion));
+      if (base) base.labels.push(v.label);
+      else groups.push({ v, labels: [v.label] });
+      return groups;
+    }, [])
+    /* A code agent's bars are named by commit hash. */
+    .map((g) => ({ labels: g.labels, v: { ...g.v, label: g.labels.map((l) => (isGitAgent(agent) ? versionNameOf(agent, l).ref?.sha || l : l)).join(" · ") }, s: statsOf(g.labels.length === 1 ? g.labels[0] : g.labels) }));
+  /* Bars for what ran, and the newest — for a code agent, its production
+     commit (a fix on its own branch isn't the agent yet). */
+  const series = all.filter((x, i) => x.s || (isGitAgent(agent) ? x.labels.includes(agent.production) : i === all.length - 1));
   const skipped = all.length - series.length;
   const head = [...series].reverse().find((x) => x.s);
   return (
     <Panel
-      title="Pass rate by version"
+      title={isGitAgent(agent) ? "Pass rate by commit" : "Pass rate by version"}
       sx={{ display: "flex", flexDirection: "column", height: "100%" }}
       action={scopes.length > 1 ? (
         <Select
@@ -258,7 +290,7 @@ export function PassRateCard({ agent, statsOf, scopeEnv, scopeEnvVersion, scopes
       )}
       {head && skipped > 0 && (
         <Typography sx={{ px: 2, pb: 1.25, typography: "s3", color: "text.subtitle" }}>
-          {`${plural(skipped, "version")} in between ${skipped === 1 ? "wasn't" : "weren't"} run here.`}
+          {`${plural(skipped, isGitAgent(agent) ? "commit" : "version")} in between ${skipped === 1 ? "wasn't" : "weren't"} run here.`}
         </Typography>
       )}
     </Panel>

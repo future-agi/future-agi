@@ -11,7 +11,7 @@ import { ConnectModeContext, InDrawerContext } from "../../environments/connectM
 import { FlowPanel } from "../../environments/StartEnvironment";
 import ConnectCatalog from "./ConnectCatalog";
 import SetupDrawer from "../../environments/SetupDrawer";
-import { POPULAR_IDS, detectAgentPaste, newAgentChoicesFor } from "./agentConnectData";
+import { detectAgentPaste, newAgentChoicesFor } from "./agentConnectData";
 import HostedAgentFlow from "./HostedAgentFlow";
 import RepoAgentFlow from "./RepoAgentFlow";
 import BuiltinAgentFlow from "./BuiltinAgentFlow";
@@ -181,7 +181,6 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
       <>
       <ConnectCatalog
         groups={groups}
-        popularIds={POPULAR_IDS}
         compact={flowsIn === "inline"}
         pickedId={choice ? picked?.id : null}
         onPick={pickItem}

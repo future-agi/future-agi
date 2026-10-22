@@ -5,6 +5,7 @@
   found there, never a copy of the repository.
 */
 import { definitionOf, sourceKindOf } from "../_mock/agentRegistry";
+import { codeRefOf } from "../_mock/codeRefs";
 import { CHANNEL_LABELS, agentChannelsOf } from "../_mock/agentLifecycle";
 import { githubAccessLabel, githubAccessOf } from "../_mock/integrations";
 import { DIRECTIONS, codeRepoOf, contactNumbersOf, fagiPromptsOf, identityOf, languagesLabel, phoneLabelOf, reachOf, turnLimitLabel } from "./agentProfile";
@@ -12,13 +13,6 @@ import { areaValueOf } from "./agentDefinitionSummary";
 import { configAreasFor } from "./configAreas";
 
 const CODE_KINDS = ["repo", "upload", "framework"];
-const hash = (s) => {
-  let h = 0;
-  const str = String(s || "");
-  for (let i = 0; i < str.length; i += 1) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
-  return Math.abs(h);
-};
-
 export const isCodeAgent = (agent) => CODE_KINDS.includes(sourceKindOf(agent));
 
 /** Identity rows: name, owner, type, channels, languages, description. */
@@ -40,8 +34,9 @@ export const identityRowsOf = (agent) => {
  */
 export const commitPointerOf = (agent, version) => {
   if (version?.commit?.sha) return { sha: version.commit.sha, message: version.commit.message || null, author: version.commit.author || null };
-  const sha = (hash(`${agent?.key || agent?.id}:${version?.label}`) >>> 0).toString(16).padStart(7, "0").slice(-7);
-  return { sha, message: null, author: null };
+  /* One hash per version, the same every screen shows (codeRefs). */
+  const r = codeRefOf(agent, version);
+  return { sha: r?.sha || "0000000", message: r?.message || null, author: r?.author || null };
 };
 
 /** Source rows: where it lives, what we read from, credentials, write access. */

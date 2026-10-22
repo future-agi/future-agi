@@ -30,8 +30,9 @@ export const ORIGIN_LABEL = (v, source) => {
   if (v.origin === "manual") return "Recorded by hand";
   if (v.origin === "pre-versioning") return "Recorded";
   if (v.origin === "rollback") return "Roll back";
+  if (v.kind === "credentials") return `Credentials only · behaves as ${v.sameAs || "the version before"}`;
   if (v.origin === "push") return `Pushed ${v.commit?.sha || ""}`.trim();
-  if (v.origin === "pr") return `Merged PR #${v.prNumber}`;
+  if (v.origin === "pr") return v.status === "draft" ? `Draft PR${v.prNumber ? ` #${v.prNumber}` : ""} on ${v.commit?.branch || "its branch"}` : `Merged PR #${v.prNumber}`;
   if (v.applied?.length) return "From an improvement";
   if (v.origin === "connect") return "Connected";
   return versionNumber(v.label) === 1 ? "Connected" : "Added manually";

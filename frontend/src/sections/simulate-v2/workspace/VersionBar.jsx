@@ -6,6 +6,7 @@ import {
   currentEnvVersion, currentAgentVersion, pendingEnvChanges, saveEnvChangesPatch, envChangeLabel, isEnvDraft, scenariosInSet,
 } from "../_mock/versions";
 import { envLabelOf, pendingCostOf } from "../_mock/envVersionKinds";
+import { envVersionNameOf } from "../_mock/codeRefs";
 import { currentEnvSnapshot } from "../_mock/envSnapshot";
 import useEnvViewAs from "./useEnvViewAs";
 import VersionHistoryMenu from "./VersionHistory";
@@ -32,6 +33,8 @@ export default function VersionBar({ env, envState, patch, locked = false }) {
   /* Viewing an older version names that version and its own suite. */
   const scenarioCount = scenariosInSet(envState, viewAs || envV.label).length;
   const agentV = currentAgentVersion(envState);
+  /* "main @ 3f9a2c1" for a code agent, "v2" for any other. */
+  const agentName = agentV ? envVersionNameOf(envState, agentV.label, env?.id).main : null;
   const pending = pendingEnvChanges(envState);
   const snap = viewAs ? null : currentEnvSnapshot(env, envState);
   const cost = pendingCostOf(env, envState);
@@ -57,7 +60,7 @@ export default function VersionBar({ env, envState, patch, locked = false }) {
               An agent change moves only the agent. The environment version moves when the world, scenarios, sub-goals, evaluations or simulated caller change.
             </Typography>
             <Typography sx={{ typography: "s3", color: "common.white" }}>
-              <b>{agentV ? `Agent ${agentV.label}` : "No agent"}</b>{" — the test subject"}
+              <b>{agentV ? `Agent ${agentName}` : "No agent"}</b>{" — the test subject"}
             </Typography>
             {draft ? (
               <Typography sx={{ typography: "s3", color: "common.white" }}><b>{`Environment ${shownLabel}`}</b> — not run yet. Edits land in place until its first run fixes it.</Typography>
@@ -75,7 +78,7 @@ export default function VersionBar({ env, envState, patch, locked = false }) {
           sx={{ typography: "s2", color: "text.secondary", cursor: "default", fontVariantNumeric: "tabular-nums", minWidth: 0 }}
         >
           <Iconify icon="solar:box-linear" width={14} sx={{ color: "text.subtitle", verticalAlign: "-2px", mr: 0.75 }} />
-          {agentV ? <>Agent {strong(agentV.label)}</> : "No agent yet"}
+          {agentV ? <>Agent {strong(agentName)}</> : "No agent yet"}
           <Typography component="span" sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}>×</Typography>
           environment {strong(shownLabel)}
           {draft && <Box component="span" sx={{ typography: "s3", color: "text.subtitle" }}> · not run yet</Box>}

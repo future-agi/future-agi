@@ -10,7 +10,8 @@ import { clickable, focusRing } from "../components/clickable";
 import { useConnectedAgents, useSimStore } from "../store";
 import { RELEASE_WHEN, draftReleaseOf, releasedNote, rollbackVersionRecord, versionReleaseOf } from "./versionRelease";
 import { pinsDiff, versionPinsOf } from "../_mock/versionPins";
-import { versionNumber } from "../_mock/versions";
+import { nextMajorLabel } from "../_mock/versions";
+import { branchesOf, commitsOn, defaultBranchOf, isGitAgent, versionNameOf } from "../_mock/codeRefs";
 import { OUTSIDE_CHANGE_LABEL, isOutsideChange } from "../_mock/agentSync";
 import { MAKE_ACTIVE_ADMIN_ONLY, activeVersionOf, currentWorkspaceRole } from "./agentProfile";
 import { versionChecksLine, versionChecksOf } from "../_mock/versionChecks";
@@ -42,13 +43,24 @@ export default function AgentVersionsTab({ agent, source, filesOf, toolsOf, stat
   const pins = useMemo(() => versionPinsOf({ agent, source, toolsOf }), [agent, source, toolsOf]);
   const labels = agent.versions.map((v) => v.label);
   const latest = labels[labels.length - 1];
-  const [to, setTo] = useState(latest);
-  const [from, setFrom] = useState(parentLabel(agent.versions, latest) || latest);
+  /* A code agent's versions are commits: "main @ 3f9a2c1"; buttons say the short hash. */
+  const git = isGitAgent(agent);
+  const nameOf = (l) => versionNameOf(agent, l).main;
+  const shortOf = (l) => (git ? versionNameOf(agent, l).ref?.sha || l : l);
+  /* In Compare's pickers: the hash and its message — branch names are long. */
+  const pickNameOf = (l) => {
+    const r = git ? versionNameOf(agent, l).ref : null;
+    return r ? `${r.sha} · ${r.message}` : l;
+  };
+  /* Starts on the newest version — a code agent's production commit, not a fix waiting on its branch. */
+  const start = isGitAgent(agent) ? agent.production || latest : latest;
+  const [to, setTo] = useState(start);
+  const [from, setFrom] = useState(parentLabel(agent.versions, start) || start);
   /* A new version lands → compare it with what it was built on. */
   useEffect(() => {
-    setTo(latest);
-    setFrom(parentLabel(agent.versions, latest) || latest);
-  }, [latest]); // eslint-disable-line react-hooks/exhaustive-deps
+    setTo(start);
+    setFrom(parentLabel(agent.versions, start) || start);
+  }, [start]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const running = (label) => agent.usedIn.filter((u) => u.running === label);
   /* An older version can be put back in an environment — the header picker
@@ -71,7 +83,9 @@ export default function AgentVersionsTab({ agent, source, filesOf, toolsOf, stat
     recordAgentVersion(agent.key, v);
     setRollbackTo(null);
     enqueueSnackbar(
-      `Saved as ${v.label}, rolled back to ${label} — a draft. Production stays on ${agent.production} until it's released.`,
+      git
+        ? `Revert of ${shortOf(label)} opened on ${versionNameOf({ ...agent, versions: [...agent.versions, v] }, v.label).ref?.branch} — a draft. Production stays on ${nameOf(agent.production)} until it's merged.`
+        : `Saved as ${v.label}, rolled back to ${label} — a draft. Production stays on ${agent.production} until it's released.`,
       { variant: "success" },
     );
   };
@@ -80,16 +94,35 @@ export default function AgentVersionsTab({ agent, source, filesOf, toolsOf, stat
      new baseline; an improvement's release is recorded where it was
      verified, so its issue moves on to Watching. Built-in agents use Make
      active instead. */
-  const markReleased = (label) => {
+  const markReleased = (label, { quiet = false } = {}) => {
     dispatch({ type: "updateAgentVersion", key: agent.key, label, patch: { status: "released", releasedAt: new Date().toISOString() } });
     const home = draftReleaseOf(agent, state, label);
     if (home) dispatch({ type: "patchEnvState", envId: home.envId, patch: home.patch });
-    enqueueSnackbar(`${label} is released — the new baseline. Environments following production test it on their next run; pinned ones stay put.`, { variant: "success" });
+    if (quiet) return;
+    enqueueSnackbar(git
+      ? `${shortOf(label)} is merged — the new baseline. Environments whose default is production test it on their next run.`
+      : `${label} is released — the new baseline. Environments whose default is production test it on their next run.`, { variant: "success" });
   };
 
   return (
     <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", lg: "minmax(340px, 420px) 1fr" }, alignItems: "start" }}>
-      {/* ── timeline ── */}
+      {/* ── a code agent: its commits, by branch ── */}
+      {git ? (
+        <CommitLog
+          agent={agent}
+          selected={to}
+          onSelect={(l) => { setTo(l); setFrom(parentLabel(agent.versions, l) || l); }}
+          statsOf={statsOf}
+          scopeName={scopeName}
+          running={running}
+          onView={onView}
+          onRunIn={onRunIn ? (e, l) => runIn(e, l, agent.usedIn.filter((u) => u.running !== l)) : null}
+          onRevert={(l) => setRollbackTo(l)}
+          onMerge={(labels) => { labels.forEach((l) => markReleased(l, { quiet: true })); enqueueSnackbar(`${versionNameOf(agent, labels[labels.length - 1]).ref?.branch} merged into ${defaultBranchOf(agent)} — environments whose default is production test it on their next run.`, { variant: "success" }); }}
+          checksOf={(v) => versionChecksOf(agent, source, v)}
+        />
+      ) : (
+      /* ── any other agent: its versions, newest first ── */
       <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, bgcolor: "background.paper" }}>
         <Typography sx={{ px: 2, py: 1.5, typography: "s2", fontWeight: 700, borderBottom: "1px solid", borderColor: "divider" }}>
           {`${agent.versions.length} version${agent.versions.length === 1 ? "" : "s"}`}
@@ -117,7 +150,7 @@ export default function AgentVersionsTab({ agent, source, filesOf, toolsOf, stat
                 </Stack>
                 <Box flex={1} minWidth={0}>
                   <Stack direction="row" alignItems="center" spacing={0.75} flexWrap="wrap" rowGap={0.5}>
-                    <Typography sx={{ typography: "s2", fontWeight: 700, fontFamily: MONO }}>{v.label}</Typography>
+                    <Typography sx={{ typography: "s2", fontWeight: 700, fontFamily: MONO }}>{nameOf(v.label)}</Typography>
                     {isLatest && <Chip label="Latest" tone="primary" />}
                     {/* The version that's live — the newest one that isn't a pending draft. */}
                     {v.label === agent.production && !release[v.label]?.live && !(builtin && v.label === active) && (
@@ -161,7 +194,7 @@ export default function AgentVersionsTab({ agent, source, filesOf, toolsOf, stat
                           size="small" variant="outlined" onClick={() => markReleased(v.label)}
                           sx={{ typography: "s3", fontWeight: 700, height: 24, minWidth: 0, color: "text.primary", borderColor: "divider" }}
                         >
-                          Mark released
+                          {git ? "Mark merged" : "Mark released"}
                         </Button>
                       </Tooltip>
                     )}
@@ -198,12 +231,12 @@ export default function AgentVersionsTab({ agent, source, filesOf, toolsOf, stat
                     </Button>
                     {!isLatest && !unreleased && onRunIn && others.length > 0 && (
                       <Button size="small" onClick={(e) => runIn(e, v.label, others)} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", minWidth: 0 }}>
-                        {others.length === 1 ? `Test ${v.label} in ${others[0].envName}…` : `Test ${v.label} in an environment…`}
+                        {others.length === 1 ? `Make ${shortOf(v.label)} the default in ${others[0].envName}…` : `Make ${shortOf(v.label)} an environment's default…`}
                       </Button>
                     )}
                     {!isLatest && !unreleased && (
                       <Button size="small" onClick={() => setRollbackTo(v.label)} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", minWidth: 0 }}>
-                        {`Roll back to ${v.label}`}
+                        {git ? `Revert to ${shortOf(v.label)}` : `Roll back to ${v.label}`}
                       </Button>
                     )}
                   </Stack>
@@ -213,26 +246,31 @@ export default function AgentVersionsTab({ agent, source, filesOf, toolsOf, stat
           })}
         </Box>
       </Box>
+      )}
 
       <Dialog
         open={!!rollbackTo} onClose={() => setRollbackTo(null)}
         PaperProps={{ sx: { borderRadius: 2, maxWidth: 440, width: "100%", bgcolor: "background.paper", backgroundImage: "none", border: "1px solid", borderColor: "divider" } }}
       >
         <Box sx={{ px: 3, pt: 2.5, pb: 1 }}>
-          <Typography sx={{ typography: "m3", fontWeight: 700 }}>{`Roll back to ${rollbackTo}?`}</Typography>
+          <Typography sx={{ typography: "m3", fontWeight: 700 }}>{git ? `Revert to ${shortOf(rollbackTo)}?` : `Roll back to ${rollbackTo}?`}</Typography>
         </Box>
         <Stack spacing={1} sx={{ px: 3, pb: 2 }}>
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            {`This saves a new version, v${Math.max(0, ...labels.map(versionNumber)) + 1}, with ${rollbackTo}'s ${source.kind === "repo" || source.kind === "framework" ? "commit" : source.kind === "upload" ? "bundle" : "configuration"}, prompts and tools. History stays as it is.`}
+            {git
+              ? `This opens a revert commit as a draft pull request — the code, prompts and tools as they were at ${shortOf(rollbackTo)}. History stays as it is.`
+              : `This saves a new version, ${nextMajorLabel(labels)}, with ${rollbackTo}'s ${source.kind === "upload" ? "bundle" : "configuration"}, prompts and tools. History stays as it is.`}
           </Typography>
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            {`It doesn't change what's in production until it's released — production stays on ${agent.production}.`}
+            {git
+              ? `Production stays on ${nameOf(agent.production)} until the pull request is merged.`
+              : `It doesn't change what's in production until it's released — production stays on ${agent.production}.`}
           </Typography>
         </Stack>
         <Stack direction="row" justifyContent="flex-end" spacing={1} sx={{ px: 3, pb: 2.5 }}>
           <Button size="small" onClick={() => setRollbackTo(null)} sx={{ typography: "s2", fontWeight: 700, color: "text.secondary" }}>Cancel</Button>
           <Button size="small" variant="contained" color="primary" onClick={() => rollBack(rollbackTo)} sx={{ typography: "s2", fontWeight: 700 }}>
-            {`Roll back to ${rollbackTo}`}
+            {git ? `Revert to ${shortOf(rollbackTo)}` : `Roll back to ${rollbackTo}`}
           </Button>
         </Stack>
       </Dialog>
@@ -254,9 +292,9 @@ export default function AgentVersionsTab({ agent, source, filesOf, toolsOf, stat
       <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, bgcolor: "background.paper", minWidth: 0 }}>
         <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}>
           <Typography sx={{ typography: "s2", fontWeight: 700 }}>Compare</Typography>
-          <VersionSelect value={from} onChange={setFrom} labels={labels} />
+          <VersionSelect value={from} onChange={setFrom} labels={labels} nameOf={pickNameOf} />
           <Iconify icon="solar:arrow-right-linear" width={14} sx={{ color: "text.subtitle" }} />
-          <VersionSelect value={to} onChange={setTo} labels={labels} />
+          <VersionSelect value={to} onChange={setTo} labels={labels} nameOf={pickNameOf} />
           <Box flex={1} />
           {from !== to && (
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -293,9 +331,12 @@ export default function AgentVersionsTab({ agent, source, filesOf, toolsOf, stat
                 return n > Math.min(labels.indexOf(from), labels.indexOf(to)) && n <= Math.max(labels.indexOf(from), labels.indexOf(to));
               });
               const recorded = between.filter((v) => v.origin === "manual").flatMap((v) => (v.changes || []).map((c) => `${v.label}: ${c.title}${c.detail && c.detail !== "Recorded by hand" ? ` — ${c.detail}` : ""}`));
+              /* Only keys moved between them — the same behaviour, by design. */
+              const credentialsOnly = between.length > 0 && between.every((v) => v.kind === "credentials");
+              if (credentialsOnly) return `${from} and ${to} behave the same — only credentials changed between them (${between.map((v) => v.label).join(", ")}). References only; the values never appear here.`;
               return recorded.length
                 ? `No file differences. What changed was recorded by hand — ${recorded.join("; ")}.`
-                : `${from} and ${to} have the same files — the difference is outside what this source exposes.`;
+                : `${nameOf(from)} and ${nameOf(to)} have the same files — the difference is outside what this source exposes.`;
             })()}
           </Typography>
         ) : (
@@ -377,17 +418,19 @@ function collapse(lines) {
   return out;
 }
 
-function VersionSelect({ value, onChange, labels }) {
+/* `nameOf` says how a version reads — "main @ 3f9a2c1" for a code agent. */
+function VersionSelect({ value, onChange, labels, nameOf = (l) => l }) {
   return (
     <Select
       size="small" value={value} onChange={(e) => onChange(e.target.value)}
-      sx={{ height: 28, typography: "s2", fontFamily: MONO, "& .MuiSelect-select": { py: 0.25 } }}
+      renderValue={(l) => nameOf(l)}
+      sx={{ height: 28, maxWidth: 280, minWidth: 0, typography: "s2", "& .MuiSelect-select": { py: 0.25, overflow: "hidden", textOverflow: "ellipsis" } }}
     >
-      {labels.map((l) => <MenuItem key={l} value={l} sx={{ typography: "s2", fontFamily: MONO }}>{l}</MenuItem>)}
+      {[...labels].reverse().map((l) => <MenuItem key={l} value={l} sx={{ typography: "s2", maxWidth: 420 }}><Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>{nameOf(l)}</Box></MenuItem>)}
     </Select>
   );
 }
-VersionSelect.propTypes = { value: PropTypes.string, onChange: PropTypes.func, labels: PropTypes.array };
+VersionSelect.propTypes = { value: PropTypes.string, onChange: PropTypes.func, labels: PropTypes.array, nameOf: PropTypes.func };
 
 /* One line under a version — "3 checks passed" — that opens to each check. */
 function VersionChecks({ result }) {
@@ -450,3 +493,118 @@ function Chip({ label, tone }) {
   );
 }
 Chip.propTypes = { label: PropTypes.string, tone: PropTypes.string };
+
+/*
+  A code agent's history, the way a repository shows it: each branch with its
+  commits, newest first. The release branch leads; a fix waiting as a draft
+  pull request is its own branch, merged as a whole from its header. A row is
+  the commit — hash, message, author and time, and where it's in production
+  or tested. Picking a row compares it with its parent on the right; its
+  actions sit on the picked row only, so the list stays a list.
+*/
+function CommitLog({ agent, selected, onSelect, statsOf, scopeName, running, onView, onRunIn, onRevert, onMerge, checksOf }) {
+  const branches = branchesOf(agent).filter((b) => b.count);
+  const headOfMain = commitsOn(agent, defaultBranchOf(agent))[0]?.label;
+  return (
+    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, bgcolor: "background.paper", overflow: "hidden", minWidth: 0 }}>
+      <Typography sx={{ px: 2, py: 1.5, typography: "s2", fontWeight: 700, borderBottom: "1px solid", borderColor: "divider" }}>
+        {`${agent.versions.length} commit${agent.versions.length === 1 ? "" : "s"} · ${branches.length} branch${branches.length === 1 ? "" : "es"}`}
+      </Typography>
+      {branches.map((b) => {
+        const commits = commitsOn(agent, b.name);
+        const draft = commits.some((c) => c.draft);
+        /* A fix an improvement opened says which, and its pull request. */
+        const head = agent.versions.find((v) => v.label === commits[0]?.label);
+        const pr = head?.prNumber || head?.draftOf?.prNumber;
+        const from = head?.draftOf?.issueId ? `from ${head.draftOf.name || "an improvement"} · ${head.draftOf.issueId}` : null;
+        return (
+          <Box key={b.name} sx={{ borderTop: "1px solid", borderColor: "divider", "&:nth-of-type(2)": { borderTop: "none" } }}>
+            {/* The branch: its name, what it is, and — for a draft PR — merging it. */}
+            <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 1, bgcolor: "background.neutral" }}>
+              <Iconify icon="solar:branching-paths-up-linear" width={14} sx={{ color: "text.secondary", flexShrink: 0 }} />
+              <Box flex={1} minWidth={0}>
+                <Typography noWrap title={b.name} sx={{ typography: "s2", fontWeight: 700, fontFamily: MONO }}>{b.name}</Typography>
+                <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+                  {[b.release ? "Release branch" : draft ? (pr ? `PR #${pr}` : "Pull request") : "Merged", from, `${b.count} commit${b.count === 1 ? "" : "s"}`].filter(Boolean).join(" · ")}
+                </Typography>
+              </Box>
+              {draft && onMerge && (
+                <Tooltip arrow title="Mark it merged once the pull request is merged on GitHub. Its newest commit becomes the new baseline every improvement is measured against.">
+                  <Button
+                    size="small" variant="outlined"
+                    onClick={() => onMerge([...commits].reverse().map((c) => c.label))}
+                    sx={{ typography: "s3", fontWeight: 700, height: 26, flexShrink: 0, color: "text.primary", borderColor: "divider" }}
+                  >
+                    Mark merged
+                  </Button>
+                </Tooltip>
+              )}
+            </Stack>
+
+            {commits.map((c) => {
+              const on = c.label === selected;
+              const envs = running(c.label);
+              const stats = statsOf(c.label);
+              const v = agent.versions.find((x) => x.label === c.label);
+              const tags = [
+                c.label === agent.production && { label: "In production", tone: "neutral" },
+                ...envs.map((u) => ({ label: `Tested in ${u.envName}`, tone: "neutral" })),
+              ].filter(Boolean);
+              const others = agent.usedIn.filter((u) => u.running !== c.label);
+              return (
+                <Box
+                  key={c.label}
+                  {...clickable(() => onSelect(c.label), { role: "radio", checked: on })}
+                  sx={{
+                    ...focusRing,
+                    px: 2, py: 1.125, cursor: "pointer", borderTop: "1px solid", borderColor: "divider",
+                    bgcolor: (t) => (on ? alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.035) : "transparent"),
+                    "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, on ? 0.07 : 0.03) },
+                  }}
+                >
+                  <Stack direction="row" alignItems="baseline" spacing={1} sx={{ minWidth: 0 }}>
+                    <Typography sx={{ typography: "s2", fontFamily: MONO, fontWeight: 700, flexShrink: 0 }}>{c.sha}</Typography>
+                    <Typography noWrap title={c.message} sx={{ typography: "s2", flex: 1, minWidth: 0 }}>{c.message}</Typography>
+                  </Stack>
+                  <Stack direction="row" alignItems="center" spacing={0.75} flexWrap="wrap" rowGap={0.5} sx={{ mt: 0.375 }}>
+                    <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+                      {[c.author, c.at && ago(c.at), stats && `${stats.rate}% · ${stats.runs} run${stats.runs === 1 ? "" : "s"}${scopeName ? ` in ${scopeName}` : ""}`].filter(Boolean).join(" · ")}
+                    </Typography>
+                    {tags.map((t) => <Chip key={t.label} label={t.label} tone={t.tone} />)}
+                  </Stack>
+                  {/* The picked commit's checks and actions. */}
+                  {on && (
+                    <Box onClick={(e) => e.stopPropagation()} sx={{ cursor: "default" }}>
+                      <VersionChecks result={checksOf(v)} />
+                      <Stack direction="row" alignItems="center" spacing={0.5} flexWrap="wrap" sx={{ mt: 0.5, ml: -0.75, "& .MuiButton-root": { px: 0.75, height: 24 } }}>
+                        <Button size="small" onClick={() => onView(c.label)} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", minWidth: 0 }}>
+                          View definition
+                        </Button>
+                        {!c.draft && c.label !== headOfMain && onRunIn && others.length > 0 && (
+                          <Button size="small" onClick={(e) => onRunIn(e, c.label)} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", minWidth: 0 }}>
+                            {others.length === 1 ? `Make it the default in ${others[0].envName}…` : "Make it an environment's default…"}
+                          </Button>
+                        )}
+                        {!c.draft && c.label !== headOfMain && (
+                          <Button size="small" onClick={() => onRevert(c.label)} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", minWidth: 0 }}>
+                            {`Revert to ${c.sha}`}
+                          </Button>
+                        )}
+                      </Stack>
+                    </Box>
+                  )}
+                </Box>
+              );
+            })}
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+CommitLog.propTypes = {
+  agent: PropTypes.object.isRequired, selected: PropTypes.string, onSelect: PropTypes.func.isRequired,
+  statsOf: PropTypes.func.isRequired, scopeName: PropTypes.string, running: PropTypes.func.isRequired,
+  onView: PropTypes.func.isRequired, onRunIn: PropTypes.func, onRevert: PropTypes.func.isRequired,
+  onMerge: PropTypes.func, checksOf: PropTypes.func.isRequired,
+};

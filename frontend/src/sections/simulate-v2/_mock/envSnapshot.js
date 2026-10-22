@@ -20,6 +20,10 @@
  *   - eval changes (envState.evalChanges)          evals
  *   - sub-goal publishes (envState.subGoalEdits)   sub-goal catalogue
  *   - caller changes (envState.callerChanges)      simulated caller
+ *   - credential changes (envState.credentialSets) secrets the world uses
+ * Credentials are versioned with the environment, as the agent's are with
+ * the agent: a version that changes only them is a minor one — v7 → v7.1 —
+ * because the world behaves the same with a new key.
  * Changes written in the same moment (an approved nudge adds a handler and
  * three scenarios at once) are one snapshot. Agent versions never are.
  */
@@ -40,7 +44,7 @@ const CONTRACT_KINDS = ["contract", "rules"];
 const WORLD_KINDS = ["contract", "rules", "seed", "toolbehaviour", "actors"];
 
 /* Which kind names a snapshot when one action changed several parts. */
-const KIND_ORDER = ["recorded", "build", "world", "scenarios", "sub-goals", "evals", "caller"];
+const KIND_ORDER = ["recorded", "build", "world", "scenarios", "sub-goals", "evals", "caller", "credentials"];
 
 export const SNAPSHOT_KIND_LABEL = {
   build: "First build",
@@ -50,6 +54,7 @@ export const SNAPSHOT_KIND_LABEL = {
   "sub-goals": "Sub-goals",
   evals: "Evaluations",
   caller: "Simulated caller",
+  credentials: "Credentials",
 };
 
 const firstSentence = (text) => {
@@ -70,8 +75,11 @@ const eventsOf = (env, envState) => {
   (envState?.evalChanges || []).forEach((c, i) => out.push({ type: "eval", at: c.at, c, order: i }));
   (envState?.subGoalEdits || []).forEach((g, i) => out.push({ type: "catalog", at: g.at, g, order: i }));
   (envState?.callerChanges || []).forEach((c, i) => out.push({ type: "caller", at: c.at, c, order: i }));
+  /* The first credential set is what the environment started with — only a
+     change after it is an event. */
+  (envState?.credentialSets || []).forEach((c, i) => { if (i > 0 && c.at) out.push({ type: "creds", at: c.at, c, order: i }); });
   const buildAt = ms(eOldest[0]?.createdAt);
-  const TYPE_RANK = { env: 0, set: 1, catalog: 2, eval: 3, caller: 4 };
+  const TYPE_RANK = { env: 0, set: 1, catalog: 2, eval: 3, caller: 4, creds: 5 };
   /* Nothing comes before the first build; within one instant, the world first. */
   return out
     .map((e) => ({ ...e, t: e.first ? buildAt : Math.max(ms(e.at), buildAt) }))
@@ -133,6 +141,14 @@ const apply = (parts, e, counters) => {
       details: [{ part: "catalog", label: parts.catalog, text: `${goal} · ${how}${e.g.note ? ` — ${e.g.note}` : ""}` }],
     };
   }
+  if (e.type === "creds") {
+    parts.creds = e.c.label;
+    const text = (e.c.changes || []).join(", ") || "References changed";
+    return {
+      pieces: [{ kind: "credentials", text: `Credentials: ${text}` }],
+      details: [{ part: "creds", label: e.c.label, text: `${text} — by reference; the world behaves the same` }],
+    };
+  }
   /* caller */
   parts.caller = e.c.to || parts.caller;
   return {
@@ -163,7 +179,7 @@ export const envSnapshotsOf = (env, envState) => {
   }
   const events = eventsOf(env, envState);
   const initialCaller = envState?.callerChanges?.[0]?.from || simulatorOf(env, envState).model;
-  const parts = { env: events[0]?.v?.label || "v1", set: "s1", catalog: "c1", eval: "e1", caller: initialCaller };
+  const parts = { env: events[0]?.v?.label || "v1", set: "s1", catalog: "c1", eval: "e1", caller: initialCaller, creds: envState?.credentialSets?.[0]?.label || null };
   const counters = { eval: 1, catalog: 1 };
   const groups = [];
   events.forEach((e) => {
@@ -214,11 +230,18 @@ export const envSnapshotsOf = (env, envState) => {
     });
   }
 
+  /* A version that only moved credentials is a minor of the one before it. */
+  let major = 0;
+  let minor = 0;
   const list = groups.map((g, i) => {
     const kinds = KIND_ORDER.filter((k) => g.pieces.some((p) => p.kind === k));
+    const credentialsOnly = i > 0 && kinds.length === 1 && kinds[0] === "credentials";
+    if (credentialsOnly) minor += 1;
+    else { major += 1; minor = 0; }
     return {
-      label: `v${i + 1}`,
+      label: minor ? `v${major}.${minor}` : `v${major}`,
       n: i + 1,
+      credentialsOnly,
       at: g.at,
       /* When the snapshot's changes were made — what a rollback reads the
          scenario set, sub-goals and evaluations at. */
@@ -274,7 +297,7 @@ export const currentEnvSnapshot = (env, envState) => {
 };
 
 /** The label the next change will mint — "v8". */
-export const nextSnapshotLabel = (env, envState) => `v${envSnapshotsOf(env, envState).length + 1}`;
+export const nextSnapshotLabel = (env, envState) => `v${Math.max(0, ...envSnapshotsOf(env, envState).map((s) => num(s.label.split(".")[0]))) + 1}`;
 
 /* The parts a run pinned — only those it actually recorded. */
 const runParts = (run, env, envState) => ({
@@ -283,6 +306,7 @@ const runParts = (run, env, envState) => ({
   catalog: run?.catalogVersion || null,
   eval: run?.evalVersion || null,
   caller: callerModel(run?.simulator),
+  creds: (typeof run?.credentialSet === "string" ? run.credentialSet : run?.credentialSet?.label) || null,
 });
 
 const runTime = (run) => ms(run?.startedAt || run?.createdAt || run?.finishedAt);

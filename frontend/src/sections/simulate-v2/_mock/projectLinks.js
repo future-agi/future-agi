@@ -96,3 +96,27 @@ export const likelyAgentFor = (project, agents = []) => {
   });
   return best;
 };
+
+/* The words that name a thing — "Pickup dispatch agent" → pickup, dispatch. */
+const nameWords = (x) => new Set(String(x || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !["agent", "assistant", "the", "and", "acme", "inc"].includes(w)));
+
+/**
+ * The existing Observe project an agent's traces most likely land in: one
+ * with real traces that no other agent has, sharing the most words with the
+ * agent's name or repository ("Pickup dispatch agent", acme-inc/pickup-dispatch
+ * → pickup-dispatch). Suggested before anyone creates a new, empty project —
+ * an agent split from its traces can't fix its own Error Feed issues.
+ */
+export const likelyProjectFor = (agent, state, agents = []) => {
+  if (!agent) return null;
+  const want = new Set([...nameWords(agent.name), ...nameWords(agent.definition?.repoUrl || agent.values?.repo || "")]);
+  let best = null;
+  let score = 0;
+  OBSERVE_PROJECTS.forEach((p) => {
+    const link = projectLinkOf(p.id, state, agents);
+    if (link.status === "linked" && link.agentKey !== agent.key) return;
+    const got = [...nameWords(`${p.id} ${p.name}`)].filter((w) => want.has(w)).length;
+    if (got > score) { score = got; best = p; }
+  });
+  return best;
+};

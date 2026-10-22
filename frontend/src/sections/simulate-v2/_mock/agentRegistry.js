@@ -14,7 +14,7 @@
  * endpoint nothing but what it does.
  */
 import { getAgentType } from "./agentTypes";
-import { agentVersions, currentAgentVersion, isAgentPinned, versionNumber } from "./versions";
+import { agentVersions, currentAgentVersion, isAgentPinned, majorOf, versionNumber } from "./versions";
 import { agentToolsFor } from "./toolFit";
 import { agentPromptOf } from "./agentPrompt";
 import { getEnvironment } from "./environments";
@@ -746,9 +746,19 @@ export const connectedAgentsFrom = (state, { withDeleted = false } = {}) => {
   /* Versions any environment has released — a draft stays a draft until
      its label is released somewhere (the PR merged, the copy went live,
      someone marked it released). */
-  const releasedLabels = new Set(Object.values(state?.byEnv || {}).flatMap((es) => (es?.releases || []).map((r) => r.version)));
+  /* Per agent: labels repeat across agents ("v10" here isn't "v10" there),
+     so only releases in environments testing this agent count. */
+  const releasedByAgent = new Map();
+  Object.entries(state?.byEnv || {}).forEach(([id, es]) => {
+    const k = es?.agent ? envAgentKey(es.agent, id) : null;
+    if (!k || !(es.releases || []).length) return;
+    const set = releasedByAgent.get(k) || new Set();
+    es.releases.forEach((r) => set.add(r.version));
+    releasedByAgent.set(k, set);
+  });
   return [...map.values()].map((a) => {
     if (!a.versions.length) a.versions = [{ id: "agent-v1", label: "v1", note: "First version connected.", createdAt: a.connectedAt, origin: "connect" }];
+    const releasedLabels = releasedByAgent.get(a.key) || new Set();
     /* A proposal's version before anyone released it: on record, not live. */
     a.versions = a.versions.map((v) => ({ ...v, pendingDraft: v.status === "draft" && !releasedLabels.has(v.label) }));
     const latest = a.versions[a.versions.length - 1];
@@ -1003,15 +1013,22 @@ export const syncCheck = ({ agent, versions, env }) => {
   const latest = versions[versions.length - 1];
   if (!source.syncable) return { ok: false, reason: "no-source" };
   /* Connecting, a sync, a push or a merged PR all read the source as it
-     stands — nothing new until it changes again. */
-  if (["connect", "sync", "push", "pr"].includes(latest?.origin)) return { ok: true, upToDate: true, latest: latest.label };
+     stands — nothing new until it changes again. A credentials-only version
+     doesn't touch the source, so it's read through to the one it's based on. */
+  const read = [...versions].reverse().find((v) => v.kind !== "credentials" && v.status !== "draft" && !v.pendingDraft) || latest;
+  if (["connect", "sync", "push", "pr"].includes(read?.origin)) return { ok: true, upToDate: true, latest: latest.label };
   return { ok: true, upToDate: false, ...changesSince({ agent, versions, env, source }) };
 };
 
 /* What changed in the source since the newest version. */
+/* What a re-read builds on: the newest version that's live — a fix waiting
+   as a draft (a pull request on its own branch, a platform draft) isn't in
+   the source yet, so a sync never inherits its unmerged change. */
+const readBaseOf = (versions) => [...versions].reverse().find((v) => v.status !== "draft" && !v.pendingDraft) || versions[versions.length - 1];
+
 const changesSince = ({ agent, versions, env, source }) => {
-  const latest = versions[versions.length - 1];
-  const n = versionNumber(latest?.label) + 1;
+  const latest = readBaseOf(versions);
+  const n = Math.max(0, ...versions.map((v) => majorOf(v.label))) + 1;
   const seed = hash(`${agentKeyOf(agent)}:${n}`);
   const known = new Set((latest?.tools || env?.tools || []).map((t) => t.name));
   const tool = NEW_TOOLS.find((t, i) => !known.has(t.name) && (seed + i) % 2 === 0) || NEW_TOOLS.find((t) => !known.has(t.name));

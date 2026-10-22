@@ -57,7 +57,8 @@ export default function FixButton({ issue, onOpenSheet }) {
   if (!improving) return null;
 
   const openFix = () => status?.optId && navigate(...issueFixNav(status, issue?.cluster_id));
-  const openConnections = () => navigate(`${paths.dashboard.agents}/connected/${agent.id}?tab=connections`);
+  /* Where a gate is answered: Connections (consent, a disconnect) or Overview (Check what we found). */
+  const openConnections = (tab = "connections") => navigate(`${paths.dashboard.agents}/connected/${agent.id}?tab=${tab}`);
 
   /* Reopened with the change it came back on: the banner under the header
      carries View fix and Fix again, so the header doesn't repeat them. */
@@ -90,12 +91,12 @@ export default function FixButton({ issue, onOpenSheet }) {
     <Box sx={{ py: 0.25 }}>
       <Typography sx={{ typography: "s3", fontWeight: 700 }}>{hardGate.title}</Typography>
       <Typography sx={{ typography: "s3", mt: 0.25 }}>{hardGate.body}</Typography>
-      {hardGate.action === "connections" && (
+      {(hardGate.action === "connections" || hardGate.action === "overview") && (
         <Typography
-          {...clickable(() => { setTip(false); openConnections(); })}
+          {...clickable(() => { setTip(false); openConnections(hardGate.action); })}
           sx={{ typography: "s3", fontWeight: 700, mt: 0.5, cursor: "pointer", textDecoration: "underline", ...focusRing }}
         >
-          Open the agent&apos;s Connections tab
+          {hardGate.action === "overview" ? "Open the agent's Overview" : "Open the agent's Connections tab"}
         </Typography>
       )}
     </Box>

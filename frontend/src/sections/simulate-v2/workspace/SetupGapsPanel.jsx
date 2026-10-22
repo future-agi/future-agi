@@ -12,6 +12,7 @@ import { downgradeTierPatch, safeTargetPatch, toolSettingOf } from "../_mock/too
 import { openGapsInbox } from "../_mock/gapsInboxBus";
 import { SafeTargetPrompt } from "./ToolDial";
 import { credentialRefPatch } from "../_mock/secretRefs";
+import { credentialSetPatch } from "../_mock/envConfig";
 import { SecretRefText, SetRefAction, SecretRefEditor, PreflightLine, RefTag } from "./SecretRefControls";
 import { NudgesSection } from "./NudgeCard";
 import { LiveConsentCard } from "../agents/AgentLiveConsent";
@@ -508,7 +509,8 @@ StatusMark.propTypes = { status: PropTypes.string, size: PropTypes.number };
 function CredentialsList({ credentials, envState, patch }) {
   const [editing, setEditing] = useState(null);
   if (!credentials.length) return null;
-  const setRef = (c, ref) => { patch?.(credentialRefPatch(envState, c.id, ref, c.provider)); setEditing(null); };
+  /* A moved reference is the environment's next (credentials-only) version. */
+  const setRef = (c, ref) => { patch?.(credentialSetPatch(envState, credentialRefPatch(envState, c.id, ref, c.provider))); setEditing(null); };
   return (
     <>
       {credentials.map((c) => {

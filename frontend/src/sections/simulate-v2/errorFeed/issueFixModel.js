@@ -12,6 +12,7 @@ import { currentAgentVersion, productionAgentVersion } from "../_mock/versions";
 import { measureTodayRun, measuredSummaryOf } from "../_mock/measureToday";
 import { isComingSoon, needsLiveConsent } from "../_mock/rsiModel";
 import { agentStatusFor, mainEnvFor } from "../_mock/improvementPolicy";
+import { needsFoundCheck } from "../_mock/agentRegistry";
 import { errorFeedScenarios } from "../_mock/scenarioSources";
 import { projectLinkOf, projectsOfAgent } from "../_mock/projectLinks";
 import { mockCluster } from "src/api/errorFeed/mockAdapter";
@@ -240,7 +241,7 @@ export const productionVersionOf = (agent, state, issue, fallbackEs) => {
  * Why Fix can't start, said rather than hidden: the agent is disconnected or
  * archived, its environment is Coming soon (browser, computer use), or it runs
  * live and needs the user's consent first. Null when Fix can start.
- *   { key, title, body, action?: "connections" }
+ *   { key, title, body, action?: "connections" | "overview" }
  */
 export const fixGateOf = (agent, env) => {
   if (!agent) return null;
@@ -253,6 +254,16 @@ export const fixGateOf = (agent, env) => {
   }
   if (isComingSoon(agent) || (env && isComingSoon(env))) {
     return { key: "coming-soon", title: "Coming soon", body: "Browser and computer-use agents are coming soon. Improvements don't run on them yet." };
+  }
+  /* A newly connected code agent is fixed, like it's run, once what we read
+     from its code is confirmed (RSI PRD Flow 1) — the same rule runs follow. */
+  if (needsFoundCheck(agent)) {
+    return {
+      key: "found",
+      title: "Confirm what we found in its code first",
+      body: `Check what we read from ${agent.name}'s code — entry point, prompts, tools and the tests every change must keep passing — on its Overview. Fixes, like runs, start once it's confirmed.`,
+      action: "overview",
+    };
   }
   if (needsLiveConsent(agent)) {
     return {

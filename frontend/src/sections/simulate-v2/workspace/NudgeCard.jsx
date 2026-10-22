@@ -7,7 +7,8 @@ import { Box, Button, Collapse, MenuItem, Select, Stack, TextField, Typography }
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { useSimStore } from "../store";
-import { NUDGE_KINDS, openNudgesOf } from "../_mock/decoupled";
+import { NUDGE_KINDS, openNudgesOf, resolveNudgePatch } from "../_mock/decoupled";
+import { contractEditPlan } from "../_mock/rlContract";
 import { currentEnvSnapshot, nextSnapshotLabel } from "../_mock/envSnapshot";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import {
@@ -155,7 +156,9 @@ export default function NudgeCard({ nudge, env, envState, patch, onNavigate, def
       </Stack>
       <Collapse in={open} unmountOnExit>
         <Box sx={{ px: 2.5, pb: 1.75, pl: 6 }}>
-          {nudge.kind === "rule"
+          {nudge.kind === "rule" && nudge.newRule
+            ? <NewRuleQuestion nudge={nudge} env={env} envState={envState} patch={patch} />
+            : nudge.kind === "rule"
             ? <RuleQuestion nudge={nudge} env={env} envState={envState} patch={patch} onNavigate={onNavigate} />
             : <ChangeProposal nudge={nudge} env={env} envState={envState} patch={patch} onNavigate={onNavigate} />}
         </Box>
@@ -284,6 +287,82 @@ function RuleQuestion({ nudge, env, envState, patch, onNavigate }) {
   );
 }
 RuleQuestion.propTypes = { nudge: PropTypes.object, env: PropTypes.object, envState: PropTypes.object, patch: PropTypes.func, onNavigate: PropTypes.func };
+
+/*
+  A rule the agent's new version added that lets it do more — approve
+  without a supervisor, skip a check — and that nothing here tests. The same
+  question as a changed rule, with what each answer can honestly do:
+    policy        the rule joins the environment's contract (its next
+                  version), so new scenarios are written against it
+    not-intended  the environment stays as it is; nothing tests the rule, so
+                  the fix is taking it back out of the agent
+*/
+const NEW_RULE_BODY = (n, next, E) => ({
+  policy: `It's how the agent should behave now. The rule is added to this environment's contract as environment ${next}, so scenarios written from here on test it — add some from Scenarios.`,
+  "not-intended": `${n.agentVersion} wasn't meant to do this. The environment stays ${E}. Nothing tests this rule yet, so no run will catch it — take it out of the agent's prompt and save a new version.`,
+});
+
+function NewRuleQuestion({ nudge, env, envState, patch }) {
+  const { enqueueSnackbar } = useSnackbar();
+  const isOpen = nudge.status === "open" || (nudge.status !== "dismissed" && !ANSWERS[nudge.answer]);
+  const [choice, setChoice] = useState(ANSWERS[nudge.answer] ? nudge.answer : null);
+  const E = currentEnvSnapshot(env, envState)?.label;
+  const next = nextSnapshotLabel(env, envState);
+  const body = NEW_RULE_BODY(nudge, next, E);
+
+  const record = () => {
+    if (!patch || !choice) return;
+    const answers = [...(nudge.answers || []), { answer: choice, at: new Date().toISOString() }];
+    if (choice === "policy") {
+      const plan = contractEditPlan(env, envState, { target: "rule", op: "add", text: nudge.to });
+      if (!plan.ok) { enqueueSnackbar(plan.error, { variant: "error" }); return; }
+      patch({ ...plan.patch(envState), ...resolveNudgePatch(envState, nudge.id, "approved", { answer: choice, answers, addedAs: plan.title }) });
+      enqueueSnackbar(`${plan.title} — environment ${next}. Add scenarios that test it from Scenarios.`, { variant: "success", autoHideDuration: 5000 });
+      return;
+    }
+    patch(resolveNudgePatch(envState, nudge.id, "approved", { answer: choice, answers }));
+    enqueueSnackbar(`Recorded as not intended — take the rule out of agent ${nudge.agentVersion}'s prompt.`, { variant: "success", autoHideDuration: 5000 });
+  };
+
+  return (
+    <Stack spacing={1.25}>
+      <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+        {`${nudge.agentVersion} added a rule that lets the agent do more than before, and nothing in this environment tests it — so if it wasn't meant, no run would catch it. A policy change, or not intended?`}
+      </Typography>
+
+      <Diff lines={[{ sign: "+", text: nudge.to }]} caption={`Added to the prompt in ${nudge.agentVersion}`} />
+
+      {isOpen ? (
+        <>
+          <Stack spacing={0.75}>
+            {Object.entries(ANSWERS).map(([id, a]) => (
+              <Choice key={id} on={choice === id} onClick={() => setChoice(id)} title={a.label} body={body[id]} />
+            ))}
+          </Stack>
+          <Effects rows={[
+            ["Environment", choice === "policy" ? `${E} → ${next} · the rule joins the contract` : `stays ${E}`],
+            ["Scenarios", choice === "policy" ? "unchanged — new ones can test the rule" : "unchanged"],
+            ["Agent", choice === "not-intended" ? `take the rule out of ${nudge.agentVersion}'s prompt` : "unchanged"],
+          ]} />
+          {patch && (
+            <Stack direction="row" spacing={0.75} justifyContent="flex-end">
+              <Button size="small" variant="contained" color="primary" disabled={!choice} onClick={record} sx={{ typography: "s2", fontWeight: 700 }}>
+                {!choice ? "Pick an answer" : choice === "policy" ? "Add it to the contract" : `Record · ${ANSWERS[choice].label.toLowerCase()}`}
+              </Button>
+            </Stack>
+          )}
+        </>
+      ) : (
+        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+          {nudge.answer === "policy"
+            ? `Policy change — ${nudge.addedAs || "the rule was added to the contract"}. Scenarios written from here on test it.`
+            : `Not intended — the environment didn't change. Nothing tests this rule, so take it out of agent ${nudge.agentVersion}'s prompt.`}
+        </Typography>
+      )}
+    </Stack>
+  );
+}
+NewRuleQuestion.propTypes = { nudge: PropTypes.object, env: PropTypes.object, envState: PropTypes.object, patch: PropTypes.func };
 
 /* What an answered question did, its history, and changing your mind. */
 function RuleOutcome({ nudge, env, envState, patch, onNavigate }) {

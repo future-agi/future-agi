@@ -10,7 +10,7 @@ import HeaderContent from "./HeaderContent";
 /* First-run nudge for the workspace tools — optional, never a gate. */
 const ConnectTools = () => {
   const integrations = useIntegrations();
-  const { github, slack, githubRequests, slackRequest } = integrations;
+  const { github, slack, slackRequest } = integrations;
   const [gh, setGh] = useState(false);
   const [sl, setSl] = useState(false);
 
@@ -19,7 +19,6 @@ const ConnectTools = () => {
       id: "github", title: "GitHub",
       body: "Connect agents straight from your code, version them from commits, and get fixes as pull requests.",
       done: github ? `Installed on ${githubAccountsLabel(integrations)} · ${installedRepos(integrations).length} repositor${installedRepos(integrations).length === 1 ? "y" : "ies"}` : null,
-      pending: !github && githubRequests?.length ? `Waiting for an owner of ${githubRequests[0].account} to approve the install` : null,
       action: "Install GitHub App",
       open: () => setGh(true),
     },

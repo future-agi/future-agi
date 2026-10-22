@@ -5,7 +5,7 @@ import { useOptionalSimStore, emptyEnvState } from "../store";
 import { getEnvironment } from "../_mock/environments";
 import { getEval } from "../_mock/evals";
 import { FAULT_PRESETS, tierOf, toolEnvPatch, allToolsFaultPatch } from "../_mock/toolEnv";
-import { envVarRefPatch } from "../_mock/envConfig";
+import { credentialSetPatch, envVarRefPatch } from "../_mock/envConfig";
 import { credentialRefPatch } from "../_mock/secretRefs";
 import { openGapsInbox } from "../_mock/gapsInboxBus";
 import { useAppliedEvals } from "../workspace/evals/useAppliedEvals";
@@ -140,8 +140,9 @@ export default function useChatActions() {
 
   const setSecretRef = useCallback((target, ref) => {
     const { envState: es } = latest.current;
-    if (target.type === "env") patch(envVarRefPatch(es, target.id, ref));
-    else patch(credentialRefPatch(es, target.id, ref, target.provider));
+    /* A moved reference is the environment's next (credentials-only) version. */
+    if (target.type === "env") patch(credentialSetPatch(es, envVarRefPatch(es, target.id, ref)));
+    else patch(credentialSetPatch(es, credentialRefPatch(es, target.id, ref, target.provider)));
   }, [patch]);
 
   /* ── links ─────────────────────────────────────────────────────────── */

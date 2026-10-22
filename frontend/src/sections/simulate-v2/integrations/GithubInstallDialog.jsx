@@ -5,7 +5,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import {
-  accountOf, getIntegrations, installGithub, installationFor, markScanned, reposOfInstall, requestGithub, useIntegrations,
+  accountOf, getIntegrations, installGithub, installationFor, markScanned, reposOfInstall, useIntegrations,
 } from "../_mock/integrations";
 import BrandMark from "./BrandMark";
 import { Returning, WaitingForWindow } from "./ExternalPage";
@@ -19,7 +19,6 @@ const MONO = "ui-monospace, Menlo, monospace";
  * for it and then shows what GitHub sent back:
  *   install  → connected, and we scan the repositories one by one
  *   update   → repository access changed (Configure)
- *   request  → a member asked the organization's owners; nothing installed yet
  *   cancel / window closed → nothing changed
  *
  * `configure` opens an existing installation's settings on GitHub.
@@ -58,14 +57,11 @@ export default function GithubInstallDialog({ open, onClose, onInstalled, config
     if (phase !== "returning" || !result) return undefined;
     const t = setTimeout(() => {
       const { outcome, account, access, repos } = result;
-      if (outcome === "request") requestGithub({ account, access, repos });
-      else {
-        const before = getIntegrations().scans || {};
-        installGithub({ account, access, repos });
-        const all = reposOfInstall(installationFor(account));
-        setToScan(outcome === "install" ? all : all.filter((r) => !before[r.name]));
-        setScanned(0);
-      }
+      const before = getIntegrations().scans || {};
+      installGithub({ account, access, repos });
+      const all = reposOfInstall(installationFor(account));
+      setToScan(outcome === "install" ? all : all.filter((r) => !before[r.name]));
+      setScanned(0);
       setPhase("outcome");
     }, 900);
     return () => clearTimeout(t);
@@ -126,7 +122,7 @@ export default function GithubInstallDialog({ open, onClose, onInstalled, config
         )}
 
         {phase === "returning" && (
-          <Returning label={result?.outcome === "request" ? `Sending your request to ${account}'s owners…` : result?.outcome === "update" ? "Updating repository access…" : `Linking ${account} to your workspace…`} />
+          <Returning label={result?.outcome === "update" ? "Updating repository access…" : `Linking ${account} to your workspace…`} />
         )}
 
         {phase === "outcome" && result?.outcome === "install" && (
@@ -145,15 +141,6 @@ export default function GithubInstallDialog({ open, onClose, onInstalled, config
           <Stack spacing={2}>
             <Result icon="solar:check-circle-bold" color="#16A34A" title={`Repository access updated · ${account}`} meta={inst?.access === "all" ? "All repositories" : `${covered.length} repositor${covered.length === 1 ? "y" : "ies"}`} />
             {toScan.length > 0 && <Box><ScanList toScan={toScan} scanned={scanned} agentsFound={agentsFound} added /></Box>}
-          </Stack>
-        )}
-
-        {phase === "outcome" && result?.outcome === "request" && (
-          <Stack spacing={1.5}>
-            <Result icon="solar:clock-circle-linear" color="#CA8A04" title={`Requested from ${account}'s owners`} meta="Nothing installed yet" />
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {`GitHub emailed the owners of ${account}. When one approves, the installation shows up on the GitHub settings page and we scan the repositories you asked for.`}
-            </Typography>
           </Stack>
         )}
 

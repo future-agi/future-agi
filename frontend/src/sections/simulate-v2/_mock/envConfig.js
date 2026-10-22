@@ -31,8 +31,8 @@ export const envVarsOf = (envState) => migrateEnvVars(envState?.envVars) || DEFA
 
 /**
  * Point a secret variable at a new reference. Re-runs the access check and
- * makes the next credential-set version (credentialSetPatch) — never an
- * environment or agent version.
+ * makes the next credential set (credentialSetPatch) — which the environment's
+ * history reads as a credentials-only version, v7 → v7.1 (envSnapshot.js).
  */
 export const envVarRefPatch = (envState, key, ref) => ({
   envVars: envVarsOf(envState).map((v) => (v.key === key ? { key: v.key, secret: true, usedBy: v.usedBy, ref } : v)),
@@ -43,11 +43,13 @@ export const envVarRefPatch = (envState, key, ref) => ({
 export const envVarCheckOf = (envState, key) => envState?.secretChecks?.[`env:${key}`] || null;
 
 /*
-  Credentials are versioned as ONE set — every secret variable's reference and
-  every agent credential reference together. Changing any of them makes the
-  next credential version (v1, v2 …), which is neither an environment nor an
-  agent version. Each run records the set it used, so a result can say which
-  credentials it ran with — references only, never values.
+  Credentials are versioned with what holds them (team decision — no
+  separate credential versions to keep track of). This environment's secret
+  references are kept as a log of sets; the environment's history reads each
+  change as a credentials-only minor version (v7 → v7.1, envSnapshot.js), and
+  each run records the set it used, so its environment version says which
+  credentials it ran with — references only, never values. The agent's own
+  key is versioned with the agent the same way (v5 → v5.1).
 */
 export const secretsUsedOf = (envState) => ({
   ...Object.fromEntries(envVarsOf(envState).filter((v) => v.secret && v.ref).map((v) => [v.key, v.ref])),

@@ -13,13 +13,15 @@ import ChipCard from "../../environments/ChipCard";
  *
  * One box does both jobs: type a name and the list narrows; paste a repo,
  * an ID, a URL or a prompt and it says what that is and opens the right
- * setup. Chips narrow by where the agent lives. Nothing is folded behind
+ * setup — with the full list still below, in case it read the paste wrong.
+ * Chips narrow by where the agent lives. Nothing is folded behind
  * "N more" — the whole list scrolls, and every row says the same three
  * things: what it is, what you'll need, and how a fix comes back.
  */
-export default function ConnectCatalog({ groups, popularIds = [], pickedId, onPick, detect, onPaste, emptyHint, onFallback, compact = false, initialFilter = "all" }) {
+export default function ConnectCatalog({ groups, pickedId, onPick, detect, onPaste, emptyHint, onFallback, compact = false, showAll = true, pasteHint = "a repo, an ID, a URL or a prompt" }) {
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState(initialFilter);
+  /* Without an All chip, it opens on the first group. */
+  const [filter, setFilter] = useState(showAll ? "all" : groups[0]?.id);
   const inputRef = useRef(null);
 
   const items = useMemo(() => groups.flatMap((g) => g.items.map((it) => ({ ...it, group: g }))), [groups]);
@@ -30,26 +32,25 @@ export default function ConnectCatalog({ groups, popularIds = [], pickedId, onPi
     return hit && hit.kind !== "unknown" ? hit : null;
   }, [detect, query]);
   const canPaste = !!found && !found.blocked && !!found.choice;
-  const paste = () => {
-    if (canPaste) onPaste(found.choice, found.prefill, { name: found.label, detail: found.detail, logo: found.logo, icon: found.icon });
+  const meta = found && { name: found.label, detail: found.detail, logo: found.logo, icon: found.icon };
+  const paste = (way = found) => {
+    if (canPaste) onPaste(way.choice, way.prefill, meta);
   };
 
   const q = query.trim().toLowerCase();
-  const matches = useMemo(() => (q && !found
+  /* A recognised paste isn't a search — the list stays whole under it. */
+  const searching = !!q && !found;
+  const matches = useMemo(() => (searching
     ? items.filter((it) => `${it.name} ${it.need} ${it.group.title}`.toLowerCase().includes(q))
-    : []), [items, q, found]);
+    : []), [items, q, searching]);
 
-  /* What the list shows: search results; or one group; or Popular, then every group. */
+  /* What the list shows: search results; or one chip's items; or every group. */
   const sections = useMemo(() => {
-    if (q) return found ? [] : [{ id: "results", title: `${matches.length} ${matches.length === 1 ? "match" : "matches"}`, items: matches }];
-    if (filter === "popular") return [{ id: "popular", title: "Popular", items: popularIds.map((id) => items.find((it) => it.id === id)).filter(Boolean) }];
+    if (searching) return [{ id: "results", title: `${matches.length} ${matches.length === 1 ? "match" : "matches"}`, items: matches }];
     if (filter !== "all") return groups.filter((g) => g.id === filter).map((g) => ({ ...g, items: g.items.map((it) => ({ ...it, group: g })) }));
-    const popular = popularIds.map((id) => items.find((it) => it.id === id)).filter(Boolean);
-    return [
-      ...(popular.length ? [{ id: "popular", title: "Popular", reach: "Where most agents come from.", items: popular }] : []),
-      ...groups.map((g) => ({ ...g, items: g.items.map((it) => ({ ...it, group: g })) })),
-    ];
-  }, [q, found, matches, filter, groups, items, popularIds]);
+    /* All is every group, each way in listed once. */
+    return groups.map((g) => ({ ...g, items: g.items.map((it) => ({ ...it, group: g })) }));
+  }, [searching, matches, filter, groups]);
 
   const onKey = (e) => {
     if (e.key === "Escape") { setQuery(""); return; }
@@ -78,7 +79,7 @@ export default function ConnectCatalog({ groups, popularIds = [], pickedId, onPi
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKey}
-          placeholder={detect ? `Search ${total} ways to connect — or paste a repo, an ID, a URL or a prompt` : `Search ${total} ways to connect`}
+          placeholder={detect ? `Search ${total} ways to connect — or paste ${pasteHint}` : `Search ${total} ways to connect`}
           inputProps={{ "aria-label": detect ? "Search ways to connect, or paste a repository, ID, URL or prompt" : "Search ways to connect", spellCheck: false }}
           sx={{
             typography: "s1",
@@ -93,77 +94,92 @@ export default function ConnectCatalog({ groups, popularIds = [], pickedId, onPi
         )}
       </Box>
 
-      {/* ── what a paste was read as, or the chips ── */}
-      {found ? (
+      {/* ── what a paste was read as ── */}
+      {found && (
         <Stack
-          direction="row" alignItems="center" spacing={1.5}
+          direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} spacing={1.5}
           sx={{ ...PANEL_SX, px: 2, py: 1.5 }}
         >
           <Box flex={1} minWidth={0}><Detection found={found} /></Box>
           {canPaste && (
-            <Button
-              variant="contained" color="primary" onClick={paste}
-              endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
-              sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}
-            >
-              Continue
-            </Button>
+            <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
+              {(found.alternatives || []).map((alt) => (
+                <Button
+                  key={alt.label} variant="outlined" onClick={() => paste(alt)}
+                  sx={{ typography: "s2", fontWeight: 600, color: "text.primary", borderColor: "divider" }}
+                >
+                  {alt.label}
+                </Button>
+              ))}
+              <Button
+                variant="contained" color="primary" onClick={() => paste()}
+                endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
+                sx={{ typography: "s2", fontWeight: 700 }}
+              >
+                {found.action || "Continue"}
+              </Button>
+            </Stack>
           )}
         </Stack>
-      ) : !q && (
-        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75 }}>
-          <ChipCard label={<Count label="All" n={total} />} on={filter === "all"} onClick={() => setFilter("all")} />
-          {popularIds.length > 0 && <ChipCard label="Popular" on={filter === "popular"} onClick={() => setFilter("popular")} />}
-          {groups.map((g) => (
-            <ChipCard key={g.id} label={<Count label={g.title} n={g.items.length} />} on={filter === g.id} onClick={() => setFilter(g.id)} />
-          ))}
-        </Box>
+      )}
+
+      {/* ── the chips — under a paste, the way out if it was read wrong ── */}
+      {!searching && (
+        <Stack spacing={0.75}>
+          {found && (
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              {found.blocked ? "Pick where the agent runs:" : "Not what you meant? Pick where it runs:"}
+            </Typography>
+          )}
+          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75 }}>
+            {showAll && <ChipCard label={<Count label="All" n={total} />} on={filter === "all"} onClick={() => setFilter("all")} />}
+            {groups.map((g) => (
+              <ChipCard key={g.id} label={<Count label={g.title} n={g.items.length} />} on={filter === g.id} onClick={() => setFilter(g.id)} />
+            ))}
+          </Box>
+        </Stack>
       )}
 
       {/* ── the list ── */}
-      {!found && (
-        <Box sx={{ ...PANEL_SX, overflow: "hidden" }}>
-          {q && !matches.length ? (
-            <Stack alignItems="center" spacing={1} sx={{ py: 5, px: 2, textAlign: "center" }}>
-              <Typography sx={{ typography: "s1", fontWeight: 600 }}>{`Nothing matches “${query.trim()}”`}</Typography>
-              {emptyHint && <Typography sx={{ typography: "s2", color: "text.secondary" }}>{emptyHint}</Typography>}
-              {onFallback && (
-                <Button size="small" variant="outlined" onClick={onFallback} sx={{ typography: "s2", fontWeight: 600, color: "text.primary", borderColor: "divider", mt: 0.5 }}>
-                  Connect an agent endpoint
-                </Button>
-              )}
+      <Box sx={{ ...PANEL_SX, overflow: "hidden" }}>
+        {searching && !matches.length ? (
+          <Stack alignItems="center" spacing={1} sx={{ py: 5, px: 2, textAlign: "center" }}>
+            <Typography sx={{ typography: "s1", fontWeight: 600 }}>{`Nothing matches “${query.trim()}”`}</Typography>
+            {emptyHint && <Typography sx={{ typography: "s2", color: "text.secondary" }}>{emptyHint}</Typography>}
+            {onFallback && (
+              <Button size="small" variant="outlined" onClick={onFallback} sx={{ typography: "s2", fontWeight: 600, color: "text.primary", borderColor: "divider", mt: 0.5 }}>
+                Connect an agent endpoint
+              </Button>
+            )}
+          </Stack>
+        ) : sections.map((sec, i) => (
+          <Box key={sec.id} sx={{ borderTop: i ? "1px solid" : "none", borderColor: "divider" }}>
+            <Stack
+              direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "baseline" }} spacing={{ xs: 0.25, sm: 1.25 }}
+              sx={{ px: 2, pt: 1.75, pb: 0.75 }}
+            >
+              <Typography component="h3" sx={{ typography: "s1", fontWeight: 700, flexShrink: 0 }}>{sec.title}</Typography>
+              {sec.reach && <Typography sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}>{sec.reach}</Typography>}
             </Stack>
-          ) : sections.map((sec, i) => (
-            <Box key={sec.id} sx={{ borderTop: i ? "1px solid" : "none", borderColor: "divider" }}>
-              <Stack
-                direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "baseline" }} spacing={{ xs: 0.25, sm: 1.25 }}
-                sx={{ px: 2, pt: 1.75, pb: 0.75 }}
-              >
-                <Typography component="h3" sx={{ typography: "s1", fontWeight: 700, flexShrink: 0 }}>{sec.title}</Typography>
-                {sec.reach && <Typography sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}>{sec.reach}</Typography>}
-              </Stack>
-              <Box
-                sx={(t) => ({
-                  display: "grid", gridTemplateColumns: "1fr", px: 1, pb: 1,
-                  [t.breakpoints.up(compact ? "lg" : "md")]: { gridTemplateColumns: "1fr 1fr", columnGap: 1 },
-                })}
-              >
-                {sec.items.map((it) => (
-                  <CatalogRow key={`${sec.id}-${it.id}`} item={it} showGroup={sec.id === "results" || sec.id === "popular"} selected={pickedId === it.id} onPick={onPick} />
-                ))}
-              </Box>
+            <Box
+              sx={(t) => ({
+                display: "grid", gridTemplateColumns: "1fr", px: 1, pb: 1,
+                [t.breakpoints.up(compact ? "lg" : "md")]: { gridTemplateColumns: "1fr 1fr", columnGap: 1 },
+              })}
+            >
+              {sec.items.map((it) => (
+                <CatalogRow key={`${sec.id}-${it.id}`} item={it} showGroup={sec.id === "results"} selected={pickedId === it.id} onPick={onPick} />
+              ))}
             </Box>
-          ))}
-        </Box>
-      )}
+          </Box>
+        ))}
+      </Box>
     </Stack>
   );
 }
 
 ConnectCatalog.propTypes = {
   groups: PropTypes.array.isRequired,
-  /* Item ids shown first, as Popular, when nothing is searched. */
-  popularIds: PropTypes.array,
   pickedId: PropTypes.string,
   onPick: PropTypes.func.isRequired,
   /* Reads a paste (repo, ID, URL, prompt) — `onPaste(choice, prefill, meta)` opens its setup. */
@@ -174,8 +190,10 @@ ConnectCatalog.propTypes = {
   onFallback: PropTypes.func,
   /* Inside a drawer: two columns only on wide screens. */
   compact: PropTypes.bool,
-  /* Which chip it opens on — "popular" where the list shares a page with other ways in. */
-  initialFilter: PropTypes.string,
+  /* An All chip listing every group at once — off where the list shares a drawer with other ways in. */
+  showAll: PropTypes.bool,
+  /* What can be pasted, as the placeholder says it. */
+  pasteHint: PropTypes.string,
 };
 
 function Count({ label, n }) {

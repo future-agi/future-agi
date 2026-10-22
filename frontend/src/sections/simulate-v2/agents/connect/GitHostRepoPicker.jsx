@@ -1,12 +1,11 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
-import { alpha } from "@mui/material/styles";
-import { Box, Button, Checkbox, CircularProgress, MenuItem, Select, Stack, Typography } from "@mui/material";
+import { Box, Button, CircularProgress, MenuItem, Select, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { GIT_HOST_META, connectGitHost, disconnectGitHost, gitHostConnection, gitHostRepos, reviewNounOf, useIntegrations } from "../../_mock/integrations";
 import { keyRefOf } from "../../_mock/secretRefs";
-import { clickable, focusRing } from "../../components/clickable";
 import SecretRefField from "./SecretRefField";
+import FoundAgentsList from "./FoundAgentsList";
 import { TextLink } from "./connectBits";
 import { HintLine } from "./replicationBits";
 
@@ -82,39 +81,7 @@ export default function GitHostRepoPicker({ host, repo, agentId, onPick, onManua
           {onManual && <TextLink onClick={() => onManual({ repo: current.name })} sx={{ mt: 0.5 }}>Point us at the entry file instead</TextLink>}
         </Box>
       ) : (
-        <Box>
-          <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>
-            {current.agents.length === 1 ? "We found 1 agent" : `We found ${current.agents.length} agents — which one do you mean?`}
-          </Typography>
-          <Stack spacing={0.75}>
-            {current.agents.map((a) => {
-              const on = a.id === agentId;
-              return (
-                <Stack
-                  key={a.id}
-                  direction="row" alignItems="center" spacing={1.25}
-                  {...clickable(() => onPick({ repo: current.name, agent: a }), { role: "radio", checked: on })}
-                  sx={{
-                    ...focusRing,
-                    px: 1.5, py: 1.125, borderRadius: 1, cursor: "pointer",
-                    border: "1px solid", borderColor: on ? "text.primary" : "divider",
-                    bgcolor: (t) => (on ? alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03) : "transparent"),
-                  }}
-                >
-                  <Checkbox size="small" checked={on} tabIndex={-1} inputProps={{ "aria-label": `Choose ${a.name}` }} sx={{ p: 0, flexShrink: 0 }} />
-                  <Box flex={1} minWidth={0}>
-                    <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{a.name}</Typography>
-                    <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-                      {`${a.framework} · `}
-                      <Box component="span" sx={{ fontFamily: MONO }}>{a.entry}</Box>
-                      {` · ${a.tools} tools · ${a.prompts.length} prompt file${a.prompts.length === 1 ? "" : "s"}`}
-                    </Typography>
-                  </Box>
-                </Stack>
-              );
-            })}
-          </Stack>
-        </Box>
+        <FoundAgentsList agents={current.agents} agentId={agentId} onPick={(a) => onPick({ repo: current.name, agent: a })} />
       ))}
     </Stack>
   );

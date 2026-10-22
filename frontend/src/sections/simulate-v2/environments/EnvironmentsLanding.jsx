@@ -7,10 +7,9 @@ import {
   WORLD_TYPES, detectPaste,
   prebuiltWorlds, worldTotal,
 } from "./landingData";
-import { POPULAR_IDS, newAgentChoicesFor } from "../agents/connect/agentConnectData";
+import { newAgentChoicesFor } from "../agents/connect/agentConnectData";
 import ConnectCatalog from "../agents/connect/ConnectCatalog";
 import { SectionHead, WorldCard } from "./LandingBits";
-import { PasteBar } from "./ConnectDirectory";
 import { OUTLINE_BTN, focusRing } from "./landingStyles";
 import WorldDrawer from "./WorldDrawer";
 import SaasSandboxRow from "./SaasSandbox";
@@ -25,12 +24,11 @@ import { YourAgentsSection } from "./AgentChoice";
   PRD), so each way in ends at an agent:
 
     1. Your agents: the agents already in Agents — pick one and build.
-    2. Paste anything: a repository, an assistant ID, an MCP URL, an
-       endpoint. We say what it is and open the right setup, filled in.
-    3. Prebuilt worlds and the SaaS sandbox: a world to start from — the
+    2. Prebuilt worlds and the SaaS sandbox: a world to start from — the
        agent it's built for is picked (or connected) before anything builds.
-    4. Connect your agent: a directory by where the agent lives, each group
-       saying how we test it there and how far a fix can go.
+    3. Connect your agent: every way in, searchable — and the same box takes
+       a paste (a repository, an assistant ID, an MCP URL, an endpoint) and
+       opens the right setup, filled in.
 
   Picking anything calls `onPick(choice, prefill, from, itemId, meta)`; the
   page opens the matching setup in a drawer, so the list stays put.
@@ -77,15 +75,6 @@ export default function EnvironmentsLanding({ onPick, onBrowseWorlds, picked, ex
 
   return (
     <Stack spacing={4} sx={{ pb: 4 }}>
-      <PasteBar
-        detect={detectPaste}
-        onPick={(choice, prefill, meta) => {
-          const kind = AGENT_KIND_OF[choice];
-          if (!kind) { onPick(choice, prefill, "paste", null, meta); return; }
-          openConnect(kind, choice === "scratch" ? { prompt: prefill?.flowText || "" } : prefill, "paste", meta);
-        }}
-      />
-
       <PrebuiltSection sectionRef={worldsRef} onBrowse={onBrowseWorlds} />
 
       <ConnectSection
@@ -97,6 +86,13 @@ export default function EnvironmentsLanding({ onPick, onBrowseWorlds, picked, ex
           ? { name: "An agent from its traces", icon: "solar:pulse-2-linear" }
           : { name: item.name, logo: item.logo, icon: item.icon })}
         onTools={() => onPick("mcp", null, "directory", "mcp", { name: "MCP server", logo: "mcp" })}
+        /* One box searches the list and reads a paste: an agent opens its
+           connect flow, an MCP server its world setup. */
+        onPaste={(choice, prefill, meta) => {
+          const kind = AGENT_KIND_OF[choice];
+          if (!kind) { onPick(choice, prefill, "paste", null, meta); return; }
+          openConnect(kind, choice === "scratch" ? { prompt: prefill?.flowText || "" } : prefill, "paste", meta);
+        }}
       />
 
       {/* Or one already in Agents (Flow 2: pick the agent from Agents). */}
@@ -132,10 +128,10 @@ EnvironmentsLanding.propTypes = {
 const linkSx = { color: "text.primary", fontWeight: 600, cursor: "pointer", "&:hover": { textDecoration: "underline" } };
 
 /* The same catalogue as Agents → New agent — searchable, by where the agent
-   lives, every row saying how a fix comes back. Pasting is the box at the top
-   of this page, so here it only searches. Agents already connected are under
-   Your agents, at the bottom. */
-function ConnectSection({ sectionRef, onPick, onConnect, onTools, pickedId }) {
+   lives, every row saying how a fix comes back. The same box reads a paste —
+   a repo, an ID, an MCP URL or a prompt — and opens the right setup. Agents
+   already connected are under Your agents, at the bottom. */
+function ConnectSection({ sectionRef, onPick, onConnect, onTools, onPaste, pickedId }) {
   const { groups } = useMemo(() => newAgentChoicesFor(null), []);
   const all = useMemo(() => groups.flatMap((g) => g.items), [groups]);
   return (
@@ -146,12 +142,14 @@ function ConnectSection({ sectionRef, onPick, onConnect, onTools, pickedId }) {
       />
       <ConnectCatalog
         groups={groups}
-        popularIds={POPULAR_IDS}
-        /* This page has other ways in below and above — open on the few most people use. */
-        initialFilter="popular"
+        /* Other ways in sit above and below it, so no All: one group at a time, Code first. */
+        showAll={false}
+        detect={detectPaste}
+        onPaste={onPaste}
+        pasteHint="a repo, an ID, an MCP URL or a prompt"
         pickedId={pickedId}
         onPick={(item) => (item.choice ? onPick(item) : onConnect(item))}
-        emptyHint="If it runs somewhere we can call, connect it as an agent endpoint — or paste its link at the top."
+        emptyHint="If it runs somewhere we can call, connect it as an agent endpoint."
         onFallback={() => onConnect(all.find((it) => it.id === "running"))}
       />
       <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 1.25 }}>
@@ -163,7 +161,7 @@ function ConnectSection({ sectionRef, onPick, onConnect, onTools, pickedId }) {
 }
 ConnectSection.propTypes = {
   sectionRef: PropTypes.object, pickedId: PropTypes.string, onPick: PropTypes.func.isRequired,
-  onConnect: PropTypes.func.isRequired, onTools: PropTypes.func,
+  onConnect: PropTypes.func.isRequired, onTools: PropTypes.func, onPaste: PropTypes.func,
 };
 
 /* ── 4. prebuilt worlds ────────────────────────────────────────────────── */

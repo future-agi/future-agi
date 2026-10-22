@@ -7,7 +7,7 @@ import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { agentSourceOf } from "../_mock/agentRegistry";
 import { getEnvironment } from "../_mock/environments";
-import { versionNumber } from "../_mock/versions";
+import { nextMajorLabel } from "../_mock/versions";
 import { rulesOf, subGoalCatalogOf } from "../_mock/envModel";
 import { raiseNudgesIn, dispatchNudges, nudgeAnnouncement, likelyFixLine, openNudgesIn } from "../_mock/nudgeEffects";
 import { useSimStore } from "../store";
@@ -80,7 +80,7 @@ export default function AddVersionDialog({ open, onClose, agent, definition, bas
     : a.kind === "voice" ? !!currentVoice
       : a.kind === "instructions" ? !isPrompt
         : true));
-  const next = `v${Math.max(0, ...agent.versions.map((v) => versionNumber(v.label))) + 1}`;
+  const next = nextMajorLabel(agent.versions.map((v) => v.label));
   const toggle = (k) => setAreas((xs) => (xs.includes(k) ? xs.filter((x) => x !== k) : [...xs, k]));
   const on = (k) => areas.includes(k);
 

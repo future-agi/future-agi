@@ -40,7 +40,9 @@ import {
 } from "../_mock/integrations";
 import { agentFilesOf } from "../_mock/agentFiles";
 import { agentToolsFor } from "../_mock/toolFit";
-import { currentEnvVersion } from "../_mock/versions";
+import { credentialsVersionRecord, currentEnvVersion } from "../_mock/versions";
+import { isGitAgent, versionNameOf } from "../_mock/codeRefs";
+import CommitPicker from "./CommitPicker";
 import { currentEnvSnapshot } from "../_mock/envSnapshot";
 import { runResultOf } from "../_mock/runResult";
 import { ObserveProjectCard } from "./AgentObserveProjects";
@@ -172,10 +174,13 @@ export default function AgentViewPage() {
 
   const rawTab = params.get("tab") || "overview";
   const tab = TAB_ALIAS[rawTab] || (TABS.some((t) => t.id === rawTab) ? rawTab : "overview");
+  /* Opens on the newest version — for a code agent, on what's in production
+     (main's head), not a fix waiting on its own branch. */
+  const homeLabel = agent && isGitAgent(agent) ? agent.production : agent?.latest;
   const viewing =
     agent && agent.versions.some((v) => v.label === params.get("v"))
       ? params.get("v")
-      : agent?.latest;
+      : homeLabel;
   const setQuery = (patch) => {
     const next = new URLSearchParams(params);
     Object.entries(patch).forEach(([k, v]) =>
@@ -305,8 +310,10 @@ export default function AgentViewPage() {
     return older && subset ? "older-or-subset" : older ? "older" : subset ? "subset" : null;
   })();
   const statsOf = useCallback(
+    /* One label, or several read as one behaviour (v5 and its credentials-only v5.1). */
     (label) => {
-      const mine = scopedRuns.filter((r) => r.agentVersion === label);
+      const labels = [].concat(label);
+      const mine = scopedRuns.filter((r) => labels.includes(r.agentVersion));
       if (!mine.length) return null;
       /* Each run's pass rate, weighted by how many scenarios it measured. */
       const measured = mine.reduce((n, r) => n + (r.measured ?? r.total ?? 0), 0);
@@ -363,6 +370,22 @@ export default function AgentViewPage() {
   const saveValues = (patch, msg) => {
     setAgentValues(agent.key, patch);
     if (msg) enqueueSnackbar(msg, { variant: "success" });
+  };
+  /* Credentials are versioned with the agent: a replaced key is a minor
+     version on top of production (v5 → v5.1). It behaves as v5, so no
+     environment gets a card or a rebuild — those following production just
+     run with the new key, and every run says which version (so which key)
+     it used. */
+  const replaceKey = (values) => {
+    const base = agent.production;
+    const v = credentialsVersionRecord(agent.versions, base, { what: "API key reference replaced" });
+    setAgentValues(agent.key, {
+      ...values,
+      /* An admin-chosen production moves to the key it now runs with. */
+      ...(agent.values?.activeVersion?.label === base && { activeVersion: { ...agent.values.activeVersion, label: v.label } }),
+    });
+    recordAgentVersion(agent.key, v);
+    enqueueSnackbar(`API key replaced — saved as ${v.label}, credentials only. It behaves as ${v.sameAs}, so its environments have nothing to check.`, { variant: "success" });
   };
   /* Connected, disconnected (a revoked key, a removed app, a deleted agent)
      or archived — said in the header and on Connections. */
@@ -597,6 +620,16 @@ export default function AgentViewPage() {
             </Typography>
           </Tooltip>
         </Box>
+        {/* A code agent is picked the way Git names it — branch, then commit;
+            any other agent by its version number. */}
+        {isGitAgent(agent) ? (
+          <CommitPicker
+            agent={agent}
+            value={viewing}
+            production={agent.production}
+            onChange={(l) => setQuery({ v: l === homeLabel ? null : l })}
+          />
+        ) : (
         <Select
           size="small"
           value={viewing}
@@ -630,6 +663,7 @@ export default function AgentViewPage() {
             </MenuItem>
           ))}
         </Select>
+        )}
         {/* Re-read the source when we can; otherwise record the change by hand. */}
         <Tooltip
           arrow
@@ -685,21 +719,8 @@ export default function AgentViewPage() {
           </Button>
           </span>
         </Tooltip>
-        <Tooltip arrow title={deleted ? "Deleted — kept for its history." : archived ? "Archived — restore it to build environments and run it again." : ""}>
-          <span>
-            <Button
-              variant="contained"
-              color="primary"
-              size="small"
-              disabled={archived}
-              onClick={buildEnvironment}
-              startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
-              sx={{ typography: "s2", fontWeight: 700, height: 32 }}
-            >
-              Build environment
-            </Button>
-          </span>
-        </Tooltip>
+        {/* Build environment lives in Next steps and on the Environments tab —
+            one of two ways forward, not a header action. */}
         {!deleted && (
           <IconButton
             size="small"
@@ -766,7 +787,7 @@ export default function AgentViewPage() {
               disableRipple
               label={
                 t.id === "versions"
-                  ? `Versions ${agent.versions.length}`
+                  ? `${isGitAgent(agent) ? "Commits" : "Versions"} ${agent.versions.length}`
                   : t.id === "environments"
                     ? `Environments ${agent.usedIn.length}`
                     : t.id === "improvements" && improvementCount
@@ -820,6 +841,8 @@ export default function AgentViewPage() {
       )}
       {tab === "overview" && (
         <AgentOverviewTab
+          /* Nothing set up yet — Next steps says it all; empty numbers would only repeat it. */
+          fresh={settingUp && !agent.usedIn.length && !runs.length && !inProgress.length && !observeLink.project && !improvementStats?.total}
           improvements={improvementStats}
           production={{
             project: observeLink.project,
@@ -877,7 +900,7 @@ export default function AgentViewPage() {
           statsOf={statsOf}
           scopeName={scopeEnv?.envName}
           onView={(l) =>
-            setQuery({ v: l === agent.latest ? null : l, tab: "definition" })
+            setQuery({ v: l === homeLabel ? null : l, tab: "definition" })
           }
           onRunIn={switchTo}
           onMakeActive={(label) => {
@@ -945,6 +968,7 @@ export default function AgentViewPage() {
           env={env}
           clones={clones}
           onSaveValues={saveValues}
+          onReplaceKey={replaceKey}
           onArchive={() => setArchiveOpen(true)}
           onDelete={() => setDisconnectOpen(true)}
           state={state}
@@ -978,8 +1002,8 @@ export default function AgentViewPage() {
           runVersionIn(switchFor.envId, switchFor.label);
           enqueueSnackbar(
             switchFor.label === agent.production
-              ? `${switchEnv?.name} follows production — its next run tests ${switchFor.label}.`
-              : `${switchEnv?.name} is pinned to ${switchFor.label} — its next run tests it.`,
+              ? `${switchEnv?.name}'s default is production — its next run tests ${switchFor.label}. Recorded in its history.`
+              : `${switchEnv?.name}'s default is ${switchFor.label} — its next run tests it. Recorded in its history.`,
             { variant: "success" },
           );
           setSwitchFor(null);
@@ -1039,10 +1063,12 @@ export default function AgentViewPage() {
 function EnvironmentsTab({ agent, runs, onBuild, onRun, onOpen, mainEnvId, mainPicked, onMakeMain, focusEnvId = null }) {
   const { state: simState } = useSimStore();
   /* "agent vN × environment vM" — what the last run there held fixed, as every run reads. */
+  /* A code agent's versions read as commits — "main @ 3f9a2c1". */
+  const nm = (l) => versionNameOf(agent, l).main;
   const pairOfLast = (last, envId) => {
     const env = simState.myEnvironments.find((e) => e.id === envId);
     const envPart = runIdentityOf(last, simState.byEnv?.[envId], env).label.split(" × ")[1];
-    return `agent ${last.agentVersion}${envPart ? ` × ${envPart}` : ""}`;
+    return `agent ${nm(last.agentVersion)}${envPart ? ` × ${envPart}` : ""}`;
   };
   /* How it did there — the newest finished run in each environment. */
   const lastIn = (envId) => runs.find((r) => r.envId === envId);
@@ -1114,7 +1140,7 @@ function EnvironmentsTab({ agent, runs, onBuild, onRun, onOpen, mainEnvId, mainP
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
               {agent.usedIn.length > 1
                 ? `Fixes run in the main one${mainPicked ? "" : " — the first built"}`
-                : "Environments follow the version in production unless pinned"}
+                : "Each environment tests what's in production unless its default says otherwise"}
             </Typography>
           }
         >
@@ -1146,7 +1172,7 @@ function EnvironmentsTab({ agent, runs, onBuild, onRun, onOpen, mainEnvId, mainP
                     )}
                   </Stack>,
                   <Box key="r" component="span" sx={{ fontFamily: MONO }}>
-                    {u.running}
+                    {nm(u.running)}
                   </Box>,
                   last ? (
                     <Box key="l" component="span">
@@ -1176,15 +1202,16 @@ function EnvironmentsTab({ agent, runs, onBuild, onRun, onOpen, mainEnvId, mainP
                       No runs yet
                     </Box>
                   ),
-                  /* Following production is the default; a pinned environment says
-                     what it's held on, and production when that's moved on. */
+                  /* Each environment's default version: production unless
+                     someone set another — then which, and production when
+                     that's moved on. */
                   u.pinned ? (
                     <Box key="s" component="span" sx={{ color: u.behind ? "text.primary" : "text.secondary", fontWeight: u.behind ? 600 : 400 }}>
-                      {u.behind ? `Pinned · ${agent.production} in production` : "Pinned"}
+                      {u.behind ? `Default ${nm(u.running)} · ${nm(agent.production)} in production` : `Default ${nm(u.running)}`}
                     </Box>
                   ) : (
                     <Box key="s" component="span" sx={{ color: "text.secondary" }}>
-                      Follows production
+                      Default: production
                     </Box>
                   ),
                   <Stack
@@ -1220,7 +1247,7 @@ function EnvironmentsTab({ agent, runs, onBuild, onRun, onOpen, mainEnvId, mainP
                           borderColor: "divider",
                         }}
                       >
-                        Follow production
+                        Default to production
                       </Button>
                     )}
                     <Button
@@ -1282,6 +1309,7 @@ function ConnectionTab({
   editId,
   onSetId,
   onSaveValues,
+  onReplaceKey,
   env,
   clones,
   onArchive,
@@ -1376,8 +1404,8 @@ function ConnectionTab({
         title="How we reach it"
         sub={(
           <>
-            Same for every version
-            <InfoTip text="Changing how we reach the agent doesn't create a version — versions track what the agent does, not where it lives." />
+            Where it lives, and its key
+            <InfoTip text="Changing where the agent lives doesn't create a version. Replacing its key saves a credentials-only version (v5 → v5.1) — it behaves the same, so nothing is checked or rebuilt." />
           </>
         )}
       >
@@ -1437,27 +1465,25 @@ function ConnectionTab({
                 </Stack>
               ) : r.keyRow ? (
                 /* By reference (AC-6.12): the path is shown, never the key.
-                   Replacing it re-runs the access check and nothing else —
-                   no new agent version. */
+                   Replacing it re-runs the access check and saves a
+                   credentials-only version (v5 → v5.1). */
                 <Box sx={{ flex: 1, minWidth: 0 }}>
                   {editingKey ? (
                     <SecretRefEditor
                       placeholder={agent.values?.apiKeyRef || defaultRefFor(`${agent.values?.provider || "agent"}_api_key`)}
                       saveLabel={r.missing ? "Save reference" : "Replace"}
                       onSave={(ref) => {
-                        onSaveValues(
-                          {
-                            hasApiKey: true,
-                            apiKeyRef: ref,
-                            apiKeyMigrated: false,
-                            apiKeyCheck: preflightRecord(ref, agent.values?.provider),
-                            /* A new key reconnects an agent whose key was revoked. */
-                            ...(agent.values?.disconnected?.cause === "key" && { disconnected: null }),
-                          },
-                          r.missing
-                            ? "API key reference saved — checking access."
-                            : "API key reference replaced — access re-checked, no new version.",
-                        );
+                        const values = {
+                          hasApiKey: true,
+                          apiKeyRef: ref,
+                          apiKeyMigrated: false,
+                          apiKeyCheck: preflightRecord(ref, agent.values?.provider),
+                          /* A new key reconnects an agent whose key was revoked. */
+                          ...(agent.values?.disconnected?.cause === "key" && { disconnected: null }),
+                        };
+                        /* The first key is setup; replacing one is a credentials version. */
+                        if (r.missing || !onReplaceKey) onSaveValues(values, "API key reference saved — checking access.");
+                        else onReplaceKey(values);
                         setEditingKey(false);
                       }}
                       onCancel={() => setEditingKey(false)}
@@ -1691,6 +1717,7 @@ ConnectionTab.propTypes = {
   demo: PropTypes.bool,
   onOpenVersions: PropTypes.func,
   onSaveValues: PropTypes.func,
+  onReplaceKey: PropTypes.func,
   env: PropTypes.object,
   clones: PropTypes.array,
 };

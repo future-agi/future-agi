@@ -4,6 +4,7 @@ import { Box, Button, Dialog, MenuItem, Select, Stack, TextField, Typography } f
 import Iconify from "src/components/iconify";
 import { useOptionalSimStore } from "../store";
 import { uniqueEnvName } from "../_mock/envNames";
+import { isGitAgent, versionNameOf } from "../_mock/codeRefs";
 
 const MONO = "ui-monospace, Menlo, monospace";
 /* Quick picks; any count from 10 to 1,000 can be typed. */
@@ -54,13 +55,13 @@ export default function BuildEnvironmentDialog({ open, onClose, agent, defaultVe
         </Box>
         <Stack direction="row" spacing={1.5}>
           <Box flex={1}>
-            <Label>Built from version</Label>
+            <Label>{isGitAgent(agent) ? "Built from commit" : "Built from version"}</Label>
             <Select size="small" fullWidth value={version} onChange={(e) => setVersion(e.target.value)} sx={{ typography: "s2" }}>
               {[...agent.versions].reverse().map((v) => (
                 <MenuItem key={v.label} value={v.label} disabled={!!v.pendingDraft} sx={{ typography: "s2" }}>
-                  <Box component="span" sx={{ fontFamily: MONO, fontWeight: 600, mr: 1 }}>{v.label}</Box>
+                  <Box component="span" sx={{ fontFamily: MONO, fontWeight: 600, mr: 1 }}>{versionNameOf(agent, v.label).main}</Box>
                   <Box component="span" sx={{ color: "text.subtitle" }}>
-                    {v.pendingDraft ? "draft — release it first" : v.label === agent.production ? "in production" : ""}
+                    {v.pendingDraft ? (isGitAgent(agent) ? "fix branch — merge it first" : "draft — release it first") : v.label === agent.production ? "in production" : ""}
                   </Box>
                 </MenuItem>
               ))}

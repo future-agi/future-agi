@@ -109,6 +109,44 @@ export const GITHUB_ACCOUNTS = [
   { login: "you", kind: "Personal account", role: "owner" },
 ];
 
+/*
+  Demo: every repository with an agent holds at least sixteen, to try
+  choosing one agent from a long list (search and scrolling). The extra
+  ones are siblings of the repository's first agent — same framework, same
+  file layout.
+*/
+const DEMO_MIN_AGENTS = 16;
+const SIBLINGS = [
+  ["order-status", "Order status helper"], ["shipping", "Shipping updates"], ["loyalty", "Loyalty points desk"],
+  ["escalations", "Escalations router"], ["survey", "After-call survey"], ["recovery", "Account recovery"],
+  ["hours", "Store hours"], ["reminders", "Appointment reminders"], ["feedback", "Feedback summariser"],
+  ["warranty", "Warranty claims"], ["subscriptions", "Subscription changes"], ["gift-cards", "Gift card balance"],
+  ["address", "Address changes"], ["invoices", "Invoice copies"], ["cancellations", "Order cancellations"],
+  ["promotions", "Promo code help"], ["accessibility", "Accessibility requests"], ["handoff", "Human handoff"],
+];
+const COMMON_FILES = /^(agent|bot|main|app|graph|crew|team|pipeline|workflow)\./;
+/* "agents/returns/agent.py" → "agents/shipping/agent.py"; "src/agents/rebooking.ts" → "src/agents/shipping.ts". */
+const siblingEntry = (entry, id) => {
+  const parts = String(entry).split(":")[0].split("/");
+  const file = parts[parts.length - 1];
+  const slug = id.replace(/-/g, "_");
+  if (parts.length >= 3 && COMMON_FILES.test(file)) return [...parts.slice(0, -2), slug, file].join("/");
+  return [...parts.slice(0, -1), `${slug}${file.slice(file.lastIndexOf("."))}`].join("/");
+};
+const withDemoSiblings = (repo) => {
+  if (!repo.agents.length || repo.agents.length >= DEMO_MIN_AGENTS) return repo;
+  const base = repo.agents[0];
+  const taken = new Set(repo.agents.map((a) => a.id));
+  const extra = SIBLINGS.filter(([id]) => !taken.has(id)).slice(0, DEMO_MIN_AGENTS - repo.agents.length).map(([id, name], i) => {
+    const entry = siblingEntry(base.entry, id);
+    return {
+      id, name, framework: base.framework, ...(base.sdk && { sdk: base.sdk }),
+      entry, prompts: [`${entry.split("/").slice(0, -1).join("/") || "."}/prompts/${id.replace(/-/g, "_")}.md`.replace(/^\.\//, "")], tools: 2 + (i % 4),
+    };
+  });
+  return { ...repo, agents: [...repo.agents, ...extra] };
+};
+
 /** What a scan of each repository finds. Monorepos hold more than one agent. */
 export const GITHUB_REPOS = [
   {
@@ -195,7 +233,32 @@ export const GITHUB_REPOS = [
       { id: "maf", name: "Escalation desk (Microsoft Agent Framework)", framework: "Microsoft Agent Framework", entry: "maf_agent/app.py", prompts: ["maf_agent/instructions.md"], tools: 3 },
     ],
   },
-];
+  {
+    /* The platform monorepo: one agent per service — enough that the found
+       list needs its search. */
+    name: "acme-inc/agent-platform", language: "Python", private: true, updated: "1 hour ago",
+    agents: [
+      { id: "orders", name: "Order status agent", framework: "LangGraph", entry: "services/orders/graph.py:orders", prompts: ["services/orders/prompts/system.md"], tools: 5 },
+      { id: "returns", name: "Returns agent", framework: "LangGraph", entry: "services/returns/graph.py:returns", prompts: ["services/returns/prompts/system.md"], tools: 6 },
+      { id: "refunds", name: "Refund approvals", framework: "LangGraph", entry: "services/refunds/graph.py:refunds", prompts: ["services/refunds/prompts/system.md"], tools: 4 },
+      { id: "shipping", name: "Shipping updates", framework: "LangGraph", entry: "services/shipping/graph.py:shipping", prompts: ["services/shipping/prompts/system.md"], tools: 3 },
+      { id: "loyalty", name: "Loyalty points desk", framework: "OpenAI Agents SDK", entry: "services/loyalty/agent.py", prompts: ["services/loyalty/prompts/system.md"], tools: 4 },
+      { id: "billing", name: "Billing questions", framework: "OpenAI Agents SDK", entry: "services/billing/agent.py", prompts: ["services/billing/prompts/system.md"], tools: 5 },
+      { id: "payments", name: "Failed payments", framework: "OpenAI Agents SDK", entry: "services/payments/agent.py", prompts: ["services/payments/prompts/system.md"], tools: 3 },
+      { id: "fraud", name: "Fraud review", framework: "CrewAI", entry: "services/fraud/crew.py:FraudCrew", prompts: ["services/fraud/prompts/system.md"], tools: 4 },
+      { id: "kyc", name: "Identity checks (KYC)", framework: "CrewAI", entry: "services/kyc/crew.py:KycCrew", prompts: ["services/kyc/prompts/system.md"], tools: 3 },
+      { id: "onboarding", name: "Merchant onboarding", framework: "Pydantic AI", entry: "services/onboarding/agent.py:onboarding", prompts: ["services/onboarding/prompts/system.md"], tools: 5 },
+      { id: "catalog", name: "Catalog assistant", framework: "Pydantic AI", entry: "services/catalog/agent.py:catalog", prompts: ["services/catalog/prompts/system.md"], tools: 4 },
+      { id: "pricing", name: "Pricing explainer", framework: "LlamaIndex", entry: "services/pricing/workflow.py:PricingAgent", prompts: ["services/pricing/prompts/system.md"], tools: 2 },
+      { id: "policies", name: "Policy Q&A", framework: "LlamaIndex", entry: "services/policies/workflow.py:PolicyAgent", prompts: ["services/policies/prompts/system.md"], tools: 2 },
+      { id: "escalations", name: "Escalations router", framework: "LangGraph", entry: "services/escalations/graph.py:router", prompts: ["services/escalations/prompts/system.md"], tools: 3 },
+      { id: "voice-orders", name: "Order line (voice)", framework: "LiveKit Agents", entry: "voice/orders/agent.py", prompts: ["voice/orders/prompts/system.md"], tools: 5 },
+      { id: "voice-returns", name: "Returns line (voice)", framework: "LiveKit Agents", entry: "voice/returns/agent.py", prompts: ["voice/returns/prompts/system.md"], tools: 6 },
+      { id: "voice-billing", name: "Billing line (voice)", framework: "Pipecat", entry: "voice/billing/bot.py", prompts: ["voice/billing/prompts/system.md"], tools: 4 },
+      { id: "survey", name: "After-call survey", framework: "Pipecat", entry: "voice/survey/bot.py", prompts: ["voice/survey/prompts/system.md"], tools: 1 },
+    ],
+  },
+].map(withDemoSiblings);
 
 /* ── GitLab and Bitbucket ─────────────────────────────────────────────────── */
 
@@ -237,7 +300,7 @@ export const GIT_HOST_META = {
 };
 
 /** What a scan of each GitLab project and Bitbucket repository finds. */
-export const GIT_HOST_REPOS = {
+const RAW_GIT_HOST_REPOS = {
   gitlab: [
     {
       name: "acme-inc/claims-voice", language: "Python", private: true, updated: "4 hours ago",
@@ -281,6 +344,7 @@ export const GIT_HOST_REPOS = {
     },
   ],
 };
+export const GIT_HOST_REPOS = Object.fromEntries(Object.entries(RAW_GIT_HOST_REPOS).map(([host, repos]) => [host, repos.map(withDemoSiblings)]));
 
 /** "github" | "gitlab" | "bitbucket" for a repository URL; null when it names none. */
 export const gitHostOfUrl = (url) => {
@@ -382,21 +446,17 @@ export const uninstallGithub = (account, { onGithub = false } = {}) => set({
 });
 export const dismissGithubRemoved = (account) => set({ githubRemoved: state.githubRemoved.filter((r) => r.account !== account) });
 
-/** A member asked an organization's owners to install (`setup_action=request`). */
-export const requestGithub = ({ account, access, repos }) => set({
-  githubRequests: [{ id: uid("ghreq"), account, access, repos, requestedAt: now(), by: "you" }, ...state.githubRequests.filter((r) => r.account !== account)],
-});
-/** An owner approved on GitHub — the install now exists. */
-export const approveGithubRequest = (id) => {
-  const r = state.githubRequests.find((x) => x.id === id);
-  if (!r) return;
-  installGithub({ account: r.account, access: r.access, repos: r.repos, installedBy: `an owner of ${r.account}` });
-  /* The installation webhook kicks off the same scan a direct install does. */
+/*
+  There's no owner-approval step: installing on any account connects it
+  straight away and its repositories are scanned. Saves from when a member's
+  install waited for an owner are settled as installs on load (below).
+*/
+const settleGithubRequest = (r) => {
+  installGithub({ account: r.account, access: r.access, repos: r.repos });
   const at = now();
   const names = reposOfInstall(installationFor(r.account)).map((x) => x.name);
   set({ scans: { ...state.scans, ...Object.fromEntries(names.map((n) => [n, at])) } });
 };
-export const cancelGithubRequest = (id) => set({ githubRequests: state.githubRequests.filter((r) => r.id !== id) });
 
 /** Repositories this workspace can see through the install. */
 /** Repositories an account owns — an install only ever sees its own account's. */
@@ -942,3 +1002,6 @@ export const dispatchToCloudAgent = ({ agentId, target = null, brief = "" }) => 
   }
   return id;
 };
+
+/* Older saves: a pending owner request becomes the install it asked for. */
+if (typeof window !== "undefined" && state.githubRequests?.length) state.githubRequests.forEach(settleGithubRequest);

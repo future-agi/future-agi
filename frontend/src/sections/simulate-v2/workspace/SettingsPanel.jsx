@@ -12,7 +12,7 @@ import { paths } from "src/routes/paths";
 import { SectionCard, CopyField } from "../components/primitives";
 import {
   envVarsOf, envVarRefPatch, envVarCheckOf, isAgentBehaviourKey, AGENT_BEHAVIOUR_MESSAGE,
-  credentialSetsOf, credentialSetPatch,
+  credentialSetPatch,
 } from "../_mock/envConfig";
 import { validateSecretRef, looksLikeRawKey, RAW_KEY_MESSAGE } from "../_mock/secretRefs";
 import { SecretRefText, SetRefAction, SecretRefEditor, PreflightLine, RefTag } from "./SecretRefControls";
@@ -121,12 +121,11 @@ export default function SettingsPanel({ env, envState, patch, onDelete, locked =
         {/* ── env vars — secrets by reference ── */}
         <EnvVarsSection envState={envState} patch={patch} locked={locked} />
         <AgentCredentialsSection envState={envState} />
-        <CredentialSetsSection envState={envState} />
 
         {/* ── versions — reproducibility, which HUD does not surface ── */}
         <SectionCard
           title="Versions"
-          subtitle="One environment version covers the world, scenarios, sub-goals, evaluations and simulated caller. Every run pins one, so a result can always be traced to what produced it"
+          subtitle="One environment version covers the world, scenarios, sub-goals, evaluations, simulated caller and credentials. Every run pins one, so a result can always be traced to what produced it"
           action={!locked && (
             <Tooltip arrow title={pending.length ? "" : `Nothing to save since environment ${currentEnvSnapshot(env, envState)?.label || shown(pinned.label)} — edit the world, contract or actors first. Scenario, sub-goal, evaluation and caller changes make a version on their own.`}>
               <span>
@@ -278,8 +277,9 @@ const KEY_W = 220;
   Secrets are references into the team's secret manager (AC-6.12): a secret
   row shows where its value lives, never the value or a mask of it, and
   "Set reference" takes only a reference. Pointing a key somewhere else
-  re-runs the access check and makes the next credential-set version — never
-  an environment or agent version. Plain variables keep plain values.
+  re-runs the access check and saves a credentials-only environment version
+  (v7 → v7.1): versioned with the environment, but the world behaves the
+  same, so nothing is re-checked. Plain variables keep plain values.
 */
 /* What runs use to reach the agent — the platform key a test copy or a draft
    is made with. By reference only; read here, set where the agent connects. */
@@ -305,51 +305,13 @@ function AgentCredentialsSection({ envState }) {
 }
 AgentCredentialsSection.propTypes = { envState: PropTypes.object };
 
-/*
-  Credentials versioned as one set: every secret reference above and every
-  agent credential, together. Moving any reference makes the next credential
-  version — not an environment or agent version — and each run records the
-  one it used. References only; values never appear here.
-*/
-function CredentialSetsSection({ envState }) {
-  const sets = credentialSetsOf(envState);
-  const current = sets[sets.length - 1];
-  const runs = (envState?.runs || []).filter((r) => !r.synthetic);
-  const usedBy = (label) => runs.filter((r) => r.credentialSet === label).length;
-  return (
-    <SectionCard
-      title={`Credentials ${current?.label || "v1"}`}
-      subtitle="Secret references and agent credentials are versioned together as one set. Changing any reference makes the next credentials version — never an environment or agent version. Every run records the set it used."
-    >
-      <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-        {[...sets].reverse().slice(0, 5).map((c, i) => (
-          <Stack key={c.label} direction="row" alignItems="center" spacing={2} sx={{ px: 2.5, py: 1.125 }}>
-            <Typography sx={{ typography: "s2", fontWeight: 700, fontFamily: MONO, width: 44, flexShrink: 0 }}>{c.label}</Typography>
-            <Box flex={1} minWidth={0}>
-              <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{(c.changes || []).join(" · ") || "References changed"}</Typography>
-              <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
-                {[
-                  c.at ? new Date(c.at).toLocaleDateString() : "Used from the next run",
-                  `${usedBy(c.label)} run${usedBy(c.label) === 1 ? "" : "s"}`,
-                ].join(" · ")}
-              </Typography>
-            </Box>
-            {i === 0 && <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", flexShrink: 0 }}>Current</Typography>}
-          </Stack>
-        ))}
-      </Stack>
-    </SectionCard>
-  );
-}
-CredentialSetsSection.propTypes = { envState: PropTypes.object };
-
 function EnvVarsSection({ envState, patch, locked = false }) {
   const vars = envVarsOf(envState);
   const [editing, setEditing] = useState(null);
   const [draft, setDraft] = useState({ key: "", value: "", secret: true });
   const [addError, setAddError] = useState(null);
 
-  /* Every write goes through the credential set, so a moved reference makes its next version. */
+  /* Every write goes through the credential set, so a moved reference is the next (credentials-only) version. */
   const save = (next) => patch?.(credentialSetPatch(envState, { envVars: next }));
   const setRef = (key, ref) => { patch?.(credentialSetPatch(envState, envVarRefPatch(envState, key, ref))); setEditing(null); };
   const remove = (key) => save(vars.filter((v) => v.key !== key));
@@ -375,7 +337,7 @@ function EnvVarsSection({ envState, patch, locked = false }) {
   return (
     <SectionCard
       title="Environment variables"
-      subtitle="Configuration passed into the environment. Secrets are references into your secret manager — the value is resolved inside the sandbox and never stored here."
+      subtitle="Configuration passed into the environment. Secrets are references into your secret manager — the value is resolved inside the sandbox and never stored here. Pointing a secret somewhere else saves a credentials-only version of the environment — a minor one, like v7 → v7.1."
     >
       <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
         {vars.map((v) => {

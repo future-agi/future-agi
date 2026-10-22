@@ -12,6 +12,7 @@ import SwitchVersionDialog from "../agents/SwitchVersionDialog";
 import { agentIdOf, agentNameOf, agentNeedsRuntime, agentSourceOf, envAgentKey } from "../_mock/agentRegistry";
 import { agentVersions, currentAgentVersion, currentEnvVersion, isAgentPinned, isPendingDraft, versionNumber } from "../_mock/versions";
 import { envLabelOf } from "../_mock/envVersionKinds";
+import { envVersionNameOf } from "../_mock/codeRefs";
 import { replicationOf } from "../_mock/replication";
 import { agentToolsFor, worldToolsFor } from "../_mock/toolFit";
 import { applyAgentSwitch, fitsEnvChannel } from "../_mock/agentSwitch";
@@ -54,8 +55,8 @@ export default function EnvAgentLine({ env, envState, patch, locked = false, onF
 
   const versions = agentVersions(envState);
   const active = currentAgentVersion(envState)?.label || versions[versions.length - 1]?.label || "v1";
-  /* Following production (the default) moves with every released version;
-     pinned holds this one. */
+  /* The environment's default version: production (moves with every
+     released version) unless someone set another. */
   const pinned = isAgentPinned(envState);
   const production = record?.production || null;
   const behind = pinned && !!production && production !== active;
@@ -69,6 +70,8 @@ export default function EnvAgentLine({ env, envState, patch, locked = false, onF
   /* Through the store, against the newest state — a version saved a moment
      ago (Sync) is already production when this runs. */
   const testHere = (label) => patch && storeDispatch({ type: "pinAgentVersion", envId: env.id, label });
+  /* A code agent's version reads as its commit — "main @ 3f9a2c1". */
+  const nm = (l) => envVersionNameOf(envState, l, env?.id).main;
 
   const [menu, setMenu] = useState(null);
   const [switching, setSwitching] = useState(false);
@@ -165,14 +168,14 @@ export default function EnvAgentLine({ env, envState, patch, locked = false, onF
         <Iconify icon={source.icon || "solar:cpu-bolt-linear"} width={16} sx={{ color: "text.secondary", flexShrink: 0 }} />
         <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
           <Box component="span" sx={{ color: "text.subtitle" }}>Tests </Box>
-          <Box component="span" sx={{ fontWeight: 700 }}>{`${name} ${active}`}</Box>
+          <Box component="span" sx={{ fontWeight: 700 }}>{`${name} ${nm(active)}`}</Box>
           <Box component="span" sx={{ color: "text.subtitle" }}>{` · ${source.label} · ${rep.proofLabel}`}</Box>
-          <Box component="span" sx={{ color: "text.subtitle" }}>{pinned ? " · pinned" : " · follows production"}</Box>
-          {behind && <Box component="span" sx={{ color: "text.secondary" }}>{` · ${production} is in production`}</Box>}
-          {newer && <Box component="span" sx={{ color: "text.secondary" }}>{newerIsDraft ? ` · ${newer} is a draft, tested here once released` : ` · ${newer} is newer`}</Box>}
+          <Box component="span" sx={{ color: "text.subtitle" }}>{pinned ? ` · default ${nm(active)}` : " · default: production"}</Box>
+          {behind && <Box component="span" sx={{ color: "text.secondary" }}>{` · ${nm(production)} is in production`}</Box>}
+          {newer && <Box component="span" sx={{ color: "text.secondary" }}>{newerIsDraft ? ` · ${nm(newer)} is a draft, tested here once released` : ` · ${nm(newer)} is newer`}</Box>}
         </Typography>
         {switchTo && !locked && (
-          <Button size="small" variant="outlined" onClick={() => setSwitching(true)} sx={outlined}>{behind ? "Follow production" : `Try ${switchTo}`}</Button>
+          <Button size="small" variant="outlined" onClick={() => setSwitching(true)} sx={outlined}>{behind ? "Default to production" : `Try ${nm(switchTo)}`}</Button>
         )}
         <Button
           size="small" onClick={viewAgent}

@@ -34,6 +34,7 @@ import OutcomeChip from "./CompareOutcome";
 import { csatOf } from "./traceTableHelpers";
 import RuleChangeDialog from "../components/RuleChangeDialog";
 import { agentSourceOf } from "../_mock/agentRegistry";
+import { agentVersions, behaviourLabelOf } from "../_mock/versions";
 import { textTone } from "../components/textTone";
 import { versionOriginOf } from "../_mock/specChange";
 import { subGoalGroups, heldFixedAcross } from "../_mock/compareHeld";
@@ -426,8 +427,13 @@ export default function CompareRuns() {
                 decides releases. */}
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
               {(() => {
-                const n = new Set(comparison.runs.map((r) => r.agentVersion)).size;
-                return `${comparison.runs.length} runs · ${n} agent version${n === 1 ? "" : "s"}`;
+                const labels = [...new Set(comparison.runs.map((r) => r.agentVersion))];
+                const n = labels.length;
+                /* A credentials-only version behaves as its base — said, so
+                   v5 against v5.1 doesn't read as two agents. */
+                const known = agentVersions(envState);
+                const same = n > 1 && new Set(labels.map((l) => behaviourLabelOf(known, l))).size === 1;
+                return `${comparison.runs.length} runs · ${n} agent version${n === 1 ? "" : "s"}${same ? ", same behaviour — only credentials differ" : ""}`;
               })()} · {comparison.coverage.shared} scenarios in every run
               {comparison.coverage.partial > 0 && ` · ${comparison.coverage.partial} in only some`}
               {comparison.coverage.unmeasured > 0 && ` · ${comparison.coverage.unmeasured} not measured`}

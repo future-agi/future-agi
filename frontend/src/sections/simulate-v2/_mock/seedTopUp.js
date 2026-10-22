@@ -14,6 +14,8 @@ import { withErrorFeedFixes, withAirlineTracing, withWatchedFixes, SEEDED_RETELL
 import { withVoiceRunHistory, HISTORY_ENV } from "./voiceRunHistory";
 import { withFiveAGoal, TOPUP_ENV } from "./voiceScenarioTopUp";
 import { PRE_VERSIONING_AGENT_NOTE, PRE_VERSIONING_ENV_NOTE, recordedBeforeVersioning } from "./versions";
+import { withCommitChanges, withCommitHistory, withCommitTies } from "./commitHistorySeed";
+import { withProjectLinkRepair } from "./projectLinkRepair";
 
 /*
   Bumped whenever the seed gains an environment.
@@ -25,7 +27,7 @@ import { PRE_VERSIONING_AGENT_NOTE, PRE_VERSIONING_ENV_NOTE, recordedBeforeVersi
   has are left exactly as they are, and an environment someone deliberately
   removed stays removed because the marker moves on regardless.
 */
-export const SEED_VERSION = 30;
+export const SEED_VERSION = 34;
 /* Environments a seed version added, so a later top-up adds only those —
    never one someone removed since the last. */
 const ADDED_AT = { 21: ["env-clinic-line"] };
@@ -418,7 +420,7 @@ const topUpSeedVersions = (stored) => {
       },
     };
   }
-  return {
+  const topped = {
     ...stored,
     seedVersion: SEED_VERSION,
     myEnvironments,
@@ -429,6 +431,14 @@ const topUpSeedVersions = (stored) => {
       ? withRecordedConsentAndKeys(scrubAgentList(stored.connectedAgents), upgraded)
       : scrubAgentList(stored.connectedAgents),
   };
+  /* Seed 31: a commit history for two code agents (commitHistorySeed);
+     Seed 32: each of those commits carries the change it made. */
+  const withHistory = (stored.seedVersion || 0) < 31 ? withCommitHistory(topped) : topped;
+  const withChanges = (stored.seedVersion || 0) < 32 ? withCommitChanges(withHistory) : withHistory;
+  /* Seed 33: each agent back on the one Observe project its traces land in. */
+  const withLinks = (stored.seedVersion || 0) < 33 ? withProjectLinkRepair(withChanges) : withChanges;
+  /* Seed 34: the seeded fix branches tied to the pull requests they are. */
+  return (stored.seedVersion || 0) < 34 ? withCommitTies(withLinks) : withLinks;
 };
 
 /*

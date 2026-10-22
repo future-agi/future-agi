@@ -288,7 +288,8 @@ export const detectNudges = (env, envState, newLabel, prevLabel) => {
     });
   }
   const version = versions.find((v) => v.label === newLabel);
-  ruleImpactOf(version, env, envState).forEach((impact) => {
+  const impacts = ruleImpactOf(version, env, envState);
+  impacts.forEach((impact) => {
     const change = (version?.changes || []).map((c) => `${c.title} ${c.detail || ""} ${c.addendum || ""}`).join(" ");
     if (!LOOSER.test(change)) {
       likelyFixes.push({ ruleId: impact.rule.id, rule: impact.rule.text, subGoals: impact.subGoals.map((g) => g.id) });
@@ -302,8 +303,37 @@ export const detectNudges = (env, envState, newLabel, prevLabel) => {
       detail: `${impact.subGoals.length} sub-goal${impact.subGoals.length === 1 ? "" : "s"} and ${impact.scenarios.length} scenario${impact.scenarios.length === 1 ? "" : "s"} test it.`,
     });
   });
-  return { nudges: out, likelyFixes };
+  /* A rule the new version added that no tested rule covers. Nothing checks
+     it, so a run can't catch it if it's wrong. One that lets the agent do
+     more (approve without a supervisor, skip a check) gets the same question
+     as a changed rule — that's exactly what an unintended change looks like.
+     One that only adds a restriction is noted, untested, without asking. */
+  const untested = [];
+  if (!impacts.length) {
+    addedRulesOf(version).forEach((text) => {
+      if (!LOOSER.test(text)) { untested.push(text); return; }
+      out.push({
+        id: nid("rule", newLabel, `new-${text.slice(0, 40)}`), kind: "rule", newRule: true, agentVersion: newLabel, prevVersion: prev, at: now, status: "open",
+        ruleId: "New rule", rule: "", to: text, scenarioIds: [], callerIds: [],
+        change: { title: "Instructions edited", detail: "Added to the prompt" },
+        title: `${newLabel} added a rule that lets the agent do more`,
+        ask: `"${text}" — a policy change, or not intended?`,
+        detail: "Nothing in this environment tests it yet.",
+      });
+    });
+  }
+  return { nudges: out, likelyFixes, untested };
 };
+
+/* The rules a version's instruction changes add — "Added: …" lines. */
+const addedRulesOf = (version) => [...new Set((version?.changes || [])
+  .filter((c) => c.kind === "instructions" || /instruction|prompt/i.test(c.title || ""))
+  .flatMap((c) => [
+    ...String(c.addendum || "").split("\n").map((l) => l.replace(/^-\s*/, "").trim()),
+    String(c.detail || "").match(/^Added:\s*"(.+)"$/)?.[1] || "",
+  ])
+  .map((t) => t.replace(/\.$/, "").trim())
+  .filter((t) => t.split(/\s+/).length >= 4))];
 
 /** Add newly detected nudges to state without duplicating ones already raised. */
 export const withNudges = (envState, nudges = []) => {

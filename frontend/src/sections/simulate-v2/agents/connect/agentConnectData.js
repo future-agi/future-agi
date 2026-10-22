@@ -152,8 +152,6 @@ export const newAgentChoicesFor = (channel) => {
   return { builtin, groups: [...groups.filter((g) => g.id === "code"), ...groups.filter((g) => g.id !== "code")] };
 };
 
-/* What most people start with — shown first when nothing is searched. */
-export const POPULAR_IDS = ["github", "vapi", "retell", "traces-new", "running", "upload"];
 
 export const pasteExamplesFor = (channel) => (!channel ? AGENT_PASTE_EXAMPLES : AGENT_PASTE_EXAMPLES.filter((e) => !e.channels || e.channels.includes(channel)));
 
@@ -181,5 +179,13 @@ export const detectAgentPaste = (raw) => {
     return { ...found, label: "A prompt", note: "We'll start an agent built in Future AGI with it.", choice: "builtin", prefill: { prompt: found.prefill.flowText } };
   }
   const kind = found.choice ? KIND_OF_CHOICE[found.choice] : null;
-  return kind ? { ...found, choice: kind } : { ...found, choice: null, blocked: true };
+  if (!kind) return { ...found, choice: null, blocked: true };
+  const alternatives = (found.alternatives || [])
+    .map((alt) => ({
+      ...alt,
+      choice: KIND_OF_CHOICE[alt.choice],
+      prefill: alt.choice === "scratch" ? { prompt: alt.prefill?.flowText || "" } : alt.prefill,
+    }))
+    .filter((alt) => alt.choice);
+  return { ...found, choice: kind, alternatives };
 };

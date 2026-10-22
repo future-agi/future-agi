@@ -807,12 +807,6 @@ export default function RunResults({ env, runId, tasks, stats, evals, seed = 7 }
                 </Tooltip>
               </>
             )}
-            {/* The credential set it ran with — by version, never the values. */}
-            {(() => {
-              const cs = identity?.credentialSet ?? sourceRun?.credentialSet;
-              const label = typeof cs === "string" ? cs : cs?.label;
-              return label ? ` · Credentials ${label}` : "";
-            })()}
             {/* What it metered, who placed the calls, which rule graded it and
                 the replay header — one hover, not five clauses. */}
             <Tooltip

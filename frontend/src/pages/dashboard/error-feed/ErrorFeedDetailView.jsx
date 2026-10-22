@@ -16,7 +16,7 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import { enqueueSnackbar } from "notistack";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import {
   useErrorFeedDetail,
@@ -32,7 +32,7 @@ import TrendsTab from "./components/TrendsTab";
 import ClusterHeadlineCard from "./components/ClusterHeadlineCard";
 import AnalyzeTab from "./components/AnalyzeTab";
 import { useErrorFeedStore } from "./store";
-import FixSheet from "src/sections/simulate-v2/errorFeed/FixSheet";
+import FixPage from "src/sections/simulate-v2/errorFeed/FixPage";
 import IssueStatusChip from "./components/IssueStatusChip";
 import ErrorStatusChip from "./components/ErrorStatusChip";
 import useIssueRootCause from "./useIssueRootCause";
@@ -139,15 +139,24 @@ export default function ErrorFeedDetailView() {
   const copyText = (text, msg) => {
     navigator.clipboard?.writeText(text).then(() => enqueueSnackbar(msg, { variant: "success" })).catch(() => {});
   };
-  /* The sheet belongs to one issue — leaving it closes the sheet. */
-  useEffect(() => () => setFixSheetOpen(false), [id, setFixSheetOpen]);
+  /* Fix is a page of its own — this issue's address with ?fix=1, so Back
+     returns to the issue and the link can be shared. Anything that asks for
+     it through the store (the Root cause tab) lands here too. */
+  const [params, setParams] = useSearchParams();
+  const fixOpen = params.get("fix") === "1";
+  const openFix = () => { const next = new URLSearchParams(params); next.set("fix", "1"); setParams(next); };
+  const closeFix = () => { const next = new URLSearchParams(params); next.delete("fix"); setParams(next); };
+  useEffect(() => {
+    if (!fixSheetOpen) return;
+    setFixSheetOpen(false);
+    openFix();
+  }, [fixSheetOpen]); // eslint-disable-line react-hooks/exhaustive-deps
   /* Back from building the agent's environment (Continue fixing): Fix opens
      where the person left it. The flag is read once, then cleared. */
   const location = useLocation();
   useEffect(() => {
     if (!location.state?.openFix) return;
-    setFixSheetOpen(true);
-    navigate(location.pathname, { replace: true, state: null });
+    navigate(`${location.pathname}?fix=1`, { replace: true, state: null });
   }, [location.state?.openFix]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const currentError = useMemo(() => {
@@ -172,6 +181,7 @@ export default function ErrorFeedDetailView() {
   if (isLoading || !currentError) {
     return <DetailSkeleton />;
   }
+  if (fixOpen) return <FixPage onClose={closeFix} issue={currentError} rootCause={rootCause} />;
 
   const tabIndex = TABS.findIndex((t) => t.key === activeTab);
   const safeTabIndex = tabIndex === -1 ? 0 : tabIndex;
@@ -341,13 +351,13 @@ export default function ErrorFeedDetailView() {
               />
               {/* Fix: prove a change in simulation, ship it as a draft. A
                   coding agent can join from the sheet. */}
-              <FixButton issue={currentError} onOpenSheet={() => setFixSheetOpen(true)} />
+              <FixButton issue={currentError} onOpenSheet={openFix} />
             </Stack>
           </Stack>
         </Box>
 
         {/* A fix that didn't hold — linked to the change. */}
-        <ReopenedBanner issue={currentError} onFixAgain={() => setFixSheetOpen(true)} />
+        <ReopenedBanner issue={currentError} onFixAgain={openFix} />
         {/* Once the fix is released: keep its scenarios as must-pass? */}
         <RegressionMemoryRow issue={currentError} />
 
@@ -458,7 +468,6 @@ export default function ErrorFeedDetailView() {
       {/* ── Right sidebar ── */}
       <ErrorMetadataPanel error={currentError} />
 
-      <FixSheet open={fixSheetOpen} onClose={() => setFixSheetOpen(false)} issue={currentError} rootCause={rootCause} />
       <LinearTeamPicker
         open={linearPickerOpen}
         onClose={() => setLinearPickerOpen(false)}

@@ -14,6 +14,7 @@ import { paths } from "src/routes/paths";
 import { useConnectedAgents } from "../store";
 import { neutralCheckboxSx } from "../components/primitives";
 import { agentSourceOf } from "../_mock/agentRegistry";
+import { branchesOf, commitsOn, isGitAgent, versionNameOf } from "../_mock/codeRefs";
 import { observeProjectOf } from "./observeProject";
 import { deleteBlockOf } from "./agentDelete";
 import AgentStateTags from "./AgentStateTags";
@@ -155,14 +156,30 @@ export default function ConnectedAgentsView({ onConnect }) {
     },
     {
       id: "latest", accessorKey: "latest", header: "Versions", size: 140, enableSorting: false,
-      cell: ({ row }) => (
-        <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
-          <Box component="span" sx={{ fontFamily: MONO, fontWeight: 600 }}>{row.original.latest}</Box>
-          <Box component="span" sx={{ color: "text.secondary" }}>
-            {`${row.original.latestIsDraft ? ` draft · ${row.original.production} in production` : ""} · ${row.original.versions.length} total`}
-          </Box>
-        </Typography>
-      ),
+      cell: ({ row }) => {
+        const a = row.original;
+        /* A code agent reads as Git does: what's in production on main, how
+           many commits, and fixes waiting on their own branches. */
+        if (isGitAgent(a)) {
+          const fixes = branchesOf(a).filter((x) => !x.release && x.count && commitsOn(a, x.name).some((c) => c.draft)).length;
+          return (
+            <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+              <Box component="span" sx={{ fontFamily: MONO, fontWeight: 600 }}>{versionNameOf(a, a.production).main}</Box>
+              <Box component="span" sx={{ color: "text.secondary" }}>
+                {` · ${a.versions.length} commit${a.versions.length === 1 ? "" : "s"}${fixes ? ` · ${fixes} open PR${fixes === 1 ? "" : "s"}` : ""}`}
+              </Box>
+            </Typography>
+          );
+        }
+        return (
+          <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
+            <Box component="span" sx={{ fontFamily: MONO, fontWeight: 600 }}>{a.latest}</Box>
+            <Box component="span" sx={{ color: "text.secondary" }}>
+              {`${a.latestIsDraft ? ` draft · ${a.production} in production` : ""} · ${a.versions.length} total`}
+            </Box>
+          </Typography>
+        );
+      },
     },
     {
       /* The one Observe project its traces or call logs land in — what lets
@@ -189,15 +206,15 @@ export default function ConnectedAgentsView({ onConnect }) {
            said as the version it tests, not a bare "N behind". Muted like
            the "· N total" beside it; the tooltip says what to do. */
         const lag = behind.length === 0 ? null
-          : u.length === 1 ? `tests ${behind[0].running}`
+          : u.length === 1 ? `tests ${versionNameOf(row.original, behind[0].running).main}`
             : `${behind.length} on older version${behind.length === 1 ? "" : "s"}`;
         const why = behind.length === 0 ? "" : (
           <Stack spacing={0.25} sx={{ py: 0.25 }}>
             {behind.map((x) => (
-              <Typography key={x.envId} sx={{ typography: "s3", color: "inherit" }}>{`${x.envName} tests ${x.running}`}</Typography>
+              <Typography key={x.envId} sx={{ typography: "s3", color: "inherit" }}>{`${x.envName} tests ${versionNameOf(row.original, x.running).main}`}</Typography>
             ))}
             <Typography sx={{ typography: "s3", color: "inherit", opacity: 0.75 }}>
-              {`${production} is in production. Switch ${behind.length === 1 ? "it" : "them"} from the agent's Environments tab.`}
+              {`${versionNameOf(row.original, production).main} is in production. Switch ${behind.length === 1 ? "it" : "them"} from the agent's Environments tab.`}
             </Typography>
           </Stack>
         );

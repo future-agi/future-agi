@@ -2,6 +2,7 @@ import { paths } from "src/routes/paths";
 import { improvementRunName } from "./optimizer";
 import { runEnvVersion } from "./toolFit";
 import { snapshotOfRun } from "./envSnapshot";
+import { envVersionNameOf } from "./codeRefs";
 
 /**
  * What a run is called, everywhere it is named.
@@ -72,9 +73,13 @@ export const runIdentityOf = (run, envState, env) => {
   const snapshot = (envStored || run?.envSnapshot) && run ? snapshotOfRun(run, env, envState) : null;
   const envLabel = snapshot?.label || run?.envSnapshot || null;
   const who = run?.agentName || "agent";
+  /* A code agent's version reads as its commit — "agent main @ 3f9a2c1".
+     Only for the agent the environment tests now: a run of one it has
+     since swapped out keeps that agent's own label. */
+  const shown = base && !run?.agentName ? `${envVersionNameOf(envState, base, env?.id || run?.envId).main}${suffix}` : agent;
   /* No version stamped (a queued row before an agent is connected) reads as
      a dash, the way an empty cell does — never as a bare "agent". */
-  const agentLabel = `${who} ${agent || "—"}`;
+  const agentLabel = `${who} ${shown || "—"}`;
   const label = [agentLabel, envLabel && `environment ${envLabel}`].filter(Boolean).join(" × ");
 
   const record = from?.record;

@@ -164,8 +164,9 @@ export const raiseNudgesIn = (state, envs, version, { extra = () => [] } = {}) =
   const list = agentVersions(es);
   const withV = list.some((v) => v.label === version.label) ? es : { ...es, agentVersions: [...list, version] };
   const prev = prevIn(withV, version);
-  const { nudges, likelyFixes } = detectNudges(env, withV, version.label, prev);
-  const all = [...nudges.map((n) => (n.kind === "rule" ? enrichRule(n, env, es, version) : n)), ...extra(env, withV, prev)];
+  const { nudges, likelyFixes, untested = [] } = detectNudges(env, withV, version.label, prev);
+  /* A new rule has no old wording or sub-goal to read — it carries its own. */
+  const all = [...nudges.map((n) => (n.kind === "rule" && !n.newRule ? enrichRule(n, env, es, version) : n)), ...extra(env, withV, prev)];
   const fixes = likelyFixes.map((f) => ({ ...f, agentVersion: version.label, at: nowIso() }));
   const folded = withNudges(es, all);
   /* A tool the new version no longer has can't be added or followed — an
@@ -179,6 +180,18 @@ export const raiseNudgesIn = (state, envs, version, { extra = () => [] } = {}) =
       : n)),
   };
   const have = new Set((es.nudges || []).map((n) => n.id));
+  /* What the harness found for this version here — kept for the history,
+     including "nothing to change", so a quiet environment still says it
+     checked. Tool and schema changes go on the card for one Rebuild; a
+     changed rule always waits for a person's answer. */
+  const check = {
+    version: version.label,
+    at: nowIso(),
+    result: all.length ? "review" : "none",
+    tools: all.filter((n) => n.kind !== "rule").length,
+    rules: all.filter((n) => n.kind === "rule").length,
+    untested: untested.length,
+  };
   return {
     env,
     envId: env.id,
@@ -188,6 +201,7 @@ export const raiseNudgesIn = (state, envs, version, { extra = () => [] } = {}) =
       ...(merged !== es && { nudges: merged.nudges }),
       ...(merged.scenarioUpdate !== es.scenarioUpdate && { scenarioUpdate: merged.scenarioUpdate }),
       ...(fixes.length && { likelyFixes: [...fixes, ...(es.likelyFixes || []).filter((f) => !fixes.some((x) => x.ruleId === f.ruleId && x.agentVersion === f.agentVersion))] }),
+      agentChecks: [...(es.agentChecks || []).filter((c) => c.version !== version.label), check],
     },
   };
 }).filter(Boolean);

@@ -19,6 +19,21 @@ const BITBUCKET = /(?:^|\/\/|@)(?:www\.)?bitbucket\.org[/:]/i;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PHONE = /^\+?[\d\s().-]{8,}$/;
 const URL_LIKE = /^(?:https?|wss?):\/\/\S+$/i;
+/* Links to a page or file, not to something we can call. */
+const DOC_HOSTS = [
+  [/(?:^|\.)notion\.(?:so|site)$/, "Notion page"],
+  [/^docs\.google\.com$/, "Google Doc"],
+  [/^drive\.google\.com$/, "Google Drive file"],
+  [/\.atlassian\.net$/, "Confluence page"],
+  [/(?:^|\.)(?:sharepoint\.com|onedrive\.live\.com|1drv\.ms)$/, "SharePoint or OneDrive file"],
+  [/(?:^|\.)(?:dropbox\.com|coda\.io|quip\.com|figma\.com|miro\.com|loom\.com)$/, "A shared page"],
+];
+const docLinkOf = (text) => {
+  const host = /^(?:https?:\/\/)?([^/\s?#:]+)/i.exec(text)?.[1]?.toLowerCase().replace(/^www\./, "");
+  if (!host || !/\./.test(host) || (!/^https?:\/\//i.test(text) && !/\//.test(text))) return null;
+  const hit = DOC_HOSTS.find(([re]) => re.test(host));
+  return hit ? { host, label: hit[1] } : null;
+};
 /* Raw secrets: never accepted here — keys go in by secret-manager reference. */
 const RAW_KEY = /^(sk|pk|rk|key|api)[-_][\w-]{12,}$|^[A-Za-z0-9_-]{32,}$/;
 
@@ -27,6 +42,8 @@ const RAW_KEY = /^(sk|pk|rk|key|api)[-_][\w-]{12,}$|^[A-Za-z0-9_-]{32,}$/;
  * { kind, label, detail, choice, prefill, logo, tag?, blocked?, warn? } or null.
  *   blocked  recognised, but not a path we can take today (said why).
  *   warn     a raw secret — refused, with where it belongs instead.
+ *   action   what Continue says, when it isn't just "Continue".
+ *   alternatives  other ways the same paste can go — [{ label, choice, prefill }].
  */
 export const detectPaste = (raw) => {
   const text = String(raw || "").trim();
@@ -66,6 +83,14 @@ export const detectPaste = (raw) => {
       blocked: true,
     };
   }
+  const doc = docLinkOf(text);
+  if (doc) {
+    return {
+      kind: "document", label: doc.label, detail: doc.host, icon: "solar:document-text-linear",
+      note: "A document can't be called like an agent. Paste its text here instead, or pick where the agent runs below.",
+      blocked: true,
+    };
+  }
   if (RAW_KEY.test(text) && !UUID.test(text) && !/^(asst|agent)_/i.test(text)) {
     return {
       kind: "raw-key", label: "Looks like an API key", detail: "Not kept", icon: "solar:shield-warning-linear",
@@ -88,7 +113,17 @@ export const detectPaste = (raw) => {
       choice: "hosted", prefill: { agentType: "voice", platform: "livekit" },
     };
   }
-  if (UUID.test(text) || /^asst_/i.test(text)) {
+  /* An OpenAI Assistants ID. OpenAI retired Assistants, so there's nothing
+     to call by it — the agent lives on in the code that called it. */
+  if (/^asst_[\w-]{8,}$/i.test(text)) {
+    return {
+      kind: "openai-assistant", label: "OpenAI assistant ID", detail: text, icon: "simple-icons:openai",
+      note: "OpenAI retired Assistants, so we can't run it by its ID. Connect the code that calls it, or start from its instructions.",
+      choice: "source", prefill: { host: "github", direct: true }, action: "Connect its code",
+      alternatives: [{ label: "Use its instructions", choice: "scratch", prefill: { flowText: "" } }],
+    };
+  }
+  if (UUID.test(text)) {
     return {
       kind: "vapi", label: "Vapi assistant ID", detail: text, logo: "vapi",
       note: "Tested live in your account on a copy we make — reference your Vapi key next.",

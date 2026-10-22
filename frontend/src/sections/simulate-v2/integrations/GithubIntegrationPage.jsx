@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Box, Button, Card, Chip, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle,
-  Menu, MenuItem, Stack, Tooltip, Typography,
+  InputBase, Menu, MenuItem, Stack, Tooltip, Typography,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
@@ -12,7 +12,7 @@ import { useConnectedAgents } from "../store";
 import { projectsOfAgent } from "../_mock/projectLinks";
 import { agentNeedsRuntime, agentRecordFromSource, agentSourceOf, definitionOf } from "../_mock/agentRegistry";
 import {
-  GITHUB_PERMISSIONS, GITHUB_WRITE_PERMISSIONS, approveGithubRequest, cancelGithubRequest, dismissGithubRemoved, githubAccountsLabel, githubInstalls, installedRepos,
+  GITHUB_PERMISSIONS, GITHUB_WRITE_PERMISSIONS, dismissGithubRemoved, githubAccountsLabel, githubInstalls, installedRepos,
   markScanned, prCheckSummary, repoNameOf, reposOfInstall, scannedAgentSource, uninstallGithub, useIntegrations,
 } from "../_mock/integrations";
 import { hasVerifyCheck } from "../_mock/prChecks";
@@ -22,8 +22,6 @@ import BrandMark from "./BrandMark";
 import GithubInstallDialog from "./GithubInstallDialog";
 import { PrVerifyStatus } from "./PrVerifyCheck";
 import { clickable, focusRing } from "../components/clickable";
-import { useDemoMode } from "../agents/demoMode";
-import { DemoLabel } from "../agents/AgentBits";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -42,8 +40,7 @@ const CAPABILITIES = [
 export default function GithubIntegrationPage() {
   const navigate = useNavigate();
   const integrations = useIntegrations();
-  const { github, prs, githubRequests, githubRemoved } = integrations;
-  const demo = useDemoMode();
+  const { github, prs, githubRemoved } = integrations;
   const { agents, state: simState } = useConnectedAgents();
   /* false | true (new install) | "<account>" (configure that installation) */
   const [installOpen, setInstallOpen] = useState(false);
@@ -190,23 +187,6 @@ export default function GithubIntegrationPage() {
         </Notice>
       ))}
 
-      {/* A member's install waits for an owner (setup_action=request). */}
-      {githubRequests.map((r) => (
-        <Notice key={r.id} icon="solar:clock-circle-linear" iconColor="#CA8A04" title={`Waiting for an owner of ${r.account} to approve`}
-          action={(
-            <>
-              <Button size="small" onClick={() => cancelGithubRequest(r.id)} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary" }}>Withdraw</Button>
-              {demo && (
-                <Button size="small" variant="outlined" onClick={() => approveGithubRequest(r.id)} sx={{ typography: "s3", fontWeight: 700, color: "text.primary", borderColor: "divider" }}>
-                  <DemoLabel />Owner approved
-                </Button>
-              )}
-            </>
-          )}
-        >
-          {`You asked for ${r.access === "all" ? "all repositories" : `${r.repos.length} repositor${r.repos.length === 1 ? "y" : "ies"}`}. GitHub emailed the owners — once one approves, the installation appears here and we scan it.`}
-        </Notice>
-      ))}
 
       {!github && (
         <Card sx={{ p: 3 }}>
@@ -307,39 +287,12 @@ export default function GithubIntegrationPage() {
                       {r.agents.length === 0 ? (
                         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>No agents found in this repository.</Typography>
                       ) : (
-                        <Stack spacing={0.75}>
-                          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{`Found ${r.agents.length} agent${r.agents.length === 1 ? "" : "s"}`}</Typography>
-                          {r.agents.map((a) => (
-                            <Stack key={a.id} direction="row" alignItems="center" spacing={1.25} sx={{ px: 1.5, py: 1, borderRadius: 1, border: "1px solid", borderColor: "divider" }}>
-                              <Box flex={1} minWidth={0}>
-                                <Typography sx={{ typography: "s2", fontWeight: 600 }}>{a.name}</Typography>
-                                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                                  {`${a.framework} · `}
-                                  <Box component="span" sx={{ fontFamily: MONO }}>{a.entry}</Box>
-                                  {` · ${a.tools} tools`}
-                                </Typography>
-                              </Box>
-                              {connectedFor(r, a) ? (
-                                <Button
-                                  size="small" variant="outlined"
-                                  onClick={() => navigate(`${paths.dashboard.agents}/connected/${connectedFor(r, a).id}`)}
-                                  startIcon={<Iconify icon="solar:check-circle-linear" width={14} />}
-                                  sx={{ typography: "s3", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
-                                >
-                                  Connected · View
-                                </Button>
-                              ) : (
-                                <Button
-                                  size="small" variant="contained" color="primary"
-                                  onClick={() => connectScanned(r, a)}
-                                  sx={{ typography: "s3", fontWeight: 700 }}
-                                >
-                                  Connect
-                                </Button>
-                              )}
-                            </Stack>
-                          ))}
-                        </Stack>
+                        <RepoAgents
+                          agents={r.agents}
+                          connectedOf={(a) => connectedFor(r, a)}
+                          onView={(c) => navigate(`${paths.dashboard.agents}/connected/${c.id}`)}
+                          onConnect={(a) => connectScanned(r, a)}
+                        />
                       )}
                     </Box>
                   )}
@@ -509,3 +462,76 @@ export function PrStatus({ status }) {
   );
 }
 PrStatus.propTypes = { status: PropTypes.string };
+
+/*
+  What a scan found in one repository. A monorepo can hold dozens of agents,
+  so the list has a search box and scrolls in its own frame past a handful
+  of rows; connected ones are counted in the heading.
+*/
+function RepoAgents({ agents, connectedOf, onView, onConnect }) {
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const shown = q ? agents.filter((a) => `${a.name} ${a.framework} ${a.entry}`.toLowerCase().includes(q)) : agents;
+  const connected = agents.filter((a) => connectedOf(a)).length;
+  return (
+    <Stack spacing={0.75}>
+      <Stack direction="row" alignItems="center" spacing={1.5}>
+        <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+          {`Found ${agents.length} agent${agents.length === 1 ? "" : "s"}${connected ? ` · ${connected} connected` : ""}${q ? ` · ${shown.length} shown` : ""}`}
+        </Typography>
+        <Box
+          sx={{
+            ml: "auto", display: "flex", alignItems: "center", gap: 0.75, px: 1, height: 30, width: 280, maxWidth: "100%",
+            border: "1px solid", borderColor: "divider", borderRadius: 1, bgcolor: "background.paper",
+            "&:focus-within": { borderColor: (t) => alpha(t.palette.text.primary, 0.45) },
+          }}
+        >
+          <Iconify icon="solar:magnifer-linear" width={14} sx={{ color: "text.disabled", flexShrink: 0 }} />
+          <InputBase
+            fullWidth value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") setQuery(""); }}
+            placeholder="Search name, framework or file"
+            inputProps={{ "aria-label": "Search the agents found", spellCheck: false }}
+            sx={{ typography: "s3", "& input::placeholder": { color: "text.disabled", opacity: 1 } }}
+          />
+        </Box>
+      </Stack>
+      {shown.length ? (
+        <Stack spacing={0.75} sx={agents.length > 5 ? { maxHeight: 300, overflowY: "auto", pr: 0.5, mr: -0.5 } : undefined}>
+          {shown.map((a) => {
+            const c = connectedOf(a);
+            return (
+              <Stack key={a.id} direction="row" alignItems="center" spacing={1.25} sx={{ px: 1.5, py: 1, borderRadius: 1, border: "1px solid", borderColor: "divider", flexShrink: 0 }}>
+                <Box flex={1} minWidth={0}>
+                  <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{a.name}</Typography>
+                  <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+                    {`${a.framework} · `}
+                    <Box component="span" sx={{ fontFamily: MONO }}>{a.entry}</Box>
+                    {` · ${a.tools} tool${a.tools === 1 ? "" : "s"}`}
+                  </Typography>
+                </Box>
+                {c ? (
+                  <Button
+                    size="small" variant="outlined" onClick={() => onView(c)}
+                    startIcon={<Iconify icon="solar:check-circle-linear" width={14} />}
+                    sx={{ typography: "s3", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
+                  >
+                    Connected · View
+                  </Button>
+                ) : (
+                  <Button size="small" variant="contained" color="primary" onClick={() => onConnect(a)} sx={{ typography: "s3", fontWeight: 700 }}>
+                    Connect
+                  </Button>
+                )}
+              </Stack>
+            );
+          })}
+        </Stack>
+      ) : (
+        <Typography sx={{ typography: "s3", color: "text.subtitle", py: 0.5 }}>{`No agent here matches “${query.trim()}”.`}</Typography>
+      )}
+    </Stack>
+  );
+}
+RepoAgents.propTypes = { agents: PropTypes.array.isRequired, connectedOf: PropTypes.func.isRequired, onView: PropTypes.func.isRequired, onConnect: PropTypes.func.isRequired };

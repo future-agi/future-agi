@@ -935,12 +935,6 @@ function LiveRun() {
               {repeats > 1 ? ` · ${repeats} repeats each` : ""} · {formatMs(elapsed)} elapsed
               {/* Voice runs in real time — the expected length, said up front. */}
               {size.voice ? ` · expected ${size.voice.line}` : ""}
-              {/* The credential set it runs with — by version, never the values. */}
-              {(() => {
-                const cs = (recorded || stored)?.credentialSet;
-                const label = typeof cs === "string" ? cs : cs?.label;
-                return label ? ` · Credentials ${label}` : "";
-              })()}
             </Typography>
             {/*
               Slow and stalled look identical on a progress bar, and telling

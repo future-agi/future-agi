@@ -140,11 +140,11 @@ export default function AgentSyncDialog({
               {phase === "upToDate" && `Nothing changed in ${source.label} since ${result?.latest} was saved.`}
               {phase === "changes" && `Saving creates agent ${result.label} only; ${result.basedOn} stays as it was. The environment and its scenarios stay as they are — we'll list anything that no longer fits.`}
               {phase === "saved" && (saved.switched
-                ? `This environment follows production, so it tests ${saved.version.label} from the next run. The environment and scenarios didn't change.`
+                ? `This environment's default is production, so it tests ${saved.version.label} from the next run. The environment and scenarios didn't change.`
                 : inEnvironment
-                  ? `This environment stays pinned to ${runningLabel}; environments following production test ${saved.version.label}. The environment and scenarios didn't change.`
+                  ? `This environment's default stays ${runningLabel}; environments whose default is production test ${saved.version.label}. The environment and scenarios didn't change.`
                   : usedInCount
-                    ? "Environments following production test it on their next run; pinned ones stay put. Their worlds and scenarios didn't change."
+                    ? "Environments whose default is production test it on their next run; the others stay on theirs. Their worlds and scenarios didn't change."
                     : "Nothing else changed.")}
             </Typography>
           </Box>

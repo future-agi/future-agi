@@ -10,7 +10,7 @@
 
   Connecting the first agent isn't a switch — there's nothing to compare with.
 */
-import { agentVersions, currentAgentVersion, nextAgentVersion, versionNumber } from "./versions";
+import { agentVersions, currentAgentVersion, majorOf, nextAgentVersion } from "./versions";
 import { agentToolsFor } from "./toolFit";
 import { detectNudges, withNudges } from "./decoupled";
 import { coreNudgeOf } from "./nudgeEffects";
@@ -57,7 +57,7 @@ const toolsOfPicked = (picked, label, state) => {
 export const agentSwitchPlan = (env, envState, { picked, label, state }) => {
   if (!envState?.agent || !picked) return null;
   const list = agentVersions(envState);
-  const n = Math.max(0, ...list.map((v) => versionNumber(v.label))) + 1;
+  const n = Math.max(0, ...list.map((v) => majorOf(v.label))) + 1;
   const prev = currentAgentVersion(envState)?.label || list[list.length - 1]?.label || null;
   const tools = toolsOfPicked(picked, label, state);
   const version = {

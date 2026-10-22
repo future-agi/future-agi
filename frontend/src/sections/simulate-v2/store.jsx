@@ -19,7 +19,7 @@ import { seededState } from "./_mock/seedState";
 import { runReadiness } from "./_mock/setupGaps";
 import { getEnvironment } from "./_mock/environments";
 import { generatedPool } from "./_mock/scenarios";
-import { agentPinPatch, agentVersions, isPendingDraft, versionNumber } from "./_mock/versions";
+import { agentPinPatch, agentVersions, defaultAgentVersionOf, isPendingDraft, majorOf, productionAgentVersion, versionNumber } from "./_mock/versions";
 import { raiseNudgesIn } from "./_mock/nudgeEffects";
 /* Which agent this is, across environments: where it lives. Two
    environments connected to the same repo, endpoint or hosted assistant are
@@ -30,6 +30,8 @@ import { scrubAgentSecrets } from "./_mock/secretRefs";
 import { recordCredentialSets } from "./_mock/envConfig";
 /* Topping a stored copy up with what the seed gained since it was saved. */
 import { SEED_VERSION, topUpSeed, scrubEnvState, scrubPatch, withRsiSeed } from "./_mock/seedTopUp";
+import { withCommitHistory, withCommitTies } from "./_mock/commitHistorySeed";
+import { withProjectLinkRepair } from "./_mock/projectLinkRepair";
 import { readStored, writeStored, updateStored } from "./_mock/storeStorage";
 /* A search that played out while nobody watched has finished. */
 import { settleImprovements } from "./_mock/optimizationRuns";
@@ -127,7 +129,7 @@ const WORKSPACE_ROLE = "admin";
   like work already in progress — and only when nothing is stored, so it never
   overwrites what someone actually did.
 */
-const firstRunState = () => ({ ...initialState, ...withRsiSeed(seededState()), seedVersion: SEED_VERSION });
+const firstRunState = () => ({ ...initialState, ...withProjectLinkRepair(withCommitTies(withCommitHistory(withRsiSeed(seededState())))), seedVersion: SEED_VERSION });
 
 /* ── agent versions: one way in ──────────────────────────────────────────────
    A version belongs to the agent. Every environment testing that agent, and
@@ -151,7 +153,7 @@ const mintVersion = (state, key, version, activateEnvId) => {
   /* A label already taken — another environment or the Agents page got there
      first — takes the next free number instead of being silently dropped. */
   const v = known.some((k) => k.label === version.label)
-    ? (() => { const n = Math.max(0, ...known.map((k) => versionNumber(k.label))) + 1; return { ...version, id: `agent-v${n}`, label: `v${n}` }; })()
+    ? (() => { const n = Math.max(0, ...known.map((k) => majorOf(k.label))) + 1; return { ...version, id: `agent-v${n}`, label: `v${n}` }; })()
     : version;
   const byEnv = { ...state.byEnv };
   Object.entries(state.byEnv).forEach(([id, es]) => {
@@ -357,7 +359,17 @@ function reducer(state, action) {
       if (!prev) return state;
       /* A draft is never what an environment tests — refused, nothing moves. */
       if (isPendingDraft(prev, action.label)) return state;
-      return { ...state, byEnv: { ...state.byEnv, [action.envId]: { ...prev, ...agentPinPatch(prev, action.label) } } };
+      const next = { ...prev, ...agentPinPatch(prev, action.label) };
+      /* The environment's default version, as its history records it: who
+         moved it, from what to what — going back to an older version is a
+         change of default, never a silent one. */
+      const before = defaultAgentVersionOf(prev);
+      const after = defaultAgentVersionOf(next);
+      const changes = before === after ? prev.agentDefaultChanges : [
+        ...(prev.agentDefaultChanges || []),
+        { from: before, to: after, production: productionAgentVersion(prev)?.label || null, at: new Date().toISOString(), by: action.by || "You" },
+      ];
+      return { ...state, byEnv: { ...state.byEnv, [action.envId]: { ...next, ...(changes && { agentDefaultChanges: changes }) } } };
     }
 
     case "patchEnvState": {
@@ -396,7 +408,7 @@ function reducer(state, action) {
       const envs = others.map((id) => state.myEnvironments.find((e) => e.id === id)).filter(Boolean);
       if (version && envs.length) {
         raiseNudgesIn(released, envs, version).forEach((r) => {
-          if (r.patch.nudges || r.patch.likelyFixes) byEnv[r.envId] = { ...byEnv[r.envId], ...r.patch };
+          byEnv[r.envId] = { ...byEnv[r.envId], ...r.patch };
         });
       }
       return { ...state, byEnv, connectedAgents };
