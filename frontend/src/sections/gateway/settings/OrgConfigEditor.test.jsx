@@ -1,8 +1,14 @@
 import React from "react";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 import OrgConfigEditor from "./OrgConfigEditor";
+import {
+  ADMIN_LEVELS,
+  NOT_ADMIN_LEVELS,
+  expectAdminOnly,
+  expectEditable,
+} from "../testing/adminOnly";
 
 vi.mock("./ProviderConfigTab", () => ({
   default: () => <div>Providers tab</div>,
@@ -51,6 +57,59 @@ vi.mock("./ModelDatabaseConfigTab", () => ({
 vi.mock("./ModelMapConfigTab", () => ({
   default: () => <div>Model map tab</div>,
 }));
+
+// The role check: every member opens the editor to read
+// the config; Save & Activate is Owner or Admin only.
+let mockOrgLevel = 8;
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ orgLevel: mockOrgLevel }),
+}));
+
+describe("OrgConfigEditor, Owner or Admin only", () => {
+  afterEach(() => {
+    mockOrgLevel = 8;
+  });
+
+  it.each(NOT_ADMIN_LEVELS)(
+    "%s reads the config with Save & Activate disabled",
+    (_who, level) => {
+      mockOrgLevel = level;
+      render(
+        <OrgConfigEditor
+          open
+          onClose={vi.fn()}
+          onSave={vi.fn()}
+          initialConfig={{ providers: {}, alerting: { enabled: true } }}
+          isSaving={false}
+          defaultTab={7}
+        />,
+      );
+      expect(screen.getByText("Notification Channels")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+      expectAdminOnly(screen.getByRole("button", { name: "Save & Activate" }));
+    },
+  );
+
+  it.each(ADMIN_LEVELS)("%s can save", async (_who, level) => {
+    mockOrgLevel = level;
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(
+      <OrgConfigEditor
+        open
+        onClose={vi.fn()}
+        onSave={onSave}
+        initialConfig={{ providers: {}, alerting: { enabled: true } }}
+        isSaving={false}
+        defaultTab={7}
+      />,
+    );
+    const save = screen.getByRole("button", { name: "Save & Activate" });
+    expectEditable(save);
+    await user.click(save);
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("OrgConfigEditor", () => {
   it("preserves alerting draft state when initialConfig changes after enabling alerting", async () => {

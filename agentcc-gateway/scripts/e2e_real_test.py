@@ -14,6 +14,7 @@ Prerequisites:
 
 import json
 import os
+import secrets
 import signal
 import subprocess
 import sys
@@ -35,7 +36,10 @@ GATEWAY_URL = "http://localhost:8091"
 DJANGO_URL = "http://localhost:8000"
 GATEWAY_ID = os.environ.get("AGENTCC_GATEWAY_ID", "00000000-0000-0000-0000-000000000001")
 AGENTCC_API_KEY = os.environ.get("AGENTCC_API_KEY", "sk-test-key-001")
-ADMIN_TOKEN = os.environ.get("AGENTCC_ADMIN_TOKEN", "test-admin-secret")
+# Unless AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN is set, the gateway refuses to
+# start on a published token, so without AGENTCC_ADMIN_TOKEN each run makes its
+# own and hands it to the gateway it starts.
+ADMIN_TOKEN = os.environ.get("AGENTCC_ADMIN_TOKEN") or secrets.token_hex(32)
 
 # Load API keys from env or .env file
 ENV_FILE = str(
@@ -481,6 +485,7 @@ def main():
     # Start gateway
     print("\n--- Starting Agentcc Gateway ---")
     env = os.environ.copy()
+    env["AGENTCC_ADMIN_TOKEN"] = ADMIN_TOKEN
     gateway_proc = subprocess.Popen(
         [GATEWAY_BINARY, "--config", GATEWAY_CONFIG],
         stdout=subprocess.PIPE,

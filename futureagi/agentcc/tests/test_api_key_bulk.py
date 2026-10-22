@@ -1,5 +1,6 @@
 """Bulk API-key sync endpoint: expires_at wire format and expired-key filtering."""
 
+import secrets
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
@@ -14,7 +15,8 @@ from agentcc.serializers.contracts import (
     APIKeyBulkResponseSerializer,
 )
 
-ADMIN_TOKEN = "agentcc-admin-secret"
+# Generated per run: a published literal is refused (agentcc/admin_token.py).
+ADMIN_TOKEN = secrets.token_hex(32)
 
 
 @pytest.fixture(autouse=True)

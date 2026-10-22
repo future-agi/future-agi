@@ -8,6 +8,31 @@ import MCPGuardrailsTab from "./MCPGuardrailsTab";
 import MCPOverviewTab from "./MCPOverviewTab";
 import MCPServersTab from "./MCPServersTab";
 import MCPToolsTab from "./MCPToolsTab";
+import {
+  ADMIN_LEVELS,
+  NOT_ADMIN_LEVELS,
+  expectAdminOnly,
+  expectEditable,
+} from "../testing/adminOnly";
+
+// The role check: editing and removing a server are
+// Owner or Admin only. The cases below run as an Admin unless one says
+// otherwise.
+let mockOrgLevel = 8;
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ orgLevel: mockOrgLevel }),
+}));
+
+const ONE_SERVER = {
+  mcp: {
+    servers: {
+      browser_smoke_mcp: {
+        url: "https://example.com/futureagi-mcp",
+        transport: "http",
+      },
+    },
+  },
+};
 
 const { mockRemoveMutate, mockUpdateMutate } = vi.hoisted(() => ({
   mockRemoveMutate: vi.fn(),
@@ -34,8 +59,41 @@ const configuredStatus = {
 
 describe("Gateway MCP status compatibility", () => {
   beforeEach(() => {
+    mockOrgLevel = 8;
     mockRemoveMutate.mockReset();
     mockUpdateMutate.mockReset();
+  });
+
+  it.each(NOT_ADMIN_LEVELS)(
+    "%s reads a server card with Edit and Delete disabled",
+    (_who, level) => {
+      mockOrgLevel = level;
+      render(
+        <MCPServersTab
+          gatewayId="default"
+          config={ONE_SERVER}
+          mcpStatus={configuredStatus}
+          onEditServer={vi.fn()}
+        />,
+      );
+      expect(screen.getByText("browser_smoke_mcp")).toBeInTheDocument();
+      expectAdminOnly(screen.getByRole("button", { name: /edit/i }));
+      expectAdminOnly(screen.getByRole("button", { name: /delete/i }));
+    },
+  );
+
+  it.each(ADMIN_LEVELS)("%s can edit and delete a server", (_who, level) => {
+    mockOrgLevel = level;
+    render(
+      <MCPServersTab
+        gatewayId="default"
+        config={ONE_SERVER}
+        mcpStatus={configuredStatus}
+        onEditServer={vi.fn()}
+      />,
+    );
+    expectEditable(screen.getByRole("button", { name: /edit/i }));
+    expectEditable(screen.getByRole("button", { name: /delete/i }));
   });
 
   it("renders configured fallback status rows with id/status fields", () => {

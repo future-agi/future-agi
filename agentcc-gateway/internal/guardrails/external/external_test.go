@@ -8,8 +8,21 @@ import (
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
+	"github.com/futureagi/agentcc-gateway/internal/mcp/egress"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
+
+// The adapter tests reach httptest servers on loopback; the org constructor
+// dials through the guarded egress dialer, so newGuard is
+// New with a dialer that lists loopback (external_egress_test.go covers the
+// guard).
+func newGuard(name string, cfg map[string]interface{}) *ExternalGuardrail {
+	d, err := egress.New(egress.Options{PrivateAllow: []string{"127.0.0.0/8", "::1"}})
+	if err != nil {
+		panic(err)
+	}
+	return New(name, cfg, d)
+}
 
 func makeMsg(role, content string) models.Message {
 	raw, _ := json.Marshal(content)
@@ -40,7 +53,7 @@ func TestLakera_Flagged(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-lakera", map[string]interface{}{
+	g := newGuard("test-lakera", map[string]interface{}{
 		"provider":   "lakera",
 		"api_key":    "lk-test",
 		"endpoint":   srv.URL,
@@ -66,7 +79,7 @@ func TestLakera_Safe(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-lakera", map[string]interface{}{
+	g := newGuard("test-lakera", map[string]interface{}{
 		"provider": "lakera", "api_key": "k", "endpoint": srv.URL,
 	})
 
@@ -86,7 +99,7 @@ func TestLakera_FlaggedButNoCategoryMatch(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider":   "lakera",
 		"api_key":    "k",
 		"endpoint":   srv.URL,
@@ -115,7 +128,7 @@ func TestAzure_HighSeverity(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-azure", map[string]interface{}{
+	g := newGuard("test-azure", map[string]interface{}{
 		"provider":           "azure_content_safety",
 		"api_key":            "az-key",
 		"endpoint":           srv.URL,
@@ -143,7 +156,7 @@ func TestAzure_LowSeverity(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-azure", map[string]interface{}{
+	g := newGuard("test-azure", map[string]interface{}{
 		"provider":           "azure_content_safety",
 		"api_key":            "k",
 		"endpoint":           srv.URL,
@@ -167,7 +180,7 @@ func TestPresidio_PIIDetected(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-presidio", map[string]interface{}{
+	g := newGuard("test-presidio", map[string]interface{}{
 		"provider":        "presidio",
 		"endpoint":        srv.URL,
 		"language":        "en",
@@ -189,7 +202,7 @@ func TestPresidio_NoPII(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-presidio", map[string]interface{}{
+	g := newGuard("test-presidio", map[string]interface{}{
 		"provider": "presidio", "endpoint": srv.URL,
 	})
 
@@ -207,7 +220,7 @@ func TestPresidio_BelowThreshold(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-presidio", map[string]interface{}{
+	g := newGuard("test-presidio", map[string]interface{}{
 		"provider":        "presidio",
 		"endpoint":        srv.URL,
 		"score_threshold": 0.5,
@@ -231,7 +244,7 @@ func TestLlamaGuard_Unsafe(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-llamaguard", map[string]interface{}{
+	g := newGuard("test-llamaguard", map[string]interface{}{
 		"provider": "llama_guard",
 		"endpoint": srv.URL,
 		"api_key":  "k",
@@ -257,7 +270,7 @@ func TestLlamaGuard_Safe(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-llamaguard", map[string]interface{}{
+	g := newGuard("test-llamaguard", map[string]interface{}{
 		"provider": "llama_guard", "endpoint": srv.URL,
 	})
 
@@ -279,7 +292,7 @@ func TestLlamaGuard_FullChatCompletionsEndpoint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-llamaguard", map[string]interface{}{
+	g := newGuard("test-llamaguard", map[string]interface{}{
 		"provider": "llama_guard",
 		"endpoint": srv.URL + "/v1/chat/completions",
 	})
@@ -299,7 +312,7 @@ func TestLlamaGuard_EmptyChoices(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "llama_guard", "endpoint": srv.URL,
 	})
 
@@ -322,7 +335,7 @@ func TestBedrock_Intervened(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-bedrock", map[string]interface{}{
+	g := newGuard("test-bedrock", map[string]interface{}{
 		"provider":           "bedrock_guardrails",
 		"endpoint":           srv.URL,
 		"guardrail_id":       "abc123",
@@ -349,7 +362,7 @@ func TestBedrock_None(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-bedrock", map[string]interface{}{
+	g := newGuard("test-bedrock", map[string]interface{}{
 		"provider":     "bedrock_guardrails",
 		"endpoint":     srv.URL,
 		"guardrail_id": "abc123",
@@ -364,7 +377,7 @@ func TestBedrock_None(t *testing.T) {
 // ======================= Generic External Tests =======================
 
 func TestExternal_NilInput(t *testing.T) {
-	g := New("test", map[string]interface{}{"provider": "lakera", "api_key": "k"})
+	g := newGuard("test", map[string]interface{}{"provider": "lakera", "api_key": "k"})
 	result := g.Check(context.Background(), nil)
 	if !result.Pass {
 		t.Fatal("nil input should pass")
@@ -372,7 +385,7 @@ func TestExternal_NilInput(t *testing.T) {
 }
 
 func TestExternal_EmptyMessages(t *testing.T) {
-	g := New("test", map[string]interface{}{"provider": "lakera", "api_key": "k", "endpoint": "http://unused"})
+	g := newGuard("test", map[string]interface{}{"provider": "lakera", "api_key": "k", "endpoint": "http://unused"})
 	result := g.Check(context.Background(), makeInput(nil))
 	if !result.Pass {
 		t.Fatal("empty messages should pass")
@@ -380,7 +393,7 @@ func TestExternal_EmptyMessages(t *testing.T) {
 }
 
 func TestExternal_NoAdapter(t *testing.T) {
-	g := New("test", nil)
+	g := newGuard("test", nil)
 	result := g.Check(context.Background(), makeInput([]models.Message{makeMsg("user", "hi")}))
 	if !result.Pass {
 		t.Fatal("no adapter should pass")
@@ -403,7 +416,7 @@ func TestExternal_HTTP500WithRetry(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "lakera", "api_key": "k", "endpoint": srv.URL,
 		"retry": 1,
 	})
@@ -423,7 +436,7 @@ func TestExternal_HTTP403NoRetry(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "lakera", "api_key": "bad", "endpoint": srv.URL,
 		"retry": 2,
 	})
@@ -446,7 +459,7 @@ func TestExternal_PostStage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "lakera", "api_key": "k", "endpoint": srv.URL,
 	})
 
@@ -465,7 +478,7 @@ func TestExternal_ContextCancelled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "lakera", "api_key": "k", "endpoint": srv.URL,
 	})
 
@@ -509,7 +522,7 @@ func TestIsExternalProviderConfig(t *testing.T) {
 }
 
 func TestExternal_Name(t *testing.T) {
-	g := New("my-guard", map[string]interface{}{"provider": "lakera"})
+	g := newGuard("my-guard", map[string]interface{}{"provider": "lakera"})
 	if g.Name() != "my-guard" {
 		t.Errorf("name = %q", g.Name())
 	}
@@ -546,7 +559,7 @@ func TestDynamoAI_Blocked(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-dynamoai", map[string]interface{}{
+	g := newGuard("test-dynamoai", map[string]interface{}{
 		"provider":   "dynamoai",
 		"api_key":    "dyn-test",
 		"endpoint":   srv.URL,
@@ -572,7 +585,7 @@ func TestDynamoAI_Safe(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-dynamoai", map[string]interface{}{
+	g := newGuard("test-dynamoai", map[string]interface{}{
 		"provider":   "dynamoai",
 		"api_key":    "k",
 		"endpoint":   srv.URL,
@@ -593,7 +606,7 @@ func TestDynamoAI_APIError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-dynamoai", map[string]interface{}{
+	g := newGuard("test-dynamoai", map[string]interface{}{
 		"provider": "dynamoai", "api_key": "k", "endpoint": srv.URL,
 	})
 
@@ -634,7 +647,7 @@ func TestEnkrypt_Flagged(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-enkrypt", map[string]interface{}{
+	g := newGuard("test-enkrypt", map[string]interface{}{
 		"provider": "enkrypt",
 		"api_key":  "ek-test",
 		"endpoint": srv.URL,
@@ -662,7 +675,7 @@ func TestEnkrypt_Safe(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-enkrypt", map[string]interface{}{
+	g := newGuard("test-enkrypt", map[string]interface{}{
 		"provider": "enkrypt", "api_key": "k", "endpoint": srv.URL,
 	})
 
@@ -683,7 +696,7 @@ func TestEnkrypt_ArraySummary(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-enkrypt", map[string]interface{}{
+	g := newGuard("test-enkrypt", map[string]interface{}{
 		"provider": "enkrypt", "api_key": "k", "endpoint": srv.URL,
 	})
 
@@ -723,7 +736,7 @@ func TestGraySwan_Violation(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-grayswan", map[string]interface{}{
+	g := newGuard("test-grayswan", map[string]interface{}{
 		"provider": "grayswan",
 		"api_key":  "gs-test",
 		"endpoint": srv.URL,
@@ -749,7 +762,7 @@ func TestGraySwan_Safe(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-grayswan", map[string]interface{}{
+	g := newGuard("test-grayswan", map[string]interface{}{
 		"provider": "grayswan", "api_key": "k", "endpoint": srv.URL,
 	})
 
@@ -773,7 +786,7 @@ func TestGraySwan_IPIOnly(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-grayswan", map[string]interface{}{
+	g := newGuard("test-grayswan", map[string]interface{}{
 		"provider": "grayswan", "api_key": "k", "endpoint": srv.URL,
 	})
 
@@ -813,7 +826,7 @@ func TestLasso_Flagged(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-lasso", map[string]interface{}{
+	g := newGuard("test-lasso", map[string]interface{}{
 		"provider": "lasso",
 		"api_key":  "ls-test",
 		"endpoint": srv.URL,
@@ -838,7 +851,7 @@ func TestLasso_Safe(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-lasso", map[string]interface{}{
+	g := newGuard("test-lasso", map[string]interface{}{
 		"provider": "lasso", "api_key": "k", "endpoint": srv.URL,
 	})
 
@@ -861,7 +874,7 @@ func TestLasso_EndpointAppendClassify(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-lasso", map[string]interface{}{
+	g := newGuard("test-lasso", map[string]interface{}{
 		"provider": "lasso", "api_key": "k", "endpoint": srv.URL,
 	})
 
@@ -900,7 +913,7 @@ func TestIBM_Flagged(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-ibm", map[string]interface{}{
+	g := newGuard("test-ibm", map[string]interface{}{
 		"provider":    "ibm_ai",
 		"api_key":     "ibm-test",
 		"endpoint":    srv.URL,
@@ -928,7 +941,7 @@ func TestIBM_Safe(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-ibm", map[string]interface{}{
+	g := newGuard("test-ibm", map[string]interface{}{
 		"provider":   "ibm_ai",
 		"api_key":    "k",
 		"endpoint":   srv.URL,
@@ -949,7 +962,7 @@ func TestIBM_EmptyChoices(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-ibm", map[string]interface{}{
+	g := newGuard("test-ibm", map[string]interface{}{
 		"provider": "ibm_ai", "api_key": "k", "endpoint": srv.URL,
 	})
 
@@ -971,7 +984,7 @@ func TestIBM_CustomCriteria(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-ibm", map[string]interface{}{
+	g := newGuard("test-ibm", map[string]interface{}{
 		"provider":    "ibm_ai",
 		"api_key":     "k",
 		"endpoint":    srv.URL,

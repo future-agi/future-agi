@@ -9,7 +9,7 @@ func TestSessionManagerCreate(t *testing.T) {
 	sm := NewSessionManager(5 * time.Minute)
 	defer sm.Close()
 
-	s := sm.Create(Implementation{Name: "test", Version: "1.0"}, ClientCapabilities{})
+	s := sm.Create(SessionOwner{}, Implementation{Name: "test", Version: "1.0"}, ClientCapabilities{})
 	if s.ID == "" {
 		t.Fatal("expected non-empty session ID")
 	}
@@ -22,9 +22,9 @@ func TestSessionManagerGetValid(t *testing.T) {
 	sm := NewSessionManager(5 * time.Minute)
 	defer sm.Close()
 
-	s := sm.Create(Implementation{Name: "test", Version: "1.0"}, ClientCapabilities{})
+	s := sm.Create(SessionOwner{}, Implementation{Name: "test", Version: "1.0"}, ClientCapabilities{})
 
-	got := sm.Get(s.ID)
+	got := sm.Get(s.ID, SessionOwner{})
 	if got == nil {
 		t.Fatal("expected to find session")
 	}
@@ -37,12 +37,12 @@ func TestSessionManagerGetExpired(t *testing.T) {
 	sm := NewSessionManager(1 * time.Millisecond)
 	defer sm.Close()
 
-	s := sm.Create(Implementation{Name: "test", Version: "1.0"}, ClientCapabilities{})
+	s := sm.Create(SessionOwner{}, Implementation{Name: "test", Version: "1.0"}, ClientCapabilities{})
 
 	// Wait for expiry.
 	time.Sleep(5 * time.Millisecond)
 
-	got := sm.Get(s.ID)
+	got := sm.Get(s.ID, SessionOwner{})
 	if got != nil {
 		t.Fatal("expected expired session to return nil")
 	}
@@ -52,7 +52,7 @@ func TestSessionManagerGetNotFound(t *testing.T) {
 	sm := NewSessionManager(5 * time.Minute)
 	defer sm.Close()
 
-	got := sm.Get("nonexistent")
+	got := sm.Get("nonexistent", SessionOwner{})
 	if got != nil {
 		t.Fatal("expected nil for non-existent session")
 	}
@@ -62,10 +62,10 @@ func TestSessionManagerDelete(t *testing.T) {
 	sm := NewSessionManager(5 * time.Minute)
 	defer sm.Close()
 
-	s := sm.Create(Implementation{Name: "test", Version: "1.0"}, ClientCapabilities{})
+	s := sm.Create(SessionOwner{}, Implementation{Name: "test", Version: "1.0"}, ClientCapabilities{})
 	sm.Delete(s.ID)
 
-	got := sm.Get(s.ID)
+	got := sm.Get(s.ID, SessionOwner{})
 	if got != nil {
 		t.Fatal("expected deleted session to return nil")
 	}
@@ -75,9 +75,9 @@ func TestSessionManagerCount(t *testing.T) {
 	sm := NewSessionManager(5 * time.Minute)
 	defer sm.Close()
 
-	sm.Create(Implementation{Name: "a", Version: "1"}, ClientCapabilities{})
-	sm.Create(Implementation{Name: "b", Version: "1"}, ClientCapabilities{})
-	sm.Create(Implementation{Name: "c", Version: "1"}, ClientCapabilities{})
+	sm.Create(SessionOwner{}, Implementation{Name: "a", Version: "1"}, ClientCapabilities{})
+	sm.Create(SessionOwner{}, Implementation{Name: "b", Version: "1"}, ClientCapabilities{})
+	sm.Create(SessionOwner{}, Implementation{Name: "c", Version: "1"}, ClientCapabilities{})
 
 	if sm.Count() != 3 {
 		t.Fatalf("expected 3 sessions, got %d", sm.Count())
@@ -88,12 +88,12 @@ func TestSessionTouch(t *testing.T) {
 	sm := NewSessionManager(50 * time.Millisecond)
 	defer sm.Close()
 
-	s := sm.Create(Implementation{Name: "test", Version: "1.0"}, ClientCapabilities{})
+	s := sm.Create(SessionOwner{}, Implementation{Name: "test", Version: "1.0"}, ClientCapabilities{})
 
 	// Keep touching to prevent expiry.
 	for i := 0; i < 5; i++ {
 		time.Sleep(20 * time.Millisecond)
-		got := sm.Get(s.ID) // Get calls Touch
+		got := sm.Get(s.ID, SessionOwner{}) // Get calls Touch
 		if got == nil {
 			t.Fatalf("session expired after %d touches", i)
 		}

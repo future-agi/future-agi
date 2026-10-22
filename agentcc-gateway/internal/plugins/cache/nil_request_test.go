@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/futureagi/agentcc-gateway/internal/cache"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
@@ -30,8 +31,8 @@ func TestProcessRequestSkipsWhenRequestIsNil(t *testing.T) {
 
 // The collision that makes the nil skip load-bearing.
 func TestBuildCacheKeyCollidesOnEmptyMessages(t *testing.T) {
-	a := BuildCacheKey("default", &models.ChatCompletionRequest{Model: "claude-3"})
-	b := BuildCacheKey("default", &models.ChatCompletionRequest{Model: "claude-3"})
+	a := BuildCacheKey(cache.NoOrgScope, "default", &models.ChatCompletionRequest{Model: "claude-3"})
+	b := BuildCacheKey(cache.NoOrgScope, "default", &models.ChatCompletionRequest{Model: "claude-3"})
 
 	if a != b {
 		t.Fatal("expected two message-less requests to collide; if they no longer " +

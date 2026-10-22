@@ -8,8 +8,21 @@ import (
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
+	"github.com/futureagi/agentcc-gateway/internal/mcp/egress"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
+
+// These tests reach httptest servers on loopback; the org constructor dials
+// through the guarded egress dialer, so newGuard is New
+// with a dialer that lists loopback (futureagi_egress_test.go covers the
+// guard itself).
+func newGuard(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
+	d, err := egress.New(egress.Options{PrivateAllow: []string{"127.0.0.0/8", "::1"}})
+	if err != nil {
+		panic(err)
+	}
+	return New(name, cfg, d)
+}
 
 func makeMsg(role, content string) models.Message {
 	raw, _ := json.Marshal(content)
@@ -67,7 +80,7 @@ func TestFutureAGI_Passed(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-toxicity", map[string]interface{}{
+	g := newGuard("test-toxicity", map[string]interface{}{
 		"provider":   "futureagi",
 		"eval_id":    "15",
 		"api_key":    "test-key",
@@ -113,7 +126,7 @@ func TestFutureAGI_Failed(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-toxicity", map[string]interface{}{
+	g := newGuard("test-toxicity", map[string]interface{}{
 		"provider":   "futureagi",
 		"eval_id":    "15",
 		"api_key":    "test-key",
@@ -149,7 +162,7 @@ func TestFutureAGI_BooleanOutputHarmful(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("flash", map[string]interface{}{
+	g := newGuard("flash", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "76",
 		"api_key": "k", "secret_key": "s", "base_url": srv.URL,
 	})
@@ -174,7 +187,7 @@ func TestFutureAGI_BooleanOutputSafe(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("flash", map[string]interface{}{
+	g := newGuard("flash", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "76",
 		"api_key": "k", "secret_key": "s", "base_url": srv.URL,
 	})
@@ -193,7 +206,7 @@ func TestFutureAGI_HTTP403(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "15",
 		"api_key": "bad", "secret_key": "bad", "base_url": srv.URL,
 	})
@@ -225,7 +238,7 @@ func TestFutureAGI_HTTP500WithRetry(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "15",
 		"api_key": "k", "secret_key": "s", "base_url": srv.URL,
 		"retry": 1,
@@ -246,7 +259,7 @@ func TestFutureAGI_HTTP500NoRetry(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "15",
 		"api_key": "k", "secret_key": "s", "base_url": srv.URL,
 	})
@@ -265,7 +278,7 @@ func TestFutureAGI_MalformedJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "15",
 		"api_key": "k", "secret_key": "s", "base_url": srv.URL,
 	})
@@ -288,7 +301,7 @@ func TestFutureAGI_EmptyEvaluations(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "15",
 		"api_key": "k", "secret_key": "s", "base_url": srv.URL,
 	})
@@ -305,7 +318,7 @@ func TestFutureAGI_EmptyResult(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "15",
 		"api_key": "k", "secret_key": "s", "base_url": srv.URL,
 	})
@@ -336,7 +349,7 @@ func TestFutureAGI_PostStage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-bias", map[string]interface{}{
+	g := newGuard("test-bias", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "69",
 		"api_key": "k", "secret_key": "s", "base_url": srv.URL,
 	})
@@ -370,7 +383,7 @@ func TestFutureAGI_MultipleMessages(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "15",
 		"api_key": "k", "secret_key": "s", "base_url": srv.URL,
 	})
@@ -388,7 +401,7 @@ func TestFutureAGI_MultipleMessages(t *testing.T) {
 // --- Test: Nil and empty inputs ---
 
 func TestFutureAGI_NilInput(t *testing.T) {
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "15",
 		"api_key": "k", "secret_key": "s",
 	})
@@ -399,7 +412,7 @@ func TestFutureAGI_NilInput(t *testing.T) {
 }
 
 func TestFutureAGI_EmptyMessages(t *testing.T) {
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "15",
 		"api_key": "k", "secret_key": "s",
 	})
@@ -409,10 +422,11 @@ func TestFutureAGI_EmptyMessages(t *testing.T) {
 	}
 }
 
-// --- Test: Missing credentials ---
+// --- Test: Missing credentials (a config.yaml rule skips; an org rule built
+// with New refuses, see futureagi_org_test.go) ---
 
 func TestFutureAGI_MissingAPIKey(t *testing.T) {
-	g := New("test", map[string]interface{}{
+	g := NewConfigFileRule("test", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "15",
 		"api_key": "", "secret_key": "s",
 	})
@@ -423,7 +437,7 @@ func TestFutureAGI_MissingAPIKey(t *testing.T) {
 }
 
 func TestFutureAGI_MissingEvalID(t *testing.T) {
-	g := New("test", map[string]interface{}{
+	g := NewConfigFileRule("test", map[string]interface{}{
 		"provider":   "futureagi",
 		"api_key":    "k",
 		"secret_key": "s",
@@ -443,7 +457,7 @@ func TestFutureAGI_ContextCancelled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "15",
 		"api_key": "k", "secret_key": "s", "base_url": srv.URL,
 	})
@@ -477,7 +491,7 @@ func TestIsFutureAGIConfig(t *testing.T) {
 // --- Test: Name ---
 
 func TestFutureAGI_Name(t *testing.T) {
-	g := New("my-guardrail", nil)
+	g := newGuard("my-guardrail", nil)
 	if g.Name() != "my-guardrail" {
 		t.Errorf("name = %q", g.Name())
 	}
@@ -515,7 +529,7 @@ func TestFutureAGI_ArrayContent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test", map[string]interface{}{
+	g := newGuard("test", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "15",
 		"api_key": "k", "secret_key": "s", "base_url": srv.URL,
 	})
@@ -562,7 +576,7 @@ func TestFutureAGI_EvalIDsArray_AllPass(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("multi", map[string]interface{}{
+	g := newGuard("multi", map[string]interface{}{
 		"provider":   "futureagi",
 		"eval_ids":   []interface{}{"76", "15", "22"},
 		"api_key":    "k",
@@ -602,7 +616,7 @@ func TestFutureAGI_EvalIDsArray_OneFailsFailsAll(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("multi", map[string]interface{}{
+	g := newGuard("multi", map[string]interface{}{
 		"provider":   "futureagi",
 		"eval_ids":   []interface{}{"76", "15", "22"},
 		"api_key":    "k",
@@ -639,7 +653,7 @@ func TestFutureAGI_EvalIDFallbackToSingular(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("legacy", map[string]interface{}{
+	g := newGuard("legacy", map[string]interface{}{
 		"provider":   "futureagi",
 		"eval_id":    "15",
 		"api_key":    "k",
@@ -672,7 +686,7 @@ func TestFutureAGI_RequestPayload(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-injection", map[string]interface{}{
+	g := newGuard("test-injection", map[string]interface{}{
 		"provider": "futureagi", "eval_id": "18",
 		"api_key": "k", "secret_key": "s", "base_url": srv.URL,
 		"call_type": "protect",

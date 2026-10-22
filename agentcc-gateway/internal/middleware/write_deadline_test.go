@@ -20,7 +20,8 @@ import (
 // silently not set.
 func productionChain(next http.Handler) http.Handler {
 	handler := Timeout(200 * time.Millisecond)(next)
-	handler = KeyAuth(nil, false)(handler)
+	handler = KeyAuth(nil, false, nil)(handler)
+	handler = TrustedClientIP(nil)(handler)
 	handler = LicenseAuth(config.LicenseAuthConfig{}, nil)(handler)
 	handler = RequestID(handler)
 	return Recovery(handler)

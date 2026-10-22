@@ -1504,16 +1504,54 @@ def test_an_existing_install_keeps_its_secrets_and_fills_only_stateless_keys(
         "CH_PASSWORD",
     ):
         assert key not in values
-    assert values["AGENTCC_ADMIN_TOKEN"] == ""
     assert (
-        "PG_PASSWORD MINIO_ROOT_PASSWORD AGENTCC_INTERNAL_API_KEY AGENTCC_ADMIN_TOKEN "
+        "PG_PASSWORD MINIO_ROOT_PASSWORD AGENTCC_INTERNAL_API_KEY "
         "CH_PASSWORD still use the defaults published in this repository"
     ) in stderr
-    # No state depends on these three, so an existing install gets them too.
+    # No state depends on these four, so an existing install gets them too.
     assert re.fullmatch(r"[0-9a-f]{64}", values["REDIS_PASSWORD"])
     assert len(base64.urlsafe_b64decode(values["INTEGRATION_ENCRYPTION_KEY"])) == 32
     # Without it the app refuses the gateway's request logs.
     assert re.fullmatch(r"[0-9a-f]{64}", values["AGENTCC_WEBHOOK_SECRET"])
+    # Without it the gateway refuses to start on the compose default, and
+    # the API's admin endpoints refuse that default.
+    assert re.fullmatch(r"[0-9a-f]{64}", values["AGENTCC_ADMIN_TOKEN"])
+
+
+@pytest.mark.parametrize(
+    "configured, replaced",
+    [
+        pytest.param(
+            "local-dev-only-admin-token-replace-me", True, id="compose-default"
+        ),
+        pytest.param("CHANGEME-set-by-bin-install", True, id="placeholder"),
+        pytest.param("e" * 64, False, id="operator-chosen"),
+    ],
+)
+def test_an_existing_install_replaces_only_an_empty_or_published_admin_token(
+    tmp_path: Path, configured: str, replaced: bool
+) -> None:
+    script, environment, _ = _installer_sandbox(
+        tmp_path,
+        CI="1",
+        FAGI_STUB_VOLUMES="futureagi_app-data futureagi_postgres-data",
+    )
+    repo = script.parents[1]
+    (repo / ".env").write_text(
+        SANDBOX_ENV_EXAMPLE + f"AGENTCC_ADMIN_TOKEN={configured}\n",
+        encoding="utf-8",
+    )
+
+    code, stdout, stderr = _run_installer(script, environment, "--no-up")
+
+    assert code == 0, stderr
+    token = _env_values(repo)["AGENTCC_ADMIN_TOKEN"]
+    if replaced:
+        assert re.fullmatch(r"[0-9a-f]{64}", token)
+        assert "Generated AGENTCC_ADMIN_TOKEN" in stdout
+    else:
+        assert token == configured
+        assert "Generated AGENTCC_ADMIN_TOKEN" not in stdout
 
 
 CLICKHOUSE_BEFORE_CH_PASSWORD = (
