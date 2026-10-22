@@ -349,12 +349,25 @@ func minTime(a, b time.Time) time.Time {
 func formatCHTime(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05.000000") }
 
 type verifier struct {
-	ch     clickHouse
-	cfg    Config
-	ledger *outcomeLedger
-	cp     *verifyCheckpoint
-	path   string
-	v      *Verification
+	ch       clickHouse
+	cfg      Config
+	ledger   *outcomeLedger
+	cp       *verifyCheckpoint
+	path     string
+	v        *Verification
+	lastSave time.Time
+}
+
+// checkpointEvery bounds how often progress is saved between chunks (the
+// checkpoint embeds the outcome ledger). Failures and completion always save,
+// so only a killed process can lose up to this much progress.
+const checkpointEvery = 10 * time.Second
+
+func (vf *verifier) saveProgress() error {
+	if time.Since(vf.lastSave) < checkpointEvery {
+		return nil
+	}
+	return vf.save()
 }
 
 // verify runs or resumes a verification. It never certifies anything it did
@@ -397,7 +410,7 @@ func (vf *verifier) run(ctx context.Context) Verification {
 			}
 		}
 		vf.cp.NextChunk++
-		if err := vf.save(); err != nil {
+		if err := vf.saveProgress(); err != nil {
 			return fail(err)
 		}
 	}
@@ -406,7 +419,7 @@ func (vf *verifier) run(ctx context.Context) Verification {
 			return fail(fmt.Errorf("namespace window %d of %d: %w", vf.cp.NextWindow+1, len(vf.cp.Windows), err))
 		}
 		vf.cp.NextWindow++
-		if err := vf.save(); err != nil {
+		if err := vf.saveProgress(); err != nil {
 			return fail(err)
 		}
 	}
@@ -524,7 +537,11 @@ func (vf *verifier) save() error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), vf.path)
+	if err := os.Rename(tmp.Name(), vf.path); err != nil {
+		return err
+	}
+	vf.lastSave = time.Now()
+	return nil
 }
 
 // withRetries runs a read-only, idempotent query, retrying a failure a bounded
