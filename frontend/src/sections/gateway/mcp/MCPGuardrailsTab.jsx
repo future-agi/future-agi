@@ -19,9 +19,12 @@ import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { useUpdateMCPGuardrails } from "./hooks/useMCPConfig";
 import { getMCPServerId } from "./utils";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 
 const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
   const updateMutation = useUpdateMCPGuardrails();
+  const { canEdit } = useGatewayAdmin();
 
   const mcpConfig = config?.mcp || {};
   const guardrailsConfig = mcpConfig.guardrails || {};
@@ -125,14 +128,16 @@ const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
           severity="warning"
           sx={{ mb: 2 }}
           action={
-            <Button
-              size="small"
-              variant="contained"
-              onClick={handleSave}
-              disabled={updateMutation.isPending}
-            >
-              {updateMutation.isPending ? "Saving..." : "Save Changes"}
-            </Button>
+            <GatewayAdminOnly allowed={canEdit}>
+              <Button
+                size="small"
+                variant="contained"
+                onClick={handleSave}
+                disabled={updateMutation.isPending || !canEdit}
+              >
+                {updateMutation.isPending ? "Saving..." : "Save Changes"}
+              </Button>
+            </GatewayAdminOnly>
           }
         >
           You have unsaved changes.
@@ -356,14 +361,16 @@ const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
 
       {!isDirty && (
         <Box sx={{ mt: 3, display: "flex", justifyContent: "flex-end" }}>
-          <Button
-            variant="contained"
-            startIcon={<Iconify icon="mdi:content-save" width={18} />}
-            onClick={handleSave}
-            disabled={updateMutation.isPending}
-          >
-            {updateMutation.isPending ? "Saving..." : "Save Guardrails"}
-          </Button>
+          <GatewayAdminOnly allowed={canEdit}>
+            <Button
+              variant="contained"
+              startIcon={<Iconify icon="mdi:content-save" width={18} />}
+              onClick={handleSave}
+              disabled={updateMutation.isPending || !canEdit}
+            >
+              {updateMutation.isPending ? "Saving..." : "Save Guardrails"}
+            </Button>
+          </GatewayAdminOnly>
         </Box>
       )}
     </Box>

@@ -36,6 +36,8 @@ import { useAnalyticsOverview } from "../analytics/hooks/useAnalyticsOverview";
 import { useGatewayContext } from "../context/useGatewayContext";
 
 import SetBudgetDialog from "./SetBudgetDialog";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 import { val } from "../utils/analyticsHelpers";
 import { formatCost } from "../utils/formatters";
 
@@ -128,6 +130,7 @@ const BudgetDashboardTab = ({ budgets: rawBudgets, overview, gatewayId }) => {
   const totalSpend = Number(val(overview?.total_cost) ?? 0);
   const totalRequests = Number(val(overview?.total_requests) ?? 0);
   const removeBudget = useRemoveBudget();
+  const { canEdit } = useGatewayAdmin();
   const [removedLevels, setRemovedLevels] = useState(new Set());
 
   const budgets = useMemo(
@@ -261,14 +264,20 @@ const BudgetDashboardTab = ({ budgets: rawBudgets, overview, gatewayId }) => {
                           {formatCost(spent)} /{" "}
                           {limit > 0 ? formatCost(limit) : "No limit"}
                         </Typography>
-                        <IconButton
-                          size="small"
-                          color="error"
-                          onClick={() => handleRemoveBudget(b.level || b.name)}
-                          title="Remove budget"
-                        >
-                          <Iconify icon="mdi:delete-outline" width={16} />
-                        </IconButton>
+                        <GatewayAdminOnly allowed={canEdit}>
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={() =>
+                              handleRemoveBudget(b.level || b.name)
+                            }
+                            title="Remove budget"
+                            aria-label={`Remove budget ${b.level || b.name || idx + 1}`}
+                            disabled={!canEdit}
+                          >
+                            <Iconify icon="mdi:delete-outline" width={16} />
+                          </IconButton>
+                        </GatewayAdminOnly>
                       </Stack>
                     </Stack>
                     <LinearProgress
@@ -552,9 +561,7 @@ const AuditLogTab = ({ gatewayId }) => {
   const logList = Array.isArray(logs) ? logs : logs?.results || [];
 
   if (isLoading) {
-    return (
-      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
-    );
+    return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
   }
 
   return (
@@ -661,6 +668,7 @@ const BudgetRBACSection = () => {
   );
 
   const [budgetDialogOpen, setBudgetDialogOpen] = useState(false);
+  const { canEdit, disabledReason } = useGatewayAdmin();
   const { gatewayId, isLoading: gwLoading } = useGatewayContext();
 
   const { data: config, isLoading: configLoading } =
@@ -714,6 +722,8 @@ const BudgetRBACSection = () => {
             size: "small",
             icon: "mdi:plus",
             onClick: () => setBudgetDialogOpen(true),
+            disabled: !canEdit,
+            tooltip: disabledReason || undefined,
           },
         ]}
       />

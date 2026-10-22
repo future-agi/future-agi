@@ -21,6 +21,7 @@ import {
   ALERT_METRIC_OPTIONS,
   DEFAULT_ALERT_METRIC,
 } from "../constants/alerting";
+import SecretField, { isMaskedSecret } from "../components/SecretField";
 
 const CONDITIONS = [
   { value: ">=", label: ">=" },
@@ -175,22 +176,39 @@ const AlertingConfigTab = ({ alerting, onChange }) => {
                       </MenuItem>
                     ))}
                   </TextField>
-                  {(ch.type === "webhook" || ch.type === "slack") && (
-                    <TextField
-                      size="small"
-                      label="URL"
-                      value={ch.url || ""}
-                      onChange={(e) =>
-                        handleChannelChange(idx, "url", e.target.value)
-                      }
-                      sx={{ flex: 1, minWidth: 250 }}
-                      placeholder={
-                        ch.type === "slack"
-                          ? "https://hooks.slack.com/..."
-                          : "https://..."
-                      }
-                    />
-                  )}
+                  {(ch.type === "webhook" || ch.type === "slack") &&
+                    (isMaskedSecret(ch.url) ? (
+                      // A URL that carries a credential (a Slack incoming
+                      // webhook, a token in its path or query) is stored
+                      // write-only and reads back as a mask: dots with
+                      // Replace, never the mask as a value. Leaving it, or a
+                      // blank after Replace, keeps the stored URL.
+                      <SecretField
+                        label="URL"
+                        value={ch.url}
+                        onChange={(value) =>
+                          handleChannelChange(idx, "url", value)
+                        }
+                        removable={false}
+                        helperText="Stored and never shown. Replace to change it, or leave it to keep."
+                        sx={{ flex: 1, minWidth: 250 }}
+                      />
+                    ) : (
+                      <TextField
+                        size="small"
+                        label="URL"
+                        value={ch.url || ""}
+                        onChange={(e) =>
+                          handleChannelChange(idx, "url", e.target.value)
+                        }
+                        sx={{ flex: 1, minWidth: 250 }}
+                        placeholder={
+                          ch.type === "slack"
+                            ? "https://hooks.slack.com/..."
+                            : "https://..."
+                        }
+                      />
+                    ))}
                   <IconButton
                     size="small"
                     onClick={() => handleRemoveChannel(idx)}

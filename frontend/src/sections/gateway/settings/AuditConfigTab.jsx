@@ -16,6 +16,7 @@ import {
   Divider,
 } from "@mui/material";
 import { Icon } from "@iconify/react";
+import { isMaskedSecret } from "../components/SecretField";
 
 const SEVERITIES = [
   { value: "info", label: "Info" },
@@ -271,7 +272,7 @@ const AuditConfigTab = ({ audit, onChange }) => {
                           sx={{ mb: 0.5 }}
                         >
                           <Chip
-                            label={`${key}: ${val}`}
+                            label={`${key}: ${isMaskedSecret(val) ? "••••••" : val}`}
                             size="small"
                             variant="outlined"
                             onDelete={() => handleRemoveHeader(idx, key)}

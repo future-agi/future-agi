@@ -29,6 +29,8 @@ import { GATEWAY_ICONS } from "../constants/gatewayIcons";
 import { useFallbackConfig } from "./hooks/useFallbackConfig";
 import { useProviderHealth } from "../providers/hooks/useGatewayConfig";
 import { useGatewayContext } from "../context/useGatewayContext";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -395,6 +397,8 @@ const ModelTimeoutsEditor = ({ timeouts, onChange, models }) => {
 // ---------------------------------------------------------------------------
 
 const FallbacksSection = () => {
+  // Saving fallbacks writes the org's gateway config: Owner or Admin only.
+  const { canEdit } = useGatewayAdmin();
   const navigate = useNavigate();
   const { routing, isLoading, error, refetch, saveRouting, isSaving } =
     useFallbackConfig();
@@ -617,15 +621,20 @@ const FallbacksSection = () => {
             <Typography variant="body2">
               You have unsaved changes. Save to apply them to the gateway.
             </Typography>
-            <LoadingButton
-              loading={isSaving}
-              variant="contained"
-              size="small"
-              onClick={handleSave}
-              startIcon={<Iconify icon="mdi:content-save-outline" width={18} />}
-            >
-              Save & Apply
-            </LoadingButton>
+            <GatewayAdminOnly allowed={canEdit}>
+              <LoadingButton
+                loading={isSaving}
+                variant="contained"
+                size="small"
+                onClick={handleSave}
+                disabled={!canEdit}
+                startIcon={
+                  <Iconify icon="mdi:content-save-outline" width={18} />
+                }
+              >
+                Save & Apply
+              </LoadingButton>
+            </GatewayAdminOnly>
           </Stack>
         </Alert>
       )}
@@ -1020,17 +1029,20 @@ const FallbacksSection = () => {
               >
                 Discard
               </Button>
-              <LoadingButton
-                loading={isSaving}
-                variant="contained"
-                size="small"
-                onClick={handleSave}
-                startIcon={
-                  <Iconify icon="mdi:content-save-outline" width={18} />
-                }
-              >
-                Save & Apply
-              </LoadingButton>
+              <GatewayAdminOnly allowed={canEdit}>
+                <LoadingButton
+                  loading={isSaving}
+                  variant="contained"
+                  size="small"
+                  onClick={handleSave}
+                  disabled={!canEdit}
+                  startIcon={
+                    <Iconify icon="mdi:content-save-outline" width={18} />
+                  }
+                >
+                  Save & Apply
+                </LoadingButton>
+              </GatewayAdminOnly>
             </Stack>
           </Stack>
         </Box>

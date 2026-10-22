@@ -27,6 +27,8 @@ import A2AConfigTab from "./A2AConfigTab";
 import AuditConfigTab from "./AuditConfigTab";
 import ModelDatabaseConfigTab from "./ModelDatabaseConfigTab";
 import ModelMapConfigTab from "./ModelMapConfigTab";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 
 const OrgConfigEditor = ({
   open,
@@ -38,6 +40,9 @@ const OrgConfigEditor = ({
 }) => {
   const [tab, setTab] = useState(defaultTab);
   const wasOpenRef = useRef(false);
+  // Every member may open the editor to read the config; saving it is Owner or
+  // Admin only.
+  const { canEdit } = useGatewayAdmin();
   const [draft, setDraft] = useState({
     providers: {},
     guardrails: {},
@@ -261,14 +266,16 @@ const OrgConfigEditor = ({
         <Button onClick={onClose} disabled={isSaving}>
           Cancel
         </Button>
-        <Button
-          variant="contained"
-          onClick={handleSave}
-          disabled={isSaving}
-          startIcon={isSaving ? <CircularProgress size={16} /> : null}
-        >
-          {isSaving ? "Saving..." : "Save & Activate"}
-        </Button>
+        <GatewayAdminOnly allowed={canEdit}>
+          <Button
+            variant="contained"
+            onClick={handleSave}
+            disabled={isSaving || !canEdit}
+            startIcon={isSaving ? <CircularProgress size={16} /> : null}
+          >
+            {isSaving ? "Saving..." : "Save & Activate"}
+          </Button>
+        </GatewayAdminOnly>
       </DialogActions>
     </Dialog>
   );

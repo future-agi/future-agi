@@ -49901,6 +49901,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "date-time",
           readOnly: true,
         },
+        secrets_set: {
+          description:
+            "JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
       },
     },
     AgentccProviderCredential: {
@@ -92703,6 +92713,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Updated at",
           type: "string",
           format: "date-time",
+        },
+        secrets_set: {
+          description:
+            "JSON pointers of the infrastructure secrets stored in the active org config. Each one reads as a mask, never its value.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
         providers: {
           title: "Providers",

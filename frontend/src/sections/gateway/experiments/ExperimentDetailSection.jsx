@@ -34,6 +34,8 @@ import {
   useDeleteExperiment,
 } from "./hooks/useExperiments";
 import SideBySideViewer from "./SideBySideViewer";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 
 const STATUS_COLORS = {
   active: "success",
@@ -56,6 +58,8 @@ const ExperimentDetailSection = ({ experimentId, onBack }) => {
   const resumeMutation = useResumeExperiment();
   const completeMutation = useCompleteExperiment();
   const deleteMutation = useDeleteExperiment();
+  // Every shadow-experiment write is Owner or Admin only (the role check).
+  const { canEdit } = useGatewayAdmin();
 
   const handlePause = () => {
     pauseMutation.mutate(experimentId, {
@@ -176,32 +180,63 @@ const ExperimentDetailSection = ({ experimentId, onBack }) => {
         <Stack direction="row" spacing={1}>
           {status === "active" && (
             <>
-              <Button size="small" variant="outlined" onClick={handlePause}>
-                Pause
-              </Button>
-              <Button size="small" variant="outlined" onClick={handleComplete}>
-                Complete
-              </Button>
+              <GatewayAdminOnly allowed={canEdit}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={handlePause}
+                  disabled={!canEdit}
+                >
+                  Pause
+                </Button>
+              </GatewayAdminOnly>
+              <GatewayAdminOnly allowed={canEdit}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={handleComplete}
+                  disabled={!canEdit}
+                >
+                  Complete
+                </Button>
+              </GatewayAdminOnly>
             </>
           )}
           {status === "paused" && (
             <>
-              <Button size="small" variant="outlined" onClick={handleResume}>
-                Resume
-              </Button>
-              <Button size="small" variant="outlined" onClick={handleComplete}>
-                Complete
-              </Button>
+              <GatewayAdminOnly allowed={canEdit}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={handleResume}
+                  disabled={!canEdit}
+                >
+                  Resume
+                </Button>
+              </GatewayAdminOnly>
+              <GatewayAdminOnly allowed={canEdit}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={handleComplete}
+                  disabled={!canEdit}
+                >
+                  Complete
+                </Button>
+              </GatewayAdminOnly>
             </>
           )}
-          <Button
-            size="small"
-            variant="outlined"
-            color="error"
-            onClick={handleDelete}
-          >
-            Delete
-          </Button>
+          <GatewayAdminOnly allowed={canEdit}>
+            <Button
+              size="small"
+              variant="outlined"
+              color="error"
+              onClick={handleDelete}
+              disabled={!canEdit}
+            >
+              Delete
+            </Button>
+          </GatewayAdminOnly>
         </Stack>
       </Stack>
 

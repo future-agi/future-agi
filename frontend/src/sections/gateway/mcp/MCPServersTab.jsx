@@ -18,6 +18,8 @@ import {
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { useRemoveMCPServer } from "./hooks/useMCPConfig";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 import {
   getMCPServerId,
   getMCPServerStatusColor,
@@ -28,6 +30,7 @@ import {
 const MCPServersTab = ({ config, mcpStatus, gatewayId, onEditServer }) => {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const removeMutation = useRemoveMCPServer();
+  const { canEdit } = useGatewayAdmin();
 
   const mcpConfig = config?.mcp || {};
   const servers = mcpConfig.servers || {};
@@ -159,24 +162,29 @@ const MCPServersTab = ({ config, mcpStatus, gatewayId, onEditServer }) => {
                     )}
 
                     <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        startIcon={<Iconify icon="mdi:pencil" width={16} />}
-                        onClick={() => onEditServer(serverId, serverCfg)}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        color="error"
-                        startIcon={<Iconify icon="mdi:delete" width={16} />}
-                        onClick={() => setConfirmDelete(serverId)}
-                        disabled={removeMutation.isPending}
-                      >
-                        Delete
-                      </Button>
+                      <GatewayAdminOnly allowed={canEdit}>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          startIcon={<Iconify icon="mdi:pencil" width={16} />}
+                          onClick={() => onEditServer(serverId, serverCfg)}
+                          disabled={!canEdit}
+                        >
+                          Edit
+                        </Button>
+                      </GatewayAdminOnly>
+                      <GatewayAdminOnly allowed={canEdit}>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="error"
+                          startIcon={<Iconify icon="mdi:delete" width={16} />}
+                          onClick={() => setConfirmDelete(serverId)}
+                          disabled={removeMutation.isPending || !canEdit}
+                        >
+                          Delete
+                        </Button>
+                      </GatewayAdminOnly>
                     </Stack>
                   </Stack>
                 </CardContent>

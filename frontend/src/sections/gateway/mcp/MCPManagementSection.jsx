@@ -24,6 +24,7 @@ import MCPPlaygroundTab from "./MCPPlaygroundTab";
 import MCPResourcesTab from "./MCPResourcesTab";
 import MCPPromptsTab from "./MCPPromptsTab";
 import AddMCPServerDialog from "./AddMCPServerDialog";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 
 const TAB_SLUGS = [
   "overview",
@@ -59,6 +60,7 @@ const MCPManagementSection = () => {
   );
 
   const [addServerOpen, setAddServerOpen] = useState(false);
+  const { canEdit, disabledReason } = useGatewayAdmin();
   const [editServer, setEditServer] = useState(null);
 
   const { gatewayId, isLoading: gwLoading } = useGatewayContext();
@@ -148,6 +150,8 @@ const MCPManagementSection = () => {
             size: "small",
             icon: "mdi:plus",
             onClick: () => setAddServerOpen(true),
+            disabled: !canEdit,
+            tooltip: disabledReason || undefined,
           },
           {
             label: reloadMutation.isPending ? "Reloading..." : "Reload Config",

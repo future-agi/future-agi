@@ -13,6 +13,7 @@ import {
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import { useUpdateMCPServer } from "./hooks/useMCPConfig";
+import SecretField from "../components/SecretField";
 
 const AUTH_OPTIONS = [
   { value: "none", label: "None" },
@@ -158,15 +159,20 @@ const AddMCPServerDialog = ({ open, onClose, gatewayId, editServer }) => {
             ))}
           </TextField>
 
+          {/* A stored token or key is read back as its mask: the
+              field shows dots with Replace and Remove, and the mask is sent
+              back untouched so the backend keeps the stored secret. A typed
+              token or key is sent exactly as typed. */}
           {form.authType === "bearer" && (
-            <TextField
+            <SecretField
               label="Bearer Token"
               value={form.token}
-              onChange={handleChange("token")}
+              onChange={(value) =>
+                setForm((prev) => ({ ...prev, token: value }))
+              }
               fullWidth
               size="small"
-              type="password"
-              placeholder="Enter token or ${ENV_VAR}"
+              placeholder="Enter the token"
             />
           )}
 
@@ -180,14 +186,15 @@ const AddMCPServerDialog = ({ open, onClose, gatewayId, editServer }) => {
                 size="small"
                 placeholder="X-API-Key"
               />
-              <TextField
+              <SecretField
                 label="API Key"
                 value={form.apiKey}
-                onChange={handleChange("apiKey")}
+                onChange={(value) =>
+                  setForm((prev) => ({ ...prev, apiKey: value }))
+                }
                 fullWidth
                 size="small"
-                type="password"
-                placeholder="Enter key or ${ENV_VAR}"
+                placeholder="Enter the key"
               />
             </>
           )}

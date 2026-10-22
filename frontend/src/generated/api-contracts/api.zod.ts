@@ -4465,6 +4465,12 @@ export const AgentccApiKeysPartialUpdateResponse = zod.object({
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
 
+/**
+ * Delete a key: it is revoked on the gateway before the row is
+deleted, so it stops working at once. When the gateway cannot revoke
+it, the delete answers 503, the row is kept and the delete can be
+retried.
+ */
 export const AgentccApiKeysDeleteParams = zod.object({
   id: zod
     .string()
@@ -5128,6 +5134,9 @@ export const AgentccEmailAlertsTestBody = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 
 export const AgentccGatewaysListResponse = zod.object({
@@ -5174,6 +5183,9 @@ export const AgentccGatewaysReadResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysCancelBatchParams = zod.object({
   id: zod.string(),
@@ -5194,6 +5206,9 @@ export const AgentccGatewaysCancelBatchResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysConfigParams = zod.object({
   id: zod.string(),
@@ -5225,6 +5240,12 @@ export const AgentccGatewaysConfigResponse = zod.object({
     change_description: zod.string().optional(),
     created_at: zod.string().datetime({ offset: true }).optional(),
     updated_at: zod.string().datetime({ offset: true }).optional(),
+    secrets_set: zod
+      .array(zod.string().min(1))
+      .optional()
+      .describe(
+        "JSON pointers of the infrastructure secrets stored in the active org config. Each one reads as a mask, never its value.",
+      ),
     providers: zod.record(
       zod.string(),
       zod.object({
@@ -5254,6 +5275,9 @@ export const AgentccGatewaysConfigResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysGetBatchParams = zod.object({
   id: zod.string(),
@@ -5285,6 +5309,9 @@ export const AgentccGatewaysGetBatchResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysHealthCheckParams = zod.object({
   id: zod.string(),
@@ -5315,6 +5342,9 @@ export const AgentccGatewaysHealthCheckResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysMcpPromptsParams = zod.object({
   id: zod.string(),
@@ -5328,6 +5358,9 @@ export const AgentccGatewaysMcpPromptsResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysMcpResourcesParams = zod.object({
   id: zod.string(),
@@ -5341,6 +5374,9 @@ export const AgentccGatewaysMcpResourcesResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysMcpStatusParams = zod.object({
   id: zod.string(),
@@ -5365,6 +5401,9 @@ export const AgentccGatewaysMcpStatusResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysMcpToolsParams = zod.object({
   id: zod.string(),
@@ -5378,6 +5417,9 @@ export const AgentccGatewaysMcpToolsResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysProvidersParams = zod.object({
   id: zod.string(),
@@ -5443,6 +5485,9 @@ export const AgentccGatewaysReloadResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysRemoveBudgetParams = zod.object({
   id: zod.string(),
@@ -5471,6 +5516,9 @@ export const AgentccGatewaysRemoveBudgetResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysRemoveMcpServerParams = zod.object({
   id: zod.string(),
@@ -5526,6 +5574,9 @@ export const AgentccGatewaysRemoveProviderResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysSetBudgetParams = zod.object({
   id: zod.string(),
@@ -5555,6 +5606,9 @@ export const AgentccGatewaysSetBudgetResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysSubmitBatchParams = zod.object({
   id: zod.string(),
@@ -5584,6 +5638,9 @@ export const AgentccGatewaysSubmitBatchResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysTestMcpToolParams = zod.object({
   id: zod.string(),
@@ -5648,6 +5705,9 @@ export const AgentccGatewaysTestPlaygroundResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysToggleGuardrailParams = zod.object({
   id: zod.string(),
@@ -5726,6 +5786,9 @@ export const AgentccGatewaysUpdateConfigResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysUpdateGuardrailParams = zod.object({
   id: zod.string(),
@@ -5758,6 +5821,9 @@ export const AgentccGatewaysUpdateGuardrailResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysUpdateMcpGuardrailsParams = zod.object({
   id: zod.string(),
@@ -5786,6 +5852,9 @@ export const AgentccGatewaysUpdateMcpGuardrailsResponse = zod.object({
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const AgentccGatewaysUpdateMcpServerParams = zod.object({
   id: zod.string(),
@@ -6127,7 +6196,10 @@ export const AgentccGuardrailFeedbackDeleteParams = zod.object({
 });
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``); every write is an org Owner's or
+Admin's, and every member can read.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const AgentccGuardrailPoliciesListQueryParams = zod.object({
   page: zod
@@ -6177,7 +6249,10 @@ export const AgentccGuardrailPoliciesListResponse = zod.object({
 });
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``); every write is an org Owner's or
+Admin's, and every member can read.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const agentccGuardrailPoliciesCreateBodyNameMax = 255;
 
@@ -6225,7 +6300,10 @@ export const AgentccGuardrailPoliciesSyncBody = zod.object({
 });
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``); every write is an org Owner's or
+Admin's, and every member can read.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const AgentccGuardrailPoliciesReadParams = zod.object({
   id: zod
@@ -6260,7 +6338,10 @@ export const AgentccGuardrailPoliciesReadResponse = zod.object({
 });
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``); every write is an org Owner's or
+Admin's, and every member can read.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const AgentccGuardrailPoliciesUpdateParams = zod.object({
   id: zod
@@ -6316,7 +6397,10 @@ export const AgentccGuardrailPoliciesUpdateResponse = zod.object({
 });
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``); every write is an org Owner's or
+Admin's, and every member can read.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const AgentccGuardrailPoliciesPartialUpdateParams = zod.object({
   id: zod
@@ -6379,7 +6463,10 @@ export const AgentccGuardrailPoliciesPartialUpdateResponse = zod.object({
 });
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``); every write is an org Owner's or
+Admin's, and every member can read.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const AgentccGuardrailPoliciesDeleteParams = zod.object({
   id: zod
@@ -6462,6 +6549,12 @@ export const AgentccOrgConfigsListResponse = zod.object({
       change_description: zod.string().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
+      secrets_set: zod
+        .array(zod.string().min(1))
+        .optional()
+        .describe(
+          "JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value.",
+        ),
     }),
   ),
 });
@@ -6531,6 +6624,12 @@ export const AgentccOrgConfigsActiveResponse = zod.object({
       change_description: zod.string().optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
       updated_at: zod.string().datetime({ offset: true }).optional(),
+      secrets_set: zod
+        .array(zod.string().min(1))
+        .optional()
+        .describe(
+          "JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value.",
+        ),
     }),
   ),
 });
@@ -6606,6 +6705,12 @@ export const AgentccOrgConfigsReadResponse = zod.object({
   change_description: zod.string().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
+  secrets_set: zod
+    .array(zod.string().min(1))
+    .optional()
+    .describe(
+      "JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value.",
+    ),
 });
 
 /**
@@ -6661,6 +6766,12 @@ export const AgentccOrgConfigsUpdateResponse = zod.object({
   change_description: zod.string().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
+  secrets_set: zod
+    .array(zod.string().min(1))
+    .optional()
+    .describe(
+      "JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value.",
+    ),
 });
 
 /**
@@ -6716,6 +6827,12 @@ export const AgentccOrgConfigsPartialUpdateResponse = zod.object({
   change_description: zod.string().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
+  secrets_set: zod
+    .array(zod.string().min(1))
+    .optional()
+    .describe(
+      "JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value.",
+    ),
 });
 
 /**
@@ -6791,6 +6908,12 @@ export const AgentccOrgConfigsDiffResponse = zod.object({
   change_description: zod.string().optional(),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
+  secrets_set: zod
+    .array(zod.string().min(1))
+    .optional()
+    .describe(
+      "JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value.",
+    ),
 });
 
 export const AgentccProviderCredentialsListQueryParams = zod.object({
@@ -7766,7 +7889,9 @@ export const AgentccRequestLogsReadResponse = zod.object({
 });
 
 /**
- * Routing policy management with version history. Org-scoped.
+ * Each write merges the active policies into a new org config version and
+pushes it, so writes are an org Owner's or Admin's.
+ * @summary Routing policy management with version history. Org-scoped.
  */
 export const AgentccRoutingPoliciesListQueryParams = zod.object({
   page: zod
@@ -7829,7 +7954,9 @@ export const AgentccRoutingPoliciesSyncBody = zod.object({
 });
 
 /**
- * Routing policy management with version history. Org-scoped.
+ * Each write merges the active policies into a new org config version and
+pushes it, so writes are an org Owner's or Admin's.
+ * @summary Routing policy management with version history. Org-scoped.
  */
 export const AgentccRoutingPoliciesReadParams = zod.object({
   id: zod
@@ -7888,7 +8015,9 @@ export const AgentccRoutingPoliciesUpdateResponse = zod.object({
 });
 
 /**
- * Routing policy management with version history. Org-scoped.
+ * Each write merges the active policies into a new org config version and
+pushes it, so writes are an org Owner's or Admin's.
+ * @summary Routing policy management with version history. Org-scoped.
  */
 export const AgentccRoutingPoliciesPartialUpdateParams = zod.object({
   id: zod
@@ -7925,7 +8054,9 @@ export const AgentccRoutingPoliciesPartialUpdateResponse = zod.object({
 });
 
 /**
- * Routing policy management with version history. Org-scoped.
+ * Each write merges the active policies into a new org config version and
+pushes it, so writes are an org Owner's or Admin's.
+ * @summary Routing policy management with version history. Org-scoped.
  */
 export const AgentccRoutingPoliciesDeleteParams = zod.object({
   id: zod
@@ -8178,7 +8309,10 @@ export const AgentccSessionsRequestsResponse = zod.object({
 });
 
 /**
- * CRUD for shadow experiments with pause/resume/complete lifecycle actions.
+ * Writes (create, update, partial update, destroy, pause, resume, complete)
+are an org Owner's or Admin's; list, retrieve and stats are open to every
+member of the org.
+ * @summary CRUD for shadow experiments with pause/resume/complete lifecycle actions.
  */
 export const AgentccShadowExperimentsListQueryParams = zod.object({
   page: zod
@@ -8245,7 +8379,10 @@ export const AgentccShadowExperimentsListResponse = zod.object({
 });
 
 /**
- * CRUD for shadow experiments with pause/resume/complete lifecycle actions.
+ * Writes (create, update, partial update, destroy, pause, resume, complete)
+are an org Owner's or Admin's; list, retrieve and stats are open to every
+member of the org.
+ * @summary CRUD for shadow experiments with pause/resume/complete lifecycle actions.
  */
 export const agentccShadowExperimentsCreateBodyNameMax = 128;
 
@@ -8286,7 +8423,10 @@ export const AgentccShadowExperimentsCreateBody = zod.object({
 });
 
 /**
- * CRUD for shadow experiments with pause/resume/complete lifecycle actions.
+ * Writes (create, update, partial update, destroy, pause, resume, complete)
+are an org Owner's or Admin's; list, retrieve and stats are open to every
+member of the org.
+ * @summary CRUD for shadow experiments with pause/resume/complete lifecycle actions.
  */
 export const AgentccShadowExperimentsReadParams = zod.object({
   id: zod
@@ -8339,7 +8479,10 @@ export const AgentccShadowExperimentsReadResponse = zod.object({
 });
 
 /**
- * CRUD for shadow experiments with pause/resume/complete lifecycle actions.
+ * Writes (create, update, partial update, destroy, pause, resume, complete)
+are an org Owner's or Admin's; list, retrieve and stats are open to every
+member of the org.
+ * @summary CRUD for shadow experiments with pause/resume/complete lifecycle actions.
  */
 export const AgentccShadowExperimentsUpdateParams = zod.object({
   id: zod
@@ -8430,7 +8573,10 @@ export const AgentccShadowExperimentsUpdateResponse = zod.object({
 });
 
 /**
- * CRUD for shadow experiments with pause/resume/complete lifecycle actions.
+ * Writes (create, update, partial update, destroy, pause, resume, complete)
+are an org Owner's or Admin's; list, retrieve and stats are open to every
+member of the org.
+ * @summary CRUD for shadow experiments with pause/resume/complete lifecycle actions.
  */
 export const AgentccShadowExperimentsPartialUpdateParams = zod.object({
   id: zod
@@ -8527,7 +8673,10 @@ export const AgentccShadowExperimentsPartialUpdateResponse = zod.object({
 });
 
 /**
- * CRUD for shadow experiments with pause/resume/complete lifecycle actions.
+ * Writes (create, update, partial update, destroy, pause, resume, complete)
+are an org Owner's or Admin's; list, retrieve and stats are open to every
+member of the org.
+ * @summary CRUD for shadow experiments with pause/resume/complete lifecycle actions.
  */
 export const AgentccShadowExperimentsDeleteParams = zod.object({
   id: zod
