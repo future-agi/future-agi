@@ -461,9 +461,10 @@ Separately from application API probes, the tool times three fixed read-only
 queries against the logical spans table, shaped like the product's reads and
 recorded verbatim in the result (``direct_clickhouse_reads``):
 
-* ``trace-by-id``: all spans of one trace of an acknowledged request.
+* ``trace-by-id``: all spans of one trace of an acknowledged request, reading
+  their ``input``/``output`` payload columns as a trace view does.
 * ``session-by-id``: all spans of that request's session (``trace_session_id``
-  computed exactly as the converter does).
+  computed exactly as the converter does), also reading the payloads.
 * ``attribute-filter``: ERROR spans of the variant cohort over the last 15 minutes
   of the run.
 
@@ -472,8 +473,11 @@ pick the newest request acknowledged at least ``--direct-probe-min-age`` ago) an
 ``--direct-probe-after-settle`` rounds after the settle window (requests spread
 across the run), each with ``--direct-probe-timeout``, ``readonly=2`` and the
 query cache explicitly off. During-load and after-settle phases are reported
-separately with success/error counts, latency percentiles, rows returned and how
-many results were non-empty. A probe with no acknowledged candidate is counted as
+separately with success/error counts, latency percentiles, rows returned, how
+many results were non-empty and, for the trace and session probes, the payload text
+bytes each query read (``payload_text_bytes_read``). Results are aggregated
+server-side, so the latency covers reading the payload columns but not
+transferring them to a client. A probe with no acknowledged candidate is counted as
 skipped, never as a success. These numbers are database latency for these queries,
 not application API or browser latency, and they add read load during the run.
 

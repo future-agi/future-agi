@@ -127,6 +127,9 @@ func TestLiveClickHouseCollectorPipeline(t *testing.T) {
 		if d.Phase == "after-settle" && d.Name != "attribute-filter" && d.NonEmpty != 3 {
 			t.Fatalf("direct read %s did not find acknowledged data: %+v", d.Name, d)
 		}
+		if d.Phase == "after-settle" && d.Name != "attribute-filter" && (d.PayloadBytes == nil || d.PayloadBytes.Min <= 0) {
+			t.Fatalf("direct read %s did not read the span payloads: %+v", d.Name, d.PayloadBytes)
+		}
 	}
 	t.Logf("real ClickHouse %s: 20 attempted/acknowledged/distinct persisted spans, run_id=%s; small functional smoke, NOT a throughput capacity benchmark", r.Provenance.ClickHouse.Version, c.RunID)
 }

@@ -44,26 +44,35 @@ type DirectReadResult struct {
 	Latency        Percentiles  `json:"successful_query_latency"`
 	FailureLatency Percentiles  `json:"failed_query_latency"`
 	Rows           Distribution `json:"rows_returned"`
-	LastError      string       `json:"last_error,omitempty"`
+	// PayloadBytes is the input+output text the query read server-side, for the
+	// probes that read span payloads the way a trace or session view does.
+	PayloadBytes *Distribution `json:"payload_text_bytes_read,omitempty"`
+	LastError    string        `json:"last_error,omitempty"`
 }
 
 type directProbe struct {
 	name  string
 	query string
+	// payload: the query also returns payload_bytes, the input+output text it
+	// read, so the probe pays for the span payload columns as a trace or session
+	// view does instead of only for the key columns a count needs.
+	payload bool
 }
 
 // Each probe is one query against the logical spans table; the parameters are
-// bound by ClickHouse, never interpolated.
+// bound by ClickHouse, never interpolated. Results are aggregated server-side so
+// the response stays small; the payload columns are still read.
 var directProbes = []directProbe{
-	{"trace-by-id", "SELECT count() AS rows FROM %s WHERE project_id = {project:UUID} AND trace_id = {trace:String}"},
-	{"session-by-id", "SELECT count() AS rows FROM %s WHERE project_id = {project:UUID} AND trace_session_id = {session:UUID}"},
-	{"attribute-filter", "SELECT count() AS rows FROM %s WHERE project_id = {project:UUID} AND start_time >= {from:DateTime64(6, 'UTC')} AND attrs_string['benchmark.cohort'] = 'variant' AND status = 'ERROR'"},
+	{"trace-by-id", "SELECT count() AS rows, sum(length(input) + length(output)) AS payload_bytes FROM %s WHERE project_id = {project:UUID} AND trace_id = {trace:String}", true},
+	{"session-by-id", "SELECT count() AS rows, sum(length(input) + length(output)) AS payload_bytes FROM %s WHERE project_id = {project:UUID} AND trace_session_id = {session:UUID}", true},
+	{"attribute-filter", "SELECT count() AS rows FROM %s WHERE project_id = {project:UUID} AND start_time >= {from:DateTime64(6, 'UTC')} AND attrs_string['benchmark.cohort'] = 'variant' AND status = 'ERROR'", false},
 }
 
 type directAccum struct {
 	result    DirectReadResult
 	good, bad *histogram
 	rows      *valueHistogram
+	payload   *valueHistogram
 }
 
 type directRunner struct {
@@ -82,7 +91,7 @@ func (d *directRunner) acc(phase string, p directProbe) *directAccum {
 	a := d.accum[key]
 	if a == nil {
 		a = &directAccum{result: DirectReadResult{Name: p.name, Phase: phase, Kind: "direct_clickhouse_sql", Query: fmt.Sprintf(p.query, d.ch.table())},
-			good: &histogram{}, bad: &histogram{}, rows: &valueHistogram{}}
+			good: &histogram{}, bad: &histogram{}, rows: &valueHistogram{}, payload: &valueHistogram{}}
 		d.accum[key] = a
 	}
 	return a
@@ -130,10 +139,11 @@ func (d *directRunner) round(ctx context.Context, phase string, cand candidate) 
 		body, err := d.ch.queryWith(ctx, fmt.Sprintf(p.query, d.ch.table()), params, lim)
 		elapsed := time.Since(began)
 		var row struct {
-			Rows *uint64 `json:"rows"`
+			Rows         *uint64 `json:"rows"`
+			PayloadBytes *uint64 `json:"payload_bytes"`
 		}
 		if err == nil {
-			if decodeOne(body, &row) != nil || row.Rows == nil {
+			if decodeOne(body, &row) != nil || row.Rows == nil || (p.payload && row.PayloadBytes == nil) {
 				err = fmt.Errorf("invalid probe response")
 			}
 		}
@@ -150,6 +160,9 @@ func (d *directRunner) round(ctx context.Context, phase string, cand candidate) 
 			a.result.Successes++
 			a.good.add(elapsed)
 			a.rows.add(int64(*row.Rows))
+			if p.payload {
+				a.payload.add(int64(*row.PayloadBytes))
+			}
 			if *row.Rows > 0 {
 				a.result.NonEmpty++
 			}
@@ -171,6 +184,10 @@ func (d *directRunner) results() []DirectReadResult {
 			}
 			r := a.result
 			r.Latency, r.FailureLatency, r.Rows = a.good.summary(), a.bad.summary(), a.rows.summary()
+			if p.payload {
+				payload := a.payload.summary()
+				r.PayloadBytes = &payload
+			}
 			switch {
 			case r.Errors > 0:
 				r.Status = "errors"

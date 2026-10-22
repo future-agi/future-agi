@@ -64,6 +64,13 @@ func rowSeq(row map[string]any) (int64, bool) {
 	return seq, err == nil && seq >= 0
 }
 
+// rowPayload is length(input) + length(output) of a stored row.
+func rowPayload(row map[string]any) int {
+	in, _ := row["input"].(string)
+	out, _ := row["output"].(string)
+	return len(in) + len(out)
+}
+
 func rowTime(row map[string]any) time.Time {
 	s, _ := row["start_time"].(string)
 	t, _ := time.Parse("2006-01-02 15:04:05.000000", s)
@@ -149,21 +156,23 @@ func (m *mockStorage) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case strings.Contains(query, "trace_id = {trace:String}"):
-		n := 0
+		n, payload := 0, 0
 		for _, row := range m.matching(q) {
 			if row["trace_id"] == first(q, "param_trace") {
 				n++
+				payload += rowPayload(row)
 			}
 		}
-		_ = enc.Encode(map[string]any{"rows": n})
+		_ = enc.Encode(map[string]any{"rows": n, "payload_bytes": payload})
 	case strings.Contains(query, "trace_session_id = {session:UUID}"):
-		n := 0
+		n, payload := 0, 0
 		for _, row := range m.matching(q) {
 			if row["trace_session_id"] == first(q, "param_session") {
 				n++
+				payload += rowPayload(row)
 			}
 		}
-		_ = enc.Encode(map[string]any{"rows": n})
+		_ = enc.Encode(map[string]any{"rows": n, "payload_bytes": payload})
 	case strings.Contains(query, "attrs_string['benchmark.cohort'] = 'variant'"):
 		n := 0
 		for _, row := range m.matching(q) {
@@ -372,6 +381,15 @@ func TestMockCollectorPipelineAndIndependentLossDetection(t *testing.T) {
 				}
 				if after.Successes != 2 || after.NonEmpty != 2 || after.Status != "measured" {
 					t.Fatalf("after-settle direct trace reads not measured: %+v", after)
+				}
+				// The trace probe reads the span payloads, not only key columns.
+				if after.PayloadBytes == nil || after.PayloadBytes.Count != 2 || after.PayloadBytes.Min <= 0 {
+					t.Fatalf("trace probe did not read span payloads: %+v", after.PayloadBytes)
+				}
+				for _, d := range r.DirectReads {
+					if d.Name == "attribute-filter" && d.PayloadBytes != nil {
+						t.Fatalf("count-only probe reports payload bytes: %+v", d)
+					}
 				}
 				if r.Provenance.SUT.Revision != "in-process-test-build" || r.Provenance.ClickHouse.Version != "mock" || r.Workload.Spans != 12 {
 					t.Fatalf("provenance/workload missing: %+v %+v", r.Provenance, r.Workload)
