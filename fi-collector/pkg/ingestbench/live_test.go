@@ -52,7 +52,9 @@ func requireLiveTarget(t *testing.T) liveTarget {
 	lt.slow = os.Getenv("OTLPBENCH_LIVE_SLOW_HOST") == "1"
 	lt.writer = chwriter.Config{URL: url, Database: lt.database, Table: lt.table, Username: user, Password: password, RequestTimeout: 30 * time.Second}
 	if lt.slow {
-		lt.writer.RequestTimeout = 3 * time.Minute
+		// An insert the client abandons may still complete on the server; the
+		// writer's retry would then store the rows twice. Wait it out instead.
+		lt.writer.RequestTimeout = 15 * time.Minute
 	}
 	return lt
 }
@@ -62,9 +64,10 @@ func (lt liveTarget) apply(c Config) Config {
 	c.Environment = "isolated-real-ClickHouse-inprocess-collector-auth-bypassed"
 	c.Settle = max(c.Settle, 3*time.Second)
 	if lt.slow {
-		c.Settle = max(c.Settle, 2*time.Minute)
-		c.VerifyQueryTimeout, c.VerifyQueryRetries, c.VerifyChunk = 3*time.Minute, 3, 1<<20
-		c.DirectProbes.QueryTimeout = 3 * time.Minute
+		// Settle must outlast the slowest acknowledged insert (minutes there).
+		c.Settle = max(c.Settle, 8*time.Minute)
+		c.VerifyQueryTimeout, c.VerifyQueryRetries, c.VerifyChunk = 5*time.Minute, 3, 1<<20
+		c.DirectProbes.QueryTimeout = 5 * time.Minute
 	}
 	return c
 }
@@ -104,7 +107,7 @@ func TestLiveClickHouseCollectorPipeline(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.Endpoint = startCollectorWithWriterConfig(t, lt.writer)
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Minute)
 	defer cancel()
 	r, err := Run(ctx, c, Options{ClickHouseHeaders: lt.headers})
 	writeLiveArtifact(t, "OTLPBENCH_LIVE_RESULT", r)
