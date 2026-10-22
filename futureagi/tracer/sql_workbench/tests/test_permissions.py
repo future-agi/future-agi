@@ -753,3 +753,71 @@ def test_table_chart_without_axes_saves_and_round_trips(tenants):
     assert response.status_code == 201
     saved = service.saved_query(actor, project.id, response.data["id"])
     assert saved.chart == {"type": "table"}
+
+
+MALFORMED_IDS = [
+    "------------------------------------",
+    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa-",
+    "a" * 36,
+    "00000000-0000-0000-0000-00000000000-",
+]
+
+
+@pytest.mark.parametrize("bad_id", MALFORMED_IDS)
+@pytest.mark.parametrize(
+    "method,path,data",
+    [
+        ("get", "/tracer/sql-query/{id}/", {}),
+        ("post", "/tracer/sql-query/{id}/cancel/", {}),
+        ("get", "/tracer/sql-query/{id}/download/", {"file_format": "csv"}),
+        ("get", "/tracer/saved-sql-query/{id}/", {}),
+        (
+            "patch",
+            "/tracer/saved-sql-query/{id}/",
+            {"name": "n", "sql": "SELECT name FROM spans", "visibility": "private"},
+        ),
+        ("delete", "/tracer/saved-sql-query/{id}/", {}),
+        ("post", "/tracer/saved-sql-query/{id}/add-widget/", {"dashboard_id": None}),
+    ],
+)
+def test_malformed_route_ids_are_not_found_on_every_id_endpoint(
+    tenants, bad_id, method, path, data
+):
+    """The router admits any 36 hex/dash characters; a non-UUID must be a 404."""
+    from django.urls import resolve
+
+    actor, project, user = tenants[0]
+    url = path.format(id=bad_id)
+    match = resolve(url)  # The real tracer router accepts the malformed id.
+    assert match.kwargs == {"pk": bad_id}
+    body = {"project_id": str(project.id), **data}
+    if "dashboard_id" in body:
+        body["dashboard_id"] = str(uuid4())
+    response = match.func(api_request(actor, user, method, url, body), **match.kwargs)
+    assert response.status_code == 404, response.data
+    assert response["Cache-Control"] == "no-store"
+
+
+@pytest.mark.parametrize("bad_id", MALFORMED_IDS)
+def test_service_never_sends_a_malformed_id_to_the_database(tenants, bad_id):
+    (actor, project, _), _ = tenants
+    for call in (
+        lambda: service.execution(actor, project.id, bad_id),
+        lambda: service.cancel(actor, project.id, bad_id),
+        lambda: service.export_result(actor, project.id, bad_id, "csv"),
+        lambda: service.saved_query(actor, project.id, bad_id),
+        lambda: service.delete_saved(actor, project.id, bad_id),
+    ):
+        with pytest.raises(AccessDenied):
+            call()
+    saved = service.save_query(
+        actor,
+        project_id=project.id,
+        name="shared",
+        sql="SELECT name FROM spans",
+        visibility="project",
+        chart={},
+        window_hours=24,
+    )
+    with pytest.raises(AccessDenied):
+        service.add_widget(actor, project.id, saved.id, bad_id)

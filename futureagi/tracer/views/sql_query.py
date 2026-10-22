@@ -4,7 +4,7 @@ from django.http import HttpResponse
 from django.utils import timezone
 from drf_yasg import openapi
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ViewSet
@@ -42,6 +42,14 @@ from tracer.sql_workbench.runner import QueryUnavailable, derived_metrics_availa
 class SQLViewMixin:
     permission_classes = [IsAuthenticated]
     lookup_value_regex = r"[0-9a-f-]{36}"
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        # The route pattern admits any 36 hex/dash characters. A value that is
+        # not a UUID is "not found" (after authentication), never an unhandled
+        # database validation error.
+        if "pk" in kwargs and service.object_id(kwargs["pk"]) is None:
+            raise NotFound("Not found.")
 
     def finalize_response(self, request, response, *args, **kwargs):
         response = super().finalize_response(request, response, *args, **kwargs)

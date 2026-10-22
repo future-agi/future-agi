@@ -4,6 +4,7 @@ import csv
 import io
 import os
 from datetime import timedelta
+from uuid import UUID
 
 from django.conf import settings
 from django.db import connection, transaction
@@ -30,6 +31,16 @@ MAX_ORG_RESULT_BYTES_24H = 512 * 1024 * 1024
 MAX_ACTOR_QUERIES_24H = 1500
 MAX_ORG_QUERIES_24H = 30000
 TERMINAL_STATES = ("succeeded", "failed", "cancelled")
+
+
+def object_id(value):
+    """Canonical UUID or ``None``; malformed ids are never sent to a query."""
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError, AttributeError):
+        return None
 
 
 def _resource_limit(name, default):
@@ -165,6 +176,9 @@ def submit(actor, *, project_id, sql, start, end):
 
 def execution(actor, project_id, job_id):
     authorize(actor, project_id)
+    job_id = object_id(job_id)
+    if job_id is None:
+        raise AccessDenied("Query not available.")
     job = SQLExecution.objects.filter(
         id=job_id,
         project_id=project_id,
@@ -263,6 +277,9 @@ def saved_queries(actor, project_id):
 
 
 def saved_query(actor, project_id, saved_id):
+    saved_id = object_id(saved_id)
+    if saved_id is None:
+        raise AccessDenied("Saved query not available.")
     saved = saved_queries(actor, project_id).filter(id=saved_id).first()
     if saved is None:
         raise AccessDenied("Saved query not available.")
@@ -322,6 +339,9 @@ def add_widget(actor, project_id, saved_id, dashboard_id):
         raise AccessDenied(
             "Share this query with the project before adding it to a dashboard."
         )
+    dashboard_id = object_id(dashboard_id)
+    if dashboard_id is None:
+        raise AccessDenied("Dashboard not available.")
     dashboard = Dashboard.no_workspace_objects.filter(
         id=dashboard_id,
         workspace_id=actor.workspace_id,
