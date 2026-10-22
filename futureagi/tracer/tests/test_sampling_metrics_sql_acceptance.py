@@ -70,7 +70,9 @@ def _reset_clients():
 @pytest.fixture
 def acceptance_ch(settings, monkeypatch):
     """A unique guarded database and host-restricted, locked SQL service login."""
-    with _ch_test_owned_database("test_sampling_metrics_sql_") as database:
+    # The SQL service provisioner limits identifiers to 48 characters, including
+    # the owned-database helper's 32-character UUID suffix.
+    with _ch_test_owned_database("test_smsql_") as database:
         _ch_test_apply_v2_schema(database)
         with _ch_test_native_client(database=database) as client:
             _reset_clients()
