@@ -20,7 +20,7 @@ import { SCENARIOS_COPY } from "./scenarios.constants";
 export default function PagedScenarioViews({
   pageData, selection, env, view, hiddenGroupIds, onHideGroup, onEdit, onRemove,
   page, onPageChange, query, filters, groupBy, showInspector, locked, rowHeight,
-  readout,
+  readout, onOpen,
 }) {
   const [inspect, setInspect] = useState(false);
   const { rows, total, pageCount, limit, pageGroups, pageIds, loading } = pageData;
@@ -84,6 +84,7 @@ export default function PagedScenarioViews({
             env={env}
             onEdit={onEdit}
             onRemove={onRemove}
+            onOpen={onOpen}
             onHideGroup={onHideGroup}
             selection={selection}
             pageIds={pageIds}
@@ -183,6 +184,7 @@ PagedScenarioViews.propTypes = {
   showInspector: PropTypes.bool,
   locked: PropTypes.bool,
   rowHeight: PropTypes.string,
+  onOpen: PropTypes.func,
   // Set while a search, filter or hidden group narrows the list.
   readout: PropTypes.shape({
     shown: PropTypes.number,
