@@ -946,3 +946,44 @@ func TestProcessResponse_SkipsInternalKey(t *testing.T) {
 		}
 	}
 }
+
+// Every header the gateway accepts a credential in must be starred before the
+// record is stored. x-goog-api-key was missing while the GenAI route reads a
+// caller's Google key from exactly that header, so those keys were kept in
+// plain text on the request log row.
+func TestSanitizeHeaders_StarsEveryCredentialHeader(t *testing.T) {
+	const secret = "SENTINEL-DO-NOT-LEAK"
+
+	credentialHeaders := []string{
+		"Authorization",
+		"Proxy-Authorization",
+		"X-Api-Key",
+		"Api-Key",
+		"X-Goog-Api-Key",
+		"X-Goog-Iam-Authorization-Token",
+		"X-Amz-Security-Token",
+		"X-Auth-Token",
+		"Cookie",
+		"Set-Cookie",
+		"X-Webhook-Secret",
+	}
+
+	in := map[string][]string{"Content-Type": {"application/json"}}
+	for _, name := range credentialHeaders {
+		in[name] = []string{secret}
+	}
+
+	out := sanitizeHeaders(in)
+
+	for _, name := range credentialHeaders {
+		got := out[name]
+		if len(got) != 1 || got[0] == secret {
+			t.Errorf("%s = %v, want it starred", name, got)
+		}
+	}
+	// A header that carries no credential stays readable, or the log stops
+	// being useful.
+	if got := out["Content-Type"]; len(got) != 1 || got[0] != "application/json" {
+		t.Errorf("Content-Type = %v, want it left alone", got)
+	}
+}

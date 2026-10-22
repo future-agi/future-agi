@@ -143,8 +143,10 @@ class SecretKeyAPIViewSet(ViewSet):
             order_by = f"{order_prefix}{db_sort_field}"
 
             # Build base queryset with select_related to avoid N+1 queries
+            # Sandbox ingest keys belong to the platform, not to the user.
             apiKeys = (
                 OrgApiKey.objects.filter(organization=user_organization, deleted=False)
+                .exclude(type="ingest")
                 .select_related("user")
                 .order_by(order_by)
             )

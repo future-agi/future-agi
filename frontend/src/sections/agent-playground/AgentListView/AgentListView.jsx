@@ -1,3 +1,4 @@
+import PropTypes from "prop-types";
 import {
   Avatar,
   AvatarGroup,
@@ -44,7 +45,7 @@ const mapGraph = (graph) => {
   };
 };
 
-export default function AgentListView() {
+export default function AgentListView({ embedded = false }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { setCurrentAgent } = useAgentPlaygroundStoreShallow((s) => ({
@@ -279,50 +280,52 @@ export default function AgentListView() {
         height: "100%",
         display: "flex",
         flexDirection: "column",
-        p: 2,
+        p: embedded ? 0 : 2,
         gap: 1.5,
         overflow: "hidden",
         minHeight: 0,
       }}
     >
-      {/* Header */}
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <Box>
-          <Typography
-            typography="m2"
-            fontWeight="fontWeightMedium"
-            color="text.primary"
-          >
-            Agent Playground
-          </Typography>
-          <Typography typography="s1" color="text.secondary">
-            Break down complex tasks into sequential steps that build upon each
-            other
-          </Typography>
-        </Box>
-        <Button
-          variant="outlined"
-          size="small"
-          sx={{ borderRadius: "4px", height: 30, px: "4px", minWidth: 105 }}
-          component="a"
-          href="https://docs.futureagi.com/docs/agent-playground"
-          target="_blank"
+      {/* Header — the Agents landing supplies its own when embedded. */}
+      {!embedded && (
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
         >
-          <SvgColor
-            src="/assets/icons/agent/docs.svg"
-            sx={{ height: 16, width: 16, mr: 1 }}
-          />
-          <Typography typography="s2" fontWeight="fontWeightMedium">
-            View Docs
-          </Typography>
-        </Button>
-      </Box>
+          <Box>
+            <Typography
+              typography="m2"
+              fontWeight="fontWeightMedium"
+              color="text.primary"
+            >
+              Agent Playground
+            </Typography>
+            <Typography typography="s1" color="text.secondary">
+              Break down complex tasks into sequential steps that build upon
+              each other
+            </Typography>
+          </Box>
+          <Button
+            variant="outlined"
+            size="small"
+            sx={{ borderRadius: "4px", height: 30, px: "4px", minWidth: 105 }}
+            component="a"
+            href="https://docs.futureagi.com/docs/agent-playground"
+            target="_blank"
+          >
+            <SvgColor
+              src="/assets/icons/agent/docs.svg"
+              sx={{ height: 16, width: 16, mr: 1 }}
+            />
+            <Typography typography="s2" fontWeight="fontWeightMedium">
+              View Docs
+            </Typography>
+          </Button>
+        </Box>
+      )}
 
       {/* Search + bulk actions / create */}
       <Box
@@ -414,7 +417,7 @@ export default function AgentListView() {
               </Typography>
             </Button>
           </Box>
-        ) : (
+        ) : embedded ? null : (
           <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
             <Button
               variant="outlined"
@@ -500,3 +503,5 @@ export default function AgentListView() {
     </Box>
   );
 }
+
+AgentListView.propTypes = { embedded: PropTypes.bool };

@@ -193,6 +193,9 @@ class AgentVersion(BaseModel):
         except AgentVersion.credentials.RelatedObjectDoesNotExist:
             pass
 
+        # Imported here: the switch imports the simulate models.
+        from tracer.services.observability_switch import observability_is_on
+
         schema = AgentConfigurationSnapshot(
             inbound=agent.inbound,
             target_speaks_first=agent.target_speaks_first,
@@ -207,9 +210,7 @@ class AgentVersion(BaseModel):
             commit_message=commit_message,
             contact_number=agent.contact_number,
             knowledge_base=knowledge_base_value,
-            observability_enabled=getattr(
-                agent.observability_provider, "enabled", False
-            ),
+            observability_enabled=observability_is_on(agent),
             model=agent.model,
             model_details=agent.model_details,
             livekit_url=livekit_url,

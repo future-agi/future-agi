@@ -20,7 +20,7 @@ export default function NavList({ data, depth, slotProps }) {
   const pathname = usePathname();
 
   const active = useActiveLink(
-    data.path,
+    data.activePath || data.path,
     !!data.children || !!data?.hasChildren,
   );
 

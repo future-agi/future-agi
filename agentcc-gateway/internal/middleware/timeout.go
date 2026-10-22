@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -43,10 +44,38 @@ func Timeout(maxTimeout time.Duration) func(http.Handler) http.Handler {
 				timeout = d
 			}
 
+			setWriteDeadline(w, timeout)
+
 			ctx, cancel := context.WithTimeout(r.Context(), timeout)
 			defer cancel()
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
+	}
+}
+
+// writeGrace is how long after the request's own deadline the response may
+// still be written. It only has to cover the last write: the deadline above
+// ends the handler, which then writes its 504.
+const writeGrace = 10 * time.Second
+
+// setWriteDeadline moves the response write deadline past this request's own
+// deadline, so the deadline above is what ends the request.
+//
+// server.write_timeout arms a write deadline when the request headers arrive,
+// and nothing resets it. A response that takes longer than that cannot be
+// written at all — not the body, and not the error either. The handler keeps
+// running to the end, bills the upstream call it completed, and the client
+// gets a closed connection with no status. Holding the deadline here keeps
+// write_timeout as what it reads like, a default for an idle or slow client,
+// and leaves the ceiling as the only limit that ends a request.
+//
+// A ResponseWriter that cannot carry a deadline is left alone: the request
+// then still ends at its own deadline, and only the write stays bounded by
+// write_timeout, which is the behaviour before this.
+func setWriteDeadline(w http.ResponseWriter, timeout time.Duration) {
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(timeout + writeGrace)); err != nil {
+		slog.Debug("could not hold the response write deadline; server.write_timeout still bounds the response",
+			"error", err, "timeout", timeout.String())
 	}
 }

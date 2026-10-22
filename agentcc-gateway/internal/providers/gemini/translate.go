@@ -3,6 +3,7 @@ package gemini
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -135,8 +136,133 @@ type geminiPrebuiltVoiceConfig struct {
 	VoiceName string `json:"voiceName"`
 }
 
+// geminiToolDeclarations is one entry of Gemini's tools array. Besides the
+// caller's own functions it carries the tools Gemini runs itself, each as the
+// caller wrote it: googleSearchRetrieval takes a retrieval config, and a
+// re-marshalled empty struct would drop it.
 type geminiToolDeclarations struct {
-	FunctionDeclarations []geminiFuncDecl `json:"functionDeclarations,omitempty"`
+	FunctionDeclarations  []geminiFuncDecl `json:"functionDeclarations,omitempty"`
+	GoogleSearch          json.RawMessage  `json:"googleSearch,omitempty"`
+	GoogleSearchRetrieval json.RawMessage  `json:"googleSearchRetrieval,omitempty"`
+	URLContext            json.RawMessage  `json:"urlContext,omitempty"`
+	CodeExecution         json.RawMessage  `json:"codeExecution,omitempty"`
+}
+
+// geminiServerTools maps the key a caller writes in an OpenAI-shaped tools
+// entry to the field Gemini expects. Both spellings are accepted: the Google
+// SDKs use camelCase and the OpenAI-compatible clients use snake_case, and a
+// caller moving between them should not have to care.
+// Keyed by the canonical name models.Tool.Capability returns, so the spelling
+// a caller used is already resolved before this is consulted — and the policy
+// that approved the request resolved it the same way.
+var geminiServerTools = map[string]func(*geminiToolDeclarations, json.RawMessage){
+	"google_search":           func(d *geminiToolDeclarations, v json.RawMessage) { d.GoogleSearch = v },
+	"google_search_retrieval": func(d *geminiToolDeclarations, v json.RawMessage) { d.GoogleSearchRetrieval = v },
+	"url_context":             func(d *geminiToolDeclarations, v json.RawMessage) { d.URLContext = v },
+	"code_execution":          func(d *geminiToolDeclarations, v json.RawMessage) { d.CodeExecution = v },
+}
+
+// emptyToolConfig is what a tool named by type alone carries: the caller asked
+// for the tool and configured nothing.
+var emptyToolConfig = json.RawMessage(`{}`)
+
+// serverTool reads a provider-executed tool out of one tools entry.
+//
+// The entry's identity comes from models.Tool.Capability, the same answer the
+// tool-policy plugin enforces against. Deriving it here instead is how a
+// policy came to approve one capability while this forwarded another.
+func serverTool(tool models.Tool) (key string, config json.RawMessage, ok bool) {
+	key = tool.Capability()
+	if _, named := geminiServerTools[key]; !named {
+		return "", nil, false
+	}
+	config = emptyToolConfig
+	if len(tool.Raw) > 0 {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(tool.Raw, &fields) == nil {
+			// The caller wrote one spelling; key is the canonical one.
+			for field, v := range fields {
+				if models.CanonicalCapability(field) == key {
+					config = v
+					break
+				}
+			}
+		}
+	}
+	return key, config, true
+}
+
+// UnsupportedToolError names a tool entry this provider cannot serve.
+//
+// The alternative is to drop it, which is what used to happen: the request
+// went upstream without the tool, the model answered as best it could, and the
+// caller was billed for a reply that could not use the capability it asked
+// for. A tool is a capability, not a hint.
+func UnsupportedToolError(tool models.Tool) *models.APIError {
+	return models.ErrBadRequest("unsupported_tool", fmt.Sprintf(
+		"gemini does not support %s. Supported: a function tool, google_search, "+
+			"google_search_retrieval, url_context, code_execution.", toolName(tool)))
+}
+
+// toolName is what to call a tools entry in a message to its caller.
+func toolName(tool models.Tool) string {
+	if tool.Type != "" {
+		return tool.Type
+	}
+	if len(tool.Raw) > 0 {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(tool.Raw, &fields) == nil {
+			for k := range fields {
+				return k
+			}
+		}
+	}
+	return "the tool entry"
+}
+
+// RejectUnsupportedTools refuses a request that would reach Gemini with no
+// tools at all, and lets one through that keeps some.
+//
+// Refusing every unservable entry would break a configuration the gateway
+// offers: a model alias or a failover group can span providers, and a caller
+// who sends one provider's server tool alongside their own functions would
+// have the whole request fail on whichever member is Gemini. 400 is not a
+// failover status, so there would be no falling through to the next provider
+// either. When something survives, the model still has a tool to work with
+// and the dropped entries are logged.
+//
+// Nothing surviving is the case worth failing on: the request would go
+// upstream with no tools, and the model would answer as if the capability had
+// never been asked for. That is what a caller pays for and cannot see.
+//
+// Kept apart from translateRequest so that function keeps its signature: it
+// has one job and many callers, and a validation error does not belong in its
+// return values.
+func RejectUnsupportedTools(tools []models.Tool) *models.APIError {
+	var unsupported []models.Tool
+	served := 0
+	for _, tool := range tools {
+		if tool.IsFunction() {
+			served++
+			continue
+		}
+		if _, _, ok := serverTool(tool); ok {
+			served++
+			continue
+		}
+		unsupported = append(unsupported, tool)
+	}
+
+	switch {
+	case len(unsupported) == 0:
+		return nil
+	case served == 0:
+		return UnsupportedToolError(unsupported[0])
+	default:
+		slog.Warn("gemini: tool entries this provider cannot serve were left out of the request",
+			"dropped", len(unsupported), "kept", served, "first", toolName(unsupported[0]))
+		return nil
+	}
 }
 
 type geminiFuncDecl struct {
@@ -152,8 +278,76 @@ type geminiResponse struct {
 }
 
 type geminiCandidate struct {
-	Content      geminiContent `json:"content"`
-	FinishReason string        `json:"finishReason,omitempty"`
+	Content           geminiContent            `json:"content"`
+	FinishReason      string                   `json:"finishReason,omitempty"`
+	GroundingMetadata *geminiGroundingMetadata `json:"groundingMetadata,omitempty"`
+}
+
+// geminiGroundingMetadata is what googleSearch returns beside the text: the
+// sources the answer is grounded in. Without it a grounded answer arrives with
+// no way to see where it came from, which is the whole reason for asking.
+type geminiGroundingMetadata struct {
+	GroundingChunks []geminiGroundingChunk `json:"groundingChunks,omitempty"`
+}
+
+type geminiGroundingChunk struct {
+	Web *geminiGroundingWeb `json:"web,omitempty"`
+}
+
+type geminiGroundingWeb struct {
+	URI   string `json:"uri,omitempty"`
+	Title string `json:"title,omitempty"`
+}
+
+// urlCitation is OpenAI's own annotation shape, which is what its web-search
+// responses use and therefore what a client already knows how to read. The
+// anthropic provider builds the same shape from its web_search citations; a
+// third provider needing it should move this to a shared package.
+type urlCitation struct {
+	Type        string          `json:"type"`
+	URLCitation urlCitationBody `json:"url_citation"`
+}
+
+type urlCitationBody struct {
+	StartIndex int    `json:"start_index"`
+	EndIndex   int    `json:"end_index"`
+	URL        string `json:"url"`
+	Title      string `json:"title,omitempty"`
+}
+
+// groundingAnnotations maps the grounded sources onto the message text.
+//
+// Gemini reports which span each source supports separately, in
+// groundingSupports. That is not mapped: a source here spans the whole answer,
+// which is true but coarser than Gemini knows. Narrowing it is worth doing
+// when a caller needs the spans.
+func groundingAnnotations(meta *geminiGroundingMetadata, textLen int) json.RawMessage {
+	if meta == nil || len(meta.GroundingChunks) == 0 {
+		return nil
+	}
+	citations := make([]urlCitation, 0, len(meta.GroundingChunks))
+	for _, chunk := range meta.GroundingChunks {
+		if chunk.Web == nil || chunk.Web.URI == "" {
+			continue
+		}
+		citations = append(citations, urlCitation{
+			Type: "url_citation",
+			URLCitation: urlCitationBody{
+				EndIndex: textLen,
+				URL:      chunk.Web.URI,
+				Title:    chunk.Web.Title,
+			},
+		})
+	}
+	if len(citations) == 0 {
+		return nil
+	}
+	encoded, err := json.Marshal(citations)
+	if err != nil {
+		slog.Warn("gemini: could not encode grounding sources, dropping them", "error", err)
+		return nil
+	}
+	return encoded
 }
 
 type geminiUsageMetadata struct {
@@ -299,22 +493,34 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 
 	gr.GenerationConfig = gc
 
-	// Translate tools.
+	// Translate tools. A tool Gemini runs itself goes in its own entry of the
+	// tools array, beside the entry holding the caller's functions.
 	if len(req.Tools) > 0 {
 		var decls []geminiFuncDecl
+		var serverTools []geminiToolDeclarations
 		for _, t := range req.Tools {
-			if t.Type != "function" {
+			if t.IsFunction() {
+				decls = append(decls, geminiFuncDecl{
+					Name:                 t.Function.Name,
+					Description:          t.Function.Description,
+					ParametersJSONSchema: normalizeToolSchema(t.Function.Parameters),
+				})
 				continue
 			}
-			decls = append(decls, geminiFuncDecl{
-				Name:                 t.Function.Name,
-				Description:          t.Function.Description,
-				ParametersJSONSchema: normalizeToolSchema(t.Function.Parameters),
-			})
+			// Anything left that is not a tool Gemini runs itself has already
+			// been refused by RejectUnsupportedTools.
+			key, config, ok := serverTool(t)
+			if !ok {
+				continue
+			}
+			var entry geminiToolDeclarations
+			geminiServerTools[key](&entry, config)
+			serverTools = append(serverTools, entry)
 		}
 		if len(decls) > 0 {
-			gr.Tools = []geminiToolDeclarations{{FunctionDeclarations: decls}}
+			gr.Tools = append(gr.Tools, geminiToolDeclarations{FunctionDeclarations: decls})
 		}
+		gr.Tools = append(gr.Tools, serverTools...)
 	}
 
 	// Translate tool_choice → toolConfig.functionCallingConfig.
@@ -733,6 +939,9 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 		if len(reasoningParts) > 0 {
 			msg.ReasoningContent = strings.Join(reasoningParts, "")
 		}
+		// Sources for a grounded answer, measured against the text the model
+		// produced rather than any multipart wrapper around it.
+		msg.Annotations = groundingAnnotations(candidate.GroundingMetadata, len(strings.Join(textParts, "")))
 
 		result.Choices = []models.Choice{
 			{

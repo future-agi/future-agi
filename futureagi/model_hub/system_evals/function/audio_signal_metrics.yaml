@@ -1,0 +1,71 @@
+eval_id: 219
+name: audio_signal_metrics
+description: Checks deterministic voiced pitch and estimated signal-to-noise ratio for a single-speaker audio recording.
+criteria: Return Passed when the decoded audio has a voiced pitch and estimated SNR inside the configured bounds; otherwise return Failed with the measured values.
+eval_tags:
+- Audio
+- Quality
+visible_ui: true
+offered_in_environments: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: pass_fail
+pass_threshold: 0.5
+config:
+  required_keys:
+  - input_audio
+  output: Pass/Fail
+  eval_type_id: CustomCodeEval
+  function_params_schema:
+    min_pitch_hz:
+      type: number
+      default: 80.0
+      minimum: 0
+      maximum: 2000
+    max_pitch_hz:
+      type: number
+      default: 400.0
+      minimum: 0
+      maximum: 4000
+    min_snr_db:
+      type: number
+      default: 6.0
+      minimum: -100
+      maximum: 100
+  config_params_desc:
+    input_audio: The single-speaker audio recording to analyse.
+    min_pitch_hz: Minimum acceptable mean voiced pitch in Hz.
+    max_pitch_hz: Maximum acceptable mean voiced pitch in Hz.
+    min_snr_db: Minimum acceptable estimated SNR in dB.
+  param_modalities:
+    input_audio:
+    - AUDIO
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        error = kwargs.get("_audio_metrics_error")
+        if error:
+            return {"score": 0.0, "reason": f"Audio metrics unavailable: {error}"}
+
+        pitch = kwargs.get("_audio_average_pitch_hz")
+        snr = kwargs.get("_audio_estimated_snr_db")
+        if pitch is None or snr is None:
+            return {"score": 0.0, "reason": "Audio metrics unavailable: pitch or SNR was not measurable"}
+
+        try:
+            min_pitch = float(kwargs.get("min_pitch_hz", 80.0))
+            max_pitch = float(kwargs.get("max_pitch_hz", 400.0))
+            min_snr = float(kwargs.get("min_snr_db", 6.0))
+        except (TypeError, ValueError):
+            return {"score": 0.0, "reason": "Invalid audio-metrics thresholds"}
+
+        pitch_passed = min_pitch <= float(pitch) <= max_pitch
+        snr_passed = float(snr) >= min_snr
+        passed = pitch_passed and snr_passed
+        reason = (
+            f"Pitch: {float(pitch):.1f} Hz "
+            f"({'pass' if pitch_passed else 'fail'}, range {min_pitch:.1f}-{max_pitch:.1f}). "
+            f"Estimated SNR: {float(snr):.1f} dB "
+            f"({'pass' if snr_passed else 'fail'}, minimum {min_snr:.1f} dB)."
+        )
+        return {"score": 1.0 if passed else 0.0, "reason": reason}

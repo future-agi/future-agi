@@ -260,13 +260,22 @@ func redactChoices(choices []models.Choice, r *privacy.Redactor, mode string) []
 	return out
 }
 
+// sensitiveHeaderKeys never reach a request log. The gateway accepts a
+// credential in each of these, so a missing entry publishes it to everyone
+// with access to the logs — x-goog-api-key was missing, and the GenAI route
+// reads a caller's Google key from it (handlers_genai.go).
 var sensitiveHeaderKeys = map[string]bool{
-	"authorization":    true,
-	"x-api-key":        true,
-	"api-key":          true,
-	"x-auth-token":     true,
-	"cookie":           true,
-	"x-webhook-secret": true,
+	"authorization":                  true,
+	"proxy-authorization":            true,
+	"x-api-key":                      true,
+	"api-key":                        true,
+	"x-goog-api-key":                 true,
+	"x-goog-iam-authorization-token": true,
+	"x-amz-security-token":           true,
+	"x-auth-token":                   true,
+	"cookie":                         true,
+	"set-cookie":                     true,
+	"x-webhook-secret":               true,
 }
 
 func sanitizeHeaders(h map[string][]string) map[string][]string {

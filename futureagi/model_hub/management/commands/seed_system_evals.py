@@ -30,7 +30,7 @@ logger = structlog.get_logger(__name__)
 # 24: ndcg_at_k no longer counts duplicate retrievals, so it stays within 1.0.
 # 25: matthews_correlation computes multiclass MCC instead of rescaled accuracy.
 # 26: the 24 ndcg_at_k fix landed after 25, so it ships as 26.
-SYSTEM_EVALS_VERSION = 27
+SYSTEM_EVALS_VERSION = 28
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any

@@ -99,7 +99,11 @@ from tracer.serializers.observation_span import (
     SubmitFeedbackActionTypeSerializer,
     SubmitFeedbackSerializer,
 )
-from tracer.serializers.trace import TraceNavigationResponseSerializer, TraceSerializer
+from tracer.serializers.trace import (
+    RUN_SCOPE_KEYS,
+    TraceNavigationResponseSerializer,
+    TraceSerializer,
+)
 from tracer.services.clickhouse.attribute_reads import (
     ATTRIBUTE_READ_EXPLICIT_SEGMENT,
     AttributeReadMetadata,
@@ -839,7 +843,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             TraceDetailReadUnavailable,
         )
 
-        selector = getattr(request, "validated_query_data", {}) or {}
+        query = getattr(request, "validated_query_data", {}) or {}
+        # The run parameters are not part of the selector: they only replace the
+        # project set with a run's hidden project, never describe a span.
+        selector = {k: v for k, v in query.items() if k not in RUN_SCOPE_KEYS}
         # ``project_id`` alone pins a bare span id to the project the span was
         # opened from; any other selector is a full physical reference.
         physical_reference = selector if selector.keys() - {"project_id"} else None
@@ -848,15 +855,32 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             observation_span_id = kwargs.get("pk")
             organization = _get_request_organization(request)
             project_manager = getattr(Project, "no_workspace_objects", Project.objects)
+            run_scope = None
+            if any(query.get(key) is not None for key in RUN_SCOPE_KEYS):
+                from tracer.services.simulation_project import (
+                    run_scope_project_ids,
+                    simulation_scope_for_run,
+                )
+
+                run_scope = simulation_scope_for_run(
+                    request,
+                    test_execution_id=query.get("test_execution_id"),
+                    call_execution_id=query.get("call_execution_id"),
+                )
             if physical_reference:
                 # Explicit identity is authority-scoped before a CH service is
                 # constructed. Never widen a denied selector to bare-ID lookup.
-                if not project_manager.filter(
-                    _project_workspace_scope_q(request, project_prefix=""),
-                    organization=organization,
-                    deleted=False,
-                    id=physical_reference["project_id"],
-                ).exists():
+                # With a run, the only project that opens is the run's hidden one.
+                if run_scope is not None:
+                    allowed = str(physical_reference["project_id"]) == str(run_scope.id)
+                else:
+                    allowed = project_manager.filter(
+                        _project_workspace_scope_q(request, project_prefix=""),
+                        organization=organization,
+                        deleted=False,
+                        id=physical_reference["project_id"],
+                    ).exists()
+                if not allowed:
                     raise PhysicalSpanDetailError("span_reference_not_found")
                 return self._retrieve_clickhouse(
                     request,
@@ -865,20 +889,25 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     authorized_project_ids=[str(physical_reference["project_id"])],
                     physical_reference=physical_reference,
                 )
-            project_scope = project_manager.filter(
-                _project_workspace_scope_q(request, project_prefix=""),
-                organization=organization,
-                deleted=False,
-            )
-            if pinned_project_id:
-                # Outside the caller's scope this resolves like a missing span.
-                project_scope = project_scope.filter(id=pinned_project_id)
-            authorized_project_ids = [
-                str(project_id)
-                for project_id in project_scope.values_list("id", flat=True)[:4097]
-            ]
-            if len(authorized_project_ids) > 4096:
-                raise TraceDetailReadUnavailable("project_scope_too_large")
+            if run_scope is not None:
+                authorized_project_ids = run_scope_project_ids(
+                    run_scope, pinned_project_id
+                )
+            else:
+                project_scope = project_manager.filter(
+                    _project_workspace_scope_q(request, project_prefix=""),
+                    organization=organization,
+                    deleted=False,
+                )
+                if pinned_project_id:
+                    # Outside the caller's scope this resolves like a missing span.
+                    project_scope = project_scope.filter(id=pinned_project_id)
+                authorized_project_ids = [
+                    str(project_id)
+                    for project_id in project_scope.values_list("id", flat=True)[:4097]
+                ]
+                if len(authorized_project_ids) > 4096:
+                    raise TraceDetailReadUnavailable("project_scope_too_large")
 
             # Direct-write CH25 is the sole span source.  The project dimension
             # above is the tenant authority; no PG ObservationSpan existence

@@ -94,8 +94,11 @@ func TestIntegration_CreateImage(t *testing.T) {
 		if !strings.Contains(r.URL.Path, ":predict") {
 			t.Errorf("URL path = %q, want to contain :predict", r.URL.Path)
 		}
-		if r.URL.Query().Get("key") != "test-api-key" {
-			t.Errorf("key = %q, want test-api-key", r.URL.Query().Get("key"))
+		if got := r.Header.Get("x-goog-api-key"); got != "test-api-key" {
+			t.Errorf("x-goog-api-key = %q, want test-api-key", got)
+		}
+		if r.URL.Query().Has("key") {
+			t.Errorf("the key was sent in the query: %s", r.URL.RawQuery)
 		}
 
 		body, _ := io.ReadAll(r.Body)

@@ -345,7 +345,7 @@ describe("NodeSelectionPopper — Agent node without eligible agents (TH-4549)",
 
     const link = screen.getByTestId("agent-node-setup-open-agents");
     expect(link.tagName).toBe("A");
-    expect(link).toHaveAttribute("href", "/dashboard/agents");
+    expect(link).toHaveAttribute("href", "/dashboard/agents/playground");
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
     expect(link).toHaveTextContent(/new tab/i);

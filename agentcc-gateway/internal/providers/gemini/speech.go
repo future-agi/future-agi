@@ -13,6 +13,7 @@ import (
 	"strconv"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 // geminiSpeechSampleRate is what Gemini TTS produces when the MIME type names no rate.
@@ -69,9 +70,6 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 	}
 
 	url := buildURL(p.baseURL, model, false)
-	if !p.vertexAI && p.apiKey != "" {
-		url += "?key=" + p.apiKey
-	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
@@ -79,11 +77,7 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	if p.vertexAI {
-		if tok := p.bearerToken(); tok != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+tok)
-		}
-	}
+	p.setAPIKey(httpReq)
 	for k, v := range p.headers {
 		httpReq.Header.Set(k, v)
 	}
@@ -99,7 +93,7 @@ func (p *Provider) CreateSpeech(ctx context.Context, req *models.SpeechRequest) 
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024)) // 50MB — audio can be large
 	if err != nil {
-		return nil, "", models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("gemini: reading speech response: %v", err))
+		return nil, "", common.ReadError(err, resp.StatusCode, "gemini: reading speech response")
 	}
 
 	if resp.StatusCode != http.StatusOK {

@@ -8,7 +8,11 @@ import (
 )
 
 // WriteError writes an error response in Google GenAI format.
+//
+// Redacted like the OpenAI-shaped writer: a dialect response is the same
+// boundary, and an upstream message can carry a credential in a URL.
 func WriteError(w http.ResponseWriter, code int, status string, message string) {
+	message = models.RedactCredentials(message)
 	resp := struct {
 		Error struct {
 			Code    int    `json:"code"`

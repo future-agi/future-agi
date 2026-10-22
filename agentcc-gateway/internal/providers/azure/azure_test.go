@@ -913,9 +913,11 @@ func TestIntegration_ChatCompletion_HTTPClientTimeout(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected *models.APIError, got %T: %v", err, err)
 	}
-	// HTTP client timeout fires while ctx.Err() is still nil, so goes to ErrUpstreamProvider.
-	if apiErr.Status != http.StatusBadGateway {
-		t.Errorf("status = %d, want %d", apiErr.Status, http.StatusBadGateway)
+	// The HTTP client timeout fires while ctx.Err() is still nil. It is a
+	// timeout all the same, and reporting it as an upstream failure makes it a
+	// 502 that an SDK retries.
+	if apiErr.Status != http.StatusGatewayTimeout {
+		t.Errorf("status = %d, want %d", apiErr.Status, http.StatusGatewayTimeout)
 	}
 }
 

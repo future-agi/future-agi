@@ -8,6 +8,8 @@ from simulate.serializers.requests.run_test_evals import (
 from simulate.services.harness_environment import (
     AGENT_TYPE_CHAT,
     AGENT_TYPE_VOICE,
+    RUN_KIND_ENVIRONMENT,
+    RUN_KIND_SIMULATE,
     STATUS_BUILDING,
     STATUS_COMPLETED,
     STATUS_FAILED,
@@ -24,6 +26,7 @@ class HarnessEnvironmentListQuerySerializer(serializers.Serializer):
 
     page = serializers.IntegerField(required=False, min_value=1)
     limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
+    agent_definition_id = serializers.UUIDField(required=False)
 
 
 class HarnessEnvironmentRenameSerializer(serializers.Serializer):
@@ -39,7 +42,7 @@ class HarnessEnvironmentRenameSerializer(serializers.Serializer):
     )
 
 
-class HarnessEnvironmentSerializer(serializers.Serializer):
+class HarnessEnvironmentFieldsSerializer(serializers.Serializer):
     """One row of the environments list.
 
     ``description``, ``tools_count`` and ``sub_goals_count`` are null until
@@ -70,6 +73,36 @@ class HarnessEnvironmentSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField()
 
 
+class AgentVersionRefSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    version_number = serializers.IntegerField()
+
+
+class RunEnvironmentRefSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+
+
+class HarnessRunSummarySerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=(RUN_KIND_ENVIRONMENT, RUN_KIND_SIMULATE))
+    test_execution_id = serializers.UUIDField()
+    run_test_id = serializers.UUIDField()
+    run_test_name = serializers.CharField(allow_blank=True)
+    run_number = serializers.IntegerField(allow_null=True)
+    status = serializers.CharField()
+    environment = RunEnvironmentRefSerializer(allow_null=True)
+    agent_version = AgentVersionRefSerializer(allow_null=True)
+    outcome_passed = serializers.IntegerField(allow_null=True)
+    outcome_failed = serializers.IntegerField(allow_null=True)
+    outcome_skipped = serializers.IntegerField(allow_null=True)
+    started_at = serializers.DateTimeField(allow_null=True)
+    completed_at = serializers.DateTimeField(allow_null=True)
+
+
+class HarnessEnvironmentSerializer(HarnessEnvironmentFieldsSerializer):
+    last_run = HarnessRunSummarySerializer(allow_null=True)
+
+
 class HarnessEnvironmentListResponseSerializer(serializers.Serializer):
     count = serializers.IntegerField()
     next = serializers.CharField(allow_null=True)
@@ -93,7 +126,7 @@ class HarnessEnvironmentAgentSerializer(serializers.Serializer):
     active_version = serializers.CharField(allow_null=True)
 
 
-class HarnessEnvironmentOverviewSerializer(HarnessEnvironmentSerializer):
+class HarnessEnvironmentOverviewSerializer(HarnessEnvironmentFieldsSerializer):
     """The list row plus the counts the overview draws; each null until authored."""
 
     flows_count = serializers.IntegerField(allow_null=True)

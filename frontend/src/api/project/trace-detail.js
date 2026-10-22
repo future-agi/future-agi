@@ -9,14 +9,21 @@ import axios, { endpoints } from "src/utils/axios";
  * pass the project the trace was opened from whenever the caller knows it;
  * without it the backend serves the newest copy in the caller's scope.
  */
-export const useGetTraceDetail = (traceId, { projectId } = {}) => {
+export const useGetTraceDetail = (
+  traceId,
+  { projectId, testExecutionId } = {},
+) => {
+  const params = {
+    ...(projectId ? { project_id: projectId } : {}),
+    ...(testExecutionId ? { test_execution_id: testExecutionId } : {}),
+  };
   return useQuery({
-    queryKey: projectId
-      ? ["trace-detail", traceId, projectId]
-      : ["trace-detail", traceId],
+    queryKey: ["trace-detail", traceId, projectId, testExecutionId].filter(
+      Boolean,
+    ),
     queryFn: () =>
       axios.get(endpoints.project.getTrace(traceId), {
-        params: projectId ? { project_id: projectId } : undefined,
+        params: Object.keys(params).length ? params : undefined,
       }),
     select: (d) => d.data?.result,
     enabled: !!traceId,

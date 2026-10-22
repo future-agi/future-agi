@@ -27,6 +27,11 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import ObservationSpan, UserIdType
 from tracer.models.project import PROJECT_TYPES, Project, ProjectSourceChoices
 from tracer.models.project_version import ProjectVersion
+from tracer.services.simulation_project import (
+    RESERVED_PROJECT_NAME_MESSAGE,
+    ReservedProjectNameError,
+    agent_id_in_simulation_project_name,
+)
 from tracer.utils.helper import (
     get_default_project_version_config,
     get_default_trace_config,
@@ -1114,6 +1119,8 @@ def get_or_create_project(
     workspace_id=None,
     source: str = ProjectSourceChoices.PROTOTYPE.value,
 ) -> Project | None:
+    if agent_id_in_simulation_project_name(project_name) is not None:
+        raise ReservedProjectNameError(RESERVED_PROJECT_NAME_MESSAGE)
     try:
         project_type = _get_project_type(project_type)
 

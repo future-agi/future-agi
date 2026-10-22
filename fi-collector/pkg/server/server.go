@@ -16,11 +16,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +33,7 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
 	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -60,6 +63,8 @@ type Server struct {
 	curated         *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
 	propertyCatalog PropertyCatalogWriter // observed keys + values spool; default nil
 	auth            *auth.Authenticator
+	router          auth.SimulationRouter // nil: requests of sandbox keys are dropped
+	refusalLog      auth.LogLimiter
 	usage           UsageEmitter
 	metering        Metering
 	log             *slog.Logger
@@ -95,6 +100,7 @@ type Option struct {
 	log             *slog.Logger
 	pricer          chexp.Pricer
 	propertyCatalog PropertyCatalogWriter
+	router          auth.SimulationRouter
 }
 
 // TraceNotifier receives ended roots only after their canonical batch is stored.
@@ -115,6 +121,12 @@ func WithPricer(p chexp.Pricer) Option { return Option{pricer: p} }
 func WithPropertyCatalogWriter(w PropertyCatalogWriter) Option {
 	return Option{propertyCatalog: w}
 }
+
+// WithSimulationRouter replaces the router of sandbox-key requests, which
+// defaults to the authenticator. A nil router is ignored. A server that ends
+// with no router at all (no authenticator and no option) drops the requests of
+// sandbox keys, so they are never stored under the project name they carry.
+func WithSimulationRouter(r auth.SimulationRouter) Option { return Option{router: r} }
 
 // New wires up the server but does NOT start serving. Call Run().
 //
@@ -153,7 +165,14 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	var pricer chexp.Pricer
 	var propertyCatalogWriter PropertyCatalogWriter
 	var traceNotifier TraceNotifier
+	var router auth.SimulationRouter
+	if authenticator != nil {
+		router = authenticator
+	}
 	for _, o := range opts {
+		if o.router != nil {
+			router = o.router
+		}
 		if o.traceNotifier != nil {
 			traceNotifier = o.traceNotifier
 		}
@@ -173,6 +192,7 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		cfg:             cfg,
 		writer:          writer,
 		auth:            authenticator,
+		router:          router,
 		usage:           usage,
 		metering:        metering,
 		log:             log,
@@ -352,10 +372,20 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	// the existing org/project behavior but deliberately does not add a
 	// workspace attribute to the canonical span payload.
 	var propertyOrganizationID, propertyWorkspaceID string
-	var propertyProjectIDs map[string]struct{}
+	var propertyProjectIDs, hiddenProjectIDs map[string]struct{}
+	var routed auth.RouteOutcome
 	if result := auth.FromContext(ctx); result != nil {
 		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
 		ck := auth.CacheKeyFromContext(ctx)
+		var err error
+		routed, err = h.s.routeSimulation(ctx, result, req.Traces())
+		if err != nil {
+			return ptraceotlp.NewExportResponse(), status.Error(codes.Unavailable, "simulation routing temporarily unavailable")
+		}
+		if routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
+			// Nothing of the request is stored, so nothing of it is metered.
+			return partialSuccessResponse(routed), nil
+		}
 		dropped, err := auth.StampResourceAttrs(ctx, h.s.auth, ck, req.Traces(), result)
 		if err != nil {
 			return ptraceotlp.NewExportResponse(), status.Errorf(codes.InvalidArgument, "auth stamp: %v", err)
@@ -365,6 +395,7 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 		}
 		var scoped bool
 		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
+		hiddenProjectIDs, _ = result.HiddenProjectIDsInWorkspace(propertyWorkspaceID)
 		if !scoped {
 			return ptraceotlp.NewExportResponse(), status.Error(codes.InvalidArgument, "auth project/workspace scope mismatch")
 		}
@@ -374,7 +405,7 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), err
 	}
-	h.s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs)
+	h.s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs)
 
 	payloadBytes, _ := req.MarshalProto()
 	h.s.emitUsage(ctx, req.Traces(), int64(len(payloadBytes)))
@@ -454,10 +485,23 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 
 	// Keep the authenticated workspace out-of-band; see the gRPC path above.
 	var propertyOrganizationID, propertyWorkspaceID string
-	var propertyProjectIDs map[string]struct{}
+	var propertyProjectIDs, hiddenProjectIDs map[string]struct{}
+	var routed auth.RouteOutcome
 	if result := auth.FromContext(r.Context()); result != nil {
 		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
 		ck := auth.CacheKeyFromContext(r.Context())
+		var err error
+		routed, err = s.routeSimulation(r.Context(), result, req.Traces())
+		if err != nil {
+			w.Header().Set("Retry-After", "5")
+			http.Error(w, "simulation routing temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
+			// Nothing of the request is stored, so nothing of it is metered.
+			writeExportResponse(w, ct, partialSuccessResponse(routed))
+			return
+		}
 		dropped, err := auth.StampResourceAttrs(r.Context(), s.auth, ck, req.Traces(), result)
 		if err != nil {
 			http.Error(w, "auth stamp: "+err.Error(), http.StatusBadRequest)
@@ -468,6 +512,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		}
 		var scoped bool
 		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
+		hiddenProjectIDs, _ = result.HiddenProjectIDsInWorkspace(propertyWorkspaceID)
 		if !scoped {
 			http.Error(w, "auth project/workspace scope mismatch", http.StatusBadRequest)
 			return
@@ -480,15 +525,20 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "convert: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs)
+	s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs)
 
 	s.emitUsage(r.Context(), req.Traces(), int64(len(body)))
 
-	// Empty ExportTraceServiceResponse — same wire shape, encoded to match
-	// the request's content-type. The spec requires the response media type
-	// to match the request.
-	resp := ptraceotlp.NewExportResponse()
+	// ExportTraceServiceResponse — same wire shape, encoded to match the
+	// request's content-type. The spec requires the response media type to
+	// match the request.
+	writeExportResponse(w, ct, ptraceotlp.NewExportResponse())
+}
+
+// writeExportResponse answers 200 with resp in the request's media type.
+func writeExportResponse(w http.ResponseWriter, ct string, resp ptraceotlp.ExportResponse) {
 	var out []byte
+	var err error
 	switch ct {
 	case "application/json":
 		out, err = resp.MarshalJSON()
@@ -502,6 +552,100 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", ct)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(out)
+}
+
+// dropNoRouter is the reason given for a sandbox-key request that arrives
+// where nothing can route it.
+const dropNoRouter = "no_router"
+
+// routeSimulation sends the spans of a sandbox key to the hidden project of
+// its agent. An error means the request must be refused as retryable; nothing
+// of it has been stored or changed.
+func (s *Server) routeSimulation(ctx context.Context, result *auth.ResolveResult, traces ptrace.Traces) (auth.RouteOutcome, error) {
+	if s.router == nil {
+		if result.KeyType != auth.KeyTypeIngest {
+			return auth.RouteOutcome{}, nil
+		}
+		// Storing the spans under their own project name would put a
+		// sandbox run in a production project.
+		spans := traces.SpanCount()
+		traces.ResourceSpans().RemoveIf(func(ptrace.ResourceSpans) bool { return true })
+		var out auth.RouteOutcome
+		if spans > 0 {
+			out.Dropped = map[string]int{dropNoRouter: spans}
+			if s.refusalLog.Allow(dropNoRouter, time.Now()) {
+				s.log.Error("simulation span dropped: the server has no router for sandbox keys",
+					"reason", dropNoRouter, "spans", spans)
+			}
+		}
+		return out, nil
+	}
+	outcome, err := s.router.RouteSimulation(ctx, auth.CacheKeyFromContext(ctx), traces, result)
+	switch {
+	case err == nil:
+	case errors.Is(err, auth.ErrRoutingNotReady):
+		// Expected until the first column check, or for the first request
+		// after a cached key is read again.
+		s.log.Debug("simulation routing is not ready; request refused", "err", err)
+	case s.refusalLog.Allow("refused", time.Now()):
+		s.log.Warn("simulation routing refused a request as retryable", "err", err)
+	}
+	return outcome, err
+}
+
+// partialSuccessResponse is the empty success response, carrying the count
+// and reasons of the spans routing dropped when there were any.
+func partialSuccessResponse(routed auth.RouteOutcome) ptraceotlp.ExportResponse {
+	resp := ptraceotlp.NewExportResponse()
+	if n := routed.DroppedSpans(); n > 0 {
+		partial := resp.PartialSuccess()
+		partial.SetRejectedSpans(int64(n))
+		partial.SetErrorMessage("simulation routing dropped " + strconv.Itoa(n) + " spans: " + routed.Summary())
+	}
+	return resp
+}
+
+// enqueueRouted parks the rows of a request. Rows of a hidden project, whether
+// routing put the whole request there or another key's request names one,
+// neither the observed catalog nor the stored-root notifier may see, so they
+// are parked without a tenant scope: both then skip them, and the catalog does
+// not record a scope failure for every drain that carries them.
+func (s *Server) enqueueRouted(
+	rows []map[string]any,
+	ids *curatedwriter.Batch,
+	routed auth.RouteOutcome,
+	organizationID string,
+	workspaceID string,
+	workspaceProjectIDs map[string]struct{},
+	hiddenProjectIDs map[string]struct{},
+) {
+	if routed.Hidden != "" {
+		s.enqueue(rows, ids)
+		return
+	}
+	if len(hiddenProjectIDs) > 0 {
+		var visible, hidden []map[string]any
+		for _, row := range rows {
+			if projectID, _ := row["project_id"].(string); projectID != "" {
+				if _, isHidden := hiddenProjectIDs[projectID]; isHidden {
+					hidden = append(hidden, row)
+					continue
+				}
+			}
+			visible = append(visible, row)
+		}
+		if len(hidden) > 0 {
+			// The payload's identities go with the visible rows, or with the
+			// hidden ones when nothing else is left.
+			if len(visible) == 0 {
+				s.enqueue(hidden, ids)
+				return
+			}
+			s.enqueue(hidden, nil)
+			rows = visible
+		}
+	}
+	s.enqueueScoped(rows, ids, organizationID, workspaceID, workspaceProjectIDs)
 }
 
 // indexByte and trimSpace are lifted here so the file doesn't grow a

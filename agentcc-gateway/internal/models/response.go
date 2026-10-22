@@ -1,6 +1,9 @@
 package models
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"reflect"
+)
 
 // ChatCompletionResponse represents an OpenAI-compatible chat completion response.
 type ChatCompletionResponse struct {
@@ -12,6 +15,35 @@ type ChatCompletionResponse struct {
 	Usage             *Usage   `json:"usage,omitempty"`
 	SystemFingerprint string   `json:"system_fingerprint,omitempty"`
 	ServiceTier       string   `json:"service_tier,omitempty"`
+
+	// Extra carries the response fields this struct does not name, so a
+	// provider's own additions reach the caller: Perplexity's citations and
+	// search_results, and whatever the next provider adds. See passthrough.go.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+func (r *ChatCompletionResponse) UnmarshalJSON(data []byte) error {
+	type Alias ChatCompletionResponse
+	var a Alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*r = ChatCompletionResponse(a)
+	extra, err := captureExtra(data, reflect.TypeFor[ChatCompletionResponse]())
+	if err != nil {
+		return err
+	}
+	r.Extra = extra
+	return nil
+}
+
+func (r ChatCompletionResponse) MarshalJSON() ([]byte, error) {
+	type Alias ChatCompletionResponse
+	data, err := json.Marshal((*Alias)(&r))
+	if err != nil {
+		return nil, err
+	}
+	return mergeExtra(data, r.Extra)
 }
 
 type Choice struct {
@@ -56,6 +88,34 @@ type Usage struct {
 	// call on top of tokens.  A response that reports tokens alone understates
 	// what the request cost.
 	ServerToolUse *ServerToolUsage `json:"server_tool_use,omitempty"`
+
+	// Extra carries a provider's own counters, such as Perplexity's
+	// citation_tokens and num_search_queries. See passthrough.go.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+func (u *Usage) UnmarshalJSON(data []byte) error {
+	type Alias Usage
+	var a Alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*u = Usage(a)
+	extra, err := captureExtra(data, reflect.TypeFor[Usage]())
+	if err != nil {
+		return err
+	}
+	u.Extra = extra
+	return nil
+}
+
+func (u Usage) MarshalJSON() ([]byte, error) {
+	type Alias Usage
+	data, err := json.Marshal((*Alias)(&u))
+	if err != nil {
+		return nil, err
+	}
+	return mergeExtra(data, u.Extra)
 }
 
 // ServerToolUsage mirrors Anthropic's usage.server_tool_use block.
@@ -73,6 +133,35 @@ type StreamChunk struct {
 	Usage             *Usage                 `json:"usage,omitempty"`
 	AgentccMetadata   *AgentccStreamMetadata `json:"agentcc_metadata,omitempty"`
 	SystemFingerprint string                 `json:"system_fingerprint,omitempty"`
+
+	// Extra carries the chunk fields this struct does not name. A provider
+	// that sends its citations on the last chunk rather than in a whole
+	// response needs this to reach a streaming caller. See passthrough.go.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+func (c *StreamChunk) UnmarshalJSON(data []byte) error {
+	type Alias StreamChunk
+	var a Alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*c = StreamChunk(a)
+	extra, err := captureExtra(data, reflect.TypeFor[StreamChunk]())
+	if err != nil {
+		return err
+	}
+	c.Extra = extra
+	return nil
+}
+
+func (c StreamChunk) MarshalJSON() ([]byte, error) {
+	type Alias StreamChunk
+	data, err := json.Marshal((*Alias)(&c))
+	if err != nil {
+		return nil, err
+	}
+	return mergeExtra(data, c.Extra)
 }
 
 type AgentccStreamMetadata struct {

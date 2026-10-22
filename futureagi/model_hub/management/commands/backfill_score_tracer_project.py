@@ -283,9 +283,13 @@ def _projects_for_pending_scores(
     """Load the finite PG project catalog used as the tenancy boundary."""
     from tracer.models.project import Project
 
+    # model_hub 0120 runs this before tracer 0115 adds simulation_agent_id: the base
+    # manager adds no hidden-project filter and values() selects no other column.
+    projects_manager = Project._base_manager
+
     if only_project:
         row = (
-            Project.objects.filter(id=only_project, deleted=False)
+            projects_manager.filter(id=only_project, deleted=False)
             .order_by()
             .values("id", "organization_id", "workspace_id")
             .first()
@@ -299,7 +303,7 @@ def _projects_for_pending_scores(
             base.order_by().values_list("organization_id", flat=True).distinct()
         )
         projects = tuple(
-            Project.objects.filter(organization_id__in=org_ids, deleted=False)
+            projects_manager.filter(organization_id__in=org_ids, deleted=False)
             .order_by("id")
             .values("id", "organization_id", "workspace_id")
         )

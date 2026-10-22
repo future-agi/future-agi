@@ -55,4 +55,34 @@ describe("useGetTraceDetail", () => {
       params: undefined,
     });
   });
+
+  it("sends the run's test_execution_id with the project when opened from a call", async () => {
+    renderHook(
+      () =>
+        useGetTraceDetail("trace-1", {
+          projectId: "hidden-project",
+          testExecutionId: "run-1",
+        }),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+    expect(axios.get).toHaveBeenCalledWith("/tracer/trace/trace-1/", {
+      params: { project_id: "hidden-project", test_execution_id: "run-1" },
+    });
+  });
+
+  it("keeps one run's copy of a trace apart from the plain read in the cache", async () => {
+    const wrapper = createQueryWrapper();
+    renderHook(() => useGetTraceDetail("trace-1", { projectId: "p" }), {
+      wrapper,
+    });
+    renderHook(
+      () =>
+        useGetTraceDetail("trace-1", { projectId: "p", testExecutionId: "run-1" }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
+  });
 });

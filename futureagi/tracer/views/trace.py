@@ -2121,6 +2121,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         Query params:
         - project_id (optional) — the project the trace was opened from.
+        - test_execution_id or call_execution_id (optional) — a run the caller
+          can read; the hidden simulation project of that run's agent is read
+          in place of the caller's projects.
         """
         from tracer.services.clickhouse.v2.trace_detail_reads import (
             TraceDetailReadUnavailable,
@@ -2132,14 +2135,15 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 TraceDetailHandlerV2,
             )
 
+            query = getattr(request, "validated_query_data", {})
             handler = TraceDetailHandlerV2(
                 view=self,
                 request=request,
                 pk=trace_id,
                 analytics=V2AnalyticsQueryService(),
-                project_id=getattr(request, "validated_query_data", {}).get(
-                    "project_id"
-                ),
+                project_id=query.get("project_id"),
+                test_execution_id=query.get("test_execution_id"),
+                call_execution_id=query.get("call_execution_id"),
             )
             return self._gm.success_response(handler.fetch())
         except Trace.DoesNotExist:
@@ -3968,6 +3972,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         Query params:
         - trace_id or legacy traceId (required) — UUID of the voice call trace.
         - project_id (optional) — the project the call was opened from.
+        - test_execution_id or call_execution_id (optional) — a run the caller
+          can read; the hidden simulation project of that run's agent is read
+          in place of the caller's projects.
         """
         trace_id = ""
         try:
@@ -3978,17 +3985,36 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # authorized projects, so a colliding public trace id cannot select
             # another tenant via an arbitrary LIMIT 1.  A project_id pins the
             # read to the project the call was opened from; outside the
-            # caller's scope it resolves like a missing trace.
-            project_scope = _project_queryset_for_request(request)
+            # caller's scope it resolves like a missing trace. A run the caller
+            # can read replaces the caller's projects with the hidden project
+            # of that run's agent.
             pinned_project_id = request.validated_query_data.get("project_id")
-            if pinned_project_id:
-                project_scope = project_scope.filter(id=pinned_project_id)
-            project_ids = [
-                str(project_id)
-                for project_id in project_scope.values_list("id", flat=True).order_by(
-                    "id"
-                )[:4097]
-            ]
+            test_execution_id = request.validated_query_data.get("test_execution_id")
+            call_execution_id = request.validated_query_data.get("call_execution_id")
+            run_scope = None
+            if test_execution_id is not None or call_execution_id is not None:
+                from tracer.services.simulation_project import (
+                    run_scope_project_ids,
+                    simulation_scope_for_run,
+                )
+
+                run_scope = simulation_scope_for_run(
+                    request,
+                    test_execution_id=test_execution_id,
+                    call_execution_id=call_execution_id,
+                )
+            if run_scope is not None:
+                project_ids = run_scope_project_ids(run_scope, pinned_project_id)
+            else:
+                project_scope = _project_queryset_for_request(request)
+                if pinned_project_id:
+                    project_scope = project_scope.filter(id=pinned_project_id)
+                project_ids = [
+                    str(project_id)
+                    for project_id in project_scope.values_list(
+                        "id", flat=True
+                    ).order_by("id")[:4097]
+                ]
             eval_configs_by_project: dict[str, list[CustomEvalConfig]] = {}
 
             def resolve_eval_config_ids(selected_project_id: str) -> list[str]:

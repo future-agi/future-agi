@@ -70,6 +70,8 @@ type RateLimiter struct {
 // LocalLimiter is satisfied by the in-memory ratelimit.RateLimiter.
 type LocalLimiter interface {
 	Allow(key string, limit int) (allowed bool, remaining int, resetSeconds int)
+	AllowTokens(key string, limit int) (allowed bool, remaining int, resetSeconds int)
+	AddTokens(key string, tokens int)
 	Stop()
 }
 
@@ -135,6 +137,21 @@ func (r *RateLimiter) Allow(key string, limit int) (bool, int, int) {
 	// We skip this for now — local will catch up on its own.
 
 	return allowed, remaining, ttl
+}
+
+// AllowTokens and AddTokens hold the token budget in the local limiter, so a
+// token limit counts per pod rather than across the cluster. The sliding
+// window above is a Lua script this package cannot run in tests without a
+// Redis; a second one, counting a number that only the answering pod knows,
+// would ship untested. Per-pod matches how providers.max_concurrent already
+// behaves: with N replicas the effective limit is N times the configured one,
+// which the deployment docs state.
+func (r *RateLimiter) AllowTokens(key string, limit int) (bool, int, int) {
+	return r.local.AllowTokens(key, limit)
+}
+
+func (r *RateLimiter) AddTokens(key string, tokens int) {
+	r.local.AddTokens(key, tokens)
 }
 
 // Stop stops the local fallback limiter.

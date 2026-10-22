@@ -850,6 +850,48 @@ class TestInternalServiceIngestion:
 
         assert response.status_code == 403
 
+    def test_execution_is_filed_under_the_active_version_not_the_latest(
+        self, run_test, agent_definition
+    ):
+        from simulate.services.alk_simulate_ingestion import (
+            create_alk_sim_test_execution,
+        )
+
+        active = agent_definition.create_version(
+            description="p", commit_message="v1", status="active"
+        )
+        agent_definition.create_version(
+            description="p2", commit_message="v2", status="archived"
+        )
+        newest = agent_definition.create_version(
+            description="p3", commit_message="v3", status="draft"
+        )
+        assert agent_definition.latest_version.id == newest.id
+
+        test_execution = create_alk_sim_test_execution(run_test)
+
+        assert test_execution.agent_version_id == active.id
+
+    def test_a_pinned_version_still_wins_over_the_active_one(
+        self, run_test, agent_definition
+    ):
+        from simulate.services.alk_simulate_ingestion import (
+            create_alk_sim_test_execution,
+        )
+
+        agent_definition.create_version(
+            description="p", commit_message="v1", status="active"
+        )
+        pinned = agent_definition.create_version(
+            description="p2", commit_message="v2", status="archived"
+        )
+        run_test.agent_version = pinned
+        run_test.save(update_fields=["agent_version"])
+
+        test_execution = create_alk_sim_test_execution(run_test)
+
+        assert test_execution.agent_version_id == pinned.id
+
 
 @pytest.mark.integration
 @pytest.mark.django_db

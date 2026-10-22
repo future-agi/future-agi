@@ -51,15 +51,26 @@ export const useAgentConfigForm = (schema, agentDetails) => {
   };
 };
 
+// Where a refusal's detail keys land on the form.
+const REFUSAL_FIELDS = {
+  api_key: "apiKey",
+  assistant_id: "assistantId",
+  instrumentation: "observabilityEnabled",
+};
+
 export const useAgentSubmit = ({
   agentDefinitionId,
+  agentKind,
   reset,
   queryClient,
   enqueueSnackbar,
   setError,
+  setFieldError = () => {},
+  setValue = () => {},
   setSelectedVersion,
   onClose,
 }) => {
+  const isSourceAgent = agentKind === "source";
   const { isPending, mutateAsync } = useMutation({
     mutationFn: (payload) =>
       axios.post(
@@ -165,7 +176,7 @@ export const useAgentSubmit = ({
         delete payload.provider;
         delete payload.api_key;
         delete payload.assistant_id;
-        delete payload.observability_enabled;
+        if (!isSourceAgent) delete payload.observability_enabled;
         delete payload.authentication_method;
         delete payload.livekit_url;
         delete payload.livekit_api_key;
@@ -178,7 +189,7 @@ export const useAgentSubmit = ({
       if (payload?.authentication_method !== "api_key") {
         delete payload.api_key;
         delete payload.assistant_id;
-        delete payload.observability_enabled;
+        if (!isSourceAgent) delete payload.observability_enabled;
       }
 
       //remove empty headers
@@ -220,6 +231,12 @@ export const useAgentSubmit = ({
         payload.contact_number = voiceContactNumber;
       }
 
+      // A code agent's description may be empty on purpose; omitting it makes
+      // the version endpoint keep the definition's placeholder text instead.
+      if (isSourceAgent) {
+        payload.description = data.description ?? "";
+      }
+
       const { livekit_api_key, livekit_api_secret, ...safePayload } = payload;
       trackEvent(Events.updateAgentDefClicked, {
         [PropertyName.id]: agentDefinitionId,
@@ -244,6 +261,19 @@ export const useAgentSubmit = ({
 
       if (onClose) onClose(response);
     } catch (err) {
+      const refusal = err.response?.data;
+      // Only this code names form fields; an ordinary 400 also carries details.
+      if (
+        refusal?.code === "observability_prerequisite_missing" &&
+        refusal.details &&
+        typeof refusal.details === "object"
+      ) {
+        Object.entries(REFUSAL_FIELDS).forEach(([key, field]) => {
+          const message = refusal.details[key]?.[0];
+          if (message) setFieldError(field, { type: "server", message });
+        });
+        setValue("observabilityEnabled", false);
+      }
       setError(
         err.response?.data?.error ||
           err.response?.data?.details?.non_field_errors?.[0] ||

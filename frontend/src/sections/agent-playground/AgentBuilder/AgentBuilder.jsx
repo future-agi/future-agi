@@ -33,6 +33,7 @@ import { useParams, useSearchParams, Navigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import useExecutionSync from "../hooks/useExecutionSync";
 import useCanEditAgent from "../hooks/useCanEditAgent";
+import { PLAYGROUND_AGENTS_PATH } from "../agentsTabs";
 
 const SELECTION_PANEL_WIDTH = "230px";
 
@@ -248,7 +249,7 @@ export default function AgentBuilder() {
 
   if (!agentId) {
     enqueueSnackbar("Missing agent", { variant: "error" });
-    return <Navigate to="/dashboard/agents" replace />;
+    return <Navigate to={PLAYGROUND_AGENTS_PATH} replace />;
   }
 
   return (

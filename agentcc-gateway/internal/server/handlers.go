@@ -1487,11 +1487,16 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 
 		if err != nil {
 			// Provider failover exhausted — try model fallback chain.
+			// A chain is configured under the name the caller asked for, so it
+			// is looked up by rc.Model. originalModel is the model to send
+			// upstream, which a target's model_override has already rewritten
+			// — indexing the chain with that found nothing and failed the
+			// request instead of falling back.
 			var modelChain []string
 			if len(rc.OrgModelFallbacks) > 0 {
-				modelChain = rc.OrgModelFallbacks[originalModel]
+				modelChain = rc.OrgModelFallbacks[rc.Model]
 			} else if mf := h.modelFallbacks.Load(); mf != nil {
-				modelChain = mf.GetChain(originalModel)
+				modelChain = mf.GetChain(rc.Model)
 			}
 
 			for _, fbModel := range modelChain {
@@ -1603,11 +1608,16 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				return firstErr
 			}
 
+			// A chain is configured under the name the caller asked for, so it
+			// is looked up by rc.Model. originalModel is the model to send
+			// upstream, which a target's model_override has already rewritten
+			// — indexing the chain with that found nothing and failed the
+			// request instead of falling back.
 			var modelChain []string
 			if len(rc.OrgModelFallbacks) > 0 {
-				modelChain = rc.OrgModelFallbacks[originalModel]
+				modelChain = rc.OrgModelFallbacks[rc.Model]
 			} else if mf := h.modelFallbacks.Load(); mf != nil {
-				modelChain = mf.GetChain(originalModel)
+				modelChain = mf.GetChain(rc.Model)
 			}
 
 			for _, fbModel := range modelChain {

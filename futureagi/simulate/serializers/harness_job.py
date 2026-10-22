@@ -432,13 +432,16 @@ class HarnessJobCreateSerializer(serializers.Serializer):
     platform_run_id = serializers.CharField(
         max_length=255, required=False, allow_null=True
     )
-    metadata = serializers.DictField(default=dict)
+    metadata = serializers.DictField(
+        child=JsonValueField(allow_null=True), default=dict
+    )
 
     def validate_metadata(self, value):
         reserved = {
             "attempt_cycle_start",
             "parallelism_clamped",
             "parallelism_warnings",
+            "observability_refusal",
         }
         if reserved.intersection(value):
             raise serializers.ValidationError(
@@ -844,7 +847,7 @@ class HarnessJobInfoSerializer(serializers.Serializer):
     job_id = serializers.UUIDField()
     run_id = serializers.UUIDField()
     source = serializers.DictField()
-    metadata = serializers.DictField()
+    metadata = serializers.DictField(child=JsonValueField(allow_null=True))
     runtime = serializers.DictField(required=False)
     run_test_id = serializers.UUIDField(allow_null=True)
     test_execution_id = serializers.UUIDField(allow_null=True)

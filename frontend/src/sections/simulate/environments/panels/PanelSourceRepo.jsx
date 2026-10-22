@@ -8,6 +8,7 @@ import ProviderRow from "../components/ProviderRow";
 import ContinueRow from "../components/ContinueRow";
 import EnvironmentValues from "./EnvironmentValues";
 import ScenarioCount from "./ScenarioCount";
+import ObservabilityChoice from "./ObservabilityChoice";
 import { DEFAULT_SCENARIOS, isValidScenarioCount } from "./scenarioCountRules";
 import RuntimePreflight from "./RuntimePreflight";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
@@ -36,6 +37,7 @@ const initial = {
   egress: "",
   secretFiles: [],
   scenarioCount: DEFAULT_SCENARIOS,
+  observabilityEnabled: false,
 };
 
 function reducer(s, a) {
@@ -52,7 +54,7 @@ export default function PanelSourceRepo() {
     dispatch({ field, value });
     build.resetPreflight();
   };
-  const { provider, repo, branch, entry, visibility, installationId, envText, egress, secretFiles, scenarioCount } = form;
+  const { provider, repo, branch, entry, visibility, installationId, envText, egress, secretFiles, scenarioCount, observabilityEnabled } = form;
   const isPrivate = visibility === REPO_VISIBILITY.PRIVATE;
   // The repo must parse to owner/repo (or a GitHub URL) before we can preflight.
   // Only flag a non-empty, unparseable value so the field isn't red before typing.
@@ -74,6 +76,7 @@ export default function PanelSourceRepo() {
     egress: egress.trim() || null,
     secretFiles,
     scenarioCount: Number(scenarioCount) || undefined,
+    observabilityEnabled,
   });
 
   return (
@@ -137,6 +140,7 @@ export default function PanelSourceRepo() {
         secretFiles={secretFiles} onSecretFiles={set("secretFiles")}
       />
       <ScenarioCount value={scenarioCount} onChange={set("scenarioCount")} />
+      <ObservabilityChoice checked={observabilityEnabled} onChange={set("observabilityEnabled")} />
       <ParallelismField
         value={build.parallelism}
         input={build.parallelismInput}
