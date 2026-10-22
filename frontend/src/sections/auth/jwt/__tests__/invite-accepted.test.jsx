@@ -62,6 +62,7 @@ describe("InviteAcceptedPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     h.authenticated = false;
+    h.switchOrganization.mockResolvedValue(undefined);
     h.post.mockResolvedValue({
       data: { joined: true, org_name: "Org B", organization_id: "org-b-id" },
     });
@@ -119,5 +120,17 @@ describe("InviteAcceptedPage", () => {
       await screen.findByPlaceholderText("Enter your password"),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Join Org B" })).toBeNull();
+  });
+
+  it("still lands on the dashboard without an error when the org switch fails after Join", async () => {
+    h.authenticated = true;
+    h.get.mockResolvedValue(preview(true));
+    h.switchOrganization.mockRejectedValue(new Error("switch failed"));
+
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Join Org B" }));
+
+    await waitFor(() => expect(h.navigate).toHaveBeenCalledWith("/dashboard"));
+    expect(screen.queryByText("An unexpected error occurred.")).toBeNull();
   });
 });

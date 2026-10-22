@@ -143,7 +143,12 @@ export default function InviteAcceptedPage() {
         variant: "success",
       });
       if (authenticated) {
-        await switchOrganization(response?.data?.organization_id);
+        try {
+          await switchOrganization(response?.data?.organization_id);
+        } catch {
+          // The join already succeeded and the org is in the switcher;
+          // switchOrganization has shown its own toast.
+        }
         navigate(paths.dashboard.root);
       } else {
         // The backend lands them in this org at their next login.
