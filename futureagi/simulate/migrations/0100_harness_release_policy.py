@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("simulate", "0098_harness_releases"),
+        ("simulate", "0099_harness_releases"),
     ]
 
     operations = [
