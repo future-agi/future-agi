@@ -114,7 +114,7 @@ test('EVAL-E2E-020: sample whole contacts, retain late spans, and explicitly rer
     await page.getByRole('menuitem', { name: projectName, exact: true }).click();
     await page.getByText('New incoming data', { exact: true }).click();
     await page.getByRole('checkbox', { name: 'Contact-aware sampling policy' }).check();
-    await page.getByRole('combobox', { name: 'Selection', exact: true }).click();
+    await page.getByRole('combobox', { name: /^Selection(?: |$)/ }).click();
     await page.getByRole('option', { name: 'Target units', exact: true }).click();
     await page.getByRole('spinbutton', { name: 'Target units', exact: true }).fill('1');
 
