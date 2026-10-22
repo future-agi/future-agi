@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from types import SimpleNamespace
 from uuid import UUID
 
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Q
 
 from tracer.models.derived_metric import (
     DerivedMetric,
@@ -186,17 +187,41 @@ class DerivedMonitorQueryBuilder:
         )
 
 
-def notify_run_monitors(run: DerivedMetricRun) -> None:
-    """Use the existing alert delivery path, once per committed run per monitor."""
+def _superseded_for(monitor_id, run: DerivedMetricRun) -> bool:
+    """True when this monitor already evaluated a newer run of the same version.
+
+    "Newer" is the same ``(as_of, id)`` order every derived-monitor read uses. An
+    older observation must never step a monitor back: neither a late retry nor a
+    recompute of a run the monitor never evaluated may alert after a newer value.
+    """
+    return (
+        DerivedMetricMonitorDelivery.objects.filter(
+            monitor_id=monitor_id, run__definition_id=run.definition_id
+        )
+        .filter(
+            Q(run__as_of__gt=run.as_of) | Q(run__as_of=run.as_of, run_id__gt=run.id)
+        )
+        .exists()
+    )
+
+
+def notify_run_monitors(run: DerivedMetricRun, monitor_id=None) -> int:
+    """Use the existing alert delivery path, once per committed run per monitor.
+
+    ``monitor_id`` restricts delivery to one monitor (the scheduler retry path).
+    Returns how many monitors consumed this run, i.e. committed a ledger row. A
+    run whose overall value is missing consumes nothing and returns 0, and so
+    does a run that a monitor's newer evaluated run supersedes.
+    """
     from tracer.models.monitor import UserAlertMonitor
     from tracer.utils.monitor import _check_static_threshold
 
     metric = run.definition.metric
     if run.definition.version != metric.current_version:
-        return
+        return 0
     values = read_results(run)["results"]
     if not values or values[0]["value"] is None:
-        return
+        return 0
     ids = UserAlertMonitor.objects.filter(
         metric_type="derived_metric",
         metric=str(metric.id),
@@ -206,7 +231,10 @@ def notify_run_monitors(run: DerivedMetricRun) -> None:
         is_mute=False,
         deleted=False,
     ).values_list("id", flat=True)
-    for monitor_id in ids.iterator(chunk_size=100):
+    if monitor_id is not None:
+        ids = ids.filter(pk=monitor_id)
+    consumed = 0
+    for current_id in ids.iterator(chunk_size=100):
         with transaction.atomic():
             # The monitor lock serializes all deliveries, including different
             # run IDs. The ledger (not the last-run display pointer) is the
@@ -214,7 +242,7 @@ def notify_run_monitors(run: DerivedMetricRun) -> None:
             monitor = (
                 UserAlertMonitor.objects.select_for_update()
                 .filter(
-                    pk=monitor_id,
+                    pk=current_id,
                     metric_type="derived_metric",
                     metric=str(metric.id),
                     project_id=metric.project_id,
@@ -228,8 +256,9 @@ def notify_run_monitors(run: DerivedMetricRun) -> None:
             if (
                 monitor is None
                 or DerivedMetricMonitorDelivery.objects.filter(
-                    monitor_id=monitor_id, run=run
+                    monitor_id=current_id, run=run
                 ).exists()
+                or _superseded_for(current_id, run)
             ):
                 continue
             current = DerivedMonitorQueryBuilder(monitor)
@@ -246,24 +275,61 @@ def notify_run_monitors(run: DerivedMetricRun) -> None:
             )
             monitor.last_derived_run_id = run.id
             monitor.save(update_fields=["last_derived_run_id"])
+        consumed += 1
+    return consumed
+
+
+# A notification that failed when its run committed is retried by the monitor
+# scheduler for this long after that commit (a recompute commits again and so
+# restarts the clock), even when the run's window ended long before the monitor's
+# own alert_frequency. Older failures are not replayed: an alert about a window
+# that stale would be noise, and the bound keeps the retry set finite.
+DELIVERY_RETRY_LOOKBACK = timedelta(hours=48)
 
 
 def process_derived_monitor(monitor, now) -> None:
-    """A scheduled check consumes the newest run; it does not rescan telemetry."""
-    from datetime import timedelta
+    """A scheduled check consumes the newest run; it does not rescan telemetry.
 
+    Only the HEAD is considered: the newest committed run of the current metric
+    version whose window has ended, in the ``(as_of, id)`` order every derived
+    monitor read uses. It is delivered when this monitor has no
+    ``DerivedMetricMonitorDelivery`` row for it and either
+
+    * its window ended inside the monitor's alert window (the original rule), or
+    * it was committed while the monitor existed and within
+      ``DELIVERY_RETRY_LOOKBACK``: the completion-time notification should have
+      reached this monitor, so a missing ledger row means that delivery failed.
+
+    An older run is never delivered once a newer one exists. A newest run whose
+    value is missing alerts nothing and does NOT fall back to an older value (the
+    same rule as ``build_metric_value_query``). The (monitor, run) ledger keeps
+    A -> B -> recompute A a no-op, and a delivery exception leaves no row, so the
+    next tick retries the same run. Each tick reads at most one stored result.
+    """
     DerivedMonitorQueryBuilder(monitor)
-    run = (
+    head = (
         DerivedMetricRun.objects.filter(
             definition__metric_id=monitor.metric,
             definition__version=F("definition__metric__current_version"),
             result_id__isnull=False,
-            window_end__gt=now - timedelta(minutes=monitor.alert_frequency),
             window_end__lte=now,
         )
         .select_related("definition__metric__project", "definition__metric__workspace")
         .order_by("-as_of", "-id")
         .first()
     )
-    if run:
-        notify_run_monitors(run)
+    if (
+        head is None
+        or DerivedMetricMonitorDelivery.objects.filter(
+            monitor_id=monitor.id, run=head
+        ).exists()
+    ):
+        return
+    committed_at = head.completed_at or head.as_of
+    in_alert_window = head.window_end > now - timedelta(minutes=monitor.alert_frequency)
+    failed_delivery = (
+        committed_at >= monitor.created_at
+        and committed_at > now - DELIVERY_RETRY_LOOKBACK
+    )
+    if in_alert_window or failed_delivery:
+        notify_run_monitors(head, monitor_id=monitor.id)
