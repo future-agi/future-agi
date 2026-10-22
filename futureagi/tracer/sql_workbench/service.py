@@ -3,6 +3,7 @@
 import csv
 import io
 import os
+import time
 from datetime import timedelta
 from uuid import UUID
 
@@ -31,6 +32,29 @@ MAX_ORG_RESULT_BYTES_24H = 512 * 1024 * 1024
 MAX_ACTOR_QUERIES_24H = 1500
 MAX_ORG_QUERIES_24H = 30000
 TERMINAL_STATES = ("succeeded", "failed", "cancelled")
+# A queued job expires if no worker starts it within this window.
+QUEUE_SECONDS = 90
+# Measured from the worker's actual start, never from submission: the Temporal
+# activity limit, which also bounds the 30-second ClickHouse execution ceiling.
+EXECUTION_SECONDS = 45
+# A cancel request waits at most this long for the worker to confirm that its
+# native query stopped (the watchdog polls every 0.5 s) before it returns. The
+# slot stays held either way until that confirmation or the execution deadline.
+CANCEL_CONFIRM_SECONDS = 3.0
+CANCEL_POLL_SECONDS = 0.2
+
+
+def active_filter(now):
+    """Jobs that hold an admission slot.
+
+    A running job that was cancelled keeps its slot (state ``cancelled`` with no
+    ``finished_at``) until its worker confirms the ClickHouse query stopped or
+    its execution deadline passes, so a slot is never handed out while the
+    previous scan may still be running, and a lost worker cannot hold it forever.
+    """
+    return Q(state__in=("queued", "running"), deadline__gt=now) | Q(
+        state="cancelled", finished_at__isnull=True, deadline__gt=now
+    )
 
 
 def object_id(value):
@@ -91,7 +115,7 @@ def submit(actor, *, project_id, sql, start, end):
         # admit too many concurrent scans on a horizontally scaled deployment.
         Organization.objects.select_for_update().get(id=actor.organization_id)
         recent = Q(created_at__gte=now - timedelta(hours=24))
-        active = Q(state__in=("queued", "running"), deadline__gt=now)
+        active = active_filter(now)
         actor_filter = Q(created_by_id=actor.user_id)
         reservation = Case(
             When(active, then=Value(MAX_RESULT_BYTES)),
@@ -141,7 +165,7 @@ def submit(actor, *, project_id, sql, start, end):
             sql=sql,
             start=start,
             end=end,
-            deadline=now + timedelta(seconds=90),
+            deadline=now + timedelta(seconds=QUEUE_SECONDS),
             expires_at=now + timedelta(hours=24),
         )
 
@@ -263,10 +287,35 @@ def history(actor, project_id, offset):
 
 def cancel(actor, project_id, job_id):
     job = execution(actor, project_id, job_id)
-    SQLExecution.objects.filter(id=job.id, state__in=["queued", "running"]).update(
+    # A queued job never reached ClickHouse, so it is finished at once.
+    SQLExecution.objects.filter(id=job.id, state="queued").update(
         state="cancelled", finished_at=timezone.now(), result={}
     )
+    # A running scan stops only when the worker's watchdog sends the native
+    # cancel and the worker returns. Until it confirms (finished_at) or the
+    # execution deadline passes, the job still holds its admission slot.
+    if (
+        SQLExecution.objects.filter(id=job.id, state="running").update(
+            state="cancelled", finished_at=None, result={}
+        )
+        # Inside a caller's transaction the worker cannot see this cancel yet.
+        and not connection.in_atomic_block
+    ):
+        wait_until = time.monotonic() + CANCEL_CONFIRM_SECONDS
+        while time.monotonic() < wait_until:
+            if not SQLExecution.objects.filter(
+                active_filter(timezone.now()), id=job.id
+            ).exists():
+                break
+            time.sleep(CANCEL_POLL_SECONDS)
     return snapshot(execution(actor, project_id, job_id))
+
+
+def confirm_stopped(job_id):
+    """Worker-side: the native query has ended, so a cancelled job frees its slot."""
+    return SQLExecution.objects.filter(
+        id=job_id, state="cancelled", finished_at__isnull=True
+    ).update(finished_at=timezone.now())
 
 
 def saved_queries(actor, project_id):

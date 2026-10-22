@@ -1032,3 +1032,208 @@ def test_server_table_filters_block_unscoped_sql_under_the_locked_profile(
         if created:
             client.execute(f"DROP USER {principal}")
         client.execute(f"DROP VIEW {view} SYNC")
+
+
+def _fill_owned_spans(client, scope, rows=60_000):
+    # 60 blocks of 1,000 owned rows; at 0.5 ms per row a full scan takes far
+    # longer than any cancellation bound asserted below.
+    client.execute(
+        f"INSERT INTO {scope.database}.spans (project_id, org_id, id, trace_id, name, start_time) "
+        f"SELECT toUUID('{scope.project_id}'), toUUID('{scope.organization_id}'), "
+        "concat('filler-', toString(number)), 'filler-trace', 'filler', now64(6, 'UTC') "
+        f"FROM numbers({rows})"
+    )
+
+
+def _running(client, query_id):
+    return client.execute(
+        "SELECT count() FROM system.processes WHERE query_id=%(q)s",
+        {"q": str(query_id)},
+    )[0][0]
+
+
+def test_native_cancel_stops_a_running_scan_on_the_real_server(
+    scoped_clickhouse, monkeypatch
+):
+    """A long scan on the locked profile ends promptly after a cancel signal."""
+    import time
+
+    from django.test import override_settings
+
+    from tracer.sql_workbench.catalog import additional_table_filters
+    from tracer.sql_workbench.runner import QueryCancelled, run
+
+    client, scope, _ = scoped_clickhouse
+    _fill_owned_spans(client, scope)
+    principal, password, statements = _service_principal(client, scope)
+    created = False
+    try:
+        for statement in statements:
+            client.execute(statement)
+            created = True
+        monkeypatch.setenv("SQL_WORKBENCH_CH_USER", principal)
+        monkeypatch.setenv("SQL_WORKBENCH_CH_PASSWORD", password)
+        monkeypatch.setenv("SQL_WORKBENCH_CH_SECURE", "false")
+        query_id = uuid4()
+        started = time.monotonic()
+        with override_settings(CLICKHOUSE_V2=_service_settings(client, scope.database)):
+            with pytest.raises(QueryCancelled):
+                run(
+                    f"SELECT sum(sleepEachRow(0.0005)) FROM {scope.database}.spans",
+                    query_id,
+                    lambda: time.monotonic() - started > 1.0,
+                    table_filters=additional_table_filters(scope),
+                )
+        elapsed = time.monotonic() - started
+        # Cancel observed at the next 0.5 s watchdog poll, then the server stops
+        # between 0.5 s blocks: far below the time the full scan would take.
+        assert elapsed < 6, elapsed
+        for _ in range(30):
+            if not _running(client, query_id):
+                break
+            time.sleep(0.1)
+        assert _running(client, query_id) == 0
+        print(f"native cancel returned after {elapsed:.2f}s")
+    finally:
+        if created:
+            client.execute(f"DROP USER {principal}")
+
+
+@pytest.mark.django_db(transaction=True)
+def test_service_cancel_holds_the_slot_until_the_native_scan_has_stopped(
+    scoped_clickhouse, monkeypatch
+):
+    """End to end on real PostgreSQL and ClickHouse: submit, run, cancel.
+
+    The worker runs in a thread exactly as the Temporal activity body does,
+    against the locked service principal. Only the compile step is replaced,
+    with a deliberately slow scan of the tenant's own rows (the catalog has
+    no sleep function), so a cancel arrives while ClickHouse is executing.
+    """
+    import threading
+    import time
+
+    from django.test import override_settings
+    from django.utils import timezone as django_timezone
+
+    from accounts.models.organization import Organization
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from accounts.models.workspace import Workspace, WorkspaceMembership
+    from model_hub.models.ai_model import AIModel
+    from tracer.models.project import Project
+    from tracer.models.sql_query import SQLExecution
+    from tracer.sql_workbench import service, tasks
+    from tracer.sql_workbench.access import Actor
+
+    client, scope, _ = scoped_clickhouse
+    _fill_owned_spans(client, scope)
+    org = Organization.objects.create(id=scope.organization_id, name=f"sql-{uuid4()}")
+    user = User(
+        id=uuid4(), email=f"sql-{uuid4()}@example.test", name="SQL", organization=org
+    )
+    User.objects.bulk_create([user])
+    workspace = Workspace(
+        id=scope.workspace_id, name="sql-live", organization=org, created_by=user
+    )
+    Workspace.no_workspace_objects.bulk_create([workspace])
+    membership = OrganizationMembership(
+        id=uuid4(), user=user, organization=org, level=3
+    )
+    OrganizationMembership.no_workspace_objects.bulk_create([membership])
+    WorkspaceMembership.no_workspace_objects.bulk_create(
+        [
+            WorkspaceMembership(
+                id=uuid4(),
+                user=user,
+                workspace=workspace,
+                level=3,
+                organization_membership=membership,
+            )
+        ]
+    )
+    project = Project(
+        id=scope.project_id,
+        name="sql-live",
+        organization=org,
+        workspace=workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+    )
+    Project.no_workspace_objects.bulk_create([project])
+    actor = Actor(user.id, org.id, workspace.id)
+    principal, password, statements = _service_principal(client, scope)
+    created = False
+    workers = []
+
+    def dispatch(args, **_):
+        worker = threading.Thread(target=tasks.execute_sql, args=args, daemon=True)
+        workers.append(worker)
+        worker.start()
+
+    try:
+        for statement in statements:
+            client.execute(statement)
+            created = True
+        monkeypatch.setenv("SQL_WORKBENCH_CH_USER", principal)
+        monkeypatch.setenv("SQL_WORKBENCH_CH_PASSWORD", password)
+        monkeypatch.setenv("SQL_WORKBENCH_CH_SECURE", "false")
+        monkeypatch.setattr(
+            tasks,
+            "compile_query",
+            lambda sql, scope: (
+                f"SELECT sum(sleepEachRow(0.0005)) FROM {scope.database}.spans"
+            ),
+        )
+        monkeypatch.setattr(tasks.execute_sql, "apply_async", dispatch)
+        with override_settings(
+            CLICKHOUSE_V2=_service_settings(client, scope.database),
+            CH25_EVAL_LOGGER_TABLE=scope.eval_table,
+        ):
+            job = service.submit(
+                actor,
+                project_id=project.id,
+                sql="SELECT count() FROM spans",
+                start=scope.start,
+                end=scope.end,
+            )
+            deadline = time.monotonic() + 20
+            while not _running(client, job.id) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            assert _running(client, job.id) == 1, SQLExecution.objects.get(id=job.id)
+            requested = time.monotonic()
+            snapshot = service.cancel(actor, project.id, job.id)
+            waited = time.monotonic() - requested
+            assert snapshot["state"] == "cancelled"
+            assert waited < service.CANCEL_CONFIRM_SECONDS + 1
+
+            def holds_slot():
+                return SQLExecution.objects.filter(
+                    service.active_filter(django_timezone.now()), id=job.id
+                ).exists()
+
+            job.refresh_from_db()
+            confirmed_in_cancel = job.finished_at is not None
+            if not confirmed_in_cancel:
+                # A slow host: cancel() stopped waiting, but the slot is still
+                # held while the worker has not confirmed the stop.
+                assert holds_slot()
+            for worker in workers:
+                worker.join(timeout=15)
+                assert not worker.is_alive()
+            job.refresh_from_db()
+            assert job.state == "cancelled" and job.finished_at is not None
+            assert not holds_slot()
+            # Confirmation means run() returned after the server ended the scan.
+            for _ in range(20):
+                if not _running(client, job.id):
+                    break
+                time.sleep(0.1)
+            assert _running(client, job.id) == 0
+            print(
+                f"cancel returned after {waited:.2f}s; "
+                f"confirmed before returning: {confirmed_in_cancel}"
+            )
+    finally:
+        if created:
+            client.execute(f"DROP USER {principal}")

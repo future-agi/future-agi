@@ -1,6 +1,7 @@
 """One bounded job, no automatic retries of an analytical scan."""
 
 import logging
+from datetime import timedelta
 
 from tfc.temporal import temporal_activity
 from django.utils import timezone
@@ -11,7 +12,7 @@ from .access import Actor, authorize
 from .compiler import compile_query
 from .catalog import CatalogUnavailable, additional_table_filters
 from .runner import QueryCancelled, QueryUnavailable, run
-from .service import query_scope
+from .service import EXECUTION_SECONDS, confirm_stopped, query_scope
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +27,12 @@ logger = logging.getLogger(__name__)
     max_retries=0,
 )
 def execute_sql(job_id):
+    now = timezone.now()
+    # The queue deadline admits the start; the execution deadline is re-anchored
+    # to this actual start, so time spent waiting in the queue never shortens it.
     if not SQLExecution.objects.filter(
-        id=job_id, state="queued", deadline__gt=timezone.now()
-    ).update(state="running"):
+        id=job_id, state="queued", deadline__gt=now
+    ).update(state="running", deadline=now + timedelta(seconds=EXECUTION_SECONDS)):
         return
     job = SQLExecution.objects.get(id=job_id)
     actor = Actor(job.created_by_id, job.organization_id, job.workspace_id)
@@ -72,6 +76,10 @@ def execute_sql(job_id):
         SQLExecution.objects.filter(id=job_id, state="running").update(
             state="failed", error=message[:300], result={}, finished_at=timezone.now()
         )
+    finally:
+        # run() has returned and closed its native connection: a user cancel
+        # that arrived during the scan can release its admission slot now.
+        confirm_stopped(job_id)
 
 
 @temporal_activity(

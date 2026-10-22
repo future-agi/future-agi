@@ -821,3 +821,151 @@ def test_service_never_sends_a_malformed_id_to_the_database(tenants, bad_id):
     )
     with pytest.raises(AccessDenied):
         service.add_widget(actor, project.id, saved.id, bad_id)
+
+
+def _submit(actor, project):
+    now = timezone.now()
+    return service.submit(
+        actor,
+        project_id=project.id,
+        sql="SELECT count() FROM spans",
+        start=now - timedelta(hours=1),
+        end=now,
+    )
+
+
+def test_cancelled_scan_holds_its_admission_slot_until_the_worker_confirms(
+    tenants, django_capture_on_commit_callbacks
+):
+    (actor, project, _), _ = tenants
+    job = create_job(actor, project, state="running")
+    snapshot = service.cancel(actor, project.id, job.id)
+    assert snapshot["state"] == "cancelled"
+    job.refresh_from_db()
+    # The native query may still be running until the worker's watchdog acts.
+    assert job.state == "cancelled" and job.finished_at is None
+    with (
+        patch("tracer.sql_workbench.service.connection_config"),
+        patch("tracer.sql_workbench.tasks.execute_sql.apply_async"),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        with pytest.raises(service.AdmissionFull):
+            _submit(actor, project)
+        assert service.confirm_stopped(job.id) == 1
+        assert service.confirm_stopped(job.id) == 0
+        _submit(actor, project)
+    job.refresh_from_db()
+    assert job.finished_at is not None
+
+
+def test_a_queued_cancel_frees_the_slot_at_once(
+    tenants, django_capture_on_commit_callbacks
+):
+    (actor, project, _), _ = tenants
+    job = create_job(actor, project)
+    service.cancel(actor, project.id, job.id)
+    job.refresh_from_db()
+    assert job.state == "cancelled" and job.finished_at is not None
+    with (
+        patch("tracer.sql_workbench.service.connection_config"),
+        patch("tracer.sql_workbench.tasks.execute_sql.apply_async"),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        _submit(actor, project)
+
+
+def test_a_lost_worker_holds_a_cancelled_slot_only_until_its_deadline(
+    tenants, django_capture_on_commit_callbacks
+):
+    (actor, project, _), _ = tenants
+    create_job(
+        actor,
+        project,
+        state="cancelled",
+        deadline=timezone.now() - timedelta(seconds=1),
+    )
+    with (
+        patch("tracer.sql_workbench.service.connection_config"),
+        patch("tracer.sql_workbench.tasks.execute_sql.apply_async"),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        _submit(actor, project)
+
+
+def test_worker_releases_a_cancelled_slot_only_after_the_scan_returns(tenants):
+    from tracer.sql_workbench.runner import QueryCancelled
+    from tracer.sql_workbench.tasks import execute_sql
+
+    (actor, project, _), _ = tenants
+    job = create_job(actor, project)
+    observed = {}
+
+    def scan(sql, query_id, cancelled, *, table_filters):
+        assert "'project_id = toUUID(" in table_filters and not cancelled()
+        service.cancel(actor, project.id, job.id)  # The user cancels mid-scan.
+        observed["held"] = SQLExecution.objects.filter(
+            service.active_filter(timezone.now()), id=job.id
+        ).exists()
+        observed["seen"] = cancelled()  # The watchdog's next poll sees it.
+        raise QueryCancelled()
+
+    with patch("tracer.sql_workbench.tasks.run", scan):
+        # The activity body itself: the Temporal wrapper would close this
+        # test's transactional connection.
+        execute_sql._original_func(str(job.id))
+    assert observed == {"held": True, "seen": True}
+    job.refresh_from_db()
+    assert job.state == "cancelled" and job.finished_at is not None
+    assert not SQLExecution.objects.filter(
+        service.active_filter(timezone.now()), id=job.id
+    ).exists()
+
+
+def test_execution_deadline_is_anchored_to_the_actual_start(tenants, monkeypatch):
+    from types import SimpleNamespace
+
+    from tracer.sql_workbench import tasks
+    from tracer.sql_workbench.runner import QueryCancelled
+
+    (actor, project, _), _ = tenants
+    job = create_job(actor, project)
+    # The job waited 85 of its 90 queue seconds before a worker picked it up.
+    started = timezone.now()
+    SQLExecution.objects.filter(id=job.id).update(
+        deadline=started + timedelta(seconds=5)
+    )
+    clock = SimpleNamespace(now=lambda: started)
+    monkeypatch.setattr(tasks, "timezone", clock)
+
+    def scan(sql, query_id, cancelled, *, table_filters):
+        # Twenty seconds into a scan bounded by 30 s on the server: alive.
+        clock.now = lambda: started + timedelta(seconds=20)
+        if cancelled():
+            raise QueryCancelled()
+        return {
+            "columns": [{"name": "n", "type": "UInt64"}],
+            "rows": [[1]],
+            "truncated": False,
+            "row_count": 1,
+            "result_bytes": 10,
+            "elapsed_ms": 20_000,
+        }
+
+    with patch.object(tasks, "run", scan):
+        tasks.execute_sql._original_func(str(job.id))
+    job.refresh_from_db()
+    assert job.state == "succeeded", job.error
+    assert job.deadline == started + timedelta(seconds=service.EXECUTION_SECONDS)
+
+
+def test_a_job_whose_queue_window_expired_never_starts(tenants):
+    from tracer.sql_workbench import tasks
+
+    (actor, project, _), _ = tenants
+    job = create_job(actor, project, deadline=timezone.now() - timedelta(seconds=1))
+    with patch.object(tasks, "run") as scan:
+        tasks.execute_sql._original_func(str(job.id))
+    scan.assert_not_called()
+    job.refresh_from_db()
+    assert job.state == "queued"
+    assert service.snapshot(job)["state"] == "failed"
