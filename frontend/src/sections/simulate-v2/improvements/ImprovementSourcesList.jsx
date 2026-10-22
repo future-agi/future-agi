@@ -245,7 +245,14 @@ export default function ImprovementSourcesList({ agent }) {
           startIcon={<Iconify icon="mage:filter" width={16} />}
           endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
           onClick={(e) => setFilterAnchorEl(e.currentTarget)}
-          sx={{ textTransform: "none", fontSize: "13px", height: "32px", borderColor: activeFilterCount ? "primary.main" : "divider", color: activeFilterCount ? "primary.main" : "text.secondary" }}
+          sx={{
+            textTransform: "none", fontSize: "13px", height: "32px",
+            /* Selected reads neutral, never purple — purple is for actions. */
+            borderColor: activeFilterCount ? "text.primary" : "divider",
+            color: activeFilterCount ? "text.primary" : "text.secondary",
+            bgcolor: activeFilterCount ? "action.selected" : "transparent",
+            "&:hover": { borderColor: activeFilterCount ? "text.primary" : "text.disabled", bgcolor: activeFilterCount ? "action.selected" : "action.hover" },
+          }}
         >
           {`Filter${activeFilterCount ? ` (${activeFilterCount})` : ""}`}
         </Button>

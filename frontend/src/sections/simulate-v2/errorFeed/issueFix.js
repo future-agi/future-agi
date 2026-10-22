@@ -17,6 +17,7 @@ import { limitsOf } from "../agents/agentLimits";
 import { startImproverSession, useIntegrations } from "../_mock/integrations";
 import { asCoderImprovement } from "../_mock/improverAttempts";
 import { rereadFor } from "../_mock/improvementPolicy";
+import { envStateOnVersion } from "../_mock/improvementStart";
 import { currentUser } from "../_mock/scenarioProvenance";
 import {
   agentKeyForIssue, envsForAgent, evidenceGateOf, fixGateOf, fixStatusOf, issueFixRecord, issueProjectOf, todayRunFor,
@@ -65,9 +66,12 @@ export function useIssueFix(issue) {
     const limits = limitsOf(state, agentKey);
     /* Measure today: the environment's scenarios on the production version,
        recorded as a run of it — the baseline and must-pass set come from it. */
-    const today = todayRunFor(env, es, issue.cluster_id);
+    /* After an outside change, today is measured on the re-read version, so
+       the baseline's version and its scores match. */
+    const esOnVersion = envStateOnVersion(es, reread);
+    const today = todayRunFor(env, esOnVersion, issue.cluster_id);
     if (today) commit({ type: "recordRun", envId: env.id, run: today });
-    const esNow = today ? { ...es, runs: [today, ...(es?.runs || [])] } : es;
+    const esNow = today ? { ...esOnVersion, runs: [today, ...(esOnVersion?.runs || [])] } : esOnVersion;
     const built = issueFixRecord({
       issue, env, es: esNow, drafts, budget, regressionEnvIds, state, reread, textSearch, targetMember, rootCause, diagnosis, lineage, today,
       limits: minutes ? { ...limits, budget: { ...limits.budget, minutes } } : limits,

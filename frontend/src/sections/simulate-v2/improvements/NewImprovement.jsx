@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Box, Typography } from "@mui/material";
 import { useSimStore, useConnectedAgents } from "../store";
 import { mainEnvOf, agentStatusOf } from "../_mock/agentLifecycle";
-import { baseRunOf, buildImprovement } from "../_mock/improvementStart";
+import { baseRunOf, buildImprovement, todaySpend } from "../_mock/improvementStart";
 import { productionAgentVersion } from "../_mock/versions";
 import { isComingSoon } from "../_mock/rsiModel";
 import ImprovementSetup from "../run/fixmyagent/ImprovementSetup";
@@ -48,6 +48,8 @@ export default function NewImprovement({ open, onClose }) {
       baseAgentVersion: from.agentVersion || null,
       trigger: { kind: "goal", goal: goal ? { id: goal.id, label: goal.label, ...(goal.group && { group: goal.group }), ...(goal.reliability && { reliability: goal.reliability }) } : undefined },
       limits, budget, regressionEnvIds: envIds, lineage,
+      /* Measuring today is spent before the search: inside the budget and the Cost. */
+      spentFirst: today ? todaySpend(today, env.surface) : 0,
       extra: { ...(name && { name }), ...(model && { model }), ...(writerModel && { writerModel }) },
     });
     commit({ type: "patchEnvState", envId: env.id, patch: { optimizations: [...(es.optimizations || []), record] } });
@@ -65,11 +67,19 @@ export default function NewImprovement({ open, onClose }) {
     .map((c) => agentPickerChoice(c.agent, c.main?.env, c.status))
     .sort((a, b) => Number(a.off) - Number(b.off) || a.name.localeCompare(b.name)), [choices]);
   const pickedChoice = pickerChoices.find((c) => c.key === picked?.key) || null;
+  /* Why nobody is listed: no agents, none tested in an environment, or none of a type improvements run on yet. */
+  const emptyText = useMemo(() => {
+    const real = agents.filter((a) => !a.placeholder);
+    if (!real.length) return "No agents connected yet — connect one from Agents first.";
+    if (!real.some((a) => (a.usedIn || []).length)) return "No agent has an environment yet — build one for an agent first.";
+    return "None of your agents can be improved yet — improvements don't run on their type yet.";
+  }, [agents]);
   const agentField = (
     <Box>
       <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>Agent</Typography>
       <AgentPicker
         choices={pickerChoices}
+        emptyText={emptyText}
         value={picked?.key || null}
         onChange={(key) => setPicked(choices.find((c) => c.agent.key === key)?.agent || null)}
       />

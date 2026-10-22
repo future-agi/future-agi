@@ -20,7 +20,7 @@ const CODE_KINDS = ["repo", "upload", "framework"];
  * Change; or not linked, with Link a project.
  */
 export function ObserveProjectCard({ agent }) {
-  const { project, options, link, unlink, canUnlink, viewIssues, openInObserve } = useAgentObserveProject(agent);
+  const { project, pending, options, link, unlink, canUnlink, viewIssues, openInObserve } = useAgentObserveProject(agent);
   const rowRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const setAnchor = (on) => setMenuOpen(!!on);
@@ -37,10 +37,11 @@ export function ObserveProjectCard({ agent }) {
           <>
             <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
               <Box component="span" sx={{ fontWeight: 600 }}>{project.name}</Box>
-              <Box component="span" sx={{ color: "text.subtitle" }}>{` · ${HOW[project.how] || "linked"}`}</Box>
+              <Box component="span" sx={{ color: "text.subtitle" }}>{pending ? " · waiting for its first trace" : ` · ${HOW[project.how] || "linked"}`}</Box>
             </Typography>
-            <ActionText onClick={openInObserve}>Open in Observe</ActionText>
-            <ActionText onClick={viewIssues}>View issues</ActionText>
+            {/* Nothing in Observe until the first trace arrives. */}
+            {!pending && <ActionText onClick={openInObserve}>Open in Observe</ActionText>}
+            {!pending && <ActionText onClick={viewIssues}>View issues</ActionText>}
             <ActionText onClick={() => setAnchor(true)}>Change</ActionText>
           </>
         ) : (

@@ -23,7 +23,7 @@ import { actorsOf } from "./actors";
 import { toolImplFor } from "./envInternals";
 import { argSpecOf } from "./toolArgSpec";
 import { contractFor } from "./contract";
-import { rulesOf, ruleOfScenario, subGoalsOfScenario, useCaseId as stableCaseId } from "./envModel";
+import { legacyUseCaseId, rulesOf, ruleOfScenario, subGoalsOfScenario, useCaseId as stableCaseId } from "./envModel";
 import { currentEnvVersion, environmentVersions, envLineage, holdsInEnv, nextEnvVersion, pendingEnvChanges, WORLD_CONFIG_KEYS } from "./versions";
 import { currentEnvSnapshot, envSnapshotsOf, nextSnapshotLabel, SAME_ACTION_MS } from "./envSnapshot";
 import { callerChangePatch, simulatorOf } from "./envModel";
@@ -446,9 +446,14 @@ export const contractUseCasesOf = (env, envState) => {
   const lineage = envLineage(env, envState);
   const changes = (envState?.useCaseChanges || []).filter((c) => holdsInEnv(lineage, c.envVersion));
   const removed = new Set(changes.filter((c) => c.kind === "removed").map((c) => c.id));
+  /* Corrections saved under the older, shorter id still apply — where that id
+     named only one use case. */
+  const legacyCount = new Map();
+  contractFor(env).useCases.forEach((t) => legacyCount.set(legacyUseCaseId(t), (legacyCount.get(legacyUseCaseId(t)) || 0) + 1));
   const base = contractFor(env).useCases.map((text) => {
     const id = stableCaseId(text);
-    const last = [...changes].reverse().find((c) => c.id === id && c.kind === "changed");
+    const legacy = legacyCount.get(legacyUseCaseId(text)) === 1 ? legacyUseCaseId(text) : null;
+    const last = [...changes].reverse().find((c) => (c.id === id || (legacy && c.id === legacy)) && c.kind === "changed");
     return { id, text: last?.to || text, original: text, changedIn: last?.envVersion || null };
   });
   const added = changes.filter((c) => c.kind === "added").map((c) => ({ id: c.id, text: c.to, original: null, changedIn: c.envVersion }));

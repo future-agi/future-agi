@@ -16,7 +16,7 @@ import { useConnectedAgents } from "../store";
 import { neutralCheckboxSx } from "../components/primitives";
 import { agentSourceOf } from "../_mock/agentRegistry";
 import { branchesOf, commitsOn, isGitAgent, versionNameOf } from "../_mock/codeRefs";
-import { observeProjectOf } from "./observeProject";
+import { observeProjectOf, pendingProjectOf } from "./observeProject";
 import { deleteBlockOf } from "./agentDelete";
 import AgentStateTags from "./AgentStateTags";
 import BuildEnvironmentDialog from "./BuildEnvironmentDialog";
@@ -54,7 +54,7 @@ export default function ConnectedAgentsView({ onConnect }) {
   const all = useMemo(() => agents
     .filter((a) => !a.placeholder)
     .map((a) => ({
-      ...a, source: agentSourceOf(a), identity: identityOf(a), project: observeProjectOf(a, state, agents),
+      ...a, source: agentSourceOf(a), identity: identityOf(a), project: observeProjectOf(a, state, agents), projectPending: !!pendingProjectOf(a, state, agents),
       tested: (a.usedIn || []).length ? "In an environment" : "No environment yet",
     })), [agents, state]);
   const filterFields = useMemo(() => {
@@ -63,7 +63,7 @@ export default function ConnectedAgentsView({ onConnect }) {
       { value: "source", label: "Source", type: "enum", choices: choicesOf((a) => a.source.label) },
       { value: "owner", label: "Owner", type: "enum", choices: choicesOf((a) => a.identity.owner) },
       { value: "tested", label: "Environments", type: "enum", choices: choicesOf((a) => a.tested) },
-      { value: "observe", label: "Observe project", type: "enum", choices: ["Linked", "Not linked"] },
+      { value: "observe", label: "Observe project", type: "enum", choices: ["Linked", "Waiting for first trace", "Not linked"] },
     ];
   }, [all]);
   const activeFilterCount = Object.values(filters).filter((v) => v?.length).length;
@@ -74,7 +74,7 @@ export default function ConnectedAgentsView({ onConnect }) {
       if (filters.source?.length && !filters.source.includes(a.source.label)) return false;
       if (filters.owner?.length && !filters.owner.includes(a.identity.owner)) return false;
       if (filters.tested?.length && !filters.tested.includes(a.tested)) return false;
-      if (filters.observe?.length && !filters.observe.includes(a.project ? "Linked" : "Not linked")) return false;
+      if (filters.observe?.length && !filters.observe.includes(a.project ? (a.projectPending ? "Waiting for first trace" : "Linked") : "Not linked")) return false;
       return true;
     });
   }, [all, query, filters]);
@@ -212,9 +212,9 @@ export default function ConnectedAgentsView({ onConnect }) {
       cell: ({ row }) => {
         const p = row.original.project;
         return (
-          <Tooltip arrow title={p ? `Error Feed issues from ${p.name} can be fixed with this agent.` : "Not linked — its Error Feed issues can't be fixed. Link a project on its Connections tab."}>
-            <Typography variant="body2" noWrap sx={{ fontSize: 13, color: p ? "text.primary" : "text.disabled" }}>
-              {p ? p.name : "Not linked"}
+          <Tooltip arrow title={p && row.original.projectPending ? `Waiting for the first trace in ${p.name} — Error Feed starts watching with it.` : p ? `Error Feed issues from ${p.name} can be fixed with this agent.` : "Not linked — its Error Feed issues can't be fixed. Link a project on its Connections tab."}>
+            <Typography variant="body2" noWrap sx={{ fontSize: 13, color: p && !row.original.projectPending ? "text.primary" : "text.disabled" }}>
+              {p ? (row.original.projectPending ? `${p.name} · waiting` : p.name) : "Not linked"}
             </Typography>
           </Tooltip>
         );

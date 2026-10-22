@@ -347,8 +347,12 @@ export const ruleImpactOf = (version, env, envState) => {
   }).filter((x) => x.subGoals.length);
 };
 
-/** A stable id for a use case — grouping survives the contract being re-written. */
-export const useCaseId = (text) => `UC-${short(slug(text))}`;
+/** A stable id for a use case — grouping survives the contract being re-written.
+    Hashes the whole text: use cases sharing their first words ("Refuse the
+    request that would break: …") each get their own id. */
+export const useCaseId = (text) => `UC-${short(String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, ""))}`;
+/** The id older stored corrections used (first 40 characters only). */
+export const legacyUseCaseId = (text) => `UC-${short(slug(text))}`;
 
 /* ── sub-goals on the scenario, critical or supporting ───────────────────── */
 

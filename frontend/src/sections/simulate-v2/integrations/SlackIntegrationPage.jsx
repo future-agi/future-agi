@@ -115,7 +115,7 @@ export default function SlackIntegrationPage() {
       {/* Removed from Slack's side (app_uninstalled / tokens_revoked). */}
       {!slack && slackRemoved && !slackRequest && (
         <Notice icon="solar:link-broken-linear" title={`Future AGI was removed from ${slackRemoved.workspace} in Slack`}>
-          Notifications and alerts stopped. Add it again to pick up where you left off.
+          Notifications and alerts stopped. Add it again to {slackRemoved.workspace} to pick up where you left off — its events and channels come back.
         </Notice>
       )}
 

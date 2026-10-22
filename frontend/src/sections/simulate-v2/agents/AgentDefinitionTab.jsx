@@ -20,7 +20,7 @@ import { ActionText, KvRow, PanelCard } from "./AgentBits";
  * it was read from, with what changed since the version before.
  */
 export default function AgentDefinitionTab({
-  agent, definition, source, files, prevFiles, label, prevLabel, latest, focusPath, diffOn, observeProject, onOpenEnv, onTab, protectedMembers, onVersion,
+  agent, definition, source, files, prevFiles, label, prevLabel, latest, focusPath, diffOn, observeProject, observePending = false, onOpenEnv, onTab, protectedMembers, onVersion,
 }) {
   const version = agent.versions.find((v) => v.label === label);
   const code = isCodeAgent(agent);
@@ -93,7 +93,7 @@ export default function AgentDefinitionTab({
           {observeProject ? (
             <Typography sx={{ typography: "s2" }}>
               {observeProject.name}
-              <Box component="span" sx={{ color: "text.subtitle" }}> · linked</Box>
+              <Box component="span" sx={{ color: "text.subtitle" }}>{observePending ? " · waiting for its first trace" : " · linked"}</Box>
             </Typography>
           ) : (
             <Stack direction="row" alignItems="center" spacing={1.5}>
@@ -142,6 +142,8 @@ AgentDefinitionTab.propTypes = {
   focusPath: PropTypes.string,
   diffOn: PropTypes.bool,
   observeProject: PropTypes.object,
+  /* Linked to a new project that hasn't had its first trace. */
+  observePending: PropTypes.bool,
   onOpenEnv: PropTypes.func,
   onTab: PropTypes.func,
   protectedMembers: PropTypes.array,

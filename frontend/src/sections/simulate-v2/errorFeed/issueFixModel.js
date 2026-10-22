@@ -12,7 +12,7 @@ import { currentAgentVersion, productionAgentVersion } from "../_mock/versions";
 import { measureTodayRun, measuredSummaryOf } from "../_mock/measureToday";
 import { isComingSoon, needsLiveConsent } from "../_mock/rsiModel";
 import { agentStatusFor, mainEnvFor } from "../_mock/improvementPolicy";
-import { needsFoundCheck } from "../_mock/agentRegistry";
+import { connectedAgentsFrom, envAgentKey, needsFoundCheck } from "../_mock/agentRegistry";
 import { errorFeedScenarios } from "../_mock/scenarioSources";
 import { projectLinkOf, projectsOfAgent } from "../_mock/projectLinks";
 import { prOfImprovement } from "../_mock/improvementPr";
@@ -184,6 +184,14 @@ const hash = (s) => {
   return h >>> 0;
 };
 
+/* The workspace's agents, as useConnectedAgents() reads them — kept for the
+   last state seen, so a table of issues works them out once. */
+let agentsMemo = { state: null, agents: [] };
+const agentsOfState = (state) => {
+  if (agentsMemo.state !== state) agentsMemo = { state, agents: connectedAgentsFrom(state) };
+  return agentsMemo.agents;
+};
+
 /** The Observe project an issue's traces came from. */
 export const issueProjectOf = (issue) => issue?.project_id || null;
 
@@ -204,7 +212,9 @@ export const agentKeyForIssue = (issue, state, agents = []) => {
 export const issueProjectLinkOf = (issue, state, agents = []) => projectLinkOf(issueProjectOf(issue), state, agents);
 
 /** The Error Feed projects an agent's issues come from — its own and any linked to it. */
-export const errorFeedProjectsOf = (agent, state) => projectsOfAgent(agent, state, agent ? [agent] : []).map((l) => l.project);
+/* Read against every agent, not just this one: a project another agent
+   watches, or a demo agent reports into, stays that agent's. */
+export const errorFeedProjectsOf = (agent, state) => projectsOfAgent(agent, state, agentsOfState(state)).map((l) => l.project);
 
 /** The environments that test an agent, main one first. */
 /* A fix is in flight from the moment it starts until it ends unfixed or the
@@ -504,13 +514,13 @@ export const issueFixRecord = ({
  * a guess — on the environment's scenarios plus the issue's, as if every
  * issue scenario reproduces (the dearest case).
  */
-export const fixPreview = (env, es, issue, drafts, limits, { textSearch } = {}) => {
+export const fixPreview = (env, es, issue, drafts, limits, { textSearch, state = null, regressionEnvIds = [] } = {}) => {
   /* What measuring today will find — the same run Start records. */
   const today = env && issue ? todayRunFor(env, es, issue.cluster_id) : null;
   const base = summaryOf(env, es, today);
   if (!base || !issue) return { base, today, result: null };
   const tasks = [...base.tasks, ...issueTasks(issue, drafts, null, env)];
-  return { base, today, result: planSearch({ env, es, agentVersion: base.agentVersion || currentAgentVersion(es)?.label || null, tasks, limits, seed: fixSeed(es, issue.cluster_id), textSearch }) };
+  return { base, today, result: planSearch({ env, es, agentVersion: base.agentVersion || currentAgentVersion(es)?.label || null, tasks, limits, seed: fixSeed(es, issue.cluster_id), textSearch, state, regressionEnvIds }) };
 };
 
 /**
@@ -622,11 +632,20 @@ export const shippedStateOf = (record, es, prs = [], { recurs, now = Date.now(),
   return null;
 };
 
-export const fixStatusOf = (issue, state, prs = [], now = Date.now()) => {
+/**
+ * Where the issue's fix stands, for the agent the issue belongs to now. Only
+ * environments that test that agent are read: after its project moves to
+ * another agent, a fix the previous one started is its history, not the new
+ * agent's fix in flight. With no agent linked there is no fix to show.
+ */
+export const fixStatusOf = (issue, state, prs = [], now = Date.now(), agents = agentsOfState(state)) => {
   const issueId = issue?.cluster_id;
+  const agentKey = agentKeyForIssue(issue, state, agents);
+  if (!issueId || !agentKey) return null;
   let found = null;
   state.myEnvironments.forEach((env) => {
     const es = state.byEnv[env.id];
+    if (!es?.agent || envAgentKey(es.agent, env.id) !== agentKey) return;
     (es?.optimizations || []).forEach((o) => {
       if (!issueId || o.trigger?.issueId !== issueId) return;
       if (!found || Date.parse(o.createdAt) > Date.parse(found.record.createdAt)) found = { record: o, env, es };

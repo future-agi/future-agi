@@ -20,6 +20,23 @@ export const observeProjectOf = (agent, state, agents = []) => {
   return [...all].sort((a, b) => (RANK[a.how] ?? 3) - (RANK[b.how] ?? 3))[0] || null;
 };
 
+/**
+ * A new project linked to this agent that hasn't had its first trace yet:
+ * { project, since, via } or null. Only while the link is still this
+ * agent's — a project another agent has since taken isn't pending here.
+ */
+export const pendingProjectOf = (agent, state, agents = []) => {
+  const p = agent?.values?.observePending;
+  if (!p?.project || agent?.values?.observeChosenAt) return null;
+  const owner = state?.projectLinks?.[p.project];
+  return owner === agent.key ? p : null;
+};
+
+/** Every project still waiting for its first trace — nothing in Observe yet. */
+export const pendingProjectIds = (state, agents = []) => new Set(
+  agents.map((a) => pendingProjectOf(a, state, agents)?.project).filter(Boolean),
+);
+
 /** The TraceAI setup guide — how a code agent starts sending traces. */
 export const TRACEAI_DOCS_URL = "https://docs.futureagi.com/docs/observe";
 
@@ -33,10 +50,12 @@ export const useAgentObserveProject = (agent) => {
   const { state, dispatch } = useSimStore();
   const { agents } = useConnectedAgents();
   const project = useMemo(() => (agent ? observeProjectOf(agent, state, agents) : null), [agent, state, agents]);
-  const options = useMemo(
-    () => knownProjects(state, agents).filter((p) => p.link.status !== "linked"),
-    [state, agents],
-  );
+  /* Projects waiting for a first trace aren't in Observe yet — not options. */
+  const options = useMemo(() => {
+    const waiting = pendingProjectIds(state, agents);
+    return knownProjects(state, agents).filter((p) => p.link.status !== "linked" && !waiting.has(p.id));
+  }, [state, agents]);
+  const pending = agent ? pendingProjectOf(agent, state, agents) : null;
   /* Linked by hand on this agent — the links Change replaces. */
   const ownLinks = Object.entries(state?.projectLinks || {}).filter(([, k]) => k === agent?.key).map(([p]) => p);
   const unlink = () => ownLinks.forEach((p) => dispatch({ type: "linkProjectAgent", project: p, agentKey: null }));
@@ -50,5 +69,5 @@ export const useAgentObserveProject = (agent) => {
     navigate(paths.dashboard.errorFeed.root);
   };
   const openInObserve = () => navigate(paths.dashboard.observe);
-  return { project, options, link, unlink, canUnlink: project?.how === "set", viewIssues, openInObserve };
+  return { project, pending, options, link, unlink, canUnlink: project?.how === "set", viewIssues, openInObserve };
 };

@@ -9,7 +9,7 @@ import { definitionOf, envAgentKey, agentNameOf } from "../_mock/agentRegistry";
 import { linkedRepoOf } from "../agents/agentLimits";
 import { useConnectedAgents } from "../store";
 import {
-  GITHUB_WRITE_PERMISSIONS, GIT_HOST_META, canWriteTo, gitHostConnection, gitHostRepos, grantGitHostWrite, grantGithubWrite,
+  GITHUB_WRITE_PERMISSIONS, GIT_HOST_META, canWriteTo, gitHostAccountOf, gitHostConnection, gitHostRepos, grantGitHostWrite, grantGithubWrite,
   hostRepoNameOf, hostRepoUrlOf, installationOfRepo, installedRepos, openPr, repoNameOf, reviewNounOf, useIntegrations,
 } from "../_mock/integrations";
 import { gitHostOf } from "../agents/agentProfile";
@@ -50,7 +50,8 @@ export default function OpenPrDialog({
   const connection = other ? gitHostConnection(host, integrations) : null;
   const github = other ? connection : integrations.github;
   const repos = other ? gitHostRepos(host, integrations) : installedRepos(integrations);
-  const canWrite = (name) => (other ? connection?.access === "write" : canWriteTo(name));
+  /* Write is per connection — the group or workspace that holds the repository. */
+  const canWrite = (name) => (other ? gitHostAccountOf(host, name, integrations)?.access === "write" : canWriteTo(name));
   /* The repository is the agent's (its Connections), never the environment's:
      a known one is fixed here, and one picked for a repo agent that has none
      yet is saved on the agent. A hosted or endpoint agent doesn't live in the
@@ -121,7 +122,7 @@ export default function OpenPrDialog({
   useEffect(() => {
     if (!granting) return undefined;
     const t = setTimeout(() => {
-      if (other) grantGitHostWrite(host);
+      if (other) grantGitHostWrite(host, repo);
       else grantGithubWrite(repo);
       setGranting(false);
       if (after === "submit") send();

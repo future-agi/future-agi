@@ -5,6 +5,7 @@ import { diagnosisSummaryOf, goalWords, rejectedFor } from "../_mock/optimizer";
 import { plural } from "../_mock/nudgeEffects";
 import { repeatsOf, limitRows, DEFAULT_LIMITS } from "../_mock/optimizationRuns";
 import { creditsLabel } from "../_mock/metering";
+import { envVersionNameOf } from "../_mock/codeRefs";
 
 /*
   A running improvement, as the stages a fix goes through — Reproduce,
@@ -45,11 +46,12 @@ export default function ImprovementStages({ record, envState, progress, model = 
   const done = !!progress?.done;
   const feed = record.trigger?.kind === "error-feed";
   const issueId = record.trigger?.issueId;
-  const version = record.baseAgentVersion || "today's version";
+  const fromRun = (envState?.runs || []).find((x) => x.id === record.fromRunId) || null;
+  /* A git agent's version reads as its commit ("main @ 3f9a2c1"), never vN. */
+  const version = record.baseAgentVersion ? envVersionNameOf(envState, record.baseAgentVersion, fromRun?.envId).main : "today's version";
   const rep = record.reproduce || {};
   const reps = repeatsOf(record);
   const cal = record.calibration || r.calibration || null;
-  const fromRun = (envState?.runs || []).find((x) => x.id === record.fromRunId) || null;
   /* The environment's own scenarios, measured on today's version alongside. */
   const envCount = fromRun?.scenarioIds?.length || 0;
   const diag = diagnosisSummaryOf(record, r);

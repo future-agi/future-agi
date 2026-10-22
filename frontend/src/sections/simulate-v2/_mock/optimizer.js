@@ -35,6 +35,7 @@ import { staleForAgentOf } from "./decoupled";
 import { contractCandidateOf } from "./improvementPolicy";
 import { withScenarioSetSeed } from "./scenarioSetSeed";
 import { scenarioTitle } from "./scenarios";
+import { mustPassOf, passesEveryRepeat, flakyToday as flakyTodayOf } from "./mustPass";
 
 /* ── the algorithms ──────────────────────────────────────────────────────── */
 
@@ -871,10 +872,11 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     its own noise, so it's named as marked but not counted until it passes
     every repeat again.
   */
-  const passesAll = (t) => t.status !== "unmeasured" && passShareOf(t) >= 1;
+  /* One rule with the setup and the other environments (mustPass.js). */
+  const passesAll = passesEveryRepeat;
   const marked = (t) => !!t.critical || !!scope.remembered?.(t);
   const mustPass = (t) => (rsi ? passesAll(t) : marked(t) || passesAll(t));
-  const flakyToday = (t) => t.status !== "unmeasured" && passShareOf(t) > 0 && passShareOf(t) < 1;
+  const flakyToday = flakyTodayOf;
   /*
     Three sets that never overlap (new improvements): the targets the
     improver tunes on and sees in full, the held-back set it never sees, and
@@ -1382,9 +1384,7 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     })(),
     ...(rsi && {
       /* Marked must-pass (or regression memory) but not passing every repeat today. */
-      markedNotCounted: (cfg.mustPassPool || scope.tasks)
-        .filter((t) => !inSets.has(t.id) && marked(t) && t.status !== "unmeasured" && !passesAll(t))
-        .map((t) => ({ id: t.id, title: t.title, ...(flakyToday(t) ? { flaky: true } : { failing: true }) })),
+      markedNotCounted: mustPassOf((cfg.mustPassPool || scope.tasks).filter((t) => !inSets.has(t.id)), { marked }).markedNotCounted,
       mustPassMeasured: mustPassMeasured.length,
       mustPassTasks: mustPassMeasured.map((t) => ({ id: t.id, title: t.title, critical: !!t.critical, ...(scope.remembered?.(t) && { remembered: true }) })),
     }),

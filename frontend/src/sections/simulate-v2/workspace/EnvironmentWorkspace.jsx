@@ -886,7 +886,9 @@ export default function EnvironmentWorkspace() {
                       ? "Live — the agent runs in your account and its tools reach your real systems. Only the starting state is checked, and a model judges sub-goals from the conversation."
                       : sandboxed
                         ? "Sealed — the agent's calls to these apps land in sandboxed copies, reset between runs; sub-goals are checked against what landed there."
-                        : "Sealed — the agent's tool calls are answered by this environment's world inside our sandbox, and sub-goals are checked against the world's end state and the tool calls.",
+                        : env?.runsOn === "local" || env?.builtFrom?.worldSource?.runsOn === "local"
+                          ? "Sealed — the agent's tool calls are answered by this environment's world, running on your machine through the CLI, and sub-goals are checked against the world's end state and the tool calls."
+                          : "Sealed — the agent's tool calls are answered by this environment's world inside our sandbox, and sub-goals are checked against the world's end state and the tool calls.",
                 });
               }
               if (isComingSoon(env)) chips.push({ key: "soon", icon: "solar:clock-circle-linear", label: "Coming soon", tip: COMING_SOON_NOTE });

@@ -14,12 +14,13 @@ import { omegaReport } from "./omega";
 import { hashSeed } from "./runStream";
 import { passShareOf } from "./optimize";
 import { definitionOf, envAgentKey } from "./agentRegistry";
-import { currentEnvVersion } from "./versions";
+import { agentVersions, currentEnvVersion } from "./versions";
 import { repoTestsOf, rereadFor, rereadStamp, textSearchDefault } from "./improvementPolicy";
 import { observabilityOf } from "./observability";
 import { pinsForNewRun } from "./envModel";
 import { runSummaries } from "./comparison";
 import { frozenSnapshotOf } from "./envSnapshot";
+import { mustPassOf } from "./mustPass";
 import {
   optimizationId, OPT_STATUS, PER_CONVERSATION, REPEATS, RATE, searchSpend, searchMinutes, trialsWithin, costCeilingLabel, searchConversations, limitGate,
 } from "./optimizationRuns";
@@ -31,6 +32,32 @@ export const baseRunOf = (env, es, agentVersion = null) => (env ? runSummaries(e
   .filter((r) => r.status !== "running" && r.status !== "queued")
   .filter((r) => !agentVersion || r.agentVersion === agentVersion)
   .sort((a, b) => Date.parse(b.finishedAt || 0) - Date.parse(a.finishedAt || 0))[0] || null;
+
+/** One run of an environment, read the way every run reader reads it — or null. */
+export const runBaseOf = (env, es, runId) => (env && runId ? runSummaries(env, es).find((r) => r.id === runId) || null : null);
+
+/*
+  Measuring today is a real run of the environment: every scenario, every
+  repeat. What it costs is part of what the improvement spends — priced the
+  same in the setup's estimate and on the record (`spentFirst`).
+*/
+export const todayConversations = (run) => (run ? (run.scenarioIds || []).length * (run.repeats || 1) : 0);
+/*
+  The environment as it is once an outside change is re-read into a new
+  version: that version in production, so today is measured on it and the
+  baseline's version and scores match.
+*/
+export const envStateOnVersion = (es, reread) => {
+  if (!es || !reread?.changed || !reread.version) return es;
+  const label = reread.version;
+  return {
+    ...es,
+    agentVersions: [...agentVersions(es).filter((v) => v.label !== label), { ...(reread.versionRecord || {}), label }],
+    ...(es.agent && { agent: { ...es.agent, values: { ...(es.agent.values || {}), activeVersion: { label } } } }),
+    agentVersionPinned: false,
+  };
+};
+export const todaySpend = (run, surface) => todayConversations(run) * PER_CONVERSATION[surface === "voice" ? "voice" : "chat"];
 
 /*
   A Fix on a run's issue searches on that issue: its root and suggested fix
@@ -97,6 +124,19 @@ export const repeatsFor = (env, es) => {
   return env?.surface === "voice" && es?.runDefaults?.repeats == null ? Math.min(d, VOICE_DEFAULTS.repeats) : d;
 };
 
+/*
+  An environment's must-pass set, off its newest finished run: the scenarios
+  that passed every repeat (mustPass.js — the same rule as the main
+  environment). Marked ones that are flaky today are named, not counted.
+    → { gated, markedNotCounted, scenarios }
+*/
+export const envMustPassOf = (env, es) => {
+  const base = env && es ? baseRunOf(env, es) : null;
+  const scope = searchScope({ env, envState: es, tasks: base?.tasks || [] });
+  const { gated, markedNotCounted } = mustPassOf(scope.tasks, { marked: (t) => !!t.critical || scope.remembered(t) });
+  return { gated, markedNotCounted, scenarios: (base?.tasks || []).length };
+};
+
 /* The other environments an improvement checks: what must keep passing in each. */
 const otherEnvsFor = (env, state, regressionEnvIds = []) => (regressionEnvIds || [])
   .filter((id) => id && id !== env?.id)
@@ -104,9 +144,8 @@ const otherEnvsFor = (env, state, regressionEnvIds = []) => (regressionEnvIds ||
     const e = (state?.myEnvironments || []).find((x) => x.id === id);
     const oes = state?.byEnv?.[id];
     if (!e || !oes) return null;
-    const base = baseRunOf(e, oes);
-    const list = (base?.tasks || []).filter((t) => t.status !== "unmeasured" && (t.critical || passShareOf(t) >= 1));
-    return { id, name: e.name, mustPass: list.map((t) => ({ id: t.id, title: t.title })), scenarios: (base?.tasks || []).length };
+    const { gated, scenarios } = envMustPassOf(e, oes);
+    return { id, name: e.name, mustPass: gated.map((t) => ({ id: t.id, title: t.title })), scenarios };
   })
   .filter(Boolean);
 
@@ -269,7 +308,10 @@ export const buildImprovement = ({
      otherwise it's re-read here when there's a workspace to read it against. */
   const reread = rereadStamp(given !== undefined ? given
     : state && es?.agent ? rereadFor({ ...es.agent, key: es.agent.key || envAgentKey(es.agent, env.id) }, state) : null);
-  const baseVersion = reread?.changed && reread.version ? reread.version : baseAgentVersion;
+  /* A re-read the caller made (and measured today on) moves the baseline to
+     the new version. One made here, with today already measured, can't — the
+     scores belong to the version they were run on; the change is only noted. */
+  const baseVersion = given !== undefined && reread?.changed && reread.version ? reread.version : baseAgentVersion;
   const full = planSearch({ env, es, agentVersion: baseVersion, tasks, limits, seed, lineage, issue, textSearch, compatCheck, ...engineArgs });
   const reps = full.repeats || REPEATS;
   const over = searchSpend(full, env.surface) + spentFirst > budget;
@@ -432,6 +474,8 @@ const OUTCOME_VERBS = [
   [/^(order|purchase|checkout)/i, "order completion rate", false],
   [/^(update|change|modify|reschedul)/i, "change success rate", false],
 ];
+/* Tools that only read — never an outcome, whatever else their name says. */
+const READ_ONLY = /^(lookup|look|get|check|find|list|read|search|fetch|query)$/i;
 /* Words in a tool's name that aren't what it acts on. */
 const OUTCOME_FILLER = new Set(["to", "a", "the", "for", "on", "of", "new", "existing", "human", "agent", "request", "api"]);
 /*
@@ -443,10 +487,13 @@ export const outcomeMetricsOf = (env) => {
   const out = new Map();
   (env?.tools || []).forEach((t) => {
     const parts = String(t.name || "").split(/[_\-.\s]+/).filter(Boolean);
-    const hitAt = parts.findIndex((p) => OUTCOME_VERBS.some(([re]) => re.test(p)));
-    if (hitAt < 0) return;
-    const [, base, inverse] = OUTCOME_VERBS.find(([re]) => re.test(parts[hitAt]));
-    const object = parts.filter((p, i) => i !== hitAt && !OUTCOME_FILLER.has(p.toLowerCase())).join(" ");
+    /* The verb is the tool name's first word — get_booking_status reads a
+       booking, it doesn't make one. */
+    if (!parts.length || parts.some((p) => READ_ONLY.test(p))) return;
+    const verb = OUTCOME_VERBS.find(([re]) => re.test(parts[0]));
+    if (!verb) return;
+    const [, base, inverse] = verb;
+    const object = parts.slice(1).filter((p) => !OUTCOME_FILLER.has(p.toLowerCase())).join(" ");
     const label = inverse ? base : object ? `${object.charAt(0).toUpperCase()}${object.slice(1)} ${base}` : `${base.charAt(0).toUpperCase()}${base.slice(1)}`;
     if (out.has(label)) return;
     out.set(label, {

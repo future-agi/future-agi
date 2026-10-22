@@ -40,7 +40,9 @@ const CAPABILITIES = [
 export default function GithubIntegrationPage() {
   const navigate = useNavigate();
   const integrations = useIntegrations();
-  const { github, prs, githubRemoved } = integrations;
+  const { github, githubRemoved } = integrations;
+  /* GitLab merge requests and Bitbucket pull requests live on their own hosts. */
+  const prs = integrations.prs.filter((p) => !p.host || p.host === "github");
   const { agents, state: simState } = useConnectedAgents();
   /* false | true (new install) | "<account>" (configure that installation) */
   const [installOpen, setInstallOpen] = useState(false);
@@ -127,7 +129,7 @@ export default function GithubIntegrationPage() {
               >
                 {githubRemoved.length ? "Reinstall GitHub App" : "Install GitHub App"}
               </Button>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Opens GitHub · organizations need an owner</Typography>
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Opens GitHub · you pick the repositories</Typography>
             </Stack>
           )}
         </Stack>
@@ -205,7 +207,7 @@ export default function GithubIntegrationPage() {
             ))}
           </Box>
           <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 2.5 }}>
-            You choose the repositories on GitHub. We only read your code. We&apos;ll ask for write access when you open your first draft pull request — and then write only to branches we create, never to main or your branches. Installing on an organization needs one of its owners; anyone else sends them a request.
+            You choose the repositories on GitHub. We only read your code. We&apos;ll ask for write access when you open your first draft pull request — and then write only to branches we create, never to main or your branches.
           </Typography>
         </Card>
       )}

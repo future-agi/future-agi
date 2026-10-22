@@ -41,7 +41,7 @@ const CHANGED = { prompt: "Prompt", code: "Tool code", orchestration: "Orchestra
  */
 export default function PrCard({ prId, env, envState, onRerun, onMerged }) {
   const { prs } = useIntegrations();
-  const { recordAgentVersion } = useConnectedAgents();
+  const { agents, recordAgentVersion, setAgentValues } = useConnectedAgents();
   const { dispatch } = useSimStore();
   const { enqueueSnackbar } = useSnackbar();
   const pr = prs.find((p) => p.id === prId);
@@ -70,6 +70,9 @@ export default function PrCard({ prId, env, envState, onRerun, onMerged }) {
        turns tracing on and leaves the versions alone. */
     if (telemetry) {
       setTracing(pr.agentKey, { on: true, since: mergedAt, project: pr.project, framework: pr.framework, prNumber: pr.number, repo: pr.repo });
+      /* The agent's own record of the PR agrees — its Commits list shows the tracing commit merged. */
+      const owner = (agents || []).find((a) => a.key === pr.agentKey);
+      if (owner?.values?.tracingPr?.id === pr.id) setAgentValues(pr.agentKey, { tracingPr: { ...owner.values.tracingPr, mergedAt } });
       enqueueSnackbar("Merged — tracing is on. Traces show up in Observe once this deploys.", { variant: "success" });
       postSlack({ event: "pr", title: `Tracing ${review.short} merged · ${pr.repo} ${ref}`, lines: [`${pr.agentName} now sends traces to Future AGI (project ${pr.project}).`], actions: ["Open in Observe"], links: { "Open in Observe": paths.dashboard.observe } });
       return;

@@ -72,6 +72,8 @@ function AgentHealth({ agent, production }) {
   const store = useOptionalSimStore();
   const { prs } = useIntegrations();
   const prod = production || {};
+  /* Linked to a new project that has had no trace yet — nothing in Observe to open. */
+  const awaitingTrace = !!prod.project && !!prod.pending;
   const nm = (l) => versionNameOf(agent, l).main;
 
   /* Its open issues, from the Observe project its traces land in. */
@@ -128,11 +130,13 @@ function AgentHealth({ agent, production }) {
         <Stack direction="row" alignItems="baseline" spacing={1} sx={{ mb: 0.5 }}>
           <Typography sx={{ typography: "s1", fontWeight: 700 }}>Production</Typography>
           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }}>
-            {prod.project
+            {awaitingTrace
+              ? `${prod.project.name} · waiting for its first trace`
+              : prod.project
               ? [prod.project.name, agent.production ? nm(agent.production) : null, issues.length ? `${plural(issues.length, "open issue")}${critical ? ` · ${issues.filter((x) => x.issue.severity === "critical").length} critical` : ""}` : "no open issues"].filter(Boolean).join(" · ")
               : "Not watched"}
           </Typography>
-          {prod.project && (
+          {prod.project && !awaitingTrace && (
             /* The Error Feed, filtered to this project — Observe's own pages
                only know projects that really receive traces. */
             <Typography
@@ -152,6 +156,11 @@ function AgentHealth({ agent, production }) {
               Link a project
             </Button>
           </Stack>
+        ) : awaitingTrace ? (
+          /* Linked but empty: nothing to watch until traceAI sends its first trace. */
+          <Typography sx={{ py: 1.5, typography: "s2", color: "text.secondary" }}>
+            No traces yet — Error Feed starts watching with the first one.
+          </Typography>
         ) : issues.length ? (
           <FitDataTable columns={columns} data={issues.slice(0, TOP_ISSUES)} getRowId={(x) => x.issue.cluster_id} onRowClick={openIssue} />
         ) : (

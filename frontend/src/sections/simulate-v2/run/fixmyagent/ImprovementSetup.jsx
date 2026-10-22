@@ -11,15 +11,19 @@ import { connectedAgentPath } from "../../improvements/improvementNav";
 import AgentPicker from "../../improvements/AgentPicker";
 import { agentPickerChoice, agentPickerHelper } from "../../improvements/agentPickerChoices";
 import { useSimStore, useConnectedAgents, useEnvState } from "../../store";
-import { agentDefinitionOf } from "../../_mock/agentRegistry";
+import { agentDefinitionOf, connectedAgentsFrom, envAgentKey } from "../../_mock/agentRegistry";
 import { getEval } from "../../_mock/evals";
 import { evalReliabilityLine, evalReliabilityOf } from "../../_mock/evalReliability";
 import AddEvalsDrawer from "../../workspace/evals/AddEvalsDrawer";
 import { useAppliedEvals } from "../../workspace/evals/useAppliedEvals";
 import { agentVersions, currentAgentVersion, productionAgentVersion } from "../../_mock/versions";
-import { improverModelsText, limitRows, OPTIMIZER_MODELS, SAME_AS_PLANNER } from "../../_mock/optimizationRuns";
+import { improverModelsText, limitRows, optimizationId, OPTIMIZER_MODELS, SAME_AS_PLANNER } from "../../_mock/optimizationRuns";
 import { OPTIMIZERS, goalWords, improvementRunName } from "../../_mock/optimizer";
-import { baseRunOf, budgetsWithin, improvementEstimate, outcomeMetricsOf, planSearch } from "../../_mock/improvementStart";
+import {
+  baseRunOf, budgetsWithin, envMustPassOf, envStateOnVersion, improvementEstimate, outcomeMetricsOf, planSearch, runBaseOf, todayConversations,
+} from "../../_mock/improvementStart";
+import { markedNotCountedLine } from "../../_mock/mustPass";
+import { envVersionNameOf } from "../../_mock/codeRefs";
 import { measureTodayRun, measuredSummaryOf } from "../../_mock/measureToday";
 import { agentStatusOf } from "../../_mock/agentLifecycle";
 import { runIdentityOf } from "../../_mock/runIdentity";
@@ -106,7 +110,20 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
   const { appliedIds, add: addEvals, slotsLeft } = useAppliedEvals(evalEnvState, patchEnv);
   const [addingEval, setAddingEval] = useState(false);
   const ADD_EVAL = "__add_eval";
-  const agent = agents.find((a) => a.key === preset?.agentKey) || null;
+  /* The agent to improve — still named when it's been deleted since (its
+     kept record, else the environment's copy), so the field never vanishes
+     and the reason Start is off is said. */
+  const agent = useMemo(() => {
+    const key = preset?.agentKey;
+    if (!key) return null;
+    const found = agents.find((a) => a.key === key) || connectedAgentsFrom(state, { withDeleted: true }).find((a) => a.key === key);
+    if (found) return found;
+    const copy = main && es?.agent && envAgentKey(es.agent, main.id) === key ? es.agent : null;
+    return copy ? { ...copy, key, name: copy.name || `${main.name} agent`, versions: agentVersions(es), usedIn: [{ envId: main.id, envName: main.name }] } : null;
+  }, [agents, state, main, es, preset?.agentKey]);
+  /* Debug failures on a run of an agent this environment has since swapped out. */
+  const envKey = main && es?.agent ? envAgentKey(es.agent, main.id) : null;
+  const swapped = !preset?.fromGoal && !!preset?.agentKey && !!envKey && preset.agentKey !== envKey;
 
   const [name, setName] = useState("");
   const [optimizerId, setOptimizerId] = useState(DEFAULT_METHOD);
@@ -122,9 +139,13 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
   /* The search method and the improving model sit in an advanced panel,
      with defaults applied — most people never open it. */
   const [advanced, setAdvanced] = useState(false);
+  /* Stamped when the setup opens: the seed is never reused, even after an
+     improvement is deleted, and stays the same until Start. */
+  const [openedAt, setOpenedAt] = useState(() => Date.now().toString(36));
 
   useEffect(() => {
     if (!open) return;
+    setOpenedAt(Date.now().toString(36));
     setAdvanced(false);
     setAlsoIn([]);
     setAcrossLineage(false);
@@ -135,14 +156,16 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
     setGoal("pass-rate");
     setBudget(null);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
-  /* Another agent picked in the same drawer: its own name, goals and environments. */
+  /* Another agent picked in the same drawer: its own name, goals,
+     environments and budget (the budgets come from its own limits). */
   useEffect(() => {
     if (!open || !main) return;
     setName(improvementRunName(es, null));
     setGoal("pass-rate");
     setAlsoIn([]);
     setAcrossLineage(false);
-  }, [main?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    setBudget(null);
+  }, [preset?.agentKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const limits = useMemo(() => limitsOf(state, preset?.agentKey), [state, preset?.agentKey]);
   /* A voice agent searches in text; its finalists are confirmed as real calls. */
@@ -171,41 +194,67 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
      as a run — so nothing is run by hand first; one opened from a run's
      Debug failures starts from that run. */
   const prodLabel = es ? productionAgentVersion(es)?.label || null : null;
-  const seed = `goal-${main?.id}-${(es?.optimizations || []).length}`;
+  const seed = `goal-${main?.id}-${optimizationId(es)}-${openedAt}`;
   const today = useMemo(
-    () => (main && preset?.fromGoal && !tasks ? measureTodayRun(main, es, { key: seed, measuredFor: { kind: "goal" }, startedBy: "Improvement · goal" }) : null),
+    () => (main && preset?.fromGoal && !tasks?.length ? measureTodayRun(main, es, { key: seed, measuredFor: { kind: "goal" }, startedBy: "Improvement · goal" }) : null),
     [main, es, preset?.fromGoal, tasks, seed],
   );
-  const base = useMemo(
-    () => (today ? measuredSummaryOf(main, es, today) : main ? baseRunOf(main, es, prodLabel) || baseRunOf(main, es) : null),
-    [today, main, es, prodLabel],
-  );
+  /* Debug failures starts from the run it diagnosed — that run's agent and
+     environment versions — never the newest production run. */
+  const fromRun = !preset?.fromGoal && !!(preset?.runId || preset?.agentVersion);
+  const base = useMemo(() => {
+    if (today) return measuredSummaryOf(main, es, today);
+    if (!main) return null;
+    if (fromRun) {
+      const run = runBaseOf(main, es, preset?.runId);
+      return {
+        ...(run || { id: preset?.runId || null, tasks: tasks || null }),
+        agentVersion: preset?.agentVersion ?? run?.agentVersion ?? null,
+        envVersion: preset?.envVersion ?? run?.envVersion ?? null,
+      };
+    }
+    return baseRunOf(main, es, prodLabel) || baseRunOf(main, es);
+  }, [today, main, es, prodLabel, fromRun, preset?.runId, preset?.agentVersion, preset?.envVersion, tasks]);
   const others = useMemo(() => (agent?.usedIn || [])
     .filter((u) => u.envId !== main?.id)
     .map((u) => state.myEnvironments.find((e) => e.id === u.envId))
     .filter(Boolean), [agent, main, state.myEnvironments]);
-  const mustPassIn = (e) => (state.byEnv[e.id]?.scenarios || []).filter((r) => !r.archived && !r.retired && (r.critical || r.regressionMemory)).length;
+  /* Each other environment's must-pass set — the same rule the search
+     holds it to (passes every baseline repeat; marked-but-flaky is named). */
+  const otherMustPass = useMemo(
+    () => Object.fromEntries(others.map((e) => [e.id, envMustPassOf(e, state.byEnv[e.id])])),
+    [others, state.byEnv],
+  );
+  const mustPassIn = (e) => otherMustPass[e.id]?.gated.length || 0;
+  /* Earlier versions: strictly older than the one the search starts from. */
   const lineageVersions = useMemo(() => {
     const list = agentVersions(es);
     const from = base?.agentVersion || prodLabel;
     const at = list.findIndex((v) => v.label === from);
     return (at > 0 ? list.slice(0, at) : []).filter((v) => (v.changes || []).length);
   }, [es, base, prodLabel]);
-  const searchTasks = tasks || base?.tasks;
-  const envIds = main ? [main.id, ...alsoIn] : [];
+  const versionName = (label) => (main && es ? envVersionNameOf(es, label, main.id).main : label);
+  /* An environment with no scenarios has nothing to search — not "every scenario meets it". */
+  const searchTasks = (tasks?.length ? tasks : null) || (base?.tasks?.length ? base.tasks : null);
+  const envIds = useMemo(() => (main ? [main.id, ...alsoIn] : []), [main, alsoIn]);
+  /* The other environments are priced inside the search (one formula), so
+     the estimate follows what's checked, in any order. */
   const preview = useMemo(
     () => (main && searchTasks ? planSearch({ env: main, es, agentVersion: base?.agentVersion || currentAgentVersion(es)?.label || null, tasks: searchTasks, limits, seed, textSearch: inText, goal: goalArg, optimizerId, state, regressionEnvIds: envIds }) : null),
-    [main, es, base, searchTasks, limits, seed, inText, goalArg?.id, optimizerId, state], // eslint-disable-line react-hooks/exhaustive-deps
+    [main, es, base, searchTasks, limits, seed, inText, goalArg?.id, optimizerId, state, envIds], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const nothing = !!preview?.goal && preview.goalTargets === 0;
   const status = agent ? agentStatusOf(agent) : null;
-  const blocked = status && status.status !== "connected" ? status.reason : null;
-  const identity = main && es ? runIdentityOf({ agentVersion: base?.agentVersion || currentAgentVersion(es)?.label || null, envVersion: base?.envVersion || null }, es, main).label : null;
-  const estimate = improvementEstimate({
-    preview, surface: main?.surface, extraScenarios: others.filter((e) => alsoIn.includes(e.id)).reduce((n, e) => n + mustPassIn(e), 0),
-    /* Measuring today is part of what it spends. */
-    firstConversations: today ? (today.scenarioIds || []).length * (today.repeats || 1) : 0,
-  });
+  const blocked = swapped
+    ? `This run tested ${agent?.name || "an agent"}, which is no longer ${main?.name || "this environment"}'s agent — improve it from Improvements instead.`
+    : preset?.agentKey && !agent ? "This agent can't be found — it may have been deleted."
+      : status && status.status !== "connected" ? status.reason : null;
+  const identity = main && es ? runIdentityOf({
+    agentVersion: base?.agentVersion || currentAgentVersion(es)?.label || null, envVersion: base?.envVersion || null,
+    ...(swapped && agent?.name && { agentName: agent.name }),
+  }, es, main).label : null;
+  /* Measuring today is part of what it spends. */
+  const estimate = improvementEstimate({ preview, surface: main?.surface, firstConversations: todayConversations(today) });
   const budgets = budgetsWithin(limits.budget.dollars);
   const spend = budget ?? budgets[budgets.length - 1];
   const overBudget = estimate.likely > spend;
@@ -220,6 +269,11 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
   /* Must-pass in the main environment, plus each other environment checked. */
   const mustPassMain = preview?.mustPassMeasured ?? preview?.mustPass?.total ?? 0;
   const mustPassAll = mustPassMain + others.filter((e) => alsoIn.includes(e.id)).reduce((n, e) => n + mustPassIn(e), 0);
+  /* Marked must-pass but not passing every repeat today: named, not counted. */
+  const notCounted = markedNotCountedLine([
+    ...(preview?.markedNotCounted || []),
+    ...others.filter((e) => alsoIn.includes(e.id)).flatMap((e) => otherMustPass[e.id]?.markedNotCounted || []),
+  ]);
   /* Every constraint the search is held to, the time cap and must-pass
      included; the budget has its own picker above. */
   const constraints = limitRows(limits, agentModel, { mustPass: mustPassAll }).filter((c) => c.id !== "budget").map((c) => `${c.label}: ${c.value}`).join(" · ");
@@ -228,13 +282,24 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
 
   const start = () => {
     /* Re-read the agent first; a change made outside Future AGI is saved as
-       a version and becomes the baseline. */
+       a version and becomes the baseline — measured on that version, so the
+       baseline's version and its scores are the same version's. */
     const reread = rereadFor(agent, state);
     recordOutsideChange(commit, state, { agent, reread, activateEnvId: main.id });
+    const moved = !!(reread?.changed && reread.version);
+    const esNow = moved ? envStateOnVersion(es, reread) : es;
+    const first = moved
+      ? measureTodayRun(main, esNow, {
+        key: seed,
+        measuredFor: preset?.fromGoal ? { kind: "goal" } : { kind: "run", runId: base?.id || null },
+        startedBy: preset?.fromGoal ? "Improvement · goal" : "Improvement · Debug failures",
+      })
+      : today;
+    const from = first && first !== today ? measuredSummaryOf(main, esNow, first) : base;
     onStart({
       name: name.trim(), model, optimizerId, ...(writer !== SAME_AS_PLANNER && writer !== model && { writerModel: writer }),
       agent, env: main, envIds, goal: goalOf, budget: spend, limits, seed, reread, textSearch: inText,
-      lineage: acrossLineage ? lineageVersions : undefined, base, today,
+      lineage: acrossLineage ? lineageVersions : undefined, base: from, today: first,
     });
   };
 
@@ -256,18 +321,22 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
       </Stack>
 
       <Stack spacing={2.5} sx={{ px: 2.5, py: 2.5, overflowY: "auto", ...(bare ? { flex: 1, minHeight: 0 } : { maxHeight: "62vh" }) }}>
-        {agentField || (agent && (
-          /* Debug failures: the same field as New improvement, fixed to the agent this run tested. */
+        {agentField || (preset?.agentKey && (
+          /* Debug failures: the same field as New improvement, fixed to the
+             agent this run tested and the version it tested — shown even when
+             that agent has been deleted since. */
           <Box>
             <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>Agent</Typography>
             <AgentPicker
-              choices={[agentPickerChoice(agent, main)]}
-              value={agent.key}
+              choices={agent ? [agentPickerChoice(agent, main, null, preset?.fromGoal ? null : base?.agentVersion)] : []}
+              value={preset.agentKey}
               locked="Debug failures improves the agent this run tested. To improve another agent, start a new improvement from Improvements."
             />
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>
-              {agentPickerHelper(agentPickerChoice(agent, main), main?.name)}
-            </Typography>
+            {agent && (
+              <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>
+                {agentPickerHelper(agentPickerChoice(agent, main, null, preset?.fromGoal ? null : base?.agentVersion), main?.name)}
+              </Typography>
+            )}
           </Box>
         ))}
         {!main && agentField && (
@@ -446,7 +515,7 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
                 <Box flex={1} minWidth={0}>
                   <Typography sx={{ typography: "s2", fontWeight: 600 }}>Search across earlier versions</Typography>
                   <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                    {`Also tries the changes ${lineageVersions[0].label}–${lineageVersions[lineageVersions.length - 1].label} made. Checked the same way as every other proposed change.`}
+                    {`Also tries the changes ${versionName(lineageVersions[0].label)}–${versionName(lineageVersions[lineageVersions.length - 1].label)} made. Checked the same way as every other proposed change.`}
                   </Typography>
                 </Box>
                 <Switch size="small" checked={acrossLineage} onChange={(e) => setAcrossLineage(e.target.checked)} />
@@ -471,7 +540,7 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
               <Row
                 label="Scenarios"
                 value={`${train} target · ${held} held back · ${mustPassAll} must-pass`}
-                note="The search sees target scenarios in full and must-pass ones as pass or fail only. The headline number comes from the held-back scenarios, which are never shown while searching."
+                note={`The search sees target scenarios in full and must-pass ones as pass or fail only. The headline number comes from the held-back scenarios, which are never shown while searching.${notCounted ? ` ${notCounted}` : ""}`}
               />
               <Row
                 label="Cost"
@@ -482,16 +551,23 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
                 label="Limits"
                 value="From the agent"
                 note={constraints}
-                action={agent ? { label: "Change", onClick: () => { onClose(); navigate(connectedAgentPath(agent.id, "constraints")); } } : null}
+                action={agent?.id && !agent.deleted?.at ? { label: "Change", onClick: () => { onClose(); navigate(connectedAgentPath(agent.id, "constraints")); } } : null}
               />
             </Stack>
           </Box>
         )}
       </Stack>
 
+      {/* Why Start is off, said above the footer — never a silently disabled button. */}
+      {blocked && (
+        <Stack direction="row" spacing={0.75} alignItems="flex-start" sx={{ px: 2.5, py: 1.25, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}>
+          <Iconify icon="solar:danger-triangle-linear" width={14} sx={{ color: "#DC2626", flexShrink: 0, mt: "2px" }} />
+          <Typography sx={{ typography: "s3", color: "text.primary" }}>{blocked}</Typography>
+        </Stack>
+      )}
       <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}>
-        <Typography sx={{ typography: "s3", color: blocked ? "#DC2626" : "text.subtitle", flex: 1 }}>
-          {blocked || (main && !searchTasks ? `${main.name} has no scenarios to run yet.` : today ? "It runs the environment on today's version first. Nothing ships on its own — a winner comes back as a draft." : "Nothing ships on its own — a winner comes back as a draft.")}
+        <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
+          {main && !searchTasks ? `${main.name} has no scenarios to run yet.` : today ? "It runs the environment on today's version first. Nothing ships on its own — a winner comes back as a draft." : "Nothing ships on its own — a winner comes back as a draft."}
         </Typography>
         <Button onClick={onClose} sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}>Cancel</Button>
         <Button
@@ -542,7 +618,11 @@ ImprovementSetup.propTypes = {
   onBack: PropTypes.func,
   /* The agent picker, first in the form, when the agent is chosen here. */
   agentField: PropTypes.node,
-  preset: PropTypes.shape({ agentKey: PropTypes.string, envId: PropTypes.string, fromGoal: PropTypes.bool }),
+  /* Debug failures also names the run it diagnosed and the versions it tested. */
+  preset: PropTypes.shape({
+    agentKey: PropTypes.string, envId: PropTypes.string, fromGoal: PropTypes.bool,
+    runId: PropTypes.string, agentVersion: PropTypes.string, envVersion: PropTypes.string,
+  }),
   tasks: PropTypes.array,
   /* The diagnosis changes ticked in Fix my agent. */
   included: PropTypes.array,

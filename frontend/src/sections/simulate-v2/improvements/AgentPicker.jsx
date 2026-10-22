@@ -20,7 +20,7 @@ const TYPE_ICON = { Voice: "solar:phone-calling-rounded-linear", Chat: "solar:ch
  * `locked` keeps the same field but fixes it to `value` — Debug failures
  * improves the agent its run tested — and says why on hover.
  */
-export default function AgentPicker({ choices, value, onChange, locked = null }) {
+export default function AgentPicker({ choices, value, onChange, locked = null, emptyText = null }) {
   const theme = useTheme();
   const anchor = useRef(null);
   const [open, setOpen] = useState(false);
@@ -165,7 +165,7 @@ export default function AgentPicker({ choices, value, onChange, locked = null })
                 {shown.length === 0 && (
                   <Box sx={{ p: 3, textAlign: "center" }}>
                     <Typography variant="body2" color="text.disabled">
-                      {choices.length ? "No agent matches" : "No agent has an environment yet — build one for an agent first."}
+                      {choices.length ? "No agent matches" : emptyText || "No agents to pick from."}
                     </Typography>
                   </Box>
                 )}
@@ -193,6 +193,8 @@ AgentPicker.propTypes = {
   onChange: PropTypes.func,
   /* Why the agent can't be changed here — shown on hover. */
   locked: PropTypes.string,
+  /* Why there are no choices at all — the caller knows what it left out. */
+  emptyText: PropTypes.string,
 };
 
 function RailItem({ cat, on, count, onClick }) {

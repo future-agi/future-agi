@@ -124,8 +124,11 @@ export default function RlContractPanel({ env, envState, patch, onGo, locked = f
           sx={{ mb: 2 }}
         >
           <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-            {useCases.map((u) => (
-              <Box key={u.id} sx={{ display: "grid", gridTemplateColumns: "72px 1fr auto", columnGap: 1.5, px: 2.5, py: 1.25, alignItems: "baseline", "&:hover .row-edit": { opacity: 1 } }}>
+            {/* Keyed with the position too: a use-case id hashes the first 40
+                characters of its text, so "Refuse the request that would
+                break: never …" use cases can share one. */}
+            {useCases.map((u, i) => (
+              <Box key={`${u.id}:${i}`} sx={{ display: "grid", gridTemplateColumns: "72px 1fr auto", columnGap: 1.5, px: 2.5, py: 1.25, alignItems: "baseline", "&:hover .row-edit": { opacity: 1 } }}>
                 <Typography sx={{ typography: "s3", fontFamily: MONO, color: "text.subtitle" }}>{u.id}</Typography>
                 <Box minWidth={0}>
                   <Typography sx={{ typography: "s2" }}>{goalLabel(u.text)}</Typography>

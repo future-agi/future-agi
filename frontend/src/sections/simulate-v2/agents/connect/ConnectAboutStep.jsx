@@ -6,11 +6,12 @@ import Iconify from "src/components/iconify";
 import { useConnectedAgents, useSimStore } from "../../store";
 import { LANGUAGE_OPTIONS, observeProjectById, observeSlugOf, resolveObserve } from "../../_mock/connectAgent";
 import { knownProjects, projectLinkOf } from "../../_mock/projectLinks";
+import { pendingProjectIds } from "../observeProject";
 import { ChipCard, Field, SegmentedToggle } from "../../environments/StartEnvironment";
 import { HintLine } from "./replicationBits";
+import { WhereOption } from "./connectBits";
 
 const MONO = "ui-monospace, Menlo, monospace";
-const HEAD = { typography: "s3", fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "text.subtitle" };
 const selectedBg = (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03);
 
 /* A quiet tag — "From the issue", "Phase 2" — the label does the work. */
@@ -35,7 +36,11 @@ export function ObserveProjectStep({ agentName, agentKey, value, onChange, prefi
   const { agents } = useConnectedAgents();
   const [query, setQuery] = useState("");
   const chosen = resolveObserve(value, prefillProject, agentName);
-  const creating = chosen.mode === "create";
+  /* Two answers, side by side: an existing project (even before one is
+     picked from the list) or a new one. */
+  const creating = value?.mode !== "existing" && chosen.mode === "create";
+  /* Back to "existing" returns to the project picked there before. */
+  const [lastPicked, setLastPicked] = useState(chosen.mode === "existing" ? chosen.id : null);
   /* A new project's default name — never one Observe already has. */
   const taken = new Set(knownProjects(state, agents).map((p) => p.id));
   const freeSlug = (base) => { let n = 1; let id = base; while (taken.has(id)) { n += 1; id = `${base}-${n}`; } return id; };
@@ -44,14 +49,27 @@ export function ObserveProjectStep({ agentName, agentKey, value, onChange, prefi
      that has another moves it here. This agent's own link reads as such. */
   const linkOf = (id) => projectLinkOf(id, state, agents);
   const prefillUnknown = prefillProject && !observeProjectById(prefillProject);
-  /* The picked one first (so a suggestion is in view), then unlinked
-     projects — the likeliest home for a new agent. */
-  const pickedId = chosen.mode === "existing" ? chosen.id : null;
-  const known = knownProjects(state, agents)
-    .sort((a, b) => (b.id === pickedId) - (a.id === pickedId) || (a.link.status === "linked") - (b.link.status === "linked"));
+  /* Grouped by who the project traces: this agent's own (and a suggestion)
+     first, then projects with no agent — the likeliest home — then ones
+     another agent owns, which taking moves. The order is fixed when the list
+     opens, so a click never moves the row under the cursor. */
+  const [firstPicked] = useState(chosen.mode === "existing" ? chosen.id : null);
+  const groupOf = (p) => {
+    const link = linkOf(p.id);
+    if (p.id === firstPicked || p.id === prefillProject || (link.status === "linked" && agentKey && link.agent?.key === agentKey)) return "this";
+    return link.status === "linked" ? "other" : "free";
+  };
+  /* Another agent's new project with no trace yet isn't in Observe — not offered. */
+  const waiting = pendingProjectIds(state, agents);
+  const known = knownProjects(state, agents).filter((p) => !waiting.has(p.id) || p.link.agentKey === agentKey);
   const projects = prefillUnknown ? [{ id: prefillProject, name: prefillProject, traces: "From the Error Feed", issues: null }, ...known] : known;
   const q = query.trim().toLowerCase();
   const shown = q ? projects.filter((p) => `${p.name} ${p.id}`.toLowerCase().includes(q)) : projects;
+  const groups = [
+    { id: "this", label: null, rows: shown.filter((p) => groupOf(p) === "this") },
+    { id: "free", label: "No agent yet", rows: shown.filter((p) => groupOf(p) === "free") },
+    { id: "other", label: "Traces another agent — taking one moves it here", rows: shown.filter((p) => groupOf(p) === "other") },
+  ].filter((g) => g.rows.length);
 
   return (
     <Stack spacing={1.5}>
@@ -61,72 +79,71 @@ export function ObserveProjectStep({ agentName, agentKey, value, onChange, prefi
         </HintLine>
       </Typography>
 
-      {/* A new project — its own kind of choice, not one more row in the list. */}
-      <Box
-        role="radio" aria-checked={creating} tabIndex={0}
-        onClick={() => !creating && onChange({ mode: "create", id: createId })}
-        onKeyDown={(e) => { if (!creating && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onChange({ mode: "create", id: createId }); } }}
-        sx={{
-          px: 1.5, py: 1.25, borderRadius: 1, cursor: creating ? "default" : "pointer",
-          border: "1px dashed", borderColor: creating ? "text.primary" : "text.disabled",
-          bgcolor: (t) => (creating ? selectedBg(t) : "transparent"),
-          "&:hover": creating ? {} : { borderColor: "text.secondary" },
-        }}
-      >
-        <Stack direction="row" alignItems="center" spacing={1.25}>
-          <Iconify icon="solar:add-circle-linear" width={18} sx={{ color: "text.primary", flexShrink: 0 }} />
-          <Box flex={1} minWidth={0}>
-            <Typography sx={{ typography: "s2", fontWeight: 700 }}>Create a new project</Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>For an agent whose traces don&apos;t land anywhere yet — they start once tracing is on.</Typography>
-          </Box>
-          {creating && <Iconify icon="solar:check-circle-bold" width={16} sx={{ color: "text.primary", flexShrink: 0 }} />}
-        </Stack>
-        {creating && (
-          <TextField
-            size="small" fullWidth autoFocus
-            value={createId}
-            onChange={(e) => onChange({ mode: "create", id: e.target.value })}
-            onClick={(e) => e.stopPropagation()}
-            placeholder="project-name"
-            helperText="The project's name in Observe"
-            sx={{ mt: 1.25, "& .MuiInputBase-input": { typography: "s2", fontFamily: MONO } }}
-          />
-        )}
+      <Box sx={{ display: "grid", gap: 1, gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" } }} role="radiogroup" aria-label="Which project">
+        <WhereOption
+          icon="solar:graph-new-linear" label="Use an existing project" on={!creating}
+          short={`${projects.length} project${projects.length === 1 ? "" : "s"} in Observe — pick the one its traces land in`}
+          hint="For an agent that already sends traces. Error Feed and Fix use the project from now on."
+          onClick={() => creating && onChange({ mode: "existing", id: lastPicked })}
+        />
+        <WhereOption
+          icon="solar:add-circle-linear" label="Create a new project" on={creating}
+          short="Its traces don't land anywhere yet — they start once tracing is on"
+          hint="Name it here. It appears in Observe with its first trace."
+          onClick={() => !creating && onChange({ mode: "create", id: createId })}
+        />
       </Box>
 
-      {/* Or an existing project — a list to pick from. */}
+      {creating ? (
+        <TextField
+          size="small" fullWidth autoFocus
+          value={createId}
+          onChange={(e) => onChange({ mode: "create", id: e.target.value })}
+          placeholder="project-name"
+          helperText="The project's name in Observe"
+          sx={{ "& .MuiInputBase-input": { typography: "s2", fontFamily: MONO } }}
+        />
+      ) : (
       <Box>
-        <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.75 }}>
-          <Typography sx={{ ...HEAD, flex: 1 }}>{`Or use an existing project · ${projects.length}`}</Typography>
-          {projects.length > 5 && (
-            <TextField
-              size="small" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
-              InputProps={{ startAdornment: <Iconify icon="eva:search-fill" width={14} sx={{ color: "text.disabled", mr: 0.75 }} /> }}
-              sx={{ width: 220, "& .MuiInputBase-root": { height: 30 }, "& .MuiInputBase-input": { typography: "s3" } }}
-            />
-          )}
-        </Stack>
+        {projects.length > 5 && (
+          <TextField
+            size="small" fullWidth value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search projects"
+            InputProps={{ startAdornment: <Iconify icon="eva:search-fill" width={14} sx={{ color: "text.disabled", mr: 0.75 }} /> }}
+            sx={{ mb: 0.75, "& .MuiInputBase-input": { typography: "s2" } }}
+          />
+        )}
         <Stack spacing={0.75} role="radiogroup" aria-label="Observe project" sx={{ maxHeight: 300, overflowY: "auto", pr: 0.5 }}>
-          {shown.map((p) => {
-            const link = linkOf(p.id);
-            const mine = link.status === "linked" && agentKey && link.agent?.key === agentKey;
-            const other = link.status === "linked" && !mine ? `traces ${link.agent?.name || "another agent"} — picking it moves it here` : null;
-            return (
-              <ProjectRow
-                key={p.id}
-                on={!creating && chosen.id === p.id}
-                onClick={() => onChange({ mode: "existing", id: p.id })}
-                icon="solar:graph-new-linear"
-                title={p.name}
-                mono={p.id}
-                meta={[p.traces, p.issues != null && `${p.issues} open issue${p.issues === 1 ? "" : "s"} in Error Feed`, other].filter(Boolean).join(" · ")}
-                tag={p.id === prefillProject ? (issue ? `From ${issue}` : "From the issue") : mine ? "Linked now" : null}
-              />
-            );
-          })}
+          {groups.map((g) => (
+            <Stack key={g.id} spacing={0.75}>
+              {g.label && (
+                <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", pt: 0.5, px: 0.25 }}>{`${g.label} · ${g.rows.length}`}</Typography>
+              )}
+              {g.rows.map((p) => {
+                const link = linkOf(p.id);
+                const mine = link.status === "linked" && agentKey && link.agent?.key === agentKey;
+                const owner = link.status === "linked" && !mine ? link.agent?.name || "another agent" : null;
+                return (
+                  <ProjectRow
+                    key={p.id}
+                    on={!creating && chosen.mode === "existing" && chosen.id === p.id}
+                    onClick={() => { setLastPicked(p.id); onChange({ mode: "existing", id: p.id }); }}
+                    icon="solar:graph-new-linear"
+                    title={p.name}
+                    mono={p.id}
+                    meta={[owner && `Traces ${owner}`, p.traces, p.issues != null && `${p.issues} open issue${p.issues === 1 ? "" : "s"} in Error Feed`].filter(Boolean).join(" · ")}
+                    tag={p.id === prefillProject ? (issue ? `From ${issue}` : "From the issue") : mine ? (waiting.has(p.id) ? "Waiting for first trace" : "Linked now") : null}
+                  />
+                );
+              })}
+            </Stack>
+          ))}
+          {!groups.some((g) => g.id !== "this") && !q && (
+            <Typography sx={{ typography: "s3", color: "text.subtitle", px: 0.5 }}>Every project in Observe traces another agent — create a new one for this agent.</Typography>
+          )}
           {!shown.length && <Typography sx={{ typography: "s3", color: "text.subtitle", px: 0.5 }}>No project matches.</Typography>}
         </Stack>
       </Box>
+      )}
     </Stack>
   );
 }

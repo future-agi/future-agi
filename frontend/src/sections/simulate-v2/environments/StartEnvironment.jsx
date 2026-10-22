@@ -398,7 +398,9 @@ export default function StartEnvironment({ entry = false }) {
               </Box>
             </Box>
             {/* Not agents: an MCP server is the world's tools, a local runtime is
-                where the world runs. Built with no agent — connect one after. */}
+                where the world runs. Only rendered without `entry`, which no
+                page mounts today — the live paths are a world source of an
+                agent's build (prebuilt world → On your machine). */}
             <Box>
               <Stack direction="row" alignItems="baseline" spacing={1.5} sx={{ mb: 1.5 }}>
                 <Typography sx={{ typography: "s2", fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase" }}>
@@ -1980,37 +1982,31 @@ function PanelScratch() {
 
 /*
   Your own machine: the environment is built in the terminal, so the setup is
-  the steps to run there — no Build button. It shows up in My environments
-  once the CLI connects.
+  the steps to run there — no Build button. The same commands as a prebuilt
+  world's On your machine (TemplateBuildPanel): install, init for an agent,
+  up. It shows up in My environments once the CLI connects.
 */
 function PanelBuildLocally() {
   const [os, setOs] = useState("mac");
-  const install = os === "windows"
-    ? "iwr https://cli.futureagi.com/install.ps1 -useb | iex"
-    : "curl -fsSL https://cli.futureagi.com/install.sh | sh";
+  const install = os === "windows" ? "py -m pip install futureagi" : "pip install futureagi";
   const steps = [
     {
       title: "Install the CLI",
-      body: "One command — it adds fai to your path.",
+      body: "Once per machine — it adds fai to your path.",
       extra: <Box sx={{ mb: 1 }}><ProviderRow options={OS_OPTIONS} value={os} onChange={setOs} /></Box>,
       cmd: install,
     },
     {
-      title: "Initialize",
-      body: "Scaffold an environment next to your agent's code.",
-      cmd: "fai env init my-environment",
+      title: "Initialize for your agent",
+      body: "Every environment belongs to one agent in Agents — name it here.",
+      hint: "--version picks the agent's version (its production one by default), --scenarios 10 to 1,000.",
+      cmd: 'fai env init my-environment --agent "My agent" --scenarios 10',
     },
     {
-      title: "Run a simulation",
-      body: "Runs on your machine — your code never leaves.",
-      hint: "The CLI opens a secure tunnel back to us, so results still show up in this workspace.",
-      cmd: "fai sim run --env my-environment",
-    },
-    {
-      title: "Deploy",
-      body: "Publish when you're ready.",
-      hint: "Runs then execute on our infrastructure and traces land back in the dashboard.",
-      cmd: "fai env deploy my-environment",
+      title: "Build it on your machine",
+      body: "Builds the world locally and opens a secure tunnel back to this workspace.",
+      hint: "Nothing in the world leaves your machine — the tunnel carries results, traces and scores.",
+      cmd: "fai env up my-environment",
     },
   ];
   return (
@@ -2019,11 +2015,10 @@ function PanelBuildLocally() {
         <LocalSteps steps={steps} />
       </Box>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2.5, py: 1.5, borderTop: "1px solid", borderColor: "divider" }}>
-        <Box sx={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, bgcolor: (th) => alpha(th.palette.text.primary, 0.3) }} />
+        <Iconify icon="solar:laptop-2-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
         <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
-          Waiting for your machine — it appears in My environments once the CLI connects.
+          Once fai env up connects, the environment shows up in My environments.
         </Typography>
-        <Button size="small" sx={{ typography: "s3", fontWeight: 700, color: "text.secondary" }}>Docs</Button>
       </Stack>
     </Box>
   );

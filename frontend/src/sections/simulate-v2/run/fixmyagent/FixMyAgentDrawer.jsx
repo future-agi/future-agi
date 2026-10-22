@@ -12,7 +12,10 @@ import { optimizationSummary, OPT_STATUS } from "../../_mock/optimizationRuns";
 import { protoRunId } from "../../_mock/executionAdapter";
 import DiagnosisPane from "./DiagnosisPane";
 import ImprovementSetup from "./ImprovementSetup";
-import { buildImprovement, budgetsWithin } from "../../_mock/improvementStart";
+import { buildImprovement, budgetsWithin, envStateOnVersion, todaySpend } from "../../_mock/improvementStart";
+import { measureTodayRun, measuredSummaryOf } from "../../_mock/measureToday";
+import { rereadFor } from "../../_mock/improvementPolicy";
+import { recordOutsideChange } from "../../_mock/nudgeEffects";
 import { asCoderImprovement } from "../../_mock/improverAttempts";
 import { startImproverSession } from "../../_mock/integrations";
 import { limitsOf } from "../../agents/agentLimits";
@@ -101,6 +104,11 @@ export default function FixMyAgentDrawer({
   const sourceRun = (envState?.runs || []).find((r) => r.id === sourceRunId);
   /* The agent version the diagnosed run tested — what changes are made on. */
   const runAgentVersion = sourceRun?.agentVersion || null;
+  /* And the agent it tested: a run keeps the agent it ran on (stamped when
+     the environment swaps agents), so an old run never improves today's. */
+  const envKey = envAgentKey(envState?.agent, env?.id);
+  const runAgentKey = sourceRun?.agentKey || envKey;
+  const swapped = !!runAgentKey && !!envKey && runAgentKey !== envKey;
   const allScenarioIds = (envState?.scenarios || []).map((sc) => sc.id);
   const runScenarioIds = sourceRun?.scenarioIds?.length ? sourceRun.scenarioIds : allScenarioIds;
 
@@ -131,12 +139,17 @@ export default function FixMyAgentDrawer({
     page finds it.
   */
   const [setupOpen, setSetupOpen] = useState(false);
-  const startFromSetup = ({ name, model, writerModel, envIds, goal, budget, limits, seed, lineage, reread, textSearch, targetMember, optimizerId }) => {
+  const startFromSetup = ({ name, model, writerModel, envIds, goal, budget, limits, seed, lineage, reread, textSearch, targetMember, optimizerId, base, today }) => {
+    /* An outside change re-read at Start is measured first, on that version
+       — recorded as a run, and part of what the improvement spends. */
+    if (today) commit({ type: "recordRun", envId: env.id, run: today });
     const record = buildImprovement({
       reread, textSearch, targetMember, optimizerId, state: simState,
-      env, es: envState, tasks, seed,
-      fromRunId: sourceRunId,
-      baseAgentVersion: runAgentVersion,
+      env, es: today ? { ...envState, runs: [today, ...(envState?.runs || [])] } : envState,
+      tasks: today && base?.tasks ? base.tasks : tasks, seed,
+      fromRunId: today?.id || sourceRunId,
+      baseAgentVersion: base?.agentVersion || runAgentVersion,
+      spentFirst: today ? todaySpend(today, env.surface) : 0,
       trigger: { kind: "run", goal: goal ? { id: goal.id, label: goal.label, ...(goal.group && { group: goal.group }), ...(goal.reliability && { reliability: goal.reliability }) } : undefined },
       limits, budget, regressionEnvIds: envIds, lineage,
       extra: {
@@ -164,11 +177,25 @@ export default function FixMyAgentDrawer({
     each one. Not navigated to: the brief's confirmation links there.
   */
   const handToAgent = (coder) => {
-    if (!env?.id || !envState) return null;
-    const limits = limitsOf(simState, envAgentKey(envState.agent, env.id));
+    /* Never on an agent this environment no longer runs. */
+    if (!env?.id || !envState || swapped) return null;
+    const limits = limitsOf(simState, runAgentKey);
+    /* Re-read first; an outside change is measured on its new version, so the
+       baseline's version and scores match. */
+    const agent = { ...envState.agent, key: envKey };
+    const reread = rereadFor(agent, simState);
+    recordOutsideChange(commit, simState, { agent, reread, activateEnvId: env.id });
+    const esOn = envStateOnVersion(envState, reread);
+    const today = esOn !== envState
+      ? measureTodayRun(env, esOn, { key: `coder-${env.id}-${Date.now().toString(36)}`, measuredFor: { kind: "run", runId: sourceRunId }, startedBy: "Improvement · Debug failures" })
+      : null;
+    const base = today ? measuredSummaryOf(env, esOn, today) : null;
+    if (today) commit({ type: "recordRun", envId: env.id, run: today });
     const record = asCoderImprovement(buildImprovement({
-      state: simState, env, es: envState, tasks,
-      fromRunId: sourceRunId, baseAgentVersion: runAgentVersion,
+      state: simState, env, es: today ? { ...envState, runs: [today, ...(envState?.runs || [])] } : envState,
+      tasks: base?.tasks || tasks, reread,
+      fromRunId: today?.id || sourceRunId, baseAgentVersion: base?.agentVersion || runAgentVersion,
+      spentFirst: today ? todaySpend(today, env.surface) : 0,
       trigger: { kind: "run" },
       limits, budget: budgetsWithin(limits.budget.dollars).at(-1), regressionEnvIds: [env.id],
       extra: { diagnosis: report.filter((a) => !a.nothing).map((a) => ({ id: a.id, label: a.label, headline: a.headline, severity: a.severity })) },
@@ -234,7 +261,10 @@ export default function FixMyAgentDrawer({
     const subset = scenarioIds?.length && scenarioIds.length < allScenarioIds.length;
     const q = new URLSearchParams();
     if (subset) q.set("only", scenarioIds.join(","));
-    if (agent || runAgentVersion) q.set("agent", agent || runAgentVersion);
+    /* The run's version names the run's agent; once the environment swapped
+       agents, that label would pick the new agent's version instead. */
+    const version = agent || (swapped ? null : runAgentVersion);
+    if (version) q.set("agent", version);
     onClose();
     navigate(q.toString() ? `${url}?${q.toString()}` : url);
   };
@@ -348,7 +378,7 @@ export default function FixMyAgentDrawer({
       <ImprovementSetup
         open={setupOpen}
         onClose={() => setSetupOpen(false)}
-        preset={{ agentKey: envAgentKey(envState?.agent, env?.id), envId: env?.id }}
+        preset={{ agentKey: runAgentKey, envId: env?.id, runId: sourceRunId || undefined, agentVersion: runAgentVersion || undefined, envVersion: sourceRun?.envVersion || undefined }}
         tasks={tasks}
         included={included}
         onStart={startFromSetup}

@@ -1,18 +1,19 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Button, CircularProgress, MenuItem, Select, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { useSimStore } from "../../store";
+import { useConnectedAgents, useSimStore } from "../../store";
+import { projectLinkOf } from "../../_mock/projectLinks";
 import { FRAMEWORK_META } from "../../_mock/agentRegistry";
 import { OBSERVE_PROJECTS, observeSlugOf } from "../../_mock/connectAgent";
-import { TRACE_AI_FRAMEWORKS, traceAiSetupFor } from "../../_mock/integrations";
+import { traceAiInstrumentor } from "../../_mock/traceAiCatalog";
 import { agentReadFromTraces, firstTraceRead } from "../../_mock/tracesAgent";
 import { Field, SegmentedToggle } from "../../environments/StartEnvironment";
-import LocalSteps from "../../environments/LocalSteps";
+import SendTracesSetup, { FirstTraceWait } from "./SendTracesSetup";
 import { LogoTile } from "../../environments/LandingBits";
 import ConnectSteps from "./ConnectSteps";
-import { TextLink, WhereOption } from "./connectBits";
+import { WhereOption } from "./connectBits";
 import { detectedRequestOf } from "./detectedRequest";
 
 const MONO = "ui-monospace, Menlo, monospace";
@@ -31,18 +32,18 @@ const FIRST_TRACE_MS = 4500;
  */
 export default function TracesAgentFlow({ title, onSave, onOpen, initial = null, lockedType = null }) {
   const { state } = useSimStore();
+  const { agents } = useConnectedAgents();
   const [mode, setMode] = useState(initial?.mode === "send" ? "send" : "project");
   const [projectId, setProjectId] = useState(null);
   const [name, setName] = useState("");
   const [agentType, setAgentType] = useState(lockedType || null);
 
   /* Send now: what's being instrumented, and whether a trace has come in. */
-  const [framework, setFramework] = useState("OpenAI SDK");
+  const [instrumentorId, setInstrumentorId] = useState("openai");
   const [language, setLanguage] = useState("Python");
+  const framework = traceAiInstrumentor(instrumentorId)?.name || "OpenAI";
   const [newProject, setNewProject] = useState("my-agent");
   const [listening, setListening] = useState(false);
-  /* The steps by hand, folded under the one prompt a coding agent can follow. */
-  const [byHand, setByHand] = useState(false);
   const [received, setReceived] = useState(false);
   useEffect(() => {
     if (!listening) return undefined;
@@ -56,9 +57,10 @@ export default function TracesAgentFlow({ title, onSave, onOpen, initial = null,
   }, [listening]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Projects already linked to an agent say so — one Observe project per agent. */
+  /* Seeded and watched projects count too — not only links set by hand. */
   const linkedName = (id) => {
-    const key = state?.projectLinks?.[id];
-    return key ? (state?.connectedAgents || []).find((a) => a.key === key)?.name || "an agent" : null;
+    const l = projectLinkOf(id, state, agents);
+    return l.status === "linked" ? l.agent?.name || "an agent" : null;
   };
   const project = OBSERVE_PROJECTS.find((p) => p.id === projectId) || null;
   const projectSlug = observeSlugOf(newProject);
@@ -79,7 +81,6 @@ export default function TracesAgentFlow({ title, onSave, onOpen, initial = null,
     setName(p.traced?.agentName || p.name);
     setAgentType(lockedType || null);
   };
-  const setup = traceAiSetupFor({ framework, language, project: projectSlug });
 
   const channel = agentType || read?.channel || "chat";
   const source = read && {
@@ -133,65 +134,24 @@ export default function TracesAgentFlow({ title, onSave, onOpen, initial = null,
           <ProjectList projects={OBSERVE_PROJECTS} picked={projectId} onPick={pickProject} linkedName={linkedName} />
         ) : (
           <Box>
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "flex-start" }} sx={{ mb: 2 }}>
-              <Box sx={{ minWidth: 220 }}>
-                <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>Framework</Typography>
-                <Select size="small" fullWidth value={framework} onChange={(e) => { setFramework(e.target.value); setReceived(false); }} sx={{ typography: "s2" }}>
-                  {TRACE_AI_FRAMEWORKS.map((f) => <MenuItem key={f.id} value={f.id} sx={{ typography: "s2" }}>{f.label}</MenuItem>)}
-                </Select>
-              </Box>
-              <Box>
-                <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>Language</Typography>
-                <SegmentedToggle value={language} onChange={(v) => { setLanguage(v); setReceived(false); }} options={[{ value: "Python", label: "Python" }, { value: "TypeScript", label: "TypeScript" }]} />
-              </Box>
-              <Box flex={1} minWidth={0}>
-                <Field label="Project its traces land in" fullWidth mono value={newProject} onChange={(v) => { setNewProject(v); setReceived(false); }} />
-              </Box>
-            </Stack>
-            {language === "TypeScript" && !setup.ts && (
-              <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.5 }}>
-                {`traceAI instruments ${framework} in Python only — these are the Python steps.`}
-              </Typography>
-            )}
-            <CodingAgentPrompt framework={framework} language={setup.ts ? "TypeScript" : "Python"} project={projectSlug} setup={setup} />
-            <TextLink onClick={() => setByHand((v) => !v)} sx={{ mt: 1.25 }}>{byHand ? "Hide the steps" : "Set it up by hand instead — three steps"}</TextLink>
-            {byHand && (
-              <Box sx={{ mt: 1.25 }}>
-                <LocalSteps
-                  steps={[
-                    { title: "Install traceAI", body: "In the agent's environment.", cmd: setup.install },
-                    { title: "Set your keys", body: "Where the agent runs. Copy them from Keys — they're read from the environment, never written into the code.", cmd: setup.env },
-                    { title: "Add these lines before the agent starts", body: `Every call it makes is traced to ${projectSlug}.`, cmd: setup.code },
-                  ]}
-                />
-              </Box>
-            )}
-            {listening ? (
-              <ListeningPanel project={projectSlug} onStop={() => setListening(false)} />
-            ) : (
-            <Stack
-              direction="row" alignItems="center" spacing={1.25}
-              sx={{ mt: 2, px: 1.75, py: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 1 }}
-            >
-              {received ? (
-                <Iconify icon="solar:check-circle-bold" width={16} sx={{ color: "#16A34A", flexShrink: 0 }} />
-              ) : listening ? (
-                <CircularProgress size={14} thickness={5} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-              ) : (
-                <Iconify icon="solar:play-circle-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-              )}
-              <Typography sx={{ typography: "s2", color: received ? "text.primary" : "text.secondary", flex: 1, minWidth: 0 }}>
-                {received
-                  ? `First trace received in ${projectSlug} · ${read?.spans || 1} spans`
-                  : listening ? `Waiting for the first trace in ${projectSlug} — run your agent once…` : "Then run your agent once — we'll pick up its first trace."}
-              </Typography>
-              {!received && !listening && (
-                <Button size="small" variant="outlined" onClick={() => setListening(true)} sx={{ typography: "s3", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}>
-                  Listen for traces
-                </Button>
-              )}
-            </Stack>
-            )}
+            <Box sx={{ mb: 2, maxWidth: 360 }}>
+              <Field label="Project its traces land in" fullWidth mono value={newProject} onChange={(v) => { setNewProject(v); setReceived(false); }} />
+            </Box>
+            <SendTracesSetup
+              project={projectSlug}
+              instrumentorId={instrumentorId}
+              onInstrumentor={(id) => { setInstrumentorId(id); setReceived(false); }}
+              onLanguage={(l) => { setLanguage(l === "typescript" ? "TypeScript" : "Python"); setReceived(false); }}
+            />
+            <Box sx={{ mt: 2 }}>
+              <FirstTraceWait
+                project={projectSlug}
+                status={received ? "received" : listening ? "listening" : "idle"}
+                spans={read?.spans || 1}
+                onListen={() => setListening(true)}
+                onStop={() => setListening(false)}
+              />
+            </Box>
           </Box>
         )}
 
@@ -200,107 +160,6 @@ export default function TracesAgentFlow({ title, onSave, onOpen, initial = null,
     </ConnectSteps>
   );
 }
-
-/*
-  The fastest way in: one prompt for the coding agent already in the repo
-  (Claude Code, Cursor, Codex) — it installs traceAI, wires the keys and
-  registers the project. The three steps by hand stay one click away.
-*/
-const promptFor = ({ framework, language, project, setup }) => [
-  `Add Future AGI tracing (traceAI) to this agent so every call it makes is traced to the Observe project "${project}".`,
-  "",
-  `- It's ${/^[aeiou]/i.test(framework) ? "an" : "a"} ${framework} agent in ${language}. Install: ${setup.install}`,
-  "- Read FI_API_KEY and FI_SECRET_KEY from the environment where the agent runs. Never write them into the code.",
-  "- Before the agent starts, register the project and instrument the framework:",
-  "",
-  setup.code,
-  "",
-  "Then run the agent once so its first trace is sent.",
-].join("\n");
-
-function CodingAgentPrompt({ framework, language, project, setup }) {
-  const [copied, setCopied] = useState(false);
-  const text = promptFor({ framework, language, project, setup });
-  const copy = () => {
-    navigator.clipboard?.writeText(text).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1600);
-  };
-  return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
-        <Iconify icon="solar:magic-stick-3-linear" width={15} sx={{ color: "text.secondary", flexShrink: 0 }} />
-        <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "s2", fontWeight: 600 }}>Ask your coding agent to add it</Typography>
-          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{"Paste this into Claude Code, Cursor or Codex, in the agent's repository."}</Typography>
-        </Box>
-        <Button
-          size="small" variant="outlined" onClick={copy}
-          startIcon={<Iconify icon={copied ? "solar:check-circle-linear" : "solar:copy-linear"} width={14} />}
-          sx={{ typography: "s3", fontWeight: 700, height: 26, color: "text.primary", borderColor: "divider", flexShrink: 0 }}
-        >
-          {copied ? "Copied" : "Copy prompt"}
-        </Button>
-      </Stack>
-      <Typography
-        component="pre"
-        sx={{ m: 0, px: 1.5, py: 1.25, maxHeight: 200, overflow: "auto", whiteSpace: "pre-wrap", fontFamily: "ui-monospace, Menlo, monospace", fontSize: 12, lineHeight: 1.55, color: "text.secondary", bgcolor: "background.neutral" }}
-      >
-        {text}
-      </Typography>
-    </Box>
-  );
-}
-CodingAgentPrompt.propTypes = { framework: PropTypes.string, language: PropTypes.string, project: PropTypes.string, setup: PropTypes.object };
-
-/*
-  While we wait for the first trace: what we're waiting on, how long it's
-  been, and — if nothing comes — what usually stops it. Other tracing tools
-  show this as its own state; a single line read as nothing happening.
-*/
-const SLOW_MS = 15000;
-function ListeningPanel({ project, onStop }) {
-  const [elapsed, setElapsed] = useState(0);
-  useEffect(() => {
-    const started = Date.now();
-    const t = setInterval(() => setElapsed(Date.now() - started), 1000);
-    return () => clearInterval(t);
-  }, []);
-  const secs = Math.floor(elapsed / 1000);
-  const steps = [
-    { label: `Project ${project} is ready for traces`, done: true },
-    { label: "Your agent runs once — any request to it is enough", done: false, now: true },
-    { label: "The first trace arrives, usually within a few seconds", done: false },
-  ];
-  return (
-    <Box sx={{ mt: 2, border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
-      <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 1.75, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}>
-        <CircularProgress size={14} thickness={5} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-        <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1, minWidth: 0 }}>{`Listening for the first trace in ${project}`}</Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>{`${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`}</Typography>
-        <Button size="small" onClick={onStop} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", minWidth: 0 }}>Stop</Button>
-      </Stack>
-      <Stack spacing={0.75} sx={{ px: 1.75, py: 1.25 }}>
-        {steps.map((st) => (
-          <Stack key={st.label} direction="row" alignItems="center" spacing={1}>
-            {st.done
-              ? <Iconify icon="solar:check-circle-linear" width={15} sx={{ color: "text.secondary", flexShrink: 0 }} />
-              : st.now
-                ? <CircularProgress size={11} thickness={6} sx={{ color: "text.disabled", flexShrink: 0, mx: "2px" }} />
-                : <Box sx={{ width: 11, height: 11, mx: "2px", borderRadius: "50%", border: "1px solid", borderColor: "divider", flexShrink: 0 }} />}
-            <Typography sx={{ typography: "s2", color: st.done || st.now ? "text.primary" : "text.disabled" }}>{st.label}</Typography>
-          </Stack>
-        ))}
-        {elapsed >= SLOW_MS && (
-          <Typography sx={{ typography: "s3", color: "text.secondary", pt: 0.5 }}>
-            Nothing yet? Check that FI_API_KEY and FI_SECRET_KEY are set where the agent runs, and that the lines above run before the agent starts.
-          </Typography>
-        )}
-      </Stack>
-    </Box>
-  );
-}
-ListeningPanel.propTypes = { project: PropTypes.string.isRequired, onStop: PropTypes.func.isRequired };
 
 TracesAgentFlow.propTypes = {
   title: PropTypes.string,

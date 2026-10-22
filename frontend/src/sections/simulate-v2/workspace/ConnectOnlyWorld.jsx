@@ -123,6 +123,10 @@ const KIND_COPY = {
   },
 };
 
+/* Built to run on the person's machine: the CLI serves the world there. */
+const LOCAL_SEALED_LINE = "Sealed — the agent's tool calls are answered by this environment's world, running on your machine through the CLI (fai env up). Sub-goals are checked against the world's end state and the agent's tool calls.";
+const runsLocally = (env) => env?.runsOn === "local" || env?.builtFrom?.worldSource?.runsOn === "local";
+
 /* "test copy" → "a test copy"; leaves "your agent" or "the draft" alone. */
 const withArticle = (phrase) => (/^(a|an|the|your)\b/i.test(phrase) ? phrase : `${/^[aeiou]/i.test(phrase) ? "an" : "a"} ${phrase}`);
 
@@ -131,7 +135,8 @@ export function EnvironmentKindNote({ env, envState, sx }) {
   const soon = isComingSoon(env);
   if (!agent && !soon) return null;
   const pk = agent ? proofKindOf(agent) : null;
-  const copy = pk ? KIND_COPY[pk.kind] : null;
+  const local = runsLocally(env);
+  const copy = pk ? (pk.kind === "sealed" && local ? { ...KIND_COPY.sealed, line: LOCAL_SEALED_LINE } : KIND_COPY[pk.kind]) : null;
   const rep = agent ? replicationOf(agent, env) : null;
   const unpinned = agent && platformTestingOf(agent)?.needsPinnedNumbers && !numbersPinned(agent);
   /* One line: what kind of proof this is and what a run calls. The full
@@ -139,7 +144,7 @@ export function EnvironmentKindNote({ env, envState, sx }) {
      asked for where it's given (Needs input), not here. */
   const short = pk?.kind === "live"
     ? `runs call ${rep ? withArticle(rep.label.charAt(0).toLowerCase() + rep.label.slice(1)) : "your agent"} in your account; its tools reach your real systems`
-    : pk?.kind === "sealed" ? "tool calls are answered by this world, inside our sandbox"
+    : pk?.kind === "sealed" ? (local ? "tool calls are answered by this world, on your machine through the CLI" : "tool calls are answered by this world, inside our sandbox")
       : pk ? "the prompt runs without your tools" : null;
   const tip = [
     copy?.line,

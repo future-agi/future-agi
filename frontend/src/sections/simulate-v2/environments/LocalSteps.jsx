@@ -5,8 +5,8 @@ import { HintLine } from "../agents/connect/replicationBits";
 
 /**
  * Numbered terminal steps — a step's title, one line on what it does and the
- * command to copy, joined by a rule. The prebuilt world's Build locally and
- * Your own machine both read this way.
+ * command to copy, joined by a rule. A prebuilt world's On your machine, the
+ * build-locally panel and sending traces all read this way.
  */
 export default function LocalSteps({ steps }) {
   return (

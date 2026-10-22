@@ -28,7 +28,7 @@ export default function ReopenedBanner({ issue, onFixAgain }) {
   /* Same hold as the header's Fix: a disconnected or archived agent, or one
      that's Coming soon — said on hover. Live-test consent isn't one: the Fix
      drawer asks for it before anything runs. */
-  const blockedWhy = agent && gate && gate.key !== "consent" ? `${gate.title}. ${gate.body}` : null;
+  const blockedWhy = gate && gate.key !== "consent" ? `${gate.title}. ${gate.body}` : null;
   return (
     <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider", bgcolor: "background.paper" }}>
       <Iconify icon="mdi:restore" width={16} sx={{ color: "text.secondary", flexShrink: 0 }} />
@@ -51,13 +51,16 @@ export default function ReopenedBanner({ issue, onFixAgain }) {
       >
         View fix
       </Button>
-      <Tooltip arrow title={blockedWhy || ""}>
-        <span>
-          <Button size="small" variant="contained" color="primary" disabled={!!blockedWhy} onClick={onFixAgain} sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}>
-            Fix again
-          </Button>
-        </span>
-      </Tooltip>
+      {/* No agent linked: the header's Connect agent to fix is the way on. */}
+      {agent && (
+        <Tooltip arrow title={blockedWhy || ""}>
+          <span>
+            <Button size="small" variant="contained" color="primary" disabled={!!blockedWhy} onClick={onFixAgain} sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}>
+              Fix again
+            </Button>
+          </span>
+        </Tooltip>
+      )}
     </Stack>
   );
 }

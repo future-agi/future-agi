@@ -11,7 +11,7 @@ import { DEFAULT_LIMITS, limitRows } from "../_mock/optimizationRuns";
 import { useAgentImprovementFlag } from "../_mock/featureFlags";
 import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
 import { buildPresetFor } from "../agents/agentViewUtils";
-import { budgetsWithin } from "../_mock/improvementStart";
+import { budgetsWithin, envMustPassOf } from "../_mock/improvementStart";
 import { limitsOf } from "../agents/agentLimits";
 import { projectLinkOf } from "../_mock/projectLinks";
 import { targetableMembers, membersOf, isProtectedMember, textSearchDefault } from "../_mock/improvementPolicy";
@@ -50,7 +50,10 @@ const label = { typography: "s3", fontWeight: 700, textTransform: "uppercase", l
  * button checks, so every way in (the button, Prove it before it ships, Fix
  * again on a reopened issue) follows the same rules: a fix already in flight
  * opens that fix, an issue no agent is linked to connects one, and Start
- * waits for a confirmed issue and the agent's production traces.
+ * waits for the agent's gate (not archived, disconnected or Coming soon,
+ * its code read confirmed), live-test consent, a built environment and at
+ * least one scenario picked. An issue the feed hasn't confirmed is noted,
+ * not held: the fix reproduces it first.
  */
 /* Preparing a fix plan takes a moment: the issue's traces are read, the
    agent and its production version found, where to test it settled, the
@@ -84,7 +87,8 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
   const [alsoIn, setAlsoIn] = useState([]);
   /* Search across the lineage: changes earlier versions made, tried again. */
   const [acrossLineage, setAcrossLineage] = useState(false);
-  const mustPassIn = (e) => (state.byEnv[e.id]?.scenarios || []).filter((r) => !r.archived && !r.retired && (r.critical || r.regressionMemory)).length;
+  /* The same must-pass rule the search gates on: passes every repeat today. */
+  const mustPassIn = (e) => envMustPassOf(e, state.byEnv[e.id]).gated.length;
   const inFlight = !!agent && !!status && FIX_IN_FLIGHT.has(status.key);
   const [connecting, setConnecting] = useState(false);
   const mainState = main ? state.byEnv[main.id] : null;
@@ -173,7 +177,11 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
   /* The search this fix will run, worked out now — so the range is real. */
   /* The agent's constraints decide what the search may try and what it may spend. */
   const limits = useMemo(() => limitsOf(state, agent?.key), [state, agent]);
-  const preview = useMemo(() => fixPreview(main, mainState, issue, drafts, limits, { textSearch: inText }), [main, mainState, issue, drafts, limits, inText]);
+  /* Planned with the other environments ticked, so the estimate prices them the way the run will. */
+  const preview = useMemo(
+    () => fixPreview(main, mainState, issue, drafts, limits, { textSearch: inText, state, regressionEnvIds: main ? [main.id, ...alsoIn] : [] }),
+    [main, mainState, issue, drafts, limits, inText, state, alsoIn],
+  );
   /* Members: one can be targeted; protected ones are never changed. */
   const members = membersOf(agent);
   const targetable = targetableMembers(agent, limits);

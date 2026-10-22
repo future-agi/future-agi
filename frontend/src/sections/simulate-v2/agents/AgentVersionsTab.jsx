@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useSnackbar } from "notistack";
 import { Box, Button, Dialog, Menu, MenuItem, Select, Stack, Tooltip, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
@@ -11,7 +11,7 @@ import { useConnectedAgents, useSimStore } from "../store";
 import { RELEASE_WHEN, draftReleaseOf, releasedNote, rollbackVersionRecord, versionReleaseOf } from "./versionRelease";
 import { pinsDiff, versionPinsOf } from "../_mock/versionPins";
 import { nextMajorLabel } from "../_mock/versions";
-import { branchesOf, commitsOn, defaultBranchOf, isGitAgent, versionNameOf } from "../_mock/codeRefs";
+import { branchesOf, commitsOn, defaultBranchOf, isGitAgent, tracingCommitOf, versionNameOf } from "../_mock/codeRefs";
 import { OUTSIDE_CHANGE_LABEL, isOutsideChange } from "../_mock/agentSync";
 import { MAKE_ACTIVE_ADMIN_ONLY, activeVersionOf, currentWorkspaceRole } from "./agentProfile";
 
@@ -517,10 +517,12 @@ Chip.propTypes = { label: PropTypes.string, tone: PropTypes.string };
 function CommitLog({ agent, selected, onSelect, statsOf, scopeName, running, onView, onRunIn, onRevert, onMerge, checksOf }) {
   const branches = branchesOf(agent).filter((b) => b.count);
   const headOfMain = commitsOn(agent, defaultBranchOf(agent))[0]?.label;
+  /* The traceAI commit: listed, but not a version — on the release branch once merged, its own branch while the PR is open. */
+  const tracing = tracingCommitOf(agent);
   return (
     <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, bgcolor: "background.paper", overflow: "hidden", minWidth: 0 }}>
       <Typography sx={{ px: 2, py: 1.5, typography: "s2", fontWeight: 700, borderBottom: "1px solid", borderColor: "divider" }}>
-        {`${agent.versions.length} commit${agent.versions.length === 1 ? "" : "s"} · ${branches.length} branch${branches.length === 1 ? "" : "es"}`}
+        {`${agent.versions.length + (tracing ? 1 : 0)} commit${agent.versions.length + (tracing ? 1 : 0) === 1 ? "" : "s"} · ${branches.length + (tracing && !tracing.merged ? 1 : 0)} branch${branches.length + (tracing && !tracing.merged ? 1 : 0) === 1 ? "" : "es"}`}
       </Typography>
       {branches.map((b) => {
         const commits = commitsOn(agent, b.name);
@@ -537,7 +539,7 @@ function CommitLog({ agent, selected, onSelect, statsOf, scopeName, running, onV
               <Box flex={1} minWidth={0}>
                 <Typography noWrap title={b.name} sx={{ typography: "s2", fontWeight: 700, fontFamily: MONO }}>{b.name}</Typography>
                 <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-                  {[b.release ? "Release branch" : draft ? (pr ? `PR #${pr}` : "Pull request") : "Merged", from, `${b.count} commit${b.count === 1 ? "" : "s"}`].filter(Boolean).join(" · ")}
+                  {[b.release ? "Release branch" : draft ? (pr ? `PR #${pr}` : "Pull request") : "Merged", from, (() => { const n = b.count + (b.release && tracing?.merged ? 1 : 0); return `${n} commit${n === 1 ? "" : "s"}`; })()].filter(Boolean).join(" · ")}
                 </Typography>
               </Box>
               {draft && onMerge && (
@@ -553,7 +555,10 @@ function CommitLog({ agent, selected, onSelect, statsOf, scopeName, running, onV
               )}
             </Stack>
 
-            {commits.map((c) => {
+            {commits.map((c, i) => {
+              /* The merged tracing commit sits where its date puts it among main's commits. */
+              const tracingHere = tracing?.merged && b.release
+                && (i === commits.findIndex((x) => !x.at || !tracing.at || Date.parse(x.at) <= Date.parse(tracing.at)));
               const on = c.label === selected;
               const envs = running(c.label);
               const stats = statsOf(c.label);
@@ -564,8 +569,9 @@ function CommitLog({ agent, selected, onSelect, statsOf, scopeName, running, onV
               ].filter(Boolean);
               const others = agent.usedIn.filter((u) => u.running !== c.label);
               return (
+                <Fragment key={c.label}>
+                {tracingHere && <TracingCommitRow commit={tracing} production={versionNameOf(agent, agent.production).main} />}
                 <Box
-                  key={c.label}
                   {...clickable(() => onSelect(c.label), { role: "radio", checked: on })}
                   sx={{
                     ...focusRing,
@@ -606,14 +612,51 @@ function CommitLog({ agent, selected, onSelect, statsOf, scopeName, running, onV
                     </Box>
                   )}
                 </Box>
+                </Fragment>
               );
             })}
+            {/* Older than every commit listed: it goes last. */}
+            {tracing?.merged && b.release && commits.every((x) => x.at && tracing.at && Date.parse(x.at) > Date.parse(tracing.at))
+              && <TracingCommitRow commit={tracing} production={versionNameOf(agent, agent.production).main} />}
           </Box>
         );
       })}
+      {tracing && !tracing.merged && (
+        <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+          <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 1, bgcolor: "background.neutral" }}>
+            <Iconify icon="solar:branching-paths-up-linear" width={14} sx={{ color: "text.secondary", flexShrink: 0 }} />
+            <Box flex={1} minWidth={0}>
+              <Typography noWrap title={tracing.branch} sx={{ typography: "s2", fontWeight: 700, fontFamily: MONO }}>{tracing.branch}</Typography>
+              <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{`PR #${tracing.pr} · adds traceAI · 1 commit`}</Typography>
+            </Box>
+          </Stack>
+          <TracingCommitRow commit={tracing} production={versionNameOf(agent, agent.production).main} />
+        </Box>
+      )}
     </Box>
   );
 }
+/* Not a version, so nothing to pick: what it is, and why it isn't one. */
+function TracingCommitRow({ commit, production }) {
+  return (
+    <Box sx={{ px: 2, py: 1.125, borderTop: "1px solid", borderColor: "divider" }}>
+      <Stack direction="row" alignItems="baseline" spacing={1} sx={{ minWidth: 0 }}>
+        <Typography sx={{ typography: "s2", fontFamily: MONO, fontWeight: 700, flexShrink: 0, color: "text.secondary" }}>{commit.sha}</Typography>
+        <Typography noWrap title={commit.message} sx={{ typography: "s2", flex: 1, minWidth: 0, color: "text.secondary" }}>{commit.message}</Typography>
+      </Stack>
+      <Stack direction="row" alignItems="center" spacing={0.75} flexWrap="wrap" rowGap={0.5} sx={{ mt: 0.375 }}>
+        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+          {[commit.author, commit.at && ago(commit.at), `PR #${commit.pr}${commit.merged ? " · merged" : ""}`].filter(Boolean).join(" · ")}
+        </Typography>
+        <Tooltip arrow title={`It only adds tracing — what the agent does is unchanged, so it isn't a new agent version: nothing re-tests it, and tests keep using ${production || "the production version"}.`}>
+          <Box component="span" sx={{ display: "inline-flex" }}><Chip label="Tracing only · not a new version" tone="neutral" /></Box>
+        </Tooltip>
+      </Stack>
+    </Box>
+  );
+}
+TracingCommitRow.propTypes = { commit: PropTypes.object.isRequired, production: PropTypes.string };
+
 CommitLog.propTypes = {
   agent: PropTypes.object.isRequired, selected: PropTypes.string, onSelect: PropTypes.func.isRequired,
   statsOf: PropTypes.func.isRequired, scopeName: PropTypes.string, running: PropTypes.func.isRequired,

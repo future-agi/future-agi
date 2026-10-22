@@ -9,6 +9,7 @@
  * the simulation provider.
  */
 import { useSyncExternalStore } from "react";
+import { traceAiInstrumentor, traceAiSnippets } from "./traceAiCatalog";
 
 const KEY = "fagi.proto.integrations.v1";
 const EMPTY = {
@@ -153,7 +154,8 @@ export const GITHUB_REPOS = [
     name: "acme-inc/support-voice-agent", language: "Python", private: true, updated: "2 days ago",
     agents: [
       { id: "returns", name: "Returns & refunds agent", framework: "LiveKit Agents", entry: "agents/returns/agent.py", prompts: ["prompts/returns_system.md"], tools: 8 },
-      { id: "triage", name: "Call triage agent", framework: "LiveKit Agents", entry: "agents/triage/agent.py", prompts: ["prompts/triage.md"], tools: 3 },
+      /* Already traced: its code registers traceAI with this project. */
+      { id: "triage", name: "Call triage agent", framework: "LiveKit Agents", entry: "agents/triage/agent.py", prompts: ["prompts/triage.md"], tools: 3, tracing: { project: "call-triage-agent", file: "agents/triage/tracing.py" } },
     ],
   },
   {
@@ -174,7 +176,7 @@ export const GITHUB_REPOS = [
        Pickup dispatch Observe project. Not shared with the app by default. */
     name: "acme-inc/pickup-dispatch", language: "Python", private: true, updated: "6 hours ago",
     agents: [
-      { id: "dispatch", name: "Pickup dispatch agent", framework: "LangGraph", entry: "app/graph.py:dispatch", prompts: ["prompts/dispatch.md"], tools: 3, model: "gpt-4.1" },
+      { id: "dispatch", name: "Pickup dispatch agent", framework: "LangGraph", entry: "app/graph.py:dispatch", prompts: ["prompts/dispatch.md"], tools: 3, model: "gpt-4.1", tracing: { project: "pickup-dispatch", file: "app/tracing.py" } },
     ],
   },
   { name: "acme-inc/web-frontend", language: "TypeScript", private: false, updated: "3 hours ago", agents: [] },
@@ -183,6 +185,7 @@ export const GITHUB_REPOS = [
     name: "acme-labs/research-agents", language: "Python", private: true, updated: "4 days ago",
     agents: [
       { id: "researcher", name: "Research assistant", framework: "OpenAI Agents SDK", entry: "agents/research.py", prompts: ["prompts/research.md"], tools: 4 },
+      { id: "order-status", name: "Order status helper", framework: "OpenAI Agents SDK", entry: "agents/order_status.py", prompts: ["prompts/order_status.md"], tools: 3 },
     ],
   },
   { name: "acme-labs/notebooks", language: "Jupyter Notebook", private: true, updated: "2 weeks ago", agents: [] },
@@ -359,12 +362,33 @@ export const hostRepoUrlOf = (host, name) => (host === "gitlab" || host === "bit
 /** "acme/repo" from any host's URL. */
 export const hostRepoNameOf = (url) => String(url || "").replace(/^https?:\/\/(www\.)?(github\.com|gitlab\.com|bitbucket\.org)\//i, "").replace(/\.git$|\/+$/g, "");
 
-export const gitHostConnection = (host, s = state) => s.gitHosts?.[host] || null;
-/** Repositories the connection to `host` can see — the connected group or workspace's. */
-export const gitHostRepos = (host, s = state) => {
-  const c = gitHostConnection(host, s);
-  return c ? (GIT_HOST_REPOS[host] || []).filter((r) => r.name.startsWith(`${c.account}/`)) : [];
+/*
+  A host's connections — one per group (GitLab) or workspace (Bitbucket),
+  like GitHub's installs, each with its own token and access. Stored as
+  `{ accounts: { [account]: {...} } }`; an older single connection
+  (`{ account, tokenRef, access }`) reads as one.
+*/
+export const gitHostAccounts = (host, s = state) => {
+  const c = s.gitHosts?.[host];
+  if (!c) return [];
+  if (c.accounts) return Object.entries(c.accounts).map(([account, a]) => ({ ...a, account }));
+  return c.account ? [c] : [];
 };
+/** The host's first connection, with every one under `accounts` — null when none. */
+export const gitHostConnection = (host, s = state) => {
+  const all = gitHostAccounts(host, s);
+  return all.length ? { ...all[0], accounts: all } : null;
+};
+/** "acme, acme-labs" — every group or workspace connected on the host. */
+export const gitHostAccountsLabel = (host, s = state) => gitHostAccounts(host, s).map((a) => a.account).join(", ");
+/** Repositories the connections to `host` can see — every connected group or workspace's. */
+export const gitHostRepos = (host, s = state) => {
+  const owners = gitHostAccounts(host, s).map((a) => `${a.account}/`);
+  return owners.length ? (GIT_HOST_REPOS[host] || []).filter((r) => owners.some((o) => r.name.startsWith(o))) : [];
+};
+/** The connection that can see a repository ("acme/repo"), or null. */
+export const gitHostAccountOf = (host, name, s = state) => gitHostAccounts(host, s).find((a) => String(name || "").startsWith(`${a.account}/`)) || null;
+const accountsMap = (host) => Object.fromEntries(gitHostAccounts(host).map(({ account, ...a }) => [account, a]));
 /** Whether the workspace's connection to that host can see this repository. */
 export const hostRepoVisible = (url, s = state) => {
   const host = gitHostOfUrl(url);
@@ -374,17 +398,24 @@ export const hostRepoVisible = (url, s = state) => {
 };
 /** Connected with a token reference — read only until the first draft MR or PR. */
 export const connectGitHost = (host, { account, tokenRef }) => set({
-  gitHosts: { ...state.gitHosts, [host]: { account, tokenRef, access: "read", connectedAt: now() } },
+  /* Another group or workspace adds a connection; the ones already there stay. */
+  gitHosts: { ...state.gitHosts, [host]: { accounts: { ...accountsMap(host), [account]: { tokenRef, access: "read", connectedAt: now() } } } },
   scans: { ...state.scans, ...Object.fromEntries((GIT_HOST_REPOS[host] || []).filter((r) => r.name.startsWith(`${account}/`)).map((r) => [`${host}:${r.name}`, now()])) },
 });
-export const disconnectGitHost = (host) => {
+/** Disconnect one group or workspace — or, with no account, the whole host. */
+export const disconnectGitHost = (host, account = null) => {
+  if (account) {
+    const { [account]: _gone, ...rest } = accountsMap(host);
+    if (Object.keys(rest).length) { set({ gitHosts: { ...state.gitHosts, [host]: { accounts: rest } } }); return; }
+  }
   const { [host]: _gone, ...rest } = state.gitHosts || {};
   set({ gitHosts: rest });
 };
-/** The person widened the token to write at the first draft MR or PR. */
-export const grantGitHostWrite = (host) => {
-  const c = gitHostConnection(host);
-  if (c) set({ gitHosts: { ...state.gitHosts, [host]: { ...c, access: "write", writeGrantedAt: now() } } });
+/** The person widened a token to write at the first draft MR or PR — that connection's token. */
+export const grantGitHostWrite = (host, repoName = null) => {
+  const all = accountsMap(host);
+  const target = (repoName && gitHostAccountOf(host, repoName)?.account) || Object.keys(all)[0];
+  if (target && all[target]) set({ gitHosts: { ...state.gitHosts, [host]: { accounts: { ...all, [target]: { ...all[target], access: "write", writeGrantedAt: now() } } } } });
 };
 /** What the host calls a proposed change: GitLab's merge request, everyone else's pull request. */
 export const reviewNounOf = (host) => (host === "gitlab"
@@ -622,19 +653,34 @@ export const SLACK_PERMISSIONS = [
   "Read the channel list so you can pick where things go",
 ];
 
-export const installSlack = ({ workspace, defaultChannel }) => set({
-  slackRequest: null,
-  slackRemoved: null,
-  slack: {
-    workspace, defaultChannel, installedAt: now(), installedBy: "you",
-    rules: Object.fromEntries(SLACK_EVENTS.map((e) => [e.id, e.on ? defaultChannel : null])),
-  },
-});
+export const installSlack = ({ workspace, defaultChannel }) => {
+  /* Removed in Slack, then added back to the same workspace: its routing
+     comes back — events stay on or off, custom channels stay, and what went
+     to the old default goes to the one just picked. `restoredFrom` lets the
+     channel step (a second call in the same install) re-apply it. */
+  const before = (state.slackRemoved?.workspace === workspace && state.slackRemoved.rules ? state.slackRemoved : null)
+    || (state.slack?.workspace === workspace ? state.slack.restoredFrom : null) || null;
+  const rules = before
+    ? Object.fromEntries(SLACK_EVENTS.map((e) => {
+      const to = e.id in before.rules ? before.rules[e.id] : (e.on ? before.defaultChannel : null);
+      return [e.id, to && to === before.defaultChannel ? defaultChannel : to];
+    }))
+    : Object.fromEntries(SLACK_EVENTS.map((e) => [e.id, e.on ? defaultChannel : null]));
+  set({
+    slackRequest: null,
+    slackRemoved: null,
+    slack: {
+      workspace, defaultChannel, installedAt: now(), installedBy: "you", rules,
+      ...(before && { restoredFrom: { rules: before.rules, defaultChannel: before.defaultChannel } }),
+    },
+  });
+};
 export const updateSlack = (patch) => set({ slack: { ...state.slack, ...patch } });
 /** Disconnected here, or the app was removed in Slack (`app_uninstalled`). */
 export const uninstallSlack = ({ inSlack = false } = {}) => set({
   slack: null,
-  ...(inSlack && state.slack && { slackRemoved: { workspace: state.slack.workspace, at: now() } }),
+  /* Removed in Slack's side: its routing is kept for when it's added back. */
+  ...(inSlack && state.slack && { slackRemoved: { workspace: state.slack.workspace, at: now(), rules: state.slack.rules || {}, defaultChannel: state.slack.defaultChannel } }),
 });
 /** The workspace needs an admin's OK before the app can be added. */
 export const requestSlack = (workspace) => set({ slackRequest: { workspace, status: "pending", requestedAt: now() } });
@@ -662,142 +708,88 @@ export const postSlack = ({ event, title, lines = [], actions = [], links = {}, 
 
 /* ── tracing (traceAI) ────────────────────────────────────────────────────── */
 
-/* Which traceAI instrumentor fits which framework. */
-const TRACE_AI = {
-  "LangGraph": { pkg: "traceAI-langchain", module: "traceai_langchain", cls: "LangChainInstrumentor" },
-  "OpenAI Agents SDK": { pkg: "traceAI-openai-agents", module: "traceai_openai_agents", cls: "OpenAIAgentsInstrumentor", ts: { pkg: "@traceai/openai-agents", cls: "OpenAIAgentsInstrumentation" } },
-  "LiveKit Agents": { pkg: "traceAI-livekit", module: "traceai_livekit", cls: "LiveKitInstrumentor" },
-};
-const TRACE_AI_DEFAULT = { pkg: "traceAI-openai", module: "traceai_openai", cls: "OpenAIInstrumentor", ts: { pkg: "@traceai/openai", cls: "OpenAIInstrumentation" } };
-
 export const setTracing = (key, value) => set({ tracing: { ...state.tracing, [key]: value } });
 
-/* The frameworks traceAI instruments, for picking one by hand. */
-export const TRACE_AI_FRAMEWORKS = [
-  { id: "OpenAI SDK", label: "OpenAI SDK" },
-  { id: "OpenAI Agents SDK", label: "OpenAI Agents SDK" },
-  { id: "LangGraph", label: "LangGraph / LangChain" },
-  { id: "LiveKit Agents", label: "LiveKit Agents" },
-];
-
 /**
- * Setting traceAI up by hand — the same instrumentor the tracing pull request
- * adds, as the three things to do: install, set the keys, add the lines.
- * Keys are read from the environment, never written into the code.
- * → { install, env, code, ts } — `ts` is false when the framework has no
- *   TypeScript instrumentor (Python is used instead).
+ * What the repository scan found about tracing, for an agent read from a
+ * GitHub repository:
+ *   { checked: true, entry, project, file } — its code registers traceAI with
+ *     that Observe project (so that's where its traces land)
+ *   { checked: true, entry } — no traceAI in its code yet
+ *   null — not a repository we scanned
  */
-export const traceAiSetupFor = ({ framework = "OpenAI SDK", language = "Python", project = "agent" } = {}) => {
-  const t = TRACE_AI[framework] || TRACE_AI_DEFAULT;
-  const env = "export FI_API_KEY=… FI_SECRET_KEY=…   # from Keys — set where the agent runs";
-  if (language === "TypeScript" && (t.ts || framework === "OpenAI SDK")) {
-    const tsT = t.ts || TRACE_AI_DEFAULT.ts;
-    return {
-      ts: true,
-      install: `npm install @traceai/fi-core ${tsT.pkg}`,
-      env,
-      code: [
-        'import { register, ProjectType } from "@traceai/fi-core";',
-        `import { ${tsT.cls} } from "${tsT.pkg}";`,
-        "",
-        `const tracerProvider = register({ projectType: ProjectType.OBSERVE, projectName: "${project}" });`,
-        `new ${tsT.cls}().setTracerProvider(tracerProvider);`,
-      ].join("\n"),
-    };
-  }
-  return {
-    ts: false,
-    install: `pip install fi-instrumentation-otel ${t.pkg}`,
-    env,
-    code: [
-      "from fi_instrumentation import register",
-      "from fi_instrumentation.fi_types import ProjectType",
-      `from ${t.module} import ${t.cls}`,
-      "",
-      `trace_provider = register(project_type=ProjectType.OBSERVE, project_name="${project}")`,
-      `${t.cls}().instrument(tracer_provider=trace_provider)`,
-    ].join("\n"),
-  };
+export const scannedTracingOf = (agent) => {
+  const def = agent?.definition || {};
+  const url = def.repoUrl || agent?.values?.repoUrl;
+  const repo = url ? GITHUB_REPOS.find((r) => r.name.toLowerCase() === repoNameOf(url).toLowerCase()) : null;
+  /* Only a repository the app can read was scanned — and only an entry
+     point the scan found says anything about this agent's code. */
+  if (!repo || !installationOfRepo(repo.name)) return null;
+  const entry = String(def.entry || agent?.values?.entry || "").split(":")[0];
+  const scanned = entry ? repo.agents.find((x) => x.entry.split(":")[0] === entry) : null;
+  if (!scanned) return null;
+  return { checked: true, entry, ...(scanned.tracing || {}) };
 };
 
 /**
- * The "Do you want traceAI?" pull request. Detects the language and
- * framework from what the scan found, adds the dependency, a small setup
- * file and one import at the entry point. Keys come from the environment —
- * never written into the code.
+ * The "add traceAI" pull request: the same install, register and
+ * instrumentor lines as Observe's New project, as a new tracing file
+ * imported first at the entry point, plus the dependencies. Keys come from
+ * the environment — never written into the code.
  */
-export const telemetryDraft = ({ agent, repo }) => {
-  const t = telemetryFiles({ agent, repo });
+export const telemetryDraft = ({ agent, repo, project, instrumentorId }) => {
+  const t = telemetryFiles({ agent, repo, project, instrumentorId });
   return {
     ...t,
     branch: "future-agi/add-traceai",
     title: `Add traceAI tracing to ${agent?.name || "the agent"}`,
     body: [
       "## Why",
-      "Sends this agent's production traces to Future AGI, so Error Feed can find failures in real conversations and simulations can be built from them.",
+      `Sends this agent's production traces to the Future AGI Observe project \`${t.project}\`, so Error Feed can find failures in real conversations.`,
       "",
       "## Changes",
       ...t.files.map((f) => `- \`${f.path}\` — ${f.title}`),
       "",
       "## Before you merge",
-      "Set `FI_API_KEY` and `FI_SECRET_KEY` where the agent runs. No keys are written into the code.",
+      "Set `FI_API_KEY` and `FI_SECRET_KEY` where the agent is deployed. No keys are written into the code. Simulation runs in Future AGI's sandbox don't get these keys, so they never send to this project.",
       "",
-      "_Opened by Future AGI. Tracing doesn't change what the agent does — no new agent version._",
+      "_Opened by Future AGI. Tracing doesn't change what the agent does — it isn't a new agent version._",
     ].join("\n"),
     meta: { framework: t.framework, project: t.project },
   };
 };
 
-const telemetryFiles = ({ agent, repo }) => {
+const telemetryFiles = ({ agent, repo, project: wanted, instrumentorId }) => {
   const def = agent?.definition || {};
   const repoMeta = GITHUB_REPOS.find((r) => r.name === repo);
   const scanned = repoMeta?.agents.find((a) => a.entry === def.entry);
   const framework = def.framework || scanned?.framework || "OpenAI SDK";
-  const ts = repoMeta?.language === "TypeScript";
-  const t = TRACE_AI[framework] || TRACE_AI_DEFAULT;
-  const project = String(agent?.name || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  const ts = repoMeta?.language === "TypeScript" || /\.(ts|tsx|js)$/.test(String(def.entry || "").split(":")[0]);
+  const project = wanted || String(agent?.name || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
   const entry = String(def.entry || (ts ? "src/index.ts" : "app/main.py")).split(":")[0];
   const dir = entry.includes("/") ? entry.slice(0, entry.lastIndexOf("/")) : ".";
+  const sn = traceAiSnippets({ instrumentorId: instrumentorId || "openai", language: ts ? "typescript" : "python", project });
+  const ins = traceAiInstrumentor(instrumentorId || "openai");
+  const pkgs = sn.install.split(" ").slice(2);
 
-  if (ts) {
-    const tsT = t.ts || TRACE_AI_DEFAULT.ts;
-    const code = [
-      `// Tracing for ${agent?.name || "this agent"} — added by Future AGI.`,
-      "// Reads FI_API_KEY and FI_SECRET_KEY from the environment.",
-      'import { register, ProjectType } from "@traceai/fi-core";',
-      `import { ${tsT.cls} } from "${tsT.pkg}";`,
-      "",
-      `const tracerProvider = register({ projectType: ProjectType.OBSERVE, projectName: "${project}" });`,
-      `new ${tsT.cls}().setTracerProvider(tracerProvider);`,
-    ].join("\n");
+  if (sn.ts) {
+    const code = [`// Tracing for ${agent?.name || "this agent"} — added by Future AGI.`, "// Reads FI_API_KEY and FI_SECRET_KEY from the environment.", sn.register, "", sn.instrument].join("\n");
     return {
       framework, project,
       files: [
-        { path: "package.json", kind: "deps", title: `Add @traceai/fi-core and ${tsT.pkg}`, adds: 2, dels: 0 },
-        { path: `${dir}/tracing.ts`, kind: "tracing", title: "Register the tracer and instrument the agent", adds: code.split("\n").length, dels: 0 },
+        { path: "package.json", kind: "deps", title: `Add ${pkgs.join(", ")}`, adds: pkgs.length, dels: 0 },
+        { path: `${dir}/tracing.ts`, kind: "tracing", title: `Register ${project} and instrument with ${ins?.name}`, adds: code.split("\n").length, dels: 0 },
         { path: entry, kind: "entry", title: "Import tracing first", adds: 1, dels: 0 },
       ],
       preview: { label: `${dir}/tracing.ts · new file`, code },
     };
   }
-  const code = [
-    `"""Tracing for ${agent?.name || "this agent"} — added by Future AGI."""`,
-    "from fi_instrumentation import register",
-    "from fi_instrumentation.fi_types import ProjectType",
-    `from ${t.module} import ${t.cls}`,
-    "",
-    "# Reads FI_API_KEY and FI_SECRET_KEY from the environment.",
-    "trace_provider = register(",
-    "    project_type=ProjectType.OBSERVE,",
-    `    project_name="${project}",`,
-    ")",
-    `${t.cls}().instrument(tracer_provider=trace_provider)`,
-  ].join("\n");
+  const code = [`"""Tracing for ${agent?.name || "this agent"} — added by Future AGI. Reads FI_API_KEY and FI_SECRET_KEY from the environment."""`, sn.register, "", sn.instrument].join("\n");
   return {
     framework, project,
     files: [
-      { path: "requirements.txt", kind: "deps", title: `Add fi-instrumentation-otel and ${t.pkg}`, adds: 2, dels: 0 },
-      { path: `${dir}/tracing.py`, kind: "tracing", title: "Register the tracer and instrument the agent", adds: code.split("\n").length, dels: 0 },
+      { path: "requirements.txt", kind: "deps", title: `Add ${pkgs.join(" and ")}`, adds: pkgs.length, dels: 0 },
+      { path: `${dir}/tracing.py`, kind: "tracing", title: `Register ${project} and instrument with ${ins?.name}`, adds: code.split("\n").length, dels: 0 },
       { path: entry, kind: "entry", title: "Import tracing before the agent starts", adds: 1, dels: 0 },
     ],
     preview: { label: `${dir}/tracing.py · new file`, code },

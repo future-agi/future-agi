@@ -75,7 +75,7 @@ export const firstTraceRead = ({ project, framework, channel = "chat" }) => {
     route: "traces",
     traceCount: 1,
     spans: 7,
-    model: framework === "OpenAI Agents SDK" ? "gpt-4.1" : "gpt-4o",
+    model: /agents/i.test(String(framework)) ? "gpt-4.1" : "gpt-4o",
     prompt: promptFor(project, tools),
     tools,
     channel,

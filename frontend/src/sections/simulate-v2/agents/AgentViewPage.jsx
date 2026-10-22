@@ -41,7 +41,7 @@ import {
 import { agentFilesOf } from "../_mock/agentFiles";
 import { agentToolsFor } from "../_mock/toolFit";
 import { credentialsVersionRecord, currentEnvVersion } from "../_mock/versions";
-import { isGitAgent, versionNameOf } from "../_mock/codeRefs";
+import { isGitAgent, versionNameOf, tracingCommitOf } from "../_mock/codeRefs";
 import CommitPicker from "./CommitPicker";
 import { currentEnvSnapshot } from "../_mock/envSnapshot";
 import { runResultOf } from "../_mock/runResult";
@@ -790,7 +790,7 @@ export default function AgentViewPage() {
               disableRipple
               label={
                 t.id === "versions"
-                  ? `${isGitAgent(agent) ? "Commits" : "Versions"} ${agent.versions.length}`
+                  ? `${isGitAgent(agent) ? "Commits" : "Versions"} ${agent.versions.length + (isGitAgent(agent) && tracingCommitOf(agent) ? 1 : 0)}`
                   : t.id === "environments"
                     ? `Environments ${agent.usedIn.length}`
                     : t.id === "improvements" && improvementCount
@@ -850,6 +850,7 @@ export default function AgentViewPage() {
           improvements={improvementStats}
           production={{
             project: observeLink.project,
+            pending: !!observeLink.pending,
             onOpenProject: observeLink.openInObserve,
             /* Error Feed, filtered to this agent's project. */
             onViewIssues: observeLink.viewIssues,
@@ -886,6 +887,7 @@ export default function AgentViewPage() {
           focusPath={params.get("file")}
           diffOn={params.get("diff") === "1"}
           observeProject={observeLink.project}
+          observePending={!!observeLink.pending}
           onOpenEnv={(envId) => navigate(paths.dashboard.simulate.environmentDetail(envId))}
           onTab={(t) => setQuery({ tab: t })}
           protectedMembers={limitsOf(state, agent.key).protectedMembers || []}

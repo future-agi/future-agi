@@ -44,6 +44,7 @@ import { candidateSourceOf, takesSnapshot } from "../../_mock/candidateSource";
 import CandidateSourcePicker from "../CandidateSourcePicker";
 import NotReproducedBody from "./NotReproducedBody";
 import { creditsLabel } from "../../_mock/metering";
+import { envVersionNameOf } from "../../_mock/codeRefs";
 
 /**
  * One improvement run.
@@ -74,6 +75,8 @@ export default function OptimizationRunView({
 }) {
   const theme = useTheme();
   const navigate = useNavigate();
+  /* A git agent's version reads as its commit ("main @ 3f9a2c1"), never vN. */
+  const versionName = (label) => envVersionNameOf(envState, label, env?.id).main;
   const openTrialRun = (trialN) => {
     if (!env?.id || !record?.id) return;
     navigate(paths.dashboard.simulate.simulationRun(env.id, `${record.id}-t${trialN}`));
@@ -389,6 +392,7 @@ export default function OptimizationRunView({
         shipped={lifecycle}
         record={record}
         fromRun={fromRun}
+        versionName={versionName}
         running={running}
         phase={phase}
         diag={diag}
@@ -463,8 +467,8 @@ export default function OptimizationRunView({
           <ImprovementProgress
             title="Reproducing"
             subtitle={record.reproduce?.total
-              ? `${record.reproduce.total} scenarios from ${record.trigger?.issueId || "the issue"} on ${record.baseAgentVersion || "today's version"}`
-              : `The environment's scenarios on ${record.baseAgentVersion || "today's version"}`}
+              ? `${record.reproduce.total} scenarios from ${record.trigger?.issueId || "the issue"} on ${record.baseAgentVersion ? versionName(record.baseAgentVersion) : "today's version"}`
+              : `The environment's scenarios on ${record.baseAgentVersion ? versionName(record.baseAgentVersion) : "today's version"}`}
             steps={reproduceStepsOf(record)}
             trials={[]}
             stepMs={TRACE_STEP_MS}
@@ -1265,7 +1269,7 @@ const signedPct = (n) => `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(n)}%`;
   failure (or start from the run it came from), search, verify, and how it
   ended. An improvement from the Error Feed also says which issue.
 */
-function ImprovementSteps({ record, fromRun, running, phase, diag, outcome, onOpenIssue, onOpenRun, shipped }) {
+function ImprovementSteps({ record, fromRun, versionName = (l) => l, running, phase, diag, outcome, onOpenIssue, onOpenRun, shipped }) {
   const feed = record.trigger?.kind === "error-feed";
   const r = record.reproduce || {};
   const ending = outcome.ending.key;
@@ -1345,9 +1349,9 @@ function ImprovementSteps({ record, fromRun, running, phase, diag, outcome, onOp
                 </>
               )}
               {[
-                record.baseAgentVersion ? `agent ${record.baseAgentVersion}` : null,
+                record.baseAgentVersion ? `agent ${versionName(record.baseAgentVersion)}` : null,
                 record.trigger?.goal ? `Goal: ${record.trigger.goal.id === "pass-rate" ? "raise the pass rate" : `raise ${record.trigger.goal.label}`}` : null,
-                record.lineage?.length ? `searched across ${record.lineage[0]}–${record.baseAgentVersion || "now"}` : null,
+                record.lineage?.length ? `searched across ${versionName(record.lineage[0])}–${record.baseAgentVersion ? versionName(record.baseAgentVersion) : "now"}` : null,
               ].filter(Boolean).map((part) => ` · ${part}`).join("")}
             </>
           )}
@@ -1380,7 +1384,7 @@ function ImprovementSteps({ record, fromRun, running, phase, diag, outcome, onOp
   );
 }
 ImprovementSteps.propTypes = {
-  record: PropTypes.object, fromRun: PropTypes.object, running: PropTypes.bool, phase: PropTypes.object, diag: PropTypes.object, outcome: PropTypes.object, onOpenIssue: PropTypes.func, onOpenRun: PropTypes.func, shipped: PropTypes.object,
+  record: PropTypes.object, fromRun: PropTypes.object, versionName: PropTypes.func, running: PropTypes.bool, phase: PropTypes.object, diag: PropTypes.object, outcome: PropTypes.object, onOpenIssue: PropTypes.func, onOpenRun: PropTypes.func, shipped: PropTypes.object,
 };
 
 /* The constraints in force while the search runs — a candidate that breaks one is dropped. */

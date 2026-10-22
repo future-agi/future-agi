@@ -16,7 +16,9 @@ export const useSaveConnectedAgent = () => {
     const now = new Date().toISOString();
     const built = agentRecordFromSource(source, now);
     /* An Observe project settled at connect (from an issue) isn't asked again. */
-    const record = source.observeChosenAt ? { ...built, values: { ...(built.values || {}), observeChosenAt: source.observeChosenAt } } : built;
+    /* A new project named at connect waits for its first trace, like one created on the agent's page. */
+    const settled = source.observeChosenAt ? { observeChosenAt: source.observeChosenAt } : source.observePending ? { observePending: source.observePending } : null;
+    const record = settled ? { ...built, values: { ...(built.values || {}), ...settled } } : built;
     const exists = agents.some((a) => a.key === record.key);
     connectAgent(exists ? record : {
       ...record,

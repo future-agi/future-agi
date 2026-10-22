@@ -89,6 +89,9 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
       ...(observeProject && { observeProject }),
       /* Connected from an issue: its project is the one — settled, not a suggestion. */
       ...(((prefill?.project && observeProject?.id === prefill.project) || source.kind === "traces") && { observeChosenAt: new Date().toISOString() }),
+      /* A project created here has no traces yet — it settles with the first one. */
+      ...(observeProject?.mode === "create" && source.kind !== "traces" && !(prefill?.project && observeProject.id === prefill.project)
+        && { observePending: { project: observeProject.id, since: new Date().toISOString(), via: "manual" } }),
     };
     const agentKey = agentRecordFromSource(full).key;
     /* Saved at once — connecting from an issue goes straight back to it. */

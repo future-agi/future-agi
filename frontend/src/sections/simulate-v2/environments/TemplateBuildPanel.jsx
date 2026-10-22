@@ -7,6 +7,8 @@ import {
 import Iconify from "src/components/iconify";
 import { getSurface } from "../_mock/surfaces";
 import { useConnectedAgents } from "../store";
+import { uniqueEnvName } from "../_mock/envNames";
+import { versionNameOf } from "../_mock/codeRefs";
 import { SectionCard } from "../components/primitives";
 import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
 import { HintLine } from "../agents/connect/replicationBits";
@@ -30,16 +32,18 @@ import { replicationOf } from "../_mock/replication";
  *
  * Every environment belongs to exactly one agent in Agents (RSI PRD), so a
  * prebuilt world is never built on its own or with a stand-in: the user picks
- * one of their agents (or connects one here), then the same Build environment
- * dialog the agent page uses (name, version, 10–1,000 scenarios) opens, and
- * the builder builds that agent's environment starting from this world's
- * tables, tools and rules — reading the agent, checking its tools against
- * the world, proving the scenarios, then running the suite once.
+ * one of their agents (or connects one here), then the builder builds that
+ * agent's environment starting from this world's tables, tools and rules —
+ * reading the agent, checking its tools against the world, proving the
+ * scenarios, then running the suite once.
  *
- * Where it runs is the person's choice: in Future AGI (our hosted sandbox,
- * the default) or on their own machine — the CLI builds the world there and
- * streams results back over a secure tunnel, so the environment still shows
- * up in this workspace.
+ * Where it runs is the person's choice. In Future AGI (our hosted sandbox,
+ * the default): the same Build environment dialog the agent page uses (name,
+ * version, 10–1,000 scenarios) opens first. On their own machine: no dialog —
+ * the CLI steps show with the defaults (production version, 10 scenarios),
+ * the CLI builds the world there and streams results back over a secure
+ * tunnel, and Open the build follows once the machine checks in, so the
+ * environment still shows up in this workspace.
  *
  * Rendered in the world drawer, so it takes a base `template`.
  */
@@ -47,7 +51,7 @@ export default function TemplateBuildPanel({ template, showName = false, initial
   /* "try" — the world with its sample agent; "agent" — with one of yours. */
   const [mode, setMode] = useState(initialMode);
   const tryWorld = useTryWorld();
-  const { agents: all } = useConnectedAgents();
+  const { agents: all, state: store } = useConnectedAgents();
   const agents = useMemo(() => buildableAgentsOf(all), [all]);
   const [agentId, setAgentId] = useState(null);
   const agent = agents.find((a) => a.id === agentId) || null;
@@ -190,11 +194,11 @@ export default function TemplateBuildPanel({ template, showName = false, initial
           <LocalRun
             template={template}
             agent={agent}
-            choice={localChoiceOf(template, agent)}
+            choice={localChoiceOf(template, agent, store.myEnvironments)}
             ranUp={ranUp}
             checkedIn={checkedIn}
             onRanUp={() => setRanUp(true)}
-            onOpen={() => startBuild(localChoiceOf(template, agent), "local")}
+            onOpen={() => startBuild(localChoiceOf(template, agent, store.myEnvironments), "local")}
           />
         ) : (
           <Typography sx={{ typography: "s3", color: "text.subtitle", px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider" }}>
@@ -271,23 +275,28 @@ export default function TemplateBuildPanel({ template, showName = false, initial
 }
 TemplateBuildPanel.propTypes = { template: PropTypes.object, showName: PropTypes.bool, initialMode: PropTypes.oneOf(["try", "agent"]) };
 
-/* What the commands build on the machine: the agent's production version and
-   10 scenarios to start — both are flags the person can change in the command. */
-function localChoiceOf(template, agent) {
-  return { name: `${agent.name} · ${template.name}`, version: agent.production || agent.latest, count: 10 };
+/* What the commands build on the machine, and what Open the build builds: the
+   agent's production version and 10 scenarios. The prototype can't read an
+   edited command, so these are the defaults both use. The name is the one the
+   build will keep (a taken name gets the next number), so the CLI slug matches. */
+function localChoiceOf(template, agent, envs = []) {
+  return { name: uniqueEnvName(`${agent.name} · ${template.name}`, envs), version: agent.production || agent.latest, count: 10 };
 }
 
 /* On their machine: the CLI steps for this world and agent, then the wait
    for the machine to check in, then the build — as it is in Future AGI. */
 function LocalRun({ template, agent, choice, ranUp, checkedIn, onRanUp, onOpen }) {
   const slug = choice.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  /* A code agent's version is a commit — named and flagged as one. */
+  const shown = versionNameOf(agent, choice.version);
+  const versionFlag = shown.ref ? `--ref ${shown.ref.branch}@${shown.ref.sha}` : `--version ${choice.version}`;
   const steps = [
     { title: "Install the CLI", body: "Once per machine.", cmd: "pip install futureagi" },
     {
       title: "Pull this world for your agent",
-      body: `This world's tables, tools and rules, and ${agent.name} at ${choice.version}.`,
-      hint: `Change --version for another of the agent's versions, and --scenarios for 10 to 1,000 scenarios.`,
-      cmd: `fai env init ${slug} --world ${template.id} --agent "${agent.name}" --version ${choice.version} --scenarios ${choice.count}`,
+      body: `This world's tables, tools and rules, and ${agent.name} at ${shown.main}.`,
+      hint: `These are the defaults Open the build here uses — ${shown.main} and ${choice.count} scenarios. For another version or size, build it In Future AGI.`,
+      cmd: `fai env init ${slug} --world ${template.id} --agent "${agent.name}" ${versionFlag} --scenarios ${choice.count}`,
     },
     {
       title: "Build it on your machine",

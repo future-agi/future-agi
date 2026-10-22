@@ -111,7 +111,12 @@ export const briefBreakdownOf = (record) => {
   const r = record?.result || null;
   const per = record?.reproduce?.perScenario || {};
   const last = r?.winner || (r?.trials || []).at(-1) || null;
-  const tasks = r?.trainMeasuredTasks?.length ? r.trainMeasuredTasks : (record?.issueScenarios || []).filter((d) => per[d.id]?.state !== "passed");
+  /* Before a search runs, the issue's scenarios stand in — less the held-back
+     set's: its fresh variations, and any of the issue's own it held back. */
+  const held = new Set([...(r?.held || []), ...(record?.pendingResult?.held || [])].map((t) => t.id));
+  const tasks = r?.trainMeasuredTasks?.length
+    ? r.trainMeasuredTasks
+    : (record?.issueScenarios || []).filter((d) => !d.freshVariation && !held.has(d.id) && per[d.id]?.state !== "passed");
   return tasks.map((t) => {
     const p = per[t.id];
     const today = p ? (p.fails ? `failed ${p.fails} of ${p.of}` : `passed ${p.of} of ${p.of}`) : t.before === "failed" ? "failing" : t.before === "flaky" ? "flaky" : t.before || "—";

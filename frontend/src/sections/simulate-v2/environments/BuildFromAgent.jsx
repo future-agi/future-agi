@@ -719,6 +719,8 @@ export default function BuildFromAgent() {
           buildStatus,
           buildProgress,
           ...(buildReplication && { replication: buildReplication }),
+          /* Built to run on the person's machine through the CLI, not in our sandbox. */
+          ...(source?.worldSource?.runsOn === "local" && { runsOn: "local" }),
           /* Built from an issue's Fix: the environment links back to it. */
           ...(fromIssue && { returnToIssue: fromIssue, returnFrom: "built" }),
         },

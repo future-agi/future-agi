@@ -16,6 +16,7 @@ import {
   useCallback,
 } from "react";
 import { seededState } from "./_mock/seedState";
+import { SEEDED_PROJECTS } from "./_mock/projectLinks";
 import { runReadiness } from "./_mock/setupGaps";
 import { getEnvironment } from "./_mock/environments";
 import { generatedPool } from "./_mock/scenarios";
@@ -547,10 +548,9 @@ function reducer(state, action) {
        can find it for every issue in that project. */
     /* An Observe project's agent. agentKey null unlinks it. */
     case "linkProjectAgent": {
-      if (!action.agentKey) {
-        const { [action.project]: _gone, ...rest } = state.projectLinks || {};
-        return { ...state, projectLinks: rest };
-      }
+      /* Unlinking leaves "no agent" in place, so the project doesn't fall
+         back to the agent its seed or name once suggested. */
+      if (!action.agentKey) return { ...state, projectLinks: { ...(state.projectLinks || {}), [action.project]: "__not-an-agent__" } };
       return { ...state, projectLinks: { ...(state.projectLinks || {}), [action.project]: action.agentKey } };
     }
 
@@ -578,7 +578,10 @@ function reducer(state, action) {
           ? [envId, { ...es, agent: null, removedAgent: { key, name: es.agent.name || null, at } }]
           : [envId, es]
       )));
-      const projectLinks = Object.fromEntries(Object.entries(state.projectLinks || {}).filter(([, k]) => k !== key));
+      /* Its projects — linked by hand or seeded — read "no agent" now, so
+         their issues say "Connect agent to fix" instead of naming a deleted agent. */
+      const projectLinks = Object.fromEntries(Object.entries(state.projectLinks || {}).map(([p, k]) => [p, k === key ? "__not-an-agent__" : k]));
+      Object.entries(SEEDED_PROJECTS).forEach(([p, k]) => { if (k === key && !projectLinks[p]) projectLinks[p] = "__not-an-agent__"; });
       return {
         ...state,
         connectedAgents: (state.connectedAgents || []).map((a) => (a.key === key ? { ...a, deleted: { at } } : a)),

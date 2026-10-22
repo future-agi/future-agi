@@ -135,3 +135,25 @@ export const envVersionNameOf = (envState, label, envId) => {
   if (!a || !label) return { main: label, sub: null };
   return versionNameOf({ ...a, key: a.key || envAgentKey(a, envId), versions: agentVersions(envState) }, label);
 };
+
+/**
+ * The commit that adds traceAI, from the tracing pull request — shown in the
+ * commit log but never an agent version: it doesn't change what the agent
+ * does, so nothing re-tests it and no version nudge follows. On its own
+ * branch while the PR is open, on the release branch once it's merged.
+ *   → { sha, message, branch, author, at, merged, pr } | null
+ */
+export const tracingCommitOf = (agent) => {
+  const pr = agent?.values?.tracingPr;
+  if (!pr) return null;
+  const merged = !!pr.mergedAt;
+  return {
+    sha: hex(`${agent?.key || agent?.name}:tracing:${pr.number}`, 7),
+    message: pr.title || "Add traceAI tracing",
+    branch: merged ? defaultBranchOf(agent) : pr.branch,
+    author: "future-agi[bot]",
+    at: pr.mergedAt || pr.openedAt || null,
+    merged,
+    pr: pr.number,
+  };
+};

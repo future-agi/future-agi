@@ -11,6 +11,7 @@ import { agentSourceOf } from "../../_mock/agentRegistry";
 import AgentStateTags from "../../agents/AgentStateTags";
 import { channelLabel } from "../../_mock/nudgeEffects";
 import { fitsEnvChannel } from "../../_mock/agentSwitch";
+import { buildableAgentsOf } from "../../environments/worldSource";
 import { getSurface } from "../../_mock/surfaces";
 import { clickable, focusRing } from "../../components/clickable";
 
@@ -35,8 +36,9 @@ const recordOf = (a) => {
 export default function ChangeAgentDrawer({ open, onClose, env, currentKey, preview, onChoose, onConnectNew }) {
   const navigate = useNavigate();
   const { agents, state } = useConnectedAgents();
-  /* Not a template's stand-in — that isn't anyone's agent to switch to. */
-  const candidates = useMemo(() => agents.filter((a) => a.key !== currentKey && !a.placeholder), [agents, currentKey]);
+  /* Agents it can be built for: not a template's stand-in or another world's
+     Sample agent, not archived or cut off, not Coming soon. */
+  const candidates = useMemo(() => buildableAgentsOf(agents).filter((a) => a.key !== currentKey), [agents, currentKey]);
   const others = useMemo(() => candidates.filter((a) => fitsEnvChannel(a, env, state)), [candidates, env, state]);
   const otherType = candidates.length - others.length;
   const channel = channelLabel(env?.surface).toLowerCase();

@@ -32,7 +32,7 @@ import { observabilityOf } from "./observability";
 /* Demo agents that report into these projects even where their saved copy
    doesn't say so. pickup-dispatch is left out on purpose: no agent in Agents
    records it yet, so its issues show Connect agent to fix. */
-const SEEDED_PROJECTS = {
+export const SEEDED_PROJECTS = {
   "returns-refunds-line-agent": "livekit:asst_9f2c1188",
   "customer-support-line-agent": "vapi:asst_v1c2f3",
   "airline-rebooking": "repo:https://github.com/skyline-air/rebooking-agent",
@@ -41,6 +41,9 @@ const SEEDED_PROJECTS = {
 
 const nameOfProject = (id) => observeProjectById(id)?.name || id;
 
+/** A project link set to no agent (unlinked on purpose, or its agent deleted). */
+export const NO_AGENT = "__not-an-agent__";
+
 /**
  * The project's agent: { project, name, status, agentKey, agent, how }.
  *   status: "linked" | "unlinked"
@@ -48,11 +51,15 @@ const nameOfProject = (id) => observeProjectById(id)?.name || id;
 export const projectLinkOf = (project, state, agents = []) => {
   if (!project) return { project: null, name: null, status: "unlinked" };
   const base = { project, name: nameOfProject(project) };
-  /* An old "not an agent" marker reads as no agent — the same thing now. */
-  const explicit = state?.projectLinks?.[project] === "__not-an-agent__" ? null : state?.projectLinks?.[project];
+  /* "Not an agent" is a link set to no agent — an unlinked project stays
+     unlinked, rather than falling back to the agent its name or seed
+     suggested. */
+  if (state?.projectLinks?.[project] === NO_AGENT) return { ...base, status: "unlinked" };
+  const explicit = state?.projectLinks?.[project];
   const byKey = (k) => agents.find((a) => a.key === k) || null;
   if (explicit) return { ...base, status: "linked", agentKey: explicit, agent: byKey(explicit), how: "set" };
-  const own = agents.find((a) => observabilityOf(a).project === project);
+  /* Watching only counts once it's on — a name-shaped default isn't a link. */
+  const own = agents.find((a) => observabilityOf(a).on && observabilityOf(a).project === project);
   if (own) return { ...base, status: "linked", agentKey: own.key, agent: own, how: "watching" };
   if (SEEDED_PROJECTS[project]) return { ...base, status: "linked", agentKey: SEEDED_PROJECTS[project], agent: byKey(SEEDED_PROJECTS[project]), how: "seeded" };
   return { ...base, status: "unlinked" };

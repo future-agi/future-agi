@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import { Box, Button, CircularProgress, MenuItem, Select, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { GIT_HOST_META, connectGitHost, disconnectGitHost, gitHostConnection, gitHostRepos, reviewNounOf, useIntegrations } from "../../_mock/integrations";
+import { GIT_HOST_META, connectGitHost, gitHostAccountOf, gitHostAccountsLabel, gitHostConnection, gitHostRepos, reviewNounOf, useIntegrations } from "../../_mock/integrations";
 import { keyRefOf } from "../../_mock/secretRefs";
 import SecretRefField from "./SecretRefField";
 import FoundAgentsList from "./FoundAgentsList";
@@ -24,6 +24,8 @@ export default function GitHostRepoPicker({ host, repo, agentId, onPick, onManua
   const repos = gitHostRepos(host, integrations);
   const current = repos.find((r) => r.name === repo) || null;
   const [scanning, setScanning] = useState(false);
+  /* Connecting another group or workspace: the current one stays until the new one is in. */
+  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     if (!repo) return undefined;
@@ -32,10 +34,15 @@ export default function GitHostRepoPicker({ host, repo, agentId, onPick, onManua
     return () => clearTimeout(t);
   }, [repo]);
 
-  if (!connection) {
+  if (!connection || adding) {
     return (
       <Box>
-        <GitHostConnectForm host={host} />
+        <GitHostConnectForm
+          host={host}
+          except={adding ? (connection?.accounts || []).map((a) => a.account) : null}
+          onConnected={adding ? () => setAdding(false) : undefined}
+          onCancel={adding ? () => setAdding(false) : undefined}
+        />
         {onManual && <TextLink onClick={() => onManual()} sx={{ mt: 0.75 }}>{`Enter a ${meta.label} repository URL instead`}</TextLink>}
       </Box>
     );
@@ -47,10 +54,10 @@ export default function GitHostRepoPicker({ host, repo, agentId, onPick, onManua
         <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.5 }}>
           <Typography sx={{ typography: "s3", fontWeight: 600 }}>Repository</Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {`· from ${meta.label} (${connection.account}) · ${connection.access === "write" ? "read and write" : "read only"}`}
+            {`· from ${meta.label} (${gitHostAccountsLabel(host, integrations)})${current ? ` · ${gitHostAccountOf(host, current.name, integrations)?.access === "write" ? "read and write" : "read only"}` : ""}`}
           </Typography>
           <Box flex={1} />
-          <TextLink onClick={() => { disconnectGitHost(host); onPick({ repo: "", agent: null }); }}>{`Connect another ${meta.account.toLowerCase()}`}</TextLink>
+          <TextLink onClick={() => setAdding(true)}>{`Connect another ${meta.account.toLowerCase()}`}</TextLink>
         </Stack>
         <Select
           size="small" fullWidth displayEmpty
@@ -100,12 +107,17 @@ GitHostRepoPicker.propTypes = {
   reference. A group (GitLab) or workspace (Bitbucket) token belongs to one
   group or workspace, so that's read off the token when it connects — it
   can't be listed before there's a token. Read scopes only — write is asked
-  for at the first draft merge or pull request.
+  for at the first draft merge or pull request. Demo: the person says which
+  group or workspace the token is for (`except` — the ones connected now —
+  aren't offered first; connecting one adds it beside them).
 */
-export function GitHostConnectForm({ host, onConnected }) {
+export function GitHostConnectForm({ host, onConnected, onCancel, except = null }) {
   const meta = GIT_HOST_META[host];
   const review = reviewNounOf(host);
   const [tokenRef, setTokenRef] = useState("");
+  /* The groups or workspaces connected already aren't offered first. */
+  const taken = [].concat(except || []);
+  const [account, setAccount] = useState(() => meta.accounts.find((a) => !taken.includes(a)) || meta.accounts[0]);
   const [connecting, setConnecting] = useState(false);
   /* What's recorded is a reference — the one typed, or (demo) the host's slot. */
   const savedRef = keyRefOf(tokenRef, meta.tokenSlot);
@@ -114,7 +126,7 @@ export function GitHostConnectForm({ host, onConnected }) {
     if (!connecting) return undefined;
     const t = setTimeout(() => {
       /* Demo: the token's group or workspace, as the host would report it. */
-      connectGitHost(host, { account: meta.accounts[0], tokenRef: savedRef });
+      connectGitHost(host, { account, tokenRef: savedRef });
       setConnecting(false);
       onConnected?.();
     }, 700);
@@ -135,11 +147,24 @@ export function GitHostConnectForm({ host, onConnected }) {
         </Box>
       </Stack>
       <Stack spacing={1.5} sx={{ px: 1.75, py: 1.5 }}>
+        {meta.accounts.length > 1 && (
+          <Box>
+            <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>{meta.account}</Typography>
+            <Select size="small" fullWidth value={account} onChange={(e) => setAccount(e.target.value)} sx={{ typography: "s2" }}>
+              {meta.accounts.map((a) => (
+                <MenuItem key={a} value={a} sx={{ typography: "s2", gap: 1 }}>
+                  <Box component="span" sx={{ fontFamily: MONO, flex: 1 }}>{a}</Box>
+                  {taken.includes(a) && <Box component="span" sx={{ color: "text.subtitle" }}>Connected now</Box>}
+                </MenuItem>
+              ))}
+            </Select>
+          </Box>
+        )}
         <SecretRefField
           label={meta.token} required fullWidth
           placeholder={meta.tokenSlot}
           value={tokenRef} onChange={setTokenRef}
-          helper={`A token belongs to one ${meta.account.toLowerCase()} — we read which when you connect, then list its repositories. Stored encrypted, never shown again, never sent to the improver.`}
+          helper={`A token belongs to one ${meta.account.toLowerCase()}${meta.accounts.length > 1 ? " — the one above" : ""}; we list its repositories when you connect. Stored encrypted, never shown again, never sent to the improver.`}
         />
         <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
           {meta.readScopes.map((p, i) => (
@@ -150,7 +175,12 @@ export function GitHostConnectForm({ host, onConnected }) {
             </Stack>
           ))}
         </Box>
-        <Stack direction="row" justifyContent="flex-end">
+        <Stack direction="row" justifyContent="flex-end" spacing={1}>
+          {onCancel && (
+            <Button size="small" variant="outlined" disabled={connecting} onClick={onCancel} sx={{ typography: "s2", fontWeight: 600, color: "text.primary", borderColor: "divider" }}>
+              Cancel
+            </Button>
+          )}
           <Button
             size="small" variant="contained" color="primary"
             disabled={!savedRef || connecting}
@@ -169,4 +199,7 @@ export function GitHostConnectForm({ host, onConnected }) {
 GitHostConnectForm.propTypes = {
   host: PropTypes.oneOf(["gitlab", "bitbucket"]).isRequired,
   onConnected: PropTypes.func,
+  onCancel: PropTypes.func,
+  /* The groups or workspaces already connected — one name or several. */
+  except: PropTypes.oneOfType([PropTypes.string, PropTypes.arrayOf(PropTypes.string)]),
 };
