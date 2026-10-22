@@ -29,8 +29,8 @@ secret_is_unset() {
   value=$(env_value "$1" "")
   [[ -z "$value" || "$value" == CHANGEME-* ]]
 }
-fill_secret() { # var, generator
-  if secret_is_unset "$1"; then
+fill_secret() { # var, generator, [a published default that counts as unset]
+  if secret_is_unset "$1" || [[ -n "${3:-}" && "$(env_value "$1" "")" == "$3" ]]; then
     set_env_var "$1" "$($2)"
     ok "Generated $1"
   fi
@@ -41,7 +41,6 @@ INSTALL_SECRETS=(
   PG_PASSWORD
   MINIO_ROOT_PASSWORD
   AGENTCC_INTERNAL_API_KEY
-  AGENTCC_ADMIN_TOKEN
   CH_PASSWORD
 )
 
@@ -62,12 +61,14 @@ clickhouse_running_password() { # project
 # of the defaults published in the compose files. An existing install keeps
 # every value it has: Postgres stores its password in its volume, and a new
 # SECRET_KEY or gateway key would sign everyone out. Only empty or CHANGEME-*
-# keys are filled, and only on a fresh install. Three keys hold no state and
+# keys are filled, and only on a fresh install. Four keys hold no state and
 # are filled on any install: without INTEGRATION_ENCRYPTION_KEY every process
 # starts with a random key of its own, so nothing encrypted before survives a
 # restart anyway, the standalone install's Redis keeps nothing across
 # restarts (the distributed stack's Redis takes no password), and the gateway
-# and the app read AGENTCC_WEBHOOK_SECRET afresh on every start.
+# and the app read AGENTCC_WEBHOOK_SECRET and AGENTCC_ADMIN_TOKEN afresh on
+# every start. The gateway refuses to start on the admin token the compose
+# files publish, so that default is replaced too.
 write_secrets() { # fresh (0|1), distributed (0|1), project
   local fresh="$1" distributed="$2" project="$3" var minio_pwd running_password
   local -a published_defaults=()
@@ -102,5 +103,6 @@ write_secrets() { # fresh (0|1), distributed (0|1), project
   fi
   fill_secret INTEGRATION_ENCRYPTION_KEY gen_fernet_key
   fill_secret AGENTCC_WEBHOOK_SECRET gen_secret
+  fill_secret AGENTCC_ADMIN_TOKEN gen_secret local-dev-only-admin-token-replace-me
   if (( distributed == 0 )); then fill_secret REDIS_PASSWORD gen_secret; fi
 }

@@ -176,6 +176,29 @@ if [ -z "${AGENTCC_WEBHOOK_SECRET:-}" ]; then
   export AGENTCC_WEBHOOK_SECRET
 fi
 
+# The gateway refuses to start on a weak admin token and the API's admin
+# endpoints refuse one. The gateway, the API and the UI run in this container
+# and the token holds no state, so an empty one, a CHANGEME- placeholder or the
+# default the compose file publishes is replaced by a random one for this
+# start. Set a stable one in .env to call the admin API from outside. The
+# dev-only opt-in keeps it as is. (Proven by
+# futureagi/tests/test_default_install_packaging.py::test_start_replaces_an_empty_or_published_admin_token.)
+admin_token_needs_replacing() {
+  case "${AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN:-}" in
+    1 | [Tt] | [Tt][Rr][Uu][Ee]) return 1 ;;
+  esac
+  case "${AGENTCC_ADMIN_TOKEN:-}" in
+    "" | CHANGEME-* | local-dev-only-admin-token-replace-me) return 0 ;;
+  esac
+  return 1
+}
+if admin_token_needs_replacing; then
+  AGENTCC_ADMIN_TOKEN=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+  AGENTCC_CONTROL_PLANE_TOKEN=$AGENTCC_ADMIN_TOKEN
+  export AGENTCC_ADMIN_TOKEN AGENTCC_CONTROL_PLANE_TOKEN
+  echo "[start] AGENTCC_ADMIN_TOKEN is empty, a placeholder or the published default: using a random one for this start (set one in .env to call the admin API from outside this container)"
+fi
+
 # Every probe in this container (the bootstrap's wait for the API and the
 # healthcheck) asks for 127.0.0.1:8000. An ALLOWED_HOSTS that names only the
 # public host names would answer them 400, and the app would never be ready.

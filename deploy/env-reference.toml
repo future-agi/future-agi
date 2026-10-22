@@ -122,8 +122,8 @@ On a fresh install (no volumes of this Compose project yet) `./bin/install`
 fills every key below that is empty or still a `CHANGEME-` placeholder with a
 random value and writes it to `.env`. It never changes a value afterwards. On
 an existing install it fills only `INTEGRATION_ENCRYPTION_KEY`,
-`AGENTCC_WEBHOOK_SECRET` and, on Standalone, `REDIS_PASSWORD`, which is safe
-while they are unset, and warns about the rest.
+`AGENTCC_WEBHOOK_SECRET`, `AGENTCC_ADMIN_TOKEN` and, on Standalone,
+`REDIS_PASSWORD`, which is safe while they are unset, and warns about the rest.
 `--wipe-volumes` and `./bin/uninstall --wipe-data` make the next install fresh
 again, and a value already in `.env` is kept even then.
 
@@ -169,9 +169,9 @@ and `CH_PASSWORD` once in use: their rows say what breaks.
 
     [[part.section.row]]
     keys = ["AGENTCC_ADMIN_TOKEN"]
-    default = "`local-dev-only-admin-token-replace-me`"
+    default = { S = "`local-dev-only-admin-token-replace-me`, which `bin/start` replaces with a random one on every start", D = "`local-dev-only-admin-token-replace-me`, which the gateway refuses" }
     setups = ["S", "D", "H"]
-    text = "Bearer token for the LLM gateway's admin API. The gateway also sends it when it loads keys from the app."
+    text = "Bearer token for the LLM gateway's admin API. The gateway also sends it when it loads keys from the app, whose admin endpoints accept it. Both refuse it when it is empty, shorter than 32 characters, a placeholder or a default published in this repository (or contains one), this one included: the gateway does not start and the app's admin endpoints deny every request. With `AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN` set to `1` (local development only) the gateway starts on such a token and the app's admin endpoints accept it unless it is empty. It holds no state, so the installer fills it on any install when it is empty or this default."
 
     [[part.section.row]]
     keys = ["AGENTCC_WEBHOOK_SECRET"]
@@ -1628,6 +1628,12 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     default = "`false`; Helm: `agentccGateway.allowPrivateProviderURLs`"
     setups = ["S", "D", "H"]
     text = "`true` lets org providers use base URLs on private networks (RFC 1918 addresses, Docker service names): a local Ollama or vLLM, see [INSTALLATION.md](repo:INSTALLATION.md#local-models-ollama-vllm). Read by the gateway and the API; a gateway or API from before this setting ignores it and refuses every private address. Loopback, link-local and cloud metadata addresses stay refused. Anyone who can add a provider can then reach every service on that network, ClickHouse included (its `default` user has no password while `CH_PASSWORD` is empty, as on installs made before the installer generated one), so turn it on only when they are all trusted."
+
+    [[part.section.row]]
+    keys = ["AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN"]
+    default = "empty (off)"
+    setups = ["S", "D"]
+    text = "`1` starts the gateway although `AGENTCC_ADMIN_TOKEN` (or `AGENTCC_CONTROL_PLANE_TOKEN`) is empty, shorter than 32 characters, a placeholder or a default published in this repository, which it otherwise refuses at start-up, and makes the app's gateway admin endpoints accept such a token unless it is empty; on Standalone it also keeps `bin/start` from replacing the published default. Local development and the E2E stack only. Set a random `AGENTCC_ADMIN_TOKEN` instead (`openssl rand -hex 32`); `bin/install` fills one on any install."
 
     [[part.section.row]]
     keys = ["AGENTCC_SYNC_INTERVAL"]
