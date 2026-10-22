@@ -1792,6 +1792,30 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
     "tracer.services.users_list_manager": {
         "_users_attr_enrichment_query": _SESSION_OR_USER,
     },
+    "tracer.sql_workbench.catalog": {
+        "sources": filed(
+            PROJECT_SET,
+            why=(
+                "SQL workbench source templates, built for the one scope a caller "
+                "passes in. Every caller takes that project from access.authorize or "
+                "from the operator command, and both resolve it through "
+                "Project.no_workspace_objects, a project manager that leaves out "
+                "simulation projects, so the id of a hidden project is refused "
+                "before a source is built"
+            ),
+        ),
+    },
+    "tracer.sql_workbench.runner": {
+        "derived_metrics_availability": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "schema and grant probe: a LIMIT 0 select over the derived metrics "
+                "view returns no row at all, and that view holds metric results, "
+                "not spans"
+            ),
+            table="derived_metrics",
+        ),
+    },
     "tracer.views.dashboard": {
         "_read_dashboard_rollup_fast_path": filed(
             PROJECT_SET,
@@ -2964,6 +2988,11 @@ ROW_TYPES = {
     "tracer.ProjectVersion.project": USER_MADE,
     "tracer.ProjectVersionWinner.project": USER_MADE,
     "tracer.ReplaySession.project": USER_MADE,
+    # Both are made only by the SQL workbench's submit and save paths, which take
+    # the project from access.authorize, a project manager that refuses a
+    # simulation project; a simulated run has no path to them.
+    "tracer.SQLExecution.project": USER_MADE,
+    "tracer.SavedSQLQuery.project": USER_MADE,
     "tracer.SavedView.project": USER_MADE,
     "tracer.Trace.project": TRACE_STORE_ROW,
     "tracer.TraceErrorAnalysis.project": JOB_THROUGH_MANAGERS,

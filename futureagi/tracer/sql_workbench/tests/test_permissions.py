@@ -1101,3 +1101,81 @@ def test_more_than_the_configuration_limit_is_explicit_never_partial(
         )
         assert accepted.status_code == 202
     assert dispatch.call_count == 1
+
+
+def test_a_hidden_simulation_project_is_never_queryable_or_savable(
+    tenants, django_capture_on_commit_callbacks
+):
+    """A simulated run's project is left out by the project managers.
+
+    Every SQL entry point resolves its project through ``access.authorize``,
+    so even the exact id of a hidden project in the actor's own organization
+    and workspace is refused before a scope, job or saved query is created.
+    """
+    from simulate.models.agent_definition import AgentDefinition
+    from tfc.middleware.workspace_context import clear_workspace_context
+    from tracer.models.sql_query import SavedSQLQuery
+    from tracer.views.sql_query import SQLQueryViewSet
+
+    (actor, project, user), _ = tenants
+    clear_workspace_context()
+    agent = AgentDefinition.objects.create(
+        agent_name="simulated agent",
+        description="simulated agent",
+        agent_type="text",
+        inbound=True,
+        organization=project.organization,
+        workspace=project.workspace,
+    )
+    clear_workspace_context()
+    hidden = Project.with_simulation.create(
+        name=f"simulation-{uuid4()}",
+        organization=project.organization,
+        workspace=project.workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+        simulation_agent=agent,
+    )
+    assert not Project.no_workspace_objects.filter(id=hidden.id).exists()
+    now = timezone.now()
+    with (
+        patch("tracer.sql_workbench.service.connection_config"),
+        patch("tracer.sql_workbench.tasks.execute_sql.apply_async") as dispatch,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        for call in (
+            lambda: authorize(actor, hidden.id),
+            lambda: service.submit(
+                actor,
+                project_id=hidden.id,
+                sql="SELECT count() FROM spans",
+                start=now - timedelta(hours=1),
+                end=now,
+            ),
+            lambda: service.save_query(
+                actor,
+                project_id=hidden.id,
+                name="hidden",
+                sql="SELECT count() FROM spans",
+                visibility="project",
+                chart={},
+                window_hours=24,
+            ),
+            lambda: service.history(actor, hidden.id, 0),
+            lambda: list(service.saved_queries(actor, hidden.id)),
+        ):
+            with pytest.raises(AccessDenied):
+                call()
+    dispatch.assert_not_called()
+    assert not SQLExecution.objects.filter(project_id=hidden.id).exists()
+    assert not SavedSQLQuery.all_objects.filter(project_id=hidden.id).exists()
+    response = SQLQueryViewSet.as_view({"get": "catalog"})(
+        api_request(
+            actor,
+            user,
+            "get",
+            "/tracer/sql-query/catalog/",
+            {"project_id": str(hidden.id)},
+        )
+    )
+    assert response.status_code == 403
