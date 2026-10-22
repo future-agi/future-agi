@@ -546,3 +546,283 @@ def test_live_first_admission_parameters_are_count_and_byte_bounded():
         SamplingQuery(task, value, "v", NOW).live_member_decisions(
             [f"session:{index}" for index in range(1001)]
         )
+
+
+def _spans_task(row_type="spans"):
+    return SimpleNamespace(
+        project_id="ba052ed0-921f-4aa9-972d-7bbbc79e5d30", row_type=row_type, filters={}
+    )
+
+
+@pytest.mark.parametrize("row_type", ["spans", "traces", "sessions"])
+@pytest.mark.parametrize("unit", ["session", "user", "attribute"])
+def test_closed_member_expansion_pushes_its_units_into_every_physical_read(
+    row_type, unit
+):
+    clean = validate_policy(
+        policy(sampling_unit=unit), now=NOW, contact_attribute="contact_id"
+    )
+    batch = [f"{unit}:a", f"{unit}:b"]
+    sql, params = SamplingQuery(_spans_task(row_type), clean, "v", NOW).rows(
+        unit_ids=batch
+    )
+    full, _ = SamplingQuery(_spans_task(row_type), clean, "v", NOW).rows()
+    assert params[f"sp_member_{unit}_ids"] == ("a", "b")
+    assert params["sp_member_units"] == tuple(batch)
+    # Every physical spans scan of the expansion is bounded by the page's units
+    # and the window hours, unlike the full-window form.
+    assert f"%(sp_member_{unit}_ids)s" in sql
+    assert f"%(sp_member_{unit}_ids)s" not in full
+    assert "_version < %(sp_snapshot_ns)s" in sql
+    assert params["sp_snapshot_ns"] == int(NOW.timestamp() * 1_000_000) * 1000
+    assert "r.unit_id IN %(sp_member_units)s" in sql
+    assert "row_number()" not in sql
+    if unit in ("session", "user"):
+        assert "GROUP BY new_id" in sql  # remap aliases of the page's units
+    with pytest.raises(ValueError, match="bounded closed page"):
+        SamplingQuery(_spans_task(row_type), clean, "v", NOW).rows(
+            unit_ids=[f"{unit}:{index}" for index in range(1001)]
+        )
+
+
+def test_live_rows_never_take_a_closed_member_page():
+    clean = validate_policy(policy(mode="live", default={"rate": 50}), now=NOW)
+    with pytest.raises(ValueError, match="bounded closed page"):
+        SamplingQuery(_spans_task(), clean, "v", NOW).rows(unit_ids=["session:a"])
+
+
+@pytest.mark.parametrize("row_type", ["spans", "traces", "sessions"])
+def test_live_first_admission_seed_is_bounded_by_window_hours_and_arrival(row_type):
+    from datetime import timedelta
+
+    clean = validate_policy(policy(mode="live", default={"rate": 50}), now=NOW)
+    snapshot = NOW + timedelta(days=3)
+    sql, params = SamplingQuery(
+        _spans_task(row_type), clean, "v", snapshot
+    ).live_member_decisions(["session:ba052ed0-921f-4aa9-972d-7bbbc79e5d30"])
+    seed = sql[sql.index("%(sp_new_session_ids)s") - 400 :]
+    assert "_version < %(sp_snapshot_ns)s" in sql
+    assert "toStartOfHour(start_time) >= toStartOfHour(toDateTime64(%(sp_start)s" in sql
+    assert params["sp_snapshot_ns"] == int(snapshot.timestamp() * 1_000_000) * 1000
+    assert params["sp_start"].isoformat() == clean["window"]["start"]
+    assert "FROM spans PREWHERE project_id = %(sp_project)s AND toStartOfHour" in seed
+    assert params.proof is True
+    assert params.read_settings == {
+        "max_rows_to_read": READ_SETTINGS["max_rows_to_read"]
+    }
+    if row_type != "spans":
+        assert "WHERE parent_span_id = ''" in sql  # roots in the eligibility hours
+
+
+def test_live_first_admission_refuses_lookback_beyond_configured_bound(settings):
+    from datetime import timedelta
+
+    from tracer.services.eval_tasks.sampling.errors import SamplingProofBoundExceeded
+
+    settings.EVAL_SAMPLING_LIVE_PROOF_MAX_DAYS = 2
+    clean = validate_policy(policy(mode="live", default={"rate": 50}), now=NOW)
+    query = SamplingQuery(_spans_task(), clean, "v", NOW + timedelta(days=3))
+    with pytest.raises(SamplingProofBoundExceeded, match="2 days"):
+        query.live_member_decisions(["session:a"])
+    settings.EVAL_SAMPLING_LIVE_PROOF_MAX_ROWS = 1000
+    settings.EVAL_SAMPLING_LIVE_PROOF_MAX_DAYS = 30
+    _, params = SamplingQuery(
+        _spans_task(), clean, "v", NOW + timedelta(days=3)
+    ).live_member_decisions(["session:a"])
+    assert params.read_settings == {"max_rows_to_read": 1000}
+    settings.EVAL_SAMPLING_LIVE_PROOF_MAX_ROWS = READ_SETTINGS["max_rows_to_read"] + 1
+    with pytest.raises(ValueError, match="must not exceed"):
+        SamplingQuery(
+            _spans_task(), clean, "v", NOW + timedelta(days=3)
+        ).live_member_decisions(["session:a"])
+
+
+def test_oversized_identity_markers_name_their_bound_per_group_position():
+    clean = validate_policy(
+        policy(group_by=[{"key": "locale"}, {"key": "category"}]), now=NOW
+    )
+    sql, _ = SamplingQuery(_spans_task(), clean, "v", NOW).members()
+    assert "throwIf(length(p.unit_id) > 2048, 'EVAL_SAMPLING_OVERSIZED_UNIT')" in sql
+    assert (
+        "throwIf(length(p.groups[1]) > 1024, 'EVAL_SAMPLING_OVERSIZED_GROUP_0')" in sql
+    )
+    assert (
+        "throwIf(length(p.groups[2]) > 1024, 'EVAL_SAMPLING_OVERSIZED_GROUP_1')" in sql
+    )
+
+
+def test_read_errors_are_typed_without_leaking_values():
+    from tracer.selectors.eval_tasks.row_resolver import (
+        EvalTaskReadBudgetExceeded,
+        EvalTaskSelectionRejected,
+    )
+    from tracer.services.eval_tasks.sampling.errors import (
+        SamplingProofBoundExceeded,
+        SamplingReadCeilingExceeded,
+        SamplingReadPressure,
+        SamplingValueTooLarge,
+        classify_read_error,
+    )
+
+    clean = validate_policy(
+        policy(
+            sampling_unit="attribute",
+            unit_attribute={"key": "contact_id"},
+            group_by=[{"key": "locale"}, {"key": "category"}],
+        ),
+        now=NOW,
+    )
+
+    def server(code, text):
+        exc = RuntimeError(f"Code: {code}. DB::Exception: {text} secret-value")
+        exc.code = code
+        return exc
+
+    unit = classify_read_error(
+        server(395, "EVAL_SAMPLING_OVERSIZED_UNIT"), policy=clean
+    )
+    group = classify_read_error(
+        server(395, "EVAL_SAMPLING_OVERSIZED_GROUP_1: while executing"), policy=clean
+    )
+    assert isinstance(unit, SamplingValueTooLarge) and "'contact_id'" in str(unit)
+    assert isinstance(group, SamplingValueTooLarge) and "'category'" in str(group)
+    assert "secret-value" not in str(unit) + str(group)
+    ceiling = classify_read_error(server(158, "Limit for rows"), policy=clean)
+    proof = classify_read_error(
+        server(307, "Limit for bytes"), policy=clean, proof=True
+    )
+    assert type(ceiling) is SamplingReadCeilingExceeded
+    assert isinstance(proof, SamplingProofBoundExceeded)
+    assert "no partial decision" in str(proof)
+    assert isinstance(ceiling, EvalTaskSelectionRejected)  # fail fast, no retry
+    pressure = classify_read_error(server(159, "Timeout exceeded"), policy=clean)
+    assert isinstance(pressure, SamplingReadPressure)
+    assert isinstance(pressure, EvalTaskReadBudgetExceeded)
+    assert not isinstance(pressure, EvalTaskSelectionRejected)  # retry/defer
+    assert isinstance(
+        classify_read_error(TimeoutError("deadline")), SamplingReadPressure
+    )
+    assert classify_read_error(server(62, "Syntax error")) is None
+    assert classify_read_error(ValueError("other")) is None
+
+
+def test_stream_query_types_errors_and_only_tightens_budgets():
+    from contextlib import contextmanager
+
+    from tracer.services.eval_tasks.sampling.errors import SamplingValueTooLarge
+    from tracer.services.eval_tasks.sampling.query import SamplingParams, stream_query
+
+    seen = []
+
+    @contextmanager
+    def execute(sql, params, **options):
+        seen.append(options["settings"])
+
+        def blocks():
+            exc = RuntimeError("Code: 395. EVAL_SAMPLING_OVERSIZED_GROUP_0")
+            exc.code = 395
+            raise exc
+            yield  # pragma: no cover
+
+        yield blocks()
+
+    params = SamplingParams(sp_project="p")
+    params.policy = {"group_by": [{"key": "locale"}]}
+    params.read_settings = {"max_rows_to_read": 10}
+    with patch(
+        "tracer.services.clickhouse.v2.query_service.get_v2_query_client",
+        return_value=SimpleNamespace(execute_read_block_stream=execute),
+    ):
+        with pytest.raises(SamplingValueTooLarge, match="'locale'"):
+            list(stream_query("SELECT 1", params))
+        with pytest.raises(ValueError, match="only tighten"):
+            list(stream_query("SELECT 1", {}, settings={"max_rows_to_read": 10**12}))
+    assert seen == [{**READ_SETTINGS, "max_rows_to_read": 10}]
+
+
+@pytest.mark.parametrize(
+    "filters,expected",
+    [
+        (
+            {
+                "project_id": "p",
+                "date_range": ["2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"],
+                "date_preset": "custom",
+                "observation_type": ["llm"],
+            },
+            {"project_id": "p", "observation_type": ["llm"]},
+        ),
+        (None, {}),
+        (
+            {
+                "filters": [
+                    {
+                        "column_id": "created_at",
+                        "filter_config": {"col_type": "SPAN_ATTRIBUTE"},
+                    }
+                ]
+            },
+            {
+                "filters": [
+                    {
+                        "column_id": "created_at",
+                        "filter_config": {"col_type": "SPAN_ATTRIBUTE"},
+                    }
+                ]
+            },
+        ),
+    ],
+)
+def test_policy_window_is_the_only_time_authority(filters, expected):
+    from tracer.services.eval_tasks.sampling.policy import policy_task_filters
+
+    assert policy_task_filters(filters) == expected
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"created_at": "2026-10-01T00:00:00Z"},
+        {"filters": [{"column_id": "start_time", "filter_config": {}}]},
+        {
+            "span_attributes_filters": [
+                {
+                    "column_id": "created_at",
+                    "filter_config": {"col_type": "SYSTEM_METRIC"},
+                }
+            ]
+        },
+    ],
+)
+def test_explicit_policy_task_time_filters_are_rejected_not_intersected(filters):
+    from tracer.services.eval_tasks.sampling.policy import (
+        policy_task_filters,
+        require_policy_time_authority,
+    )
+
+    with pytest.raises(InvalidSamplingPolicy, match="policy window"):
+        policy_task_filters(filters)
+    with pytest.raises(InvalidSamplingPolicy):
+        require_policy_time_authority(filters)
+
+
+def test_normalized_policy_edit_is_not_a_population_change():
+    from tracer.services.eval_tasks.sampling.policy import (
+        normalize_policy_update,
+        population_changed,
+    )
+
+    task = SimpleNamespace(
+        sampling_policy=policy(),
+        filters={"project_id": "p"},
+        project="project",
+        row_type="spans",
+    )
+    changes = {"filters": {"project_id": "p", "date_range": ["a", "b"]}}
+    normalize_policy_update(task, changes)
+    assert changes == {"filters": {"project_id": "p"}}
+    assert not population_changed(task, changes)
+    legacy = SimpleNamespace(sampling_policy=None, filters={})
+    untouched = {"filters": {"date_range": ["a", "b"]}}
+    normalize_policy_update(legacy, untouched)
+    assert untouched == {"filters": {"date_range": ["a", "b"]}}
