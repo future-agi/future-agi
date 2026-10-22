@@ -422,8 +422,15 @@ class PasswordResetConfirmRequestSerializer(serializers.Serializer):
 
 
 class AcceptInvitationRequestSerializer(serializers.Serializer):
-    new_password = serializers.CharField(write_only=True)
-    repeat_password = serializers.CharField(write_only=True)
+    # Optional: a user who already has an account joins without a password.
+    new_password = serializers.CharField(write_only=True, required=False)
+    repeat_password = serializers.CharField(write_only=True, required=False)
+
+
+class AcceptInvitationResponseSerializer(AccountsTokenPairResponseSerializer):
+    joined = serializers.BooleanField(required=False)
+    existing_user = serializers.BooleanField(required=False)
+    organization_id = serializers.CharField(required=False)
 
 
 class UserIdsRequestSerializer(serializers.Serializer):

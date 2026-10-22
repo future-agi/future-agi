@@ -374,3 +374,117 @@ class TestAcceptLinkPreview:
 
         assert r.status_code == 200, r.data
         assert r.data["org_name"] == org_a.name
+
+
+NEW_PASSWORD = "Per-Invite-Pass-4079!"
+EXISTING_USER_PASSWORD_MSG = (
+    "You already have an account. Use the Join button to accept this invitation."
+)
+
+
+def _membership(user, org):
+    return OrganizationMembership.all_objects.get(user=user, organization=org)
+
+
+def _set_password_body():
+    return {"new_password": NEW_PASSWORD, "repeat_password": NEW_PASSWORD}
+
+
+@pytest.fixture
+def two_org_invites(owner_a, owner_b, sent_emails):
+    """A then B invite the same new email; returns (user, link_a, link_b)."""
+    email = "accept-two-org@futureagi.com"
+    _invite_via_api(owner_a, email)
+    link_a = sent_emails[-1]["context"]["invite_link"]
+    _invite_via_api(owner_b, email)
+    link_b = sent_emails[-1]["context"]["invite_link"]
+    return User.objects.get(email=email), link_a, link_b
+
+
+class TestAcceptLinkPost:
+    def test_first_invite_accept_joins_only_that_org(
+        self, api_client, org_a, org_b, two_org_invites
+    ):
+        user, _, link_b = two_org_invites
+
+        r = api_client.post(_accept_path(link_b), _set_password_body(), format="json")
+
+        assert r.status_code == 200, r.data
+        assert "access" in r.data
+        assert _membership(user, org_b).is_active is True
+        assert _membership(user, org_a).is_active is False
+        assert OrganizationInvite.objects.get(organization=org_b).status == (
+            InviteStatus.ACCEPTED
+        )
+        assert OrganizationInvite.objects.get(organization=org_a).status == (
+            InviteStatus.PENDING
+        )
+
+    def test_second_invite_existing_user_joins_without_password(
+        self, api_client, org_a, org_b, two_org_invites
+    ):
+        user, link_a, link_b = two_org_invites
+        first = api_client.post(
+            _accept_path(link_a), _set_password_body(), format="json"
+        )
+        assert first.status_code == 200, first.data
+
+        r = api_client.post(_accept_path(link_b), {}, format="json")
+
+        assert r.status_code == 200, r.data
+        assert r.data["joined"] is True
+        assert "access" not in r.data
+        assert r.data["organization_id"] == str(org_b.id)
+        user.refresh_from_db()
+        assert user.check_password(NEW_PASSWORD)
+        assert user.config["post_login_organization_id"] == str(org_b.id)
+        assert _membership(user, org_b).is_active is True
+        assert OrganizationInvite.objects.get(organization=org_b).status == (
+            InviteStatus.ACCEPTED
+        )
+
+    def test_existing_user_sending_password_is_rejected(
+        self, api_client, two_org_invites
+    ):
+        _, link_a, link_b = two_org_invites
+        api_client.post(_accept_path(link_a), _set_password_body(), format="json")
+
+        r = api_client.post(_accept_path(link_b), _set_password_body(), format="json")
+
+        assert r.status_code == 400 and _error(r) == EXISTING_USER_PASSWORD_MSG
+
+    def test_expired_invite_post_does_not_join(
+        self, api_client, org_a, invited_user, pending_invite
+    ):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        OrganizationMembership.no_workspace_objects.create(
+            user=invited_user,
+            organization=org_a,
+            role=OrganizationRoles.MEMBER,
+            level=Level.MEMBER,
+            is_active=False,
+        )
+        OrganizationInvite.objects.filter(id=pending_invite.id).update(
+            created_at=timezone.now() - timedelta(days=8)
+        )
+
+        r = api_client.post(
+            _accept_path(_link_for(invited_user, pending_invite)),
+            _set_password_body(),
+            format="json",
+        )
+
+        assert r.status_code == 400 and _error(r) == EXPIRED_MSG
+        assert _membership(invited_user, org_a).is_active is False
+
+    def test_new_user_post_without_passwords_still_rejected(
+        self, api_client, invited_user, pending_invite
+    ):
+        r = api_client.post(
+            _accept_path(_link_for(invited_user, pending_invite)), {}, format="json"
+        )
+
+        assert r.status_code == 400 and _error(r) == "Both password fields are required."
