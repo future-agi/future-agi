@@ -527,6 +527,7 @@ class TestDatasetExecute:
             mock_execute_rows.call_args.kwargs["task_queue"] == "agent-playground-test"
         )
         assert mock_execute_rows.call_args.kwargs["row_ids"] is None
+        assert mock_execute_rows.call_args.kwargs["max_concurrent_nodes"] == 10
 
     def test_success_with_row_ids(
         self,
@@ -551,6 +552,89 @@ class TestDatasetExecute:
         assert response.status_code == status.HTTP_201_CREATED
         assert response.data["result"]["execution_ids"] == fake_ids
         assert mock_execute_rows.call_args.kwargs["row_ids"] == [row.id]
+
+    def test_success_uses_graph_stored_concurrency(
+        self,
+        authenticated_client,
+        graph,
+        graph_dataset,
+        active_graph_version,
+    ):
+        """Uses the agent's stored concurrency when the request omits it."""
+        graph.max_concurrent_nodes = 4
+        graph.save()
+        fake_ids = [str(uuid.uuid4())]
+        with patch(
+            "agent_playground.views.dataset_link.execute_rows",
+            return_value=fake_ids,
+        ) as mock_execute_rows:
+            url = reverse("graph-dataset-execute", kwargs={"graph_id": graph.id})
+            response = authenticated_client.post(url, data={}, format="json")
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert mock_execute_rows.call_args.kwargs["max_concurrent_nodes"] == 4
+
+    def test_success_request_overrides_stored_concurrency(
+        self,
+        authenticated_client,
+        graph,
+        graph_dataset,
+        active_graph_version,
+    ):
+        """Request body value is the value the run uses."""
+        graph.max_concurrent_nodes = 4
+        graph.save()
+        fake_ids = [str(uuid.uuid4())]
+        with patch(
+            "agent_playground.views.dataset_link.execute_rows",
+            return_value=fake_ids,
+        ) as mock_execute_rows:
+            url = reverse("graph-dataset-execute", kwargs={"graph_id": graph.id})
+            response = authenticated_client.post(
+                url, data={"max_concurrent_nodes": 2}, format="json"
+            )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert mock_execute_rows.call_args.kwargs["max_concurrent_nodes"] == 2
+
+    def test_bad_request_zero_concurrency_does_not_dispatch(
+        self,
+        authenticated_client,
+        graph,
+        graph_dataset,
+        active_graph_version,
+    ):
+        """Zero is refused before the run starts, with an allowed-values message."""
+        with patch(
+            "agent_playground.views.dataset_link.execute_rows",
+        ) as mock_execute_rows:
+            url = reverse("graph-dataset-execute", kwargs={"graph_id": graph.id})
+            response = authenticated_client.post(
+                url, data={"max_concurrent_nodes": 0}, format="json"
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "greater than zero" in str(response.data)
+        mock_execute_rows.assert_not_called()
+
+    def test_bad_request_negative_concurrency_does_not_dispatch(
+        self,
+        authenticated_client,
+        graph,
+        graph_dataset,
+        active_graph_version,
+    ):
+        with patch(
+            "agent_playground.views.dataset_link.execute_rows",
+        ) as mock_execute_rows:
+            url = reverse("graph-dataset-execute", kwargs={"graph_id": graph.id})
+            response = authenticated_client.post(
+                url, data={"max_concurrent_nodes": -3}, format="json"
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "greater than zero" in str(response.data)
+        mock_execute_rows.assert_not_called()
 
     def test_not_found_no_active_version(
         self,
