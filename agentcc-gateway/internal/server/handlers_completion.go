@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/requestview"
 	"github.com/futureagi/agentcc-gateway/internal/streaming"
 )
 
@@ -69,7 +71,7 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 	rc.UserID = req.User
 
 	// Extract client IP for audit.
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 
 	setAuthMetadataFromRequest(rc, r)
 
@@ -85,9 +87,7 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract guardrail policy override header.
-	if v := r.Header.Get("X-Guardrail-Policy"); v != "" {
-		rc.Metadata["x-guardrail-policy"] = v
-	}
+	readGuardrailPolicyHeader(rc, r)
 
 	// Extract cache-related headers.
 	if v := r.Header.Get("x-agentcc-cache-ttl"); v != "" {
@@ -138,10 +138,12 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// If global registry doesn't know this model, try org provider model lists.
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
+			if orgP, providerID, upstream := h.resolveOrgProvider(rc, orgID, orgCfg, req.Model); orgP != nil {
 				provider = orgP
 				rc.Provider = providerID
 				rc.Metadata["org_provider"] = "true"
+				req.Model = upstream
+				chatReq.Model = upstream
 				err = nil
 			}
 		}
@@ -196,13 +198,7 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record health metrics.
-	if h.healthMonitor != nil && rc.Provider != "" {
-		if len(rc.Errors) > 0 {
-			h.healthMonitor.RecordError(rc.Provider, rc.Errors[0])
-		} else {
-			h.healthMonitor.RecordSuccess(rc.Provider)
-		}
-	}
+	h.recordProviderHealth(rc)
 
 	// Record provider latency for routing.
 	if router := h.registry.Router(); router != nil {
@@ -235,10 +231,16 @@ func isLegacyCompletionModel(model string) bool {
 // equivalent ChatCompletionResponse so downstream post-plugins
 // (cost/credits/logging/prometheus) that key off rc.Response.Usage and
 // rc.Response.Model keep working uniformly — they don't need to branch on
-// completion vs chat format. The assistant message content mirrors the first
-// choice's text so logs remain human-readable.
+// completion vs chat format. It holds every choice the client gets (a request
+// with n above 1, or with a list of prompts, gets several), so an output check
+// reads each of them, and the log shows them all.
 func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider nativeTextCompletionProvider, req *models.CompletionRequest) {
 	var nativeResp *models.CompletionResponse
+
+	// The provider gets req's prompt, not rc.Request, which the checks on
+	// the request read: a check's rewrite of rc.Request (a remediation) is
+	// written into req's prompt, or the request is refused when it cannot be.
+	rc.PassThrough = requestview.Completion(req, rc.Request)
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		resp, err := provider.TextCompletion(ctx, req)
@@ -246,33 +248,14 @@ func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWr
 			return err
 		}
 		nativeResp = resp
-		text := ""
-		if len(resp.Choices) > 0 {
-			text = resp.Choices[0].Text
-		}
-		contentJSON, _ := json.Marshal(text)
-		finish := ""
-		if len(resp.Choices) > 0 {
-			finish = resp.Choices[0].FinishReason
-		}
-		rc.Response = &models.ChatCompletionResponse{
-			ID:      resp.ID,
-			Object:  "chat.completion",
-			Created: resp.Created,
-			Model:   resp.Model,
-			Choices: []models.Choice{{
-				Index:        0,
-				Message:      models.Message{Role: "assistant", Content: contentJSON},
-				FinishReason: finish,
-			}},
-			Usage:             resp.Usage,
-			SystemFingerprint: resp.SystemFingerprint,
-		}
+		rc.Response = chatAnswerFromCompletion(resp)
 		rc.ResolvedModel = resp.Model
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	// An output check that withheld the answer is refused like a pre-stage
+	// block, and nativeResp is never served.
+	if err := pipelineErr(rc, h.engine.Process(ctx, rc, providerCall)); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -288,6 +271,31 @@ func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWr
 	json.NewEncoder(w).Encode(nativeResp)
 }
 
+// chatAnswerFromCompletion is a native /v1/completions answer as the chat
+// answer rc.Response holds: one choice per choice of the answer, with its
+// index, its text as the message content and its finish reason, and the
+// answer's usage and model.
+func chatAnswerFromCompletion(resp *models.CompletionResponse) *models.ChatCompletionResponse {
+	answer := &models.ChatCompletionResponse{
+		ID:                resp.ID,
+		Object:            "chat.completion",
+		Created:           resp.Created,
+		Model:             resp.Model,
+		Choices:           make([]models.Choice, 0, len(resp.Choices)),
+		Usage:             resp.Usage,
+		SystemFingerprint: resp.SystemFingerprint,
+	}
+	for _, choice := range resp.Choices {
+		content, _ := json.Marshal(choice.Text)
+		answer.Choices = append(answer.Choices, models.Choice{
+			Index:        choice.Index,
+			Message:      models.Message{Role: "assistant", Content: content},
+			FinishReason: choice.FinishReason,
+		})
+	}
+	return answer
+}
+
 func (h *Handlers) handleCompletionNonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider) {
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		resp, err := provider.ChatCompletion(ctx, rc.Request)
@@ -299,7 +307,9 @@ func (h *Handlers) handleCompletionNonStream(ctx context.Context, w http.Respons
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	// An output check that withheld the answer is refused like a pre-stage
+	// block, not answered 500 for the response it dropped.
+	if err := pipelineErr(rc, h.engine.Process(ctx, rc, providerCall)); err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -335,8 +345,11 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		return nil
 	}
 
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
-		models.WriteError(w, models.ErrInternal(err.Error()))
+	// A refusal keeps its own status (a guardrail block 403, a missing key
+	// 401), as on every other surface. A cache hit an output check withheld is
+	// refused the same way.
+	if err := pipelineErr(rc, h.engine.Process(ctx, rc, providerCall)); err != nil {
+		models.WriteErrorFromError(w, err)
 		return
 	}
 
@@ -357,7 +370,10 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 
 	// Track last usage from stream chunks for post-plugin cost/credits tracking.
 	var lastUsage *models.Usage
-	capture := newStreamCapture(h.captureStreamContent)
+	// The answer the stream sends, assembled for the request log and for an
+	// output check that reads it at the stream's end, whether or not the log
+	// keeps bodies.
+	capture := newStreamCapture(h.captureStreamContent || rc.Flags.AnswerReaders != 0)
 
 	// finalizeStream populates rc.Response with accumulated usage and runs
 	// post-plugins (cost, credits, logging). Must be called before every return.
@@ -379,8 +395,15 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
-				sseWriter.WriteDone()
+				// The post-plugins run before [DONE], as on a chat stream, so
+				// an output check that refuses the answer the stream sent (the
+				// request log assembles it when it keeps bodies) ends the
+				// stream with the guardrail's error event.
 				finalizeStream(false)
+				if apiErr := withheldAnswerError(rc); apiErr != nil {
+					sseWriter.WriteError(apiErr)
+				}
+				sseWriter.WriteDone()
 				return
 			}
 			if len(chunk.Choices) > 0 && rc.ResolvedModel == "" {

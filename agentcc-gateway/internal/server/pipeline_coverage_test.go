@@ -15,17 +15,18 @@ import (
 // Handlers with no provider call behind them are not listed.
 func TestBillableHandlersRunThePipeline(t *testing.T) {
 	billable := map[string][]string{
-		"handlers.go":            {"ChatCompletion"},
-		"handlers_completion.go": {"TextCompletion"},
-		"handlers_embedding.go":  {"CreateEmbedding"},
-		"handlers_image.go":      {"CreateImage"},
-		"handlers_audio.go":      {"CreateSpeech", "CreateTranscription", "CreateTranslation"},
-		"handlers_rerank.go":     {"Rerank"},
-		"handlers_search.go":     {"Search"},
-		"handlers_ocr.go":        {"OCR"},
-		"handlers_responses.go":  {"CreateResponse"},
-		"handlers_anthropic.go":  {"AnthropicMessages"},
-		"handlers_genai.go":      {"GenAIHandler"},
+		"chat_nonstream.go":           {"ChatCompletion"},
+		"handlers_completion.go":      {"TextCompletion"},
+		"handlers_embedding.go":       {"CreateEmbedding"},
+		"handlers_image.go":           {"CreateImage"},
+		"handlers_audio.go":           {"CreateSpeech", "CreateTranscription", "CreateTranslation"},
+		"handlers_rerank.go":          {"Rerank"},
+		"handlers_search.go":          {"Search"},
+		"handlers_ocr.go":             {"OCR"},
+		"handlers_responses.go":       {"CreateResponse"},
+		"handlers_anthropic.go":       {"AnthropicMessages"},
+		"handlers_genai.go":           {"GenAIHandler"},
+		"handlers_capability_echo.go": {"CapabilityEcho"},
 	}
 
 	for file, handlers := range billable {
@@ -44,7 +45,7 @@ func TestBillableHandlersRunThePipeline(t *testing.T) {
 // a streaming handler must call RunPostPlugins itself or never be costed.
 func TestStreamingHandlersRunPostPlugins(t *testing.T) {
 	for _, file := range []string{
-		"handlers.go",
+		"chat_stream.go",
 		"handlers_completion.go",
 		"handlers_responses.go",
 		"handlers_anthropic.go",

@@ -23,6 +23,11 @@ import (
 // tests, so a test can start a real gateway and signal it.
 const runGatewayEnv = "AGENTCC_TEST_RUN_GATEWAY"
 
+// testAdminToken is a token the gateway's start-up check accepts (64 hex
+// characters, as `openssl rand -hex 32` prints): a gateway with a control
+// plane refuses to start without one.
+const testAdminToken = "5d1f8b3e7a9c2e4f6b8d0a2c4e6f8a1b3d5f7a9c1e3b5d7f9a2c4e6b8d0f2a4c"
+
 func TestMain(m *testing.M) {
 	if os.Getenv(runGatewayEnv) == "1" {
 		main()
@@ -74,6 +79,12 @@ func startGateway(t *testing.T, shutdownTimeout time.Duration, hangWebhook bool)
 			`"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
 	}))
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/agentcc/webhook/logs/" {
+			// Not a request-log flush: the org budget plugin reads
+			// /agentcc/spend-summary/ from the control plane at start. It
+			// is neither an early flush nor a delivered log.
+			return
+		}
 		if g.signalled.Load() {
 			select {
 			case g.logsPosted <- struct{}{}:
@@ -117,10 +128,12 @@ providers:
     models: [gpt-4o]
 control_plane:
   url: %s
+admin:
+  token: %s
 logging:
   request_logging:
     enabled: true
-`, port, shutdownTimeout, provider.URL, backend.URL)
+`, port, shutdownTimeout, provider.URL, backend.URL, testAdminToken)
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}

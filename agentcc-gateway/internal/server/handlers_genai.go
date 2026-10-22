@@ -10,9 +10,13 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/futureagi/agentcc-gateway/internal/credentials"
 	"github.com/futureagi/agentcc-gateway/internal/genaifmt"
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	geminiprov "github.com/futureagi/agentcc-gateway/internal/providers/gemini"
+	"github.com/futureagi/agentcc-gateway/internal/requestview"
 	"github.com/futureagi/agentcc-gateway/internal/translation"
 	geminitrans "github.com/futureagi/agentcc-gateway/internal/translation/gemini"
 )
@@ -42,7 +46,6 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	if prefix := r.URL.Query().Get("provider"); prefix != "" {
 		rc.Model = prefix + "/" + model
 	}
-	rc.RequestHeaders = cloneRequestHeaders(r)
 
 	switch action {
 	case "generateContent":
@@ -59,7 +62,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		rc.IsStream = false
 	}
 
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 
 	// Extract auth from query param, header, or Authorization header.
 	if key := r.URL.Query().Get("key"); key != "" {
@@ -74,10 +77,20 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		rc.Metadata["authorization"] = authHeader
 	}
 
+	// The request's copy of its headers (what the request log and the trace
+	// export read) is taken once the key is read, and without
+	// x-goog-api-key: on this route that header is the gateway key, read
+	// above like ?key=, so the copy never holds it.
+	rc.RequestHeaders = cloneRequestHeaders(r)
+	rc.RequestHeaders.Del("x-goog-api-key")
+
 	// Extract agentcc metadata.
 	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
 		parseMetadataHeader(meta, rc)
 	}
+	// X-Guardrail-Policy on every action: a check on the request reads each
+	// (embedContent too, as /v1/embeddings).
+	readGuardrailPolicyHeader(rc, r)
 
 	// Read request body.
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.maxBodySize+1))
@@ -124,14 +137,26 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		writeGenAIErrorFromError(w, err)
 		return
 	}
-	if upstreamModel != rc.Model {
+	if apiErr := h.keyProviderACL(rc); apiErr != nil {
+		writeGenAIErrorFromError(w, apiErr)
+		return
+	}
+	if host := rc.Metadata[metaOrgUpstreamModel]; host != "" {
+		// The org's own provider took the request under the id it
+		// registered, which the native API names as it is: the translated
+		// path below sends upstreamModel, the form its adapter needs.
+		model = host
+	} else if upstreamModel != rc.Model {
 		model = providers.ResolveModelName(upstreamModel)
 	}
 
-	// Collect Google-specific headers to forward (only used on native path).
+	// Collect Google-specific headers to forward (only used on native path),
+	// other than a credential: the provider sends its own key (the
+	// organization's, or the gateway's), and no credential header the client
+	// sends is forwarded.
 	googleHeaders := make(map[string]string)
 	for key := range r.Header {
-		if len(key) > 6 && key[:7] == "X-Goog-" || len(key) > 6 && key[:7] == "x-goog-" {
+		if (len(key) > 6 && key[:7] == "X-Goog-" || len(key) > 6 && key[:7] == "x-goog-") && !credentials.IsHeader(key) {
 			googleHeaders[key] = r.Header.Get(key)
 		}
 	}
@@ -154,25 +179,42 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+		// countTokens sends the provider the whole prompt, so the checks on
+		// the request read it (rc.PassThrough, as on generateContent), and
+		// the provider gets it with any rewrite of theirs.
+		passThrough := requestview.GeminiCountTokens(body, model)
 		call := func(ctx context.Context) ([]byte, int, error) {
-			return gp.GenAICountTokens(ctx, model, body, googleHeaders)
+			return gp.GenAICountTokens(ctx, model, passThrough.Body(), googleHeaders)
+		}
+		if action == "countTokens" {
+			rc.PassThrough = passThrough
 		}
 		if action == "embedContent" {
+			// The checks on the request read the text embedded (its parts and
+			// its title), and the provider gets it with any rewrite of theirs.
+			embed := requestview.GeminiEmbedContent(body)
+			rc.PassThrough = embed
 			call = func(ctx context.Context) ([]byte, int, error) {
-				return gp.EmbedContent(ctx, model, body, googleHeaders)
+				return gp.EmbedContent(ctx, model, embed.Body(), googleHeaders)
 			}
 		}
 		h.handleGenAINativeOnly(ctx, w, rc, call)
 		return
 	}
 
-	// Fast path: provider natively speaks GenAI.
+	// Fast path: provider natively speaks GenAI. rc.Request stays nil, as on
+	// the Anthropic pass-through (see AnthropicMessages); the guardrail
+	// checks on the request read the body the provider gets, in the chat
+	// shape, from rc.PassThrough, and a check's rewrite of it (a
+	// remediation) is written into the body sent.
 	if gp, ok := provider.(providers.GenAINativeProvider); ok {
+		passThrough := requestview.Gemini(body, model, action == "streamGenerateContent")
+		rc.PassThrough = passThrough
 		switch action {
 		case "generateContent":
-			h.handleGenAINonStream(ctx, w, rc, gp, model, body, googleHeaders)
+			h.handleGenAINonStream(ctx, w, rc, gp, model, passThrough, googleHeaders)
 		case "streamGenerateContent":
-			h.handleGenAIStream(ctx, w, rc, gp, model, body, googleHeaders)
+			h.handleGenAIStream(ctx, w, rc, gp, model, passThrough, googleHeaders)
 		}
 		return
 	}
@@ -214,22 +256,35 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 
 // ─── Native pass-through helpers ─────────────────────────────────────────────
 
-func (h *Handlers) handleGenAINonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, gp providers.GenAINativeProvider, model string, reqBody []byte, headers map[string]string) {
+func (h *Handlers) handleGenAINonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, gp providers.GenAINativeProvider, model string, req *requestview.View, headers map[string]string) {
 	var respBody []byte
 	var statusCode int
 
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
-		respBody, statusCode, callErr = gp.GenerateContent(ctx, model, reqBody, headers)
+		// The body after the checks on the request, with any rewrite of
+		// theirs.
+		respBody, statusCode, callErr = gp.GenerateContent(ctx, model, req.Body(), headers)
 		if callErr != nil {
 			return callErr
 		}
 		if statusCode < 400 {
 			applyGenAIUsage(rc, respBody)
+			// An output check reads the answer the client gets, every
+			// candidate of it, not only its usage.
+			if rc.Flags.AnswerReaders != 0 {
+				if answer, err := geminiprov.AnswerFromNative(respBody); err == nil {
+					giveChecksTheAnswer(rc, answer)
+				} else {
+					markAnswerUnreadable(rc)
+				}
+			}
 		}
 		return nil
 	})
-	if err != nil {
+	// An output check that withheld the answer is refused like a pre-stage
+	// block, and respBody is never served.
+	if err = pipelineErr(rc, err); err != nil {
 		writeGenAIErrorFromError(w, err)
 		return
 	}
@@ -255,16 +310,20 @@ func (h *Handlers) handleGenAINonStream(ctx context.Context, w http.ResponseWrit
 	w.Write(respBody)
 }
 
-func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, gp providers.GenAINativeProvider, model string, reqBody []byte, headers map[string]string) {
+func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, gp providers.GenAINativeProvider, model string, req *requestview.View, headers map[string]string) {
 	var stream io.ReadCloser
 	var statusCode int
 
 	// Post-plugins wait for the closing chunk, where the counts arrive.
-	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
-		stream, statusCode, callErr = gp.StreamGenerateContent(ctx, model, reqBody, headers)
+		// The body after the checks on the request, with any rewrite of
+		// theirs.
+		stream, statusCode, callErr = gp.StreamGenerateContent(ctx, model, req.Body(), headers)
 		return callErr
-	}); err != nil {
+	})
+	// A cache hit an output check withheld is refused like a pre-stage block.
+	if err = pipelineErr(rc, err); err != nil {
 		writeGenAIErrorFromError(w, err)
 		return
 	}
@@ -280,8 +339,11 @@ func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter,
 	defer stream.Close()
 
 	var usage genaifmt.StreamUsageScanner
+	// The text the stream sends, for an output check that reads the answer.
+	answer := newSSEAnswer(rc.Flags.AnswerReaders != 0, genaiStreamDelta)
 	finalize := func(detach bool) {
 		applyGenAIStreamUsage(rc, &usage)
+		answer.giveTo(rc)
 		pluginCtx := ctx
 		if detach {
 			pluginCtx = context.Background()
@@ -323,6 +385,7 @@ func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter,
 		n, readErr := stream.Read(buf)
 		if n > 0 {
 			usage.Write(buf[:n])
+			answer.Write(buf[:n])
 			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
 				slog.Warn("error writing genai stream", "request_id", rc.RequestID, "error", writeErr)
 				// Client gone, tokens still spent — detach from its context.
@@ -336,6 +399,9 @@ func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter,
 				slog.Warn("error reading genai stream", "request_id", rc.RequestID, "error", readErr)
 			}
 			finalize(false)
+			if readErr == io.EOF {
+				endWithheldStream(w, flusher, rc, genaifmt.StreamErrorEvent)
+			}
 			return
 		}
 
@@ -361,10 +427,14 @@ func applyGenAIUsage(rc *models.RequestContext, respBody []byte) {
 	if completionTokens > 0 {
 		rc.Metadata["output_tokens"] = strconv.Itoa(completionTokens)
 	}
-	if promptTokens == 0 && completionTokens == 0 {
+	// Grounding is metered (and marks eval_export forbidden, Gemini API
+	// terms) even when the body reports no tokens.
+	grounding := geminiprov.GroundingUsage(respBody)
+	if promptTokens == 0 && completionTokens == 0 && grounding == nil {
 		return
 	}
 	setUsageResponse(rc, promptTokens, completionTokens)
+	rc.Response.Usage.ServerToolUse = grounding
 }
 
 // applyGenAIStreamUsage moves collected counts onto rc. Left nil when the
@@ -417,6 +487,13 @@ func (h *Handlers) handleGenAINativeOnly(ctx context.Context, w http.ResponseWri
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
 		respBody, statusCode, callErr = call(ctx)
+		if callErr == nil {
+			// The answer is passed through as the provider sent it: the log
+			// records the status written below and, for countTokens, the
+			// count (rc has no answer).
+			models.RecordPassedThroughAnswer(rc, nativeOnlyStatus(statusCode), respBody,
+				rc.EndpointType == "genai_count_tokens")
+		}
 		return callErr
 	}); err != nil {
 		writeGenAIErrorFromError(w, err)
@@ -429,11 +506,17 @@ func (h *Handlers) handleGenAINativeOnly(ctx context.Context, w http.ResponseWri
 
 	h.setAgentccHeaders(w, rc)
 	w.Header().Set("Content-Type", "application/json")
-	if statusCode < 400 {
-		statusCode = http.StatusOK
-	}
-	w.WriteHeader(statusCode)
+	w.WriteHeader(nativeOnlyStatus(statusCode))
 	w.Write(respBody)
+}
+
+// nativeOnlyStatus is the status handleGenAINativeOnly answers with for the
+// provider's: its own when it refused the call, 200 otherwise.
+func nativeOnlyStatus(status int) int {
+	if status < 400 {
+		return http.StatusOK
+	}
+	return status
 }
 
 // ─── Translation-path helpers ─────────────────────────────────────────────────
@@ -461,7 +544,9 @@ func (h *Handlers) handleGenAINonStreamViaCanonical(
 		rc.Response = canonicalResp
 		return nil
 	})
-	if err != nil {
+	// An output check that withheld the answer is refused like a pre-stage
+	// block, and canonicalResp is never served.
+	if err = pipelineErr(rc, err); err != nil {
 		var apiErr *models.APIError
 		if errors.As(err, &apiErr) {
 			status, body, ct := translator.ErrorFromCanonical(apiErr)
@@ -549,10 +634,12 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	var rawChunkCh <-chan models.StreamChunk
 	var errCh <-chan error
 
-	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		rawChunkCh, errCh = provider.StreamChatCompletion(ctx, canonicalReq)
 		return nil
-	}); err != nil {
+	})
+	// A cache hit an output check withheld is refused like a pre-stage block.
+	if err = pipelineErr(rc, err); err != nil {
 		writeGenAIErrorFromError(w, err)
 		return
 	}
@@ -566,11 +653,15 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 		return
 	}
 
-	// Tee for usage from the final chunk.
-	chunkCh, usageCh := teeStreamUsage(ctx, rawChunkCh)
+	// Tee for usage from the final chunk. It assembles the text for an output
+	// check that reads the answer.
+	capture := newStreamCapture(rc.Flags.AnswerReaders != 0)
+	chunkCh, usageCh := teeStreamUsage(ctx, rawChunkCh, capture)
 
 	finalize := func(detach bool) {
 		applyCanonicalStreamUsage(rc, usageCh)
+		// After the usage: the tee has finished writing the capture.
+		giveChecksTheStreamedAnswer(rc, capture)
 		pluginCtx := ctx
 		if detach {
 			pluginCtx = context.Background()
@@ -606,8 +697,10 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 
 		case event, ok := <-eventCh:
 			if !ok {
+				// break, not continue: the check below the select ends the
+				// stream once every channel has closed.
 				eventCh = nil
-				continue
+				break
 			}
 			if _, writeErr := w.Write(event); writeErr != nil {
 				slog.Warn("error writing translated genai stream", "request_id", rc.RequestID, "error", writeErr)
@@ -621,7 +714,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 				// Error channel closed. Keep draining eventCh — final events
 				// (finishReason payload, usageMetadata) may still be buffered.
 				translatorErrCh = nil
-				continue
+				break
 			}
 			if err != nil {
 				slog.Warn("translator stream error", "request_id", rc.RequestID, "error", err)
@@ -632,7 +725,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 		case err, ok := <-errCh:
 			if !ok {
 				errCh = nil
-				continue
+				break
 			}
 			if err != nil {
 				slog.Warn("provider stream error", "request_id", rc.RequestID, "error", err)
@@ -643,6 +736,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 
 		if eventCh == nil && errCh == nil && translatorErrCh == nil {
 			finalize(false)
+			endWithheldStream(w, flusher, rc, genaifmt.StreamErrorEvent)
 			return
 		}
 	}

@@ -1631,7 +1631,10 @@ func TestShouldApplyOrgProviderOverride(t *testing.T) {
 	}
 }
 
-func TestListModels_MergesGlobalAndOrgModelsForRequestingOrg(t *testing.T) {
+// An org's customer key lists only what it can call: its org's own
+// provider models and "auto". The operator's gpt-4o-mini is not listed:
+// chat refuses it to this key.
+func TestListModels_ListsOnlyTheRequestingOrgsModels(t *testing.T) {
 	mock := startMockOpenAI(t)
 	defer mock.Close()
 
@@ -1651,6 +1654,7 @@ func TestListModels_MergesGlobalAndOrgModelsForRequestingOrg(t *testing.T) {
 		t.Fatalf("parsing response: %v", err)
 	}
 
+	// The org's two models plus "auto", which the gateway routes itself.
 	if len(resp.Data) != 3 {
 		t.Fatalf("model count = %d, want 3; body=%s", len(resp.Data), w.Body.String())
 	}
@@ -1658,12 +1662,14 @@ func TestListModels_MergesGlobalAndOrgModelsForRequestingOrg(t *testing.T) {
 	for _, m := range resp.Data {
 		ids[m.ID] = true
 	}
-	if !ids["gpt-4o"] || !ids["claude-sonnet-4-6"] || !ids["gpt-4o-mini"] {
-		t.Fatalf("returned model ids = %#v, want gpt-4o, gpt-4o-mini, and claude-sonnet-4-6", ids)
+	if !ids["gpt-4o"] || !ids["claude-sonnet-4-6"] || ids["gpt-4o-mini"] || !ids["auto"] {
+		t.Fatalf("returned model ids = %#v, want gpt-4o, claude-sonnet-4-6 and auto, and not the operator's gpt-4o-mini", ids)
 	}
 }
 
-func TestListModels_FallsBackToGlobalModelsForKeyWithoutOrg(t *testing.T) {
+// A customer key without an org can call none of the operator's models, so
+// it lists only "auto".
+func TestListModels_KeyWithoutOrgListsNoOperatorModels(t *testing.T) {
 	mock := startMockOpenAI(t)
 	defer mock.Close()
 
@@ -1682,24 +1688,28 @@ func TestListModels_FallsBackToGlobalModelsForKeyWithoutOrg(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("parsing response: %v", err)
 	}
-	if len(resp.Data) != 2 {
-		t.Fatalf("model count = %d, want 2 global models; body=%s", len(resp.Data), w.Body.String())
+	if len(resp.Data) != 1 || resp.Data[0].ID != "auto" {
+		t.Fatalf("models = %s, want only auto", w.Body.String())
 	}
 }
 
-func TestGetModel_ReturnsGlobalModelForOrgRequest(t *testing.T) {
+// GET /v1/models/{id} answers an org key only for a model it can call:
+// the operator's gpt-4o-mini is 404, the org's gpt-4o is 200.
+func TestGetModel_OrgRequestGetsOnlyItsOrgsModels(t *testing.T) {
 	mock := startMockOpenAI(t)
 	defer mock.Close()
 
 	srv := createOrgScopedModelsTestServer(t, mock.URL)
 
-	req := httptest.NewRequest("GET", "/v1/models/gpt-4o-mini", nil)
-	req.Header.Set("Authorization", "Bearer sk-agentcc-org-test")
-	w := httptest.NewRecorder()
-	srv.httpServer.Handler.ServeHTTP(w, req)
+	for model, want := range map[string]int{"gpt-4o-mini": http.StatusNotFound, "gpt-4o": http.StatusOK} {
+		req := httptest.NewRequest("GET", "/v1/models/"+model, nil)
+		req.Header.Set("Authorization", "Bearer sk-agentcc-org-test")
+		w := httptest.NewRecorder()
+		srv.httpServer.Handler.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+		if w.Code != want {
+			t.Fatalf("GET %s: status = %d, want %d; body=%s", model, w.Code, want, w.Body.String())
+		}
 	}
 }
 

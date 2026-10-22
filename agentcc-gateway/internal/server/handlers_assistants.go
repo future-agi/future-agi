@@ -10,8 +10,10 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/requestview"
 )
 
 // ---------------------------------------------------------------------------
@@ -41,6 +43,7 @@ func (h *Handlers) resolveOpenAIProvider(ctx context.Context, rc *models.Request
 				}
 			}
 			rc.Provider = openAIProviderID
+			rc.Metadata["billing_mode"] = billingBYOK // the org's own key
 			return p, nil
 		}
 	}
@@ -63,6 +66,9 @@ func (h *Handlers) resolveAssistantsProvider(ctx context.Context, rc *models.Req
 	provider, err := h.resolveOpenAIProvider(ctx, rc)
 	if err != nil {
 		return nil, err
+	}
+	if apiErr := h.keyProviderACL(rc); apiErr != nil {
+		return nil, apiErr
 	}
 
 	ap, ok := provider.(providers.AssistantsProvider)
@@ -87,7 +93,7 @@ func (h *Handlers) setupAssistantsRC(r *http.Request, operation string) *models.
 	rc.TraceID = r.Header.Get("x-agentcc-trace-id")
 	rc.EndpointType = "assistants"
 	rc.Metadata["assistants_operation"] = operation
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = middleware.ClientIP(r)
 
 	setAuthMetadataFromRequest(rc, r)
 	// Caller dimensions, from the x-agentcc-metadata header.
@@ -115,6 +121,32 @@ func (h *Handlers) setupAssistantsRC(r *http.Request, operation string) *models.
 	h.applyOrgModelMapOverrides(orgCfg, rc)
 
 	return rc
+}
+
+// ---------------------------------------------------------------------------
+// Helper: the checks on the request of a body proxied outside the pipeline
+// ---------------------------------------------------------------------------
+
+// checkProxiedRequest runs the checks on the request of a body the handler
+// proxies to the provider without the pipeline (the Assistants API, vector
+// store search): view reads the body in the chat shape. The key is
+// authenticated as the pipeline authenticates it (the auth plugin, which
+// writes the identity the guardrail plugin reads), and X-Guardrail-Policy
+// applies, as on chat; then the guardrail plugin's checks on the request run
+// (requestview's reader for the route), and a check's rewrite of the body
+// is in the body returned. A check that would block or rewrite a body the
+// gateway cannot read refuses it (request_unavailable), as on the routes
+// that pass a body through. On a refusal it writes the error and reports
+// false: the provider is never called. These routes have no request log
+// entry; the refusal is the client's 403.
+func (h *Handlers) checkProxiedRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, rc *models.RequestContext, view *requestview.View) ([]byte, bool) {
+	readGuardrailPolicyHeader(rc, r)
+	rc.PassThrough = view
+	if err := h.engine.RunRequestPlugins(ctx, rc, "auth", "guardrails"); err != nil {
+		models.WriteError(w, err)
+		return nil, false
+	}
+	return view.Body(), true
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +301,9 @@ func (h *Handlers) CreateAssistant(w http.ResponseWriter, r *http.Request) {
 			body = replaced
 		}
 	}
+	if body, ok = h.checkProxiedRequest(ctx, w, r, rc, requestview.Assistant(body)); !ok {
+		return
+	}
 
 	h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", "/v1/assistants", body, nil)
 }
@@ -357,6 +392,9 @@ func (h *Handlers) UpdateAssistant(w http.ResponseWriter, r *http.Request) {
 			body = replaced
 		}
 	}
+	if body, ok = h.checkProxiedRequest(ctx, w, r, rc, requestview.Assistant(body)); !ok {
+		return
+	}
 
 	h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", "/v1/assistants/"+assistantID, body, nil)
 }
@@ -407,6 +445,10 @@ func (h *Handlers) CreateThread(w http.ResponseWriter, r *http.Request) {
 	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
+		return
+	}
+
+	if body, ok = h.checkProxiedRequest(ctx, w, r, rc, requestview.Thread(body)); !ok {
 		return
 	}
 
@@ -521,6 +563,10 @@ func (h *Handlers) CreateMessage(w http.ResponseWriter, r *http.Request) {
 	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
+		return
+	}
+
+	if body, ok = h.checkProxiedRequest(ctx, w, r, rc, requestview.ThreadMessage(body)); !ok {
 		return
 	}
 
@@ -685,6 +731,10 @@ func (h *Handlers) CreateRun(w http.ResponseWriter, r *http.Request) {
 		if replaced, replErr := models.ReplaceModelInBody(body, resolveModelNameForAssistants(modelName)); replErr == nil {
 			body = replaced
 		}
+	}
+
+	if body, ok = h.checkProxiedRequest(ctx, w, r, rc, requestview.Run(body)); !ok {
+		return
 	}
 
 	upstreamPath := "/v1/threads/" + threadID + "/runs"
@@ -942,6 +992,10 @@ func (h *Handlers) CreateThreadAndRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if body, ok = h.checkProxiedRequest(ctx, w, r, rc, requestview.ThreadAndRun(body)); !ok {
+		return
+	}
+
 	if isStream {
 		h.proxyAssistantsStream(w, ctx, rc, ap, "/v1/threads/runs", body)
 	} else {
@@ -984,6 +1038,10 @@ func (h *Handlers) SubmitToolOutputs(w http.ResponseWriter, r *http.Request) {
 	ap, err := h.resolveAssistantsProvider(ctx, rc)
 	if err != nil {
 		models.WriteErrorFromError(w, err)
+		return
+	}
+
+	if body, ok = h.checkProxiedRequest(ctx, w, r, rc, requestview.ToolOutputs(body)); !ok {
 		return
 	}
 

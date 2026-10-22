@@ -8,6 +8,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/requestview"
 )
 
 // ---------------------------------------------------------------------------
@@ -18,6 +19,9 @@ func (h *Handlers) resolveVectorStoresProvider(ctx context.Context, rc *models.R
 	provider, err := h.resolveOpenAIProvider(ctx, rc)
 	if err != nil {
 		return nil, err
+	}
+	if apiErr := h.keyProviderACL(rc); apiErr != nil {
+		return nil, apiErr
 	}
 
 	vsp, ok := provider.(providers.VectorStoresProvider)
@@ -37,6 +41,14 @@ func (h *Handlers) resolveVectorStoresProvider(ctx context.Context, rc *models.R
 // ---------------------------------------------------------------------------
 
 func (h *Handlers) proxyVectorStores(w http.ResponseWriter, r *http.Request, method, upstreamPath string, body []byte, queryParams url.Values, operation string) {
+	h.proxyVectorStoresChecked(w, r, method, upstreamPath, body, queryParams, operation, nil)
+}
+
+// proxyVectorStoresChecked is proxyVectorStores for a body whose text the
+// model reads (a search's query): view reads it, for the checks on the
+// request (checkProxiedRequest), before the provider is called. view is nil
+// for a body the checks do not read.
+func (h *Handlers) proxyVectorStoresChecked(w http.ResponseWriter, r *http.Request, method, upstreamPath string, body []byte, queryParams url.Values, operation string, view func([]byte) *requestview.View) {
 	rc := h.setupAssistantsRC(r, operation)
 	rc.EndpointType = "vector_stores"
 	rc.Metadata["vector_stores_operation"] = operation
@@ -50,6 +62,12 @@ func (h *Handlers) proxyVectorStores(w http.ResponseWriter, r *http.Request, met
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
+	}
+	if view != nil {
+		var ok bool
+		if body, ok = h.checkProxiedRequest(ctx, w, r, rc, view(body)); !ok {
+			return
+		}
 	}
 
 	respBody, statusCode, respHeaders, proxyErr := vsp.ProxyVectorStoresRequest(ctx, method, upstreamPath, body, queryParams)
@@ -144,7 +162,7 @@ func (h *Handlers) SearchVectorStore(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	h.proxyVectorStores(w, r, "POST", "/v1/vector_stores/"+vsID+"/search", body, nil, "vector_stores.search")
+	h.proxyVectorStoresChecked(w, r, "POST", "/v1/vector_stores/"+vsID+"/search", body, nil, "vector_stores.search", requestview.VectorStoreSearch)
 }
 
 // ===========================================================================

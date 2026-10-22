@@ -9,6 +9,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/requestview"
 )
 
 // CreateImage handles POST /v1/images/generations.
@@ -51,9 +52,14 @@ func (h *Handlers) CreateImage(w http.ResponseWriter, r *http.Request) {
 
 	rc.Model = req.Model
 	rc.ImageRequest = &req
+	// The checks on the request read its text (rc.PassThrough, in the chat
+	// shape), and a check's rewrite of it goes into the prompt, which the provider
+	// gets; X-Guardrail-Policy applies here as on chat.
+	rc.PassThrough = requestview.Image(&req)
 
 	setAuthMetadataFromRequest(rc, r)
 	applyCallerMetadata(rc, r, nil)
+	readGuardrailPolicyHeader(rc, r)
 
 	// Resolve timeout and apply.
 	timeout := h.resolveTimeout(rc, r)
@@ -73,10 +79,11 @@ func (h *Handlers) CreateImage(w http.ResponseWriter, r *http.Request) {
 	provider, upstreamModel, err := h.resolveProvider(ctx, rc, req.Model)
 	if err != nil {
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
+			if orgP, providerID, upstream := h.resolveOrgProvider(rc, orgID, orgCfg, req.Model); orgP != nil {
 				provider = orgP
 				rc.Provider = providerID
 				rc.Metadata["org_provider"] = "true"
+				req.Model = upstream
 				err = nil
 			}
 		}
@@ -89,6 +96,17 @@ func (h *Handlers) CreateImage(w http.ResponseWriter, r *http.Request) {
 		if shouldApplyOrgProviderOverride(rc) {
 			provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
 		}
+	}
+	if apiErr := h.keyProviderACL(rc); apiErr != nil {
+		models.WriteError(w, apiErr)
+		return
+	}
+	// The model shutdown calendar: this handler runs no eligibility,
+	// so a model the serving host shut down is refused here, before any
+	// upstream call.
+	if apiErr := h.shutDownModel(orgCfg, rc.Provider, req.Model); apiErr != nil {
+		models.WriteError(w, apiErr)
+		return
 	}
 
 	// Type-assert to ImageProvider.
@@ -109,6 +127,10 @@ func (h *Handlers) CreateImage(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		rc.ImageResponse = resp
+		// The model sent, which a route may have put in place of the
+		// requested one: x-agentcc-model-used, the request log and the
+		// cost plugin's price (implicitAttempt) all read it.
+		rc.ResolvedModel = rc.ImageRequest.Model
 		return nil
 	}
 

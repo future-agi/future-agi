@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/auth"
 	gatewayadmin "github.com/futureagi/agentcc-gateway/internal/contracts/generated"
@@ -88,6 +90,17 @@ func (h *KeyHandlers) CreateKey(w http.ResponseWriter, r *http.Request) {
 
 	if req.Name == "" {
 		models.WriteError(w, models.ErrBadRequest("missing_name", "name is required"))
+		return
+	}
+
+	// A key's authority is set once, when it is created, by the platform:
+	// org_id, and allow_policy_override on its playground key. The other
+	// reserved names never come through this API (PUT refuses a change to
+	// any of them), so a create that sends one is refused whole.
+	if names := auth.NotPlatformSetMetadata(req.Metadata); len(names) > 0 {
+		models.WriteError(w, models.ErrBadRequest("reserved_metadata", fmt.Sprintf(
+			"metadata %s cannot be set when a key is created here: org_id and allow_policy_override are the only reserved names this API takes",
+			strings.Join(names, ", "))))
 		return
 	}
 
@@ -206,14 +219,18 @@ func (h *KeyHandlers) RevokeKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.keyStore.Revoke(keyID) {
-		models.WriteError(w, models.ErrNotFound("key_not_found", "Key not found: "+keyID))
-		return
-	}
+	revoked := h.keyStore.Revoke(keyID)
 
-	// Broadcast revocation to all other replicas via Redis pub/sub.
+	// Broadcast revocation to all other replicas via Redis pub/sub, even when
+	// this replica does not hold the key: the replica that created it may be
+	// the only one that does until the next sync. Unknown IDs are a no-op there.
 	if h.revocationPublisher != nil {
 		h.revocationPublisher.Publish(r.Context(), keyID)
+	}
+
+	if !revoked {
+		models.WriteError(w, models.ErrNotFound("key_not_found", "Key not found: "+keyID))
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -241,8 +258,18 @@ func (h *KeyHandlers) UpdateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key, ok := h.keyStore.Update(keyID, req.Name, req.Owner, req.Models, req.Providers, req.Metadata)
-	if !ok {
+	key, err := h.keyStore.Update(keyID, req.Name, req.Owner, req.Models, req.Providers, req.Metadata)
+	var reserved *auth.ReservedMetadataError
+	switch {
+	case errors.As(err, &reserved):
+		models.WriteError(w, &models.APIError{
+			Status:  http.StatusConflict,
+			Type:    models.ErrTypeInvalidRequest,
+			Code:    "reserved_metadata",
+			Message: reserved.Error(),
+		})
+		return
+	case err != nil:
 		models.WriteError(w, models.ErrNotFound("key_not_found", "Key not found: "+keyID))
 		return
 	}

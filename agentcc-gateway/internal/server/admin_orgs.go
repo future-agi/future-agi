@@ -49,7 +49,36 @@ func redactOrgConfig(cfg *tenant.OrgConfig) *tenant.OrgConfig {
 		}
 		redacted.Providers = rp
 	}
+	redacted.ManagedModels = redactManagedModels(redacted.ManagedModels)
+	if r := redacted.Routing; r != nil && r.Rollout != nil && r.Rollout.ManagedModels != nil &&
+		len(r.Rollout.ManagedModels.UpstreamKeys) > 0 {
+		routing := *r
+		rollout := *r.Rollout
+		rollout.ManagedModels = redactManagedModels(rollout.ManagedModels)
+		routing.Rollout = &rollout
+		redacted.Routing = &routing
+	}
 	return &redacted
+}
+
+// redactManagedModels masks every pushed per-org upstream key (redacted
+// from every GET) and keeps key_hash. It copies before masking, so
+// the live config is never changed.
+func redactManagedModels(mm *tenant.ManagedModelsConfig) *tenant.ManagedModelsConfig {
+	if mm == nil || len(mm.UpstreamKeys) == 0 {
+		return mm
+	}
+	cp := *mm
+	cp.UpstreamKeys = make(map[string]*tenant.ManagedUpstreamKey, len(mm.UpstreamKeys))
+	for id, k := range mm.UpstreamKeys {
+		if k == nil {
+			continue
+		}
+		masked := *k
+		masked.APIKey = redactAPIKey(masked.APIKey)
+		cp.UpstreamKeys[id] = &masked
+	}
+	return &cp
 }
 
 func gatewayContractOrgConfigToTenant(cfg *gatewayadmin.OrgConfig) (*tenant.OrgConfig, error) {
@@ -277,4 +306,24 @@ func (h *OrgConfigHandlers) BulkLoadOrgConfigs(w http.ResponseWriter, r *http.Re
 		"status": "ok",
 		"loaded": len(configs),
 	})
+}
+
+// SetOrgSectionsEnforced records the org config sections this node enforces,
+// as cmd/agentcc reads them off the plugins it installed: GET /-/config
+// reports them as org_sections_enforced. Call after New and
+// before Start. A server it is never called on leaves the field out, which the
+// console reads as "enforcement unknown".
+func (s *Server) SetOrgSectionsEnforced(sections []string) {
+	s.orgSectionsEnforced = append([]string{}, sections...)
+}
+
+// SetOrgSectionsNotEnforced records, for GET /-/config's
+// org_sections_not_enforced, each org config section this node does not
+// enforce with the reason (ip_acl: middleware.OrgIPACLClientIPUnknown). An
+// empty or nil map leaves the field out. Call after New and before Start.
+func (s *Server) SetOrgSectionsNotEnforced(reasons map[string]string) {
+	s.orgSectionsNotEnforced = make(map[string]string, len(reasons))
+	for section, reason := range reasons {
+		s.orgSectionsNotEnforced[section] = reason
+	}
 }
