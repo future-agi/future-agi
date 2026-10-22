@@ -17,12 +17,14 @@
 *.sh            text eol=lf
 
 # Shell scripts without a .sh extension — bin/install is the documented
-# self-host entry point and futureagi/bin/temporal-worker is exec'd inside the
-# container on the production path.
+# self-host entry point, bin/dev the contributor one (CONTRIBUTING.md), and
+# futureagi/bin/temporal-worker is exec'd inside the container on the
+# production path. deploy/standalone/bin/* is COPYed into the standalone image.
+bin/dev                             text eol=lf
 bin/e2e                             text eol=lf
 bin/install                         text eol=lf
-bin/property-catalog-backfill       text eol=lf
 bin/uninstall                       text eol=lf
+deploy/standalone/bin/*             text eol=lf
 futureagi/bin/temporal-worker       text eol=lf
 futureagi/bin/test                  text eol=lf
 
