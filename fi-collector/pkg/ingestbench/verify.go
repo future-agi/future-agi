@@ -33,9 +33,10 @@ type queryLimits struct {
 	settings    map[string]string
 }
 
-// controlLimits bound small preflight, provenance and resource queries.
+// controlLimits bound small preflight, provenance, lag and resource queries:
+// 30 seconds, or the verification query limit when that is longer.
 func (c Config) controlLimits() queryLimits {
-	return queryLimits{timeout: 30 * time.Second, maxMemory: 1 << 30, maxResponse: 1 << 20}
+	return queryLimits{timeout: max(30*time.Second, c.VerifyQueryTimeout), maxMemory: 1 << 30, maxResponse: 1 << 20}
 }
 
 func (c Config) verifyLimits() queryLimits {
@@ -99,6 +100,10 @@ func (ch clickHouse) queryWith(ctx context.Context, query string, params map[str
 	q.Set("max_execution_time", strconv.FormatInt(int64(math.Ceil(lim.timeout.Seconds())), 10))
 	q.Set("max_memory_usage", strconv.FormatInt(lim.maxMemory, 10))
 	q.Set("output_format_json_quote_64bit_integers", "0")
+	// Without this ClickHouse may send HTTP 200 before the query finishes and
+	// report a later failure inside the body; buffering the (small) result
+	// makes the status code authoritative.
+	q.Set("wait_end_of_query", "1")
 	for k, v := range lim.settings {
 		q.Set(k, v)
 	}
@@ -131,6 +136,9 @@ func (ch clickHouse) queryWith(ctx context.Context, query string, params map[str
 		return nil, fmt.Errorf("ClickHouse response failed: HTTP %d%s", resp.StatusCode, detail)
 	}
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("ClickHouse response timed out after %s while reading", lim.timeout+10*time.Second)
+		}
 		return nil, fmt.Errorf("ClickHouse response unreadable or larger than %d bytes", lim.maxResponse)
 	}
 	return body, nil

@@ -66,7 +66,7 @@ func (lt liveTarget) apply(c Config) Config {
 	if lt.slow {
 		// Settle must outlast the slowest acknowledged insert (minutes there).
 		c.Settle = max(c.Settle, 8*time.Minute)
-		c.VerifyQueryTimeout, c.VerifyQueryRetries, c.VerifyChunk = 5*time.Minute, 3, 1<<20
+		c.VerifyQueryTimeout, c.VerifyQueryRetries, c.VerifyChunk = 5*time.Minute, 3, 1_000_000
 		c.DirectProbes.QueryTimeout = 5 * time.Minute
 	}
 	return c

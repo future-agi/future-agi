@@ -103,8 +103,8 @@ func (m *mockStorage) serve(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(q.Get("query"), "INSERT") {
 		return
 	}
-	if q.Get("readonly") != "2" {
-		http.Error(w, "benchmark reads must be readonly=2", 400)
+	if q.Get("readonly") != "2" || q.Get("wait_end_of_query") != "1" {
+		http.Error(w, "benchmark reads must be readonly=2 with wait_end_of_query=1", 400)
 		return
 	}
 	body, _ := io.ReadAll(r.Body)
@@ -450,10 +450,14 @@ func runBackpressureCase(t *testing.T, chURL string, headers http.Header, writer
 	c := mockRunConfig()
 	c.RunID = NewRunID()
 	c.Encoding, c.Gzip = encoding, gzip
+	// 50 requests/s against a 16-row budget that drains every 400 ms: after two
+	// requests fill it, every request until the next flush is refused. Small
+	// payloads keep request building cheap even under the race detector, so
+	// refusals do not depend on generator speed.
 	c.Rate, c.Duration, c.BatchSize, c.Concurrency, c.VerifyChunk = 400, time.Second, 8, 4, 64
-	c.Settle = 800 * time.Millisecond
+	c.Payload, c.Settle = "small", 2*time.Second
 	c.DirectProbes.Enabled = false
-	fixture := startCollector(t, writer, server.Config{MaxPendingRows: 16, BatchMaxRows: 1000, BatchMaxAge: 200 * time.Millisecond})
+	fixture := startCollector(t, writer, server.Config{MaxPendingRows: 16, BatchMaxRows: 1000, BatchMaxAge: 400 * time.Millisecond})
 	c.ClickHouseURL, c.Endpoint = chURL, fixture.endpoint(encoding)
 	c = prepare(c)
 	r, err := Run(context.Background(), c, Options{ClickHouseHeaders: headers})
@@ -497,6 +501,7 @@ func runOversizeCase(t *testing.T, chURL string, headers http.Header, writer chw
 	c.RunID = NewRunID()
 	c.Encoding, c.Gzip = encoding, gzip
 	c.Rate, c.Duration, c.BatchSize, c.VerifyChunk = 40, time.Second, 20, 64
+	c.Payload = "small"
 	c.DirectProbes.Enabled = false
 	fixture := startCollector(t, writer, server.Config{MaxPendingRows: 16, BatchMaxRows: 1000, BatchMaxAge: 50 * time.Millisecond})
 	c.ClickHouseURL, c.Endpoint = chURL, fixture.endpoint(encoding)
