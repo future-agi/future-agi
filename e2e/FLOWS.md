@@ -727,21 +727,25 @@
 ### DATA-E2E-003 — editing a dynamic column reruns selected dependents in order
 
 **Goal:** A dataset editor keeps derived columns current after changing an upstream dynamic column  
-**Spec:** `flows/datasets/rerun-dependent-columns.spec.ts:55`  
+**Spec:** `flows/datasets/rerun-dependent-columns.spec.ts:56`  
 **Tags:** —
 
 **User steps:**
 
-1. seed a dataset with a three-level classification dependency chain
-2. open the source classification column configuration
-3. update the source column
+1. seed a dataset with a three-level extract JSON dependency chain
+2. change the upstream cell so every derived column is stale
+3. open the source column configuration and update it
 4. review the direct and transitive dependents in the confirmation dialog
 5. rerun the selected dependent columns
 
 **Backend state verified:**
 
 - the browser posts dependent reruns in topological order with the stored operation type
-- the source and both selected dependent columns reach Completed
+- the direct and transitive cells move from the old upstream value to the new one
+
+**Browser observations:**
+
+- the dialog closes once confirmed and a snackbar reports that the dependents reran
 
 ## error-feed
 

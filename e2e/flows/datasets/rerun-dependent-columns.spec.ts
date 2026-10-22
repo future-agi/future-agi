@@ -8,9 +8,9 @@ const CREATE_DATASET_PATH = "/model-hub/develops/create-dataset-manually/";
 // Pinned from DatasetUpdateCellValueRequestSerializer.
 const updateCellPath = (datasetId: string) =>
   `/model-hub/develops/${datasetId}/update_cell_value/`;
-// Pinned from ClassifyColumnRequestSerializer and ClassifyColumnView.
-const classifyColumnPath = (datasetId: string) =>
-  `/model-hub/datasets/${datasetId}/classify-column/`;
+// Pinned from ExtractJsonColumnRequestSerializer and ExtractJsonColumnView.
+const extractJsonColumnPath = (datasetId: string) =>
+  `/model-hub/develops/${datasetId}/extract-json-column/`;
 // Pinned from frontend/src/utils/axios.js `getDatasetDetail`.
 const datasetTablePath = (datasetId: string) =>
   `/model-hub/develops/${datasetId}/get-dataset-table/`;
@@ -28,6 +28,7 @@ interface DatasetTableColumn {
 
 interface DatasetTableRow {
   row_id: string;
+  [columnId: string]: string | { cell_value?: string | null };
 }
 
 interface DatasetTableEnvelope {
@@ -62,15 +63,18 @@ test(
       userGoal:
         "A dataset editor keeps derived columns current after changing an upstream dynamic column",
       steps: [
-        "seed a dataset with a three-level classification dependency chain",
-        "open the source classification column configuration",
-        "update the source column",
+        "seed a dataset with a three-level extract JSON dependency chain",
+        "change the upstream cell so every derived column is stale",
+        "open the source column configuration and update it",
         "review the direct and transitive dependents in the confirmation dialog",
         "rerun the selected dependent columns",
       ],
       backendChecks: [
         "the browser posts dependent reruns in topological order with the stored operation type",
-        "the source and both selected dependent columns reach Completed",
+        "the direct and transitive cells move from the old upstream value to the new one",
+      ],
+      browserChecks: [
+        "the dialog closes once confirmed and a snackbar reports that the dependents reran",
       ],
     }),
   },
@@ -84,6 +88,8 @@ test(
     const sourceName = `e2e-source-${suffix}`;
     const directName = `e2e-direct-${suffix}`;
     const transitiveName = `e2e-transitive-${suffix}`;
+    const oldLeaf = `old-${suffix}`;
+    const newLeaf = `new-${suffix}`;
 
     const createdDataset = await actor.api.post<CreatedDatasetEnvelope>(
       CREATE_DATASET_PATH,
@@ -107,11 +113,24 @@ test(
     const staticColumnId = initialDataset.result.column_config[0].id;
     const rowId = initialDataset.result.table[0].row_id;
 
-    await actor.api.post(updateCellPath(datasetId), {
-      row_id: rowId,
-      column_id: staticColumnId,
-      new_value: `seed-${suffix}`,
-    });
+    // Each extract_json column takes one key of its upstream value, so the
+    // transitive column holds the leaf: {a: {b: {c: leaf}}} -> b -> c -> leaf.
+    const setUpstreamLeaf = (leaf: string) =>
+      actor.api.post(updateCellPath(datasetId), {
+        row_id: rowId,
+        column_id: staticColumnId,
+        new_value: JSON.stringify({ a: { b: { c: leaf } } }),
+      });
+
+    const readCells = async (columnIds: string[]) => {
+      const row = (await readDataset()).result.table[0];
+      return columnIds.map((columnId) => {
+        const cell = row?.[columnId];
+        return cell && typeof cell === "object"
+          ? (cell.cell_value ?? null)
+          : null;
+      });
+    };
 
     const waitForCompleted = async (columnId: string) => {
       await expect
@@ -124,16 +143,16 @@ test(
         .toBe("Completed");
     };
 
-    const createClassification = async (
+    const createExtractJson = async (
       columnId: string,
+      jsonKey: string,
       newColumnName: string,
     ) => {
       const created = await actor.api.post<CreatedColumnEnvelope>(
-        classifyColumnPath(datasetId),
+        extractJsonColumnPath(datasetId),
         {
           column_id: columnId,
-          labels: ["alpha", "beta"],
-          language_model_id: "gpt-4o",
+          json_key: jsonKey,
           concurrency: 1,
           new_column_name: newColumnName,
         },
@@ -142,18 +161,30 @@ test(
       return created.result.new_column_id;
     };
 
-    const sourceColumnId = await createClassification(
+    await setUpstreamLeaf(oldLeaf);
+    const sourceColumnId = await createExtractJson(
       staticColumnId,
+      "a",
       sourceName,
     );
-    const directColumnId = await createClassification(
+    const directColumnId = await createExtractJson(
       sourceColumnId,
+      "b",
       directName,
     );
-    const transitiveColumnId = await createClassification(
+    const transitiveColumnId = await createExtractJson(
       directColumnId,
+      "c",
       transitiveName,
     );
+
+    // The upstream value changes; nothing reruns on its own, so every derived
+    // column still holds the old leaf until the user acts.
+    await setUpstreamLeaf(newLeaf);
+    expect(await readCells([directColumnId, transitiveColumnId])).toEqual([
+      `{'c': '${oldLeaf}'}`,
+      oldLeaf,
+    ]);
 
     await testInfo.attach("seeded-dataset", {
       body: JSON.stringify({
@@ -185,7 +216,7 @@ test(
       rerunRequests.push({ columnId: match[1], operationType });
     });
 
-    await test.step("UI: update the source classification column", async () => {
+    await test.step("UI: update the source extract JSON column", async () => {
       await page.goto(`/dashboard/develop/${datasetId}?tab=data`, {
         waitUntil: "domcontentloaded",
       });
@@ -194,11 +225,12 @@ test(
         .locator(".ag-header-cell")
         .filter({ hasText: sourceName });
       await expect(sourceHeader).toBeVisible({ timeout: UI_READY });
-      await sourceHeader.getByRole("button").click();
+      await sourceHeader.hover();
+      await sourceHeader.getByRole("button").first().click();
       await page.getByText("Configure Dynamic Column", { exact: true }).click();
 
       await expect(
-        page.getByText("Edit Classification", { exact: true }),
+        page.getByText("Edit Extract JSON Key", { exact: true }),
       ).toBeVisible({ timeout: UI_READY });
       await page.getByRole("button", { name: "Update Column" }).click();
     });
@@ -216,40 +248,31 @@ test(
       ).toBeChecked();
 
       await dialog.getByRole("button", { name: "Rerun selected" }).click();
-      await expect(dialog).toBeHidden({ timeout: RERUN_CHAIN_READY });
+      // The chain runs in the background, so the page is not blocked.
+      await expect(dialog).toBeHidden({ timeout: UI_READY });
+      await expect(
+        page.getByText("Dependent columns rerun successfully"),
+      ).toBeVisible({ timeout: RERUN_CHAIN_READY });
     });
 
     await test.step("API: dependents rerun in topological order", async () => {
-      await expect
-        .poll(
-          () =>
-            rerunRequests.filter(
-              (request) => request.columnId !== sourceColumnId,
-            ),
-          POLL.ASYNC_JOB,
-        )
-        .toEqual([
-          { columnId: directColumnId, operationType: "classify" },
-          { columnId: transitiveColumnId, operationType: "classify" },
-        ]);
+      expect(
+        rerunRequests.filter((request) => request.columnId !== sourceColumnId),
+      ).toEqual([
+        { columnId: directColumnId, operationType: "extract_json" },
+        { columnId: transitiveColumnId, operationType: "extract_json" },
+      ]);
     });
 
-    await test.step("API: the rerun chain reaches Completed", async () => {
-      const expectedIds = [
-        sourceColumnId,
-        directColumnId,
-        transitiveColumnId,
-      ].sort();
+    await test.step("API: the dependents now hold the new upstream value", async () => {
+      // A dependent rerun before its upstream column completed would read the
+      // upstream's cleared cells and end empty, not with the new leaf.
       await expect
-        .poll(async () => {
-          const dataset = await readDataset();
-          return dataset.result.column_config
-            .filter((column) => expectedIds.includes(column.id))
-            .filter((column) => column.status === "Completed")
-            .map((column) => column.id)
-            .sort();
-        }, POLL.ASYNC_JOB)
-        .toEqual(expectedIds);
+        .poll(
+          () => readCells([directColumnId, transitiveColumnId]),
+          POLL.ASYNC_JOB,
+        )
+        .toEqual([`{'c': '${newLeaf}'}`, newLeaf]);
     });
   },
 );
