@@ -17,7 +17,7 @@ const JsonOutputRenderer = ({
   const [expandedPaths, setExpandedPaths] = useState(() => {
     const initial = new Set();
     if (initialExpanded) {
-      initial.add("root");
+      initial.add("");
     }
     return initial;
   });
@@ -46,11 +46,15 @@ const JsonOutputRenderer = ({
   }, []);
 
   const expandAll = useCallback(() => {
-    const paths = new Set(["root"]);
+    const paths = new Set([""]);
     const collectPaths = (obj, currentPath) => {
       if (typeof obj === "object" && obj !== null) {
         Object.keys(obj).forEach((key) => {
-          const newPath = currentPath ? `${currentPath}.${key}` : key;
+          const newPath = Array.isArray(obj)
+            ? `${currentPath}[${key}]`
+            : currentPath
+              ? `${currentPath}.${key}`
+              : key;
           paths.add(newPath);
           collectPaths(obj[key], newPath);
         });
@@ -61,7 +65,7 @@ const JsonOutputRenderer = ({
   }, [parsedData]);
 
   const collapseAll = useCallback(() => {
-    setExpandedPaths(new Set(["root"]));
+    setExpandedPaths(new Set([""]));
   }, []);
 
   const handleCopyPath = useCallback(
@@ -312,7 +316,7 @@ const JsonOutputRenderer = ({
           </IconButton>
         </Tooltip>
       </Box>
-      {renderValue(parsedData, "root", 0)}
+      {renderValue(parsedData, "", 0)}
     </Box>
   );
 };
