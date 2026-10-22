@@ -542,21 +542,30 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 {"detail": "Pick another run to compare against"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Older or newer, as long as both finished: a run still going has no verdicts.
-        if execution.status != TestExecution.ExecutionStatus.COMPLETED:
-            raise HostedHarnessError(
-                "comparison_run_unfinished",
-                "Compare this run once it finishes",
-                details={"execution_id": str(execution.id)},
-            )
-        if (
-            against is not None
-            and against.status != TestExecution.ExecutionStatus.COMPLETED
-        ):
-            raise HostedHarnessError(
-                "comparison_run_unfinished",
+        # Older or newer, as long as both completed: only a completed run has verdicts.
+        ended = {
+            TestExecution.ExecutionStatus.FAILED: "failed",
+            TestExecution.ExecutionStatus.CANCELLED: "was cancelled",
+        }
+        for run, name, unfinished in (
+            (execution, "This run", "Compare this run once it finishes"),
+            (
+                against,
+                "The run to compare against",
                 "Pick a finished run to compare against",
-                details={"execution_id": str(against.id)},
+            ),
+        ):
+            if run is None or run.status == TestExecution.ExecutionStatus.COMPLETED:
+                continue
+            details = {"execution_id": str(run.id)}
+            if run.status in ended:
+                raise HostedHarnessError(
+                    f"comparison_run_{run.status}",
+                    f"{name} {ended[run.status]} before its calls were graded",
+                    details=details,
+                )
+            raise HostedHarnessError(
+                "comparison_run_unfinished", unfinished, details=details
             )
         comparison = build_run_comparison(
             execution, run_calls_queryset(execution), against=against, with_pairs=True

@@ -534,6 +534,11 @@ def enqueue_message(
         )
         conversation.next_message_sequence += 1
         conversation.last_activity_at = timezone.now()
+        if reply_to is not None:
+            # Answered: the turn waiting on it runs on, so the question is no longer open.
+            conversation.blocking_input = None
+            if conversation.state == HostedHarnessConversation.State.WAITING_FOR_USER:
+                conversation.state = HostedHarnessConversation.State.RESPONDING
         if conversation.state in {
             HostedHarnessConversation.State.COLD,
             HostedHarnessConversation.State.DEGRADED,
@@ -544,6 +549,7 @@ def enqueue_message(
                 "next_message_sequence",
                 "last_activity_at",
                 "state",
+                "blocking_input",
                 "updated_at",
             ]
         )
@@ -1118,6 +1124,11 @@ def _project_event(
             },
         )
         conversation.next_message_sequence += 1
+        if conversation.messages.filter(
+            role=HostedHarnessConversationMessage.Role.USER, reply_to=message_id
+        ).exists():
+            # Asked again after a restart, but already answered.
+            return
         conversation.state = HostedHarnessConversation.State.WAITING_FOR_USER
         conversation.blocking_input = {
             "message_id": str(message_id),

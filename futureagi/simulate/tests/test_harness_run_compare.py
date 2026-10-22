@@ -771,16 +771,16 @@ class TestCompareEndpoint:
 
     @pytest.mark.parametrize("side", ["current", "against"])
     @pytest.mark.parametrize(
-        "unfinished",
+        "unfinished,code",
         [
-            Execution.ExecutionStatus.RUNNING,
-            Execution.ExecutionStatus.EVALUATING,
-            Execution.ExecutionStatus.FAILED,
-            Execution.ExecutionStatus.CANCELLED,
+            (Execution.ExecutionStatus.RUNNING, "comparison_run_unfinished"),
+            (Execution.ExecutionStatus.EVALUATING, "comparison_run_unfinished"),
+            (Execution.ExecutionStatus.FAILED, "comparison_run_failed"),
+            (Execution.ExecutionStatus.CANCELLED, "comparison_run_cancelled"),
         ],
     )
-    def test_an_unfinished_run_is_refused(
-        self, auth_client, user, workspace, storage, unfinished, side
+    def test_a_run_that_did_not_complete_is_refused(
+        self, auth_client, user, workspace, storage, unfinished, code, side
     ):
         environment, before, after = self._pair(
             user, workspace, storage, f"cmp-{unfinished}-{side}"
@@ -797,7 +797,7 @@ class TestCompareEndpoint:
         )
 
         assert response.status_code == 400
-        assert response.json()["error"] == "comparison_run_unfinished"
+        assert response.json()["error"] == code
         assert response.json()["execution_id"] == str(refused.test_execution_id)
 
     def test_a_run_still_going_is_not_compared_with_the_previous(

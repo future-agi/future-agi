@@ -250,6 +250,107 @@ def test_guest_command_and_event_channel_projects_streamed_reply(organization):
 
 
 @pytest.mark.django_db
+def test_an_answered_question_stops_blocking_at_once(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="conversation-answered"
+    )
+    conversation, command, _ = enqueue_message(
+        job, content="Add a rider", client_request_id="ask"
+    )
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-1",
+        attempt=None,
+        ttl_seconds=600,
+    )
+    client = APIClient()
+    sent = iter(range(1, 10))
+
+    def emit(kind, *, acknowledged_through, message_id=None, payload=None):
+        event = {
+            "schema_version": "futureagi.harness-conversation-event.v1",
+            "event_id": f"ce-answered-{uuid.uuid4()}",
+            "conversation_id": str(conversation.id),
+            "sequence": next(sent),
+            "kind": kind,
+            "message_id": message_id,
+            "stage": "authoring",
+            "invocation_id": "turn-1",
+            "function_call_id": None,
+            "emitted_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "payload": payload or {},
+        }
+        event["digest"] = canonical_digest(event)
+        response = client.post(
+            f"{BASE}/{conversation.id}/events/",
+            {
+                "schema_version": "futureagi.harness-conversation-event.v1",
+                "acknowledged_through": acknowledged_through,
+                "events": [event],
+            },
+            format="json",
+            **_headers(capability),
+        )
+        assert response.status_code == 200, response.content
+
+    question = str(uuid.uuid4())
+    emit("turn_started", acknowledged_through=1)
+    emit(
+        "question_requested",
+        acknowledged_through=1,
+        message_id=question,
+        payload={"prompt": "Confirm this change", "options": ["Yes", "No"]},
+    )
+    conversation.refresh_from_db()
+    assert serialize_conversation(conversation)["blocking_input"]["message_id"] == (
+        question
+    )
+
+    enqueue_message(
+        job,
+        content="Yes",
+        client_request_id="answer",
+        kind="user_response",
+        reply_to=uuid.UUID(question),
+    )
+
+    conversation.refresh_from_db()
+    serialized = serialize_conversation(conversation)
+    assert serialized["blocking_input"] is None
+    assert serialized["state"] == "responding"
+    with pytest.raises(HostedHarnessError) as second:
+        enqueue_message(
+            job,
+            content="No",
+            client_request_id="answer-again",
+            kind="user_response",
+            reply_to=uuid.UUID(question),
+        )
+    assert second.value.code == "conversation_reply_target_invalid"
+
+    # Asked again after a restart, the answered question stays closed.
+    emit(
+        "question_requested",
+        acknowledged_through=1,
+        message_id=question,
+        payload={"prompt": "Confirm this change", "options": ["Yes", "No"]},
+    )
+    conversation.refresh_from_db()
+    assert conversation.blocking_input is None
+    assert conversation.state == "responding"
+
+    emit(
+        "turn_completed",
+        acknowledged_through=2,
+        payload={"command_message_id": str(command.id)},
+    )
+    conversation.refresh_from_db()
+    assert conversation.state == "warm_idle"
+    assert conversation.blocking_input is None
+
+
+@pytest.mark.django_db
 def test_conversation_agent_can_request_active_run_adjustment(
     organization, monkeypatch
 ):
