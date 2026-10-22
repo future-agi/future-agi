@@ -53,11 +53,11 @@ interface CreatedColumnEnvelope {
 }
 
 test(
-  "DATA-E2E-001: editing a dynamic column reruns selected dependents in order",
+  "DATA-E2E-003: editing a dynamic column reruns selected dependents in order",
   {
     tag: ["@flow"],
     annotation: flowAnnotation({
-      id: "DATA-E2E-001",
+      id: "DATA-E2E-003",
       area: "datasets",
       userGoal:
         "A dataset editor keeps derived columns current after changing an upstream dynamic column",
@@ -80,7 +80,7 @@ test(
     test.setTimeout(720_000);
 
     const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
-    const datasetName = `e2e-data1-${suffix}`;
+    const datasetName = `e2e-data3-${suffix}`;
     const sourceName = `e2e-source-${suffix}`;
     const directName = `e2e-direct-${suffix}`;
     const transitiveName = `e2e-transitive-${suffix}`;
