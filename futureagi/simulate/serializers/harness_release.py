@@ -65,6 +65,18 @@ class HarnessReleaseListResponseSerializer(serializers.Serializer):
     results = HarnessReleaseSerializer(many=True)
 
 
+def _parallelism_field() -> serializers.IntegerField:
+    return serializers.IntegerField(
+        min_value=1,
+        max_value=8,
+        required=False,
+        help_text=(
+            "Worlds the composition's runs use side by side; admission may lower it. "
+            "Omitted: as many as this deployment admits."
+        ),
+    )
+
+
 class HarnessReleaseAgentRequestSerializer(serializers.Serializer):
     """Which agent version is bound, and how its hosted agent is reached (as in a hosted job)."""
 
@@ -73,6 +85,7 @@ class HarnessReleaseAgentRequestSerializer(serializers.Serializer):
     agent = HarnessAgentSerializer()
     name = serializers.CharField(max_length=255)
     idempotency_key = serializers.CharField(max_length=255)
+    parallelism = _parallelism_field()
 
 
 class HarnessHostedAgentRequestSerializer(serializers.Serializer):
@@ -83,6 +96,7 @@ class HarnessHostedAgentRequestSerializer(serializers.Serializer):
     instructions = serializers.CharField(max_length=65536)
     model = serializers.ChoiceField(choices=HOSTED_AGENT_MODELS)
     idempotency_key = serializers.CharField(max_length=255)
+    parallelism = _parallelism_field()
 
 
 class HarnessHostedAgentResponseSerializer(serializers.Serializer):

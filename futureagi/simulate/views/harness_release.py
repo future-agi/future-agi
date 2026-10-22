@@ -93,6 +93,7 @@ class HarnessHostedAgentViewSet(viewsets.ViewSet):
                 instructions=data["instructions"],
                 model=data["model"],
                 idempotency_key=data["idempotency_key"],
+                parallelism=data.get("parallelism"),
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)

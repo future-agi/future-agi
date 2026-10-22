@@ -541,6 +541,32 @@ def _chain(suite: HarnessSuiteRelease) -> list[HarnessEnvironmentRelease]:
     return [environment.parent, environment] if environment.parent_id else [environment]
 
 
+def _admitted_parallelism(payload: dict[str, Any]) -> int:
+    """The most worlds this deployment admits for a composition's runs: the parallelism flag,
+    certified templates and the sandbox's resources, as admission would clamp a request for 8. A
+    release world is a fresh database clone with no fixed ports, so its scenarios can always run
+    side by side; voice runs also stay within the sandbox's CPU units."""
+    from simulate.services.harness_capacity import configured_capacity
+    from simulate.services.hosted_harness import clamp_parallelism
+    from simulate.services.hosted_sandbox import sandbox_runtime_policy
+
+    runtime = payload["runtime"]
+    # Not bounded by today's suite size: an edit may add scenarios, and each run's launch is
+    # bounded by its own scenario count.
+    widest = {**payload, "scenario_count": 8, "runtime": {**runtime, "parallelism": 8}}
+    try:
+        capacity = configured_capacity(widest)
+    except ValueError as exc:
+        raise _error("composition_invalid", str(exc)) from exc
+    admitted, _ = clamp_parallelism(
+        8, capacity.snapshot_digest or sandbox_runtime_policy().digest
+    )
+    admitted = min(admitted, capacity.parallelism)
+    if MODALITY.get(payload["agent"]["connector"]) == "voice":
+        admitted = min(admitted, runtime["cpu_units"])
+    return max(1, admitted)
+
+
 # One transaction: a retried call must never find the idempotent job without its scenarios.
 @transaction.atomic
 def create_composition(
@@ -556,6 +582,7 @@ def create_composition(
     alignment: dict[str, Any] | None = None,
     binding_proof: dict[str, Any] | None = None,
     trajectories: dict[str, Any] | None = None,
+    parallelism: int | None = None,
 ) -> HostedHarnessJob:
     """A completed environment that runs `agent` against `suite` and its environment.
 
@@ -563,7 +590,8 @@ def create_composition(
     `agent_version` is the platform identity results are attributed to. `binding` is the sealed
     document adaptation produced, the only way an agent is admitted (§7.5), with its `alignment`
     and, when tool-routed, `binding_proof` and the agent's proved `trajectories`, which a suite
-    edit re-proves the binding with (§7.8).
+    edit re-proves the binding with (§7.8). Every run copies the composition's `parallelism`;
+    unset, it is as many worlds as this deployment admits (§7.3).
     """
     from simulate.serializers.harness_job import HarnessJobCreateSerializer
     from simulate.services.alk_simulate_ingestion import (
@@ -583,11 +611,14 @@ def create_composition(
             "artifacts": {"level": "full"},
             "scenario_count": len(personas),
             "metadata": {"name": name},
+            **({"runtime": {"parallelism": parallelism}} if parallelism else {}),
         }
     )
     if not serializer.is_valid():
         raise _error("composition_invalid", json.dumps(serializer.errors, default=str))
     payload = serializer.validated_data
+    if not parallelism:
+        payload["runtime"]["parallelism"] = _admitted_parallelism(payload)
     connector = payload["agent"]["connector"]
     if (connector, payload["agent"].get("mode")) not in COMPOSABLE:
         raise _error(
@@ -744,6 +775,7 @@ def create_hosted_agent_composition(
     instructions: str,
     model: str,
     idempotency_key: str,
+    parallelism: int | None = None,
 ) -> HostedHarnessJob:
     """Our own agent (a new text agent definition and version holding its spec) composed with
     `suite` through the binding the platform builds for it."""
@@ -752,9 +784,14 @@ def create_hosted_agent_composition(
         organization=organization, idempotency_key=idempotency_key
     ).first()
     if existing is not None:
+        payload = existing.payload or {}
         if (
             existing.workspace_id != getattr(workspace, "id", None)
-            or ((existing.payload or {}).get("agent") or {}).get("config") != config
+            or (payload.get("agent") or {}).get("config") != config
+            or (
+                parallelism
+                and (payload.get("runtime") or {}).get("parallelism") != parallelism
+            )
         ):
             raise _error(
                 "idempotency_conflict",
@@ -791,6 +828,7 @@ def create_hosted_agent_composition(
         agent_version=version,
         name=name,
         idempotency_key=idempotency_key,
+        parallelism=parallelism,
         binding=hosted_agent_binding(version, config, chain[-1].digest),
         # It calls the environment's tools by their own names (attached servers' tools too).
         alignment={
@@ -1067,8 +1105,10 @@ def adaptation_payload(
     agent: dict[str, Any],
     agent_version: AgentVersion,
     name: str,
+    parallelism: int | None = None,
 ) -> dict[str, Any]:
-    """The validated hosted job payload of an adaptation of `agent` to `suite`."""
+    """The validated hosted job payload of an adaptation of `agent` to `suite`. `parallelism` is
+    the composition's, kept until adaptation completes (unset: what the deployment admits)."""
     from simulate.serializers.harness_job import HarnessJobCreateSerializer
 
     if suite.organization_id not in (None, organization.id):
@@ -1109,6 +1149,7 @@ def adaptation_payload(
             "object_key": suite.object_key,
         },
         "agent_version_id": str(agent_version.id),
+        "parallelism": parallelism,
         "agent": agent_reference(
             agent_version, connector, payload["agent"].get("config") or {}
         ),
@@ -1208,6 +1249,7 @@ def _adapt(job: HostedHarnessJob, output: Path) -> tuple[dict[str, Any], dict | 
         agent_version=agent_version,
         name=str((job.payload.get("metadata") or {}).get("name") or suite.name),
         idempotency_key=f"adaptation:{job.id}",
+        parallelism=adaptation.get("parallelism"),
         binding=binding,
         alignment=result.get("alignment"),
         # A missing proof is refused by the composition as binding_unproved.

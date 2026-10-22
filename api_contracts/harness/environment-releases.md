@@ -743,6 +743,16 @@ name is a new row. `create_composition` (`services/harness_releases.py`) builds 
 binding document adaptation produced, and for our `hosted_agent` from the
 canonical binding the platform builds (§6.4).
 
+**Parallelism.** Every run copies the composition's `runtime.parallelism`, the
+worlds its scenarios use side by side. Both creating requests take an optional
+`parallelism` (1-8); without one the composition gets as many worlds as the
+deployment admits for a request of 8: the parallelism flag, certified
+templates and the sandbox's resources (and, for voice, its CPU units), never
+bounded by the suite's current size. A release world is a fresh database clone
+with no fixed ports, so its scenarios can always run side by side. A given
+value is admitted like any job's (clamped and recorded, never refused), and
+every run's launch clamps again.
+
 `metadata.adaptation`, `adaptation_result`, `release_composition` and
 `run_manifest` are written only by these services; a job request carrying any
 of them is refused (400). At launch the gateway resolves the archives from the
@@ -869,8 +879,8 @@ Under `/simulate/api/`, organization-scoped like the other harness routes.
 | Route | Request | Response |
 |---|---|---|
 | `GET harness-releases/` | | `{results: [{id, digest, name, system, parent: {digest, name} or null, tools: [{name, description, mutates_state}], policy: {parameters: [{name, type, default, allowed}], agent_rules: [{id, text}]}, suites: [{id, digest, name, scenario_count, origins: {base, specialized, custom}, policy_profile}]}]}`; system releases and the organization's own |
-| `POST harness-adaptations/` | `{suite_id, agent_version_id, agent, name, idempotency_key}` (the key in the body); `agent` as in a hosted job (`connector` `retell_chat`, `retell` or `vapi`, `mode: "provider_import"`, `config`, `secret_refs`); the agent definition's type must match the connector's modality (400 `agent_modality_mismatch`) | 202, the job (`HarnessJobReadSerializer`); the UI follows it like any harness job |
-| `POST harness-hosted-agents/` | `{suite_id, name, instructions, model, idempotency_key}`; `model` as in §6.4 | 201 `{id, agent_version_id}`: the composition (an environment ID) and the new agent version; the same key with the same spec answers the same composition, with another 409 `idempotency_conflict` |
+| `POST harness-adaptations/` | `{suite_id, agent_version_id, agent, name, idempotency_key, parallelism?}` (the key in the body; `parallelism` is the composition's, §7.3); `agent` as in a hosted job (`connector` `retell_chat`, `retell` or `vapi`, `mode: "provider_import"`, `config`, `secret_refs`); the agent definition's type must match the connector's modality (400 `agent_modality_mismatch`) | 202, the job (`HarnessJobReadSerializer`); the UI follows it like any harness job |
+| `POST harness-hosted-agents/` | `{suite_id, name, instructions, model, idempotency_key, parallelism?}`; `model` as in §6.4, `parallelism` as in §7.3 | 201 `{id, agent_version_id}`: the composition (an environment ID) and the new agent version; the same key with the same spec (and parallelism, when given) answers the same composition, with another 409 `idempotency_conflict` |
 | `GET harness-environments/{id}/` | | adds `composition`: `null`, or `{environment: [{digest, name}], suite: {digest, name, parent_digest, policy_profile, unscored_agent_rules: [{id, text}], scenarios: [{key, origin, derived_from}]}, binding: {digest, mode, agent_tools, tools}, agent: {agent_definition_id, agent_version_id, connector, name, version_name}, alignment, binding_proof: {passed, scenarios}}` |
 | `GET harness-environments/{id}/runs/{run_id}/report/` | `?baseline=<run_id>`; a run is named by its test execution ID or its run job ID; the baseline may be a run of another composition in the organization | §7.7; 409 `not_a_composition` for other environments |
 

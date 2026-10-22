@@ -1120,6 +1120,7 @@ class HostedHarnessProvider:
                     organization, data["agent_version_id"]
                 ),
                 name=data["name"],
+                parallelism=data.get("parallelism"),
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
