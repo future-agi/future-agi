@@ -140,10 +140,20 @@ Generous free-tier, no credit card required.
 
 **One command, full stack. Published images, no source build.**
 
+macOS / Linux / WSL:
+
 ```bash
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
-./bin/install          # Windows (PowerShell): .\bin\install.ps1
+./bin/install
+```
+
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/future-agi/future-agi.git
+cd future-agi
+.\bin\install.ps1
 ```
 
 </td>
