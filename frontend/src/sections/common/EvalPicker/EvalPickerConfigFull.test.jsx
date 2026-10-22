@@ -1,13 +1,13 @@
 import React from "react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render } from "src/utils/test-utils";
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 
 import EvalPickerProvider from "./context/EvalPickerProvider";
 import EvalPickerConfigFull from "./EvalPickerConfigFull";
 
 const { capturedProps } = vi.hoisted(() => ({
-  capturedProps: { tracing: null },
+  capturedProps: { tracing: null, llmPrompt: null, instruction: null },
 }));
 
 vi.mock("src/sections/evals/components/TracingTestMode", () => {
@@ -49,11 +49,19 @@ vi.mock("src/sections/evals/components/ModelSelector", () => ({
 }));
 
 vi.mock("src/sections/evals/components/InstructionEditor", () => ({
-  default: () => <div />,
+  default: (props) => {
+    capturedProps.instruction = props;
+    return <div />;
+  },
 }));
 
+// LLMPromptEditor renders the ModelSelector inline, so its `model` prop is
+// the hydrated model the user actually sees in the chip.
 vi.mock("src/sections/evals/components/LLMPromptEditor", () => ({
-  default: () => <div />,
+  default: (props) => {
+    capturedProps.llmPrompt = props;
+    return <div data-testid="llm-prompt-editor" />;
+  },
 }));
 
 vi.mock("src/sections/evals/components/CodeEvalEditor", () => ({
@@ -70,6 +78,17 @@ vi.mock("src/sections/evals/components/FewShotExamples", () => ({
 
 vi.mock("src/sections/tasks/components/TaskFilterBar", () => ({
   default: () => <div />,
+}));
+
+// Renders the tooltip title as plain text whenever `show` is true, so tests
+// can assert on the disabled-reason copy without simulating a real hover.
+vi.mock("src/components/tooltip/CustomTooltip", () => ({
+  default: ({ show, title, children }) => (
+    <>
+      {children}
+      {show && title ? <div data-testid="tooltip-text">{title}</div> : null}
+    </>
+  ),
 }));
 
 // Transitive import of the real TaskLivePreview (needed for the real
@@ -93,9 +112,11 @@ const {
     data: {
       id: "tpl-1",
       name: "toxicity",
-      eval_type: "llm",
+      owner: "system",
+      eval_type: "agent",
       output_type: "pass_fail",
-      config: {},
+      instructions: "Template instructions",
+      config: { model: "template-model", tools: { template: true } },
     },
     isLoading: false,
     isError: false,
@@ -158,7 +179,21 @@ const TIME_WINDOW = {
   endDate: "2026-05-18T18:29:59.000Z",
 };
 
-const renderConfigFull = ({ sourceTimeWindow } = {}) =>
+const DEFAULT_EVAL_DATA = {
+  id: "tpl-1",
+  templateId: "tpl-1",
+  name: "toxicity",
+};
+
+const DEFAULT_DETAIL = {
+  id: "tpl-1",
+  name: "toxicity",
+  eval_type: "llm",
+  output_type: "pass_fail",
+  config: {},
+};
+
+const renderConfigFull = ({ sourceTimeWindow, evalData, requireInputs } = {}) =>
   render(
     <EvalPickerProvider
       source="task"
@@ -169,15 +204,43 @@ const renderConfigFull = ({ sourceTimeWindow } = {}) =>
       onEvalAdded={() => {}}
       onClose={() => {}}
       sourceTimeWindow={sourceTimeWindow}
+      initialEval={evalData || null}
+      requireInputs={requireInputs}
     >
       <EvalPickerConfigFull
-        evalData={{ id: "tpl-1", templateId: "tpl-1", name: "toxicity" }}
+        evalData={evalData || DEFAULT_EVAL_DATA}
         onBack={() => {}}
         onSave={() => {}}
         isSaving={false}
       />
     </EvalPickerProvider>,
   );
+
+it("restores saved system-eval binding configuration", async () => {
+  renderConfigFull({
+    evalData: {
+      id: "tpl-1",
+      templateId: "tpl-1",
+      userEvalId: "binding-1",
+      name: "toxicity_dataset",
+      bindingConfig: {
+        template_format: "jinja",
+      },
+      runConfig: {
+        model: "saved-model",
+        tools: { github: true },
+      },
+    },
+  });
+
+  await waitFor(() =>
+    expect(capturedProps.instruction).toMatchObject({
+      model: "saved-model",
+      templateFormat: "jinja",
+    }),
+  );
+  expect(capturedProps.instruction.activeConnectorIds).toEqual(["github"]);
+});
 
 describe("EvalPickerConfigFull — task preview time window", () => {
   beforeEach(() => {
@@ -215,6 +278,70 @@ describe("EvalPickerConfigFull — task preview time window", () => {
   });
 });
 
+describe("EvalPickerConfigFull — model hydration on edit", () => {
+  const originalDetail = stableEvalDetail.data;
+  afterEach(() => {
+    stableEvalDetail.data = originalDetail;
+  });
+
+  beforeEach(() => {
+    capturedProps.llmPrompt = null;
+    stableEvalDetail.data = { ...DEFAULT_DETAIL };
+  });
+
+  const hydratedModel = async () => {
+    await waitFor(() => expect(capturedProps.llmPrompt).not.toBeNull());
+    return capturedProps.llmPrompt.model;
+  };
+
+  it("restores the model saved in run_config instead of the template default", async () => {
+    // The user edited this eval down to turing_small. `build_run_config_view`
+    // used to drop `model` from its whitelist, so run_config arrived without
+    // it and the form fell back to the template default (turing_large).
+    stableEvalDetail.data = { ...DEFAULT_DETAIL, model: "turing_large" };
+    renderConfigFull({
+      evalData: {
+        ...DEFAULT_EVAL_DATA,
+        run_config: { model: "turing_small", agent_mode: "agent" },
+      },
+    });
+
+    expect(await hydratedModel()).toBe("turing_small");
+  });
+
+  it("prefers the canonical detail model over the list's stripped form", async () => {
+    // The list endpoint returns "small" for built-in templates while detail
+    // returns "turing_small". Mapping `model` into normalizedRunConfig let the
+    // stripped value win and render "small" in the chip — guard against that
+    // mapping coming back.
+    stableEvalDetail.data = { ...DEFAULT_DETAIL, model: "turing_small" };
+    renderConfigFull({
+      evalData: { ...DEFAULT_EVAL_DATA, model: "small", run_config: {} },
+    });
+
+    expect(await hydratedModel()).toBe("turing_small");
+  });
+
+  it("keeps the saved model when the list also carries a stripped form", async () => {
+    stableEvalDetail.data = { ...DEFAULT_DETAIL, model: "turing_large" };
+    renderConfigFull({
+      evalData: {
+        ...DEFAULT_EVAL_DATA,
+        model: "small",
+        run_config: { model: "turing_small" },
+      },
+    });
+
+    expect(await hydratedModel()).toBe("turing_small");
+  });
+
+  it("falls back to turing_large when no model is available anywhere", async () => {
+    renderConfigFull({ evalData: { ...DEFAULT_EVAL_DATA, run_config: {} } });
+
+    expect(await hydratedModel()).toBe("turing_large");
+  });
+});
+
 describe("EvalPickerConfigFull — error localization gating (TH-7177)", () => {
   beforeEach(() => {
     Object.assign(deploymentMode, {
@@ -240,5 +367,239 @@ describe("EvalPickerConfigFull — error localization gating (TH-7177)", () => {
     Object.assign(deploymentMode, { mode: "ee", isCloud: false, isEE: true });
     renderConfigFull();
     expect(screen.getByText("Error Localization")).toBeTruthy();
+  });
+});
+
+describe("EvalPickerConfigFull — host-supplied queue decorations", () => {
+  it("overrides the primary button label and renders the progress node", async () => {
+    render(
+      <EvalPickerProvider
+        source="task"
+        sourceId="project-1"
+        sourceRowType="traces"
+        sourceColumns={[]}
+        existingEvals={[]}
+        onEvalAdded={() => {}}
+        onClose={() => {}}
+      >
+        <EvalPickerConfigFull
+          evalData={{ id: "tpl-1", templateId: "tpl-1", name: "toxicity" }}
+          onBack={() => {}}
+          onSave={() => {}}
+          isSaving={false}
+          primaryLabel="Walk on"
+          progress={<div data-testid="queue-progress">bar</div>}
+        />
+      </EvalPickerProvider>,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Walk on" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Evaluation" })).toBeNull();
+    expect(screen.getByTestId("queue-progress")).toBeInTheDocument();
+  });
+});
+
+const NO_INPUTS_TOOLTIP =
+  "This evaluation has no inputs to map, so it can't run in an environment.";
+
+describe("EvalPickerConfigFull — requireInputs", () => {
+  // stableEvalDetail (the mocked eval detail) has no required_keys and no
+  // {{variables}} in its instructions, so `variables` resolves to [] —
+  // exactly the "no inputs to map" case this opt-in rule targets.
+  it("disables adding an eval with no inputs when requireInputs is set", async () => {
+    renderConfigFull({ requireInputs: true });
+
+    const addButton = await screen.findByRole("button", {
+      name: "Add Evaluation",
+    });
+    expect(addButton).toBeDisabled();
+    expect(screen.getByTestId("tooltip-text")).toHaveTextContent(
+      NO_INPUTS_TOOLTIP,
+    );
+  });
+
+  it("does not disable for missing inputs when requireInputs is absent", async () => {
+    renderConfigFull({});
+
+    await screen.findByRole("button", { name: "Add Evaluation" });
+    expect(screen.queryByText(NO_INPUTS_TOOLTIP)).toBeNull();
+  });
+});
+
+// Under the environment's own source (`simulation`), `hasDataInjection` is
+// always false — it only ever applies to "task" and "tracing"
+// (EvalPickerConfigFull.jsx ~L403-409). So a system eval with no variables
+// hits the pre-existing "no variables" branch before requireInputs gets a
+// chance to run, and would show the template-editing copy instead of the
+// no-inputs-to-map one — misleading for a system eval, whose template a
+// person can't edit.
+const DEFAULT_STABLE_EVAL_DETAIL_DATA = {
+  id: "tpl-1",
+  name: "toxicity",
+  owner: "system",
+  eval_type: "agent",
+  output_type: "pass_fail",
+  instructions: "Template instructions",
+  config: { model: "template-model", tools: { template: true } },
+};
+
+describe("EvalPickerConfigFull — requireInputs environment shape", () => {
+  afterEach(() => {
+    Object.keys(stableEvalDetail.data).forEach((k) => {
+      delete stableEvalDetail.data[k];
+    });
+    Object.assign(stableEvalDetail.data, DEFAULT_STABLE_EVAL_DETAIL_DATA);
+    stableCompositeDetail.data = null;
+  });
+
+  it("shows the no-inputs-to-map copy (not the template-variable copy) for a system eval with no variables under source=simulation", async () => {
+    render(
+      <EvalPickerProvider
+        source="simulation"
+        sourceId="run-test-1"
+        existingEvals={[]}
+        onEvalAdded={() => {}}
+        onClose={() => {}}
+        requireInputs
+      >
+        <EvalPickerConfigFull
+          evalData={{ id: "tpl-1", templateId: "tpl-1", name: "toxicity" }}
+          onBack={() => {}}
+          onSave={() => {}}
+          isSaving={false}
+        />
+      </EvalPickerProvider>,
+    );
+
+    const addButton = await screen.findByRole("button", {
+      name: "Add Evaluation",
+    });
+    expect(addButton).toBeDisabled();
+    // Not getByTestId: under source="simulation" the Test button's own
+    // "no variables" tooltip also renders (it has no requireInputs override),
+    // so two `tooltip-text` nodes exist — match on the no-inputs-to-map copy itself.
+    expect(screen.getByText(NO_INPUTS_TOOLTIP)).toBeInTheDocument();
+  });
+
+  it("shows the no-inputs-to-map copy for a code eval with no required_keys and no saved mapping, under source=simulation", async () => {
+    Object.assign(stableEvalDetail.data, {
+      eval_type: "code",
+      config: {
+        code: "def evaluate(**kwargs):\n    return 1",
+        language: "python",
+      },
+      required_keys: [],
+    });
+
+    render(
+      <EvalPickerProvider
+        source="simulation"
+        sourceId="run-test-1"
+        existingEvals={[]}
+        onEvalAdded={() => {}}
+        onClose={() => {}}
+        requireInputs
+      >
+        <EvalPickerConfigFull
+          evalData={{ id: "tpl-2", templateId: "tpl-2", name: "my_code_eval" }}
+          onBack={() => {}}
+          onSave={() => {}}
+          isSaving={false}
+        />
+      </EvalPickerProvider>,
+    );
+
+    const addButton = await screen.findByRole("button", {
+      name: "Add Evaluation",
+    });
+    expect(addButton).toBeDisabled();
+    expect(screen.getByText(NO_INPUTS_TOOLTIP)).toBeInTheDocument();
+  });
+
+  // requireInputs must not be limited to non-composite evals — a composite
+  // with no child required_keys has nothing to map either.
+  it("shows the no-inputs-to-map copy for a composite eval with no child required_keys", async () => {
+    Object.assign(stableEvalDetail.data, {
+      template_type: "composite",
+      eval_type: "composite",
+    });
+    stableCompositeDetail.data = { children: [] };
+
+    render(
+      <EvalPickerProvider
+        source="simulation"
+        sourceId="run-test-1"
+        existingEvals={[]}
+        onEvalAdded={() => {}}
+        onClose={() => {}}
+        requireInputs
+      >
+        <EvalPickerConfigFull
+          evalData={{
+            id: "tpl-3",
+            templateId: "tpl-3",
+            name: "my_composite_eval",
+          }}
+          onBack={() => {}}
+          onSave={() => {}}
+          isSaving={false}
+        />
+      </EvalPickerProvider>,
+    );
+
+    const addButton = await screen.findByRole("button", {
+      name: "Add Evaluation",
+    });
+    expect(addButton).toBeDisabled();
+    expect(screen.getByText(NO_INPUTS_TOOLTIP)).toBeInTheDocument();
+    stableCompositeDetail.data = null;
+  });
+});
+
+describe("EvalPickerConfigFull — no-variables copy outside the environment", () => {
+  afterEach(() => {
+    stableEvalDetail.data.owner = "system";
+  });
+  const renderSim = (props = {}) =>
+    render(
+      <EvalPickerProvider
+        source="simulation"
+        sourceId="run-test-1"
+        existingEvals={[]}
+        onEvalAdded={() => {}}
+        onClose={() => {}}
+        {...props}
+      >
+        <EvalPickerConfigFull
+          evalData={{ id: "tpl-1", templateId: "tpl-1", name: "toxicity" }}
+          onBack={() => {}}
+          onSave={() => {}}
+          isSaving={false}
+        />
+      </EvalPickerProvider>,
+    );
+
+  it("keeps the template-variable copy for a system eval when requireInputs is absent", async () => {
+    renderSim();
+    expect(
+      await screen.findByRole("button", { name: "Add Evaluation" }),
+    ).toBeDisabled();
+    expect(screen.queryByText(NO_INPUTS_TOOLTIP)).toBeNull();
+    expect(
+      screen.getByText(
+        /Your Mustache template has no variables\. .* before adding this evaluation\./,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the template-variable copy for a user eval even with requireInputs, since its template is editable", async () => {
+    stableEvalDetail.data.owner = "user";
+    renderSim({ requireInputs: true });
+    expect(
+      await screen.findByRole("button", { name: "Add Evaluation" }),
+    ).toBeDisabled();
+    expect(screen.queryByText(NO_INPUTS_TOOLTIP)).toBeNull();
   });
 });

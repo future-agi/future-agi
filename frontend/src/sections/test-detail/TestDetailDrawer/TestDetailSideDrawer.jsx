@@ -107,10 +107,10 @@ const TestDetailSideDrawerChild = ({
       data?.observation_span?.[0]?.observation_type === "conversation" ||
       data?.simulation_call_type === "voice");
   const { data: voiceDetail, isLoading: isVoiceDetailLoading } =
-    useVoiceCallDetail(
-      traceId,
-      urlModule === "project" && isVoiceCall && !!traceId,
-    );
+    useVoiceCallDetail(traceId, {
+      enabled: urlModule === "project" && isVoiceCall && !!traceId,
+      projectId: resolvedProjectId,
+    });
 
   // Fetch full call execution detail for simulate calls. The list response
   // strips `transcript` when `detail_mode=false` (see
@@ -607,8 +607,9 @@ const TestDetailSideDrawerChild = ({
         rootSpanId: rootObsSpanId,
         module: urlModule,
         callExecutionId: data?.id,
+        projectId: resolvedProjectId,
       }),
-    [traceId, rootObsSpanId, urlModule, data?.id],
+    [traceId, rootObsSpanId, urlModule, data?.id, resolvedProjectId],
   );
   const hasCurrentTerminalNavigator =
     urlModule === "project" &&

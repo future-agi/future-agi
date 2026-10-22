@@ -16,18 +16,39 @@ from tracer.services.clickhouse.query_builders.user_time_series import (
 from tracer.services.clickhouse.v2.id_remap_sql import (
     bounded_survivor_map_subquery,
     resolved_id_expr,
+    survivor_map_subquery,
 )
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
 )
 
+# MATERIALIZED ``spans`` columns a compiled filter can reference. ``SELECT *``
+# omits MATERIALIZED columns, so a predicate on one over the latest-row
+# snapshot fails with an unknown identifier (code 47); the snapshot names each
+# of them after the star instead. That works whatever
+# ``asterisk_include_materialized_columns`` says (and on a read-only profile
+# that drops query settings): with it on, ClickHouse does not duplicate the
+# column. Only ``trace_name`` is emitted by the filter compilers today; every
+# other MATERIALIZED column is left out, since one that was ``ALTER``-added is
+# computed on read for older parts from its source (``lengthUTF8(input)`` for
+# ``input_length``), and nothing proves ``physical.*`` prunes an unreferenced
+# one. ``test_graph_snapshot_materialized_columns`` lists every MATERIALIZED
+# column in the DDL and fails when a compiler starts emitting one missing here.
+SPANS_FILTERABLE_MATERIALIZED_COLUMNS: tuple[str, ...] = ("trace_name",)
+
 
 def latest_physical_span_rows_sql(
     *, table: str = "spans", project_predicate: str,
     start_hour: str, end_hour: str, mutable_columns: tuple[str, ...],
 ) -> str:
-    """Fence trusted mutable output columns after full physical FINAL winners."""
+    """Fence trusted mutable output columns after full physical FINAL winners.
+
+    A ``spans`` snapshot names the MATERIALIZED columns a filter can reference
+    (``SPANS_FILTERABLE_MATERIALIZED_COLUMNS``) after ``*``, which omits them.
+    """
+    materialized = SPANS_FILTERABLE_MATERIALIZED_COLUMNS if table == "spans" else ()
+    named = "".join(f", {column}" for column in materialized)
     columns = ", ".join(mutable_columns)
     values = ", ".join(f"physical.{column}" for column in mutable_columns)
     projection = ",\n            ".join(
@@ -37,7 +58,7 @@ def latest_physical_span_rows_sql(
     return f"""
         SELECT physical.* EXCEPT ({columns}), {projection}
         FROM (
-            SELECT * FROM {table} FINAL
+            SELECT *{named} FROM {table} FINAL
             PREWHERE {project_predicate}
               AND toStartOfHour(start_time) >= {start_hour}
               AND toStartOfHour(start_time) < {end_hour}
@@ -46,20 +67,104 @@ def latest_physical_span_rows_sql(
     """
 
 
-def _latest_start_time_spans_cte(*, table: str, project_predicate: str) -> str:
-    """Replay full physical winners before the direct constructor's window."""
-    return _full_snapshot_latest_spans_cte(
-        table=table, project_predicate=project_predicate
+# Every column the aggregate user graph reads off a replayed span. The
+# statement below reduces each ReplacingMergeTree identity to its winning
+# version, so the reducer has to name what it keeps: ``SELECT *`` cannot be
+# argMax-ed. Anything absent here is simply never read, which is the point —
+# the previous snapshot handed the whole row to the optimizer and hoped.
+USER_GRAPH_SPAN_COLUMNS: tuple[str, ...] = (
+    "start_time",
+    "is_deleted",
+    "end_user_id",
+    "latency_ms",
+    "total_tokens",
+    "cost",
+    "prompt_tokens",
+    "completion_tokens",
+    "status",
+)
+_LATEST_STATE = "latest_state"
+
+
+def _latest_spans_argmax_cte(
+    *,
+    table: str,
+    project_predicate: str,
+    cte_name: str = "latest_spans",
+    member_predicates: tuple[str, ...] = (),
+) -> str:
+    """Reduce each physical span identity to its winning version in one pass.
+
+    ``argMax(tuple(...), _version)`` over the deployed replacement key
+    ``(project_id, observation_type, service_name, toStartOfHour(start_time),
+    trace_id, id)`` is the same latest-state contract the exact session/trace
+    readers already use. One tuple keeps a version that nulls a Nullable column
+    from losing to an older non-null one, which per-column ``argMax`` would do.
+
+    The scan is bounded by complete identity hours because the replacement key
+    holds ``toStartOfHour(start_time)``, not the exact timestamp: a correction
+    or tombstone outside the requested interval can still replace an older row
+    inside it within the same hour. Mutable state therefore reaches ``HAVING``,
+    after the replay, never ``PREWHERE``. Because the GROUP BY is the table's
+    sorting key, ClickHouse retires each identity as the key advances instead
+    of merging parts, so no ``FINAL`` (and no fence around it) is needed.
+
+    ``member_predicates`` are trusted compiled attribute leaves. Evaluating
+    them inside the tuple keeps them on the winning version while leaving the
+    projection closed, so an attribute filter never widens it to ``SELECT *``.
+    """
+
+    projected = (*USER_GRAPH_SPAN_COLUMNS, *member_predicates)
+    aliases = [
+        *USER_GRAPH_SPAN_COLUMNS,
+        *(f"user_member_match_{index}" for index in range(len(member_predicates))),
+    ]
+    reduced = ",\n            ".join(
+        f"{_LATEST_STATE}.{position} AS {alias}"
+        for position, alias in enumerate(aliases, 1)
     )
+    deleted_position = USER_GRAPH_SPAN_COLUMNS.index("is_deleted") + 1
+    start_position = USER_GRAPH_SPAN_COLUMNS.index("start_time") + 1
+    return f"""
+    {cte_name} AS (
+        SELECT
+            trace_id,
+            id,
+            {reduced}
+        FROM (
+            SELECT
+                project_id,
+                observation_type,
+                service_name,
+                trace_id,
+                id,
+                argMax(tuple({", ".join(projected)}), _version) AS {_LATEST_STATE}
+            FROM {table}
+            PREWHERE {project_predicate}
+              AND toStartOfHour(start_time) >= %(user_snapshot_scan_start)s
+              AND toStartOfHour(start_time) < %(user_snapshot_scan_end)s
+            GROUP BY
+                project_id,
+                observation_type,
+                service_name,
+                toStartOfHour(start_time),
+                trace_id,
+                id
+            HAVING {_LATEST_STATE}.{deleted_position} = 0
+               AND {_LATEST_STATE}.{start_position} >=
+                   fromUnixTimestamp64Micro(%(user_snapshot_start_us)s, 'UTC')
+               AND {_LATEST_STATE}.{start_position} <
+                   fromUnixTimestamp64Micro(%(user_snapshot_end_us)s, 'UTC')
+        ) AS replayed_spans
+    )
+    """
 
 
-def _entity_safe_latest_spans_ctes(*, table: str, project_predicate: str) -> str:
+def _entity_safe_latest_spans_ctes(*, snapshot_cte: str) -> str:
     """Hydrate complete traces whose earliest span belongs to this partition."""
 
     return f"""
-    {_full_snapshot_latest_spans_cte(
-        table=table, project_predicate=project_predicate, cte_name="snapshot_spans"
-    )},
+    {snapshot_cte},
     candidate_trace_ids AS (
         SELECT trace_id
         FROM snapshot_spans
@@ -115,21 +220,10 @@ def _touched_survivor_map_subquery(
     remap_table: str,
     candidate_cte: str,
     candidate_column: str,
-    single_candidate_reference: bool = False,
 ) -> str:
     """Resolve only remap groups touched by a request-bounded candidate CTE."""
 
-    alias_expansion = ""
-    if single_candidate_reference:
-        # Expand the small remap side, not the full snapshot population. One
-        # IN set avoids recursively inlining latest_spans for both OR arms.
-        # DISTINCT new_id removes the duplicate hits before full-group replay.
-        alias_expansion = "ARRAY JOIN [old_id, new_id] AS candidate_alias"
-        touched_predicate = f"""candidate_alias IN (
-                    SELECT {candidate_column} FROM {candidate_cte}
-                )"""
-    else:
-        touched_predicate = f"""old_id IN (
+    touched_predicate = f"""old_id IN (
                     SELECT {candidate_column} FROM {candidate_cte}
                 )
                    OR new_id IN (
@@ -149,7 +243,6 @@ def _touched_survivor_map_subquery(
             WHERE new_id IN (
                 SELECT DISTINCT new_id
                 FROM {remap_table} FINAL
-                {alias_expansion}
                 WHERE {touched_predicate}
             )
             GROUP BY new_id
@@ -298,38 +391,69 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
             user_snapshot_start_us=_unix_microseconds(snapshot_start),
             user_snapshot_end_us=_unix_microseconds(snapshot_end),
         )
-        if full_snapshot:
-            latest_spans_cte = _full_snapshot_latest_spans_cte(
+        member_predicates = (
+            self.user_membership_plan.predicates
+            if self.user_membership_plan is not None
+            else ()
+        )
+
+        # The reduction can only name what it keeps, so it is used exactly
+        # where this builder owns every column read off the population: a
+        # membership relation compiled against the curated user dimension.
+        # A caller-compiled filter, or a membership relation that re-reads the
+        # population itself (the whole user-aggregate source, which needs
+        # end_time/observation_type/attributes), reads columns this projection
+        # does not carry, so those keep the whole-row snapshot. Fail closed on
+        # the substring: an unrecognised relation never narrows the read.
+        closed_projection = bool(self.user_membership_sql) and (
+            "latest_spans" not in self.user_membership_sql
+        )
+
+        def snapshot_cte(cte_name: str) -> str:
+            if closed_projection:
+                return _latest_spans_argmax_cte(
+                    table=self.TABLE,
+                    project_predicate=self.project_filter_sql(),
+                    cte_name=cte_name,
+                    member_predicates=member_predicates,
+                )
+            return _full_snapshot_latest_spans_cte(
                 table=self.TABLE,
                 project_predicate=self.project_filter_sql(),
+                cte_name=cte_name,
             )
-        elif self.exact_snapshot_start is not None:
+
+        if full_snapshot or self.exact_snapshot_start is None:
+            latest_spans_cte = snapshot_cte("latest_spans")
+        else:
             self.params.update(
                 user_partition_start_us=_unix_microseconds(self.start_date),
                 user_partition_end_us=_unix_microseconds(self.end_date),
             )
             latest_spans_cte = _entity_safe_latest_spans_ctes(
-                table=self.TABLE,
-                project_predicate=self.project_filter_sql(),
+                snapshot_cte=snapshot_cte("snapshot_spans"),
             )
-        else:
-            latest_spans_cte = _latest_start_time_spans_cte(
-                table=self.TABLE,
-                project_predicate=self.project_filter_sql(),
-            )
-        eu_map = _touched_survivor_map_subquery(
-            remap_table=self.END_USER_REMAP_TABLE,
-            candidate_cte="candidate_end_user_ids",
-            candidate_column="end_user_id",
-            single_candidate_reference=full_snapshot,
-        )
+        # The whole remap table is two parts / tens of granules. Deriving the
+        # map from it costs one small window pass; deriving it from the spans
+        # population cost two extra replays of the entire window, because the
+        # candidate CTE inlined ``latest_spans`` once per reference.
+        eu_map = survivor_map_subquery(self.END_USER_REMAP_TABLE)
         resolved_eu = resolved_id_expr("rs.end_user_id")
 
         trace_flags = ""
         bucket_flags = ""
         if self.user_membership_plan is not None:
+            # On the reduced population the flag was already evaluated on the
+            # winning version and projected; otherwise it is still a raw row
+            # predicate over the whole-row snapshot.
             trace_flags = "".join(
-                f",\n                    countIf({predicate}) AS user_member_trace_{index}"
+                ",\n                    countIf("
+                + (
+                    f"rs.user_member_match_{index}"
+                    if closed_projection
+                    else predicate
+                )
+                + f") AS user_member_trace_{index}"
                 for index, predicate in enumerate(self.user_membership_plan.predicates)
             )
             bucket_flags = "".join(
@@ -337,11 +461,16 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
                 for index in range(len(self.user_membership_plan.predicates))
             )
 
+        # Latency is the pooled mean of every live span of the bucket's user
+        # traces: each level carries a latency sum and a count, and only the
+        # bucket divides. No level averages another level's means, so a user
+        # with many spans weighs by its spans, not as one vote.
         user_bucket_rows = f"""
             SELECT
                 {bucket_fn}(min_start) AS time_bucket,
                 end_user_id,
-                avg(span_avg_latency) AS user_avg_latency,
+                sum(span_latency_sum) AS user_latency_sum,
+                sum(span_latency_count) AS user_latency_count,
                 sum(span_total_tokens) AS user_total_tokens,
                 sum(span_total_cost) AS user_total_cost,
                 sum(span_prompt_tokens) AS user_prompt_tokens,
@@ -353,7 +482,8 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
                     {resolved_eu} AS end_user_id,
                     rs.trace_id AS trace_id,
                     min(rs.start_time) AS min_start,
-                    avg(rs.latency_ms) AS span_avg_latency,
+                    sum(rs.latency_ms) AS span_latency_sum,
+                    count(rs.latency_ms) AS span_latency_count,
                     sum(rs.total_tokens) AS span_total_tokens,
                     sum(rs.cost) AS span_total_cost,
                     sum(rs.prompt_tokens) AS span_prompt_tokens,
@@ -396,16 +526,10 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
         query = f"""
         WITH
         {latest_spans_cte},
-        candidate_end_user_ids AS (
-            SELECT DISTINCT end_user_id
-            FROM latest_spans
-            WHERE isNotNull(end_user_id)
-              AND end_user_id != toUUID('00000000-0000-0000-0000-000000000000')
-        ),
         eu_survivor_map AS ({eu_map})
         SELECT
             time_bucket,
-            avg(user_avg_latency) AS avg_latency,
+            sum(user_latency_sum) / greatest(sum(user_latency_count), 1) AS avg_latency,
             sum(user_total_tokens) AS total_tokens,
             avg(user_total_cost) AS avg_cost,
             count() AS traffic_count,
@@ -422,8 +546,6 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
         GROUP BY time_bucket
         ORDER BY time_bucket
         """
-        # All paths replay FINAL winners before mutable time/liveness filters.
-        query += "\nSETTINGS optimize_move_to_prewhere_if_final = 0"
         return query, self.params
 
 

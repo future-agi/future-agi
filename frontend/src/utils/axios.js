@@ -26,20 +26,47 @@ import { SS_KEY_ORG_ID, SS_KEY_WORKSPACE_ID } from "./sessionKeys";
 // ----------------------------------------------------------------------
 //
 const axiosInstance = axios.create({ baseURL: HOST_API });
+const MAX_PICKER_GET_URL_LENGTH = 8192;
 
 // Only source-declared read aliases use POST; unrelated reads remain GET.
 export const readQuery = (url, { params = {}, ...config } = {}) => {
-  if (!findOpenApiEndpoint(url, "post")?.contract.readQueryPost) {
+  const endpoint = findOpenApiEndpoint(url, "post");
+  if (!endpoint?.contract.readQueryPost) {
     return axiosInstance.get(url, { params, ...config });
   }
-  if (config.data !== undefined) throw new Error("Read query body is owned by params.");
+  if (config.data !== undefined)
+    throw new Error("Read query body is owned by params.");
   const [path, search = ""] = url.split("?");
-  const data = Object.fromEntries(Object.entries(params).filter(([, value]) => value != null));
+  const data = Object.fromEntries(
+    Object.entries(params).filter(([, value]) => value != null),
+  );
   for (const [key, value] of new URLSearchParams(search)) {
-    if (Object.hasOwn(data, key)) throw new Error("Duplicate read query parameter.");
+    if (Object.hasOwn(data, key))
+      throw new Error("Duplicate read query parameter.");
     data[key] = value;
   }
-  return axiosInstance.post(path, data, config);
+  return axiosInstance.post(path, data, config).catch((error) => {
+    // Older backends expose these picker reads through GET only.
+    if (
+      error.statusCode !== 405 ||
+      ![
+        "/tracer/dashboard/metrics/",
+        "/tracer/dashboard/filter_values/",
+      ].includes(endpoint.template)
+    ) {
+      throw error;
+    }
+    const getConfig = { ...config, params: data };
+    if (
+      axiosInstance.getUri({ ...getConfig, url: path }).length >
+      MAX_PICKER_GET_URL_LENGTH
+    ) {
+      throw new Error(
+        "This picker request is too large for legacy GET compatibility. Upgrade the backend or reduce the selected projects and filters.",
+      );
+    }
+    return axiosInstance.get(path, getConfig);
+  });
 };
 
 const avoidRedirect = [
@@ -140,10 +167,18 @@ axiosInstance.interceptors.response.use(
       setIsRefreshing(true);
 
       try {
+        const refreshGeneration = localStorage.getItem("fai_auth_generation");
         const res = await refreshTokenRequest();
         const newAccessToken = res.data?.access;
 
         if (!newAccessToken) throw new Error("No access token returned");
+
+        if (refreshGeneration !== localStorage.getItem("fai_auth_generation")) {
+          const sessionReplaced = new Error("session replaced");
+          processQueue(sessionReplaced, null);
+          window.location.replace("/dashboard/develop");
+          throw sessionReplaced;
+        }
 
         // 🪪 Save new token in storage + axios headers
         // Workspace header is managed by WorkspaceProvider (reads from sessionStorage).
@@ -169,6 +204,9 @@ axiosInstance.interceptors.response.use(
         originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
         return axiosInstance(originalRequest);
       } catch (err) {
+        if (err?.message === "session replaced") {
+          return Promise.reject(err);
+        }
         processQueue(err, null); // ❌ Fail queued requests too
         setSession(null);
         resetUser();
@@ -1291,7 +1329,8 @@ export const endpoints = {
     updateSessionListColumnVisibility: () =>
       apiPath("/tracer/project/update_project_session_config/"),
     traceSession: apiPath("/tracer/trace-session/"),
-    traceSessionQuery: (id) => apiPath("/tracer/trace-session/{id}/query/", { id }),
+    traceSessionQuery: (id) =>
+      apiPath("/tracer/trace-session/{id}/query/", { id }),
     projectExperimentDetail: (projectId) =>
       apiPath("/tracer/project/{id}/", { id: projectId }),
     deleteObservePrototype: apiPath("/tracer/project/"),
@@ -1682,11 +1721,33 @@ export const endpoints = {
         "/simulate/test-executions/{test_execution_id}/optimiser-analysis/refresh/",
         { test_execution_id: id },
       ),
+    debugAnalysis: (id) =>
+      apiPath("/simulate/test-executions/{test_execution_id}/debug-analysis/", {
+        test_execution_id: id,
+      }),
     compareExecutions: (id) =>
       apiPath(
         "/simulate/call-executions/{call_execution_id}/session-comparison/",
         { call_execution_id: id },
       ),
+  },
+  runResultsV3: {
+    calls: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/calls/", {
+        test_execution_id: id,
+      }),
+    callDetail: (id) =>
+      apiPath("/simulate/v3/call-executions/{call_execution_id}/", {
+        call_execution_id: id,
+      }),
+    analytics: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/analytics/", {
+        test_execution_id: id,
+      }),
+    export: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/export/", {
+        test_execution_id: id,
+      }),
   },
   optimizeSimulate: {
     createOptimization: apiPath("/simulate/api/agent-prompt-optimiser/"),
@@ -1783,10 +1844,20 @@ export const endpoints = {
     update: apiPath("/accounts/organizations/update/"),
   },
   errorFeed: {
+    alerts: {
+      list: apiPath("/tracer/alerts/"),
+      options: apiPath("/tracer/alerts/options/"),
+      detail: (id) => apiPath("/tracer/alerts/{kind}/{alert_id}/", { kind: "error_feed", alert_id: id }),
+      test: (id) => apiPath("/tracer/alerts/error_feed/{alert_id}/test/", { alert_id: id }),
+    },
     list: apiPath("/tracer/feed/issues/"),
     stats: apiPath("/tracer/feed/issues/stats/"),
     detail: (clusterId) =>
       apiPath("/tracer/feed/issues/{cluster_id}/", { cluster_id: clusterId }),
+    redirect: (clusterId) =>
+      apiPath("/tracer/feed/issues/{cluster_id}/redirect/", {
+        cluster_id: clusterId,
+      }),
     update: (clusterId) =>
       apiPath("/tracer/feed/issues/{cluster_id}/", { cluster_id: clusterId }),
     overview: (clusterId) =>
@@ -1887,6 +1958,7 @@ export const endpoints = {
     requestLogDetail: (id) =>
       apiPath("/agentcc/request-logs/{id}/", { id: id }),
     requestLogSearch: apiPath("/agentcc/request-logs/search/"),
+    requestLogMetadataValues: apiPath("/agentcc/request-logs/metadata-values/"),
     requestLogSessions: apiPath("/agentcc/request-logs/sessions/"),
     requestLogSessionDetail: (sessionId) =>
       apiPath("/agentcc/request-logs/sessions/{session_id}/", {
@@ -1989,6 +2061,10 @@ export const endpoints = {
     },
   },
   integrations: {
+    slack: {
+      install: apiPath("/integrations/slack/install/"),
+      channels: (id) => apiPath("/integrations/connections/{connection_id}/slack/channels/", { connection_id: id }),
+    },
     connections: {
       list: apiPath("/integrations/connections/"),
       create: apiPath("/integrations/connections/"),

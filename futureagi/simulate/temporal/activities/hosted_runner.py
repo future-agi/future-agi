@@ -257,7 +257,7 @@ async def run_hosted_sdk_job(input: RunHostedJobInput) -> RunHostedJobOutput:
                     )
             return_code = await proc.wait()
         except asyncio.CancelledError:
-            _terminate(proc)
+            await _terminate(proc)
             raise
         finally:
             # Keep the scratch on failure for debugging; the run root is durable.
@@ -352,12 +352,24 @@ async def finalize_hosted_execution(input: FinalizeRunnerInput) -> str:
                 completed_at=timezone.now(),
             )
             return "cancelled"
+        # A run already scoring is not turned failed by a failed runner
+        # child: its finished calls are being graded, and the settle ends it.
+        scoring = execution.status == TestExecution.ExecutionStatus.EVALUATING
+        if execution.status not in (
+            TestExecution.ExecutionStatus.COMPLETED,
+            TestExecution.ExecutionStatus.CANCELLED,
+            TestExecution.ExecutionStatus.EVALUATING,
+        ):
+            execution.status = TestExecution.ExecutionStatus.FAILED
+            execution.save(update_fields=["status"])
         if execution.status not in (
             TestExecution.ExecutionStatus.COMPLETED,
             TestExecution.ExecutionStatus.CANCELLED,
         ):
-            execution.status = TestExecution.ExecutionStatus.FAILED
-            execution.save(update_fields=["status"])
+            # The child is gone, so no result can land on a call it left
+            # open. A scoring run can hold such calls too (an eval rerun of a
+            # finished call moves a run still in transport into scoring), and
+            # nothing would ever end the run while they stay open.
             CallExecution.objects.filter(
                 test_execution=execution,
                 status__in=[
@@ -369,6 +381,12 @@ async def finalize_hosted_execution(input: FinalizeRunnerInput) -> str:
                 status=CallExecution.CallStatus.FAILED,
                 completed_at=timezone.now(),
             )
+        if scoring:
+            from simulate.services.scoring_status import settle_run
+
+            # Its scoring may be closed already, with those calls the only
+            # thing still holding it.
+            settle_run(execution.id)
         return "failed"
 
     return await _run_db(_mark_terminal)
@@ -751,9 +769,17 @@ def _parse_status_line(line: str) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) and "phase" in parsed else None
 
 
-def _terminate(proc: asyncio.subprocess.Process) -> None:
+async def _terminate(proc: asyncio.subprocess.Process) -> None:
     if proc.returncode is None:
         try:
             proc.terminate()
         except ProcessLookupError:
-            pass
+            return
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except TimeoutError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                return
+            await proc.wait()

@@ -221,6 +221,7 @@ const EvaluateCell = ({
         meta={meta}
         isFutureAgiEval={isFutureAgiEval}
         value={value}
+        valueInfos={parsedValueInfos}
         choicesMap={choicesMap}
       />
     );

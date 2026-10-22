@@ -177,6 +177,7 @@ class ALKSimulateIngestionViewSet(ViewSet):
                 agent_name=payload.get("agent_name"),
                 description=payload.get("description", ""),
                 modality=payload.get("modality", "text"),
+                enable_tool_evaluation=payload.get("enable_tool_evaluation", False),
             )
         except ALKSimulateIngestionError as e:
             return self.gm.bad_request(str(e))

@@ -568,10 +568,15 @@ class ClickHouseVectorDB:
         metadata: dict[str, str],
         unique_keys: list[str],
         exclude_keys: list[str] | None = None,
+        mark_existing_deleted: bool = True,
     ) -> str:
         """
-        Upserts a vector into the specified table, marking previous entries with the same metadata as deleted.
+        Inserts a vector and optionally marks matching previous entries deleted.
         Returns the ID of the newly inserted or updated entry.
+
+        ``mark_existing_deleted=False`` is used while staging a feedback
+        replacement; the caller commits the group tombstone only after every
+        replacement insert succeeds.
         """
         new_id = str(uuid.uuid4())
         metadata = sanitize_metadata(metadata)
@@ -579,28 +584,29 @@ class ClickHouseVectorDB:
         if exclude_keys:
             exclude_keys = sanitize_keys(exclude_keys)
 
-        update_query = (
-            f"ALTER TABLE {table_name} UPDATE deleted = 1 WHERE deleted = 0 AND "
-        )
-
-        metadata_filter = []
-        for unique_key in unique_keys:
-            unique_value = metadata[unique_key]
-            metadata_filter.append(
-                f"has(metadata.key, '{unique_key}') AND metadata.value[indexOf(metadata.key, '{unique_key}')] = '{unique_value}'"
+        if mark_existing_deleted:
+            update_query = (
+                f"ALTER TABLE {table_name} UPDATE deleted = 1 WHERE deleted = 0 AND "
             )
 
-        if exclude_keys:
-            for exclude_key in exclude_keys:
-                metadata_filter.append(f"NOT has(metadata.key, '{exclude_key}')")
+            metadata_filter = []
+            for unique_key in unique_keys:
+                unique_value = metadata[unique_key]
+                metadata_filter.append(
+                    f"has(metadata.key, '{unique_key}') AND metadata.value[indexOf(metadata.key, '{unique_key}')] = '{unique_value}'"
+                )
 
-        metadata_filter_query = " AND ".join(metadata_filter)
-        update_query += metadata_filter_query
-        start_time = datetime.now()
-        self.client.execute(update_query)
-        end_time = datetime.now()
-        elapsed_time = (end_time - start_time).total_seconds()
-        logger.info(f"ALTER query took {elapsed_time:.2f} seconds to execute")
+            if exclude_keys:
+                for exclude_key in exclude_keys:
+                    metadata_filter.append(f"NOT has(metadata.key, '{exclude_key}')")
+
+            metadata_filter_query = " AND ".join(metadata_filter)
+            update_query += metadata_filter_query
+            start_time = datetime.now()
+            self.client.execute(update_query)
+            end_time = datetime.now()
+            elapsed_time = (end_time - start_time).total_seconds()
+            logger.info(f"ALTER query took {elapsed_time:.2f} seconds to execute")
         # Flatten metadata into two arrays
         metadata_keys = list(metadata.keys())
         metadata_values = list(metadata.values())
@@ -617,6 +623,54 @@ class ClickHouseVectorDB:
         elapsed_time = (end_time - start_time).total_seconds()
         logger.info(f"Insert query took {elapsed_time:.2f} seconds to execute")
         return new_id
+
+    def mark_deleted_by_metadata(
+        self,
+        table_name: str,
+        filters: dict[str, str],
+        eval_id: str | None = None,
+        exclude_filters: dict[str, str] | None = None,
+    ) -> None:
+        """
+        Tombstone vectors whose metadata matches every key/value in ``filters``.
+
+        Mirrors the ``ALTER TABLE … UPDATE deleted = 1`` tombstone inside
+        ``upsert_vector``, but standalone — for lifecycle events (e.g. a
+        ``Feedback`` row being soft-deleted) that must revoke retrieval
+        eligibility without inserting a replacement vector.
+
+        ``exclude_filters`` keeps a staged replacement revision active while
+        older vectors for the same feedback are revoked.
+        """
+        if not filters:
+            raise ValueError("At least one metadata filter is required")
+
+        clauses = ["deleted = 0"]
+        if eval_id:
+            clauses.append(f"eval_id = '{sanitize_sql_value(eval_id)}'")
+        for key, value in sanitize_metadata(filters).items():
+            clauses.append(
+                f"has(metadata.key, '{key}') AND "
+                f"metadata.value[indexOf(metadata.key, '{key}')] = '{value}'"
+            )
+        for key, value in sanitize_metadata(exclude_filters or {}).items():
+            clauses.append(
+                f"NOT (has(metadata.key, '{key}') AND "
+                f"metadata.value[indexOf(metadata.key, '{key}')] = '{value}')"
+            )
+        update_query = (
+            f"ALTER TABLE {table_name} UPDATE deleted = 1 WHERE "
+            + " AND ".join(clauses)
+        )
+        start_time = datetime.now()
+        self.client.execute(update_query, settings={"mutations_sync": 2})
+        elapsed_time = (datetime.now() - start_time).total_seconds()
+        logger.info(
+            "ch_vector_mark_deleted_done",
+            table=table_name,
+            filters=list(sanitize_metadata(filters).keys()),
+            elapsed_sec=round(elapsed_time, 3),
+        )
 
     def fetch_vector_by_id(
         self, table_name: str, id: str

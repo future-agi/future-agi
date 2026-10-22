@@ -788,6 +788,45 @@ class TestGroundTruthDeleteAPI:
 # =========================================================================
 
 
+# Not marked e2e (pytest.ini deselects e2e): this is the only API-level check
+# that the standalone install, which ships without model serving, refuses the
+# embed up front, so it must run in the default backend CI lane.
+@pytest.mark.django_db
+class TestGroundTruthEmbedWithoutModelServing:
+    def _url(self, gt_id):
+        return f"/model-hub/ground-truth/{gt_id}/embed/"
+
+    def test_embed_refused_without_model_serving(
+        self, auth_client, ground_truth, model_serving_down, monkeypatch
+    ):
+        """Refused with the reason up front, rather than a workflow that can
+        only end FAILED; the ground truth keeps its current status."""
+        from agentic_eval.core.embeddings.serving_client import (
+            SERVING_UNAVAILABLE_MESSAGE,
+        )
+
+        calls = []
+
+        async def fake_trigger_embedding_generation(ground_truth_id):
+            calls.append(ground_truth_id)
+            return "test-run-id"
+
+        monkeypatch.setattr(
+            "tfc.temporal.ground_truth.client.trigger_embedding_generation",
+            fake_trigger_embedding_generation,
+        )
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.COMPLETED
+        ground_truth.save(update_fields=["embedding_status", "updated_at"])
+
+        response = auth_client.post(self._url(ground_truth.id), {}, format="json")
+
+        assert response.status_code == 400
+        assert response.data["message"] == SERVING_UNAVAILABLE_MESSAGE
+        assert calls == []
+        ground_truth.refresh_from_db()
+        assert ground_truth.embedding_status == EvalGroundTruth.EmbeddingStatus.COMPLETED
+
+
 @pytest.mark.e2e
 @pytest.mark.django_db
 class TestGroundTruthEmbedAPI:

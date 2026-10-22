@@ -131,8 +131,7 @@ const convertGraphSelectionsToFilters = (
 };
 import { ShowComponent } from "src/components/show";
 import { useQueryClient, useMutation } from "@tanstack/react-query";
-import { formatDate } from "src/utils/report-utils";
-import { startOfToday, startOfTomorrow, startOfYesterday, sub } from "date-fns";
+import { observePresetDateFilter } from "../timeWindowPresets";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { Helmet } from "react-helmet-async";
@@ -193,6 +192,7 @@ import { buildAddEvalsDraft } from "./buildAddEvalsDraft";
 import SelectAllBanner from "./SelectAllBanner";
 import { getSelectionCountState } from "./listTotalMetadata";
 import { spanSourceIdsFromPhysicalRowIds } from "./spanPhysicalIdentity";
+import { traceIdsFromGridRowIds } from "./traceGridRowId";
 import { normalizeVoiceCallSavedFilters } from "./voiceCallFilterFields";
 import { serializeTraceFiltersForPersistence } from "./filter_persistence";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
@@ -227,7 +227,7 @@ import {
 } from "../SessionsView/ReplaySessions/store";
 import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
 import { REPLAY_TYPES } from "../SessionsView/ReplaySessions/constants";
-import { filtersContentEqual } from "../saved-view-utils";
+import { dateFilterEqual, filtersContentEqual } from "../saved-view-utils";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
 import { enqueueSnackbar } from "notistack";
 import {
@@ -405,7 +405,7 @@ const comparePillSx = {
 };
 
 // Header row for agent graph/path in compare mode: [A/B badge] [label] [date pill] [filter pill] + inline chips
-const CompareGraphHeader = ({
+export const CompareGraphHeader = ({
   compareType,
   dateFilter,
   setDateFilter,
@@ -427,47 +427,9 @@ const CompareGraphHeader = ({
       setCustomDateOpen(true);
       return;
     }
-    let filter = null;
-    switch (option) {
-      case "Today":
-        filter = [formatDate(startOfToday()), formatDate(startOfTomorrow())];
-        break;
-      case "Yesterday":
-        filter = [formatDate(startOfYesterday()), formatDate(startOfToday())];
-        break;
-      case "7D":
-        filter = [
-          formatDate(sub(new Date(), { days: 7 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "30D":
-        filter = [
-          formatDate(sub(new Date(), { days: 30 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "3M":
-        filter = [
-          formatDate(sub(new Date(), { months: 3 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "6M":
-        filter = [
-          formatDate(sub(new Date(), { months: 6 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      case "12M":
-        filter = [
-          formatDate(sub(new Date(), { months: 12 })),
-          formatDate(startOfTomorrow()),
-        ];
-        break;
-      default:
-        break;
-    }
+    // One shared window per preset: hour-floored start, next-midnight end,
+    // identical to the default load (see observePresetDateFilter).
+    const filter = observePresetDateFilter(option);
     if (filter)
       setDateFilter((prev) => ({
         ...prev,
@@ -538,6 +500,7 @@ const CompareGraphHeader = ({
         open={customDateOpen}
         onClose={() => setCustomDateOpen(false)}
         anchorEl={dateButtonRef.current}
+        value={dateFilter?.dateFilter}
         setDateFilter={(range) => {
           setDateFilter?.((prev) => ({
             ...prev,
@@ -1007,6 +970,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       return { ids: [], error };
     }
   }, [selectedSpans]);
+  // On the user page the trace grid's row ids carry each row's project.
+  const selectedTraceIds = useMemo(
+    () => traceIdsFromGridRowIds(selectedTraces),
+    [selectedTraces],
+  );
 
   const {
     openReplaySessionDrawer,
@@ -1192,6 +1160,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     projectSource,
     allowOrgScope: isUserMode,
   });
+  // The Voice screen lists voice calls (list_voice_calls), so its trace graph
+  // must count the same population rather than every trace in the project.
+  const traceGraphObserveType =
+    projectSource === PROJECT_SOURCE.SIMULATOR && selectedTab !== "spans"
+      ? "voice"
+      : undefined;
 
   const effectiveViewMode = canonicalObserveViewMode({
     viewMode,
@@ -2862,6 +2836,19 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     setActiveViewConfig,
   ]);
 
+  // Filter-bar Save on a saved view. Moving the baseline on success keeps
+  // Save view from staying visible for changes that were just saved.
+  const saveFiltersToActiveView = useCallback(() => {
+    const config = buildViewConfig();
+    updateSavedView(
+      { id: activeViewTabId, config },
+      {
+        onSuccess: (response) =>
+          setActiveViewConfig(response?.data?.result?.config ?? config),
+      },
+    );
+  }, [activeViewTabId, buildViewConfig, updateSavedView, setActiveViewConfig]);
+
   // Default tab only — saved views go through handleSaveView instead.
   useEffect(() => {
     if (activeViewTabId) return;
@@ -3077,7 +3064,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     const baselineExtraFilters = hydrateProjectFilterList(
       activeViewConfig.extra_filters,
     );
-    const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
     const baselineColumnFilters = hydrateProjectFilterList(
       activeViewConfig.filters,
     );
@@ -3099,11 +3085,48 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
     const currentDate =
       viewTabType === "trace" ? primaryTraceDateFilter : primarySpanDateFilter;
-    if ((currentDate?.dateOption ?? null) !== baselineDateOption) return true;
+    if (!dateFilterEqual(currentDate, baselineDisplay.dateFilter)) return true;
 
     const columnFilters =
       viewTabType === "trace" ? primaryTraceFilters : primarySpanFilters;
     if (!filtersContentEqual(columnFilters, baselineColumnFilters)) return true;
+
+    // Compare-mode state is persisted by buildViewConfig only while compare
+    // is on, so only edits made in compare mode can diverge from the saved
+    // view. Check the same three fields the config writes.
+    if (showCompare) {
+      const compareFilters =
+        viewTabType === "trace" ? compareTraceFilters : compareSpansFilters;
+      if (
+        !filtersContentEqual(
+          compareFilters,
+          hydrateProjectFilterList(activeViewConfig.compare_filters),
+        )
+      ) {
+        return true;
+      }
+      if (
+        !filtersContentEqual(
+          compareExtraFilters,
+          hydrateProjectFilterList(activeViewConfig.compare_extra_filters),
+        )
+      ) {
+        return true;
+      }
+      // A view saved before compare mode has no compare_date_filter; the
+      // live default range is not a user edit in that case.
+      if (
+        activeViewConfig.compare_date_filter !== undefined &&
+        !dateFilterEqual(
+          viewTabType === "trace"
+            ? compareTraceDateFilter
+            : compareSpansDateFilter,
+          activeViewConfig.compare_date_filter,
+        )
+      ) {
+        return true;
+      }
+    }
 
     if (
       baselineDisplay.viewMode !== undefined &&
@@ -3176,6 +3199,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     primarySpanDateFilter,
     primaryTraceFilters,
     primarySpanFilters,
+    compareTraceFilters,
+    compareSpansFilters,
+    compareTraceDateFilter,
+    compareSpansDateFilter,
+    compareExtraFilters,
     viewMode,
     cellHeight,
     showErrors,
@@ -3602,10 +3630,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           onSave={() => {
             setFilterChipsSaved(true);
             if (activeViewTabId) {
-              updateSavedView({
-                id: activeViewTabId,
-                config: buildViewConfig(),
-              });
+              saveFiltersToActiveView();
             } else {
               try {
                 localStorage.setItem(
@@ -3669,10 +3694,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               onClick={() => {
                 setFilterChipsSaved(true);
                 if (activeViewTabId) {
-                  updateSavedView({
-                    id: activeViewTabId,
-                    config: buildViewConfig(),
-                  });
+                  saveFiltersToActiveView();
                 } else {
                   try {
                     localStorage.setItem(
@@ -3779,6 +3801,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     ? endpoints.project.getSpanGraphData()
                     : endpoints.project.getTraceGraphData()
                 }
+                observeType={traceGraphObserveType}
+                removeSimulationCalls={!!excludeSimulationCalls}
                 onFilterToggle={
                   showCompare
                     ? (e) => handleCompareFilterToggle(e, "primary")
@@ -3816,6 +3840,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       ? endpoints.project.getSpanGraphData()
                       : endpoints.project.getTraceGraphData()
                   }
+                  observeType={traceGraphObserveType}
+                  removeSimulationCalls={!!excludeSimulationCalls}
                   onFilterToggle={(e) =>
                     handleCompareFilterToggle(e, "compare")
                   }
@@ -4298,6 +4324,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     // Call rows don't carry tags — fetch current tags per
                     // trace so the popover can merge correctly. Guard
                     // against concurrent clicks triggering duplicate fetches.
+                    // A call's trace id can exist in several projects, so
+                    // read this project's copy.
                     if (tagsFetching) return;
                     const ids = (selectedCallIds || []).filter(Boolean);
                     if (ids.length === 0) return;
@@ -4305,7 +4333,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     Promise.all(
                       ids.map((id) =>
                         axios
-                          .get(endpoints.project.getTrace(id))
+                          .get(endpoints.project.getTrace(id), {
+                            params: { project_id: observeId },
+                          })
                           .then((res) => ({
                             id,
                             type: "trace",
@@ -4711,10 +4741,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       // Simulator calls are traces under the hood
                       return (selectedCallIds || []).filter(Boolean);
                     }
-                    return (
-                      selectedTraces?.filter((id) => id != null && id !== "") ||
-                      []
-                    );
+                    return selectedTraceIds;
                   })()}
                   selectedSpans={spanSourceSelection.ids}
                   currentTab={
@@ -4800,7 +4827,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   // deselection after opt-in is a follow-up (client-side
                   // CallLogsGrid has no inverted-selection model).
                   if (filterSelectionMode && selectedTab === "trace") {
-                    return selectedTraces || [];
+                    return selectedTraceIds;
                   }
                   if (spanFilterSelectionMode && selectedTab === "spans") {
                     return spanSourceSelection.ids;
@@ -4814,7 +4841,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   if (projectSource === PROJECT_SOURCE.SIMULATOR)
                     return (selectedCallIds || []).filter(Boolean);
                   return selectedTab === "trace"
-                    ? (selectedTraces || []).filter(Boolean)
+                    ? selectedTraceIds
                     : spanSourceSelection.ids;
                 })()}
                 itemName={(() => {

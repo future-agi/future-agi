@@ -9,6 +9,7 @@ import {
   cancelHarnessJob,
   createHarnessJob,
   harnessIdempotencyKey,
+  sendHarnessConversationMessage,
 } from "./harness";
 
 const JOB_ID = "d1fd7560-0143-4cb8-88ed-36518b848cbf";
@@ -73,5 +74,25 @@ describe("createHarnessJob", () => {
         value: originalCrypto,
       });
     }
+  });
+});
+
+
+describe("sendHarnessConversationMessage", () => {
+  beforeEach(() => {
+    axios.post.mockClear();
+  });
+
+  it("posts the durable message envelope to the contracted endpoint", async () => {
+    const payload = {
+      content: "Add five payment-failure scenarios",
+      client_request_id: "message-1",
+      kind: "user_message",
+    };
+    await sendHarnessConversationMessage(JOB_ID, payload);
+    expect(axios.post).toHaveBeenCalledWith(
+      `/simulate/api/harness-jobs/${JOB_ID}/conversation/messages/`,
+      payload,
+    );
   });
 });

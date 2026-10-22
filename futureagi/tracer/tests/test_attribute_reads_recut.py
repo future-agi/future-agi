@@ -52,6 +52,7 @@ from tracer.services.clickhouse.attribute_reads import (
     ATTRIBUTE_READ_EXACT_KEY_QUERY_TIMEOUT_MS,
     ATTRIBUTE_READ_EXPLICIT_SEGMENT,
     ATTRIBUTE_READ_JSON_QUERY_TIMEOUT_MS,
+    ATTRIBUTE_READ_MAX_KEY_BYTES,
     ATTRIBUTE_READ_MAX_PROJECTS,
     ATTRIBUTE_READ_MAX_QUERY_COUNT,
     ATTRIBUTE_READ_MAX_VALUES,
@@ -8519,12 +8520,23 @@ def test_malformed_keys_and_oversized_project_scopes_fail_before_ch():
     executor = RecordingExecutor()
     selector = AttributeReadSelector(executor, now=NOW)
 
-    for key in ("", "contains\x00control", "é" * 257):
+    for key in (
+        "",
+        None,
+        42,
+        "\ud800",
+        "x" * (ATTRIBUTE_READ_MAX_KEY_BYTES + 1),
+        "é" * (ATTRIBUTE_READ_MAX_KEY_BYTES // 2 + 1),
+    ):
         with pytest.raises(InvalidAttributeKey):
             selector.read_values([PROJECT_A], key)
-    assert validate_attribute_key("customer.%_status\\路径'quote") == (
-        "customer.%_status\\路径'quote"
-    )
+    for key in (
+        "customer.%_status\\路径'quote",
+        "contains\x00control",
+        " key \t\n",
+        "é" * (ATTRIBUTE_READ_MAX_KEY_BYTES // 2),
+    ):
+        assert validate_attribute_key(key) == key
     too_many_projects = [
         str(uuid.uuid4()) for _ in range(ATTRIBUTE_READ_MAX_PROJECTS + 1)
     ]
@@ -12808,14 +12820,26 @@ def test_span_attribute_key_api_does_not_turn_cursor_size_into_vocabulary_cap(
 
 
 def test_span_attribute_detail_contract_validates_key_and_exposes_read_state():
-    query = SpanAttributeDetailQuerySerializer(
-        data={"project_id": uuid.uuid4(), "key": "customer.%_status\\path"}
-    )
-
-    assert query.is_valid(), query.errors
-    assert query.validated_data["key"] == "customer.%_status\\path"
-    assert query.validated_data["refresh"] is False
-    for invalid_key in ("", "contains\x00control", "é" * 257):
+    for key in (
+        "customer.%_status\\path",
+        "contains\x00control",
+        " key \t\n",
+        "é" * (ATTRIBUTE_READ_MAX_KEY_BYTES // 2),
+    ):
+        query = SpanAttributeDetailQuerySerializer(
+            data={"project_id": uuid.uuid4(), "key": key}
+        )
+        assert query.is_valid(), query.errors
+        assert query.validated_data["key"] == key
+        assert query.validated_data["refresh"] is False
+    for invalid_key in (
+        "",
+        None,
+        42,
+        "\ud800",
+        "x" * (ATTRIBUTE_READ_MAX_KEY_BYTES + 1),
+        "é" * (ATTRIBUTE_READ_MAX_KEY_BYTES // 2 + 1),
+    ):
         invalid = SpanAttributeDetailQuerySerializer(
             data={"project_id": uuid.uuid4(), "key": invalid_key}
         )

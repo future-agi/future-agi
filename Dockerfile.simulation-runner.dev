@@ -14,9 +14,9 @@ ARG BACKEND_IMAGE=futureagi/future-agi:dev
 FROM ${BACKEND_IMAGE}
 
 ARG ALK_WHEEL=agent_learning_kit-0.1.0-py3-none-any.whl
-# Keep the native LiveKit stack aligned with the ALK release lock (see the prod
-# Dockerfile for why 1.6.x is avoided in linux/amd64 under Rosetta).
-ARG LIVEKIT_AGENTS_VERSION=1.5.17
+# Keep the native LiveKit stack aligned with the ALK release lock and the prod
+# simulation-runner image.
+ARG LIVEKIT_AGENTS_VERSION=1.8.3
 
 COPY ${ALK_WHEEL} /tmp/alk/${ALK_WHEEL}
 RUN python -m venv /opt/alk-venv \

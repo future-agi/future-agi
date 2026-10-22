@@ -3,37 +3,53 @@ import PropTypes from "prop-types";
 import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
 import { useLLMTracingStoreShallow } from "./states";
 import { useParams } from "react-router";
+import { useUrlState } from "src/routes/hooks/use-url-state";
 
 const LLMTracingTraceDetailDrawer = ({ refreshGrid }) => {
   const { observeId } = useParams();
-  const { traceDetailDrawerOpen, setTraceDetailDrawerOpen, visibleTraceIds } =
+  const [evalFocus, , removeEvalFocus] = useUrlState("evalFocus", false);
+  const { traceDetailDrawerOpen, setTraceDetailDrawerOpen, visibleTraces } =
     useLLMTracingStoreShallow((state) => ({
       traceDetailDrawerOpen: state.traceDetailDrawerOpen,
       setTraceDetailDrawerOpen: state.setTraceDetailDrawerOpen,
-      visibleTraceIds: state.visibleTraceIds,
+      visibleTraces: state.visibleTraces,
     }));
 
   const traceId = traceDetailDrawerOpen?.traceId || null;
+  // The clicked row's project. /dashboard/users/:userId has no route
+  // project and lists every project's rows; a trace id is not unique across
+  // projects, so an unpinned read could open another project's copy. A
+  // project route stays authoritative.
+  const pinnedProjectId = traceDetailDrawerOpen?.projectId || undefined;
   const filters = traceDetailDrawerOpen?.filters || [];
 
   const currentIdx = useMemo(
-    () => (traceId ? visibleTraceIds.indexOf(traceId) : -1),
-    [traceId, visibleTraceIds],
+    () =>
+      traceId
+        ? visibleTraces.findIndex(
+            (row) =>
+              row.traceId === traceId &&
+              (!pinnedProjectId || row.projectId === pinnedProjectId),
+          )
+        : -1,
+    [traceId, pinnedProjectId, visibleTraces],
   );
   const hasPrev = currentIdx > 0;
-  const hasNext = currentIdx >= 0 && currentIdx < visibleTraceIds.length - 1;
+  const hasNext = currentIdx >= 0 && currentIdx < visibleTraces.length - 1;
 
   const navigateToTrace = useCallback(
     (direction) => {
       if (currentIdx === -1) return;
       const nextIdx = currentIdx + direction;
-      if (nextIdx < 0 || nextIdx >= visibleTraceIds.length) return;
+      if (nextIdx < 0 || nextIdx >= visibleTraces.length) return;
+      const next = visibleTraces[nextIdx];
       setTraceDetailDrawerOpen({
-        traceId: visibleTraceIds[nextIdx],
+        traceId: next.traceId,
+        ...(next.projectId ? { projectId: next.projectId } : {}),
         filters,
       });
     },
-    [currentIdx, visibleTraceIds, filters, setTraceDetailDrawerOpen],
+    [currentIdx, visibleTraces, filters, setTraceDetailDrawerOpen],
   );
 
   const onPrev = useCallback(() => navigateToTrace(-1), [navigateToTrace]);
@@ -43,12 +59,16 @@ const LLMTracingTraceDetailDrawer = ({ refreshGrid }) => {
     <TraceDetailDrawerV2
       traceId={traceId}
       open={Boolean(traceDetailDrawerOpen)}
-      onClose={() => setTraceDetailDrawerOpen(null)}
-      projectId={observeId}
+      onClose={() => {
+        removeEvalFocus();
+        setTraceDetailDrawerOpen(null);
+      }}
+      projectId={observeId || pinnedProjectId}
       onPrev={onPrev}
       onNext={onNext}
       hasPrev={hasPrev}
       hasNext={hasNext}
+      initialEvalFocus={evalFocus === true}
       refreshParentGrid={refreshGrid}
     />
   );

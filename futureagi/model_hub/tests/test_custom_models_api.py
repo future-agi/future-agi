@@ -17,6 +17,7 @@ import uuid
 from unittest.mock import patch
 
 import pytest
+import requests
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
@@ -24,6 +25,9 @@ from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from agentic_eval.core_evals.run_prompt.available_models import (
+    VERTEX_SDK_MISSING_MESSAGE,
+)
 from model_hub.models.ai_model import AIModel
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.models.metric import Metric
@@ -441,6 +445,31 @@ class TestCustomModelsCreateView(CustomModelsAPITestCase):
         self.assertEqual(model.user_model_id, "gpt-4-turbo")
         self.assertEqual(model.provider, "openai")
 
+    @patch("model_hub.views.custom_model.validate_model_working")
+    def test_create_model_with_zero_token_cost(self, mock_validate):
+        """Self-hosted models are free, so a cost of 0 must be stored as 0."""
+        mock_validate.return_value = True
+
+        response = self.client.post(
+            f"{BASE_URL}/custom_models/create/",
+            {
+                "model_provider": "openai",
+                "model_name": "llama-3-local",
+                "input_token_cost": 0,
+                "output_token_cost": 0,
+                "config_json": {
+                    "key": "sk-local",
+                    "api_base": "http://llm.internal:8000/v1",
+                },
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        model = CustomAIModel.objects.get(id=response.data["result"]["data"]["id"])
+        self.assertEqual(model.input_token_cost, 0)
+        self.assertEqual(model.output_token_cost, 0)
+
     def test_create_model_missing_provider(self):
         """Test creating model without provider returns error."""
         data = {
@@ -605,6 +634,38 @@ class TestCustomModelsCreateView(CustomModelsAPITestCase):
         model = CustomAIModel.objects.get(id=model_id)
         self.assertTrue(model.user_model_id.startswith("vertex_ai/"))
 
+    @patch("model_hub.views.custom_model.vertex_ai_sdk_available", return_value=False)
+    @patch("model_hub.views.custom_model.validate_model_working")
+    def test_create_vertex_partner_model_without_the_sdk_is_refused(
+        self, mock_validate, _sdk
+    ):
+        """An image without the gcp extra cannot call Vertex partner models."""
+        data = {
+            "model_provider": "vertex_ai",
+            # Prefixed with vertex_ai/ by the view before the check.
+            "model_name": "claude-3-5-sonnet-v2@20241022",
+            "input_token_cost": 0.003,
+            "output_token_cost": 0.015,
+            "config_json": {
+                "project_id": "my-gcp-project",
+                "location": "us-east5",
+                "credentials": {"type": "service_account"},
+            },
+        }
+
+        response = self.client.post(
+            f"{BASE_URL}/custom_models/create/", data, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["result"], VERTEX_SDK_MISSING_MESSAGE)
+        mock_validate.assert_not_called()
+        self.assertFalse(
+            CustomAIModel.objects.filter(
+                user_model_id="vertex_ai/claude-3-5-sonnet-v2@20241022"
+            ).exists()
+        )
+
     @patch("model_hub.views.custom_model.validate_model_working")
     def test_create_vertex_ai_model_missing_config(self, mock_validate):
         """Test Vertex AI model requires config_json."""
@@ -643,6 +704,90 @@ class TestCustomModelsCreateView(CustomModelsAPITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    @patch("model_hub.utils.utils.requests.post")
+    def test_create_custom_provider_base_url_404_asks_for_full_endpoint(
+        self, mock_post
+    ):
+        """A /v1 base that 404s says to use the full chat-completions URL.
+
+        The check POSTs to api_base as given, as the model's own calls do, so a
+        bare /v1 base 404s; the raw requests error left the user guessing.
+        """
+        api_base = "http://mock-llm:8080/v1"
+        not_found = requests.Response()
+        not_found.status_code = 404
+        not_found.reason = "Not Found"
+        not_found.url = api_base
+        mock_post.return_value = not_found
+
+        # The payload the Configure Custom Model form sends.
+        data = {
+            "model_provider": "custom",
+            "model_name": "my-custom-model",
+            "input_token_cost": 0,
+            "output_token_cost": 0,
+            "config_json": {
+                "headers": {"x_api_key": "custom-key"},
+                "api_base": api_base,
+                "custom_provider": True,
+            },
+        }
+
+        response = self.client.post(
+            f"{BASE_URL}/custom_models/create/", data, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(mock_post.call_args.args[0], api_base)
+        message = response.data["message"]
+        self.assertIn(api_base, message)
+        self.assertIn("full chat-completions URL", message)
+        self.assertIn("/v1/chat/completions", message)
+        self.assertFalse(
+            CustomAIModel.objects.filter(user_model_id="my-custom-model").exists()
+        )
+
+    @patch("model_hub.utils.utils.requests.post")
+    def test_create_custom_provider_full_url_404_names_the_model(self, mock_post):
+        """A 404 from the full URL also points at the model name.
+
+        OpenAI-compatible servers answer 404 for an unknown model too, so the
+        message must not blame only the URL. It never repeats the body.
+        """
+        api_base = "http://mock-llm:8080/v1/chat/completions"
+        not_found = requests.Response()
+        not_found.status_code = 404
+        not_found.reason = ""  # the server sent no reason phrase
+        not_found._content = b"internal-body-marker"
+        not_found.url = api_base
+        mock_post.return_value = not_found
+
+        data = {
+            "model_provider": "custom",
+            "model_name": "my-custom-model",
+            "input_token_cost": 0,
+            "output_token_cost": 0,
+            "config_json": {
+                "headers": {"x_api_key": "custom-key"},
+                "api_base": api_base,
+                "custom_provider": True,
+            },
+        }
+
+        response = self.client.post(
+            f"{BASE_URL}/custom_models/create/", data, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        message = response.data["message"]
+        self.assertIn("answered 404 Not Found.", message)
+        self.assertIn("full chat-completions URL", message)
+        self.assertIn("my-custom-model", message)
+        self.assertNotIn("internal-body-marker", message)
+        self.assertFalse(
+            CustomAIModel.objects.filter(user_model_id="my-custom-model").exists()
+        )
 
     @patch("model_hub.views.custom_model.validate_model_working")
     def test_create_sagemaker_model_success(self, mock_validate):
@@ -1288,6 +1433,46 @@ class TestEditCustomModelView(CustomModelsAPITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @patch("model_hub.views.custom_model.vertex_ai_sdk_available", return_value=False)
+    @patch("model_hub.views.custom_model.validate_model_working")
+    def test_patch_new_credentials_for_an_sdk_only_vertex_model_are_refused(
+        self, mock_validate, _sdk
+    ):
+        """New credentials are validated with a call the image cannot make."""
+        mock_validate.return_value = True
+        model = self.create_custom_model(
+            user_model_id="vertex_ai/meta/llama3-405b-instruct-maas",
+            provider="vertex_ai",
+            input_token_cost=0.01,
+        )
+
+        response = self.client.patch(
+            f"{BASE_URL}/custom_models/edit/",
+            {
+                "id": str(model.id),
+                "input_token_cost": 0.05,
+                "config_json": {"project_id": "my-gcp-project"},
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["result"], VERTEX_SDK_MISSING_MESSAGE)
+        mock_validate.assert_not_called()
+        model.refresh_from_db()
+        self.assertEqual(model.input_token_cost, 0.01)
+
+        # Without new credentials there is nothing to call: costs still save.
+        response = self.client.patch(
+            f"{BASE_URL}/custom_models/edit/",
+            {"id": str(model.id), "input_token_cost": 0.05},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        model.refresh_from_db()
+        self.assertEqual(model.input_token_cost, 0.05)
 
     def test_patch_edit_model_not_found(self):
         """Test patching non-existent model."""

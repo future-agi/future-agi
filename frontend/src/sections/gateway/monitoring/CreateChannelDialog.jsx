@@ -13,10 +13,14 @@ import {
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import { useUpdateConfig } from "../providers/hooks/useGatewayConfig";
+import { ALERT_CHANNEL_TYPE_OPTIONS } from "../constants/alerting";
 
-const CHANNEL_TYPES = ["webhook", "email", "slack", "pagerduty"];
-
-const CreateChannelDialog = ({ open, onClose, gatewayId }) => {
+const CreateChannelDialog = ({
+  open,
+  onClose,
+  gatewayId,
+  existingChannels = [],
+}) => {
   const [name, setName] = useState("");
   const [type, setType] = useState("webhook");
   const [url, setUrl] = useState("");
@@ -35,20 +39,25 @@ const CreateChannelDialog = ({ open, onClose, gatewayId }) => {
   };
 
   const handleCreate = () => {
-    const channel = { name, type, url };
+    const channelName = name.trim();
+    const channel = { name: channelName, type };
+    if (url.trim()) channel.url = url.trim();
+
+    // Send the whole array, for the same reason the rule dialog does: a
+    // name-keyed object would replace a channels array saved from
+    // Settings → Alerting.
+    const channels = [
+      ...existingChannels.filter((c) => c?.name !== channelName),
+      channel,
+    ];
 
     updateConfig.mutate(
-      {
-        gatewayId,
-        config: {
-          alerting: {
-            channels: { [name]: channel },
-          },
-        },
-      },
+      { gatewayId, config: { alerting: { channels } } },
       {
         onSuccess: () => {
-          enqueueSnackbar(`Channel "${name}" created`, { variant: "success" });
+          enqueueSnackbar(`Channel "${channelName}" created`, {
+            variant: "success",
+          });
           handleClose();
         },
         onError: () => {
@@ -78,24 +87,22 @@ const CreateChannelDialog = ({ open, onClose, gatewayId }) => {
             value={type}
             onChange={(e) => setType(e.target.value)}
           >
-            {CHANNEL_TYPES.map((t) => (
-              <MenuItem key={t} value={t}>
-                {t}
+            {ALERT_CHANNEL_TYPE_OPTIONS.map((t) => (
+              <MenuItem key={t.value} value={t.value}>
+                {t.label}
               </MenuItem>
             ))}
           </TextField>
           <TextField
             label="URL / Endpoint"
             fullWidth
-            required
+            required={type !== "log"}
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder={
-              type === "webhook"
+              type === "slack"
                 ? "https://hooks.slack.com/..."
-                : type === "email"
-                  ? "alerts@company.com"
-                  : "Endpoint URL"
+                : "Endpoint URL"
             }
           />
           {updateConfig.isError && (
@@ -110,7 +117,11 @@ const CreateChannelDialog = ({ open, onClose, gatewayId }) => {
         <Button
           variant="contained"
           onClick={handleCreate}
-          disabled={!name.trim() || !url.trim() || updateConfig.isPending}
+          disabled={
+            !name.trim() ||
+            (type !== "log" && !url.trim()) ||
+            updateConfig.isPending
+          }
         >
           {updateConfig.isPending ? "Creating..." : "Add Channel"}
         </Button>
@@ -123,6 +134,7 @@ CreateChannelDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   gatewayId: PropTypes.string,
+  existingChannels: PropTypes.arrayOf(PropTypes.object),
 };
 
 export default CreateChannelDialog;

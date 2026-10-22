@@ -15,9 +15,9 @@ import (
 var syncHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 // SyncFromControlPlane fetches all org configs from the Django control plane
-// bulk endpoint and loads them into the tenant store. If the control plane is
-// unreachable, it logs a warning and returns an error so background retry loops
-// can keep trying while the gateway continues serving with its current store.
+// bulk endpoint and loads them into the tenant store. A failure leaves the
+// store as it was and is returned for the caller to log: during startup the
+// control plane is often not up yet, which is not worth a warning.
 func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store *Store) error {
 	if baseURL == "" {
 		slog.Info("control plane sync skipped: no URL configured")
@@ -36,43 +36,38 @@ func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store
 
 	resp, err := syncHTTPClient.Do(req)
 	if err != nil {
-		slog.Warn("control plane sync failed (gateway will start with empty org store)",
-			"url", endpoint,
-			"error", err,
-		)
 		return fmt.Errorf("control plane unreachable: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		slog.Warn("control plane sync returned non-200",
-			"url", endpoint,
-			"status", resp.StatusCode,
-			"body", string(body),
-		)
-		return fmt.Errorf("control plane returned status %d: %s", resp.StatusCode, body)
+		return fmt.Errorf("control plane returned status %d from %s: %s", resp.StatusCode, endpoint, body)
 	}
 
-	// Django response format: {"status": true, "result": {"org_id": {...}, ...}}
+	// Django response format:
+	// {"status": true, "result": {"org_id": {...}, ...}, "unbuilt_org_ids": ["org_id", ...]}
+	// unbuilt_org_ids names orgs whose config the control plane could not build.
 	var envelope struct {
-		Status bool                       `json:"status"`
-		Result map[string]json.RawMessage `json:"result"`
+		Status        bool                       `json:"status"`
+		Result        map[string]json.RawMessage `json:"result"`
+		UnbuiltOrgIDs []string                   `json:"unbuilt_org_ids"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 10<<20)).Decode(&envelope); err != nil {
-		slog.Warn("control plane sync: failed to parse response",
-			"error", err,
-		)
 		return fmt.Errorf("parsing sync response: %w", err)
 	}
 
 	if !envelope.Status {
-		slog.Warn("control plane sync: response status=false")
 		return fmt.Errorf("control plane sync: status=false")
 	}
 
-	// Build set of all org IDs in the response (including those that fail to parse).
-	allOrgIDs := make(map[string]struct{}, len(envelope.Result))
+	// Build set of all org IDs in the response, including those that fail to
+	// parse here and those the control plane could not build. MergeBulk keeps
+	// the stored entry of every org in this set that has no parsed config.
+	allOrgIDs := make(map[string]struct{}, len(envelope.Result)+len(envelope.UnbuiltOrgIDs))
+	for _, orgID := range envelope.UnbuiltOrgIDs {
+		allOrgIDs[orgID] = struct{}{}
+	}
 	configs := make(map[string]*OrgConfig, len(envelope.Result))
 	var parseErrors int
 	for orgID, raw := range envelope.Result {
@@ -90,9 +85,15 @@ func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store
 	}
 
 	store.MergeBulk(configs, allOrgIDs)
+	if len(envelope.UnbuiltOrgIDs) > 0 {
+		slog.Warn("control plane sync: control plane could not build some org configs, keeping existing entries",
+			"org_ids", envelope.UnbuiltOrgIDs,
+		)
+	}
 	slog.Info("control plane sync completed",
 		"orgs_loaded", len(configs),
 		"parse_errors", parseErrors,
+		"unbuilt", len(envelope.UnbuiltOrgIDs),
 	)
 	return nil
 }

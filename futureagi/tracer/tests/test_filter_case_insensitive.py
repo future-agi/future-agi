@@ -118,58 +118,69 @@ class TestSpanAttributeTextCaseInsensitive:
 
     def test_equals_lowers_both_sides(self):
         where, params = _builder().translate([_attr("mykey", "equals", "Hello")])
-        assert "lowerUTF8(toString(span_attr_str['mykey'])) =" in where
-        assert params["attr_1"] == "hello"
+        assert "lowerUTF8(toString(span_attr_str[%(attr_key_1)s])) =" in where
+        assert params == {"attr_key_1": "mykey", "attr_2": "hello"}
 
     def test_not_equals_lowers_both_sides(self):
         where, params = _builder().translate([_attr("mykey", "not_equals", "Hello")])
-        assert "lowerUTF8(toString(span_attr_str['mykey'])) !=" in where
-        assert params["attr_1"] == "hello"
+        assert "lowerUTF8(toString(span_attr_str[%(attr_key_1)s])) !=" in where
+        assert params == {"attr_key_1": "mykey", "attr_2": "hello"}
 
     def test_in_lowers_values(self):
         where, params = _builder().translate([_attr("mykey", "in", ["Hello", "World"])])
-        assert "lowerUTF8(toString(span_attr_str['mykey'])) IN" in where
-        assert params["attr_1"] == ("hello", "world")
+        assert "lowerUTF8(toString(span_attr_str[%(attr_key_1)s])) IN" in where
+        assert params == {"attr_key_1": "mykey", "attr_2": ("hello", "world")}
 
     def test_not_in_lowers_values(self):
         where, params = _builder().translate(
             [_attr("mykey", "not_in", ["Hello", "World"])]
         )
-        assert "lowerUTF8(toString(span_attr_str['mykey'])) NOT IN" in where
-        assert params["attr_1"] == ("hello", "world")
+        assert "lowerUTF8(toString(span_attr_str[%(attr_key_1)s])) NOT IN" in where
+        assert params == {"attr_key_1": "mykey", "attr_2": ("hello", "world")}
 
     def test_contains_uses_literal_utf8_search(self):
         where, params = _builder().translate([_attr("mykey", "contains", "Hello")])
-        assert "positionUTF8(lowerUTF8(toString(span_attr_str['mykey']))" in where
-        assert params["attr_1"] == "Hello"
+        assert (
+            "positionUTF8(lowerUTF8(toString(span_attr_str[%(attr_key_1)s]))" in where
+        )
+        assert params == {"attr_key_1": "mykey", "attr_2": "Hello"}
 
     def test_not_contains_uses_literal_utf8_search(self):
         where, params = _builder().translate([_attr("mykey", "not_contains", "Hello")])
-        assert "positionUTF8(lowerUTF8(toString(span_attr_str['mykey']))" in where
+        assert (
+            "positionUTF8(lowerUTF8(toString(span_attr_str[%(attr_key_1)s]))" in where
+        )
         assert ") = 0" in where
-        assert params["attr_1"] == "Hello"
+        assert params == {"attr_key_1": "mykey", "attr_2": "Hello"}
 
     def test_starts_with_uses_literal_utf8_search(self):
-        where, _ = _builder().translate([_attr("mykey", "starts_with", "Hel")])
-        assert "startsWith(lowerUTF8(toString(span_attr_str['mykey']))" in where
+        where, params = _builder().translate([_attr("mykey", "starts_with", "Hel")])
+        assert "startsWith(lowerUTF8(toString(span_attr_str[%(attr_key_1)s]))" in where
+        assert params == {"attr_key_1": "mykey", "attr_2": "Hel"}
 
     def test_ends_with_uses_literal_utf8_search(self):
-        where, _ = _builder().translate([_attr("mykey", "ends_with", "lo")])
-        assert "endsWith(lowerUTF8(toString(span_attr_str['mykey']))" in where
+        where, params = _builder().translate([_attr("mykey", "ends_with", "lo")])
+        assert "endsWith(lowerUTF8(toString(span_attr_str[%(attr_key_1)s]))" in where
+        assert params == {"attr_key_1": "mykey", "attr_2": "lo"}
 
     def test_exists_predicate_still_present(self):
         """Case-insensitive predicate must still guard with mapContains."""
-        where, _ = _builder().translate([_attr("mykey", "equals", "X")])
-        assert "mapContains(span_attr_str, 'mykey')" in where
+        where, params = _builder().translate([_attr("mykey", "equals", "X")])
+        assert "mapContains(span_attr_str, %(attr_key_1)s)" in where
+        assert params == {"attr_key_1": "mykey", "attr_2": "x"}
 
     def test_number_attr_not_case_folded(self):
-        where, _ = _builder().translate([_attr("mykey", "equals", 5, ftype="number")])
+        where, params = _builder().translate(
+            [_attr("mykey", "equals", 5, ftype="number")]
+        )
         assert "lower(" not in where
-        assert "span_attr_num['mykey'] =" in where
+        assert "span_attr_num[%(attr_key_1)s] =" in where
+        assert params == {"attr_key_1": "mykey", "attr_2": 5.0}
 
     def test_boolean_attr_not_case_folded(self):
-        where, _ = _builder().translate(
+        where, params = _builder().translate(
             [_attr("mykey", "equals", True, ftype="boolean")]
         )
         assert "lower(" not in where
-        assert "span_attr_bool['mykey'] =" in where
+        assert "span_attr_bool[%(attr_key_1)s] =" in where
+        assert params == {"attr_key_1": "mykey", "attr_2": 1}

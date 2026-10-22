@@ -2427,9 +2427,11 @@ export interface APIKeyBulkItemApi {
   owner: string;
   /** @minLength 1 */
   key_hash: string;
+  key_prefix: string;
   models: string[];
   providers: string[];
   metadata: APIKeyBulkItemApiMetadata;
+  expires_at: string | null;
 }
 
 export interface APIKeyBulkResponseApi {
@@ -2620,6 +2622,7 @@ export interface GatewayConfigProviderApi {
   base_url: string;
   /** Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set. */
   api_format: string;
+  api_path_prefix?: string;
   models: GatewayConfigProviderApiModelsItem[];
   is_active: boolean;
   default_timeout: number;
@@ -3317,6 +3320,8 @@ export type OrgConfigBulkResponseApiResult = {
 export interface OrgConfigBulkResponseApi {
   status: boolean;
   result: OrgConfigBulkResponseApiResult;
+  /** Orgs with an active config that could not be built. The gateway keeps their last good config instead of dropping them. */
+  unbuilt_org_ids: string[];
 }
 
 export type AgentccProviderCredentialApiModelsList = { [key: string]: unknown };
@@ -3365,6 +3370,18 @@ export interface AgentccProviderCredentialApi {
   last_rotated_at?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
+}
+
+export interface AgentccRequestLogMetadataValuesApi {
+  application: string[];
+  service: string[];
+  /** key:value pairs, for keys declared as custom properties. */
+  tags: string[];
+}
+
+export interface AgentccRequestLogMetadataValuesResponseApi {
+  status: boolean;
+  result: AgentccRequestLogMetadataValuesApi;
 }
 
 export type AgentccRequestLogDetailApiMetadata = { [key: string]: unknown };
@@ -4059,6 +4076,15 @@ export const SetupChecksResultApiMode = {
   experiment: "experiment",
 } as const;
 
+export type SetupChecksResultApiSetup =
+  (typeof SetupChecksResultApiSetup)[keyof typeof SetupChecksResultApiSetup];
+
+export const SetupChecksResultApiSetup = {
+  standalone: "standalone",
+  distributed: "distributed",
+  helm: "helm",
+} as const;
+
 export type SetupCheckApiStatus =
   (typeof SetupCheckApiStatus)[keyof typeof SetupCheckApiStatus];
 
@@ -4077,11 +4103,17 @@ export interface SetupCheckApi {
   status: SetupCheckApiStatus;
   required: boolean;
   detail: string;
+  fix: string;
+  docs_url: string;
 }
 
 export interface SetupChecksResultApi {
   status: SetupChecksResultApiStatus;
   mode: SetupChecksResultApiMode;
+  setup: SetupChecksResultApiSetup;
+  /** @minLength 1 */
+  collector_http_url: string;
+  account_exists: boolean;
   checks: SetupCheckApi[];
 }
 
@@ -5005,6 +5037,7 @@ export const IntegrationConnectionListApiPlatform = {
   cloud_storage: "cloud_storage",
   message_queue: "message_queue",
   linear: "linear",
+  slack: "slack",
 } as const;
 
 export type IntegrationConnectionListApiStatus =
@@ -5123,6 +5156,7 @@ export const IntegrationConnectionCreateApiPlatform = {
   cloud_storage: "cloud_storage",
   message_queue: "message_queue",
   linear: "linear",
+  slack: "slack",
 } as const;
 
 export type IntegrationConnectionCreateApiCredentials = {
@@ -5190,6 +5224,7 @@ export const IntegrationConnectionDetailApiPlatform = {
   cloud_storage: "cloud_storage",
   message_queue: "message_queue",
   linear: "linear",
+  slack: "slack",
 } as const;
 
 export type IntegrationConnectionDetailApiStatus =
@@ -5283,6 +5318,7 @@ export const ValidateCredentialsApiPlatform = {
   cloud_storage: "cloud_storage",
   message_queue: "message_queue",
   linear: "linear",
+  slack: "slack",
 } as const;
 
 export type ValidateCredentialsApiCredentials = { [key: string]: unknown };
@@ -5333,6 +5369,26 @@ export interface IntegrationValidationResponseApi {
   result: IntegrationValidationResultApi;
 }
 
+export interface SlackChannelApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  is_private: boolean;
+  is_member: boolean;
+}
+
+export interface SlackChannelsResultApi {
+  channels: SlackChannelApi[];
+  /** @minLength 1 */
+  next_cursor: string;
+}
+
+export interface SlackChannelsResponseApi {
+  status: boolean;
+  result: SlackChannelsResultApi;
+}
+
 export interface IntegrationConnectionUpdateApi {
   /**
    * @minLength 1
@@ -5374,6 +5430,20 @@ export interface IntegrationMessageResultApi {
 export interface IntegrationMessageResponseApi {
   status?: boolean;
   result: IntegrationMessageResultApi;
+}
+
+export interface SlackInstallApi {
+  connection_id?: string;
+}
+
+export interface SlackInstallResultApi {
+  /** @minLength 1 */
+  authorization_url: string;
+}
+
+export interface SlackInstallResponseApi {
+  status: boolean;
+  result: SlackInstallResultApi;
 }
 
 export type SyncLogApiStatus =
@@ -5584,8 +5654,29 @@ export interface MCPToolCallResponseApi {
   session_id: string;
 }
 
+export interface MCPToolParameterApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly type?: string;
+  readonly description?: string;
+  readonly required?: boolean;
+}
+
+export type MCPToolDiscoveryItemApiInputSchema = { [key: string]: unknown };
+
+export interface MCPToolDiscoveryItemApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly category?: string;
+  readonly description?: string;
+  readonly parameters?: readonly MCPToolParameterApi[];
+  readonly input_schema?: MCPToolDiscoveryItemApiInputSchema;
+}
+
 export interface MCPToolListResultApi {
-  tools: ToolDiscoveryItemApi[];
+  tools: MCPToolDiscoveryItemApi[];
   total: number;
   session_id: string;
 }
@@ -8666,6 +8757,50 @@ export interface DuplicateDatasetResponseApi {
   result: DuplicateDatasetResultApi;
 }
 
+export type DatasetLimitCheckFailedErrorApiType =
+  (typeof DatasetLimitCheckFailedErrorApiType)[keyof typeof DatasetLimitCheckFailedErrorApiType];
+
+export const DatasetLimitCheckFailedErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type DatasetLimitCheckFailedErrorApiCode =
+  (typeof DatasetLimitCheckFailedErrorApiCode)[keyof typeof DatasetLimitCheckFailedErrorApiCode];
+
+export const DatasetLimitCheckFailedErrorApiCode = {
+  dataset_limit_check_failed: "dataset_limit_check_failed",
+} as const;
+
+export type DatasetLimitCheckFailedErrorApiDetails = {
+  [key: string]: string[];
+};
+
+export interface DatasetLimitCheckFailedErrorApi {
+  status?: boolean;
+  type?: DatasetLimitCheckFailedErrorApiType;
+  code?: DatasetLimitCheckFailedErrorApiCode;
+  detail?: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: DatasetLimitCheckFailedErrorApiDetails;
+}
+
 export interface ExtractEntitiesRequestApi {
   column_id: string;
   /** @minLength 1 */
@@ -9113,6 +9248,11 @@ export interface DatasetCreationProgressResponseApi {
   result: DatasetCreationProgressResultApi;
 }
 
+export interface DatasetDeleteApi {
+  /** @maxItems 50 */
+  dataset_ids: string[];
+}
+
 export interface EditRunPromptColumnApi {
   dataset_id: string;
   column_id: string;
@@ -9493,10 +9633,25 @@ export interface DatasetMultipleStaticColumnsRequestApi {
   columns: DatasetMultipleStaticColumnsRequestApiColumnsItem[];
 }
 
-export type DatasetAddRowsRequestApiRowsItem = { [key: string]: unknown };
+/**
+ * Any valid JSON value.
+ */
+export type DatasetRowCellRequestApiValue = { [key: string]: unknown };
+
+export interface DatasetRowCellRequestApi {
+  /** @minLength 1 */
+  column_name: string;
+  /** Any valid JSON value. */
+  value?: DatasetRowCellRequestApiValue;
+}
+
+export interface DatasetRowRequestApi {
+  id?: string;
+  cells?: DatasetRowCellRequestApi[];
+}
 
 export interface DatasetAddRowsRequestApi {
-  rows: DatasetAddRowsRequestApiRowsItem[];
+  rows: DatasetRowRequestApi[];
 }
 
 export type DatasetAddRowsFromExistingRequestApiColumnMapping = {
@@ -11180,8 +11335,11 @@ export const EvalUsageStatsResponseResultApiCompleteness = {
 export interface EvalUsageStatsApi {
   total_runs: number;
   runs_period: number;
+  /** Deprecated compatibility field. Usage counts only successful runs, so this always equals runs_period. */
   success_count: number;
+  /** Deprecated compatibility field. Usage counts only successful runs, so this is always 0; failed runs stay in the eval logs. */
   error_count: number;
+  /** Deprecated compatibility field. Usage counts only successful runs, so this is 100 when runs_period is above 0, otherwise 0. */
   pass_rate: number;
 }
 
@@ -13900,6 +14058,131 @@ export interface DerivedVariableDetailResponseApi {
   result: DerivedVariableDetailApi;
 }
 
+export type PromptTemplatePatchApiVariableNames = { [key: string]: unknown };
+
+export type PromptTemplatePatchApiPlaceholders = { [key: string]: unknown };
+
+export interface PromptTemplatePatchApi {
+  readonly id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  name?: string;
+  description?: string;
+  variable_names?: PromptTemplatePatchApiVariableNames;
+  readonly organization?: string;
+  prompt_folder?: string;
+  placeholders?: PromptTemplatePatchApiPlaceholders;
+  readonly created_by?: string;
+}
+
+export interface PromptRunStatusResultApi {
+  /** @minLength 1 */
+  status: string;
+  error_message: string;
+  executions_result: PromptHistoryExecutionApi;
+}
+
+export interface PromptRunStatusResponseApi {
+  status: boolean;
+  result: PromptRunStatusResultApi;
+}
+
+export type PromptRunRequestApiVariableNames = {
+  [key: string]: { [key: string]: unknown };
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptRunRequestApiPlaceholders = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptRunRequestApiEvaluationConfigsItem = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptRunRequestApiIsRun = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptRunModelConfigurationApiToolsItem = {
+  [key: string]: unknown;
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type PromptRunModelConfigurationApiModelDetail = {
+  [key: string]: unknown;
+};
+
+/**
+ * String or JSON object.
+ */
+export type PromptRunModelConfigurationApiResponseFormat =
+  | string
+  | { [key: string]: unknown };
+
+/**
+ * String or JSON object.
+ */
+export type PromptRunModelConfigurationApiModel =
+  | string
+  | { [key: string]: unknown };
+
+export interface PromptRunModelConfigurationApi {
+  tool_choice?: string;
+  template_format?: string;
+  tools?: PromptRunModelConfigurationApiToolsItem[];
+  output_format?: string;
+  model_type?: string;
+  /** Any valid JSON value. */
+  model_detail?: PromptRunModelConfigurationApiModelDetail;
+  voice_id?: string;
+  temperature?: number;
+  max_tokens?: number;
+  top_p?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  /** String or JSON object. */
+  response_format?: PromptRunModelConfigurationApiResponseFormat;
+  /** String or JSON object. */
+  model?: PromptRunModelConfigurationApiModel;
+  [key: string]: unknown;
+}
+
+export interface PromptRunConfigurationApi {
+  messages?: MessageItemApi[];
+  configuration?: PromptRunModelConfigurationApi;
+}
+
+export interface PromptRunRequestApi {
+  /** @minLength 1 */
+  name?: string;
+  /** @minLength 1 */
+  version?: string;
+  prompt_config?: PromptRunConfigurationApi[];
+  variable_names?: PromptRunRequestApiVariableNames;
+  /** Any valid JSON value. */
+  placeholders?: PromptRunRequestApiPlaceholders;
+  evaluation_configs?: PromptRunRequestApiEvaluationConfigsItem[];
+  /** @minLength 1 */
+  source?: string;
+  /** Any valid JSON value. */
+  is_run?: PromptRunRequestApiIsRun;
+  is_sdk?: boolean;
+  /** @minimum 0 */
+  run_index?: number;
+}
+
 export type PromptDerivedVariablesResultApiDerivedVariables = {
   [key: string]: string[];
 };
@@ -14227,6 +14510,8 @@ export interface BulkCreateScoresApi {
   span_notes?: string;
   span_notes_source_id?: string;
   queue_item_id?: string;
+  /** Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, the score is written to that project's copy. */
+  project_id?: string;
 }
 
 export interface BulkCreateScoresResultApi {
@@ -14305,6 +14590,9 @@ export type TestEvalTemplateApiChoices = { [key: string]: string };
 
 export type TestEvalTemplateApiInputDataTypes = { [key: string]: unknown };
 
+/**
+ * Any valid JSON value.
+ */
 export type TestEvalTemplateApiVariableKeys = { [key: string]: unknown };
 
 export type TestEvalTemplateApiMapping = { [key: string]: unknown };
@@ -14345,6 +14633,7 @@ export interface TestEvalTemplateApi {
   error_localizer?: boolean;
   reason_column?: boolean;
   optional_keys?: string[];
+  /** Any valid JSON value. */
   variable_keys?: TestEvalTemplateApiVariableKeys;
   run_prompt_column?: boolean;
   template_name?: string;
@@ -16755,6 +17044,7 @@ export interface ALKSimulateProvisionRunTestRequestApi {
   agent_definition_id?: string;
   /** @maxLength 255 */
   agent_name?: string;
+  enable_tool_evaluation?: boolean;
 }
 
 export interface ALKSimulateProvisionResultApi {
@@ -16845,17 +17135,687 @@ export interface CallExecutionErrorResponseApi {
   details?: CallExecutionErrorResponseApiDetails;
 }
 
+export type HarnessEnvironmentApiAgentType =
+  (typeof HarnessEnvironmentApiAgentType)[keyof typeof HarnessEnvironmentApiAgentType];
+
+export const HarnessEnvironmentApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentApiStatus =
+  (typeof HarnessEnvironmentApiStatus)[keyof typeof HarnessEnvironmentApiStatus];
+
+export const HarnessEnvironmentApiStatus = {
+  building: "building",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface HarnessEnvironmentApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  domain: string;
+  /** @minLength 1 */
+  source_kind: string;
+  agent_type: HarnessEnvironmentApiAgentType;
+  status: HarnessEnvironmentApiStatus;
+  /** @minLength 1 */
+  stage: string;
+  scenario_count: number;
+  sub_goals_count: number;
+  tools_count: number;
+  runs_count: number;
+  last_updated: string;
+  created_at: string;
+}
+
+export interface HarnessEnvironmentListResponseApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  results: HarnessEnvironmentApi[];
+}
+
+export type HarnessEnvironmentOverviewApiAgentType =
+  (typeof HarnessEnvironmentOverviewApiAgentType)[keyof typeof HarnessEnvironmentOverviewApiAgentType];
+
+export const HarnessEnvironmentOverviewApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentOverviewApiStatus =
+  (typeof HarnessEnvironmentOverviewApiStatus)[keyof typeof HarnessEnvironmentOverviewApiStatus];
+
+export const HarnessEnvironmentOverviewApiStatus = {
+  building: "building",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface HarnessEnvironmentRunLinkApi {
+  run_test_id: string;
+  test_execution_id: string;
+  /** @minLength 1 */
+  simulation_url: string;
+}
+
+export interface HarnessEnvironmentAgentApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  provider: string;
+  versions_count: number;
+  /** @minLength 1 */
+  active_version: string;
+}
+
+export interface HarnessEnvironmentOverviewApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  domain: string;
+  /** @minLength 1 */
+  source_kind: string;
+  agent_type: HarnessEnvironmentOverviewApiAgentType;
+  status: HarnessEnvironmentOverviewApiStatus;
+  /** @minLength 1 */
+  stage: string;
+  scenario_count: number;
+  sub_goals_count: number;
+  tools_count: number;
+  runs_count: number;
+  last_updated: string;
+  created_at: string;
+  flows_count: number;
+  guardrails_count: number;
+  personas_count: number;
+  evaluations_count: number;
+  run: HarnessEnvironmentRunLinkApi;
+  agent: HarnessEnvironmentAgentApi;
+}
+
+export interface HarnessEnvironmentAmendmentApi {
+  subject: string;
+  /** @minLength 1 */
+  note: string;
+}
+
+export type HarnessEnvironmentCatalogueSubGoalApiKind =
+  (typeof HarnessEnvironmentCatalogueSubGoalApiKind)[keyof typeof HarnessEnvironmentCatalogueSubGoalApiKind];
+
+export const HarnessEnvironmentCatalogueSubGoalApiKind = {
+  checkpoint: "checkpoint",
+  judge: "judge",
+} as const;
+
+export interface HarnessEnvironmentCatalogueSubGoalApi {
+  /** @minLength 1 */
+  name: string;
+  what: string;
+  kind: HarnessEnvironmentCatalogueSubGoalApiKind;
+  claim: string;
+  check: string;
+}
+
+export type HarnessEnvironmentEndConditionsApiClock =
+  (typeof HarnessEnvironmentEndConditionsApiClock)[keyof typeof HarnessEnvironmentEndConditionsApiClock];
+
+export const HarnessEnvironmentEndConditionsApiClock = {
+  "real-time": "real-time",
+  stepped: "stepped",
+} as const;
+
+export interface HarnessEnvironmentEndConditionsApi {
+  max_turns: number;
+  max_duration_seconds: number;
+  clock: HarnessEnvironmentEndConditionsApiClock;
+  ended_reasons: string[];
+}
+
+export type HarnessEnvironmentProvenanceApiBuiltBy =
+  (typeof HarnessEnvironmentProvenanceApiBuiltBy)[keyof typeof HarnessEnvironmentProvenanceApiBuiltBy];
+
+export const HarnessEnvironmentProvenanceApiBuiltBy = {
+  alk: "alk",
+  repository: "repository",
+} as const;
+
+export type HarnessEnvironmentProvenanceApiSource = { [key: string]: string };
+
+export type HarnessEnvironmentProvenanceApiDigests = { [key: string]: string };
+
+export type HarnessEnvironmentProvenanceApiAuthoredAt = {
+  [key: string]: string;
+};
+
+export interface HarnessEnvironmentProvenanceApi {
+  source: HarnessEnvironmentProvenanceApiSource;
+  built_by: HarnessEnvironmentProvenanceApiBuiltBy;
+  attempt: number;
+  /** @minLength 1 */
+  snapshot: string;
+  digests: HarnessEnvironmentProvenanceApiDigests;
+  authored_at: HarnessEnvironmentProvenanceApiAuthoredAt;
+}
+
+export type HarnessEnvironmentContractApiToolsItem = { [key: string]: unknown };
+
+export type HarnessEnvironmentContractApiRuntime = { [key: string]: unknown };
+
+export type HarnessEnvironmentContractApiDependenciesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractApiRuntimeDependenciesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractApiToolEntrypointsItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractApiDataStore = { [key: string]: unknown };
+
+export interface HarnessEnvironmentContractApi {
+  agent?: string;
+  one_liner?: string;
+  modality?: string;
+  call_direction?: string;
+  system_prompt_excerpt?: string;
+  tools?: HarnessEnvironmentContractApiToolsItem[];
+  real_use_cases?: string[];
+  hard_constraints?: string[];
+  runtime?: HarnessEnvironmentContractApiRuntime;
+  dependencies?: HarnessEnvironmentContractApiDependenciesItem[];
+  runtime_dependencies?: HarnessEnvironmentContractApiRuntimeDependenciesItem[];
+  implementation?: string;
+  tool_entrypoints?: HarnessEnvironmentContractApiToolEntrypointsItem[];
+  data_store?: HarnessEnvironmentContractApiDataStore;
+  open_questions?: string[];
+  amendments: HarnessEnvironmentAmendmentApi[];
+  sub_goals: HarnessEnvironmentCatalogueSubGoalApi[];
+  end_conditions: HarnessEnvironmentEndConditionsApi;
+  notes?: string;
+  chosen_evals?: string[];
+  provenance: HarnessEnvironmentProvenanceApi;
+}
+
+export interface HarnessEnvironmentPersonaApi {
+  name?: string;
+  scenario_keys: string[];
+}
+
+export interface HarnessEnvironmentStoreTableApi {
+  /** @minLength 1 */
+  name: string;
+  rows: number;
+}
+
+export interface HarnessEnvironmentStoreApi {
+  capability: string;
+  engine: string;
+  strategy: string;
+  tables: HarnessEnvironmentStoreTableApi[];
+  total_rows: number;
+}
+
+export type HarnessEnvironmentWorldApiRuntime = { [key: string]: string };
+
+export interface HarnessEnvironmentWorldApi {
+  runtime: HarnessEnvironmentWorldApiRuntime;
+  personas: HarnessEnvironmentPersonaApi[];
+  stores: HarnessEnvironmentStoreApi[];
+}
+
+export type HarnessEnvironmentSubGoalApiKind =
+  (typeof HarnessEnvironmentSubGoalApiKind)[keyof typeof HarnessEnvironmentSubGoalApiKind];
+
+export const HarnessEnvironmentSubGoalApiKind = {
+  checkpoint: "checkpoint",
+  judge: "judge",
+} as const;
+
+export interface HarnessEnvironmentSubGoalApi {
+  /** @minLength 1 */
+  name: string;
+  what?: string;
+  kind?: HarnessEnvironmentSubGoalApiKind;
+  claim?: string;
+}
+
+export type HarnessEnvironmentScenarioApiFixture = { [key: string]: string };
+
+export type HarnessEnvironmentScenarioApiPersona = { [key: string]: string };
+
+export interface HarnessEnvironmentScenarioApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  scenario_id: string;
+  name: string;
+  instruction: string;
+  /** @minLength 1 */
+  use_case: string;
+  /** @minLength 1 */
+  branch: string;
+  /** @minLength 1 */
+  tests: string;
+  fixture: HarnessEnvironmentScenarioApiFixture;
+  steps: number;
+  sub_goals: HarnessEnvironmentSubGoalApi[];
+  persona: HarnessEnvironmentScenarioApiPersona;
+  /** @minLength 1 */
+  situation: string;
+  /** @minLength 1 */
+  outcome: string;
+  /** @minLength 1 */
+  status: string;
+  call_execution_id: string;
+}
+
+export type HarnessEnvironmentSelectedEvalApiSource =
+  (typeof HarnessEnvironmentSelectedEvalApiSource)[keyof typeof HarnessEnvironmentSelectedEvalApiSource];
+
+export const HarnessEnvironmentSelectedEvalApiSource = {
+  system: "system",
+  custom: "custom",
+} as const;
+
+export type HarnessEnvironmentSelectedEvalApiAgentType =
+  (typeof HarnessEnvironmentSelectedEvalApiAgentType)[keyof typeof HarnessEnvironmentSelectedEvalApiAgentType];
+
+export const HarnessEnvironmentSelectedEvalApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentSelectedEvalApiModality =
+  (typeof HarnessEnvironmentSelectedEvalApiModality)[keyof typeof HarnessEnvironmentSelectedEvalApiModality];
+
+export const HarnessEnvironmentSelectedEvalApiModality = {
+  voice: "voice",
+  text: "text",
+  any: "any",
+} as const;
+
+export interface HarnessEnvironmentEvalInputApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  source: string;
+  /** @minLength 1 */
+  label: string;
+}
+
+export interface HarnessEnvironmentSelectedEvalApi {
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  source: HarnessEnvironmentSelectedEvalApiSource;
+  tags: string[];
+  required_keys: string[];
+  agent_type: HarnessEnvironmentSelectedEvalApiAgentType;
+  modality: HarnessEnvironmentSelectedEvalApiModality;
+  credits_per_run: number;
+  charges_judge_tokens: boolean;
+  inputs: HarnessEnvironmentEvalInputApi[];
+  id: string;
+  runnable: boolean;
+  editable: boolean;
+}
+
+export type HarnessEnvironmentResultApiEvaluationsItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentResultApiCoverage = { [key: string]: string };
+
+export interface HarnessEnvironmentResultApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  /** @minLength 1 */
+  status: string;
+  attempt_number: number;
+  evaluations: HarnessEnvironmentResultApiEvaluationsItem[];
+  coverage: HarnessEnvironmentResultApiCoverage;
+}
+
+export interface HarnessEnvironmentEvaluationsApi {
+  selected: HarnessEnvironmentSelectedEvalApi[];
+  results: HarnessEnvironmentResultApi[];
+}
+
+export interface HarnessEnvironmentCredentialFileApi {
+  /** @minLength 1 */
+  environment_name: string;
+}
+
+export type HarnessEnvironmentAgentSettingsApiConfig = {
+  [key: string]: string;
+};
+
+export interface HarnessEnvironmentAgentSettingsApi {
+  /** @minLength 1 */
+  connector: string;
+  /** @minLength 1 */
+  mode: string;
+  /** @minLength 1 */
+  call_direction: string;
+  config: HarnessEnvironmentAgentSettingsApiConfig;
+  secret_refs: string[];
+  secrets: string[];
+  credential_files: HarnessEnvironmentCredentialFileApi[];
+}
+
+export type HarnessEnvironmentSettingsApiSource = { [key: string]: string };
+
+export type HarnessEnvironmentSettingsApiRuntime = { [key: string]: string };
+
+export type HarnessEnvironmentSettingsApiSecurity = { [key: string]: string };
+
+export type HarnessEnvironmentSettingsApiArtifacts = { [key: string]: string };
+
+export interface HarnessEnvironmentSettingsApi {
+  /** @minLength 1 */
+  schema_version: string;
+  source: HarnessEnvironmentSettingsApiSource;
+  agent: HarnessEnvironmentAgentSettingsApi;
+  runtime: HarnessEnvironmentSettingsApiRuntime;
+  security: HarnessEnvironmentSettingsApiSecurity;
+  artifacts: HarnessEnvironmentSettingsApiArtifacts;
+  scenario_count: number;
+  seed: number;
+  enable_tool_evaluation: boolean;
+}
+
+export interface HarnessEnvironmentDetailApi {
+  id: string;
+  overview: HarnessEnvironmentOverviewApi;
+  contract: HarnessEnvironmentContractApi;
+  world: HarnessEnvironmentWorldApi;
+  scenarios: HarnessEnvironmentScenarioApi[];
+  evaluations: HarnessEnvironmentEvaluationsApi;
+  settings: HarnessEnvironmentSettingsApi;
+}
+
+export interface HarnessEnvironmentRenameApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+}
+
+export interface HarnessEnvironmentAddEvaluationApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+}
+
+export type HarnessEnvironmentOfferedEvalApiSource =
+  (typeof HarnessEnvironmentOfferedEvalApiSource)[keyof typeof HarnessEnvironmentOfferedEvalApiSource];
+
+export const HarnessEnvironmentOfferedEvalApiSource = {
+  system: "system",
+  custom: "custom",
+} as const;
+
+export type HarnessEnvironmentOfferedEvalApiAgentType =
+  (typeof HarnessEnvironmentOfferedEvalApiAgentType)[keyof typeof HarnessEnvironmentOfferedEvalApiAgentType];
+
+export const HarnessEnvironmentOfferedEvalApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentOfferedEvalApiModality =
+  (typeof HarnessEnvironmentOfferedEvalApiModality)[keyof typeof HarnessEnvironmentOfferedEvalApiModality];
+
+export const HarnessEnvironmentOfferedEvalApiModality = {
+  voice: "voice",
+  text: "text",
+  any: "any",
+} as const;
+
+export interface HarnessEnvironmentOfferedEvalApi {
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  source: HarnessEnvironmentOfferedEvalApiSource;
+  tags: string[];
+  required_keys: string[];
+  agent_type: HarnessEnvironmentOfferedEvalApiAgentType;
+  modality: HarnessEnvironmentOfferedEvalApiModality;
+  credits_per_run: number;
+  charges_judge_tokens: boolean;
+  inputs: HarnessEnvironmentEvalInputApi[];
+}
+
+export interface HarnessEnvironmentAvailableEvalsApi {
+  evaluations: HarnessEnvironmentOfferedEvalApi[];
+}
+
+export interface HarnessEnvironmentToolCallEvaluationApi {
+  enable_tool_evaluation: boolean;
+}
+
+/**
+ * Updated evaluation configuration parameters.
+ */
+export type HarnessEnvironmentEvalEditApiConfig = { [key: string]: unknown };
+
+/**
+ * Updated field mapping between test data and evaluation inputs.
+ */
+export type HarnessEnvironmentEvalEditApiMapping = { [key: string]: unknown };
+
+export type HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type HarnessEnvironmentEvalEditApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type HarnessEnvironmentEvalEditApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: HarnessEnvironmentEvalEditApiFiltersItemFilterConfig;
+};
+
+export interface HarnessEnvironmentEvalEditApi {
+  /** Updated evaluation configuration parameters. */
+  config?: HarnessEnvironmentEvalEditApiConfig;
+  /** Updated field mapping between test data and evaluation inputs. */
+  mapping?: HarnessEnvironmentEvalEditApiMapping;
+  /**
+   * Model to use for evaluations.
+   * @minLength 1
+   */
+  model?: string;
+  /** Enable granular error localization in evaluation results. */
+  error_localizer?: boolean;
+  /** UUID of a knowledge base to use for grounding. Pass null to clear. Switching template_id without providing an explicit kb_id will clear the KB association. */
+  kb_id?: string;
+  /** Updated canonical filter list to restrict which test results are evaluated. */
+  filters?: HarnessEnvironmentEvalEditApiFiltersItem[];
+  /**
+   * Updated name for the evaluation configuration.
+   * @minLength 1
+   */
+  name?: string;
+}
+
+export type SimulateEvalConfigResponseApiConfig = { [key: string]: unknown };
+
+export type SimulateEvalConfigResponseApiMapping = { [key: string]: unknown };
+
+export type SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type SimulateEvalConfigResponseApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type SimulateEvalConfigResponseApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: SimulateEvalConfigResponseApiFiltersItemFilterConfig;
+};
+
+export interface SimulateEvalConfigResponseApi {
+  readonly id?: string;
+  /** @minLength 1 */
+  readonly name?: string;
+  readonly config?: SimulateEvalConfigResponseApiConfig;
+  readonly mapping?: SimulateEvalConfigResponseApiMapping;
+  readonly filters?: readonly SimulateEvalConfigResponseApiFiltersItem[];
+  readonly error_localizer?: boolean;
+  /** @minLength 1 */
+  readonly model?: string;
+  /** @minLength 1 */
+  readonly status?: string;
+  /** @minLength 1 */
+  readonly eval_group?: string;
+  readonly template_id?: string;
+  /** @minLength 1 */
+  readonly eval_type?: string;
+  readonly regradable?: boolean;
+  readonly editable?: boolean;
+}
+
+export interface HarnessRunCreateApi {
+  /** @maxItems 1000 */
+  scenario_ids: string[];
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials?: number;
+}
+
+export interface HarnessRunCreateResponseApi {
+  environment_id: string;
+  job_id: string;
+  run_id: string;
+  run_test_id: string;
+  test_execution_id: string;
+  /** @minimum 1 */
+  scenario_count: number;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials: number;
+  /** @minimum 1 */
+  total_calls: number;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  stage: string;
+}
+
+export interface HarnessEnvironmentRunEvaluationQueuedApi {
+  /** Stamped and scheduled for dispatch -- not yet dispatched. A call whose stamp committed but whose grading job then failed to queue is still counted here, not subtracted. */
+  queued: number;
+  skipped_existing: number;
+  skipped_in_flight: number;
+  skipped_pending: number;
+  completed_calls: number;
+}
+
+export interface HarnessEnvironmentRunEvaluationsApi {
+  /** @minItems 1 */
+  eval_config_ids: string[];
+  /** Saved on the environment before grading starts; left as it is when absent. */
+  enable_tool_evaluation?: boolean;
+}
+
+export interface HarnessEnvironmentRunEvaluationsQueuedApi {
+  /** How many of the run's calls were queued for grading. */
+  call_execution_count: number;
+}
+
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
+
+export type HarnessJobReadApiUsageLimit = { [key: string]: unknown };
 
 export type HarnessJobInfoApiSource = { [key: string]: string };
 
 export type HarnessJobInfoApiMetadata = { [key: string]: string };
+
+export type HarnessJobInfoApiRuntime = { [key: string]: string };
 
 export interface HarnessJobInfoApi {
   job_id: string;
   run_id: string;
   source: HarnessJobInfoApiSource;
   metadata: HarnessJobInfoApiMetadata;
+  runtime?: HarnessJobInfoApiRuntime;
   run_test_id: string;
   test_execution_id: string;
 }
@@ -16872,6 +17832,8 @@ export interface HarnessJobStatusApi {
   attempt: number;
   completed_scenarios: number;
   failed_scenarios: number;
+  active_scenarios?: number;
+  queued_scenarios?: number;
   total_scenarios: number;
   /** @minLength 1 */
   deadline_at: string;
@@ -16942,6 +17904,122 @@ export interface HarnessRuntimeReadApi {
   diagnostics?: HarnessDiagnosticsApi;
 }
 
+export interface HarnessParallelismApi {
+  requested: number;
+  admitted: number;
+  effective: number;
+  degrade_reasons: string[];
+}
+
+export type HarnessConversationMessageApiRole =
+  (typeof HarnessConversationMessageApiRole)[keyof typeof HarnessConversationMessageApiRole];
+
+export const HarnessConversationMessageApiRole = {
+  user: "user",
+  assistant: "assistant",
+  system: "system",
+} as const;
+
+export type HarnessConversationMessageApiKind =
+  (typeof HarnessConversationMessageApiKind)[keyof typeof HarnessConversationMessageApiKind];
+
+export const HarnessConversationMessageApiKind = {
+  message: "message",
+  question: "question",
+  confirmation: "confirmation",
+  status: "status",
+} as const;
+
+export type HarnessConversationMessageApiState =
+  (typeof HarnessConversationMessageApiState)[keyof typeof HarnessConversationMessageApiState];
+
+export const HarnessConversationMessageApiState = {
+  queued: "queued",
+  delivered: "delivered",
+  streaming: "streaming",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export type HarnessConversationMessageApiPayload = { [key: string]: unknown };
+
+export interface HarnessConversationMessageApi {
+  message_id: string;
+  /** @minimum 1 */
+  sequence: number;
+  role: HarnessConversationMessageApiRole;
+  kind: HarnessConversationMessageApiKind;
+  state: HarnessConversationMessageApiState;
+  stage: string;
+  content: string;
+  payload: HarnessConversationMessageApiPayload;
+  /** @minLength 1 */
+  invocation_id?: string;
+  /** @minLength 1 */
+  function_call_id?: string;
+  reply_to?: string;
+  created_at: string;
+}
+
+export type HarnessConversationEventReadApiPayload = { [key: string]: unknown };
+
+export interface HarnessConversationEventReadApi {
+  /** @minLength 1 */
+  event_id: string;
+  /** @minimum 1 */
+  sequence: number;
+  /** @minLength 1 */
+  kind: string;
+  message_id?: string;
+  stage: string;
+  /** @minLength 1 */
+  invocation_id?: string;
+  /** @minLength 1 */
+  function_call_id?: string;
+  payload: HarnessConversationEventReadApiPayload;
+  emitted_at: string;
+}
+
+export interface HarnessConversationRuntimeApi {
+  /** @minLength 1 */
+  state: string;
+  warm_until: string;
+  degraded: boolean;
+  available: boolean;
+}
+
+export type HarnessConversationReadApiBlockingInput = {
+  [key: string]: unknown;
+};
+
+export interface HarnessConversationReadApi {
+  conversation_id: string;
+  job_id: string;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  stage: string;
+  /** @minLength 1 */
+  active_invocation_id: string;
+  blocking_input: HarnessConversationReadApiBlockingInput;
+  messages: HarnessConversationMessageApi[];
+  events: HarnessConversationEventReadApi[];
+  /** @minimum 0 */
+  event_watermark: number;
+  runtime: HarnessConversationRuntimeApi;
+}
+
+export interface HarnessConsumptionApi {
+  /** @minimum 0 */
+  text_sim_tokens: number;
+  /** @minimum 0 */
+  voice_sim_minutes: number;
+  /** @minimum 0 */
+  ai_credits: number;
+  /** @minimum 0 */
+  sandbox_seconds: number;
+}
+
 export interface HarnessJobReadApi {
   job: HarnessJobInfoApi;
   status: HarnessJobStatusApi;
@@ -16951,6 +18029,10 @@ export interface HarnessJobReadApi {
   receipts: HarnessJobReadApiReceiptsItem[];
   platform: HarnessPlatformApi;
   runtime?: HarnessRuntimeReadApi;
+  parallelism?: HarnessParallelismApi;
+  conversation?: HarnessConversationReadApi;
+  consumption?: HarnessConsumptionApi;
+  usage_limit?: HarnessJobReadApiUsageLimit;
 }
 
 export type HarnessJobCreateApiSchemaVersion =
@@ -16980,6 +18062,8 @@ export const HarnessSourceApiVisibility = {
   private: "private",
 } as const;
 
+export type HarnessSourceApiEnvironmentValues = { [key: string]: string };
+
 export interface HarnessSourceApi {
   kind: HarnessSourceApiKind;
   /**
@@ -17006,6 +18090,7 @@ export interface HarnessSourceApi {
   /** @minLength 1 */
   endpoint?: string;
   visibility?: HarnessSourceApiVisibility;
+  environment_values?: HarnessSourceApiEnvironmentValues;
 }
 
 export type HarnessAgentApiConnector =
@@ -17016,6 +18101,7 @@ export const HarnessAgentApiConnector = {
   vapi: "vapi",
   retell: "retell",
   retell_chat: "retell_chat",
+  phone: "phone",
   auto: "auto",
 } as const;
 
@@ -17026,6 +18112,17 @@ export const HarnessAgentApiMode = {
   connect_only: "connect_only",
   environment_backed: "environment_backed",
   provider_import: "provider_import",
+} as const;
+
+/**
+ * inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.
+ */
+export type HarnessAgentApiCallDirection =
+  (typeof HarnessAgentApiCallDirection)[keyof typeof HarnessAgentApiCallDirection];
+
+export const HarnessAgentApiCallDirection = {
+  inbound: "inbound",
+  outbound: "outbound",
 } as const;
 
 export type SecretReferenceApiManager =
@@ -17060,13 +18157,15 @@ export interface SecretReferenceApi {
   purpose: SecretReferenceApiPurpose;
 }
 
-export type HarnessAgentApiConfig = { [key: string]: string };
+export type HarnessAgentApiConfig = { [key: string]: unknown };
 
 export type HarnessAgentApiSecretRefs = { [key: string]: SecretReferenceApi };
 
 export interface HarnessAgentApi {
   connector: HarnessAgentApiConnector;
   mode?: HarnessAgentApiMode;
+  /** inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only. */
+  call_direction?: HarnessAgentApiCallDirection;
   config?: HarnessAgentApiConfig;
   secret_refs?: HarnessAgentApiSecretRefs;
 }
@@ -17174,7 +18273,7 @@ export interface HarnessJobCreateApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 200
+   * @maximum 1000
    */
   scenario_count?: number;
   seed?: number;
@@ -17211,7 +18310,7 @@ export interface HarnessPreflightApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 200
+   * @maximum 1000
    */
   scenario_count?: number;
   seed?: number;
@@ -17227,6 +18326,72 @@ export interface HarnessPreflightApi {
   metadata?: HarnessPreflightApiMetadata;
   /** Target-provider values to verify live; used for this check only. */
   credential_values?: HarnessPreflightApiCredentialValues;
+}
+
+export type HarnessPreflightResponseApiState =
+  (typeof HarnessPreflightResponseApiState)[keyof typeof HarnessPreflightResponseApiState];
+
+export const HarnessPreflightResponseApiState = {
+  connected: "connected",
+  failed: "failed",
+} as const;
+
+export type HarnessPreflightResponseApiResourceProfile = {
+  [key: string]: unknown;
+};
+
+export type HarnessPreflightResponseApiSnapshot = { [key: string]: unknown };
+
+export type HarnessPreflightCheckApiStatus =
+  (typeof HarnessPreflightCheckApiStatus)[keyof typeof HarnessPreflightCheckApiStatus];
+
+export const HarnessPreflightCheckApiStatus = {
+  passed: "passed",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export interface HarnessPreflightCheckApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  status: HarnessPreflightCheckApiStatus;
+  detail: string;
+  missing: string[];
+  /** @minLength 1 */
+  fix: string;
+}
+
+export type HarnessPreflightCredentialsApiRequirementsItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessPreflightCredentialsApiCredentialChoicesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessPreflightCredentialsApiProbeItem = {
+  [key: string]: unknown;
+};
+
+export interface HarnessPreflightCredentialsApi {
+  scanned_files: number;
+  detected_connectors: string[];
+  requirements: HarnessPreflightCredentialsApiRequirementsItem[];
+  credential_choices: HarnessPreflightCredentialsApiCredentialChoicesItem[];
+  probe: HarnessPreflightCredentialsApiProbeItem[];
+}
+
+export interface HarnessPreflightResponseApi {
+  ready_to_submit: boolean;
+  state: HarnessPreflightResponseApiState;
+  checks: HarnessPreflightCheckApi[];
+  credentials: HarnessPreflightCredentialsApi;
+  parallelism_enabled: boolean;
+  effective_parallelism: number;
+  resource_profile: HarnessPreflightResponseApiResourceProfile;
+  snapshot: HarnessPreflightResponseApiSnapshot;
 }
 
 export interface HarnessSecretFileUploadResponseApi {
@@ -17254,6 +18419,15 @@ export interface HarnessSourceUploadResponseApi {
   total_bytes: number;
 }
 
+export type HarnessJobAdjustmentApiTargetStage =
+  (typeof HarnessJobAdjustmentApiTargetStage)[keyof typeof HarnessJobAdjustmentApiTargetStage];
+
+export const HarnessJobAdjustmentApiTargetStage = {
+  understand: "understand",
+  environment: "environment",
+  scenarios: "scenarios",
+} as const;
+
 export interface HarnessJobAdjustmentApi {
   /**
    * A user correction to apply at the next safe harness stage boundary.
@@ -17266,6 +18440,9 @@ export interface HarnessJobAdjustmentApi {
    * @maxLength 128
    */
   client_request_id?: string;
+  target_stage?: HarnessJobAdjustmentApiTargetStage;
+  /** @minimum 1 */
+  scenario_delta?: number;
 }
 
 export type HarnessJobActionApiReason =
@@ -17278,6 +18455,37 @@ export const HarnessJobActionApiReason = {
 
 export interface HarnessJobActionApi {
   reason?: HarnessJobActionApiReason;
+}
+
+export type HarnessConversationMessageCreateApiKind =
+  (typeof HarnessConversationMessageCreateApiKind)[keyof typeof HarnessConversationMessageCreateApiKind];
+
+export const HarnessConversationMessageCreateApiKind = {
+  user_message: "user_message",
+  user_response: "user_response",
+  approval: "approval",
+  interrupt: "interrupt",
+  cancel_operation: "cancel_operation",
+} as const;
+
+export type HarnessConversationMessageCreateApiPayload = {
+  [key: string]: unknown;
+};
+
+export interface HarnessConversationMessageCreateApi {
+  /**
+   * @minLength 1
+   * @maxLength 20000
+   */
+  content: string;
+  /**
+   * @minLength 1
+   * @pattern ^[A-Za-z0-9_-]{1,128}$
+   */
+  client_request_id: string;
+  kind?: HarnessConversationMessageCreateApiKind;
+  reply_to?: string;
+  payload?: HarnessConversationMessageCreateApiPayload;
 }
 
 export interface HarnessJobExtendApi {
@@ -17297,6 +18505,39 @@ export interface HarnessJobExtendApi {
    * @maxLength 128
    */
   client_request_id?: string;
+}
+
+export type HarnessScenarioChangeApiOp =
+  (typeof HarnessScenarioChangeApiOp)[keyof typeof HarnessScenarioChangeApiOp];
+
+export const HarnessScenarioChangeApiOp = {
+  drop: "drop",
+  set_field: "set_field",
+  set_persona: "set_persona",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type HarnessScenarioChangeApiValue = { [key: string]: unknown };
+
+export type HarnessScenarioChangeApiPersona = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export interface HarnessScenarioChangeApi {
+  op: HarnessScenarioChangeApiOp;
+  scenario?: string;
+  scenarios?: string[];
+  field?: string;
+  /** Any valid JSON value. */
+  value?: HarnessScenarioChangeApiValue;
+  persona?: HarnessScenarioChangeApiPersona;
+}
+
+export interface HarnessScenarioAmendApi {
+  changes: HarnessScenarioChangeApi[];
+  rework?: boolean;
 }
 
 export type HarnessManifestApiSchemaVersion =
@@ -17465,6 +18706,57 @@ export interface HarnessSubGoalApi {
   judged: boolean;
 }
 
+export type HarnessTargetMetricsApiProvider =
+  (typeof HarnessTargetMetricsApiProvider)[keyof typeof HarnessTargetMetricsApiProvider];
+
+export const HarnessTargetMetricsApiProvider = {
+  vapi: "vapi",
+  retell: "retell",
+  livekit: "livekit",
+} as const;
+
+export interface HarnessTargetUsageApi {
+  /** @minimum 0 */
+  prompt_tokens?: number;
+  /** @minimum 0 */
+  completion_tokens?: number;
+  /** @minimum 0 */
+  total_tokens?: number;
+}
+
+export interface HarnessTargetLatencyApi {
+  /** @minimum 0 */
+  turn?: number;
+  /** @minimum 0 */
+  model?: number;
+  /** @minimum 0 */
+  voice?: number;
+  /** @minimum 0 */
+  transcriber?: number;
+  /** @minimum 0 */
+  endpointing?: number;
+  /** @maxItems 1000 */
+  turns?: number[];
+}
+
+export interface HarnessTargetMetricsApi {
+  provider: HarnessTargetMetricsApiProvider;
+  usage?: HarnessTargetUsageApi;
+  /** @minimum 0 */
+  cost_cents?: number;
+  latency?: HarnessTargetLatencyApi;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  provider_call_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  provider_end_reason?: string;
+}
+
 export interface HarnessCallApi {
   started_at: string;
   ended_at: string;
@@ -17483,6 +18775,8 @@ export interface HarnessCallApi {
    * @maxLength 128
    */
   stop_reason?: string;
+  script_completed?: boolean;
+  target_metrics?: HarnessTargetMetricsApi;
 }
 
 export type HarnessFailureApiDomain =
@@ -17618,6 +18912,394 @@ export interface HarnessScenarioOperationResultApi {
 
 export interface HarnessScenarioOperationResponseApi {
   result: HarnessScenarioOperationResultApi;
+}
+
+export type HarnessUsageRequestApiOperation =
+  (typeof HarnessUsageRequestApiOperation)[keyof typeof HarnessUsageRequestApiOperation];
+
+export const HarnessUsageRequestApiOperation = {
+  check: "check",
+  report: "report",
+} as const;
+
+export type HarnessUsageRequestApiAction =
+  (typeof HarnessUsageRequestApiAction)[keyof typeof HarnessUsageRequestApiAction];
+
+export const HarnessUsageRequestApiAction = {
+  text_call: "text_call",
+  voice_call: "voice_call",
+} as const;
+
+export type HarnessUsageRequestApiSchemaVersion =
+  (typeof HarnessUsageRequestApiSchemaVersion)[keyof typeof HarnessUsageRequestApiSchemaVersion];
+
+export const HarnessUsageRequestApiSchemaVersion = {
+  "futureagiharness-usagev1": "futureagi.harness-usage.v1",
+} as const;
+
+export type HarnessUsageRecordApiAction =
+  (typeof HarnessUsageRecordApiAction)[keyof typeof HarnessUsageRecordApiAction];
+
+export const HarnessUsageRecordApiAction = {
+  text_call: "text_call",
+  voice_call: "voice_call",
+} as const;
+
+export type HarnessUsageRecordApiFunding =
+  (typeof HarnessUsageRecordApiFunding)[keyof typeof HarnessUsageRecordApiFunding];
+
+export const HarnessUsageRecordApiFunding = {
+  platform: "platform",
+  customer: "customer",
+} as const;
+
+export type HarnessUsageRecordApiOutcome =
+  (typeof HarnessUsageRecordApiOutcome)[keyof typeof HarnessUsageRecordApiOutcome];
+
+export const HarnessUsageRecordApiOutcome = {
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export type HarnessUsageRecordApiFailureDomain =
+  (typeof HarnessUsageRecordApiFailureDomain)[keyof typeof HarnessUsageRecordApiFailureDomain];
+
+export const HarnessUsageRecordApiFailureDomain = {
+  agent: "agent",
+  simulator: "simulator",
+  environment: "environment",
+  connectivity: "connectivity",
+  infrastructure: "infrastructure",
+  grading: "grading",
+  artifact: "artifact",
+  platform_sync: "platform_sync",
+} as const;
+
+export interface HarnessUsageRecordApi {
+  id: string;
+  action: HarnessUsageRecordApiAction;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  scenario_key: string;
+  /** @minimum 0 */
+  amount: number;
+  occurred_at: string;
+  funding: HarnessUsageRecordApiFunding;
+  outcome?: HarnessUsageRecordApiOutcome;
+  failure_domain?: HarnessUsageRecordApiFailureDomain;
+}
+
+export interface HarnessUsageRequestApi {
+  operation: HarnessUsageRequestApiOperation;
+  action?: HarnessUsageRequestApiAction;
+  schema_version?: HarnessUsageRequestApiSchemaVersion;
+  records?: HarnessUsageRecordApi[];
+}
+
+export type HarnessUsageResponseApiUpgradeCta = { [key: string]: unknown };
+
+export interface HarnessUsageResponseApi {
+  allowed?: boolean;
+  accepted?: boolean;
+  reason?: string;
+  error_code?: string;
+  dimension?: string;
+  current_usage?: number;
+  limit?: number;
+  upgrade_cta?: HarnessUsageResponseApiUpgradeCta;
+}
+
+export type HarnessConversationAdjustmentApiTargetStage =
+  (typeof HarnessConversationAdjustmentApiTargetStage)[keyof typeof HarnessConversationAdjustmentApiTargetStage];
+
+export const HarnessConversationAdjustmentApiTargetStage = {
+  understand: "understand",
+  environment: "environment",
+  scenarios: "scenarios",
+} as const;
+
+export interface HarnessConversationAdjustmentApi {
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  instruction: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  client_request_id?: string;
+  target_stage?: HarnessConversationAdjustmentApiTargetStage;
+  /** @minimum 1 */
+  scenario_delta?: number;
+}
+
+export interface HarnessConversationAdjustmentResponseApi {
+  adjustment_id: string;
+  /** @minLength 1 */
+  client_request_id?: string;
+  /** @minLength 1 */
+  instruction: string;
+  /** @minLength 1 */
+  target_stage: string;
+  scenario_delta: number;
+  /** @minLength 1 */
+  status: string;
+  created_at: string;
+}
+
+export type HarnessConversationEventBatchApiSchemaVersion =
+  (typeof HarnessConversationEventBatchApiSchemaVersion)[keyof typeof HarnessConversationEventBatchApiSchemaVersion];
+
+export const HarnessConversationEventBatchApiSchemaVersion = {
+  "futureagiharness-conversation-eventv1":
+    "futureagi.harness-conversation-event.v1",
+} as const;
+
+export type HarnessConversationEventApiSchemaVersion =
+  (typeof HarnessConversationEventApiSchemaVersion)[keyof typeof HarnessConversationEventApiSchemaVersion];
+
+export const HarnessConversationEventApiSchemaVersion = {
+  "futureagiharness-conversation-eventv1":
+    "futureagi.harness-conversation-event.v1",
+} as const;
+
+export type HarnessConversationEventApiKind =
+  (typeof HarnessConversationEventApiKind)[keyof typeof HarnessConversationEventApiKind];
+
+export const HarnessConversationEventApiKind = {
+  turn_started: "turn_started",
+  assistant_delta: "assistant_delta",
+  assistant_message: "assistant_message",
+  stage_changed: "stage_changed",
+  authoring_activity: "authoring_activity",
+  tool_started: "tool_started",
+  tool_result: "tool_result",
+  question_requested: "question_requested",
+  confirmation_requested: "confirmation_requested",
+  turn_interrupted: "turn_interrupted",
+  turn_completed: "turn_completed",
+  checkpoint_committed: "checkpoint_committed",
+  capability_changed: "capability_changed",
+} as const;
+
+export type HarnessConversationEventApiPayload = { [key: string]: unknown };
+
+export interface HarnessConversationEventApi {
+  schema_version: HarnessConversationEventApiSchemaVersion;
+  /**
+   * @minLength 1
+   * @pattern ^[A-Za-z0-9_-]{1,128}$
+   */
+  event_id: string;
+  conversation_id: string;
+  /** @minimum 1 */
+  sequence: number;
+  kind: HarnessConversationEventApiKind;
+  message_id?: string;
+  /** @maxLength 32 */
+  stage?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  invocation_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  function_call_id?: string;
+  emitted_at: string;
+  payload: HarnessConversationEventApiPayload;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[0-9a-f]{64}$
+   */
+  digest: string;
+}
+
+export interface HarnessConversationEventBatchApi {
+  schema_version: HarnessConversationEventBatchApiSchemaVersion;
+  /** @minimum 0 */
+  acknowledged_through: number;
+  events: HarnessConversationEventApi[];
+}
+
+export interface HarnessConversationEventAckApi {
+  /** @minimum 0 */
+  acked_through_sequence: number;
+}
+
+export interface HarnessConversationOverviewQueryApi {
+  [key: string]: unknown;
+}
+
+export type HarnessConversationOverviewApiEnvironment = {
+  [key: string]: string;
+};
+
+export type HarnessConversationOverviewApiUseCasesItem = {
+  [key: string]: string;
+};
+
+export type HarnessConversationOverviewApiCoverage = { [key: string]: string };
+
+export type HarnessConversationOverviewApiRecentRunsItem = {
+  [key: string]: string;
+};
+
+export type HarnessConversationOverviewApiBuildChangesItem = {
+  [key: string]: string;
+};
+
+export type HarnessConversationOverviewApiEarlierMessagesItem = {
+  [key: string]: string;
+};
+
+export interface HarnessConversationOverviewApi {
+  environment: HarnessConversationOverviewApiEnvironment;
+  scenario_count: number;
+  use_cases: HarnessConversationOverviewApiUseCasesItem[];
+  coverage: HarnessConversationOverviewApiCoverage;
+  recent_runs: HarnessConversationOverviewApiRecentRunsItem[];
+  build_changes: HarnessConversationOverviewApiBuildChangesItem[];
+  earlier_messages: HarnessConversationOverviewApiEarlierMessagesItem[];
+}
+
+export interface HarnessConversationPublishApi {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  digest: string;
+}
+
+export interface HarnessConversationRerunApi {
+  [key: string]: unknown;
+}
+
+export type HarnessConversationRunStatusApiReceipts = {
+  [key: string]: unknown;
+};
+
+export interface HarnessConversationRunStatusApi {
+  job_id: string;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  stage: string;
+  /** @minimum 0 */
+  completed_scenarios: number;
+  /** @minimum 0 */
+  failed_scenarios: number;
+  /** @minimum 0 */
+  total_scenarios: number;
+  receipts: HarnessConversationRunStatusApiReceipts;
+}
+
+export interface HarnessConversationRunsQueryApi {
+  /** @maxLength 64 */
+  run_id?: string;
+  /**
+   * @minimum 1
+   * @maximum 50
+   */
+  limit?: number;
+}
+
+export type HarnessConversationRunStartApiRangesItem = {
+  [key: string]: number;
+};
+
+export interface HarnessConversationRunStartApi {
+  /** @maxItems 5000 */
+  numbers?: number[];
+  /** @maxItems 100 */
+  ranges?: HarnessConversationRunStartApiRangesItem[];
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials?: number;
+  /** @maxLength 64 */
+  operation_id?: string;
+}
+
+export type HarnessConversationScenarioQueryApiRangesItem = {
+  [key: string]: number;
+};
+
+export type HarnessConversationScenarioQueryApiFilters = {
+  [key: string]: string;
+};
+
+export interface HarnessConversationScenarioQueryApi {
+  /** @maxItems 5000 */
+  numbers?: number[];
+  /** @maxItems 100 */
+  ranges?: HarnessConversationScenarioQueryApiRangesItem[];
+  /** @maxItems 500 */
+  names?: string[];
+  /** @maxItems 1000 */
+  ids?: string[];
+  /** @maxLength 500 */
+  search?: string;
+  filters?: HarnessConversationScenarioQueryApiFilters;
+  /** @minimum 1 */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+  full?: boolean;
+}
+
+export type HarnessConversationTranscriptAppendApiEntriesItem = {
+  [key: string]: unknown;
+};
+
+export interface HarnessConversationTranscriptAppendApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  project_key: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  session_id: string;
+  /** @maxLength 512 */
+  subpath?: string;
+  /**
+   * @minItems 1
+   * @maxItems 500
+   */
+  entries: HarnessConversationTranscriptAppendApiEntriesItem[];
+}
+
+export interface HarnessConversationTranscriptAppendResponseApi {
+  /** @minimum 0 */
+  appended: number;
+}
+
+export interface HarnessConversationWorkspaceResponseApi {
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[0-9a-f]{64}$
+   */
+  digest: string;
+  /** @minimum 0 */
+  size: number;
+}
+
+export type HarnessIngressProxyRequestApiPayload = { [key: string]: unknown };
+
+export interface HarnessIngressProxyRequestApi {
+  payload?: HarnessIngressProxyRequestApiPayload;
 }
 
 export type LiveKitCallConfigResponseApiCallMetadata = {
@@ -18358,64 +20040,6 @@ export type RunTestResponseApiScenariosDetailItem = { [key: string]: unknown };
 
 export type RunTestResponseApiSimulatorAgentDetail = { [key: string]: unknown };
 
-export type SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
-  (typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem];
-
-export const SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
-  {
-    string: "string",
-    number: "number",
-    boolean: "boolean",
-  } as const;
-
-export type SimulateEvalConfigResponseApiConfig = { [key: string]: unknown };
-
-export type SimulateEvalConfigResponseApiMapping = { [key: string]: unknown };
-
-export type SimulateEvalConfigResponseApiFiltersItemFilterConfig = {
-  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
-  filter_type: string;
-  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
-  filter_op: string;
-  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
-  filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
-  col_type?: string;
-  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
-  attribute_value_types?: SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem[];
-};
-
-export type SimulateEvalConfigResponseApiFiltersItem = {
-  /** Column or attribute id to filter on. */
-  column_id: string;
-  /** Optional stable namespaced Property Registry identity. */
-  property_id?: string;
-  /** Optional UI label for chips and saved views. */
-  display_name?: string;
-  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
-  source?: string;
-  /** Optional metric output type metadata used by eval and annotation filters. */
-  output_type?: string;
-  filter_config: SimulateEvalConfigResponseApiFiltersItemFilterConfig;
-};
-
-export interface SimulateEvalConfigResponseApi {
-  readonly id?: string;
-  /** @minLength 1 */
-  readonly name?: string;
-  readonly config?: SimulateEvalConfigResponseApiConfig;
-  readonly mapping?: SimulateEvalConfigResponseApiMapping;
-  readonly filters?: readonly SimulateEvalConfigResponseApiFiltersItem[];
-  readonly error_localizer?: boolean;
-  /** @minLength 1 */
-  readonly model?: string;
-  /** @minLength 1 */
-  readonly status?: string;
-  /** @minLength 1 */
-  readonly eval_group?: string;
-  readonly template_id?: string;
-}
-
 export interface RunTestResponseApi {
   readonly id?: string;
   /**
@@ -18595,6 +20219,17 @@ export const CallExecutionDetailApiStatus = {
 } as const;
 
 /**
+ * Set on the v3 call detail: a sub-goal check or an evaluation
+ */
+export type CallExecutionEvalMetricApiKind =
+  (typeof CallExecutionEvalMetricApiKind)[keyof typeof CallExecutionEvalMetricApiKind];
+
+export const CallExecutionEvalMetricApiKind = {
+  evaluation: "evaluation",
+  sub_goal: "sub_goal",
+} as const;
+
+/**
  * number | bool | string | list[string] | null
  */
 export type CallExecutionEvalMetricApiValue = { [key: string]: unknown };
@@ -18615,10 +20250,14 @@ export interface CallExecutionEvalMetricApi {
   reason?: string;
   type?: string;
   template_type?: string;
+  /** Set on the v3 call detail: a sub-goal check or an evaluation */
+  kind?: CallExecutionEvalMetricApiKind;
   visible?: boolean;
   error?: boolean;
   status?: string;
   skipped?: boolean;
+  /** Present and true only when the eval was removed from the environment; a live eval's verdict omits the key entirely. */
+  removed?: boolean;
   error_localizer?: boolean;
   error_analysis?: CallExecutionEvalMetricApiErrorAnalysis;
   error_localizer_status?: string;
@@ -18717,6 +20356,9 @@ export interface CallExecutionDetailApi {
   readonly recordings?: string;
   readonly test_execution_id?: string;
   readonly scenario_id?: string;
+  readonly source_scenario_key?: string;
+  readonly trial_index?: string;
+  readonly harness_outcome_status?: string;
   readonly scenario_graph?: string;
   readonly scenario_graph_id?: string;
   readonly avg_agent_latency?: number;
@@ -19464,6 +21106,10 @@ export interface EvalConfigResponseApi {
   status?: EvalConfigResponseApiStatus;
   readonly eval_group?: string;
   readonly template_id?: string;
+  /** @minLength 1 */
+  readonly eval_type?: string;
+  readonly regradable?: boolean;
+  readonly editable?: boolean;
 }
 
 export interface AddEvalConfigsResponseApi {
@@ -19682,6 +21328,18 @@ export interface TestExecutionItemResponseApi {
   readonly total_number_of_fagi_agent_turns?: number;
   /** @minLength 1 */
   readonly source_type?: string;
+  readonly scenario_keys?: readonly string[];
+  readonly selected_scenarios?: number;
+  readonly trials?: number;
+  readonly total_calls?: number;
+  readonly completed_calls?: number;
+  readonly failed_calls?: number;
+  readonly pending_calls?: number;
+  /** @minLength 1 */
+  readonly completed_at?: string;
+  readonly outcome_passed?: number;
+  readonly outcome_failed?: number;
+  readonly outcome_skipped?: number;
 }
 
 export interface RunTestExecutionsResponseApi {
@@ -19691,6 +21349,7 @@ export interface RunTestExecutionsResponseApi {
   /** @minLength 1 */
   readonly previous?: string;
   readonly results?: readonly TestExecutionItemResponseApi[];
+  readonly covered_scenario_count?: number;
 }
 
 export interface SimulationPreviewItemApi {
@@ -19787,6 +21446,7 @@ export interface RunNewEvalsResponseApi {
   message: string;
   run_test_id: string;
   call_execution_count: number;
+  dispatched: boolean;
 }
 
 export interface RunTestScenarioItemResponseApi {
@@ -20436,6 +22096,136 @@ export interface TestExecutionColumnOrderResponseApi {
   readonly column_order?: readonly ColumnOrderApi[];
 }
 
+export type TestExecutionDebugAnalysisResponseApiStatus =
+  (typeof TestExecutionDebugAnalysisResponseApiStatus)[keyof typeof TestExecutionDebugAnalysisResponseApiStatus];
+
+export const TestExecutionDebugAnalysisResponseApiStatus = {
+  not_requested: "not_requested",
+  pending: "pending",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface DebugAnalysisCoverageApi {
+  /** @minLength 1 */
+  scope: string;
+  observed_call_count: number;
+  read_complete: boolean;
+}
+
+export interface DebugAnalysisReportApi {
+  id: string;
+  /** @minLength 1 */
+  execution_status: string;
+  /** @minLength 1 */
+  outcome: string;
+  coverage: DebugAnalysisCoverageApi;
+  /** @minLength 1 */
+  error_message: string;
+  /** @minLength 1 */
+  grouping_status: string;
+  recorded_at: string;
+}
+
+export interface DebugAnalysisClusterApi {
+  id: string;
+  /** @minLength 1 */
+  cluster_id: string;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  error_type: string;
+}
+
+export interface DebugAnalysisEvidenceApi {
+  /** @minLength 1 */
+  evidence_id: string;
+  call_execution_id: string;
+  /** @minLength 1 */
+  excerpt: string;
+}
+
+export interface DebugAnalysisFindingApi {
+  id: string;
+  /** @minLength 1 */
+  kind: string;
+  /** @minLength 1 */
+  statement: string;
+  /** @minLength 1 */
+  recovery: string;
+  /** @minLength 1 */
+  category: string;
+  /** @minLength 1 */
+  group_label: string;
+  /** @minLength 1 */
+  fix_layer: string;
+  /** @minLength 1 */
+  confidence: string;
+  /** @minLength 1 */
+  goal: string;
+  cluster: DebugAnalysisClusterApi;
+  evidence: DebugAnalysisEvidenceApi[];
+}
+
+export interface DebugAnalysisSummaryApi {
+  measured_call_count: number;
+  broken_goal_count: number;
+  broken_call_count: number;
+  one_off_count: number;
+  excluded_call_ids: string[];
+  unanalyzed_call_ids: string[];
+}
+
+export interface DebugAnalysisWayApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  phrase: string;
+  call_ids: string[];
+}
+
+export interface DebugAnalysisGoalApi {
+  /** @minLength 1 */
+  goal: string;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  criteria: string;
+  broken_call_ids: string[];
+  tested_call_count: number;
+  ways: DebugAnalysisWayApi[];
+  unexplained_call_ids: string[];
+}
+
+export interface TestExecutionDebugAnalysisResponseApi {
+  test_execution_id: string;
+  status: TestExecutionDebugAnalysisResponseApiStatus;
+  generation: number;
+  job_id: string;
+  /** @minLength 1 */
+  error_message: string;
+  report: DebugAnalysisReportApi;
+  findings: DebugAnalysisFindingApi[];
+  summary: DebugAnalysisSummaryApi;
+  goals: DebugAnalysisGoalApi[];
+  one_offs: DebugAnalysisWayApi[];
+}
+
+export interface TestExecutionDebugAnalysisNotFoundApi {
+  /** @minLength 1 */
+  detail: string;
+}
+
+export interface TestExecutionDebugAnalysisErrorApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  detail: string;
+}
+
 export interface EvalExplanationClusterApi {
   /** @minLength 1 */
   readonly kind?: string;
@@ -20485,6 +22275,8 @@ export type RunTestKPIsResponseApiScenarioGraphs = {
 
 export interface RunTestKPIsResponseApi {
   readonly total_calls?: number;
+  /** Calls with status completed, counted like every other KPI here: soft-deleted calls included. The run-level add's 202 counts live calls only, so the two can differ for a run with a deleted call (TH-8057). */
+  readonly completed_calls?: number;
   readonly avg_score?: number;
   readonly avg_response?: number;
   readonly calls_attempted?: number;
@@ -20632,6 +22424,1031 @@ export interface TestExecutionTranscriptsResponseApi {
   readonly total_transcripts?: number;
 }
 
+/**
+ * Current status of the call
+ */
+export type CallExecutionV3DetailResponseApiStatus =
+  (typeof CallExecutionV3DetailResponseApiStatus)[keyof typeof CallExecutionV3DetailResponseApiStatus];
+
+export const CallExecutionV3DetailResponseApiStatus = {
+  pending: "pending",
+  queued: "queued",
+  ongoing: "ongoing",
+  completed: "completed",
+  failed: "failed",
+  analyzing: "analyzing",
+  cancelled: "cancelled",
+} as const;
+
+/**
+ * Get evaluation metrics in a format suitable for the UI
+ */
+export type CallExecutionV3DetailResponseApiEvalMetrics = {
+  [key: string]: CallExecutionEvalMetricApi;
+};
+
+/**
+ * Tool evaluation output - separate from standard evaluations
+ */
+export type CallExecutionV3DetailResponseApiToolOutputs = {
+  [key: string]: unknown;
+};
+
+/**
+ * Detailed cost breakdown from customer call data
+ */
+export type CallExecutionV3DetailResponseApiCustomerCostBreakdown = {
+  [key: string]: unknown;
+};
+
+/**
+ * Latency metrics from customer call data
+ */
+export type CallExecutionV3DetailResponseApiCustomerLatencyMetrics = {
+  [key: string]: unknown;
+};
+
+/**
+ * Type of simulation call
+ */
+export type CallExecutionV3DetailResponseApiSimulationCallType =
+  (typeof CallExecutionV3DetailResponseApiSimulationCallType)[keyof typeof CallExecutionV3DetailResponseApiSimulationCallType];
+
+export const CallExecutionV3DetailResponseApiSimulationCallType = {
+  voice: "voice",
+  text: "text",
+} as const;
+
+export type CallExecutionV3DetailResponseApiOutcome =
+  (typeof CallExecutionV3DetailResponseApiOutcome)[keyof typeof CallExecutionV3DetailResponseApiOutcome];
+
+export const CallExecutionV3DetailResponseApiOutcome = {
+  queued: "queued",
+  in_progress: "in_progress",
+  passed: "passed",
+  failed: "failed",
+  inconclusive: "inconclusive",
+  error: "error",
+} as const;
+
+export type CallExecutionV3DetailResponseApiScoringStatus =
+  (typeof CallExecutionV3DetailResponseApiScoringStatus)[keyof typeof CallExecutionV3DetailResponseApiScoringStatus];
+
+export const CallExecutionV3DetailResponseApiScoringStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+} as const;
+
+export type CallExecutionV3DetailResponseApiCsatStatus =
+  (typeof CallExecutionV3DetailResponseApiCsatStatus)[keyof typeof CallExecutionV3DetailResponseApiCsatStatus];
+
+export const CallExecutionV3DetailResponseApiCsatStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+  skipped: "skipped",
+} as const;
+
+export interface PersonaDetailsApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  voice: string;
+  /** @minLength 1 */
+  age: string;
+  traits: string[];
+}
+
+export interface SubGoalResultApi {
+  /** @minLength 1 */
+  name: string;
+  passed: boolean | null;
+}
+
+export interface CostBreakdownApi {
+  stt: number;
+  llm: number;
+  tts: number;
+  storage: number;
+  customer: number;
+}
+
+export type SimulateRunV3EvaluationResultApiStatus =
+  (typeof SimulateRunV3EvaluationResultApiStatus)[keyof typeof SimulateRunV3EvaluationResultApiStatus];
+
+export const SimulateRunV3EvaluationResultApiStatus = {
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+  skipped: "skipped",
+} as const;
+
+export type SimulateRunV3EvaluationResultApiValue = { [key: string]: unknown };
+
+export interface SimulateRunV3EvaluationResultApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  type: string;
+  value: SimulateRunV3EvaluationResultApiValue;
+  score: number;
+  passed: boolean;
+  reason: string;
+  status: SimulateRunV3EvaluationResultApiStatus;
+}
+
+export type SimulateRunV3FunctionCallApiArguments = { [key: string]: unknown };
+
+export type SimulateRunV3FunctionCallApiResult = { [key: string]: unknown };
+
+export type SimulateRunV3FunctionCallApiOutput = { [key: string]: unknown };
+
+export interface SimulateRunV3FunctionCallApi {
+  /** @minLength 1 */
+  id?: string;
+  /** @minLength 1 */
+  name?: string;
+  arguments?: SimulateRunV3FunctionCallApiArguments;
+  result?: SimulateRunV3FunctionCallApiResult;
+  output?: SimulateRunV3FunctionCallApiOutput;
+  duration_ms?: number;
+  start_time_ms?: number;
+}
+
+export interface CallExecutionV3DetailResponseApi {
+  readonly id?: string;
+  /** @minLength 1 */
+  readonly service_provider_call_id?: string;
+  readonly session_id?: string;
+  readonly timestamp?: string;
+  readonly call_type?: string;
+  /** Current status of the call */
+  status?: CallExecutionV3DetailResponseApiStatus;
+  readonly duration?: string;
+  /**
+   * Duration of the call in seconds
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  duration_seconds?: number;
+  readonly start_time?: string;
+  readonly transcript?: string;
+  /** @minLength 1 */
+  readonly scenario?: string;
+  readonly overall_score?: string;
+  readonly response_time?: string;
+  /**
+   * Average response time in milliseconds
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  response_time_ms?: number;
+  /** @minLength 1 */
+  readonly audio_url?: string;
+  /** @minLength 1 */
+  readonly customer_name?: string;
+  readonly eval_outputs?: string;
+  /** Get evaluation metrics in a format suitable for the UI */
+  readonly eval_metrics?: CallExecutionV3DetailResponseApiEvalMetrics;
+  readonly scenario_columns?: string;
+  /**
+   * Reason why the call ended
+   * @maxLength 10000
+   */
+  ended_reason?: string;
+  /** @minLength 1 */
+  readonly simulator_agent_name?: string;
+  readonly simulator_agent_id?: string;
+  /** @minLength 1 */
+  readonly agent_definition_used_name?: string;
+  readonly agent_definition_used_id?: string;
+  /** Call summary from the service */
+  call_summary?: string;
+  readonly recordings?: string;
+  readonly test_execution_id?: string;
+  readonly scenario_id?: string;
+  readonly source_scenario_key?: string;
+  readonly trial_index?: string;
+  readonly harness_outcome_status?: string;
+  readonly scenario_graph?: string;
+  readonly scenario_graph_id?: string;
+  readonly avg_agent_latency?: number;
+  /**
+   * Average agent latency in milliseconds (time taken by agent to respond after user's pause)
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  avg_agent_latency_ms?: number;
+  /**
+   * Number of times user interrupted the AI
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  user_interruption_count?: number;
+  /** Rate of user interruptions (interruptions per minute) */
+  user_interruption_rate?: number;
+  /** User's words per minute */
+  user_wpm?: number;
+  /** Bot's words per minute */
+  bot_wpm?: number;
+  /** Ratio of bot speaking time to user speaking time */
+  talk_ratio?: number;
+  /**
+   * Number of times AI interrupted the user
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  ai_interruption_count?: number;
+  /** Rate of AI interruptions (interruptions per minute) */
+  ai_interruption_rate?: number;
+  readonly avg_stop_time_after_interruption?: number;
+  readonly total_tokens?: string;
+  readonly input_tokens?: string;
+  readonly output_tokens?: string;
+  readonly avg_latency_ms?: string;
+  readonly turn_count?: string;
+  readonly agent_talk_percentage?: string;
+  readonly csat_score?: string;
+  readonly processing_skipped?: string;
+  readonly processing_skip_reason?: string;
+  readonly rerun_snapshots?: string;
+  readonly is_snapshot?: string;
+  readonly snapshot_timestamp?: string;
+  readonly rerun_type?: string;
+  readonly original_call_execution_id?: string;
+  /** Tool evaluation output - separate from standard evaluations */
+  tool_outputs?: CallExecutionV3DetailResponseApiToolOutputs;
+  /**
+   * Cost of the call in cents
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  cost_cents?: number;
+  /**
+   * Total customer-reported cost in cents
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  customer_cost_cents?: number;
+  /** Detailed cost breakdown from customer call data */
+  customer_cost_breakdown?: CallExecutionV3DetailResponseApiCustomerCostBreakdown;
+  /** Latency metrics from customer call data */
+  customer_latency_metrics?: CallExecutionV3DetailResponseApiCustomerLatencyMetrics;
+  /**
+   * Customer call ID if available
+   * @maxLength 255
+   */
+  customer_call_id?: string;
+  /** Type of simulation call */
+  simulation_call_type?: CallExecutionV3DetailResponseApiSimulationCallType;
+  readonly provider?: string;
+  /**
+   * Phone number called (null for TEXT/chat simulations)
+   * @maxLength 20
+   */
+  phone_number?: string;
+  /** @minLength 1 */
+  goal: string;
+  /** @minLength 1 */
+  scenario_details: string;
+  /** @minLength 1 */
+  ideal_outcome: string;
+  /** @minLength 1 */
+  conversation_branch: string;
+  /** @minLength 1 */
+  persona: string;
+  persona_details: PersonaDetailsApi;
+  sub_goals: string[];
+  sub_goal_results: SubGoalResultApi[];
+  outcome: CallExecutionV3DetailResponseApiOutcome;
+  cost_breakdown_cents: CostBreakdownApi;
+  evaluations: SimulateRunV3EvaluationResultApi[];
+  function_calls: SimulateRunV3FunctionCallApi[];
+  scoring_status: CallExecutionV3DetailResponseApiScoringStatus;
+  csat_status: CallExecutionV3DetailResponseApiCsatStatus;
+  /** @minLength 1 */
+  csat_reason: string;
+}
+
+export type RunDashboardMetricApiUnit =
+  (typeof RunDashboardMetricApiUnit)[keyof typeof RunDashboardMetricApiUnit];
+
+export const RunDashboardMetricApiUnit = {
+  number: "number",
+  percent: "percent",
+  ms: "ms",
+  seconds: "seconds",
+  ratio: "ratio",
+  cents: "cents",
+} as const;
+
+export interface RunDashboardMetricApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  value: number;
+  unit: RunDashboardMetricApiUnit;
+  measured: number;
+  total: number;
+  note: string;
+}
+
+export interface RunDashboardSegmentApi {
+  /** @minLength 1 */
+  label: string;
+  count: number;
+  share: number;
+  statuses?: string[];
+}
+
+export interface RunDashboardBreakdownApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  total: number;
+  segments: RunDashboardSegmentApi[];
+  headline: RunDashboardSegmentApi;
+}
+
+export interface RunDashboardSloApi {
+  /** @minLength 1 */
+  key: string;
+  average: number;
+  measured: number;
+  max: number;
+  p50: number;
+  p90: number;
+  p99: number;
+  /** @minLength 1 */
+  label: string;
+}
+
+export interface RunDashboardInterruptionsApi {
+  total: number;
+  measured: number;
+  average: number;
+}
+
+export interface RunDashboardSeriesApi {
+  /** @minLength 1 */
+  label: string;
+  started_at: string;
+  calls: number;
+  latency_ms: number;
+  duration_ms: number;
+  llm_cents: number;
+  tts_cents: number;
+  stt_cents: number;
+  storage_cents: number;
+}
+
+export type RunDashboardV3ApiSeriesMode =
+  (typeof RunDashboardV3ApiSeriesMode)[keyof typeof RunDashboardV3ApiSeriesMode];
+
+export const RunDashboardV3ApiSeriesMode = {
+  calls: "calls",
+  time_buckets: "time_buckets",
+} as const;
+
+export interface RunDashboardPercentileApi {
+  percentile: number;
+  value: number;
+}
+
+export interface RunDashboardDistributionApi {
+  /** @minLength 1 */
+  key: string;
+  average: number;
+  measured: number;
+  max: number;
+  p50: number;
+  p90: number;
+  p99: number;
+}
+
+export interface RunDashboardHistogramBinApi {
+  /** @minLength 1 */
+  label: string;
+  lower: number;
+  upper: number;
+  count: number;
+  danger: boolean;
+}
+
+export interface RunDashboardAgreementApi {
+  compared: number;
+  agreed: number;
+  percent: number;
+}
+
+export interface RunDashboardCsatApi {
+  bins: RunDashboardHistogramBinApi[];
+  measured: number;
+  total: number;
+  satisfied: number;
+  satisfied_percent: number;
+  agreement: RunDashboardAgreementApi;
+}
+
+export interface RunDashboardResponseTimeApi {
+  bins: RunDashboardHistogramBinApi[];
+  measured: number;
+  total: number;
+  target_ms: number;
+  p50: number;
+  p95: number;
+  at_or_above_target: number;
+  at_or_above_target_percent: number;
+}
+
+export interface RunDashboardPipelineCostApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  total_cents: number;
+  share: number;
+}
+
+export interface RunDashboardToolApi {
+  /** @minLength 1 */
+  name: string;
+  invocations: number;
+  measured: number;
+  failures: number;
+  failure_rate: number;
+  /** @minLength 1 */
+  failure_label: string;
+}
+
+export interface RunDashboardToolsApi {
+  total_invocations: number;
+  total_tools: number;
+  volume: RunDashboardToolApi[];
+  failures: RunDashboardToolApi[];
+}
+
+export interface RunDashboardTaskApi {
+  rank: number;
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  axis_label: string;
+  value: number;
+  /** @minLength 1 */
+  modality: string;
+  /** @minLength 1 */
+  provider: string;
+}
+
+export interface RunDashboardUnavailableApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  reason: string;
+}
+
+export interface RunDashboardEvaluationSummaryApi {
+  graders: number;
+  passed: number;
+  measured: number;
+  pass_rate: number;
+  errored_checks: number;
+}
+
+export interface RunDashboardRiskApi {
+  queued: number;
+  in_progress: number;
+  /** @minLength 1 */
+  scenario: string;
+  passed: number;
+  failed: number;
+  error: number;
+  inconclusive: number;
+}
+
+export interface RunDashboardHealthApi {
+  show_banner: boolean;
+  attempted: number;
+  ran_cleanly: number;
+  connected: number;
+  errored: number;
+  not_evaluated: number;
+  eval_errors: number;
+}
+
+export interface RunDashboardComparisonApi {
+  available: boolean;
+  previous_execution_id: string;
+  shared_scenarios: number;
+  newly_passing: string[];
+  newly_failing: string[];
+}
+
+export interface RunDashboardV3Api {
+  metrics: RunDashboardMetricApi[];
+  breakdowns: RunDashboardBreakdownApi[];
+  voice_slos: RunDashboardSloApi[];
+  interruptions: RunDashboardInterruptionsApi;
+  series: RunDashboardSeriesApi[];
+  series_limit: number;
+  series_mode: RunDashboardV3ApiSeriesMode;
+  agent_latency_percentiles: RunDashboardPercentileApi[];
+  latency_percentiles: RunDashboardPercentileApi[];
+  distributions: RunDashboardDistributionApi[];
+  csat: RunDashboardCsatApi;
+  agent_response_time: RunDashboardResponseTimeApi;
+  pipeline_cost: RunDashboardPipelineCostApi[];
+  tools: RunDashboardToolsApi;
+  slowest_tasks: RunDashboardTaskApi[];
+  most_expensive_tasks: RunDashboardTaskApi[];
+  unavailable_features: RunDashboardUnavailableApi[];
+  evaluation_summary: RunDashboardEvaluationSummaryApi;
+  use_case_risk: RunDashboardRiskApi[];
+  run_health: RunDashboardHealthApi;
+  comparison: RunDashboardComparisonApi;
+  goal_count: number;
+}
+
+export interface AnalyticsExecutionApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  started_at: string;
+  completed_at: string;
+}
+
+export interface OutcomeCountsApi {
+  queued: number;
+  in_progress: number;
+  passed: number;
+  failed: number;
+  error: number;
+  inconclusive: number;
+}
+
+export interface MetricStatsApi {
+  average: number;
+  p50: number;
+  p75: number;
+  p90: number;
+  p95: number;
+  p99: number;
+  measured: number;
+  total: number;
+}
+
+export interface TotalMetricStatsApi {
+  average: number;
+  p50: number;
+  p75: number;
+  p90: number;
+  p95: number;
+  p99: number;
+  measured: number;
+  total: number;
+  total_value: number;
+}
+
+export interface AnalyticsSummaryApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  evaluators: number;
+}
+
+export interface RiskApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  scenario: string;
+  /** @minLength 1 */
+  scenario_key: string;
+}
+
+export interface ReliabilityIntervalApi {
+  low: number;
+  high: number;
+  effective_n: number;
+  evaluated: number;
+  clusters: number;
+}
+
+export type ReliabilityRowApiVerdict =
+  (typeof ReliabilityRowApiVerdict)[keyof typeof ReliabilityRowApiVerdict];
+
+export const ReliabilityRowApiVerdict = {
+  passed: "passed",
+  failed: "failed",
+  flaky: "flaky",
+  not_evaluated: "not_evaluated",
+} as const;
+
+export interface ReliabilityRowApi {
+  queued: number;
+  in_progress: number;
+  passed: number;
+  failed: number;
+  error: number;
+  inconclusive: number;
+  /** @minLength 1 */
+  scenario: string;
+  /** @minLength 1 */
+  scenario_key: string;
+  runs: number;
+  evaluated: number;
+  pass_rate: number;
+  verdict: ReliabilityRowApiVerdict;
+}
+
+export interface ReliabilityApi {
+  trials: number;
+  scenarios: number;
+  consistent_pass: number;
+  passed_at_least_once: number;
+  repeated: number;
+  flaky: number;
+  flip_rate: number;
+  pass_rate_interval: ReliabilityIntervalApi;
+  rows: ReliabilityRowApi[];
+}
+
+export interface TurnDistributionApi {
+  queued: number;
+  in_progress: number;
+  passed: number;
+  failed: number;
+  error: number;
+  inconclusive: number;
+  turn_count: number;
+}
+
+export interface EvaluationSummaryApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  passed: number;
+  failed: number;
+  measured: number;
+  errored: number;
+  missing: number;
+  pass_rate: number;
+  average_score: number;
+}
+
+export interface FailureBreakdownApi {
+  /** @minLength 1 */
+  reason: string;
+  failures: number;
+  share: number;
+}
+
+export interface DistributionsApi {
+  duration_seconds: MetricStatsApi;
+  latency_ms: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+}
+
+export interface CostComponentApi {
+  total: number;
+  measured: number;
+  calls: number;
+}
+
+export interface CostComponentsApi {
+  stt: CostComponentApi;
+  llm: CostComponentApi;
+  tts: CostComponentApi;
+  storage: CostComponentApi;
+  customer: CostComponentApi;
+}
+
+export interface ProviderBreakdownApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  provider: string;
+}
+
+export interface ModalityBreakdownApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  modality: string;
+}
+
+export interface TrendApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  execution_id: string;
+  started_at: string;
+}
+
+export interface RunAnalyticsV3ResponseApi {
+  dashboard: RunDashboardV3Api;
+  execution: AnalyticsExecutionApi;
+  summary: AnalyticsSummaryApi;
+  scenario_risk: RiskApi[];
+  reliability: ReliabilityApi;
+  turn_distribution: TurnDistributionApi[];
+  evaluations: EvaluationSummaryApi[];
+  failure_breakdown: FailureBreakdownApi[];
+  distributions: DistributionsApi;
+  cost_breakdown_cents: CostComponentsApi;
+  provider_breakdown: ProviderBreakdownApi[];
+  modality_breakdown: ModalityBreakdownApi[];
+  trends: TrendApi[];
+}
+
+export interface RunSummaryApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+}
+
+export interface RunExecutionApi {
+  id: string;
+  run_test_id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  status: string;
+  started_at: string;
+  completed_at: string;
+  ordinal: number;
+  /** @minLength 1 */
+  agent_version: string;
+  selected_scenario_keys?: string[];
+  /** @minimum 1 */
+  trials?: number;
+  /** @minLength 1 */
+  agent_type: string;
+  summary: RunSummaryApi;
+}
+
+export interface SimulateRunV3ScoringCountsApi {
+  /** @minimum 0 */
+  not_applicable: number;
+  /** @minimum 0 */
+  pending: number;
+  /** @minimum 0 */
+  succeeded: number;
+  /** @minimum 0 */
+  failed: number;
+  /** @minimum 0 */
+  timed_out: number;
+}
+
+export interface SimulateRunV3CallsSummaryApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  scoring: SimulateRunV3ScoringCountsApi;
+}
+
+export type RunCallApiOutcome =
+  (typeof RunCallApiOutcome)[keyof typeof RunCallApiOutcome];
+
+export const RunCallApiOutcome = {
+  queued: "queued",
+  in_progress: "in_progress",
+  passed: "passed",
+  failed: "failed",
+  inconclusive: "inconclusive",
+  error: "error",
+} as const;
+
+export type RunCallApiScoringStatus =
+  (typeof RunCallApiScoringStatus)[keyof typeof RunCallApiScoringStatus];
+
+export const RunCallApiScoringStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+} as const;
+
+export type RunCallApiCsatStatus =
+  (typeof RunCallApiCsatStatus)[keyof typeof RunCallApiCsatStatus];
+
+export const RunCallApiCsatStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+  skipped: "skipped",
+} as const;
+
+export interface RunCallApi {
+  id: string;
+  /** @minLength 1 */
+  scenario: string;
+  /** @minLength 1 */
+  scenario_details: string;
+  /** @minLength 1 */
+  goal: string;
+  /** @minLength 1 */
+  ideal_outcome: string;
+  /** @minLength 1 */
+  conversation_branch: string;
+  /** @minLength 1 */
+  persona: string;
+  persona_details: PersonaDetailsApi;
+  sub_goals: string[];
+  sub_goal_results: SubGoalResultApi[];
+  /** @minLength 1 */
+  harness_outcome_status: string;
+  /** @minLength 1 */
+  source_scenario_key: string;
+  trial_index: number;
+  outcome: RunCallApiOutcome;
+  /** @minLength 1 */
+  execution_status: string;
+  /** @minLength 1 */
+  modality: string;
+  /** @minLength 1 */
+  provider: string;
+  started_at: string;
+  completed_at: string;
+  duration_seconds: number;
+  latency_ms: number;
+  /** Average stop time after caller interruption in milliseconds. */
+  avg_stop_time_after_interruption: number | null;
+  ai_interruption_count: number | null;
+  turn_count: number;
+  tokens: number;
+  cost_cents: number;
+  cost_breakdown_cents: CostBreakdownApi;
+  csat: number;
+  /** @minLength 1 */
+  ended_reason: string;
+  /** @minLength 1 */
+  error_message: string;
+  evaluations: SimulateRunV3EvaluationResultApi[];
+  scoring_status: RunCallApiScoringStatus;
+  csat_status: RunCallApiCsatStatus;
+  /** @minLength 1 */
+  csat_reason: string;
+}
+
+export type GroupAggregatesApiEvaluations = { [key: string]: unknown };
+
+export interface GroupAggregatesApi {
+  csat: number;
+  turns: number;
+  latency_ms: number;
+  /** Mean call stop latency in milliseconds, excluding unmeasured calls. */
+  avg_stop_time_after_interruption: number | null;
+  /** Mean AI interruption count per call, excluding unmeasured calls. */
+  ai_interruptions: number | null;
+  tokens: number;
+  evaluations: GroupAggregatesApiEvaluations;
+}
+
+export interface RunGroupApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  result_ids: string[];
+  aggregates: GroupAggregatesApi;
+}
+
+export interface FacetValueApi {
+  /** @minLength 1 */
+  value: string;
+  count: number;
+}
+
+export interface RunFacetsApi {
+  goal: FacetValueApi[];
+  sub_goal: FacetValueApi[];
+  status: FacetValueApi[];
+}
+
+export type EvaluationColumnApiKind =
+  (typeof EvaluationColumnApiKind)[keyof typeof EvaluationColumnApiKind];
+
+export const EvaluationColumnApiKind = {
+  evaluation: "evaluation",
+  sub_goal: "sub_goal",
+} as const;
+
+export interface EvaluationColumnApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  kind: EvaluationColumnApiKind;
+}
+
+export interface RunCallsV3ResponseApi {
+  execution: RunExecutionApi;
+  summary: SimulateRunV3CallsSummaryApi;
+  count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  results: RunCallApi[];
+  groups: RunGroupApi[];
+  facets: RunFacetsApi;
+  status_counts: OutcomeCountsApi;
+  evaluation_columns: EvaluationColumnApi[];
+}
+
+export type RunExportV3RequestApiFilters = { [key: string]: unknown };
+
+export type RunExportV3RequestApiOrdering =
+  (typeof RunExportV3RequestApiOrdering)[keyof typeof RunExportV3RequestApiOrdering];
+
+export const RunExportV3RequestApiOrdering = {
+  started_at: "started_at",
+  "-started_at": "-started_at",
+  duration_seconds: "duration_seconds",
+  "-duration_seconds": "-duration_seconds",
+  latency_ms: "latency_ms",
+  "-latency_ms": "-latency_ms",
+  turn_count: "turn_count",
+  "-turn_count": "-turn_count",
+  tokens: "tokens",
+  "-tokens": "-tokens",
+  cost_cents: "cost_cents",
+  "-cost_cents": "-cost_cents",
+  scenario: "scenario",
+  "-scenario": "-scenario",
+  goal: "goal",
+  "-goal": "-goal",
+  outcome: "outcome",
+  "-outcome": "-outcome",
+} as const;
+
+export interface RunExportV3RequestApi {
+  search?: string;
+  filters?: RunExportV3RequestApiFilters;
+  ordering?: RunExportV3RequestApiOrdering;
+}
+
 export interface DeploymentHeartbeatApi {
   schema_version?: number;
   instance_id: string;
@@ -20764,6 +23581,205 @@ export interface DeploymentRegistrationResponseApi {
   instance_secret: string;
 }
 
+export type AlertItemApiKind =
+  (typeof AlertItemApiKind)[keyof typeof AlertItemApiKind];
+
+export const AlertItemApiKind = {
+  metric: "metric",
+  error_feed: "error_feed",
+} as const;
+
+export type AlertItemApiSeverityThreshold =
+  (typeof AlertItemApiSeverityThreshold)[keyof typeof AlertItemApiSeverityThreshold];
+
+export const AlertItemApiSeverityThreshold = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  critical: "critical",
+} as const;
+
+export type AlertItemApiFilters = { [key: string]: unknown };
+
+export type AlertItemApiLogsItem = { [key: string]: unknown };
+
+export interface AlertItemApi {
+  id: string;
+  kind: AlertItemApiKind;
+  /** @minLength 1 */
+  name: string;
+  enabled: boolean;
+  project_id?: string;
+  /** @minLength 1 */
+  trigger_type?: string;
+  severity_threshold?: AlertItemApiSeverityThreshold;
+  occurrence_threshold?: number;
+  filters?: AlertItemApiFilters;
+  slack_connection_id?: string;
+  /** @minLength 1 */
+  slack_channel_id?: string;
+  /** @minLength 1 */
+  slack_channel_name?: string;
+  cooldown_seconds?: number;
+  last_triggered_at?: string;
+  /** @minLength 1 */
+  health?: string;
+  /** @minLength 1 */
+  failure_reason?: string;
+  created_at?: string;
+  updated_at?: string;
+  project?: string;
+  organization?: string;
+  workspace?: string;
+  created_by?: string;
+  /** @minLength 1 */
+  metric_type?: string;
+  metric?: string;
+  /** @minLength 1 */
+  metric_name?: string;
+  /** @minLength 1 */
+  threshold_type?: string;
+  /** @minLength 1 */
+  threshold_operator?: string;
+  threshold_metric_value?: string;
+  critical_threshold_value?: number;
+  warning_threshold_value?: number;
+  alert_frequency?: number;
+  auto_threshold_time_window?: number;
+  last_checked_at?: string;
+  slack_webhook_url?: string;
+  slack_notes?: string;
+  is_mute?: boolean;
+  deleted?: boolean;
+  deleted_at?: string;
+  logs?: AlertItemApiLogsItem[];
+  notification_emails?: string[];
+}
+
+export interface AlertListResultApi {
+  alerts: AlertItemApi[];
+}
+
+export interface AlertListResponseApi {
+  status: boolean;
+  result: AlertListResultApi;
+}
+
+export type AlertWriteRequestApiKind =
+  (typeof AlertWriteRequestApiKind)[keyof typeof AlertWriteRequestApiKind];
+
+export const AlertWriteRequestApiKind = {
+  metric: "metric",
+  error_feed: "error_feed",
+} as const;
+
+export type AlertWriteRequestApiSeverityThreshold =
+  (typeof AlertWriteRequestApiSeverityThreshold)[keyof typeof AlertWriteRequestApiSeverityThreshold];
+
+export const AlertWriteRequestApiSeverityThreshold = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  critical: "critical",
+} as const;
+
+export type AlertWriteRequestApiFilters = { [key: string]: unknown };
+
+export interface AlertWriteRequestApi {
+  kind?: AlertWriteRequestApiKind;
+  /** @minLength 1 */
+  name?: string;
+  enabled?: boolean;
+  project_id?: string;
+  /** @minLength 1 */
+  trigger_type?: string;
+  severity_threshold?: AlertWriteRequestApiSeverityThreshold;
+  /**
+   * @minimum 1
+   * @maximum 1000000
+   */
+  occurrence_threshold?: number;
+  filters?: AlertWriteRequestApiFilters;
+  slack_connection_id?: string;
+  /** @minLength 1 */
+  slack_channel_id?: string;
+  /** @minimum 0 */
+  cooldown_seconds?: number;
+  project?: string;
+  /** @minLength 1 */
+  metric_type?: string;
+  metric?: string;
+  /** @minLength 1 */
+  threshold_type?: string;
+  /** @minLength 1 */
+  threshold_operator?: string;
+  threshold_metric_value?: string;
+  critical_threshold_value?: number;
+  warning_threshold_value?: number;
+  alert_frequency?: number;
+  auto_threshold_time_window?: number;
+  slack_webhook_url?: string;
+  slack_notes?: string;
+  is_mute?: boolean;
+  notification_emails?: string[];
+}
+
+export interface AlertItemResponseApi {
+  status: boolean;
+  result: AlertItemApi;
+}
+
+export interface AlertTestRequestApi {
+  [key: string]: unknown;
+}
+
+export interface AlertTestResultApi {
+  sent: boolean;
+  /** @minLength 1 */
+  slack_ts: string;
+}
+
+export interface AlertTestResponseApi {
+  status: boolean;
+  result: AlertTestResultApi;
+}
+
+export interface AlertOptionApi {
+  /** @minLength 1 */
+  value: string;
+  /** @minLength 1 */
+  label: string;
+}
+
+export interface AlertProjectOptionApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+export interface AlertOptionsResultApi {
+  triggers: AlertOptionApi[];
+  severities: string[];
+  statuses: string[];
+  sources: string[];
+  projects: AlertProjectOptionApi[];
+}
+
+export interface AlertOptionsResponseApi {
+  status: boolean;
+  result: AlertOptionsResultApi;
+}
+
+export interface AlertDeletedResultApi {
+  id: string;
+  deleted: boolean;
+}
+
+export interface AlertDeletedResponseApi {
+  status: boolean;
+  result: AlertDeletedResultApi;
+}
+
 export interface BulkAnnotationAnnotationRequestApi {
   annotation_label_id: string;
   value?: string;
@@ -20847,6 +23863,16 @@ export interface ApiErrorResponseApi {
   details?: ApiErrorResponseApiDetails;
 }
 
+export type FetchGraphResponseApiResultMetricStatistic =
+  (typeof FetchGraphResponseApiResultMetricStatistic)[keyof typeof FetchGraphResponseApiResultMetricStatistic];
+
+export const FetchGraphResponseApiResultMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  percentage: "percentage",
+} as const;
+
 export type FetchGraphResponseApiResultDataItem = {
   timestamp: string;
   value: number;
@@ -20871,6 +23897,7 @@ export type FetchGraphResponseApiResult = {
   metric_name?: string;
   id?: string;
   name?: string;
+  metric_statistic?: FetchGraphResponseApiResultMetricStatistic;
   data: FetchGraphResponseApiResultDataItem[];
   query_complete: boolean;
   query_status: FetchGraphResponseApiResultQueryStatus;
@@ -20974,6 +24001,7 @@ export const DashboardFilterValuesResultApiQueryStatus = {
   complete: "complete",
   sampled: "sampled",
   degraded: "degraded",
+  partial: "partial",
 } as const;
 
 export type DashboardFilterValuesResultApiQueryErrorCode =
@@ -21030,10 +24058,13 @@ export type DashboardFilterValuesResultApiQueryProvenance =
 
 export const DashboardFilterValuesResultApiQueryProvenance = {
   activated_property_catalog: "activated_property_catalog",
+  current_property_catalog: "current_property_catalog",
 } as const;
 
 export interface DashboardFilterValuesResultApi {
+  query_exact?: boolean;
   values: DashboardFilterValueOptionApi[];
+  /** Whether this page read completed, not whether all source history is indexed. */
   query_complete?: boolean;
   query_status?: DashboardFilterValuesResultApiQueryStatus;
   query_error_code?: DashboardFilterValuesResultApiQueryErrorCode;
@@ -21067,6 +24098,74 @@ export interface DashboardFilterValuesResultApi {
 export interface DashboardFilterValuesResponseApi {
   status?: boolean;
   result: DashboardFilterValuesResultApi;
+}
+
+export type DashboardFilterValuesQueryApiMetricType =
+  (typeof DashboardFilterValuesQueryApiMetricType)[keyof typeof DashboardFilterValuesQueryApiMetricType];
+
+export const DashboardFilterValuesQueryApiMetricType = {
+  system_metric: "system_metric",
+  eval_metric: "eval_metric",
+  annotation_metric: "annotation_metric",
+  custom_attribute: "custom_attribute",
+  custom_column: "custom_column",
+} as const;
+
+export type DashboardFilterValuesQueryApiSource =
+  (typeof DashboardFilterValuesQueryApiSource)[keyof typeof DashboardFilterValuesQueryApiSource];
+
+export const DashboardFilterValuesQueryApiSource = {
+  traces: "traces",
+  spans: "spans",
+  sessions: "sessions",
+  users: "users",
+  voice_calls: "voice_calls",
+  prompts: "prompts",
+  datasets: "datasets",
+  dataset_column: "dataset_column",
+  simulation: "simulation",
+  both: "both",
+  all: "all",
+} as const;
+
+export type DashboardFilterValuesQueryApiAttributeType =
+  (typeof DashboardFilterValuesQueryApiAttributeType)[keyof typeof DashboardFilterValuesQueryApiAttributeType];
+
+export const DashboardFilterValuesQueryApiAttributeType = {
+  string: "string",
+  number: "number",
+  boolean: "boolean",
+  array: "array",
+  map: "map",
+  json: "json",
+} as const;
+
+export interface DashboardFilterValuesQueryApi {
+  /**
+   * Stable namespaced property identity returned by the metrics catalog. Legacy metric_name/metric_type remain accepted during migration.
+   * @minLength 1
+   * @maxLength 4113
+   */
+  property_id?: string;
+  /** @minLength 1 */
+  metric_name?: string;
+  metric_type?: DashboardFilterValuesQueryApiMetricType;
+  source?: DashboardFilterValuesQueryApiSource;
+  project_ids?: string;
+  dataset_id?: string;
+  /** @maxLength 512 */
+  search?: string;
+  /**
+   * @minimum 1
+   * @maximum 50
+   */
+  page_size?: number;
+  /**
+   * @minLength 1
+   * @maxLength 262144
+   */
+  cursor?: string;
+  attribute_type?: DashboardFilterValuesQueryApiAttributeType;
 }
 
 export type DashboardMetricCatalogItemApiPropertyKind =
@@ -21143,6 +24242,7 @@ export type DashboardMetricsCatalogResultApiQueryStatus =
 
 export const DashboardMetricsCatalogResultApiQueryStatus = {
   complete: "complete",
+  partial: "partial",
 } as const;
 
 export type DashboardMetricsCatalogResultApiQueryProvenance =
@@ -21150,6 +24250,7 @@ export type DashboardMetricsCatalogResultApiQueryProvenance =
 
 export const DashboardMetricsCatalogResultApiQueryProvenance = {
   activated_property_catalog: "activated_property_catalog",
+  current_property_catalog: "current_property_catalog",
 } as const;
 
 export type DashboardMetricsCatalogResultApiCategoryCounts = {
@@ -21173,7 +24274,7 @@ export interface DashboardMetricsCatalogResultApi {
   has_more?: boolean;
   /**
    * @minLength 1
-   * @maxLength 16384
+   * @maxLength 262144
    */
   next_cursor?: string | null;
   /**
@@ -21188,6 +24289,7 @@ export interface DashboardMetricsCatalogResultApi {
    * @pattern ^[0-9a-f]{64}$
    */
   activation_fingerprint?: string;
+  /** Whether this page read completed, not whether all source history is indexed. */
   query_complete?: boolean;
   query_exact?: boolean;
   query_status?: DashboardMetricsCatalogResultApiQueryStatus;
@@ -21197,6 +24299,76 @@ export interface DashboardMetricsCatalogResultApi {
 export interface DashboardMetricsCatalogResponseApi {
   status?: boolean;
   result: DashboardMetricsCatalogResultApi;
+}
+
+export type DashboardMetricsCatalogQueryApiWorkflow =
+  (typeof DashboardMetricsCatalogQueryApiWorkflow)[keyof typeof DashboardMetricsCatalogQueryApiWorkflow];
+
+export const DashboardMetricsCatalogQueryApiWorkflow = {
+  observability: "observability",
+  dataset: "dataset",
+  simulation: "simulation",
+} as const;
+
+export type DashboardMetricsCatalogQueryApiCategory =
+  (typeof DashboardMetricsCatalogQueryApiCategory)[keyof typeof DashboardMetricsCatalogQueryApiCategory];
+
+export const DashboardMetricsCatalogQueryApiCategory = {
+  system_metric: "system_metric",
+  eval_metric: "eval_metric",
+  annotation_metric: "annotation_metric",
+  custom_attribute: "custom_attribute",
+  custom_column: "custom_column",
+} as const;
+
+export type DashboardMetricsCatalogQueryApiRole =
+  (typeof DashboardMetricsCatalogQueryApiRole)[keyof typeof DashboardMetricsCatalogQueryApiRole];
+
+export const DashboardMetricsCatalogQueryApiRole = {
+  metric: "metric",
+  dimension: "dimension",
+} as const;
+
+export type DashboardMetricsCatalogQueryApiSource =
+  (typeof DashboardMetricsCatalogQueryApiSource)[keyof typeof DashboardMetricsCatalogQueryApiSource];
+
+export const DashboardMetricsCatalogQueryApiSource = {
+  traces: "traces",
+  spans: "spans",
+  sessions: "sessions",
+  users: "users",
+  voice_calls: "voice_calls",
+  prompts: "prompts",
+  datasets: "datasets",
+  simulation: "simulation",
+  both: "both",
+  all: "all",
+} as const;
+
+export interface DashboardMetricsCatalogQueryApi {
+  workflow?: DashboardMetricsCatalogQueryApiWorkflow;
+  project_ids?: string;
+  agent_definition_id?: string;
+  per_eval_config?: boolean;
+  exclude_custom_attributes?: boolean;
+  /** @maxLength 256 */
+  search?: string;
+  category?: DashboardMetricsCatalogQueryApiCategory;
+  role?: DashboardMetricsCatalogQueryApiRole;
+  source?: DashboardMetricsCatalogQueryApiSource;
+  /** @minimum 1 */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  page_size?: number;
+  cursor_mode?: boolean;
+  /**
+   * @minLength 1
+   * @maxLength 262144
+   */
+  cursor?: string;
 }
 
 export type DashboardQueryApiWorkflow =
@@ -21560,6 +24732,9 @@ export interface DashboardQueryMetricResultApi {
   aggregation: DashboardQueryMetricResultApiAggregation;
   unit: string;
   series: DashboardQuerySeriesApi[];
+  /** @minimum 0 */
+  series_total?: number;
+  series_truncated?: boolean;
   query_complete?: boolean;
   query_sampled?: boolean;
   query_status?: DashboardQueryMetricResultApiQueryStatus;
@@ -21663,8 +24838,14 @@ export interface DashboardQueryApiResponseApi {
   result: DashboardQueryResultApi;
 }
 
+/**
+ * Saved query in the same shape as the dashboard query request: time_range and metrics are required once any metric is set, with optional workflow, project_ids, granularity, filters, and breakdowns.
+ */
 export type DashboardWidgetApiQueryConfig = { [key: string]: unknown };
 
+/**
+ * Chart presentation. chart_type must be one of line, stacked_line, column, stacked_column, bar, stacked_bar, pie, table, or metric.
+ */
 export type DashboardWidgetApiChartConfig = { [key: string]: unknown };
 
 export interface DashboardWidgetApi {
@@ -21690,7 +24871,9 @@ export interface DashboardWidgetApi {
    * @maximum 2147483647
    */
   height?: number;
+  /** Saved query in the same shape as the dashboard query request: time_range and metrics are required once any metric is set, with optional workflow, project_ids, granularity, filters, and breakdowns. */
   query_config?: DashboardWidgetApiQueryConfig;
+  /** Chart presentation. chart_type must be one of line, stacked_line, column, stacked_column, bar, stacked_bar, pie, table, or metric. */
   chart_config?: DashboardWidgetApiChartConfig;
   readonly created_by?: string;
   readonly created_at?: string;
@@ -21969,11 +25152,18 @@ export interface EvalTaskUsageStatsApi {
   total_runs: number;
   /** @minimum 0 */
   runs_period: number;
-  /** @minimum 0 */
+  /**
+   * Deprecated compatibility field. Usage counts only successful runs, so this always equals runs_period.
+   * @minimum 0
+   */
   success_count: number;
-  /** @minimum 0 */
+  /**
+   * Deprecated compatibility field. Usage counts only successful runs, so this is always 0; failed runs stay in the task logs.
+   * @minimum 0
+   */
   error_count: number;
   /**
+   * Deprecated compatibility field. Usage counts only successful runs, so this is 100 when runs_period is above 0, otherwise 0.
    * @minimum 0
    * @maximum 100
    */
@@ -22459,6 +25649,11 @@ export interface TrendPointApi {
 
 export interface FeedListRowApi {
   /** @minLength 1 */
+  severity_assessment_status?: string;
+  /** @minLength 1 */
+  severity_source?: string;
+  severity_reason?: string;
+  /** @minLength 1 */
   cluster_id: string;
   /** @minLength 1 */
   source: string;
@@ -22767,6 +25962,18 @@ export interface OverviewApiResponseApi {
   result: OverviewResponseApi;
 }
 
+export interface FeedRedirectApi {
+  /** @minLength 1 */
+  requested_cluster_id: string;
+  /** @minLength 1 */
+  resolved_cluster_id: string;
+}
+
+export interface FeedRedirectApiResponseApi {
+  status?: boolean;
+  result: FeedRedirectApi;
+}
+
 export interface RootCauseApi {
   rank: number;
   /** @minLength 1 */
@@ -23000,6 +26207,1130 @@ export interface TriggerAnalysisApi {
   trace_id: string;
   project_id: string;
   widgets: WidgetAnalysisApi[];
+}
+
+export type UpdateInvestigationAttemptRequestApiAction =
+  (typeof UpdateInvestigationAttemptRequestApiAction)[keyof typeof UpdateInvestigationAttemptRequestApiAction];
+
+export const UpdateInvestigationAttemptRequestApiAction = {
+  renew: "renew",
+  cancel: "cancel",
+} as const;
+
+export interface UpdateInvestigationAttemptRequestApi {
+  organization_id: string;
+  workspace_id: string;
+  project_id: string;
+  job_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  action: UpdateInvestigationAttemptRequestApiAction;
+  /** @maxLength 2000 */
+  reason?: string;
+}
+
+export interface UpdateInvestigationAttemptResponseApi {
+  attempt_id: string;
+  /** @minLength 1 */
+  status: string;
+  lease_expires_at: string;
+  cancellation_requested: boolean;
+  /** @minLength 1 */
+  job_state: string;
+}
+
+export type InvestigationControlErrorApiType =
+  (typeof InvestigationControlErrorApiType)[keyof typeof InvestigationControlErrorApiType];
+
+export const InvestigationControlErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type InvestigationControlErrorApiDetails = { [key: string]: string[] };
+
+export interface InvestigationControlErrorApi {
+  status?: boolean;
+  type?: InvestigationControlErrorApiType;
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  detail: string;
+  result?: string;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: InvestigationControlErrorApiDetails;
+}
+
+export interface ConversationEvidenceRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallAgentApiId = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallAgentApiVersion = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallAgentApiName = JsonValueApi;
+
+export interface ConversationCallAgentApi {
+  /** Any valid JSON value. */
+  id: ConversationCallAgentApiId;
+  /** Any valid JSON value. */
+  version: ConversationCallAgentApiVersion;
+  /** Any valid JSON value. */
+  name: ConversationCallAgentApiName;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallApiStatus = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallApiDirection = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallApiEndedReason = JsonValueApi;
+
+export interface ConversationCallApi {
+  /** Any valid JSON value. */
+  status: ConversationCallApiStatus;
+  /** Any valid JSON value. */
+  direction: ConversationCallApiDirection;
+  duration_seconds: number | null;
+  /** Any valid JSON value. */
+  ended_reason: ConversationCallApiEndedReason;
+  agent: ConversationCallAgentApi;
+}
+
+export type ConversationVariablesApiConfigured = {
+  [key: string]: JsonValueApi;
+};
+
+export type ConversationVariablesApiCollected = { [key: string]: JsonValueApi };
+
+export interface ConversationVariablesApi {
+  configured: ConversationVariablesApiConfigured;
+  collected: ConversationVariablesApiCollected;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationAnalysisApiSummary = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationAnalysisApiSuccessful = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationAnalysisApiInVoicemail = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationAnalysisApiSentiment = JsonValueApi;
+
+export type ConversationAnalysisApiFlags = { [key: string]: JsonValueApi };
+
+export interface ConversationAnalysisApi {
+  /** Any valid JSON value. */
+  summary: ConversationAnalysisApiSummary;
+  /** Any valid JSON value. */
+  successful: ConversationAnalysisApiSuccessful;
+  /** Any valid JSON value. */
+  in_voicemail: ConversationAnalysisApiInVoicemail;
+  /** Any valid JSON value. */
+  sentiment: ConversationAnalysisApiSentiment;
+  flags: ConversationAnalysisApiFlags;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationLatencyApiP50 = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationLatencyApiP90 = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationLatencyApiMax = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationLatencyApiNum = JsonValueApi;
+
+export interface ConversationLatencyApi {
+  /** Any valid JSON value. */
+  p50: ConversationLatencyApiP50;
+  /** Any valid JSON value. */
+  p90: ConversationLatencyApiP90;
+  /** Any valid JSON value. */
+  max: ConversationLatencyApiMax;
+  /** Any valid JSON value. */
+  num: ConversationLatencyApiNum;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiText = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiId = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiName = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiArguments = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiOk = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiContent = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiTo = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiType = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiDigit = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiMediaItem = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiFrom = JsonValueApi;
+
+export interface ConversationTurnApi {
+  /** @minimum 0 */
+  i: number;
+  /** @minLength 1 */
+  role: string;
+  start?: number | null;
+  end?: number | null;
+  /** Any valid JSON value. */
+  text?: ConversationTurnApiText;
+  spoken?: boolean;
+  at?: number | null;
+  /** Any valid JSON value. */
+  id?: ConversationTurnApiId;
+  /** Any valid JSON value. */
+  name?: ConversationTurnApiName;
+  /** Any valid JSON value. */
+  arguments?: ConversationTurnApiArguments;
+  /** Any valid JSON value. */
+  ok?: ConversationTurnApiOk;
+  /** Any valid JSON value. */
+  content?: ConversationTurnApiContent;
+  /** Any valid JSON value. */
+  to?: ConversationTurnApiTo;
+  /** Any valid JSON value. */
+  type?: ConversationTurnApiType;
+  /** Any valid JSON value. */
+  digit?: ConversationTurnApiDigit;
+  media?: ConversationTurnApiMediaItem[];
+  /** Any valid JSON value. */
+  from?: ConversationTurnApiFrom;
+}
+
+export type ConversationProviderLogIssueApiLevel =
+  (typeof ConversationProviderLogIssueApiLevel)[keyof typeof ConversationProviderLogIssueApiLevel];
+
+export const ConversationProviderLogIssueApiLevel = {
+  warn: "warn",
+  error: "error",
+} as const;
+
+export interface ConversationProviderLogIssueApi {
+  at: number;
+  level: ConversationProviderLogIssueApiLevel;
+  message: string;
+}
+
+export type ConversationDossierApiLatencyMs = {
+  [key: string]: ConversationLatencyApi;
+};
+
+export interface ConversationDossierApi {
+  /** @minLength 1 */
+  provider: string;
+  agent_instructions: string | null;
+  call: ConversationCallApi;
+  variables: ConversationVariablesApi;
+  analysis: ConversationAnalysisApi;
+  latency_ms: ConversationDossierApiLatencyMs;
+  turns: ConversationTurnApi[];
+  provider_log_issues?: ConversationProviderLogIssueApi[];
+  not_included: string[];
+}
+
+export type ConversationEvidenceRowApiAttrsString = { [key: string]: string };
+
+export interface ConversationEvidenceRowApi {
+  project_id: string;
+  trace_id: string;
+  org_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  id: string;
+  parent_span_id: string;
+  name: string;
+  /** @minLength 1 */
+  observation_type: string;
+  start_time: string;
+  end_time: string | null;
+  attrs_string: ConversationEvidenceRowApiAttrsString;
+  conversation: ConversationDossierApi;
+}
+
+export interface ConversationEvidenceResponseApi {
+  rows: ConversationEvidenceRowApi[];
+}
+
+export interface SimulationEvidenceRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  /** @minimum 0 */
+  cursor: number;
+}
+
+export interface ClaimInvestigationsRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  worker_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 20
+   */
+  engine_version: string;
+  /**
+   * @minimum 1
+   * @maximum 50
+   */
+  limit: number;
+}
+
+export type InvestigationClaimApiWorkloadType =
+  (typeof InvestigationClaimApiWorkloadType)[keyof typeof InvestigationClaimApiWorkloadType];
+
+export const InvestigationClaimApiWorkloadType = {
+  trace: "trace",
+  simulation_test_execution: "simulation_test_execution",
+} as const;
+
+export interface InvestigationEvidenceWindowApi {
+  start: string;
+  end: string;
+}
+
+export type InvestigationClaimApiEvidenceSource =
+  (typeof InvestigationClaimApiEvidenceSource)[keyof typeof InvestigationClaimApiEvidenceSource];
+
+export const InvestigationClaimApiEvidenceSource = {
+  conversation: "conversation",
+} as const;
+
+export interface InvestigationMemoryEntryApi {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  id: string;
+  /**
+   * @minLength 1
+   * @maxLength 4000
+   */
+  text: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  source_feedback_id?: string;
+}
+
+export interface InvestigationMemoryApi {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  snapshot_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 71
+   */
+  digest: string;
+  entries: InvestigationMemoryEntryApi[];
+}
+
+export interface InvestigationLimitsApi {
+  /** @minimum 1 */
+  deadline_seconds: number;
+  /** @minimum 1 */
+  max_model_calls: number;
+  /** @minimum 0 */
+  max_children: number;
+  /** @minimum 0 */
+  max_parallel_children: number;
+  /** @minimum 1 */
+  max_input_tokens_total: number;
+  /** @minimum 1 */
+  max_output_tokens_total: number;
+  /** @minimum 1 */
+  max_evidence_bytes: number;
+  /** @minimum 1 */
+  max_tool_result_bytes: number;
+}
+
+export interface InvestigationClaimApi {
+  organization_id: string;
+  /** @minLength 1 */
+  organization_name?: string;
+  workspace_id: string;
+  project_id: string;
+  /** @minLength 1 */
+  project_name?: string;
+  job_id: string;
+  workload_type?: InvestigationClaimApiWorkloadType;
+  trace_id?: string;
+  test_execution_id?: string;
+  /** @minimum 1 */
+  generation: number;
+  attempt_id: string;
+  /** @minLength 1 */
+  lease_token: string;
+  lease_expires_at: string;
+  read_cutoff: string;
+  evidence_window?: InvestigationEvidenceWindowApi;
+  evidence_source?: InvestigationClaimApiEvidenceSource;
+  /**
+   * @minLength 1
+   * @maxLength 20
+   */
+  engine_version: string;
+  /** @minLength 1 */
+  contract_version: string;
+  memory: InvestigationMemoryApi;
+  limits: InvestigationLimitsApi;
+  verification_capabilities: string[];
+  feature_enabled: boolean;
+}
+
+export interface ClaimInvestigationsResponseApi {
+  claims: InvestigationClaimApi[];
+}
+
+export type UpdateGroupingAttemptApiAction =
+  (typeof UpdateGroupingAttemptApiAction)[keyof typeof UpdateGroupingAttemptApiAction];
+
+export const UpdateGroupingAttemptApiAction = {
+  renew: "renew",
+  cancel: "cancel",
+  fail: "fail",
+} as const;
+
+export interface UpdateGroupingAttemptApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  action: UpdateGroupingAttemptApiAction;
+  /** @maxLength 100 */
+  failure_code?: string;
+}
+
+export interface GroupingControlResponseApi {
+  /** @minLength 1 */
+  state?: string;
+  /** @minLength 1 */
+  failure_code?: string;
+  /** @minLength 1 */
+  status?: string;
+  checkpoint_revision?: number;
+  receipt_id?: string;
+}
+
+export type GroupingErrorApiType =
+  (typeof GroupingErrorApiType)[keyof typeof GroupingErrorApiType];
+
+export const GroupingErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type GroupingErrorApiDetails = { [key: string]: string[] };
+
+export interface GroupingErrorApi {
+  status?: boolean;
+  type?: GroupingErrorApiType;
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  detail: string;
+  result?: string;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: GroupingErrorApiDetails;
+}
+
+export type GroupingCheckpointApiCheckpoint = { [key: string]: unknown };
+
+export interface GroupingCheckpointApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  /** @minimum 0 */
+  expected_revision: number;
+  checkpoint: GroupingCheckpointApiCheckpoint;
+}
+
+export type PublishGroupingApiCommandsItem = { [key: string]: unknown };
+
+export interface PublishGroupingApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  idempotency_key: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  snapshot_digest: string;
+  /** @minimum 0 */
+  registry_revision: number;
+  /** @maxItems 1000 */
+  commands: PublishGroupingApiCommandsItem[];
+  /** @maxItems 100 */
+  receipt_ids: string[];
+}
+
+export interface GroupingRepairIntentApi {
+  /**
+   * @minLength 1
+   * @pattern ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$
+   */
+  primary_receipt_id: string;
+  /**
+   * @minimum 0
+   * @maximum 99
+   */
+  group_index: number;
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  missing_own_report_ids: string[];
+}
+
+export interface ReserveGroupingCallApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  request_key: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  request_digest: string;
+  max_cost_usd: string;
+  repair_intent?: GroupingRepairIntentApi;
+}
+
+export type SettleGroupingCallApiStatus =
+  (typeof SettleGroupingCallApiStatus)[keyof typeof SettleGroupingCallApiStatus];
+
+export const SettleGroupingCallApiStatus = {
+  settled: "settled",
+  unknown: "unknown",
+} as const;
+
+export type SettleGroupingCallApiResult = { [key: string]: unknown };
+
+export interface SettleGroupingCallApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  request_key: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  request_digest: string;
+  status: SettleGroupingCallApiStatus;
+  result?: SettleGroupingCallApiResult;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model_used?: string;
+  /** @minimum 0 */
+  input_tokens?: number;
+  /** @minimum 0 */
+  output_tokens?: number;
+  cost_usd?: string;
+  /** @maxLength 100 */
+  failure_code?: string;
+}
+
+export interface ClaimGroupingRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  worker_id: string;
+  /**
+   * @minimum 1
+   * @maximum 10
+   */
+  limit: number;
+}
+
+export type GroupingClaimsResponseApiClaimsItem = { [key: string]: unknown };
+
+export interface GroupingClaimsResponseApi {
+  claims: GroupingClaimsResponseApiClaimsItem[];
+}
+
+export type RenewGroupingFeatureApiAction =
+  (typeof RenewGroupingFeatureApiAction)[keyof typeof RenewGroupingFeatureApiAction];
+
+export const RenewGroupingFeatureApiAction = {
+  renew: "renew",
+} as const;
+
+export interface RenewGroupingFeatureApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  action: RenewGroupingFeatureApiAction;
+}
+
+export type CompleteGroupingFeatureApiStatus =
+  (typeof CompleteGroupingFeatureApiStatus)[keyof typeof CompleteGroupingFeatureApiStatus];
+
+export const CompleteGroupingFeatureApiStatus = {
+  ready: "ready",
+  failed: "failed",
+} as const;
+
+export type CompleteGroupingFeatureApiFeaturesItem = { [key: string]: unknown };
+
+export interface CompleteGroupingFeatureApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  status: CompleteGroupingFeatureApiStatus;
+  /** @maxItems 200 */
+  features: CompleteGroupingFeatureApiFeaturesItem[];
+  /** @maxLength 100 */
+  error_code?: string;
+}
+
+export interface GroupingOutboxRequestApi {
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit: number;
+}
+
+export type GroupingOutboxResponseApiEventsItem = { [key: string]: unknown };
+
+export interface GroupingOutboxResponseApi {
+  events: GroupingOutboxResponseApiEventsItem[];
+}
+
+export interface GroupingOutboxAckApi {
+  [key: string]: unknown;
+}
+
+export interface PublishSeverityApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  receipt_id: string;
+}
+
+export type TraceAvailableDeliveryApiTopic =
+  (typeof TraceAvailableDeliveryApiTopic)[keyof typeof TraceAvailableDeliveryApiTopic];
+
+export const TraceAvailableDeliveryApiTopic = {
+  "error-feedtrace-availablev1": "error-feed.trace-available.v1",
+} as const;
+
+export type TraceAvailableEventApiEventKind =
+  (typeof TraceAvailableEventApiEventKind)[keyof typeof TraceAvailableEventApiEventKind];
+
+export const TraceAvailableEventApiEventKind = {
+  root_span_written: "root_span_written",
+} as const;
+
+export interface TraceAvailableItemApi {
+  trace_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  root_span_id: string;
+  root_end_time: string;
+}
+
+export interface TraceAvailableEventApi {
+  /**
+   * @minimum 1
+   * @maximum 1
+   */
+  version: number;
+  event_id: string;
+  organization_id: string;
+  workspace_id: string;
+  project_id: string;
+  event_kind: TraceAvailableEventApiEventKind;
+  traces: TraceAvailableItemApi[];
+  emitted_at: string;
+}
+
+export interface TraceAvailableDeliveryApi {
+  topic: TraceAvailableDeliveryApiTopic;
+  /** @minimum 0 */
+  partition: number;
+  /** @minimum 0 */
+  offset: number;
+  value: TraceAvailableEventApi;
+}
+
+export interface RecordTraceNotificationsRequestApi {
+  deliveries: TraceAvailableDeliveryApi[];
+}
+
+export interface PendingInvestigationApi {
+  organization_id: string;
+  workspace_id: string;
+  project_id: string;
+  trace_id: string;
+  job_id: string;
+  /** @minimum 1 */
+  generation: number;
+  /** @minLength 1 */
+  state: string;
+  not_before: string;
+}
+
+export interface RecordTraceNotificationsResponseApi {
+  /** @minimum 0 */
+  accepted_events: number;
+  /** @minimum 0 */
+  duplicate_events: number;
+  pending: PendingInvestigationApi[];
+}
+
+export type InvestigationResultApiContractVersion =
+  (typeof InvestigationResultApiContractVersion)[keyof typeof InvestigationResultApiContractVersion];
+
+export const InvestigationResultApiContractVersion = {
+  "omega-investigation/v1": "omega-investigation/v1",
+  "omega-simulation/v1": "omega-simulation/v1",
+} as const;
+
+export type InvestigationResultApiWorkloadType =
+  (typeof InvestigationResultApiWorkloadType)[keyof typeof InvestigationResultApiWorkloadType];
+
+export const InvestigationResultApiWorkloadType = {
+  trace: "trace",
+  simulation_test_execution: "simulation_test_execution",
+} as const;
+
+export type InvestigationResultApiExecutionStatus =
+  (typeof InvestigationResultApiExecutionStatus)[keyof typeof InvestigationResultApiExecutionStatus];
+
+export const InvestigationResultApiExecutionStatus = {
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export type InvestigationResultApiOutcome =
+  (typeof InvestigationResultApiOutcome)[keyof typeof InvestigationResultApiOutcome];
+
+export const InvestigationResultApiOutcome = {
+  success: "success",
+  failure: "failure",
+  unknown: "unknown",
+} as const;
+
+export type FindingAttributionRoleApiStatus =
+  (typeof FindingAttributionRoleApiStatus)[keyof typeof FindingAttributionRoleApiStatus];
+
+export const FindingAttributionRoleApiStatus = {
+  supported: "supported",
+  unsupported: "unsupported",
+  unknown: "unknown",
+} as const;
+
+export interface FindingAttributionRoleApi {
+  status: FindingAttributionRoleApiStatus;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  span_id?: string;
+  call_execution_id?: string;
+  /** @maxItems 100 */
+  evidence_ids: string[];
+  /** @maxLength 600 */
+  explanation?: string;
+}
+
+export interface FindingAttributionApi {
+  origin: FindingAttributionRoleApi;
+  decisive: FindingAttributionRoleApi;
+  symptom: FindingAttributionRoleApi;
+}
+
+export interface InvestigationFindingApi {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  finding_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  kind: string;
+  /**
+   * @minLength 1
+   * @maxLength 8000
+   */
+  statement: string;
+  /**
+   * @minLength 1
+   * @maxLength 256
+   */
+  requirement_id?: string;
+  /** @maxItems 100 */
+  evidence_ids: string[];
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  recovery: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  category?: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  group_label?: string;
+  /**
+   * @minLength 1
+   * @maxLength 50
+   */
+  fix_layer?: string;
+  /**
+   * @minLength 1
+   * @maxLength 2
+   */
+  confidence?: string;
+  attribution: FindingAttributionApi;
+}
+
+export interface InvestigationRequirementCheckApi {
+  /**
+   * @minLength 1
+   * @maxLength 256
+   */
+  requirement_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 8000
+   */
+  requirement: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  status: string;
+  /** @maxItems 100 */
+  evidence_ids: string[];
+}
+
+export interface InvestigationEvidenceReceiptApi {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  evidence_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  span_id?: string;
+  call_execution_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  parent_span_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 8000
+   */
+  excerpt: string;
+  end_time?: string;
+}
+
+export interface InvestigationVerificationReceiptApi {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  receipt_id: string;
+  executed: boolean;
+}
+
+export interface InvestigationCoverageApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  scope?: string;
+  /** @minimum 0 */
+  observed_span_count?: number;
+  /** @minimum 0 */
+  observed_call_count?: number;
+  read_complete: boolean;
+  future_arrivals_known?: boolean;
+}
+
+export interface InvestigationUsageApi {
+  /** @minimum 0 */
+  model_calls: number;
+  /** @minimum 0 */
+  input_tokens: number;
+  /** @minimum 0 */
+  output_tokens: number;
+  /** @minimum 0 */
+  cost_usd?: number;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  cost_status: string;
+}
+
+export type GatewayAccountingApiRaw = { [key: string]: unknown };
+
+export interface GatewayAccountingApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  request_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model_used: string;
+  /** @minimum 0 */
+  cost: number;
+  /** @minimum 0 */
+  input_tokens?: number;
+  /** @minimum 0 */
+  output_tokens?: number;
+  raw?: GatewayAccountingApiRaw;
+}
+
+export interface InvestigationResultApi {
+  contract_version: InvestigationResultApiContractVersion;
+  workload_type?: InvestigationResultApiWorkloadType;
+  organization_id: string;
+  workspace_id: string;
+  project_id: string;
+  job_id: string;
+  /** @minimum 1 */
+  generation: number;
+  attempt_id: string;
+  trace_id?: string;
+  test_execution_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 20
+   */
+  engine_version: string;
+  read_cutoff: string;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  memory_snapshot_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 71
+   */
+  memory_digest: string;
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  evidence_digest: string;
+  execution_status: InvestigationResultApiExecutionStatus;
+  outcome: InvestigationResultApiOutcome;
+  error_message?: string;
+  findings: InvestigationFindingApi[];
+  requirement_checks: InvestigationRequirementCheckApi[];
+  evidence_receipts: InvestigationEvidenceReceiptApi[];
+  verification_receipts: InvestigationVerificationReceiptApi[];
+  coverage: InvestigationCoverageApi;
+  usage: InvestigationUsageApi;
+  gateway_accounting: GatewayAccountingApi[];
+  /**
+   * @minLength 1
+   * @pattern ^sha256:[a-f0-9]{64}$
+   */
+  result_digest: string;
+}
+
+export interface PublishInvestigationRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  idempotency_key: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  result: InvestigationResultApi;
+}
+
+export type PublishInvestigationResponseApiStatus =
+  (typeof PublishInvestigationResponseApiStatus)[keyof typeof PublishInvestigationResponseApiStatus];
+
+export const PublishInvestigationResponseApiStatus = {
+  accepted: "accepted",
+  duplicate: "duplicate",
+} as const;
+
+export interface PublishInvestigationResponseApi {
+  status: PublishInvestigationResponseApiStatus;
+  report_id: string;
+  occurrence_ids: string[];
+  /** @minLength 1 */
+  grouping_status: string;
 }
 
 export type ObservabilityProviderApiProvider =
@@ -23315,9 +27646,23 @@ export interface ObserveGraphDataRequestApi {
   /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
   filters?: ObserveGraphDataRequestApiFiltersItem[];
   interval?: ObserveGraphDataRequestApiInterval;
+  /** Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency. */
   property?: string;
   req_data_config: ObserveGraphDataRequestApiReqDataConfig;
 }
+
+/**
+ * Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.
+ */
+export type ObserveGraphDataResultApiMetricStatistic =
+  (typeof ObserveGraphDataResultApiMetricStatistic)[keyof typeof ObserveGraphDataResultApiMetricStatistic];
+
+export const ObserveGraphDataResultApiMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  percentage: "percentage",
+} as const;
 
 /**
  * Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.
@@ -23376,6 +27721,8 @@ export const ObserveGraphDataResultApiQuerySamplingStrategy = {
 export interface ObserveGraphDataResultApi {
   metric_name: string;
   name?: string;
+  /** Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series. */
+  metric_statistic?: ObserveGraphDataResultApiMetricStatistic;
   /** Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points. */
   data: ObserveGraphDataPointApi[];
   query_complete?: boolean;
@@ -23461,6 +27808,14 @@ export interface SpanObserveIndexQueryApi {
   filters?: string;
 }
 
+export type SpanListColumnConfigApiTargetType =
+  (typeof SpanListColumnConfigApiTargetType)[keyof typeof SpanListColumnConfigApiTargetType];
+
+export const SpanListColumnConfigApiTargetType = {
+  span: "span",
+  trace: "trace",
+} as const;
+
 /**
  * Any valid JSON value.
  */
@@ -23496,6 +27851,7 @@ export interface SpanListColumnConfigApi {
   choices_map?: SpanListColumnConfigApiChoicesMap;
   /** @minLength 1 */
   eval_template_id?: string | null;
+  target_type?: SpanListColumnConfigApiTargetType | null;
   /** Any valid JSON value. */
   annotators?: SpanListColumnConfigApiAnnotators;
   /** @minLength 1 */
@@ -23559,6 +27915,8 @@ export interface SpanListMetadataApi {
   query_applied_filter_sha256?: string;
   /** @minimum 0 */
   query_applied_filter_count?: number;
+  query_exact?: boolean;
+  ordering_exact?: boolean;
 }
 
 export type SpanPrototypeListResultApiTableItem = {
@@ -23816,6 +28174,13 @@ export interface ProjectApi {
 export type ProjectGraphDataResultApiSystemMetrics = { [key: string]: unknown };
 
 /**
+ * Statistic of each ``system_metrics`` series per bucket, e.g. {"latency": "mean", "tokens": "sum", "cost": "mean", "traffic": "count"}. Latency is always the mean (avg) span latency.
+ */
+export type ProjectGraphDataResultApiSystemMetricStatistics = {
+  [key: string]: "count" | "sum" | "mean" | "percentage";
+};
+
+/**
  * Any valid JSON value.
  */
 export type ProjectGraphDataResultApiEvaluations = { [key: string]: unknown };
@@ -23823,6 +28188,8 @@ export type ProjectGraphDataResultApiEvaluations = { [key: string]: unknown };
 export interface ProjectGraphDataResultApi {
   /** Any valid JSON value. */
   system_metrics: ProjectGraphDataResultApiSystemMetrics;
+  /** Statistic of each ``system_metrics`` series per bucket, e.g. {"latency": "mean", "tokens": "sum", "cost": "mean", "traffic": "count"}. Latency is always the mean (avg) span latency. */
+  system_metric_statistics?: ProjectGraphDataResultApiSystemMetricStatistics;
   /** Any valid JSON value. */
   evaluations: ProjectGraphDataResultApiEvaluations;
 }
@@ -24506,6 +28873,7 @@ export const SharedLinkListApiResourceType = {
   eval_run: "eval_run",
   dataset: "dataset",
   project: "project",
+  call_execution: "call_execution",
 } as const;
 
 export type SharedLinkListApiAccessType =
@@ -24539,6 +28907,7 @@ export const SharedLinkCreateApiResourceType = {
   trace: "trace",
   dashboard: "dashboard",
   project: "project",
+  call_execution: "call_execution",
 } as const;
 
 export type SharedLinkCreateApiAccessType =
@@ -24571,6 +28940,7 @@ export const SharedLinkDetailApiResourceType = {
   eval_run: "eval_run",
   dataset: "dataset",
   project: "project",
+  call_execution: "call_execution",
 } as const;
 
 export type SharedLinkDetailApiAccessType =
@@ -24637,6 +29007,7 @@ export const SharedLinkResolveResponseApiResourceType = {
   eval_run: "eval_run",
   dataset: "dataset",
   project: "project",
+  call_execution: "call_execution",
 } as const;
 
 export type SharedLinkResolveResponseApiAccessType =
@@ -25014,6 +29385,7 @@ export interface TraceSessionGraphDataRequestApi {
   /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
   filters?: TraceSessionGraphDataRequestApiFiltersItem[];
   interval?: TraceSessionGraphDataRequestApiInterval;
+  /** Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency. */
   property?: string;
   req_data_config: TraceSessionGraphDataRequestApiReqDataConfig;
 }
@@ -25040,6 +29412,19 @@ export const ObserveGraphDataErrorResponseApiType = {
 export type ObserveGraphDataErrorResponseApiDetails = {
   [key: string]: string[];
 };
+
+/**
+ * Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.
+ */
+export type ObserveGraphDataErrorResultApiMetricStatistic =
+  (typeof ObserveGraphDataErrorResultApiMetricStatistic)[keyof typeof ObserveGraphDataErrorResultApiMetricStatistic];
+
+export const ObserveGraphDataErrorResultApiMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  percentage: "percentage",
+} as const;
 
 export type ObserveGraphDataErrorResultApiQueryProvenance =
   (typeof ObserveGraphDataErrorResultApiQueryProvenance)[keyof typeof ObserveGraphDataErrorResultApiQueryProvenance];
@@ -25088,6 +29473,8 @@ export const ObserveGraphDataErrorResultApiQuerySamplingStrategy = {
 export interface ObserveGraphDataErrorResultApi {
   metric_name: string;
   name?: string;
+  /** Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series. */
+  metric_statistic?: ObserveGraphDataErrorResultApiMetricStatistic;
   /** Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points. */
   data: ObserveGraphDataPointApi[];
   query_complete?: boolean;
@@ -25201,8 +29588,8 @@ export interface TraceSessionListMetadataApi {
   /** @minimum 0 */
   query_applied_filter_count?: number;
   query_exact?: boolean;
-  query_provenance?: TraceSessionListMetadataApiQueryProvenance;
   ordering_exact?: boolean;
+  query_provenance?: TraceSessionListMetadataApiQueryProvenance;
 }
 
 /**
@@ -25235,6 +29622,14 @@ export interface TraceSessionTableRowApi {
   user_id_hash?: string | null;
   [key: string]: JsonValueApi | undefined;
 }
+
+export type TraceObserveColumnConfigApiTargetType =
+  (typeof TraceObserveColumnConfigApiTargetType)[keyof typeof TraceObserveColumnConfigApiTargetType];
+
+export const TraceObserveColumnConfigApiTargetType = {
+  span: "span",
+  trace: "trace",
+} as const;
 
 /**
  * Any valid JSON value.
@@ -25271,6 +29666,7 @@ export interface TraceObserveColumnConfigApi {
   choices_map?: TraceObserveColumnConfigApiChoicesMap;
   /** @minLength 1 */
   eval_template_id?: string | null;
+  target_type?: TraceObserveColumnConfigApiTargetType | null;
   /** Any valid JSON value. */
   annotators?: TraceObserveColumnConfigApiAnnotators;
   /** @minLength 1 */
@@ -25495,6 +29891,109 @@ export interface TraceAgentGraphQueryApi {
   refresh?: boolean;
 }
 
+export type TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type TraceGraphDataRequestApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type TraceGraphDataRequestApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: TraceGraphDataRequestApiFiltersItemFilterConfig;
+};
+
+export type TraceGraphDataRequestApiInterval =
+  (typeof TraceGraphDataRequestApiInterval)[keyof typeof TraceGraphDataRequestApiInterval];
+
+export const TraceGraphDataRequestApiInterval = {
+  hour: "hour",
+  day: "day",
+  week: "week",
+  month: "month",
+} as const;
+
+export type TraceGraphDataRequestApiReqDataConfigType =
+  (typeof TraceGraphDataRequestApiReqDataConfigType)[keyof typeof TraceGraphDataRequestApiReqDataConfigType];
+
+export const TraceGraphDataRequestApiReqDataConfigType = {
+  SYSTEM_METRIC: "SYSTEM_METRIC",
+  EVAL: "EVAL",
+  ANNOTATION: "ANNOTATION",
+} as const;
+
+export type TraceGraphDataRequestApiReqDataConfigSource =
+  (typeof TraceGraphDataRequestApiReqDataConfigSource)[keyof typeof TraceGraphDataRequestApiReqDataConfigSource];
+
+export const TraceGraphDataRequestApiReqDataConfigSource = {
+  traces: "traces",
+  sessions: "sessions",
+} as const;
+
+export type TraceGraphDataRequestApiReqDataConfig = {
+  id: string;
+  type: TraceGraphDataRequestApiReqDataConfigType;
+  output_type?: string;
+  eval_output_type?: string;
+  choices?: string[];
+  value?: unknown;
+  filter_op?: string;
+  filter_value?: unknown;
+  /** Stable Property Registry identity. */
+  property_id?: string;
+  source?: TraceGraphDataRequestApiReqDataConfigSource;
+};
+
+/**
+ * Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them.
+ */
+export type TraceGraphDataRequestApiObserveType =
+  (typeof TraceGraphDataRequestApiObserveType)[keyof typeof TraceGraphDataRequestApiObserveType];
+
+export const TraceGraphDataRequestApiObserveType = {
+  trace: "trace",
+  voice: "voice",
+} as const;
+
+export interface TraceGraphDataRequestApi {
+  project_id: string;
+  /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
+  filters?: TraceGraphDataRequestApiFiltersItem[];
+  interval?: TraceGraphDataRequestApiInterval;
+  /** Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency. */
+  property?: string;
+  req_data_config: TraceGraphDataRequestApiReqDataConfig;
+  /** Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them. */
+  observe_type?: TraceGraphDataRequestApiObserveType;
+  /** Voice graphs only: exclude calls placed by a simulator phone, exactly as list_voice_calls' remove_simulation_calls does. */
+  remove_simulation_calls?: boolean;
+}
+
 export interface TracePropertiesResponseApi {
   status?: boolean;
   result: string[];
@@ -25566,6 +30065,8 @@ export interface TraceObserveListMetadataApi {
   query_applied_filter_sha256?: string;
   /** @minimum 0 */
   query_applied_filter_count?: number;
+  query_exact?: boolean;
+  ordering_exact?: boolean;
 }
 
 export type TracePrototypeListResultApiTableItem = {
@@ -25616,6 +30117,7 @@ export type TraceObserveListResultApiTableItem = {
 
 export interface TraceObserveListResultApi {
   metadata: TraceObserveListMetadataApi;
+  /** Observe eval bool and choice cells are counts of completed attempts; a detail eval_rollup separately selects the latest completed row per span. */
   table: TraceObserveListResultApiTableItem[];
   config: TraceObserveColumnConfigApi[];
 }
@@ -25701,8 +30203,12 @@ export interface TraceVoiceCallListResponseApi {
   next_cursor_fingerprint?: string | null;
   query_complete: boolean;
   query_status: TraceVoiceCallListResponseApiQueryStatus;
+  query_exact?: boolean;
+  ordering_exact?: boolean;
   /** @minLength 1 */
   query_error_code?: string;
+  /** @minimum 0 */
+  query_count?: number;
   query_applied_filter_version?: TraceVoiceCallListResponseApiQueryAppliedFilterVersion;
   /**
    * @minLength 1
@@ -25744,6 +30250,69 @@ export interface TraceVoiceCallListQueryApi {
   allow_sampled?: boolean;
 }
 
+export type TraceVoiceCallDetailResultApiEvalRollupScope =
+  (typeof TraceVoiceCallDetailResultApiEvalRollupScope)[keyof typeof TraceVoiceCallDetailResultApiEvalRollupScope];
+
+export const TraceVoiceCallDetailResultApiEvalRollupScope = {
+  trace: "trace",
+  span: "span",
+} as const;
+
+export type EvalRollupEvalApiTargetType =
+  (typeof EvalRollupEvalApiTargetType)[keyof typeof EvalRollupEvalApiTargetType];
+
+export const EvalRollupEvalApiTargetType = {
+  span: "span",
+  trace: "trace",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupSpanApiValue = JsonValueApi;
+
+export interface EvalRollupSpanApi {
+  /** @minLength 1 */
+  span_id: string;
+  span_name?: string;
+  /** Any valid JSON value. */
+  value?: EvalRollupSpanApiValue | null;
+  /** @minLength 1 */
+  explanation?: string | null;
+  error?: boolean;
+  /** @minLength 1 */
+  status?: string | null;
+  eval_config_id?: string;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupEvalApiChoicesMap = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupEvalApiAggregate = JsonValueApi;
+
+export interface EvalRollupEvalApi {
+  /** @minLength 1 */
+  eval_config_id: string;
+  /** @minLength 1 */
+  eval_name: string;
+  /** @minLength 1 */
+  output_type?: string | null;
+  /** @minLength 1 */
+  template_type?: string | null;
+  target_type?: EvalRollupEvalApiTargetType | null;
+  /** Any valid JSON value. */
+  choices_map?: EvalRollupEvalApiChoicesMap | null;
+  /** Any valid JSON value. */
+  aggregate: EvalRollupEvalApiAggregate;
+  spans: EvalRollupSpanApi[];
+  error?: boolean;
+}
+
 export type TraceVoiceCallDetailResultApiCostBreakdown = {
   [key: string]: unknown;
 };
@@ -25776,6 +30345,12 @@ export type TraceVoiceCallDetailResultApiObservationSpanItem = {
 
 export type TraceVoiceCallDetailResultApiEvalOutputs = {
   [key: string]: unknown;
+};
+
+export type TraceVoiceCallDetailResultApiEvalRollup = {
+  scope: TraceVoiceCallDetailResultApiEvalRollupScope;
+  evals: EvalRollupEvalApi[];
+  error?: boolean;
 };
 
 export type TraceVoiceCallDetailResultApiScenarioGraph = {
@@ -25836,6 +30411,7 @@ export interface TraceVoiceCallDetailResultApi {
   call_metadata: TraceVoiceCallDetailResultApiCallMetadata;
   observation_span: TraceVoiceCallDetailResultApiObservationSpanItem[];
   eval_outputs: TraceVoiceCallDetailResultApiEvalOutputs;
+  eval_rollup?: TraceVoiceCallDetailResultApiEvalRollup | null;
   /** @minLength 1 */
   call_execution_id?: string | null;
   /** @minLength 1 */
@@ -25864,11 +30440,38 @@ export interface TraceVoiceCallDetailResponseApi {
   result: TraceVoiceCallDetailResultApi;
 }
 
-export type TraceDetailResultApiTrace = { [key: string]: unknown };
+export type EvalRollupApiScope =
+  (typeof EvalRollupApiScope)[keyof typeof EvalRollupApiScope];
 
-export type TraceDetailResultApiObservationSpansItem = {
-  [key: string]: unknown;
-};
+export const EvalRollupApiScope = {
+  trace: "trace",
+  span: "span",
+} as const;
+
+export interface EvalRollupApi {
+  scope: EvalRollupApiScope;
+  evals: EvalRollupEvalApi[];
+  error?: boolean;
+}
+
+export type TraceDetailSpanApiObservationSpan = { [key: string]: unknown };
+
+export type TraceDetailSpanApiChildrenItem = { [key: string]: unknown };
+
+export type TraceDetailSpanApiEvalScoresItem = { [key: string]: unknown };
+
+export type TraceDetailSpanApiAnnotationsItem = { [key: string]: unknown };
+
+export interface TraceDetailSpanApi {
+  observation_span: TraceDetailSpanApiObservationSpan;
+  children?: TraceDetailSpanApiChildrenItem[];
+  /** Raw eval rows retained for backwards-compatible array consumers. */
+  eval_scores?: TraceDetailSpanApiEvalScoresItem[];
+  eval_rollup?: EvalRollupApi;
+  annotations?: TraceDetailSpanApiAnnotationsItem[];
+}
+
+export type TraceDetailResultApiTrace = { [key: string]: unknown };
 
 export type TraceDetailResultApiSummary = { [key: string]: unknown };
 
@@ -25876,7 +30479,7 @@ export type TraceDetailResultApiGraph = { [key: string]: unknown };
 
 export interface TraceDetailResultApi {
   trace: TraceDetailResultApiTrace;
-  observation_spans: TraceDetailResultApiObservationSpansItem[];
+  observation_spans: TraceDetailSpanApi[];
   summary: TraceDetailResultApiSummary;
   graph: TraceDetailResultApiGraph;
 }
@@ -26089,6 +30692,65 @@ export interface UserAlertMonitorDuplicateResponseApi {
   result: UserAlertMonitorDuplicateResultApi;
 }
 
+export interface UserAlertMonitorListColumnApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  is_visible: boolean;
+}
+
+export type UserAlertMonitorListItemApiStatus =
+  (typeof UserAlertMonitorListItemApiStatus)[keyof typeof UserAlertMonitorListItemApiStatus];
+
+export const UserAlertMonitorListItemApiStatus = {
+  triggered: "triggered",
+  healthy: "healthy",
+} as const;
+
+export interface UserAlertMonitorTrendApi {
+  timestamp: string;
+  /** @minimum 0 */
+  count: number;
+}
+
+export type UserAlertMonitorListItemApiFilters = { [key: string]: unknown };
+
+export interface UserAlertMonitorListItemApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  created_at: string;
+  updated_at: string;
+  /** @minLength 1 */
+  metric_type: string;
+  filters: UserAlertMonitorListItemApiFilters;
+  status: UserAlertMonitorListItemApiStatus;
+  /** @minimum 0 */
+  no_of_alerts: number;
+  last_triggered: string;
+  is_mute: boolean;
+  trends: UserAlertMonitorTrendApi[];
+}
+
+export interface UserAlertMonitorListMetadataApi {
+  /** @minimum 0 */
+  total_rows: number;
+  /** @minimum 0 */
+  total_pages: number;
+}
+
+export interface UserAlertMonitorListResultApi {
+  column_config: UserAlertMonitorListColumnApi[];
+  table: UserAlertMonitorListItemApi[];
+  metadata: UserAlertMonitorListMetadataApi;
+}
+
+export interface UserAlertMonitorListResponseApi {
+  status: boolean;
+  result: UserAlertMonitorListResultApi;
+}
+
 export interface UserAlertMonitorMetricOptionApi {
   /** @minLength 1 */
   readonly id?: string;
@@ -26256,6 +30918,8 @@ export interface UsersTableRowApi {
   avg_output_float?: number;
   project_id?: string;
   /** @minLength 1 */
+  project_name?: string;
+  /** @minLength 1 */
   user_id_type?: string;
   /** @minLength 1 */
   user_id_hash?: string;
@@ -26276,6 +30940,14 @@ export type UsersResultApiQueryProvenance =
 export const UsersResultApiQueryProvenance = {
   span_user_rollup_end_users_candidate: "span_user_rollup_end_users_candidate",
   physical_latest_users: "physical_latest_users",
+  matching_activity_walk: "matching_activity_walk",
+} as const;
+
+export type UsersResultApiOrdering =
+  (typeof UsersResultApiOrdering)[keyof typeof UsersResultApiOrdering];
+
+export const UsersResultApiOrdering = {
+  latest_matching_activity: "latest_matching_activity",
 } as const;
 
 export type UsersResultApiApproximateFieldsItem =
@@ -26303,6 +30975,7 @@ export interface UsersResultApi {
   query_exact?: boolean;
   query_provenance?: UsersResultApiQueryProvenance;
   ordering_exact?: boolean;
+  ordering?: UsersResultApiOrdering;
   approximate_fields?: UsersResultApiApproximateFieldsItem[];
 }
 
@@ -28337,21 +33010,17 @@ export type AgentccAnalyticsModelComparison200 = {
 };
 
 export type AgentccAnalyticsOverviewParams = {
+  start?: string;
+  end?: string;
   /**
-   * A page number within the paginated result set.
+   * @minLength 1
    */
-  page?: number;
+  granularity?: string;
   /**
-   * Number of results to return per page.
+   * Gateway key id (not the API key's UUID primary key).
+   * @maxLength 255
    */
-  limit?: number;
-};
-
-export type AgentccAnalyticsOverview200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: AgentccRequestLogApi[];
+  api_key_id?: string;
 };
 
 export type AgentccAnalyticsUsageTimeseriesParams = {
@@ -28576,13 +33245,57 @@ export type AgentccProviderCredentialsList200 = {
 
 export type AgentccRequestLogsListParams = {
   /**
-   * A page number within the paginated result set.
+   * @minimum 1
    */
   page?: number;
   /**
-   * Number of results to return per page.
+   * @minimum 1
    */
   limit?: number;
+  user_id?: string;
+  session_id?: string;
+  /**
+   * Gateway key id (not the API key's UUID primary key).
+   * @maxLength 255
+   */
+  api_key_id?: string;
+  request_id?: string;
+  /**
+   * Comma-separated model names.
+   * @minLength 1
+   */
+  model?: string;
+  /**
+   * Comma-separated provider names.
+   * @minLength 1
+   */
+  provider?: string;
+  /**
+   * Comma-separated HTTP status codes.
+   * @minLength 1
+   */
+  status_code?: string;
+  min_status_code?: number;
+  max_status_code?: number;
+  is_error?: boolean;
+  cache_hit?: boolean;
+  fallback_used?: boolean;
+  guardrail_triggered?: boolean;
+  is_stream?: boolean;
+  started_after?: string;
+  started_before?: string;
+  min_latency?: number;
+  max_latency?: number;
+  min_cost?: number;
+  max_cost?: number;
+  min_tokens?: number;
+  max_tokens?: number;
+  q?: string;
+  search?: string;
+  /**
+   * @minLength 1
+   */
+  ordering?: string;
 };
 
 export type AgentccRequestLogsList200 = {
@@ -28789,8 +33502,7 @@ export type AgentccWebhooksList200 = {
 export type ApiTracesSpanAttributeDetailListParams = {
   project_id: string;
   /**
-   * @minLength 1
-   * @maxLength 512
+   * Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.
    */
   key: string;
   refresh?: boolean;
@@ -28804,8 +33516,7 @@ export type ApiTracesSpanAttributeKeysListParams = {
    */
   discovery_mode?: ApiTracesSpanAttributeKeysListDiscoveryMode;
   /**
-   * @minLength 1
-   * @maxLength 512
+   * Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.
    */
   q?: string;
   /**
@@ -28831,8 +33542,7 @@ export const ApiTracesSpanAttributeKeysListDiscoveryMode = {
 export type ApiTracesSpanAttributeValuesListParams = {
   project_id: string;
   /**
-   * @minLength 1
-   * @maxLength 512
+   * Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.
    */
   key: string;
   /**
@@ -28876,6 +33586,13 @@ export type IntegrationsConnectionsListParams = {
    * @maximum 100
    */
   page_size?: number;
+};
+
+export type IntegrationsConnectionsSlackChannelsListParams = {
+  /**
+   * @maxLength 512
+   */
+  cursor?: string;
 };
 
 export type IntegrationsSyncLogsListParams = {
@@ -28937,6 +33654,10 @@ export type ModelHubAnnotationQueuesForSourceParams = {
   source_type?: ModelHubAnnotationQueuesForSourceSourceType;
   source_id?: string;
   sources?: string;
+  /**
+   * Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, only that project's queue items are listed.
+   */
+  project_id?: string;
 };
 
 export type ModelHubAnnotationQueuesForSourceSourceType =
@@ -29129,12 +33850,15 @@ export type ModelHubApiKeysListParams = {
 };
 
 export type ModelHubDatasetOptimizationListParams = {
+  dataset_id?: string;
+  column_id?: string;
+  develop_id?: string;
   /**
-   * A page number within the paginated result set.
+   * @minimum 1
    */
   page?: number;
   /**
-   * Number of results to return per page.
+   * @minimum 1
    */
   limit?: number;
 };
@@ -29204,6 +33928,19 @@ export const ModelHubDevelopsGetEvalStructureReadEvalType = {
   previously_configured: "previously_configured",
 } as const;
 
+export type ModelHubDevelopsGetEvalsListListParams = {
+  /**
+   * Use user to list evaluations attached to this dataset, including their runnable IDs.
+   */
+  eval_type?: string;
+  search_text?: string;
+  eval_categories?: string;
+  eval_tags?: string[];
+  use_cases?: string[];
+  experiment_id?: string;
+  order?: string;
+};
+
 export type ModelHubDevelopsGetExperimentDatasetTableListParams = {
   /**
    * @minimum 1
@@ -29217,14 +33954,15 @@ export type ModelHubDevelopsGetExperimentDatasetTableListParams = {
 };
 
 export type ModelHubEvalGroupsListParams = {
+  name?: string;
   /**
-   * A page number within the paginated result set.
+   * @minimum 0
    */
-  page?: number;
+  page_number?: number;
   /**
-   * Number of results to return per page.
+   * @minimum 1
    */
-  limit?: number;
+  page_size?: number;
 };
 
 export type ModelHubEvalGroupsList200 = {
@@ -29232,6 +33970,10 @@ export type ModelHubEvalGroupsList200 = {
   next?: string;
   previous?: string;
   results: EvalGroupApi[];
+};
+
+export type ModelHubEvalGroupsReadParams = {
+  name?: string;
 };
 
 export type ModelHubEvalTemplatesUsageListParams = {
@@ -29921,6 +34663,7 @@ export type ModelHubPromptTemplatesListParams = {
    * Number of results to return per page.
    */
   limit?: number;
+  modality?: string[];
 };
 
 export type ModelHubPromptTemplatesList200 = {
@@ -29957,6 +34700,21 @@ export type ModelHubPromptTemplatesGetTemplateByName200 = {
   next?: string;
   previous?: string;
   results: PromptTemplateApi[];
+};
+
+export type ModelHubPromptTemplatesGetRunStatusParams = {
+  template_version?: string;
+};
+
+export type ModelHubPromptTemplatesVersionsParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   */
+  limit?: number;
 };
 
 export type ModelHubPromptMetricsListParams = {
@@ -30060,6 +34818,10 @@ export type ModelHubScoresForSourceParams = {
    * @minLength 1
    */
   source_id: string;
+  /**
+   * Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, only that project's scores are listed.
+   */
+  project_id?: string;
 };
 
 export type ModelHubScoresForSourceSourceType =
@@ -30150,6 +34912,13 @@ export type Saml2AuthAuthCallbackListParams = {
 export type Saml2AuthAuthReadParams = {
   code?: string;
   state?: string;
+};
+
+export type Saml2AuthCompleteListParams = {
+  /**
+   * One-time SAML response candidate key.
+   */
+  c: string;
 };
 
 export type Saml2AuthGithubCallbackListParams = {
@@ -30393,6 +35162,18 @@ export type SimulateApiCallExecutionsListParams = {
   limit?: number;
 };
 
+export type SimulateApiHarnessEnvironmentsListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
 export type SimulateApiHarnessJobsSecretFileUploadBody = {
   /** Credential file; transferred without entering job JSON. */
   file: Blob;
@@ -30406,6 +35187,30 @@ export type SimulateApiHarnessJobsSourceUploadBody = {
   /** Repeat in file order with each repository-relative path. */
   paths: string;
   name?: string;
+};
+
+export type SimulateApiHarnessConversationsCommandsParams = {
+  /**
+   * @minimum 0
+   */
+  after?: number;
+};
+
+export type SimulateApiHarnessConversationsSessionStoreParams = {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  project_key: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  session_id: string;
+  /**
+   * @maxLength 512
+   */
+  subpath?: string;
 };
 
 /**
@@ -30512,6 +35317,19 @@ export const SimulateApiRunTestsListSimulationType = {
   agent_definition: "agent_definition",
   prompt: "prompt",
 } as const;
+
+export type SimulateApiTestExecutionsListParams = {
+  search?: string;
+  status?: string;
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   */
+  limit?: number;
+};
 
 export type SimulateExportReadParams = {
   /**
@@ -30681,6 +35499,84 @@ export type SimulateTestExecutionsPreviewCallsListParams = {
   run_test_id: string;
 };
 
+export type SimulateV3TestExecutionCallsParams = {
+  search?: string;
+  filters?: string;
+  ordering?: SimulateV3TestExecutionCallsOrdering;
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  group_by?: SimulateV3TestExecutionCallsGroupBy;
+  group_key?: string;
+};
+
+export type SimulateV3TestExecutionCallsOrdering =
+  (typeof SimulateV3TestExecutionCallsOrdering)[keyof typeof SimulateV3TestExecutionCallsOrdering];
+
+export const SimulateV3TestExecutionCallsOrdering = {
+  started_at: "started_at",
+  "-started_at": "-started_at",
+  duration_seconds: "duration_seconds",
+  "-duration_seconds": "-duration_seconds",
+  latency_ms: "latency_ms",
+  "-latency_ms": "-latency_ms",
+  turn_count: "turn_count",
+  "-turn_count": "-turn_count",
+  tokens: "tokens",
+  "-tokens": "-tokens",
+  cost_cents: "cost_cents",
+  "-cost_cents": "-cost_cents",
+  scenario: "scenario",
+  "-scenario": "-scenario",
+  goal: "goal",
+  "-goal": "-goal",
+  outcome: "outcome",
+  "-outcome": "-outcome",
+} as const;
+
+export type SimulateV3TestExecutionCallsGroupBy =
+  (typeof SimulateV3TestExecutionCallsGroupBy)[keyof typeof SimulateV3TestExecutionCallsGroupBy];
+
+export const SimulateV3TestExecutionCallsGroupBy = {
+  goal: "goal",
+  sub_goal: "sub_goal",
+  accent: "accent",
+  age: "age",
+  attack: "attack",
+  task: "task",
+  status: "status",
+} as const;
+
+export type TracerAlertsListParams = {
+  kind?: TracerAlertsListKind;
+};
+
+export type TracerAlertsListKind =
+  (typeof TracerAlertsListKind)[keyof typeof TracerAlertsListKind];
+
+export const TracerAlertsListKind = {
+  metric: "metric",
+  error_feed: "error_feed",
+} as const;
+
+export type TracerAlertsOptionsListParams = {
+  kind?: TracerAlertsOptionsListKind;
+};
+
+export type TracerAlertsOptionsListKind =
+  (typeof TracerAlertsOptionsListKind)[keyof typeof TracerAlertsOptionsListKind];
+
+export const TracerAlertsOptionsListKind = {
+  metric: "metric",
+  error_feed: "error_feed",
+} as const;
+
 export type TracerChartsFetchGraphParams = {
   /**
    * @minLength 1
@@ -30739,29 +35635,11 @@ export type TracerCustomEvalConfigListCustomEvalConfigs200 = {
   results: CustomEvalConfigApi[];
 };
 
-export type TracerDashboardListParams = {
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
-};
-
-export type TracerDashboardList200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: DashboardApi[];
-};
-
 export type TracerDashboardFilterValuesParams = {
   /**
    * Stable namespaced property identity returned by the metrics catalog. Legacy metric_name/metric_type remain accepted during migration.
    * @minLength 1
-   * @maxLength 1024
+   * @maxLength 4113
    */
   property_id?: string;
   /**
@@ -30783,7 +35661,7 @@ export type TracerDashboardFilterValuesParams = {
   page_size?: number;
   /**
    * @minLength 1
-   * @maxLength 16384
+   * @maxLength 262144
    */
   cursor?: string;
   attribute_type?: TracerDashboardFilterValuesAttributeType;
@@ -30854,7 +35732,7 @@ export type TracerDashboardMetricsParams = {
   cursor_mode?: boolean;
   /**
    * @minLength 1
-   * @maxLength 16384
+   * @maxLength 262144
    */
   cursor?: string;
 };
@@ -30905,24 +35783,6 @@ export const TracerDashboardMetricsSource = {
 
 export type TracerDashboardQueryParams = {
   refresh?: boolean;
-};
-
-export type TracerDashboardSimulationAgentsParams = {
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
-};
-
-export type TracerDashboardSimulationAgents200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: DashboardApi[];
 };
 
 export type TracerDashboardWidgetsListParams = {
@@ -31218,6 +36078,10 @@ export type TracerFeedIssuesOverviewListParams = {
   rep_limit?: number;
 };
 
+export type TracerFeedIssuesRedirectListParams = {
+  project_id?: string;
+};
+
 export type TracerFeedIssuesRootCauseListParams = {
   /**
    * @minLength 1
@@ -31316,8 +36180,7 @@ export type TracerObservationSpanGetEvalAttributesListParams = {
   filters: string;
   row_type?: TracerObservationSpanGetEvalAttributesListRowType;
   /**
-   * @minLength 1
-   * @maxLength 512
+   * Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.
    */
   q?: string;
 };
@@ -31394,8 +36257,7 @@ export type TracerObservationSpanGetSpanAttributesListParams = {
   filters: string;
   row_type?: TracerObservationSpanGetSpanAttributesListRowType;
   /**
-   * @minLength 1
-   * @maxLength 512
+   * Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.
    */
   q?: string;
 };
@@ -31498,14 +36360,6 @@ export type TracerObservationSpanListSpansParams = {
 };
 
 export type TracerObservationSpanListSpansObserveParams = {
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
   project_id?: string;
   user_id?: string;
   /**
@@ -31655,15 +36509,29 @@ export type TracerProjectVersionListRuns200 = {
 };
 
 export type TracerProjectListParams = {
+  name?: string;
+  project_type?: string;
+  tags?: string;
+  filters?: string;
+  sort_by?: string;
+  sort_direction?: TracerProjectListSortDirection;
   /**
-   * A page number within the paginated result set.
+   * @minimum 0
    */
-  page?: number;
+  page_number?: number;
   /**
-   * Number of results to return per page.
+   * @minimum 1
    */
-  limit?: number;
+  page_size?: number;
 };
+
+export type TracerProjectListSortDirection =
+  (typeof TracerProjectListSortDirection)[keyof typeof TracerProjectListSortDirection];
+
+export const TracerProjectListSortDirection = {
+  asc: "asc",
+  desc: "desc",
+} as const;
 
 export type TracerProjectList200 = {
   count: number;
@@ -31939,14 +36807,6 @@ export type TracerTraceSessionGetTraceSessionExportDataParams = {
 };
 
 export type TracerTraceSessionListSessionsParams = {
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
   project_id?: string;
   user_id?: string;
   bookmarked?: boolean;
@@ -32161,14 +37021,6 @@ export type TracerTraceListTracesParams = {
 };
 
 export type TracerTraceListTracesOfSessionParams = {
-  /**
-   * A page number within the paginated result set.
-   */
-  page?: number;
-  /**
-   * Number of results to return per page.
-   */
-  limit?: number;
   project_id?: string;
   project_version_id?: string;
   session_id?: string;
@@ -32247,6 +37099,17 @@ export type TracerTraceVoiceCallDetailParams = {
    * Legacy alias for trace_id; when both are supplied they must match.
    */
   traceId?: string;
+  /**
+   * Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.
+   */
+  project_id?: string;
+};
+
+export type TracerTraceReadParams = {
+  /**
+   * Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.
+   */
+  project_id?: string;
 };
 
 export type TracerUserAlertLogsListParams = {
@@ -32305,21 +37168,41 @@ export type TracerUserAlertsList200 = {
 
 export type TracerUserAlertsListMonitorsParams = {
   /**
-   * A page number within the paginated result set.
+   * Zero-based page number.
+   * @minimum 0
    */
-  page?: number;
+  page_number?: number;
   /**
-   * Number of results to return per page.
+   * @minimum 1
+   * @maximum 100
    */
-  limit?: number;
+  page_size?: number;
+  search_text?: string;
+  project_id?: string[];
+  status?: TracerUserAlertsListMonitorsStatusItem[];
+  metric_type?: string[];
+  /**
+   * @minLength 1
+   */
+  sort_by?: string;
+  sort_direction?: TracerUserAlertsListMonitorsSortDirection;
 };
 
-export type TracerUserAlertsListMonitors200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: UserAlertMonitorApi[];
-};
+export type TracerUserAlertsListMonitorsStatusItem =
+  (typeof TracerUserAlertsListMonitorsStatusItem)[keyof typeof TracerUserAlertsListMonitorsStatusItem];
+
+export const TracerUserAlertsListMonitorsStatusItem = {
+  triggered: "triggered",
+  healthy: "healthy",
+} as const;
+
+export type TracerUserAlertsListMonitorsSortDirection =
+  (typeof TracerUserAlertsListMonitorsSortDirection)[keyof typeof TracerUserAlertsListMonitorsSortDirection];
+
+export const TracerUserAlertsListMonitorsSortDirection = {
+  asc: "asc",
+  desc: "desc",
+} as const;
 
 export type TracerUserAlertsMetricOptionsParams = {
   /**

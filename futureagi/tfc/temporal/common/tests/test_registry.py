@@ -3,7 +3,32 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
+from tfc import ee_loader
 from tfc.temporal.common import registry
+
+
+def test_hosted_runner_dropin_stays_on_its_dedicated_queue():
+    from simulate.tasks.hosted_harness_conversation import (
+        ensure_hosted_harness_conversation_runtime,
+    )
+    from simulate.temporal.constants import QUEUE_RUNNER
+    from tfc.temporal.drop_in.decorator import _ACTIVITY_WRAPPERS
+    from tfc.temporal.drop_in.workflow import TaskRunnerWorkflow
+
+    runner_activities = registry.get_activities_for_queue(QUEUE_RUNNER)
+    runner = _ACTIVITY_WRAPPERS[ensure_hosted_harness_conversation_runtime.name]
+    assert runner in runner_activities
+    assert TaskRunnerWorkflow in registry.get_workflows_for_queue(QUEUE_RUNNER)
+    for queue in (
+        "default",
+        "tasks_s",
+        "tasks_l",
+        "tasks_xl",
+        "agent_compass",
+        "trace_ingestion",
+        "exact_aggregation",
+    ):
+        assert runner not in registry.get_activities_for_queue(queue)
 
 
 def test_usage_temporal_registry_prefers_cloud(monkeypatch):
@@ -52,6 +77,31 @@ def test_usage_temporal_registry_returns_none_when_unavailable(monkeypatch):
     ]
 
 
+def test_usage_events_are_on_where_the_registry_finds_their_consumer(monkeypatch):
+    # One tuple decides both: whether settings turn usage events on, and
+    # where the worker loads the workflow that drains them.
+    import_module = MagicMock(
+        side_effect=[
+            ModuleNotFoundError("missing", name=name)
+            for name in ee_loader.USAGE_TEMPORAL_MODULES
+        ]
+    )
+    monkeypatch.setattr(registry, "import_module", import_module)
+
+    registry._load_usage_temporal_registry("get_workflows")
+
+    assert [c.args[0] for c in import_module.call_args_list] == list(
+        ee_loader.USAGE_TEMPORAL_MODULES
+    )
+    for name in ee_loader.USAGE_TEMPORAL_MODULES:
+        monkeypatch.setattr(
+            ee_loader, "has_ee", lambda module, name=name: module == name
+        )
+        assert ee_loader.usage_event_consumer_available()
+    monkeypatch.setattr(ee_loader, "has_ee", lambda module: False)
+    assert not ee_loader.usage_event_consumer_available()
+
+
 def test_usage_temporal_registry_does_not_hide_internal_import_error(monkeypatch):
     import_error = ModuleNotFoundError("dependency unavailable", name="redis")
     monkeypatch.setattr(registry, "import_module", MagicMock(side_effect=import_error))
@@ -85,3 +135,36 @@ def test_usage_temporal_registration_does_not_hide_packaging_failure(
         register(*args)
 
     assert exc_info.value is import_error
+
+
+def test_scoring_sweeper_schedule_registered():
+    """The sweeper runs every minute on the small-task queue, as a registered
+    activity with its own time limit."""
+    from simulate.services.scoring_status import SCORING_SWEEP_TIME_LIMIT_SECONDS
+    from simulate.tasks.chat_sim import sweep_stuck_scoring
+    from tfc.temporal.drop_in.decorator import _ACTIVITY_WRAPPERS
+    from tfc.temporal.schedules import ALL_SCHEDULES
+    from tfc.temporal.schedules.manager import _build_schedule_for_config
+
+    (config,) = [
+        schedule
+        for schedule in ALL_SCHEDULES
+        if schedule.schedule_id == "sweep-stuck-scoring"
+    ]
+    assert config.activity_name == "sweep_stuck_scoring"
+    assert config.activity_name == sweep_stuck_scoring._activity_name
+    assert config.interval_seconds == 60
+    assert config.queue == "tasks_s"
+    assert sweep_stuck_scoring._metadata["queue"] == "tasks_s"
+    assert sweep_stuck_scoring._metadata["time_limit"] == (
+        SCORING_SWEEP_TIME_LIMIT_SECONDS
+    )
+    run_input = _build_schedule_for_config(config).action.args[0]
+    assert run_input.time_limit == SCORING_SWEEP_TIME_LIMIT_SECONDS == 300
+    # One attempt: a pass that outlives its limit is not started again beside
+    # its own still-running thread.
+    assert sweep_stuck_scoring._metadata["max_retries"] == 0
+    assert run_input.max_retries == 0
+    assert "simulate.tasks.chat_sim" in registry.TEMPORAL_ACTIVITY_MODULES
+    activities = registry.get_activities_for_queue("tasks_s")
+    assert _ACTIVITY_WRAPPERS["sweep_stuck_scoring"] in activities

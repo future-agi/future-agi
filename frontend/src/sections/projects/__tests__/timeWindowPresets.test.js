@@ -6,6 +6,8 @@ import {
   presetToToken,
   tokenToPreset,
   formatTimeWindow,
+  observePresetDateFilter,
+  resolvePresetDateFilter,
 } from "../timeWindowPresets";
 
 const freezeClock = () => {
@@ -128,5 +130,85 @@ describe("formatTimeWindow", () => {
     expect(formatTimeWindow("2026-07-01 00:00:00", "2026-06-01 00:00:00")).toBe(
       "",
     );
+  });
+});
+
+describe("resolvePresetDateFilter (TH-8634)", () => {
+  const NOW = new Date(2026, 9, 15, 11, 49, 0);
+  const STALE = ["2026-10-01 00:00:00", "2026-10-02 00:00:00"];
+
+  it("re-anchors Today to the current day", () => {
+    expect(
+      resolvePresetDateFilter({ dateOption: "Today", dateFilter: STALE }, NOW),
+    ).toEqual({
+      dateOption: "Today",
+      dateFilter: ["2026-10-15 00:00:00", "2026-10-16 00:00:00"],
+    });
+  });
+
+  it("re-anchors Yesterday to the day before now", () => {
+    expect(
+      resolvePresetDateFilter(
+        { dateOption: "Yesterday", dateFilter: STALE },
+        NOW,
+      ).dateFilter,
+    ).toEqual(["2026-10-14 00:00:00", "2026-10-15 00:00:00"]);
+  });
+
+  it.each(["7D", "30D", "3M", "6M", "12M"])(
+    "re-anchors %s with the same window the dropdown sends",
+    (option) => {
+      const resolved = resolvePresetDateFilter(
+        { dateOption: option, dateFilter: STALE },
+        NOW,
+      );
+      expect(resolved.dateFilter).toEqual(observePresetDateFilter(option, NOW));
+      expect(resolved.dateFilter).not.toEqual(STALE);
+    },
+  );
+
+  it("returns the same object when the dates are already fresh", () => {
+    const fresh = {
+      dateOption: "Today",
+      dateFilter: ["2026-10-15 00:00:00", "2026-10-16 00:00:00"],
+    };
+    expect(resolvePresetDateFilter(fresh, NOW)).toBe(fresh);
+  });
+
+  it("keeps a Custom range exactly as given", () => {
+    const custom = { dateOption: "Custom", dateFilter: STALE };
+    expect(resolvePresetDateFilter(custom, NOW)).toBe(custom);
+  });
+
+  it("fills in dates for a preset that has none", () => {
+    expect(resolvePresetDateFilter({ dateOption: "Today" }, NOW)).toEqual({
+      dateOption: "Today",
+      dateFilter: ["2026-10-15 00:00:00", "2026-10-16 00:00:00"],
+    });
+  });
+
+  it.each(["30 mins", "6 hrs", "bogus"])(
+    "keeps the dates for %s, which the Observe dropdown does not offer",
+    (option) => {
+      const value = { dateOption: option, dateFilter: STALE };
+      expect(resolvePresetDateFilter(value, NOW)).toBe(value);
+    },
+  );
+
+  it.each([undefined, null])("passes %s through", (value) => {
+    expect(resolvePresetDateFilter(value, NOW)).toBe(value);
+  });
+
+  it("uses the current time when now is omitted", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    try {
+      expect(
+        resolvePresetDateFilter({ dateOption: "Today", dateFilter: STALE })
+          .dateFilter,
+      ).toEqual(["2026-10-15 00:00:00", "2026-10-16 00:00:00"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

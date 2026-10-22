@@ -73,6 +73,7 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
       refreshGrid();
       navigate(`/dashboard/develop/${data?.data?.result?.dataset_id}?tab=data`);
     },
+    meta: { errorHandled: true },
     onError: (error) => {
       enqueueSnackbar(
         getRequestErrorMessage(error, "Failed to upload dataset", {

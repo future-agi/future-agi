@@ -1,12 +1,18 @@
+import inspect
 import os
 import re
 import secrets
 import string
+import threading
+import urllib.parse
 
 import requests
 import structlog
 from django.conf import settings
+from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db import close_old_connections, transaction
 from django.db.models.functions import Lower
 from django.utils.encoding import force_bytes
@@ -30,6 +36,7 @@ from analytics.utils import (
 from saml2_auth.models import SAMLMetadataModel
 from tfc.constants.email import FREE_EMAIL_DOMAINS
 from tfc.constants.levels import Level
+from tfc.ee_loader import is_cloud_env
 from tfc.settings.settings import ssl
 from tfc.utils.email import email_helper
 from tfc.utils.parse_errors import parse_serialized_errors
@@ -37,7 +44,22 @@ from tfc.utils.parse_errors import parse_serialized_errors
 logger = structlog.get_logger(__name__)
 
 
-def _fire_deployment_telemetry_registration():
+def _record_signup_api_key_event(key_id, organization_id):
+    try:
+        from tfc.deployment_telemetry.events import record_event
+
+        record_event(
+            "api_key_created",
+            actor_type="api_key",
+            actor_id=key_id,
+            source="system",
+            organization_id=organization_id,
+        )
+    except Exception:
+        logger.debug("deployment_telemetry_signup_api_key_event_failed", exc_info=True)
+
+
+def _fire_deployment_telemetry_registration(user_id=None, source="system"):
     import threading
 
     try:
@@ -52,6 +74,15 @@ def _fire_deployment_telemetry_registration():
                 from tfc.deployment_telemetry.sender import attempt_registration
 
                 attempt_registration()
+                from tfc.deployment_telemetry.events import record_event
+
+                if user_id is not None:
+                    record_event(
+                        "user_created",
+                        actor_type="human_user",
+                        actor_id=user_id,
+                        source=source,
+                    )
             finally:
                 close_old_connections()
 
@@ -189,7 +220,10 @@ def is_disposable_email_domain(domain):
     domain_parts = domain.split(".")
     for i in range(len(domain_parts) - 1):
         suffix = ".".join(domain_parts[i:])
-        if suffix in DISPOSABLE_EMAIL_DOMAINS or suffix in EXTRA_DISPOSABLE_EMAIL_DOMAINS:
+        if (
+            suffix in DISPOSABLE_EMAIL_DOMAINS
+            or suffix in EXTRA_DISPOSABLE_EMAIL_DOMAINS
+        ):
             return True
     return False
 
@@ -257,7 +291,7 @@ def is_work_email(email):
     return not is_disposable_email_domain(domain)
 
 
-def first_signup(data, mode=None):
+def first_signup(data, mode=None, telemetry_source="web"):
     if not data.get("email"):
         raise Exception("Email not provided")
 
@@ -285,7 +319,7 @@ def first_signup(data, mode=None):
     # Only managed cloud requires a work address. A self-hosted install — EE
     # licensed or not — is run by people signing up on whatever address they
     # have, and the operator already controls who can reach the instance.
-    is_cloud = settings.CLOUD_DEPLOYMENT in ("US", "EU", "DEV")
+    is_cloud = is_cloud_env(settings.CLOUD_DEPLOYMENT)
     allow_any_email = (
         os.getenv("ALLOW_ANY_EMAIL", "false" if is_cloud else "true").lower() == "true"
     )
@@ -347,18 +381,57 @@ def first_signup(data, mode=None):
         track_mixpanel_event(event_name, properties)
 
         if len(apiKeys) == 0:
-            OrgApiKey.no_workspace_objects.create(
+            system_key = OrgApiKey.no_workspace_objects.create(
                 organization=organization, type="system"
+            )
+            transaction.on_commit(
+                lambda key_id=system_key.id, org_id=organization.id: _record_signup_api_key_event(
+                    key_id, org_id
+                )
             )
         if generated_password:
             process_post_registration(user.id, generated_password)
 
-        transaction.on_commit(_fire_deployment_telemetry_registration)
+        transaction.on_commit(
+            lambda user_id=user.id, source=telemetry_source: _fire_deployment_telemetry_registration(
+                user_id, source
+            )
+        )
         return user
 
     else:
         error_messages = parse_serialized_errors(serializer)
         raise Exception(str(error_messages))
+
+
+def create_owner_account(email, full_name, password, telemetry_source=None):
+    """An account that owns a new organization, as a first signup creates it:
+    ``manage.py create_user`` and the Helm chart's first admin
+    (``bootstrap_install``). Raises ValidationError, with messages for the
+    operator, for a missing field, a malformed or taken email, or a password
+    AUTH_PASSWORD_VALIDATORS reject, before anything is created."""
+    if not email or not full_name or not password:
+        raise ValidationError("Email, name, and password are all required.")
+    validate_email(email)
+    # Before the password: ./bin/install counts "already exists" as success.
+    if User.objects.filter(email__iexact=email).exists():
+        raise ValidationError(f"A user with the email {email} already exists.")
+    # UserSignupSerializer trims the password before it validates and stores it.
+    validate_password(password.strip())
+    signup_data = {
+        "email": email,
+        "full_name": full_name,
+        "password": password,
+        "allow_email": True,
+    }
+    if telemetry_source is None:
+        return first_signup(signup_data)
+    # Keep compatibility with callers that replace first_signup with a simple
+    # one-argument callback (management-command tests and downstream hooks),
+    # while passing the source to the real implementation.
+    if "telemetry_source" not in inspect.signature(first_signup).parameters:
+        return first_signup(signup_data)
+    return first_signup(signup_data, telemetry_source=telemetry_source)
 
 
 def persist_pending_org_invite(
@@ -399,7 +472,7 @@ def build_invite_accept_link(user):
     """
     uid = urlsafe_base64_encode(force_bytes(user.pk))
     token = default_token_generator.make_token(user)
-    return f"{settings.APP_URL}/auth/jwt/invitation/accept/{uid}/{token}"
+    return f"{settings.APP_BASE_URL}/auth/jwt/invitation/accept/{uid}/{token}"
 
 
 def build_invite_links(emails):
@@ -430,7 +503,7 @@ def build_password_reset_link(uidb64, token):
     than derived here because the caller has already minted the AuthToken that
     the token encodes — building a second one would leave a stray active token.
     """
-    return f"{settings.APP_URL}/auth/jwt/verify/{uidb64}/{token}"
+    return f"{settings.APP_BASE_URL}/auth/jwt/verify/{uidb64}/{token}"
 
 
 def send_invite_email(email, organization, inviter):
@@ -481,7 +554,40 @@ def send_signup_email(generated_password, user_email, user_name):
     )
 
 
+def hubspot_is_configured(url_setting="HUBSPOT_URL"):
+    """Whether HubSpot lead sync may run on this deployment.
+
+    Lead sync (a contact on signup, ``logged_in`` on login) is a Future AGI
+    Cloud integration. It runs only when the operator sets HUBSPOT_API_TOKEN;
+    self-hosted installs leave it empty, so signup and login never contact
+    HubSpot, log nothing above debug and add no latency. ``url_setting`` names
+    the endpoint setting the caller is about to use; an empty one also turns
+    the call off.
+    """
+    token = str(getattr(settings, "HUBSPOT_API_TOKEN", "") or "").strip()
+    url = str(getattr(settings, url_setting, "") or "").strip()
+    return bool(token and url)
+
+
+def hubspot_contact_url(email):
+    """HUBSPOT_UPDATE_URL for one contact. The address goes into the URL path,
+    and a valid one may hold ``?``, ``#`` or ``/``, which would otherwise end
+    the path and point the PATCH at another contact."""
+    return settings.HUBSPOT_UPDATE_URL.format(urllib.parse.quote(email, safe="@"))
+
+
+def slack_signup_webhook_is_configured():
+    """Whether new-signup Slack notifications have a webhook to post to."""
+    return bool(str(getattr(settings, "SLACK_WEBHOOK_CHANNEL", "") or "").strip())
+
+
 def send_slack_notification(user, updated=False, err=None):
+    if not slack_signup_webhook_is_configured():
+        logger.debug(
+            "signup_slack_notification_skipped",
+            reason="SLACK_WEBHOOK_CHANNEL not set",
+        )
+        return
     try:
         org = get_user_organization(user)
         org_name = (org.display_name or org.name) if org else "Unknown"
@@ -490,7 +596,7 @@ def send_slack_notification(user, updated=False, err=None):
             data += "\n✅ Contact Updated in HubSpot"
         if err:
             data += f"\n❌ Error (HUBSPOT): {err}"
-        webhook = WebhookClient(settings.SLACK_WEBHOOK_CHANNEL)
+        webhook = WebhookClient(settings.SLACK_WEBHOOK_CHANNEL, timeout=10)
         webhook.send(text=data)
         logger.info("Slack notification sent successfully")
     except Exception as e:
@@ -498,8 +604,17 @@ def send_slack_notification(user, updated=False, err=None):
 
 
 def send_hubspot_notification(user):
+    """Create the new user's HubSpot contact, or update it if it already exists.
+
+    Returns ``(updated, err)``. Without HubSpot configured it returns
+    ``(False, None)`` and makes no network call.
+    """
     updated = False
     err = None
+
+    if not hubspot_is_configured():
+        logger.debug("hubspot_contact_sync_skipped", reason="HUBSPOT_API_TOKEN not set")
+        return updated, err
 
     headers = {
         "Authorization": f"Bearer {settings.HUBSPOT_API_TOKEN}",
@@ -543,7 +658,7 @@ def send_hubspot_notification(user):
         }
     }
 
-    logger.info(f"CONTACT: {contact}")
+    logger.debug("hubspot_contact_create", lead_type=contact["properties"]["lead_type"])
     response_text = "No Response"
     response = (
         None  # Initialize before try block to avoid NameError in exception handler
@@ -574,6 +689,10 @@ def send_hubspot_notification(user):
             err = f"Create failed: {str(e)}, Response: {response_text}"
             return updated, err
 
+        if not hubspot_is_configured("HUBSPOT_UPDATE_URL"):
+            err = f"Create failed: {str(e)}, and HUBSPOT_UPDATE_URL is not set"
+            return updated, err
+
         update_contact = {
             "properties": {
                 "email": user.email,
@@ -595,7 +714,7 @@ def send_hubspot_notification(user):
         # Get response text before checking status
         try:
             response = requests.patch(
-                settings.HUBSPOT_UPDATE_URL.format(user.email),
+                hubspot_contact_url(user.email),
                 json=update_contact,
                 headers=headers,
                 timeout=10,
@@ -620,12 +739,62 @@ def send_hubspot_notification(user):
     return updated, err
 
 
+def _send_hubspot_login_update(email, lead_type):
+    """PATCH the contact's ``logged_in`` flag. Runs on a background thread."""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {settings.HUBSPOT_API_TOKEN}",
+    }
+    contact = {"properties": {"lead_type": lead_type, "logged_in": "Yes"}}
+    try:
+        response = requests.patch(
+            hubspot_contact_url(email),
+            json=contact,
+            headers=headers,
+            timeout=10,
+        )
+        response.raise_for_status()
+        logger.info("hubspot_login_recorded")
+    except requests.exceptions.RequestException as e:
+        logger.error("hubspot_login_update_failed", error=str(e))
+
+
+def record_hubspot_login(user):
+    """Mark the user's HubSpot contact as logged in, off the request path.
+
+    Without HubSpot configured this returns None straight away: no thread, no
+    network call, nothing logged above debug. Otherwise the PATCH runs on a
+    daemon thread so a slow or unreachable HubSpot never delays the login, and
+    the started thread is returned. Never raises.
+    """
+    try:
+        if not hubspot_is_configured("HUBSPOT_UPDATE_URL"):
+            logger.debug(
+                "hubspot_login_update_skipped", reason="HUBSPOT_API_TOKEN not set"
+            )
+            return None
+        thread = threading.Thread(
+            target=_send_hubspot_login_update,
+            args=(user.email, getattr(user, "organization_role", None)),
+            name="hubspot-login-update",
+            daemon=True,
+        )
+        thread.start()
+        return thread
+    except Exception:
+        logger.warning("hubspot_login_update_not_started", exc_info=True)
+        return None
+
+
 def _run_post_registration(user_id, generated_password):
     """Process post-registration steps in a separate thread"""
     user = User.objects.get(id=user_id)
     if user:
         send_signup_email(generated_password, user.email, user.name)
 
+        # Each of these returns without a network call unless its key is set
+        # (HUBSPOT_API_TOKEN, SLACK_WEBHOOK_CHANNEL), so a self-hosted install
+        # with ENV_TYPE=production still never contacts HubSpot or Slack.
         if os.getenv("ENV_TYPE") not in ["local"]:
             updated, err = send_hubspot_notification(user)
             send_slack_notification(user, updated=updated, err=err)

@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from tracer.models.project import Project
 from tracer.serializers.filters import (
+    OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
     JsonValueField,
     MetricSortParamListField,
     ObserveGraphMetricConfigField,
@@ -132,6 +133,21 @@ class ProjectListQuerySerializer(StrictInputSerializer):
     )
 
 
+class ProjectViewSetListQuerySerializer(ProjectListQuerySerializer):
+    """GET /tracer/project/ historically had no page_size ceiling.
+
+    `list_projects` keeps the bounded contract on ProjectListQuerySerializer.
+    Documenting this ViewSet list must not start rejecting callers that already
+    passed page_size above 100.
+    """
+
+    page_size = serializers.IntegerField(
+        required=False,
+        default=20,
+        min_value=1,
+    )
+
+
 class ProjectNameUpdateSerializer(serializers.Serializer):
     project_id = serializers.UUIDField(required=True)
     name = serializers.CharField(required=True)
@@ -176,6 +192,15 @@ class ProjectGraphDataResultSerializer(serializers.Serializer):
     """
 
     system_metrics = JsonValueField()
+    system_metric_statistics = serializers.DictField(
+        child=serializers.ChoiceField(choices=OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES),
+        required=False,
+        help_text=(
+            "Statistic of each ``system_metrics`` series per bucket, e.g. "
+            '{"latency": "mean", "tokens": "sum", "cost": "mean", '
+            '"traffic": "count"}. Latency is always the mean (avg) span latency.'
+        ),
+    )
     evaluations = JsonValueField()
 
 

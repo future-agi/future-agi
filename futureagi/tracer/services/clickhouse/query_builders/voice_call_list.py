@@ -22,11 +22,16 @@ from typing import Any
 
 from django.conf import settings
 
-from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+from tracer.services.clickhouse.eval_logger_table import (
+    count_mode_choice_array,
+    eval_logger_source,
+    latest_completed_eval_rows,
+)
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
 from tracer.services.simulator_phones import SIMULATOR_PHONE_NUMBERS
+from tracer.utils.attribute_accessor import vapi_customer
 
 # Backward-compatible public name used by existing callers and tests.
 VAPI_PHONE_NUMBERS = SIMULATOR_PHONE_NUMBERS
@@ -42,7 +47,7 @@ def _unix_microseconds(value: datetime) -> int:
     return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
 
 
-_VOICE_ROOT_FILTER = {
+VOICE_CALL_ROOT_FILTER = {
     "column_id": "observation_type",
     "filter_config": {
         "col_type": "INTERNAL_ROOT_METRIC",
@@ -55,6 +60,52 @@ _VOICE_ROOT_FILTER = {
     # Voice calls use the same invariant as eval-task trace selection.
     "_eval_task_trace_root": True,
 }
+
+# The Voice screen's "exclude simulation calls" toggle for population readers
+# that take filter leaves (the Voice chart): the call's root is not a
+# simulator call. It carries the same unforgeable root marker, so requests
+# cannot spell it and exact identities keep it.
+VOICE_CALL_SIMULATOR_EXCLUSION_FILTER = {
+    "column_id": "simulator_call",
+    "filter_config": {
+        "col_type": "INTERNAL_ROOT_METRIC",
+        "filter_type": "boolean",
+        "filter_op": "equals",
+        "filter_value": False,
+    },
+    "_eval_task_trace_root": True,
+}
+
+
+def simulator_call_sql(
+    *, provider: str, raw_log_json: str, raw_log_text: str, span_attr_str: str
+) -> str:
+    """SQL that is true when a voice call was placed by a simulator phone.
+
+    The one definition shared by the Voice list and the Voice chart. The
+    arguments are SQL expressions for the call root's provider, its ``raw_log``
+    as JSON and as JSON-encoded text, and its string attribute map; the caller
+    binds ``simulator_phone_numbers``.
+    """
+
+    def phone(*path: str) -> str:
+        keys = ", ".join(f"'{key}'" for key in path)
+        sources = (raw_log_json, raw_log_text, f"{span_attr_str}['raw_log']")
+        extracted = ", ".join(
+            f"nullIf(JSONExtractString({source}, {keys}), '')" for source in sources
+        )
+        return f"coalesce({extracted})"
+
+    return f"""(
+                (
+                    lowerUTF8({provider}) = 'vapi'
+                    AND ({phone("customer", "number")}) IN %(simulator_phone_numbers)s
+                )
+                OR (
+                    lowerUTF8({provider}) = 'retell'
+                    AND ({phone("from_number")}) IN %(simulator_phone_numbers)s
+                )
+            )"""
 
 
 class VoiceCallFilterBuilder(ClickHouseFilterBuilder):
@@ -102,6 +153,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         bounded_identity_only: bool = False,
         bounded_sampling_salt: str | None = None,
         bounded_sampling_rate: float | None = None,
+        eval_count_mode: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
@@ -114,6 +166,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         self._annotation_label_set_known = annotation_label_ids is not None
         self.annotation_label_ids = annotation_label_ids or []
         self.eval_filter_metadata = eval_filter_metadata
+        self.eval_count_mode = eval_count_mode
         self._bounded_internal_scan = bool(bounded_internal_scan)
         self._bounded_identity_only = bool(bounded_identity_only)
         if (bounded_sampling_salt is None) != (bounded_sampling_rate is None):
@@ -192,7 +245,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             project_ids=self.project_ids,
             page_number=self.page_number,
             page_size=self.page_size,
-            filters=[*delegate_filters, _VOICE_ROOT_FILTER],
+            filters=[*delegate_filters, VOICE_CALL_ROOT_FILTER],
             eval_config_ids=(
                 self.eval_config_ids if self._eval_config_ids_known else None
             ),
@@ -200,6 +253,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
                 self.annotation_label_ids if self._annotation_label_set_known else None
             ),
             eval_filter_metadata=self.eval_filter_metadata,
+            eval_count_mode=self.eval_count_mode,
             # The voice wrapper is normally an internal trace-selector proxy.
             # Candidate-witness capability checks must retain the public list
             # planning contract, otherwise the trace builder intentionally
@@ -401,10 +455,46 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         return min(self.recommended_filter_seed_batch_size(), requested)
 
     def recommended_filter_query_timeout_ms(self) -> int | None:
-        """Share the public endpoint's 9.5-second wall across required reads."""
+        """Give each required read the public endpoint's whole wall.
+
+        ``INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS`` is the deadline of the entire
+        voice-list request, and on this read path it is also the only wall a
+        statement has. Two earlier revisions of this docstring argued for the
+        trace list's smaller 9.5 s share on the ground that the selector
+        halves a slice which overruns its per-statement timeout and retries it
+        narrower. That recovery exists, but it is gated on
+        ``retry_wide_read_budget`` (``trace_filter_reads.py``), which the voice
+        list view never passes - only the bulk-selection service does - so it
+        cannot fire on a voice filtered read at any timeout value. One
+        revision also claimed the share was implemented on the short
+        exact-string seed lane; it was, and it has been removed again, because
+        the measurement below shows it buys nothing and can cost a page.
+
+        What the selector does with this number here is pass it to
+        ``execute_ch_query`` as ``timeout_ms``, and ``AnalyticsQueryService``
+        discards it: it calls the client with ``timeout_ms=None`` and
+        ``application_read_settings`` zeroes ``max_execution_time``. Measured
+        offline through the real bounded selector on an empty 365-day window
+        with a transport shaped like that one: a seed statement that spends
+        12 s of the wall yields the identical complete 12-slice page at 9 500
+        ms and at the whole wall, and one that spends 40 s ends both at
+        ``deadline_exceeded`` after the same two seeds. On a transport that
+        DOES enforce ``timeout_ms``, the same 12 s seed returned
+        ``read_budget_exceeded`` after two statements - 12 hours of the 365
+        days, which the view answers with 503 - at 9 500 ms, against a
+        complete page at the wall. So every voice filtered read keeps the
+        wall, the seed lane included, and a slow statement is bounded by the
+        request deadline rather than by a number this transport ignores.
+        """
 
         if not self._bounded_internal_scan and not self._bounded_identity_only:
-            return settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+            # Capped as the span list's is: the bounded selector refuses a
+            # recommendation above the builder cap, so a request wall raised
+            # past it (production: 60 s wall, 30 s cap) must not fail the page.
+            return min(
+                settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS,
+                settings.FILTER_SELECTOR_MAX_BUILDER_QUERY_TIMEOUT_MS,
+            )
         return None
 
     def recommended_filter_classify_batch_size(self) -> int | None:
@@ -772,32 +862,6 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             # and every physical root is reduced to its latest version before
             # the predicate.
             params = {**params, "simulator_phone_numbers": tuple(VAPI_PHONE_NUMBERS)}
-            simulator_phone = """
-            coalesce(
-                nullIf(JSONExtractString(
-                    latest_raw_log_json, 'customer', 'number'
-                ), ''),
-                nullIf(JSONExtractString(
-                    latest_raw_log_text, 'customer', 'number'
-                ), ''),
-                nullIf(JSONExtractString(
-                    latest_span_attr_str['raw_log'], 'customer', 'number'
-                ), '')
-            )
-        """
-            retell_phone = """
-            coalesce(
-                nullIf(JSONExtractString(
-                    latest_raw_log_json, 'from_number'
-                ), ''),
-                nullIf(JSONExtractString(
-                    latest_raw_log_text, 'from_number'
-                ), ''),
-                nullIf(JSONExtractString(
-                    latest_span_attr_str['raw_log'], 'from_number'
-                ), '')
-            )
-        """
             simulator_time_scope = (
                 """
                   AND start_time >= %(candidate_start_date)s
@@ -805,6 +869,12 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             """
                 if "candidate_start_date" in params
                 else ""
+            )
+            simulator_call = simulator_call_sql(
+                provider="latest_provider",
+                raw_log_json="latest_raw_log_json",
+                raw_log_text="latest_raw_log_text",
+                span_attr_str="latest_span_attr_str",
             )
             query = f"""
         SELECT *
@@ -840,16 +910,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             WHERE latest_is_deleted = 0
               AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
               AND latest_observation_type = 'conversation'
-              AND (
-                    (
-                        lowerUTF8(latest_provider) = 'vapi'
-                        AND ({simulator_phone}) IN %(simulator_phone_numbers)s
-                    )
-                    OR (
-                        lowerUTF8(latest_provider) = 'retell'
-                        AND ({retell_phone}) IN %(simulator_phone_numbers)s
-                    )
-              )
+              AND {simulator_call}
         )
         ORDER BY start_time DESC, trace_id DESC
         LIMIT {bounded_voice_limit}
@@ -892,6 +953,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = end_date
 
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -964,6 +1026,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = end_date
 
         fb = ClickHouseFilterBuilder(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -1103,6 +1166,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
     def build_count_query(self) -> tuple[str, dict[str, Any]]:
         """Build a query to count total matching voice calls."""
         fb = ClickHouseFilterBuilder(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -1141,14 +1205,14 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def is_simulator_call(span_attrs: dict, provider: str) -> bool:
+    def is_simulator_call(raw_log: dict, provider: str) -> bool:
         """Return True if the call comes from a known simulator phone number.
 
-        Called after Phase 1b as a defensive parity check.
+        Called after Phase 1b as a defensive parity check, on the call's
+        payload as ``span_raw_log`` reads it.
         """
-        raw_log = span_attrs.get("raw_log") or {}
         if provider == "vapi":
-            phone = (raw_log.get("customer") or {}).get("number", "")
+            phone = vapi_customer(raw_log).get("number", "")
         elif provider == "retell":
             phone = raw_log.get("from_number", "")
         else:
@@ -1162,8 +1226,15 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
     def build_eval_query(
         self,
         trace_ids: list[str],
+        *,
+        count_mode: bool = False,
     ) -> tuple[str, dict[str, Any]]:
-        """Build eval-scores query for a page of trace IDs."""
+        """Build eval-scores query for a page of trace IDs.
+
+        ``count_mode`` adds the exact pass/fail counts and target type the
+        call-log count tiles read, counting each span once by its newest
+        completed result, as the Observe trace list does.
+        """
         if not trace_ids or not self.eval_config_ids:
             return "", {}
 
@@ -1175,7 +1246,9 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         table, _ = self._EVAL_LOGGER_SOURCE()
         is_v2 = table.endswith("_v2")
         version = "_version" if is_v2 else "_peerdb_version"
-        status_aggregate = "'completed'" if is_v2 else f"argMax(status, {version})"
+        status_aggregate = (
+            "'completed'" if is_v2 else f"argMax(tuple(status), {version}).1"
+        )
         skipped_reason_aggregate = (
             "CAST(NULL AS Nullable(String))"
             if is_v2
@@ -1186,7 +1259,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             if is_v2
             else (
                 f"greatest(argMax(_peerdb_is_deleted, {version}), "
-                f"coalesce(argMax(deleted, {version}), 0))"
+                f"coalesce(argMax(tuple(deleted), {version}).1, 0))"
             )
         )
 
@@ -1203,36 +1276,24 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         # trace_id, eval_config_id, avg_score, pass_rate, success_count,
         # error_count, eval_count, str_lists — new per-status columns are
         # appended after ``str_lists`` so the pivot's positional fallbacks hold.
-        query = f"""
-        SELECT
-            latest_trace_id AS trace_id,
-            toString(latest_eval_config_id) AS eval_config_id,
-            -- ifNotFinite(, NULL): avgIf over an all-NULL group returns NaN,
-            -- which json.dumps(allow_nan=False) rejects. NULL serializes as null.
-            ifNotFinite(avgIf(
-                latest_output_float,
-                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND latest_status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ), NULL) AS avg_score,
-            ifNotFinite(avgIf(
-                CASE WHEN latest_output_bool = 1 THEN 100.0 ELSE 0.0 END,
-                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND latest_status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ), NULL) AS pass_rate,
-            countIf(
-                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND latest_status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ) AS success_count,
-            countIf(
-                latest_error = 1 OR ifNull(latest_output_str, '') = 'ERROR' OR latest_status = 'errored'
-            ) AS error_count,
-            count() AS eval_count,
-            groupArrayIf(
-                latest_output_str_list,
-                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND latest_status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ) AS str_lists,
-            countIf(latest_status = 'skipped') AS skipped_count,
-            countIf(latest_status = 'running') AS running_count,
-            countIf(latest_status = 'pending') AS pending_count,
-            anyIf(latest_skipped_reason, latest_status = 'skipped') AS skipped_reason
-        FROM (
+        completed = (
+            "latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' "
+            "AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')"
+        )
+        count_projection = ""
+        count_inner_projection = ""
+        if count_mode:
+            count_projection = f"""
+            , countIf(if(isNull(latest_output_bool), latest_output_float >= 0.5, latest_output_bool = 1) AND {completed}) AS pass_count
+            , countIf(if(isNull(latest_output_bool), latest_output_float < 0.5, latest_output_bool = 0) AND {completed}) AS fail_count
+            , argMax(latest_target_type, latest_created_at) AS target_type
+            """
+            count_inner_projection = f""",
+                argMax(observation_span_id, {version}) AS latest_observation_span_id,
+                argMax(created_at, {version}) AS latest_created_at,
+                argMax(target_type, {version}) AS latest_target_type"""
+
+        collapsed = f"""(
             SELECT
                 id AS grouped_eval_id,
                 argMax(trace_id, {version}) AS latest_trace_id,
@@ -1244,13 +1305,55 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
                 argMax(error, {version}) AS latest_error,
                 {status_aggregate} AS latest_status,
                 {skipped_reason_aggregate} AS latest_skipped_reason,
-                {deleted_aggregate} AS latest_is_deleted
+                {deleted_aggregate} AS latest_is_deleted{count_inner_projection}
             FROM {table}
             PREWHERE trace_id IN %(trace_ids)s
               AND custom_eval_config_id IN %(eval_config_ids)s
             GROUP BY id
-        ) AS latest_voice_evals
-        WHERE latest_is_deleted = 0
+        )"""
+        if count_mode:
+            eval_source = latest_completed_eval_rows(
+                collapsed,
+                "latest_is_deleted = 0",
+                "latest_trace_id, latest_eval_config_id, latest_observation_span_id",
+                completed_predicate=completed,
+                newest_first="latest_created_at DESC, toString(grouped_eval_id) DESC",
+            )
+        else:
+            eval_source = f"""{collapsed} AS latest_voice_evals
+        WHERE latest_is_deleted = 0"""
+
+        query = f"""
+        SELECT
+            latest_trace_id AS trace_id,
+            toString(latest_eval_config_id) AS eval_config_id,
+            -- ifNotFinite(, NULL): avgIf over an all-NULL group returns NaN,
+            -- which json.dumps(allow_nan=False) rejects. NULL serializes as null.
+            ifNotFinite(avgIf(
+                latest_output_float,
+                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ), NULL) AS avg_score,
+            ifNotFinite(avgIf(
+                CASE WHEN latest_output_bool = 1 THEN 100.0 ELSE 0.0 END,
+                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ), NULL) AS pass_rate,
+            countIf(
+                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS success_count,
+            countIf(
+                latest_error = 1 OR ifNull(latest_output_str, '') = 'ERROR' OR latest_status = 'errored'
+            ) AS error_count,
+            count() AS eval_count,
+            groupArrayIf(
+                {count_mode_choice_array("latest_") if count_mode else "latest_output_str_list"},
+                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS str_lists,
+            countIf(latest_status = 'skipped') AS skipped_count,
+            countIf(latest_status = 'running') AS running_count,
+            countIf(latest_status = 'pending') AS pending_count,
+            anyIf(latest_skipped_reason, latest_status = 'skipped') AS skipped_reason
+            {count_projection}
+        FROM {eval_source}
         GROUP BY latest_trace_id, latest_eval_config_id
         ORDER BY latest_trace_id ASC, latest_eval_config_id ASC
         LIMIT 5001

@@ -8,14 +8,25 @@ only succeeds with a valid key. Adding a provider means adding a row, nothing el
 
 from __future__ import annotations
 
+import time
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, urlparse
 
 import requests
+import structlog
+from google.protobuf import json_format
+
+from tfc.utils.lazy_extras import load_extra
+
+logger = structlog.get_logger(__name__)
 
 PROBE_TIMEOUT_SECONDS = 8
+LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS = 8
+LIVEKIT_AGENT_POLL_SECONDS = 1
+LIVEKIT_ALIASES = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
 
 
 @dataclass(frozen=True)
@@ -44,15 +55,21 @@ class ProbeResult:
     aliases: tuple[str, ...]
     ok: bool
     message: str
+    # The name the provider holds for a looked-up target, so a build can be
+    # labelled by it instead of by the opaque ID the user pasted.
+    target_name: str = ""
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "provider": self.provider,
             "label": self.label,
             "aliases": list(self.aliases),
             "ok": self.ok,
             "message": self.message,
         }
+        if self.target_name:
+            result["target_name"] = self.target_name
+        return result
 
 
 def _bearer(url: str, alias: str, **extra_headers: str):
@@ -211,6 +228,133 @@ def probe_all(values: Mapping[str, str]) -> list[ProbeResult]:
     ]
 
 
+def _dispatched_identities(livekit_api: Any, listing: dict[str, Any]) -> set[str]:
+    response = json_format.ParseDict(
+        listing, livekit_api.ListAgentDispatchResponse(), ignore_unknown_fields=True
+    )
+    return {
+        job.state.participant_identity
+        for dispatch in response.agent_dispatches
+        for job in dispatch.state.jobs
+        if job.state.participant_identity
+    }
+
+
+def probe_livekit_agent(
+    agent_name: str, values: Mapping[str, str]
+) -> ProbeResult | None:
+    agent_name = str(agent_name or "").strip()
+    if not agent_name or not all(
+        str(values.get(alias) or "").strip() for alias in LIVEKIT_ALIASES
+    ):
+        return None
+
+    def result(ok: bool, message: str) -> ProbeResult:
+        return ProbeResult(
+            "livekit_target",
+            "LiveKit agent",
+            LIVEKIT_ALIASES,
+            ok,
+            message,
+            agent_name if ok else "",
+        )
+
+    try:
+        livekit_api = load_extra("livekit.api", "voice")
+    except ImportError as exc:
+        logger.warning("livekit_agent_probe_unavailable", exc_info=True)
+        return result(False, str(exc))
+
+    room = f"_preflight_agent_{uuid.uuid4().hex[:8]}"
+    base_url = f"{_livekit_http_url(values['LIVEKIT_URL'])}/twirp"
+    token = (
+        livekit_api.AccessToken(
+            values["LIVEKIT_API_KEY"].strip(), values["LIVEKIT_API_SECRET"].strip()
+        )
+        .with_grants(
+            livekit_api.VideoGrants(
+                room_create=True, room_admin=True, room_list=True, room=room
+            )
+        )
+        .to_jwt()
+    )
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    def call(service: str, method: str, body: dict[str, Any]) -> dict[str, Any]:
+        response = requests.post(
+            f"{base_url}/livekit.{service}/{method}",
+            headers=headers,
+            json=body,
+            timeout=PROBE_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        return response.json() if response.content else {}
+
+    try:
+        call(
+            "RoomService",
+            "CreateRoom",
+            {"name": room, "empty_timeout": LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS + 15},
+        )
+        try:
+            dispatch = call(
+                "AgentDispatchService",
+                "CreateDispatch",
+                {"agent_name": agent_name, "room": room},
+            )
+            dispatch_id = dispatch.get("id") or ""
+            deadline = time.monotonic() + LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS
+            while dispatch_id and time.monotonic() < deadline:
+                identities = _dispatched_identities(
+                    livekit_api,
+                    call(
+                        "AgentDispatchService",
+                        "ListDispatch",
+                        {"dispatch_id": dispatch_id, "room": room},
+                    ),
+                )
+                if identities:
+                    listing = call("RoomService", "ListParticipants", {"room": room})
+                    if any(
+                        item.get("identity") in identities
+                        for item in listing.get("participants") or []
+                    ):
+                        return result(
+                            True, f"LiveKit agent '{agent_name}' joined a test room"
+                        )
+                time.sleep(LIVEKIT_AGENT_POLL_SECONDS)
+        finally:
+            try:
+                call("RoomService", "DeleteRoom", {"room": room})
+            except requests.RequestException:
+                logger.warning(
+                    "livekit_agent_probe_room_cleanup_failed", room=room, exc_info=True
+                )
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else 0
+        if status in {401, 403}:
+            return result(
+                False,
+                f"LiveKit rejected LIVEKIT_API_KEY + LIVEKIT_API_SECRET (HTTP {status})",
+            )
+        logger.warning("livekit_agent_probe_http_error", status=status, exc_info=True)
+        return result(
+            False,
+            f"LiveKit returned HTTP {status} while checking agent '{agent_name}'",
+        )
+    except requests.RequestException as exc:
+        logger.warning("livekit_agent_probe_unreachable", exc_info=True)
+        return result(
+            False, f"LiveKit is unreachable ({type(exc).__name__}); retry Preflight"
+        )
+    return result(
+        False,
+        f"No agent named '{agent_name}' joined a test room within "
+        f"{LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS}s; check the agent name and that "
+        "the agent is running on this LiveKit project",
+    )
+
+
 def probe_provider_target(
     connector: str, target_id: str, values: Mapping[str, str]
 ) -> ProbeResult | None:
@@ -225,6 +369,8 @@ def probe_provider_target(
     target_id = str(target_id or "").strip()
     if not target_id:
         return None
+    if connector == "livekit":
+        return probe_livekit_agent(target_id, values)
 
     escaped_id = quote(target_id, safe="")
     if connector == "vapi":
@@ -287,10 +433,19 @@ def probe_provider_target(
             False,
             f"{label} ID could not be validated (HTTP {response.status_code})",
         )
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    name_field = "name" if connector == "vapi" else "agent_name"
+    target_name = (
+        str(body.get(name_field) or "").strip()[:255] if isinstance(body, dict) else ""
+    )
     return ProbeResult(
         provider,
         label,
         aliases,
         True,
         f"{label} ID exists and is accessible with {alias}",
+        target_name,
     )

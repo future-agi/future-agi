@@ -13,6 +13,7 @@ the API envelope — runs for real.
 
 import importlib
 import json
+import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -162,6 +163,42 @@ def _start_and_batch(auth_client, run_test):
     return test_execution_id, call_ids
 
 
+def _start_paged_run(auth_client, run_test):
+    """Start an SDK run with two scenarios; returns its id and a function that
+    asks for the next one-call page."""
+    second_scenario = Scenarios.objects.create(
+        name="Second ALK Chat Scenario",
+        description="Second page of an SDK run",
+        source="test",
+        scenario_type=Scenarios.ScenarioTypes.DATASET,
+        organization=run_test.organization,
+        workspace=run_test.workspace,
+        agent_definition=run_test.agent_definition,
+        simulator_agent=run_test.simulator_agent,
+        status=StatusType.COMPLETED.value,
+    )
+    run_test.scenarios.add(second_scenario)
+    start = auth_client.post(
+        f"{ALK_BASE}/run-tests/{run_test.id}/test-executions/",
+        {},
+        format="json",
+    )
+    assert start.status_code == 200, start.content
+    test_execution_id = start.json()["result"]["test_execution_id"]
+
+    def _next_page():
+        resp = auth_client.post(
+            f"{ALK_BASE}/test-executions/{test_execution_id}/batch/",
+            {"count": 1},
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+        (call_id,) = resp.json()["result"]["call_execution_ids"]
+        return call_id
+
+    return test_execution_id, _next_page
+
+
 # ---------------------------------------------------------------------------
 # provision (SDK-first RunTest + scenario-of-record)
 # ---------------------------------------------------------------------------
@@ -268,6 +305,59 @@ class TestProvisionRunTest:
             )
         ) == {row.id for row in rows}
 
+    def test_provision_records_the_scenario_dataset_column_order(self, auth_client):
+        """`scenario_columns.situation.value` resolves only through `column_order`."""
+        from model_hub.models.develop_dataset import Column
+
+        resp = self._provision(
+            auth_client,
+            name="column-order",
+            personas=[
+                {
+                    "name": "Sam",
+                    "scenario_name": "Late refund",
+                    "situation": "My refund is late",
+                    "outcome": "Explain the status",
+                }
+            ],
+        )
+        assert resp.status_code == 200, resp.content
+        run_test = RunTest.objects.get(id=resp.json()["result"]["run_test_id"])
+        dataset = run_test.scenarios.get().dataset
+
+        ordered = list(
+            Column.objects.filter(id__in=dataset.column_order).values_list("id", "name")
+        )
+        by_id = dict(ordered)
+        assert [
+            by_id[column_id]
+            for column_id in map(__import__("uuid").UUID, dataset.column_order)
+        ] == [
+            "persona",
+            "situation",
+            "outcome",
+        ]
+
+        # And the path the mapping uses resolves to the situation text.
+        from simulate.serializers.test_execution import (
+            CallExecutionDetailSerializer,
+        )
+        from simulate.temporal.activities.xl import walk_subject_path
+
+        # `CallExecution` has no `run_test` field: the run test hangs off its
+        # `test_execution`, so the filter spans the relation.
+        call = CallExecution.objects.filter(test_execution__run_test=run_test).first()
+        if call is None:
+            _execution_id, call_ids = _start_and_batch(auth_client, run_test)
+            call = CallExecution.objects.get(id=call_ids[0])
+        columns = CallExecutionDetailSerializer().get_scenario_columns(call) or {}
+        assert (
+            walk_subject_path(
+                {"scenario_columns": columns}, "scenario_columns.situation.value"
+            )
+            == "My refund is late"
+        )
+
     def test_provision_voice_preserves_voice_call_type(self, auth_client):
         resp = self._provision(
             auth_client,
@@ -371,6 +461,93 @@ class TestProvisionRunTest:
             agent_definition_id=str(agent_definition.id),
         )
         assert resp.status_code == 400, resp.content
+
+    def test_provisioned_run_test_defaults_tool_evaluation_off(self, auth_client):
+        """A caller who says nothing gets the tool-call judge off by default."""
+        resp = self._provision(
+            auth_client,
+            name="tool-eval-default",
+            personas=[
+                {
+                    "name": "Sam",
+                    "scenario_name": "Late refund",
+                    "situation": "My refund is late",
+                    "outcome": "Explain the status",
+                }
+            ],
+        )
+        assert resp.status_code == 200, resp.content
+        run_test = RunTest.objects.get(id=resp.json()["result"]["run_test_id"])
+        assert run_test.enable_tool_evaluation is False
+
+    def test_provisioned_run_test_accepts_tool_evaluation_on(self, auth_client):
+        """The SDK-first door can start a run test with the judge already on."""
+        resp = self._provision(
+            auth_client,
+            name="tool-eval-on",
+            enable_tool_evaluation=True,
+            personas=[
+                {
+                    "name": "Sam",
+                    "scenario_name": "Late refund",
+                    "situation": "My refund is late",
+                    "outcome": "Explain the status",
+                }
+            ],
+        )
+        assert resp.status_code == 200, resp.content
+        run_test = RunTest.objects.get(id=resp.json()["result"]["run_test_id"])
+        assert run_test.enable_tool_evaluation is True
+
+    def test_provisioning_refuses_tool_evaluation_for_a_versionless_voice_agent(
+        self, auth_client
+    ):
+        """The SDK door must refuse the same shape the PUT endpoint answers 409 for."""
+        resp = self._provision(
+            auth_client,
+            name="voice-tool-eval",
+            modality="voice",
+            enable_tool_evaluation=True,
+            personas=[
+                {
+                    "name": "Sam",
+                    "scenario_name": "s",
+                    "situation": "x",
+                    "outcome": "y",
+                }
+            ],
+        )
+        assert resp.status_code == 400, resp.content
+        assert not RunTest.objects.filter(enable_tool_evaluation=True).exists()
+
+    def test_a_bad_scenario_id_is_reported_before_the_voice_refusal(self, auth_client):
+        """Error precedence: an unknown scenario id is what a request with both
+        faults hears about, not the tool-evaluation refusal -- the scenario
+        lookup runs before the agent definition is resolved."""
+        resp = self._provision(
+            auth_client,
+            name="voice-tool-eval-bad-scenario",
+            modality="voice",
+            enable_tool_evaluation=True,
+            scenario_ids=[str(uuid.uuid4())],
+        )
+        assert resp.status_code == 400, resp.content
+        assert "scenario(s) not found" in json.dumps(resp.json()).lower()
+        assert not RunTest.objects.filter(enable_tool_evaluation=True).exists()
+
+    def test_scenario_id_provisioning_also_carries_the_switch(
+        self, auth_client, scenario
+    ):
+        """The `scenario_ids` provisioning branch writes the switch too."""
+        resp = self._provision(
+            auth_client,
+            name="tool-eval-scenarios",
+            enable_tool_evaluation=True,
+            scenario_ids=[str(scenario.id)],
+        )
+        assert resp.status_code == 200, resp.content
+        run_test = RunTest.objects.get(id=resp.json()["result"]["run_test_id"])
+        assert run_test.enable_tool_evaluation is True
 
 
 # ---------------------------------------------------------------------------
@@ -709,6 +886,26 @@ class TestMixedResultRollup:
         assert test_execution.completed_calls == 1
         assert test_execution.failed_calls == 1
 
+    def test_eval_task_does_not_initialize_a_voice_provider(self):
+        """Provider-neutral eval replay must not require Vapi credentials."""
+        from simulate.services.test_executor import _run_simulate_evaluations_task
+
+        call_execution = SimpleNamespace(id="call-id")
+        with (
+            patch(
+                "simulate.services.test_executor.CallExecution.objects.select_related"
+            ) as selected,
+            patch("simulate.services.test_executor.TestExecutor") as executor_cls,
+        ):
+            selected.return_value.get.return_value = call_execution
+            assert _run_simulate_evaluations_task._original_func("call-id") is True
+            executor_cls.assert_called_once_with(initialize_voice_service=False)
+            executor_cls.return_value._run_simulate_evaluations.assert_called_once_with(
+                call_execution,
+                eval_config_ids=None,
+                skip_existing=False,
+            )
+
 
 # ---------------------------------------------------------------------------
 # result ingest — metrics, duration, tokens, csat
@@ -782,14 +979,273 @@ class TestResultIngest:
             "kind": "checkpoint",
             "platform_template": "",
         }
-        assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
-        assert execution.completed_at is not None
+        # Transport is done: the roll-up moves the run to EVALUATING and hands
+        # it to the settle after commit, which a test transaction never runs.
+        # Whether CSAT holds the run is pinned elsewhere; here the settle
+        # completes it once CSAT lands.
+        assert execution.status == SimTestExecution.ExecutionStatus.EVALUATING
+        assert execution.completed_at is None
         assert execution.total_calls == 1
         assert execution.completed_calls == 1
         assert execution.failed_calls == 0
 
-    def test_platform_judgement_is_linked_to_run_eval_config_and_output(
+        from simulate.services.test_executor import TestExecutor
+        from simulate.tasks.alk_sim import _set_csat_state
+
+        _set_csat_state(call, "completed")
+        TestExecutor(
+            initialize_voice_service=False
+        )._check_and_update_test_execution_completion(test_execution_id)
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
+        assert execution.completed_at is not None
+
+    def test_a_later_batch_reopens_a_settled_run_until_its_calls_finish(
+        self, auth_client, text_run_test
+    ):
+        """An SDK that pages its calls can see its first page settle the run
+        before it asks for the next one; the next page puts the run back in
+        transport, so the roll-up and the settle count every page."""
+        from simulate.services.scoring_status import settle_run
+        from simulate.tasks.alk_sim import _set_csat_state
+
+        test_execution_id, _next_page = _start_paged_run(auth_client, text_run_test)
+        first_call_id = _next_page()
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{first_call_id}/result/",
+            {
+                "status": "completed",
+                "transcript": _transcript_payload(),
+                "call_metadata": {
+                    "harness_evaluations": [{"name": "ride_booked", "passed": True}]
+                },
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+        _set_csat_state(CallExecution.objects.get(id=first_call_id), "completed")
+        settle_run(test_execution_id)
+        execution = SimTestExecution.objects.get(id=test_execution_id)
+        assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
+        first_completed_at = execution.completed_at
+        assert first_completed_at is not None
+
+        second_call_id = _next_page()
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.RUNNING
+        assert execution.completed_at == first_completed_at
+        assert execution.total_calls == 2
+
+        # Nothing finishes the run while the new page is still in transport.
+        settle_run(test_execution_id)
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.RUNNING
+
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{second_call_id}/result/",
+            {"status": "failed", "transcript": _transcript_payload()},
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.EVALUATING
+        settle_run(test_execution_id)
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
+        assert execution.completed_at > first_completed_at
+        assert (
+            execution.total_calls,
+            execution.completed_calls,
+            execution.failed_calls,
+        ) == (2, 1, 1)
+
+    def test_a_later_batch_revives_a_run_whose_first_page_all_failed(
+        self, auth_client, text_run_test
+    ):
+        """A first page whose calls all failed fails the run on what it has
+        seen so far; the next page puts it back in transport, and the final
+        roll-up and settle count both pages."""
+        from simulate.services.scoring_status import settle_run
+        from simulate.tasks.alk_sim import _set_csat_state
+
+        test_execution_id, _next_page = _start_paged_run(auth_client, text_run_test)
+        first_call_id = _next_page()
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{first_call_id}/result/",
+            {"status": "failed", "transcript": _transcript_payload()},
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+        execution = SimTestExecution.objects.get(id=test_execution_id)
+        assert execution.status == SimTestExecution.ExecutionStatus.FAILED
+        failed_at = execution.completed_at
+        assert failed_at is not None
+
+        second_call_id = _next_page()
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.RUNNING
+        assert execution.completed_at == failed_at
+        assert execution.total_calls == 2
+
+        resp = auth_client.patch(
+            f"{ALK_BASE}/call-executions/{second_call_id}/result/",
+            {
+                "status": "completed",
+                "transcript": _transcript_payload(),
+                "call_metadata": {
+                    "harness_evaluations": [{"name": "ride_booked", "passed": True}]
+                },
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.content
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.EVALUATING
+        _set_csat_state(CallExecution.objects.get(id=second_call_id), "completed")
+        settle_run(test_execution_id)
+        execution.refresh_from_db()
+        assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
+        assert execution.completed_at > failed_at
+        assert (
+            execution.total_calls,
+            execution.completed_calls,
+            execution.failed_calls,
+        ) == (2, 1, 1)
+
+    @pytest.mark.parametrize(
+        ("status", "precreated", "expected"),
+        [
+            pytest.param("evaluating", False, "running", id="evaluating-reopens"),
+            pytest.param("completed", True, "running", id="adopted-rows-reopen"),
+            pytest.param("failed", False, "running", id="failed-reopens"),
+            pytest.param("running", False, "running", id="running-stays"),
+            pytest.param("cancelling", False, "cancelling", id="cancelling-stays"),
+            pytest.param("cancelled", False, "cancelled", id="cancelled-stays"),
+        ],
+    )
+    def test_a_batch_reopens_only_a_settled_or_failed_run(
+        self, auth_client, text_run_test, status, precreated, expected
+    ):
+        """A new page reopens a run an earlier page settled or failed, whether
+        it creates its rows or adopts pre-created ones; a stopped run stays
+        stopped, and completed_at is left for the next settle."""
+        from django.utils import timezone
+
+        from simulate.services.alk_simulate_ingestion import (
+            precreate_alk_sim_call_executions,
+        )
+
+        test_execution_id, _next_page = _start_paged_run(auth_client, text_run_test)
+        if precreated:
+            precreate_alk_sim_call_executions(
+                SimTestExecution.objects.get(id=test_execution_id)
+            )
+        stamp = timezone.now()
+        SimTestExecution.objects.filter(id=test_execution_id).update(
+            status=status, completed_at=stamp
+        )
+        _next_page()
+        execution = SimTestExecution.objects.get(id=test_execution_id)
+        assert (execution.status, execution.completed_at) == (expected, stamp)
+
+    def test_a_harness_receipt_with_the_switch_off_still_short_circuits(
         self, auth_client, run_test
+    ):
+        """With the switch off (the default), a harness receipt with no
+        selected evals still takes the short circuit and never dispatches."""
+        test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        assert run_test.enable_tool_evaluation is False
+
+        with patch(
+            "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
+        ) as dispatch:
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {"name": "ride_booked", "passed": False}
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+        dispatch.assert_not_called()
+
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.call_metadata["eval_completed"] is True
+
+    def test_a_harness_receipt_with_the_switch_on_dispatches_instead(
+        self, auth_client, run_test
+    ):
+        """With the switch on, a harness receipt with no selected evals
+        dispatches instead, and the selection stays `[]` rather than widening
+        to `None`."""
+        run_test.enable_tool_evaluation = True
+        run_test.save(update_fields=["enable_tool_evaluation"])
+        test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+
+        with patch(
+            "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once",
+            return_value=True,  # the real function answers a bool the receipt carries
+        ) as dispatch:
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {"name": "ride_booked", "passed": False}
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+        dispatch.assert_called_once()
+        _, kwargs = dispatch.call_args
+        assert kwargs.get("eval_config_ids") == []
+
+    def test_a_switch_on_receipt_leaves_the_call_awaiting_its_grading_job(
+        self, auth_client, run_test
+    ):
+        """With the switch on and no eval selected, a harness call's
+        completion depends on the eval worker running its per-call job: a
+        job accepted but not yet executed leaves the call `eval_started`
+        without `eval_completed`."""
+        run_test.enable_tool_evaluation = True
+        run_test.save(update_fields=["enable_tool_evaluation"])
+        test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+
+        with patch(
+            "simulate.services.test_executor._run_simulate_evaluations_task.apply_async"
+        ):
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {"name": "ride_booked", "passed": False}
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.call_metadata["eval_started"] is True
+        assert "eval_completed" not in call.call_metadata
+
+    @patch("model_hub.tasks.user_evaluation.trigger_error_localization_for_simulate")
+    def test_platform_judgement_is_linked_to_run_eval_config_and_output(
+        self, trigger_localizer, auth_client, run_test
     ):
         template = EvalTemplate.objects.create(
             name="alk-platform-check",
@@ -838,6 +1294,20 @@ class TestResultIngest:
             "kind": "eval",
             "platform_template": template.name,
         }
+        trigger_localizer.assert_called_once()
+        localizer_call = trigger_localizer.call_args.kwargs
+        assert localizer_call["eval_template"] == template
+        assert localizer_call["call_execution"].id == call.id
+        assert localizer_call["eval_config"] == config
+        assert localizer_call["value"] == "Passed"
+        assert localizer_call["mapping"] == {
+            "transcript": (
+                "user: Hi, my package is late. Can you check the status?\n"
+                "assistant: Of course, let me look that up for you right away.\n"
+                "user: Thank you, I appreciate it."
+            )
+        }
+        assert localizer_call["eval_explanation"] == "matched the required response"
 
     def test_ingest_computes_metrics_and_duration(self, auth_client, run_test):
         _, call_ids = _start_and_batch(auth_client, run_test)
@@ -2393,9 +2863,7 @@ class TestBuildVoiceRunnerJob:
             HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS=600,
         ):
             with pytest.raises(HostedRunnerBuildError) as excinfo:
-                self._build_multi(
-                    organization, workspace, simulator_agent, agent, 3
-                )
+                self._build_multi(organization, workspace, simulator_agent, agent, 3)
         message = str(excinfo.value)
         assert "cap" in message
         assert "HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS" in message
@@ -2421,9 +2889,7 @@ class TestBuildVoiceRunnerJob:
             HOSTED_RUNNER_MAX_CASES=2,
         ):
             with pytest.raises(HostedRunnerBuildError) as excinfo:
-                self._build_multi(
-                    organization, workspace, simulator_agent, agent, 3
-                )
+                self._build_multi(organization, workspace, simulator_agent, agent, 3)
         assert "capped at 2" in str(excinfo.value)
 
     def test_web_transport_admission_refuses_excess_wallclock(
@@ -2447,9 +2913,7 @@ class TestBuildVoiceRunnerJob:
         )
         with override_settings(HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS=100):
             with pytest.raises(HostedRunnerBuildError) as excinfo:
-                self._build_multi(
-                    organization, workspace, simulator_agent, agent, 3
-                )
+                self._build_multi(organization, workspace, simulator_agent, agent, 3)
         assert "HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS" in str(excinfo.value)
 
     def test_admission_env_int_is_lenient(self, monkeypatch):
@@ -5324,7 +5788,9 @@ class TestAlkVoiceCsatScoring:
         with (
             patch("simulate.tasks.alk_sim.close_old_connections"),
             patch.object(
-                alk_sim, "server_reachable_url", return_value="http://minio:9000/rec.wav"
+                alk_sim,
+                "server_reachable_url",
+                return_value="http://minio:9000/rec.wav",
             ),
             patch.object(alk_sim, "_run_agent_csat", return_value=8.0) as scorer,
         ):
@@ -5382,6 +5848,44 @@ class TestAlkVoiceCsatScoring:
         assert call.call_metadata["csat_status"] == "failed"
         assert "returned no result" in call.call_metadata["csat_error"]
         assert not (call.conversation_metrics_data or {}).get("csat_score")
+
+    def test_csat_no_evidence_is_skipped(self, auth_client, run_test):
+        """A call with neither a recording nor a transcript has nothing to
+        score: CSAT is skipped with that reason, the scorer never runs, and the
+        run settles."""
+        from structlog.testing import capture_logs
+
+        from simulate.services.scoring_status import REASON_CSAT_NO_EVIDENCE
+        from simulate.tasks import alk_sim
+
+        call = self._completed_voice_call(auth_client, run_test)
+        call.recording_url = None
+        call.call_metadata = {
+            **(call.call_metadata or {}),
+            "eval_started": True,
+            "eval_completed": True,
+            "csat_status": "pending",
+        }
+        call.save(update_fields=["recording_url", "call_metadata"])
+        SimTestExecution.objects.filter(id=call.test_execution_id).update(
+            status=SimTestExecution.ExecutionStatus.EVALUATING
+        )
+
+        with (
+            patch("simulate.tasks.alk_sim.close_old_connections"),
+            patch.object(alk_sim, "_run_agent_csat") as scorer,
+            capture_logs() as logs,
+        ):
+            alk_sim.calculate_alk_voice_csat_score._original_func(str(call.id))
+
+        scorer.assert_not_called()
+        call.refresh_from_db()
+        assert call.call_metadata["csat_status"] == "skipped"
+        assert call.call_metadata["csat_error"] == REASON_CSAT_NO_EVIDENCE
+        execution = SimTestExecution.objects.get(id=call.test_execution_id)
+        assert execution.status == SimTestExecution.ExecutionStatus.COMPLETED
+        events = [line["event"] for line in logs]
+        assert events.count("alk_csat_skipped_no_evidence") == 1
 
     def test_text_call_falls_back_to_call_transcript(self, auth_client, run_test):
         from simulate.tasks import alk_sim

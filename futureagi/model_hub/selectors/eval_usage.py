@@ -6,7 +6,10 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
+from uuid import UUID
+
+from django.utils import timezone
 
 from tracer.services.clickhouse.application_read_policy import (
     application_read_context,
@@ -20,6 +23,10 @@ from tracer.services.clickhouse.read_budget import (
 from tracer.services.clickhouse.trace_project_scope import (
     latest_live_trace_projects_sql,
 )
+from tracer.services.exact_aggregation_cache import exact_refresh_state
+
+if TYPE_CHECKING:
+    from accounts.models.organization import Organization
 
 READ_TIMEOUT_MS = 9_500
 MAX_PAGE_SIZE = 100
@@ -89,8 +96,6 @@ class EvalUsageReadError(RuntimeError):
 class EvalUsageRead:
     total_runs: int
     runs_period: int
-    success_count: int
-    error_count: int
     chart: list[EvalUsageChartBucket]
     logs: list[EvalUsageLog]
     completeness: EvalUsageReadCompleteness
@@ -265,19 +270,22 @@ def read_eval_usage(
             "end_date": _utc(end_date) + timedelta(microseconds=1),
             "bucket_minutes": bucket_minutes,
             "success_status": "success",
-            "error_status": "error",
         }
     )
 
-    live = "_peerdb_is_deleted = 0 AND deleted = 0"
-    # Preserve the pre-CH contract exactly: total_runs is all live runs for the
-    # organization/workspace/template, independent of the requested period.
-    # Unlike period rendering, that contract never had project membership in
-    # its scope. Avoiding the trace dictionary here keeps this exact count on
-    # the table's organization/source ordering while the shared finite budget
-    # turns an unprovable count into a typed failure, never a partial success.
+    # Usage counts only successful runs; every run, failed or not, stays in
+    # the eval logs. Like the tombstones, status is judged on each row's newest
+    # version, after the collapse, so a run whose latest version is an error
+    # cannot count through an older success version.
+    live = "_peerdb_is_deleted = 0 AND deleted = 0 AND status = %(success_status)s"
+    # total_runs is every successful live run for the organization/workspace/
+    # template, independent of the requested period. Unlike period rendering,
+    # that contract never had project membership in its scope. Avoiding the
+    # trace dictionary here keeps this exact count on the table's
+    # organization/source ordering while the shared finite budget turns an
+    # unprovable count into a typed failure, never a partial success.
     total_slice = _latest_usage_slice(
-        projection="id, deleted, _peerdb_is_deleted",
+        projection="id, status, deleted, _peerdb_is_deleted",
         scope=scope,
         start_param=None,
         end_param=None,
@@ -357,9 +365,7 @@ def read_eval_usage(
             sumKahanIf({score_expr}, {score_expr} IS NOT NULL) AS score_sum,
             countIf({score_expr} IS NOT NULL) AS score_count,
             countIf({pass_expr}) AS pass_count,
-            countIf({fail_expr}) AS fail_count,
-            countIf(status = %(success_status)s) AS success_count,
-            countIf(status = %(error_status)s) AS error_count
+            countIf({fail_expr}) AS fail_count
         FROM ({period_slice}) AS latest_usage
         WHERE {live}
         GROUP BY bucket
@@ -382,7 +388,7 @@ def read_eval_usage(
     def page_count_query(*, extra_predicates: tuple[str, ...] = ()) -> str:
         return f"""
             SELECT count() AS page_window_count
-            FROM ({page_slice(projection="id, created_at, eval_trace_id, deleted, _peerdb_is_deleted", extra_predicates=extra_predicates)}) AS latest_usage
+            FROM ({page_slice(projection="id, created_at, eval_trace_id, status, deleted, _peerdb_is_deleted", extra_predicates=extra_predicates)}) AS latest_usage
             WHERE {live}
         """
 
@@ -393,7 +399,7 @@ def read_eval_usage(
                     AS older_count,
                 countIf(created_at >= %(page_window_midpoint)s)
                     AS newer_count
-            FROM ({page_slice(projection="id, created_at, eval_trace_id, deleted, _peerdb_is_deleted")}) AS latest_usage
+            FROM ({page_slice(projection="id, created_at, eval_trace_id, status, deleted, _peerdb_is_deleted")}) AS latest_usage
             WHERE {live}
         """
 
@@ -481,8 +487,6 @@ def read_eval_usage(
             return EvalUsageRead(
                 total_runs=0,
                 runs_period=0,
-                success_count=0,
-                error_count=0,
                 chart=[],
                 logs=[],
                 completeness=EvalUsageReadCompleteness.COMPLETE,
@@ -503,8 +507,6 @@ def read_eval_usage(
 
         chart: list[EvalUsageChartBucket] = []
         runs_period = 0
-        success_count = 0
-        error_count = 0
         for row in chart_rows:
             calls = int(row[1] or 0)
             duration_sum = _finite_float_or_none(row[2])
@@ -532,8 +534,6 @@ def read_eval_usage(
                 )
             )
             runs_period += calls
-            success_count += int(row[8] or 0)
-            error_count += int(row[9] or 0)
 
         def execute_page_count(
             query: str,
@@ -661,7 +661,7 @@ def read_eval_usage(
             if current_count and current_count > _MAX_PAGE_SELECTION_ROWS:
                 bounds_query = f"""
                     SELECT min(id), max(id), count()
-                    FROM ({page_slice(projection="id, created_at, eval_trace_id, deleted, _peerdb_is_deleted")}) AS latest_usage
+                    FROM ({page_slice(projection="id, created_at, eval_trace_id, status, deleted, _peerdb_is_deleted")}) AS latest_usage
                     WHERE {live}
                 """
                 bounds_params = {
@@ -704,7 +704,7 @@ def read_eval_usage(
                             countIf(id <= %(page_id_midpoint)s) AS lower_count,
                             countIf(id > %(page_id_midpoint)s) AS upper_count
                         FROM (
-                            {page_slice(projection="id, created_at, eval_trace_id, deleted, _peerdb_is_deleted", extra_predicates=id_predicates)}
+                            {page_slice(projection="id, created_at, eval_trace_id, status, deleted, _peerdb_is_deleted", extra_predicates=id_predicates)}
                         ) AS latest_usage
                         WHERE {live}
                     """
@@ -795,8 +795,6 @@ def read_eval_usage(
         return EvalUsageRead(
             total_runs=total_runs,
             runs_period=runs_period,
-            success_count=success_count,
-            error_count=error_count,
             chart=chart,
             logs=logs,
             completeness=EvalUsageReadCompleteness.COMPLETE,
@@ -808,6 +806,76 @@ def read_eval_usage(
         raise_typed("eval_usage", exc)
 
 
+# How far before a snapshot a usage row can have been created and still change
+# afterwards: a row stays PROCESSING until its eval run settles, and the eval
+# activities cap one run at an hour (``time_limit=3600``).
+_EVAL_USAGE_IN_FLIGHT_WINDOW = timedelta(hours=1)
+
+# A snapshot younger than this is served without an automatic refresh. The
+# browser polls until a refresh publishes; on a template that runs every few
+# seconds a newer run already exists by then, so without a minimum age every
+# poll would start another exact read. The frontend's longest configurable
+# poll delay (60 s) plus one request (30 s) lands inside this window.
+_EVAL_USAGE_AUTO_REFRESH_MIN_AGE = timedelta(minutes=2)
+
+# Rows written up to this long before a snapshot published also count as newer:
+# the snapshot's time is its publish time, not when ClickHouse was read, and
+# ClickHouse reads a CDC copy that lags Postgres by seconds. Must not exceed
+# the minimum age, or a quiet template would refresh on every visit.
+_EVAL_USAGE_LATE_ROW_MARGIN = _EVAL_USAGE_AUTO_REFRESH_MIN_AGE
+
+
+def eval_usage_snapshot_is_stale(
+    *,
+    usage_log_model: Any,
+    organization: Organization,
+    template_id: UUID | str,
+    cache_identity: dict[str, Any],
+    snapshot: dict[str, Any] | None,
+) -> bool:
+    """Whether a public request should refresh ``snapshot`` in the background.
+
+    Exact snapshots are served until refreshed and are keyed by period, not by
+    data, so without this a period's first-visit snapshot kept serving for the
+    whole cache TTL while newer runs existed. A snapshot is stale when a usage
+    row for ``template_id`` was written after it (a newer run, or an in-flight
+    run that settled after it) and all of these hold:
+
+    - it is at least ``_EVAL_USAGE_AUTO_REFRESH_MIN_AGE`` old, so the polls that
+      follow a refresh settle on the new snapshot instead of chaining reads;
+    - no refresh is running or has just failed. A failed refresh never
+      publishes, so its snapshot stays old; retrying it waits for the user's
+      Refresh instead of resubmitting a failing read on every poll.
+
+    ``usage_log_model`` is the usage ledger model, passed in by the caller that
+    owns the enterprise import so this module needs none; it is only touched
+    once the cheap checks pass. The row scan stays on the
+    ``(organization, source_id, -created_at)`` index.
+    A read that takes longer than ``_EVAL_USAGE_LATE_ROW_MARGIN`` can still miss
+    rows that landed as it started; the next run or a Refresh picks them up.
+    """
+    completed_at = (snapshot or {}).get("query_completed_at")
+    if not isinstance(completed_at, str):
+        return False
+    try:
+        completed_at = datetime.fromisoformat(completed_at)
+    except ValueError:
+        return False
+    if completed_at.tzinfo is None:
+        completed_at = completed_at.replace(tzinfo=UTC)
+    if timezone.now() - completed_at < _EVAL_USAGE_AUTO_REFRESH_MIN_AGE:
+        return False
+    if exact_refresh_state("eval-usage", cache_identity) is not None:
+        return False
+    written_after = completed_at - _EVAL_USAGE_LATE_ROW_MARGIN
+    return usage_log_model.objects.filter(
+        organization=organization,
+        source_id=str(template_id),
+        created_at__gte=written_after - _EVAL_USAGE_IN_FLIGHT_WINDOW,
+        updated_at__gt=written_after,
+    ).exists()
+
+
 __all__ = [
     "EvalUsageChartBucket",
     "EvalUsageLog",
@@ -815,5 +883,6 @@ __all__ = [
     "EvalUsageReadCompleteness",
     "EvalUsageReadError",
     "EvalUsageReadErrorCode",
+    "eval_usage_snapshot_is_stale",
     "read_eval_usage",
 ]

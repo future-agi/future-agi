@@ -13,8 +13,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
-
-from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import (
     BaseModelViewSetMixin,
@@ -35,6 +34,8 @@ from tracer.serializers.monitor import (
     UserAlertMonitorDuplicateResponseSerializer,
     UserAlertMonitorDuplicateSerializer,
     UserAlertMonitorGraphResponseSerializer,
+    UserAlertMonitorListQuerySerializer,
+    UserAlertMonitorListResponseSerializer,
     UserAlertMonitorLogResolveRequestSerializer,
     UserAlertMonitorLogResolveResponseSerializer,
     UserAlertMonitorLogSerializer,
@@ -46,7 +47,7 @@ from tracer.serializers.monitor import (
     UserAlertMonitorSerializer,
 )
 from tracer.utils.helper import get_sort_query
-from tracer.utils.monitor import MonitorConfigError
+from tracer.utils.monitor import MonitorConfigError, uses_choice_threshold
 from tracer.utils.monitor_graphs import (
     MONITOR_GRAPH_METADATA_PG_TIMEOUT_CAP_MS,
     MonitorGraphUnavailable,
@@ -146,7 +147,10 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return query_Set.filter(id=user_alert_id)
 
         search_text = self.request.query_params.get("search_text")
-        page_number, page_size = _parse_page_params(self.request.query_params)
+        page_params = getattr(
+            self.request, "validated_query_data", self.request.query_params
+        )
+        page_number, page_size = _parse_page_params(page_params)
         project_ids = self.request.query_params.getlist("project_id")
         status_filters = self.request.query_params.getlist("status")
         metric_type_filters = self.request.query_params.getlist("metric_type")
@@ -459,14 +463,17 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 f"Error occurred while updating User Alerts: {str(e)}"
             )
 
-    @action(detail=False, methods=["get"])
+    @validated_request(
+        query_serializer=UserAlertMonitorListQuerySerializer,
+        auto_schema=ExplicitQueryAutoSchema,
+        responses={
+            200: UserAlertMonitorListResponseSerializer,
+            400: ApiErrorResponseSerializer,
+        },
+    )
+    @action(detail=False, methods=["get"], pagination_class=None)
     def list_monitors(self, request, *args, **kwargs):
-        try:
-            _page_number, page_size = _parse_page_params(self.request.query_params)
-        except ValueError:
-            return self._gm.bad_request(
-                {"pagination": "page_number and page_size must be integers."}
-            )
+        page_size = request.validated_query_data["page_size"]
         try:
             queryset, total_records = self.get_queryset()
             queryset = queryset.prefetch_related("useralertmonitorlog_set")
@@ -522,9 +529,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         except Exception as e:
             # Server-side failure: log the detail, return a generic 5xx (a 400
             # with raw str(e) both misclassifies it and leaks internals).
-            logger.error(
-                "monitor_list_failed", error=str(e), exc_info=True
-            )
+            logger.error("monitor_list_failed", error=str(e), exc_info=True)
             return self._gm.internal_server_error_response(
                 "Failed to fetch monitors list"
             )
@@ -628,6 +633,23 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 {"name": f"An alert with the name '{new_name}' already exists."}
             )
 
+        threshold_metric_value = monitor.threshold_metric_value
+        if (
+            monitor.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value
+            and monitor.metric
+        ):
+            eval_config = (
+                CustomEvalConfig.objects.filter(
+                    id=monitor.metric,
+                    project=monitor.project,
+                    deleted=False,
+                )
+                .select_related("eval_template")
+                .first()
+            )
+            if eval_config and not uses_choice_threshold(eval_config.eval_template):
+                threshold_metric_value = None
+
         duplicated_monitor = UserAlertMonitor.objects.create(
             organization=org,
             workspace=monitor.workspace,
@@ -638,7 +660,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             metric=monitor.metric,
             threshold_operator=monitor.threshold_operator,
             threshold_type=monitor.threshold_type,
-            threshold_metric_value=monitor.threshold_metric_value,
+            threshold_metric_value=threshold_metric_value,
             critical_threshold_value=monitor.critical_threshold_value,
             warning_threshold_value=monitor.warning_threshold_value,
             alert_frequency=monitor.alert_frequency,

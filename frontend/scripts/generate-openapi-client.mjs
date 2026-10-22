@@ -315,6 +315,13 @@ async function runGeneration(schemaPath) {
     return source.slice(0, start) + rewritten + source.slice(end);
   }
 
+  const interruptionNullableFields = {
+    RunCallApi: ["avg_stop_time_after_interruption", "ai_interruption_count"],
+    GroupAggregatesApi: [
+      "avg_stop_time_after_interruption",
+      "ai_interruptions",
+    ],
+  };
   const voiceCallDetailNullableFields = [
     "provider_call_id",
     "phone_number",
@@ -344,6 +351,7 @@ async function runGeneration(schemaPath) {
     "messages",
     "analysis_data",
     "evaluation_data",
+    "eval_rollup",
     "call_execution_id",
     "test_execution_id",
     "scenario_id",
@@ -363,6 +371,20 @@ async function runGeneration(schemaPath) {
   const schemasOutputPath = path.join(outputDir, "api.schemas.ts");
   if (fs.existsSync(schemasOutputPath)) {
     let schemas = fs.readFileSync(schemasOutputPath, "utf8");
+
+    for (const [typeName, fields] of Object.entries(
+      interruptionNullableFields,
+    )) {
+      for (const field of fields) {
+        schemas = assertReplaceInNamedBlock(
+          schemas,
+          `export interface ${typeName} {`,
+          `${field}: number;`,
+          `${field}: number | null;`,
+          `${typeName}.${field} nullable`,
+        );
+      }
+    }
 
     // x-string-or-array: type aliases preceded by "Plain text string or array
     // of content-part objects." are generated as { [key: string]: unknown } but
@@ -421,6 +443,9 @@ export type SpanAttributeTopValueApiValue = JsonValueApi;`,
       "TraceObserveColumnConfigApiSettings",
       "TraceObserveColumnConfigApiChoicesMap",
       "TraceObserveColumnConfigApiAnnotators",
+      "EvalRollupSpanApiValue",
+      "EvalRollupEvalApiChoicesMap",
+      "EvalRollupEvalApiAggregate",
     ]) {
       schemas = assertReplace(
         schemas,
@@ -454,6 +479,37 @@ export type ${jsonAlias} = JsonValueApi;`,
       );
     }
 
+    // Eval rollups use nullable JSON/scalar fields in the wire response. Keep
+    // the generated TypeScript contract aligned with the DRF serializer rather
+    // than requiring clients to pretend omitted values are never explicit null.
+    for (const [field, type] of [
+      ["value", "EvalRollupSpanApiValue"],
+      ["explanation", "string"],
+      ["status", "string"],
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface EvalRollupSpanApi {",
+        `${field}?: ${type};`,
+        `${field}?: ${type} | null;`,
+        `EvalRollupSpanApi.${field} nullable`,
+      );
+    }
+    for (const [field, type] of [
+      ["output_type", "string"],
+      ["template_type", "string"],
+      ["target_type", "EvalRollupEvalApiTargetType"],
+      ["choices_map", "EvalRollupEvalApiChoicesMap"],
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface EvalRollupEvalApi {",
+        `${field}?: ${type};`,
+        `${field}?: ${type} | null;`,
+        `EvalRollupEvalApi.${field} nullable`,
+      );
+    }
+
     // Orval drops Swagger 2.0 x-nullable from generated TypeScript. Voice
     // detail deliberately returns null when a provider did not emit an
     // optional value or a computed metric could not be derived, so preserve
@@ -467,6 +523,14 @@ export type ${jsonAlias} = JsonValueApi;`,
         `TraceVoiceCallDetailResultApi.${field} nullable`,
       );
     }
+
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface SubGoalResultApi {",
+      "passed: boolean;",
+      "passed: boolean | null;",
+      "SubGoalResultApi.passed nullable",
+    );
 
     const columnConfigNullableFields = [
       ["group_by?: string;", "group_by?: string | null;"],
@@ -494,6 +558,14 @@ export type ${jsonAlias} = JsonValueApi;`,
           `${configType} nullable ${anchor}`,
         );
       }
+      // Non-eval columns serialize target_type as an explicit null.
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        `export interface ${configType} {`,
+        `target_type?: ${configType}TargetType;`,
+        `target_type?: ${configType}TargetType | null;`,
+        `${configType} nullable target_type`,
+      );
     }
 
     // Orval also drops Swagger 2.0 x-nullable for the exact continuation
@@ -646,11 +718,69 @@ export type ${jsonAlias} = JsonValueApi;`,
       "TraceSessionTableRowApi dynamic JSON values",
     );
 
+    // A key that never expires syncs to the gateway with expires_at: null.
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface APIKeyBulkItemApi {",
+      "expires_at: string;",
+      "expires_at: string | null;",
+      "APIKeyBulkItemApi.expires_at nullable",
+    );
+
+    // The compact conversation record passes provider values on as they were
+    // logged, and the times it computes are null when the provider gave none.
+    schemas = assertReplaceRegex(
+      schemas,
+      /(export type Conversation(?:CallAgent|Call|Analysis|Latency|Turn)Api\w+ = )\{ \[key: string\]: unknown \};/g,
+      "$1JsonValueApi;",
+      "conversation record JSON values → recursive JSON value",
+    );
+    for (const recordType of [
+      "ConversationVariablesApiConfigured",
+      "ConversationVariablesApiCollected",
+      "ConversationAnalysisApiFlags",
+    ]) {
+      schemas = assertReplace(
+        schemas,
+        `export type ${recordType} = {[key: string]: { [key: string]: unknown }};`,
+        `export type ${recordType} = { [key: string]: JsonValueApi };`,
+        `${recordType} → recursive JSON values`,
+      );
+    }
+    for (const [typeName, field] of [
+      ["ConversationEvidenceRowApi", "end_time"],
+      ["ConversationDossierApi", "agent_instructions"],
+      ["ConversationCallApi", "duration_seconds"],
+      ["ConversationTurnApi", "start"],
+      ["ConversationTurnApi", "end"],
+      ["ConversationTurnApi", "at"],
+    ]) {
+      schemas = assertReplaceRegexInNamedBlock(
+        schemas,
+        `export interface ${typeName} {`,
+        new RegExp(`(^\\s*${field}\\??: [^;]+)(;)$`, "m"),
+        "$1 | null$2",
+        `${typeName}.${field} nullable`,
+      );
+    }
+
     fs.writeFileSync(schemasOutputPath, schemas);
   }
 
   if (fs.existsSync(zodOutputPath)) {
     let zod = fs.readFileSync(zodOutputPath, "utf8");
+
+    for (const field of new Set(
+      Object.values(interruptionNullableFields).flat(),
+    )) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        "export const SimulateV3TestExecutionCallsResponse =",
+        `"${field}": zod.number()`,
+        `"${field}": zod.number().nullable()`,
+        `SimulateV3TestExecutionCallsResponse.${field} nullable`,
+      );
+    }
 
     zod = assertReplace(
       zod,
@@ -697,6 +827,46 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "DashboardFilterValueOption zod value → recursive JSON value",
     );
 
+    // Both detail endpoints expose the same typed rollup. Scope scalar
+    // rewrites to that property so provider-level fields keep their own rules.
+    for (const responseName of [
+      "TracerTraceReadResponse",
+      "TracerTraceVoiceCallDetailResponse",
+    ]) {
+      const declaration = `export const ${responseName} = zod.object({`;
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        declaration,
+        /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+        "jsonValueSchema",
+        `${responseName} JSON values → recursive JSON value`,
+      );
+      for (const [field, pattern] of [
+        ["output_type", "zod\\.string\\(\\)\\.min\\(1\\)"],
+        ["template_type", "zod\\.string\\(\\)\\.min\\(1\\)"],
+        ["target_type", "zod\\.enum\\(\\['span', 'trace'\\]\\)"],
+        ["explanation", "zod\\.string\\(\\)\\.min\\(1\\)"],
+        ["status", "zod\\.string\\(\\)\\.min\\(1\\)"],
+      ]) {
+        zod = assertReplaceRegexInNamedBlock(
+          zod,
+          declaration,
+          new RegExp(
+            `("eval_rollup": zod\\.object\\(\\{[\\s\\S]*?"${field}": ${pattern})\\.optional\\(\\)`,
+          ),
+          "$1.nullish()",
+          `${responseName} eval rollup ${field} nullable`,
+        );
+      }
+    }
+    zod = assertReplaceInNamedBlock(
+      zod,
+      "export const TracerTraceVoiceCallDetailResponse = zod.object({",
+      '"error": zod.boolean().optional()\n}).optional(),',
+      '"error": zod.boolean().optional()\n}).nullish(),',
+      "TracerTraceVoiceCallDetailResponse.eval_rollup nullable",
+    );
+
     const listResponseExports = [
       "TracerTraceListTracesResponse",
       "TracerTraceListTracesOfSessionResponse",
@@ -714,13 +884,31 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         `${exportName} JSON cells → recursive JSON value`,
       );
     }
+    const conversationEvidenceResponse =
+      "export const TracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse = zod.object({";
     zod = assertReplaceRegexInNamedBlock(
       zod,
-      "export const TracerTraceVoiceCallDetailResponse = zod.object({",
+      conversationEvidenceResponse,
       /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
       "jsonValueSchema",
-      "TracerTraceVoiceCallDetailResponse JSON cells → recursive JSON value",
+      "conversation evidence JSON values → recursive JSON value",
     );
+    for (const [anchor, label] of [
+      [/("end_time": zod\.string\(\)\.datetime\([^)]*\))/, "end_time"],
+      [/("agent_instructions": zod\.string\(\))/, "agent_instructions"],
+      [/("duration_seconds": zod\.number\(\))/, "duration_seconds"],
+      [/("start": zod\.number\(\))/, "turn start"],
+      [/("end": zod\.number\(\))/, "turn end"],
+      [/("at": zod\.number\(\))/, "turn at"],
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        conversationEvidenceResponse,
+        anchor,
+        "$1.nullable()",
+        `conversation evidence ${label} nullable`,
+      );
+    }
 
     for (const responseName of [
       "ModelHubDevelopsGetDatasetTableListResponse",
@@ -751,6 +939,19 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         '"next_cursor": zod.string().min(1),',
         '"next_cursor": zod.string().min(1).nullable(),',
         `${responseName}.next_cursor nullable`,
+      );
+    }
+
+    for (const responseName of [
+      "SimulateV3CallExecutionDetailResponse",
+      "SimulateV3TestExecutionCallsResponse",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${responseName} = zod.object({`,
+        /("sub_goal_results": zod\.array\(zod\.object\(\{[\s\S]*?"passed": )zod\.boolean\(\)/,
+        "$1zod.boolean().nullable()",
+        `${responseName}.sub_goal_results.passed nullable`,
       );
     }
 
@@ -972,6 +1173,13 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
           `${exportName} nullable column config`,
         );
       }
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${exportName} = zod.object({`,
+        /("target_type": zod\.enum\(\[[^\]]*\]\))\.optional\(\)/,
+        "$1.nullish()",
+        `${exportName}.target_type nullable`,
+      );
     }
 
     for (const exportName of listResponseExports.slice(0, -1)) {
@@ -1115,6 +1323,14 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         `TracerTraceAgentGraphResponse.${fieldPrefix}.trace_count nullable`,
       );
     }
+
+    zod = assertReplaceInNamedBlock(
+      zod,
+      "export const AgentccApiKeysBulkListResponse = zod.object({",
+      '"expires_at": zod.string().datetime({"offset":true})',
+      '"expires_at": zod.string().datetime({"offset":true}).nullable()',
+      "AgentccApiKeysBulkListResponse.expires_at nullable",
+    );
 
     // x-string-or-array: orval generates zod.object({}).passthrough() for these
     // fields. Use the unique description emitted by StringOrArrayField as anchor.

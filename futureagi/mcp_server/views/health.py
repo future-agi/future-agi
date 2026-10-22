@@ -3,7 +3,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ai_tools.registry import registry
+from mcp_server.generated_registry import registry
 from mcp_server.serializers.contracts import (
     MCPErrorResponseSerializer,
     MCPHealthResponseSerializer,

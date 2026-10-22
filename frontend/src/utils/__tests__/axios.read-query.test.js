@@ -96,8 +96,18 @@ const adapter = vi.fn(async () => ({
 }));
 // Deliberately no server-response contract or successful query-population claim.
 const originalAdapter = client.defaults.adapter;
+const rejectHttp = (status) => (config) =>
+  Promise.reject({
+    config,
+    response: { status, config, data: { detail: `HTTP ${status}` } },
+  });
 beforeEach(() => {
-  adapter.mockClear();
+  adapter.mockReset();
+  adapter.mockResolvedValue({
+    status: 200,
+    data: { fixture: true },
+    headers: {},
+  });
   client.defaults.adapter = adapter;
 });
 afterEach(() => {
@@ -106,13 +116,166 @@ afterEach(() => {
 });
 
 describe("opt-in query read transport", () => {
-  it("declares exactly thirteen enabled POST reads, not a generic POST-to-list rule", () => {
+  it("declares the enabled POST reads, not a generic POST-to-list rule", () => {
     expect(
       Object.values(OPENAPI_CONTRACT.endpoints).filter(
         (op) => op.post?.readQueryPost,
       ),
-    ).toHaveLength(13);
+    ).toHaveLength(15);
     expect(readQuery).toBeTypeOf("function");
+  });
+  it.each(["metrics", "filter_values"])(
+    "keeps large catalog continuations in the %s POST body",
+    async (action) => {
+      const params =
+        action === "metrics"
+          ? { cursor_mode: true, cursor: "x".repeat(24000), page_size: 1 }
+          : {
+              property_id: "custom_attribute:key",
+              source: "traces",
+              cursor: "x".repeat(24000),
+              page_size: 1,
+            };
+      const url = `/tracer/dashboard/${action}/`;
+      await readQuery(url, { params });
+      const config = adapter.mock.calls.at(-1)[0];
+      expect(config.method).toBe("post");
+      expect(config.url).toBe(url);
+      expect(config.params).toBeUndefined();
+      expect(JSON.parse(config.data)).toEqual(params);
+    },
+  );
+  it.each(["metrics", "filter_values"])(
+    "retries a GET-only backend once with equivalent %s picker parameters",
+    async (action) => {
+      const path = `/tracer/dashboard/${action}/`;
+      const signal = new AbortController().signal;
+      const headers = {
+        Authorization: "Bearer offline",
+        "X-Organization-Id": pid,
+        "X-Workspace-Id": version,
+      };
+      const params = {
+        source: "traces",
+        ...(action === "metrics"
+          ? { cursor_mode: true }
+          : { property_id: "custom_attribute:customer.plan" }),
+        cursor: 'opaque+&=%/"é',
+        page_size: 1,
+        search: null,
+      };
+      adapter.mockImplementationOnce(rejectHttp(405));
+      await expect(
+        readQuery(`${path}?project_ids=${pid}`, {
+          params,
+          signal,
+          headers,
+          timeout: 1234,
+          withCredentials: true,
+        }),
+      ).resolves.toHaveProperty("status", 200);
+      expect(adapter.mock.calls.map(([config]) => config.method)).toEqual([
+        "post",
+        "get",
+      ]);
+      const [post, get] = adapter.mock.calls.map(([config]) => config);
+      expect(get.url).toBe(path);
+      expect(get.data).toBeUndefined();
+      expect(get.params).toEqual(JSON.parse(post.data));
+      expect(new URL(client.getUri(get)).searchParams.get("cursor")).toBe(
+        params.cursor,
+      );
+      expect(get.headers.toJSON()).toMatchObject(headers);
+      expect(get.signal).toBe(signal);
+      expect(get.timeout).toBe(1234);
+      expect(get.withCredentials).toBe(true);
+      expect(params.search).toBeNull();
+    },
+  );
+  it.each([403, 500])(
+    "does not retry picker HTTP %s as GET",
+    async (status) => {
+      adapter.mockImplementationOnce(rejectHttp(status));
+      await expect(
+        readQuery("/tracer/dashboard/metrics/"),
+      ).rejects.toHaveProperty("statusCode", status);
+      expect(adapter).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("does not extend 405 fallback to other reads or direct mutations", async () => {
+    adapter.mockImplementation(rejectHttp(405));
+    await expect(readQuery("/tracer/users/")).rejects.toHaveProperty(
+      "statusCode",
+      405,
+    );
+    await expect(
+      client.post("/tracer/dashboard/metrics/", {}),
+    ).rejects.toHaveProperty("statusCode", 405);
+    expect(adapter.mock.calls.map(([config]) => config.method)).toEqual([
+      "post",
+      "post",
+    ]);
+  });
+  it("propagates GET failure without retrying again", async () => {
+    adapter.mockImplementation(rejectHttp(405));
+    await expect(
+      readQuery("/tracer/dashboard/metrics/"),
+    ).rejects.toHaveProperty("statusCode", 405);
+    expect(adapter.mock.calls.map(([config]) => config.method)).toEqual([
+      "post",
+      "get",
+    ]);
+  });
+  it("bounds the encoded GET URL and explains how to recover", async () => {
+    const path = "/tracer/dashboard/metrics/";
+    const params = {
+      cursor: "x".repeat(
+        8192 - client.getUri({ url: path, params: { cursor: "" } }).length,
+      ),
+    };
+    expect(client.getUri({ url: path, params })).toHaveLength(8192);
+    adapter.mockImplementationOnce(rejectHttp(405));
+    await expect(readQuery(path, { params })).resolves.toHaveProperty(
+      "status",
+      200,
+    );
+    adapter.mockImplementationOnce(rejectHttp(405));
+    await expect(
+      readQuery(path, { params: { cursor: `${params.cursor}é` } }),
+    ).rejects.toThrow(/too large.*GET.*upgrade.*backend/i);
+    expect(adapter.mock.calls.map(([config]) => config.method)).toEqual([
+      "post",
+      "get",
+      "post",
+    ]);
+  });
+  it("preserves cancellation while the fallback GET is pending", async () => {
+    const controller = new AbortController();
+    let finish;
+    adapter.mockImplementationOnce(rejectHttp(405));
+    const started = new Promise((resolve) =>
+      adapter.mockImplementationOnce((config) => {
+        resolve(config);
+        return new Promise((done) => {
+          finish = done;
+        });
+      }),
+    );
+    const pending = readQuery("/tracer/dashboard/metrics/", {
+      signal: controller.signal,
+    });
+    const cancelled = expect(pending).rejects.toHaveProperty(
+      "transportCode",
+      "ERR_CANCELED",
+    );
+    expect((await started).signal).toBe(controller.signal);
+    controller.abort();
+    finish({ status: 200, data: { fixture: true }, headers: {} });
+    await cancelled;
+    expect(adapter.mock.calls.map(([config]) => config.method)).toEqual([
+      "post",
+      "get",
+    ]);
   });
   it("keeps large session navigation filters entirely in the POST body", async () => {
     const navigation = {

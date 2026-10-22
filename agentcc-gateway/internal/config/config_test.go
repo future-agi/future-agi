@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"os"
 	"path/filepath"
@@ -16,6 +17,9 @@ func TestDefaultConfig(t *testing.T) {
 
 	if cfg.Server.Port != 8080 {
 		t.Errorf("default port = %d, want 8080", cfg.Server.Port)
+	}
+	if cfg.Server.ReadHeaderTimeout != 5*time.Second || cfg.Server.ReadTimeout != 60*time.Second {
+		t.Errorf("default read timeouts = (%v, %v), want (5s, 60s)", cfg.Server.ReadHeaderTimeout, cfg.Server.ReadTimeout)
 	}
 	if cfg.Server.DefaultRequestTimeout != 60*time.Second {
 		t.Errorf("default timeout = %v, want 60s", cfg.Server.DefaultRequestTimeout)
@@ -53,9 +57,24 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "invalid read header timeout",
+			modify:  func(c *Config) { c.Server.ReadHeaderTimeout = 0 },
+			wantErr: true,
+		},
+		{
 			name:    "invalid log level",
 			modify:  func(c *Config) { c.Logging.Level = "verbose" },
 			wantErr: true,
+		},
+		{
+			name:    "max request timeout below the server default",
+			modify:  func(c *Config) { c.Server.MaxRequestTimeout = 30 * time.Second },
+			wantErr: true,
+		},
+		{
+			name:    "max request timeout unset leaves it to Load",
+			modify:  func(c *Config) { c.Server.MaxRequestTimeout = 0 },
+			wantErr: false,
 		},
 		{
 			name: "provider missing base_url",
@@ -337,6 +356,66 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 }
 
+// The values are shared with the backend's test, which reads the same
+// variable: an unparseable one keeps the safe default in both.
+func TestLoadFromEnv_AllowPrivateProviderURLs(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "api_contracts", "gateway", "provider-url-policy.json"))
+	if err != nil {
+		t.Fatalf("reading the shared URL policy cases: %v", err)
+	}
+	var policy struct {
+		OptInEnv []struct {
+			Value   string `json:"value"`
+			Allowed bool   `json:"allowed"`
+		} `json:"opt_in_env"`
+	}
+	if err := json.Unmarshal(raw, &policy); err != nil {
+		t.Fatalf("parsing the shared URL policy cases: %v", err)
+	}
+	for _, tt := range policy.OptInEnv {
+		t.Run(tt.Value, func(t *testing.T) {
+			t.Setenv(EnvAllowPrivateProviderURLs, tt.Value)
+			cfg, err := Load("")
+			if err != nil {
+				t.Fatalf("Load error: %v", err)
+			}
+			if cfg.OrgProviders.AllowPrivateURLs != tt.Allowed {
+				t.Errorf("AllowPrivateURLs = %v, want %v", cfg.OrgProviders.AllowPrivateURLs, tt.Allowed)
+			}
+		})
+	}
+}
+
+// A gateway given the control-plane URL reloads Django's keys on start and,
+// with an interval, keeps them in step; the shared admin token authenticates
+// those calls unless a separate control-plane token is set.
+func TestLoadFromEnv_ControlPlaneSync(t *testing.T) {
+	t.Setenv("AGENTCC_CONTROL_PLANE_URL", "http://backend:8000")
+	t.Setenv("AGENTCC_SYNC_ON_STARTUP", "true")
+	t.Setenv("AGENTCC_SYNC_INTERVAL", "30s")
+	t.Setenv("AGENTCC_ADMIN_TOKEN", "shared-admin-token")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if !cfg.ControlPlane.SyncOnStartup || cfg.ControlPlane.SyncInterval != 30*time.Second {
+		t.Errorf("sync_on_startup = %v, sync_interval = %v, want true, 30s", cfg.ControlPlane.SyncOnStartup, cfg.ControlPlane.SyncInterval)
+	}
+	if cfg.ControlPlane.AdminToken != "shared-admin-token" {
+		t.Errorf("control plane token = %q, want the admin token", cfg.ControlPlane.AdminToken)
+	}
+
+	t.Setenv("AGENTCC_CONTROL_PLANE_TOKEN", "separate-token")
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.ControlPlane.AdminToken != "separate-token" {
+		t.Errorf("control plane token = %q, want the explicit one", cfg.ControlPlane.AdminToken)
+	}
+}
+
 func testLicensePublicKey(t *testing.T) string {
 	t.Helper()
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -384,6 +463,9 @@ func TestLoadFromEnvAuthFailsClosedWhenKeyPresent(t *testing.T) {
 	if seeded.KeyType != "internal" {
 		t.Fatalf("seeded key KeyType = %q, want \"internal\"", seeded.KeyType)
 	}
+	if seeded.Metadata["access_groups"] != "internal" {
+		t.Fatalf("seeded key access group = %q, want internal", seeded.Metadata["access_groups"])
+	}
 }
 
 // The explicit toggle still applies on its own when no key is configured.
@@ -425,5 +507,83 @@ func TestLoadFromEnvDoesNotClobberExplicitInternalKey(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("got %d entries for the key, want 1 (env seed must not duplicate an explicit config key)", n)
+	}
+}
+
+// A config file that states the server block without max_request_timeout gets
+// the write timeout, the point past which no response can be written anyway.
+func TestLoad_MaxRequestTimeoutDefaultsToWriteTimeout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := "server:\n  write_timeout: 200s\n  default_request_timeout: 60s\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.MaxRequestTimeout != 200*time.Second {
+		t.Errorf("max_request_timeout = %v, want 200s (the write timeout)", cfg.Server.MaxRequestTimeout)
+	}
+}
+
+// A ceiling above the write timeout is one no response can reach, so Load
+// lowers it rather than refusing to start.
+func TestLoad_MaxRequestTimeoutIsHeldAtTheWriteTimeout(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := "server:\n  write_timeout: 300s\n  max_request_timeout: 600s\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Server.MaxRequestTimeout != 300*time.Second {
+		t.Errorf("max_request_timeout = %v, want 300s (the write timeout)", cfg.Server.MaxRequestTimeout)
+	}
+}
+
+// A default request timeout above the ceiling is not something to normalize:
+// the gateway could never serve it.
+func TestLoad_DefaultAboveTheCeilingFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	body := "server:\n  write_timeout: 120s\n  default_request_timeout: 600s\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load accepted a default request timeout above the write timeout")
+	}
+}
+
+// A duration environment variable without a unit used to be dropped in
+// silence, which reads as "the environment does not override the file".
+func TestLoadFromEnv_DurationWithoutAUnitKeepsTheConfiguredValue(t *testing.T) {
+	tests := []struct {
+		value string
+		want  time.Duration
+	}{
+		{"180", 90 * time.Second},
+		{"180000", 90 * time.Second},
+		{"", 90 * time.Second},
+		{"180s", 180 * time.Second},
+		{"3m", 3 * time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run("AGENTCC_DEFAULT_REQUEST_TIMEOUT="+tt.value, func(t *testing.T) {
+			t.Setenv("AGENTCC_DEFAULT_REQUEST_TIMEOUT", tt.value)
+
+			cfg := DefaultConfig()
+			cfg.Server.DefaultRequestTimeout = 90 * time.Second
+			loadFromEnv(cfg)
+
+			if cfg.Server.DefaultRequestTimeout != tt.want {
+				t.Errorf("default_request_timeout = %v, want %v", cfg.Server.DefaultRequestTimeout, tt.want)
+			}
+		})
 	}
 }
