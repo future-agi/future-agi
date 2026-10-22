@@ -36,6 +36,7 @@ from tracer.serializers.derived_metric import (
     DerivedMetricWriteSerializer,
 )
 from tracer.services.derived_metrics import service
+from tracer.services.derived_metrics.cursor import newest_first_page
 from tracer.services.derived_metrics.errors import MetricInputError
 from tracer.services.derived_metrics.formula import FormulaError
 from tracer.services.derived_metrics.queries import Scope
@@ -111,20 +112,16 @@ class DerivedMetricViewSet(MetricViewSet):
     )
     def list(self, request):
         params = request.validated_query_data
-        queryset = self.get_queryset().order_by("-id")
+        queryset = self.get_queryset()
         if params.get("project_id"):
             queryset = queryset.filter(project_id=params["project_id"])
-        if params.get("before"):
-            queryset = queryset.filter(id__lt=params["before"])
-        rows = list(queryset[: params["limit"] + 1])
+        page, next_cursor = newest_first_page(
+            queryset, params.get("before"), params["limit"]
+        )
         return Response(
             {
-                "results": DerivedMetricSerializer(
-                    rows[: params["limit"]], many=True
-                ).data,
-                "next_cursor": str(rows[params["limit"] - 1].id)
-                if len(rows) > params["limit"]
-                else None,
+                "results": DerivedMetricSerializer(page, many=True).data,
+                "next_cursor": next_cursor,
             }
         )
 
@@ -206,22 +203,16 @@ class DerivedMetricViewSet(MetricViewSet):
     def runs(self, request, pk=None):
         metric = self.get_object()
         params = request.validated_query_data
-        queryset = (
-            DerivedMetricRun.objects.filter(definition__metric=metric)
-            .select_related("definition")
-            .order_by("-id")
+        queryset = DerivedMetricRun.objects.filter(
+            definition__metric=metric
+        ).select_related("definition")
+        page, next_cursor = newest_first_page(
+            queryset, params.get("before"), params["limit"]
         )
-        if params.get("before"):
-            queryset = queryset.filter(id__lt=params["before"])
-        rows = list(queryset[: params["limit"] + 1])
         return Response(
             {
-                "results": DerivedMetricRunSerializer(
-                    rows[: params["limit"]], many=True
-                ).data,
-                "next_cursor": str(rows[params["limit"] - 1].id)
-                if len(rows) > params["limit"]
-                else None,
+                "results": DerivedMetricRunSerializer(page, many=True).data,
+                "next_cursor": next_cursor,
             }
         )
 
