@@ -11,7 +11,7 @@ from uuid import UUID
 
 from django.conf import settings
 
-from .compiler import MAX_RESULT_BYTES, MAX_RESULT_ROWS
+from .compiler import MAX_COMPILED_BYTES, MAX_RESULT_BYTES, MAX_RESULT_ROWS
 
 MAX_SECONDS = 30
 # Server profiles must enforce ceilings too; request settings can only tighten.
@@ -39,7 +39,7 @@ QUERY_SETTINGS = {
     "max_result_bytes": MAX_RESULT_BYTES,
     "result_overflow_mode": "throw",
     "max_threads": 2,
-    "max_query_size": 262_144,
+    "max_query_size": MAX_COMPILED_BYTES,
     "max_ast_depth": 100,
     "max_ast_elements": 30_000,
     "max_block_size": 1000,

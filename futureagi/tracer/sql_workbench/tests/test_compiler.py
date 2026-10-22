@@ -27,21 +27,21 @@ def scope():
     )
 
 
-@pytest.mark.parametrize(
-    "query",
-    [
-        "SELECT model, count() AS n FROM spans GROUP BY model ORDER BY n DESC",
-        "SELECT s.id, e.score FROM sessions AS s JOIN eval_results AS e ON s.id = e.session_id",
-        "WITH x AS (SELECT id FROM spans) SELECT * FROM x",
-        "WITH x AS (SELECT id FROM spans), y AS (SELECT id FROM users) SELECT * FROM x UNION ALL SELECT toString(id) FROM y",
-        "SELECT name FROM spans WHERE id IN (SELECT span_id FROM eval_results WHERE score < 0.5)",
-        "SELECT * FROM (SELECT name FROM spans) AS s LEFT JOIN (SELECT toString(id) AS id FROM traces) AS t ON s.name = t.id",
-        "SELECT name, row_number() OVER (PARTITION BY model ORDER BY start_time) AS rank FROM spans",
-        "SELECT * FROM annotations UNION ALL SELECT * FROM annotations",
-        "SELECT attrs_string['locale'] AS locale, sum(cost) AS spend FROM spans GROUP BY locale",
-        "SELECT coalesce(label, 'unknown') AS label FROM eval_results",
-    ],
-)
+VALID_QUERIES = [
+    "SELECT model, count() AS n FROM spans GROUP BY model ORDER BY n DESC",
+    "SELECT s.id, e.score FROM sessions AS s JOIN eval_results AS e ON s.id = e.session_id",
+    "WITH x AS (SELECT id FROM spans) SELECT * FROM x",
+    "WITH x AS (SELECT id FROM spans), y AS (SELECT id FROM users) SELECT * FROM x UNION ALL SELECT toString(id) FROM y",
+    "SELECT name FROM spans WHERE id IN (SELECT span_id FROM eval_results WHERE score < 0.5)",
+    "SELECT * FROM (SELECT name FROM spans) AS s LEFT JOIN (SELECT toString(id) AS id FROM traces) AS t ON s.name = t.id",
+    "SELECT name, row_number() OVER (PARTITION BY model ORDER BY start_time) AS rank FROM spans",
+    "SELECT * FROM annotations UNION ALL SELECT * FROM annotations",
+    "SELECT attrs_string['locale'] AS locale, sum(cost) AS spend FROM spans GROUP BY locale",
+    "SELECT coalesce(label, 'unknown') AS label FROM eval_results",
+]
+
+
+@pytest.mark.parametrize("query", VALID_QUERIES)
 def test_valid_queries_rewrite_every_physical_source(query, scope):
     compiled = compile_query(query, scope)
     tree = sqlglot.parse_one(compiled, read="clickhouse")
@@ -53,63 +53,63 @@ def test_valid_queries_rewrite_every_physical_source(query, scope):
     assert not any(t.name == "eval_results" and t.db for t in tree.find_all(exp.Table))
 
 
-@pytest.mark.parametrize(
-    "query",
-    [
-        "DROP TABLE spans",
-        "SELECT * FROM spans; SELECT * FROM users",
-        "SELECT * FROM spans; -- hide\n DELETE FROM spans",
-        "INSERT INTO spans SELECT * FROM users",
-        "ALTER TABLE spans DELETE WHERE 1",
-        "SELECT * FROM spans INTO OUTFILE '/tmp/leak'",
-        "SELECT * FROM spans SETTINGS max_execution_time=0",
-        "SELECT * FROM spans FORMAT Parquet",
-        "SELECT * FROM system.tables",
-        "SELECT * FROM information_schema.tables",
-        "SELECT * FROM analytics.spans",
-        "SELECT * FROM remote('attacker', 'db', 'table')",
-        "SELECT * FROM url('https://attacker', 'CSV')",
-        "SELECT * FROM file('/etc/passwd', 'CSV')",
-        "SELECT * FROM s3('https://attacker', 'CSV')",
-        "SELECT * FROM mysql('attacker','db','t','u','p')",
-        "SELECT * FROM numbers(1000000000)",
-        "SELECT * FROM merge('.*', '.*')",
-        "SELECT * FROM view(SELECT * FROM system.tables)",
-        "SELECT * FROM clusterAllReplicas('cluster', system.tables)",
-        "SELECT * FROM input('x String')",
-        "SELECT dictGet('secret', 'password', id) FROM spans",
-        "SELECT getSetting('password') FROM spans",
-        "SELECT currentDatabase() FROM spans",
-        "SELECT version() FROM spans",
-        "SELECT sleep(3) FROM spans",
-        "SELECT filesystemAvailable('/') FROM spans",
-        "SELECT file('/etc/passwd') FROM spans",
-        "SELECT arrayJoin(range(1000000000)) FROM spans",
-        "SELECT generateRandom() FROM spans",
-        "SELECT * FROM spans CROSS JOIN users",
-        "SELECT * FROM spans, users",
-        "SELECT * FROM spans ARRAY JOIN attrs_string",
-        "SELECT * FROM spans GLOBAL JOIN users ON 1=1",
-        "SELECT * FROM spans FINAL",
-        "SELECT * FROM spans SAMPLE 0.1",
-        "WITH x AS (SELECT * FROM system.tables) SELECT * FROM x",
-        "SELECT * FROM spans UNION ALL SELECT * FROM system.tables",
-        "SELECT * FROM spans WHERE name IN (SELECT name FROM system.tables)",
-        "SELECT (SELECT version()) FROM spans",
-        "WITH RECURSIVE x AS (SELECT * FROM spans) SELECT * FROM x",
-        "SELECT * FROM spans JOIN unknown ON 1=1",
-        "SELECT * FROM spans JOIN remote('x', 't') ON 1=1",
-        "SELECT * FROM `spans;DROP TABLE users`",
-        "SELECT * FROM `ѕpans`",
-        "SELECT * FROM `spans\n`",
-        "SELECT * FROM {table:Identifier}",
-        "SELECT * FROM spans WHERE name = {name:String}",
-        "SELECT secret FROM tracer_eval_logger",
-        "SHOW TABLES",
-        "EXPLAIN SELECT * FROM spans",
-        "SELECT * FROM spans UNION ALL SELECT * FROM file('/etc/passwd', 'CSV')",
-    ],
-)
+ADVERSARIAL_QUERIES = [
+    "DROP TABLE spans",
+    "SELECT * FROM spans; SELECT * FROM users",
+    "SELECT * FROM spans; -- hide\n DELETE FROM spans",
+    "INSERT INTO spans SELECT * FROM users",
+    "ALTER TABLE spans DELETE WHERE 1",
+    "SELECT * FROM spans INTO OUTFILE '/tmp/leak'",
+    "SELECT * FROM spans SETTINGS max_execution_time=0",
+    "SELECT * FROM spans FORMAT Parquet",
+    "SELECT * FROM system.tables",
+    "SELECT * FROM information_schema.tables",
+    "SELECT * FROM analytics.spans",
+    "SELECT * FROM remote('attacker', 'db', 'table')",
+    "SELECT * FROM url('https://attacker', 'CSV')",
+    "SELECT * FROM file('/etc/passwd', 'CSV')",
+    "SELECT * FROM s3('https://attacker', 'CSV')",
+    "SELECT * FROM mysql('attacker','db','t','u','p')",
+    "SELECT * FROM numbers(1000000000)",
+    "SELECT * FROM merge('.*', '.*')",
+    "SELECT * FROM view(SELECT * FROM system.tables)",
+    "SELECT * FROM clusterAllReplicas('cluster', system.tables)",
+    "SELECT * FROM input('x String')",
+    "SELECT dictGet('secret', 'password', id) FROM spans",
+    "SELECT getSetting('password') FROM spans",
+    "SELECT currentDatabase() FROM spans",
+    "SELECT version() FROM spans",
+    "SELECT sleep(3) FROM spans",
+    "SELECT filesystemAvailable('/') FROM spans",
+    "SELECT file('/etc/passwd') FROM spans",
+    "SELECT arrayJoin(range(1000000000)) FROM spans",
+    "SELECT generateRandom() FROM spans",
+    "SELECT * FROM spans CROSS JOIN users",
+    "SELECT * FROM spans, users",
+    "SELECT * FROM spans ARRAY JOIN attrs_string",
+    "SELECT * FROM spans GLOBAL JOIN users ON 1=1",
+    "SELECT * FROM spans FINAL",
+    "SELECT * FROM spans SAMPLE 0.1",
+    "WITH x AS (SELECT * FROM system.tables) SELECT * FROM x",
+    "SELECT * FROM spans UNION ALL SELECT * FROM system.tables",
+    "SELECT * FROM spans WHERE name IN (SELECT name FROM system.tables)",
+    "SELECT (SELECT version()) FROM spans",
+    "WITH RECURSIVE x AS (SELECT * FROM spans) SELECT * FROM x",
+    "SELECT * FROM spans JOIN unknown ON 1=1",
+    "SELECT * FROM spans JOIN remote('x', 't') ON 1=1",
+    "SELECT * FROM `spans;DROP TABLE users`",
+    "SELECT * FROM `ѕpans`",
+    "SELECT * FROM `spans\n`",
+    "SELECT * FROM {table:Identifier}",
+    "SELECT * FROM spans WHERE name = {name:String}",
+    "SELECT secret FROM tracer_eval_logger",
+    "SHOW TABLES",
+    "EXPLAIN SELECT * FROM spans",
+    "SELECT * FROM spans UNION ALL SELECT * FROM file('/etc/passwd', 'CSV')",
+]
+
+
+@pytest.mark.parametrize("query", ADVERSARIAL_QUERIES)
 def test_adversarial_sql_is_rejected(query, scope):
     with pytest.raises(UnsafeQuery):
         compile_query(query, scope)
@@ -269,32 +269,296 @@ def test_scalar_with_alias_cannot_capture_scope_columns(scope, expression):
         )
 
 
-@pytest.mark.parametrize(
-    "sql",
-    [
-        "SELECT id FROM spans WHERE status = 'ERROR' AND (cost > 0 OR total_tokens > 0)",
-        "SELECT s.id FROM spans s JOIN spans t ON s.id=t.id AND s.trace_id=t.trace_id",
-        "SELECT sumIf(cost, status='ERROR'), avgIf(cost, status='OK'), countIf(status='ERROR') FROM spans",
-        "SELECT toStartOfHour(start_time), toStartOfDay(start_time), dateDiff('day', start_time, now()), dateAdd('day', 1, start_time) FROM spans",
-        "SELECT id FROM spans WHERE start_time >= now() - INTERVAL 1 DAY",
-        "SELECT quantile(0.95)(latency_ms), quantileExact(0.5)(cost), now() FROM spans",
-    ],
-)
+REVIEWED_GRAMMAR = [
+    "SELECT id FROM spans WHERE status = 'ERROR' AND (cost > 0 OR total_tokens > 0)",
+    "SELECT s.id FROM spans s JOIN spans t ON s.id=t.id AND s.trace_id=t.trace_id",
+    "SELECT sumIf(cost, status='ERROR'), avgIf(cost, status='OK'), countIf(status='ERROR') FROM spans",
+    "SELECT toStartOfHour(start_time), toStartOfDay(start_time), dateDiff('day', start_time, now()), dateAdd('day', 1, start_time) FROM spans",
+    "SELECT id FROM spans WHERE start_time >= now() - INTERVAL 1 DAY",
+    "SELECT quantile(0.95)(latency_ms), quantileExact(0.5)(cost), now() FROM spans",
+]
+
+
+@pytest.mark.parametrize("sql", REVIEWED_GRAMMAR)
 def test_reviewed_boolean_date_and_aggregate_grammar(sql, scope):
     assert "analytics.spans" in compile_query(sql, scope)
 
 
-@pytest.mark.parametrize(
-    "sql",
-    [
-        "SELECT sumState(cost) FROM spans",
-        "SELECT groupArrayIf(name, status='ERROR') FROM spans",
-        "SELECT dateAdd('unreviewed_unit', 1, start_time) FROM spans",
-        "SELECT id FROM spans WHERE status='OK' OR sleep(10)=0",
-        "SELECT s.id FROM spans s JOIN spans t ON s.id=t.id OR s.trace_id=t.trace_id",
-        "SELECT id FROM spans WHERE name IN (SELECT name FROM system.tables) AND 1=1",
-    ],
-)
+GRAMMAR_ESCAPES = [
+    "SELECT sumState(cost) FROM spans",
+    "SELECT groupArrayIf(name, status='ERROR') FROM spans",
+    "SELECT dateAdd('unreviewed_unit', 1, start_time) FROM spans",
+    "SELECT id FROM spans WHERE status='OK' OR sleep(10)=0",
+    "SELECT s.id FROM spans s JOIN spans t ON s.id=t.id OR s.trace_id=t.trace_id",
+    "SELECT id FROM spans WHERE name IN (SELECT name FROM system.tables) AND 1=1",
+]
+
+
+@pytest.mark.parametrize("sql", GRAMMAR_ESCAPES)
 def test_grammar_extensions_do_not_expand_privileges(sql, scope):
     with pytest.raises(UnsafeQuery):
         compile_query(sql, scope)
+
+
+# ClickHouse reads the right side of IN as a whole table when it is a bare,
+# parenthesized, quoted or database-qualified name, or a table alias / CTE name
+# (verified on the owned 25.3 server: ``'x' IN (t)`` and ``'x' IN a`` read t).
+# SQLGlot parses these as an In whose right side is a Column, not a Table, so
+# they must be rejected outright: they can never be rewritten to a scope.
+IN_TABLE_BYPASSES = [
+    "SELECT id FROM spans WHERE id IN spans",
+    "SELECT id FROM spans WHERE id IN system.tables",
+    "SELECT id FROM spans WHERE (id, trace_id) IN spans",
+    "SELECT id FROM spans WHERE id GLOBAL IN spans",
+    "SELECT id FROM spans WHERE id NOT IN spans",
+    "SELECT id FROM spans WHERE id GLOBAL NOT IN traces",
+    "SELECT id FROM spans WHERE NOT id IN spans",
+    "SELECT id FROM spans WHERE id IN (spans)",
+    "SELECT id FROM spans WHERE id IN ((spans))",
+    "SELECT id FROM spans WHERE id IN (spans, traces)",
+    "SELECT id FROM spans WHERE id IN ('x', spans)",
+    "SELECT id FROM spans WHERE id IN `spans`",
+    'SELECT id FROM spans WHERE id IN "system"."tables"',
+    "SELECT id FROM spans WHERE id IN `system`.`tables`",
+    "SELECT id FROM spans WHERE id IN analytics.spans",
+    "SELECT id FROM spans WHERE id IN default.spans",
+    "SELECT id FROM spans WHERE id IN tracer_eval_logger",
+    "SELECT id FROM spans WHERE id IN tracer_eval_logger_v2",
+    "SELECT id FROM spans WHERE id IN model_hub_score",
+    "SELECT id FROM spans WHERE id IN end_users",
+    "SELECT id FROM spans WHERE id IN trace_sessions",
+    "SELECT id FROM spans WHERE id IN derived_metric_results",
+    "SELECT id FROM spans WHERE id IN information_schema.tables",
+    "SELECT id FROM spans WHERE id iN SPANS",
+    "SELECT id FROM spans WHERE id IN /* c */ spans",
+    "SELECT id FROM spans WHERE id IN\n-- c\nspans",
+    "SELECT id FROM spans WHERE id IN\tspans",
+    "SELECT id FROM spans AS s WHERE s.id IN s",
+    "WITH own AS (SELECT id FROM spans) SELECT id FROM spans WHERE id IN own",
+    "SELECT id IN spans FROM spans",
+    "SELECT id FROM spans GROUP BY id HAVING id IN spans",
+    "SELECT CASE WHEN id IN spans THEN 1 ELSE 0 END FROM spans",
+    "SELECT if(id IN spans, 1, 0) FROM spans",
+    "SELECT id FROM spans ORDER BY id IN spans",
+    "SELECT count() FROM spans GROUP BY id IN spans",
+    "SELECT id FROM (SELECT id FROM spans WHERE id IN spans)",
+    "SELECT id FROM spans WHERE id IN (SELECT id FROM spans WHERE trace_id IN traces)",
+    "SELECT id FROM spans UNION ALL SELECT id FROM spans WHERE id IN spans",
+    "WITH x AS (SELECT id FROM spans WHERE id IN spans) SELECT id FROM x",
+    "SELECT s.id FROM spans AS s JOIN traces AS t ON s.trace_id = t.id WHERE s.id IN spans",
+    "SELECT (SELECT count() FROM spans WHERE id IN spans) FROM spans",
+    "SELECT id FROM spans WHERE id IN (spans.id)",
+    "SELECT id FROM spans WHERE id IN (id, trace_id)",
+    "SELECT id FROM spans WHERE id IN tuple('a')",
+    "SELECT id FROM spans WHERE id IN numbers(10)",
+    "SELECT id FROM spans WHERE id IN cluster('c', system.tables)",
+    "SELECT id FROM spans WHERE id IN {t:Identifier}",
+    "SELECT id FROM spans WHERE id IN 'spans'",
+    "SELECT id FROM spans WHERE id GLOBAL IN (SELECT id FROM spans)",
+    "SELECT id FROM spans WHERE id IN (SELECT id FROM spans) AND trace_id IN spans",
+    "SELECT arrayMap(x -> x IN spans, [1]) FROM spans",
+]
+
+# Function forms of IN and functions that take a table, dictionary or setting
+# name as an argument.
+TABLE_NAME_FUNCTIONS = [
+    "SELECT in(id, spans) FROM spans",
+    "SELECT globalIn(id, spans) FROM spans",
+    "SELECT notIn(id, spans) FROM spans",
+    "SELECT globalNotIn(id, spans) FROM spans",
+    "SELECT nullIn(id, spans) FROM spans",
+    "SELECT dictGet('d', 'a', id) FROM spans",
+    "SELECT dictGetOrDefault('d', 'a', id, '') FROM spans",
+    "SELECT dictGetString('d', 'a', toUInt64(1)) FROM spans",
+    "SELECT dictHas('d', id) FROM spans",
+    "SELECT joinGet('j', 'v', id) FROM spans",
+    "SELECT joinGetOrNull('j', 'v', id) FROM spans",
+    "SELECT hasColumnInTable('default', 'spans', 'id') FROM spans",
+    "SELECT getSetting('additional_table_filters') FROM spans",
+    "SELECT * FROM spans WHERE EXISTS (SELECT 1 FROM system.tables)",
+    "SELECT * FROM spans WHERE id = ANY (SELECT name FROM system.tables)",
+    "SELECT * FROM (spans)",
+    "SELECT * FROM spans LEFT ARRAY JOIN attrs_string",
+    "SELECT * FROM spans AS s JOIN traces AS t USING (id) SETTINGS a = 1",
+]
+
+
+# Every other clause or node that can carry a table name or take one, with an
+# IN-table read or a physical name placed in it.
+CLAUSE_SWEEP = [
+    "SELECT id FROM spans JOIN traces USING (id) WHERE id IN spans",
+    "SELECT s.id FROM spans AS s JOIN traces AS t ON s.id = t.id AND s.id IN spans",
+    "SELECT * FROM spans WHERE id = ALL (SELECT name FROM system.tables)",
+    "SELECT * FROM spans WHERE id != ANY (SELECT id FROM spans)",
+    "SELECT * FROM spans JOIN system.tables USING (name)",
+    "SELECT * FROM spans AS s JOIN (traces) AS t ON s.trace_id = t.id",
+    "SELECT * FROM spans SAMPLE 1/10 OFFSET 1/2",
+    "SELECT * FROM spans AS s FINAL",
+    "SELECT dictHas('d', toUInt64(1)) FROM spans",
+    "SELECT * FROM (SELECT id FROM spans SETTINGS additional_table_filters = {}) AS x",
+    "SELECT id FROM spans SETTINGS additional_table_filters = {'spans': '1'}",
+    "SELECT id FROM spans INTERSECT SELECT name FROM system.tables",
+    "SELECT id FROM spans EXCEPT SELECT name FROM system.tables",
+    "SELECT id FROM spans WHERE id IN (SELECT id FROM spans INTERSECT SELECT name FROM system.tables)",
+    "SELECT id FROM spans WHERE id IN (SELECT number FROM numbers(1))",
+    "SELECT arrayExists(x -> x IN spans, [id]) FROM spans",
+    "SELECT id FROM spans WHERE EXISTS spans",
+    "SELECT id FROM spans ARRAY JOIN [1, 2] AS x",
+    "SELECT id FROM spans WHERE id IN (SELECT id FROM spans) AND id IN `traces`",
+    "SELECT id FROM spans WHERE id IN [spans]",
+    "SELECT id FROM spans WHERE id IN tuple(spans)",
+    "SELECT id FROM spans WHERE id IN (SELECT id FROM spans) OR id IN system.one",
+    "SELECT joinGet(spans, 'name', id) FROM spans",
+    "SELECT * FROM spans WHERE id IN (WITH x AS (SELECT 1) SELECT * FROM system.tables)",
+    "SELECT id, (id IN traces) AS hit FROM spans",
+    "SELECT count() OVER (PARTITION BY id IN spans) FROM spans",
+    "SELECT id FROM spans ORDER BY id IN spans WITH FILL",
+    "SELECT id FROM spans LIMIT 1 BY id IN spans",
+    "SELECT id FROM spans QUALIFY id IN spans",
+    "SELECT id FROM spans PREWHERE id IN spans",
+    "SELECT * FROM spans AS s INNER ANY JOIN traces AS t ON s.trace_id = t.id WHERE s.id IN traces",
+    "SELECT * FROM spans AS s PASTE JOIN traces AS t",
+]
+
+
+@pytest.mark.parametrize(
+    "query", IN_TABLE_BYPASSES + TABLE_NAME_FUNCTIONS + CLAUSE_SWEEP
+)
+def test_names_where_clickhouse_expects_a_table_are_rejected(query, scope):
+    with pytest.raises(UnsafeQuery):
+        compile_query(query, scope)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT id FROM spans WHERE id IN ('a', 'b')",
+        "SELECT id FROM spans WHERE id NOT IN ('a')",
+        "SELECT id FROM spans WHERE (id, trace_id) IN (('a', 'b'), ('c', 'd'))",
+        "SELECT id FROM spans WHERE id IN [1, 2]",
+        "SELECT id FROM spans WHERE total_tokens IN (-1, 2)",
+        "SELECT id FROM spans WHERE session_id IN (toUUID('11111111-1111-4111-8111-111111111111'))",
+        "SELECT id FROM spans WHERE id IN (SELECT span_id FROM eval_results)",
+        "SELECT id FROM spans WHERE id NOT IN (SELECT span_id FROM eval_results WHERE score < 0.5)",
+        "WITH own AS (SELECT id FROM spans) SELECT id FROM spans WHERE id IN (SELECT id FROM own)",
+        "SELECT id FROM spans WHERE id IN (SELECT id FROM spans UNION ALL SELECT span_id FROM eval_results)",
+    ],
+)
+def test_reviewed_in_forms_compile_fully_scoped(query, scope):
+    compiled = compile_query(query, scope)
+    tree = sqlglot.parse_one(compiled, read="clickhouse")
+    assert all(node.args.get("field") is None for node in tree.find_all(exp.In)), (
+        compiled
+    )
+    physical = [t for t in tree.find_all(exp.Table) if t.db]
+    assert physical and all(t.db == "analytics" for t in physical)
+
+
+def test_table_argument_functions_are_never_approved():
+    from tracer.sql_workbench import compiler
+
+    approved = compiler.FUNCTIONS | compiler.FUNCTION_ALIASES
+    assert not approved & compiler.TABLE_ARGUMENT_FUNCTIONS
+    assert not [name for name in approved if name.startswith(("dict", "joinget"))]
+
+
+def test_user_cte_names_never_reach_clickhouse(scope):
+    sql = (
+        "WITH spans AS (SELECT id FROM users), tracer_eval_logger AS "
+        "(SELECT id FROM traces) SELECT id FROM spans UNION ALL "
+        "SELECT toString(id) FROM tracer_eval_logger"
+    )
+    compiled = compile_query(sql, scope)
+    tree = sqlglot.parse_one(compiled, read="clickhouse")
+    names = {cte.alias for cte in tree.find_all(exp.CTE)}
+    assert {"__sql_cte_0", "__sql_cte_1"} <= names
+    assert not names & {"spans", "tracer_eval_logger"}
+    unqualified = {t.name for t in tree.find_all(exp.Table) if not t.db}
+    assert unqualified <= names | {"__sql_eval_candidates"}
+    # The user's names survive only as aliases, so x.col references still work.
+    assert "__sql_cte_0 AS spans" in compiled
+
+
+def test_verification_is_independent_of_the_in_rule(scope, monkeypatch):
+    """A regression in the validation pass must still fail closed."""
+    from tracer.sql_workbench import compiler
+
+    monkeypatch.setattr(compiler, "_check_in", lambda node: None)
+    for query in [
+        "SELECT id FROM spans WHERE id IN spans",
+        "SELECT id FROM spans WHERE id IN (spans)",
+        "SELECT id FROM spans WHERE id IN system.tables",
+    ]:
+        with pytest.raises(UnsafeQuery, match="verified as fully scoped"):
+            compile_query(query, scope)
+
+
+def test_verification_catches_a_source_the_rewrite_missed(scope, monkeypatch):
+    """Simulate a scope-analysis gap: one catalog reference is not rewritten."""
+    from tracer.sql_workbench import compiler
+
+    real = compiler._analyze
+
+    def drops_last_reference(sql):
+        tree, references, links = real(sql)
+        return tree, references[:-1], links
+
+    monkeypatch.setattr(compiler, "_analyze", drops_last_reference)
+    with pytest.raises(UnsafeQuery, match="verified as fully scoped"):
+        compile_query(
+            "SELECT s.id FROM spans AS s JOIN traces AS t ON s.trace_id = t.id", scope
+        )
+
+
+@pytest.mark.parametrize(
+    "remainder",
+    [
+        "SELECT * FROM (SELECT id FROM analytics.spans) AS query_result LIMIT 10001",
+        "SELECT * FROM (SELECT id FROM spans) AS query_result LIMIT 10001",
+        "SELECT * FROM (SELECT 1 WHERE 'x' IN spans) AS query_result LIMIT 10001",
+        "SELECT * FROM (SELECT 1 WHERE 'x' IN (spans)) AS query_result LIMIT 10001",
+        "SELECT * FROM (WITH spans AS (SELECT 1) SELECT * FROM spans) AS query_result",
+        "SELECT * FROM (SELECT * FROM __sql_cte_0) AS query_result",
+        "SELECT * FROM (SELECT dictGet('d', 'a', 1)) AS query_result",
+        "SELECT * FROM (SELECT analytics.spans.id) AS query_result",
+        "SELECT * FROM (SELECT 1 SETTINGS readonly = 0) AS query_result",
+        "SELECT * FROM numbers(10)",
+    ],
+)
+def test_verification_rejects_any_physical_or_unscoped_remainder(remainder):
+    from tracer.sql_workbench.compiler import _verify_compiled
+
+    with pytest.raises(UnsafeQuery):
+        _verify_compiled(remainder, {})
+
+
+def test_verification_requires_each_generated_source_exactly(scope):
+    from collections import Counter
+
+    from tracer.sql_workbench.compiler import _verify_compiled
+
+    compiled = compile_query("SELECT count() FROM spans", scope)
+    spans = sqlglot.parse_one(sources(scope)["spans"], read="clickhouse")
+    for table in spans.find_all(exp.Table):
+        table.set("db", exp.to_identifier(scope.database))
+    text = spans.sql(dialect="clickhouse")
+    _verify_compiled(compiled, Counter({text: 1}))
+    for wrong in [Counter(), Counter({text: 2}), Counter({text + " ": 1})]:
+        with pytest.raises(UnsafeQuery):
+            _verify_compiled(compiled, wrong)
+
+
+def test_compiled_text_is_bounded_by_the_profile_query_size(scope):
+    from dataclasses import replace
+
+    from tracer.sql_workbench import runner
+    from tracer.sql_workbench.compiler import MAX_COMPILED_BYTES
+
+    assert runner.QUERY_SETTINGS["max_query_size"] == MAX_COMPILED_BYTES
+    many = replace(scope, eval_config_ids=tuple(uuid4() for _ in range(1000)))
+    one = compile_query("SELECT count() FROM eval_results", many)
+    assert len(one.encode()) < MAX_COMPILED_BYTES
+    with pytest.raises(UnsafeQuery, match="too large"):
+        compile_query(
+            " UNION ALL ".join(["SELECT count() FROM eval_results"] * 6), many
+        )
