@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -93,11 +94,21 @@ func TestHTTPContentEncodingFailuresAreExplicitAndBounded(t *testing.T) {
 // compressor is registered only because package server imports it, and
 // removing that import makes this export fail.
 func TestGRPCGzipRequestsAreAccepted(t *testing.T) {
-	s := New(Config{GRPCAddr: testTCPAddr(t), MaxPendingRows: 100, BatchMaxRows: 1000, BatchMaxAge: 1 << 40}, nil, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	ch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+	}))
+	defer ch.Close()
+	writer, err := chwriter.New(chwriter.Config{URL: ch.URL, Database: "default", Table: "spans", MaxRetries: 1, DeadLetterFile: t.TempDir() + "/dl.jsonl"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	s := New(Config{GRPCAddr: testTCPAddr(t), MaxPendingRows: 100, BatchMaxRows: 1000, BatchMaxAge: time.Hour}, writer, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 	s.cfg.HTTPAddr = ""
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = s.Run(ctx) }()
+	done := make(chan struct{})
+	go func() { _ = s.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
 	if !waitPort(s.cfg.GRPCAddr, 2*time.Second) {
 		t.Fatal("server did not start")
 	}
