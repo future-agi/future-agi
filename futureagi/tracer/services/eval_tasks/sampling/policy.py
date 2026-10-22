@@ -302,6 +302,68 @@ def population_changed(task: EvalTask, changes: dict) -> bool:
     )
 
 
+def normalize_policy_update(task: EvalTask, changes: dict) -> None:
+    """Strip a hidden task window from an edit before diffing populations.
+
+    Older edit drawers always send ``date_range``. For a policy task that key
+    is never part of the population, so it must neither intersect the policy
+    window nor make an unchanged population look edited.
+    """
+
+    policy = (
+        changes["sampling_policy"]
+        if "sampling_policy" in changes
+        else getattr(task, "sampling_policy", None)
+    )
+    if policy is not None and changes.get("filters") is not None:
+        changes["filters"] = policy_task_filters(changes["filters"])
+
+
+LEGACY_TASK_WINDOW_KEYS = ("date_range", "date_preset")
+_TIME_FILTER_MESSAGE = (
+    "Sampling policy tasks take their event-time range only from the policy "
+    "window. Remove start-time/created-at filters and set the policy window instead."
+)
+
+
+def policy_task_filters(filters: dict | None) -> dict:
+    """Return policy-task filters with the legacy task date window removed.
+
+    The sampling policy's window is the single event-time authority for its
+    population. Historical task forms carry a separate ``date_range`` (and its
+    ``date_preset`` token); silently intersecting it with the policy window
+    would shrink the population while the preview and saved policy disagree.
+    Those two UI keys are therefore removed explicitly at every policy write
+    and preview boundary. Any other explicit time-window filter is rejected
+    rather than intersected.
+    """
+
+    from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+
+    clean = deepcopy(filters or {})
+    if not isinstance(clean, dict):
+        raise InvalidSamplingPolicy("Task filters must be an object.")
+    for key in LEGACY_TASK_WINDOW_KEYS:
+        clean.pop(key, None)
+    if clean.get("created_at") not in (None, "", []):
+        raise InvalidSamplingPolicy(_TIME_FILTER_MESSAGE)
+    for list_key in ("filters", "span_attributes_filters"):
+        for item in clean.get(list_key) or []:
+            if isinstance(item, dict) and BaseQueryBuilder.is_datetime_filter(item):
+                raise InvalidSamplingPolicy(_TIME_FILTER_MESSAGE)
+    return clean
+
+
+def require_policy_time_authority(filters: dict | None) -> None:
+    """Fail closed if a stored policy task still carries a second window."""
+
+    if policy_task_filters(filters) != (filters or {}):
+        raise InvalidSamplingPolicy(
+            "This sampling task still carries a task date range. Save the task "
+            "again so the policy window is the only event-time range."
+        )
+
+
 def validate_live_filter_sources(policy: dict | None, filters: dict | None) -> None:
     if not policy or policy["mode"] != "live":
         return

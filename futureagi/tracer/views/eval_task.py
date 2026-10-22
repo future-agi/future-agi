@@ -85,7 +85,11 @@ from tracer.serializers.eval_task import (
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.eval_tasks.edit_options import validate_edit_action
 from tracer.services.eval_tasks.entries import soft_delete_live
-from tracer.services.eval_tasks.sampling.policy import population_changed
+from tracer.services.eval_tasks.sampling.policy import (
+    InvalidSamplingPolicy,
+    normalize_policy_update,
+    population_changed,
+)
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -3047,6 +3051,10 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 original_evals = set(eval_task.evals.values_list("id", flat=True))
                 original_run_type = eval_task.run_type
                 update_fields = self._extract_update_fields(validated_data)
+                try:
+                    normalize_policy_update(eval_task, update_fields)
+                except InvalidSamplingPolicy as exc:
+                    return self._gm.bad_request(str(exc))
 
                 # Validate the requested evals belong to the task's project.
                 requested_evals = validated_data.get("evals")
