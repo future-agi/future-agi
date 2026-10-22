@@ -1,11 +1,22 @@
 import { Box } from "@mui/material";
-import React, { useCallback, useRef, useState, useEffect } from "react";
+import React, {
+  useCallback,
+  useRef,
+  useState,
+  useEffect,
+  useMemo,
+} from "react";
 import PropTypes from "prop-types";
 import { AgentGraph } from "src/components/AgentGraph";
 import { START_ID, END_ID } from "src/components/AgentGraph/layoutUtils";
 import useResolvedExecution from "../../hooks/useResolvedExecution";
-import { useWorkflowRunStoreShallow } from "../../store";
+import {
+  useAgentPlaygroundStoreShallow,
+  useWorkflowRunStoreShallow,
+} from "../../store";
 import NodeOutputDetail from "./NodeOutputDetail";
+import NodeOutputListView from "./NodeOutputListView";
+import { mapExecutionNodesToTree } from "./common";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import PanelErrorBoundary from "../../components/PanelErrorBoundary";
 
@@ -21,7 +32,12 @@ export default function RunAgentPanel({
   const resizeRef = useRef(null);
   const [isResizing, setIsResizing] = useState(false);
   const isRunning = useWorkflowRunStoreShallow((s) => s.isRunning);
+  const currentAgent = useAgentPlaygroundStoreShallow((s) => s.currentAgent);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const stepNodes = useMemo(
+    () => mapExecutionNodesToTree(executionData?.nodes),
+    [executionData?.nodes],
+  );
 
   // Reset selected node when a new execution starts
   useEffect(() => {
@@ -148,14 +164,29 @@ export default function RunAgentPanel({
         }}
       />
       <ResizablePanels
-        initialLeftWidth={50}
+        initialLeftWidth={60}
         minLeftWidth={15}
         maxLeftWidth={80}
         leftPanel={
-          <AgentGraph
-            executionData={executionData}
-            onNodeClick={handleGraphNodeClick}
-            selectedNodeId={selectedNodeId}
+          <ResizablePanels
+            initialLeftWidth={38}
+            minLeftWidth={25}
+            maxLeftWidth={55}
+            leftPanel={
+              <NodeOutputListView
+                currentAgent={currentAgent}
+                nodes={stepNodes}
+                selectedNodeId={selectedNodeId}
+                onNodeSelect={setSelectedNodeId}
+              />
+            }
+            rightPanel={
+              <AgentGraph
+                executionData={executionData}
+                onNodeClick={handleGraphNodeClick}
+                selectedNodeId={selectedNodeId}
+              />
+            }
           />
         }
         rightPanel={
