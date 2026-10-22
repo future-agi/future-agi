@@ -266,7 +266,7 @@ export default function TracesTab({ error }) {
   const isVoiceProject = projectDetail?.source === PROJECT_SOURCE.SIMULATOR;
   const { data: voiceCallData, isFetching: voiceLoading } = useVoiceCallDetail(
     drawerTraceId,
-    isVoiceProject && !!drawerTraceId,
+    { enabled: isVoiceProject && !!drawerTraceId, projectId },
   );
 
   const agg = data?.aggregates ?? EMPTY_AGG;

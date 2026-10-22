@@ -31,7 +31,7 @@ export default function VoiceFullPage() {
     data: voiceDetail,
     isLoading: isLoadingVoice,
     isError: isVoiceError,
-  } = useVoiceCallDetail(callId, true);
+  } = useVoiceCallDetail(callId, { enabled: true, projectId: observeId });
 
   // Enable the simulate fallback only after the observe fetch has
   // resolved without data. `enabled` flips asynchronously, so React Query

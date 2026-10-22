@@ -147,6 +147,9 @@ const UsersGrid = React.memo(
 
     const { observeId } = useParams();
     const updatedObserveId = observeId;
+    // Without a project in the route this is the cross-project Users page:
+    // rows from several projects share the grid, so each names its project.
+    const includeProject = !observeId;
     const sortStorageKey = `ag-grid-sort-model-${updatedObserveId}`;
     const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
 
@@ -176,7 +179,7 @@ const UsersGrid = React.memo(
     }, [hasActiveListReads]);
 
     useEffect(() => {
-      const initial = getUsersColumnConfig();
+      const initial = getUsersColumnConfig({ includeProject });
 
       const transformed = initial.map((col) => ({
         id: col.field,
@@ -187,10 +190,10 @@ const UsersGrid = React.memo(
       }));
 
       setColumns(transformed);
-    }, []);
+    }, [includeProject, setColumns]);
 
     const userColumnDefs = useMemo(() => {
-      const baseConfig = getUsersColumnConfig();
+      const baseConfig = getUsersColumnConfig({ includeProject });
 
       // If columns from store isn't ready, use baseConfig directly
       if (!columns || !Array.isArray(columns)) {
@@ -256,7 +259,7 @@ const UsersGrid = React.memo(
       }
 
       return result;
-    }, [columns]);
+    }, [columns, includeProject]);
 
     const requestedProjection = useMemo(() => {
       // Zustand starts with an empty list and is hydrated in an effect. AG Grid
@@ -266,7 +269,7 @@ const UsersGrid = React.memo(
       const projectionColumns =
         Array.isArray(columns) && columns.length > 0
           ? columns
-          : getUsersColumnConfig().map((column) => ({
+          : getUsersColumnConfig({ includeProject }).map((column) => ({
               id: column.field,
               isVisible: column.hide !== true,
               groupBy: null,
@@ -284,7 +287,7 @@ const UsersGrid = React.memo(
           .map((column) => column.id)
           .filter(Boolean),
       };
-    }, [columns]);
+    }, [columns, includeProject]);
 
     const dataSource = useMemo(() => {
       cursorPagination.current.reset();
@@ -292,6 +295,13 @@ const UsersGrid = React.memo(
 
       return {
         getRows: async (params) => {
+          let requestCompleted = false;
+          const finishRequest = (result) => {
+            if (requestCompleted) return;
+            requestCompleted = true;
+            if (result) params.success(result);
+            else params.fail();
+          };
           let pageNumber = 0;
           let requestGeneration = null;
           let loadingOwner = null;
@@ -457,11 +467,11 @@ const UsersGrid = React.memo(
               resumePendingListPage({
                 page: exactPage,
                 resume: () => {
+                  finishRequest();
                   if (
                     cursorPagination.current.isCurrent(requestGeneration) &&
                     isGridApiLive(params.api)
                   ) {
-                    params.fail();
                     if (params.api?.retryServerSideLoads) {
                       params.api.retryServerSideLoads();
                     } else {
@@ -549,7 +559,7 @@ const UsersGrid = React.memo(
               clearSelection();
             }
 
-            params.success({
+            finishRequest({
               rowData: userData,
               rowCount: gridRowCount,
             });
@@ -568,9 +578,14 @@ const UsersGrid = React.memo(
               // Keep existing rows and the exact signed checkpoint. The user
               // can explicitly retry without seeing a false empty or error
               // state, and the client never drains an unbounded cursor chain.
+              // A paused first page has not established whether this query
+              // has users, so a previous query's confirmed-empty result must
+              // not bring the empty screen back over the Continue search
+              // control.
+              if (pageNumber === 0) setHasData(null);
               setReadError(null);
               setContinuationNotice(true);
-              params.fail();
+              finishRequest();
               return;
             }
             if (
@@ -581,15 +596,19 @@ const UsersGrid = React.memo(
             ) {
               cursorPagination.current.disableCursor();
               setReadError(null);
-              params.fail();
+              finishRequest();
               params.api?.refreshServerSide?.({ purge: true });
               return;
             }
             setContinuationNotice(null);
             setReadError(QUERY_FAILED_RETRY_MESSAGE);
             setSearchState("error");
-            failServerSideGridRead(params);
+            failServerSideGridRead({ ...params, fail: finishRequest });
           } finally {
+            // AG Grid releases its shared loader slot only via a callback,
+            // even when the obsolete cache ignores the result. A scheduled
+            // continuation owns completion until its resume callback runs.
+            if (!continuationPending) finishRequest();
             if (loadingOwner) {
               activeListReadsRef.current.delete(loadingOwner);
               // Obsolete reads cannot release loading during a filter handoff,

@@ -83,6 +83,7 @@ def test_all_history_envelope_uses_bounded_selector_not_legacy_build(monkeypatch
     # 1970 would underflow the score subqueries' `- INTERVAL 1 DAY`.
     assert injected[0]["filter_config"]["filter_value"][0].startswith("1971")
     assert not injected[0]["filter_config"]["filter_value"][1].startswith("2099")
+    assert "eval_count_mode" not in capture["builder_kwargs"]
     assert capture["builder_kwargs"]["bounded_internal_scan"] is True
 
 

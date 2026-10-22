@@ -11,6 +11,7 @@ import { EVAL_STATUS, getEvalStatusLabel } from "src/utils/evalStatus";
 //   - pending  -> "Queued" blue pill (design system)
 //   - skipped  -> muted chip + reason tooltip
 //   - errored  -> muted red "Error" chip
+//   - timed_out -> amber "Timed out" chip (simulate scoring past its limit)
 // Returns null for a terminal score state (the caller renders the score).
 
 // Centered, full-height wrapper so the pill/chip states sit in the cell the
@@ -99,6 +100,23 @@ const EvalStatusIndicator = ({ status, skippedReason }) => {
     return (
       <CellWrap>
         {skippedReason ? <Tooltip title={skippedReason}>{chip}</Tooltip> : chip}
+      </CellWrap>
+    );
+  }
+
+  if (status === EVAL_STATUS.TIMED_OUT) {
+    return (
+      <CellWrap>
+        <Chip
+          size="small"
+          label={getEvalStatusLabel(status)}
+          sx={{
+            height: 20,
+            fontSize: 11,
+            color: "warning.dark",
+            bgcolor: (theme) => alpha(theme.palette.warning.main, 0.12),
+          }}
+        />
       </CellWrap>
     );
   }

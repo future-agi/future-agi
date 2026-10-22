@@ -13,7 +13,7 @@ Future AGI is an open-source AI evaluation and observability platform, and we we
 - 🐛 [Report a bug](https://github.com/future-agi/future-agi/issues/new?template=bug_report.yml)
 - ✨ [Request a feature](https://github.com/future-agi/future-agi/issues/new?template=feature_request.yml)
 - 🔖 [Good first issues](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-- 💬 [Join Discord](https://discord.com/invite/QDVvTgA8Xp)
+- 💬 [Join Discord](https://discord.com/invite/n2tCUKBkAw)
 
 ---
 
@@ -40,14 +40,24 @@ gh repo fork future-agi/future-agi --clone
 cd future-agi
 ```
 
-### 2. Start the stack
+### 2. Start the stack with hot reload
 
 ```bash
-cp futureagi/.env.example futureagi/.env
-docker compose up -d
+./bin/dev
 ```
 
-The backend will be at `http://localhost:8000`, the frontend at `http://localhost:3031`.
+The first run builds every image from your checkout and installs through
+`./bin/install --from-source` (it writes `.env` and asks for your first
+account); give Docker 8 GB of memory for that build. After that, the UI is at
+<http://localhost:3000> (Vite, hot module replacement) and the API at
+<http://localhost:8000>, which restarts when you save a Python file under
+`futureagi/`.
+
+Everyday commands: `./bin/dev logs`, `./bin/dev shell`,
+`./bin/dev manage migrate`, `./bin/dev rebuild` after a dependency change,
+`./bin/dev down`. [Local development](https://docs.futureagi.com/docs/self-hosting/development) covers what
+reloads, migrations, tests, when to use `./bin/dev --distributed`, and
+troubleshooting.
 
 ### 3. Install git hooks
 
@@ -69,14 +79,14 @@ Branch names are validated on `git push`.
 ### 4. Run tests
 
 ```bash
-# Backend
-cd futureagi && make test
+# Backend: a host virtualenv, with Postgres, Redis, ClickHouse and MinIO in their own test containers
+cd futureagi && uv sync --frozen && make test
 
 # Frontend
 cd frontend && yarn test
 ```
 
-Full testing workflow — git hooks, CI pipeline, coverage thresholds, frontend/backend-specific commands — lives in [TESTING.md](TESTING.md). Backend setup: [futureagi/README.md](futureagi/README.md). Frontend conventions and commands: [frontend/README.md](frontend/README.md).
+Tests never touch the `./bin/dev` stack. Full testing workflow — git hooks, CI pipeline, coverage thresholds, frontend/backend-specific commands — lives in [TESTING.md](TESTING.md). Backend setup: [futureagi/README.md](futureagi/README.md). Frontend conventions and commands: [frontend/README.md](frontend/README.md).
 
 ---
 
@@ -86,7 +96,8 @@ Full testing workflow — git hooks, CI pipeline, coverage thresholds, frontend/
 
 Before filing, search [existing issues](https://github.com/future-agi/future-agi/issues) to see if it's already reported. A good bug report includes:
 
-- Future AGI version (`git rev-parse HEAD` if self-hosted; see the settings page in Cloud)
+- Future AGI version (self-hosted: `FUTURE_AGI_VERSION` in `.env`, or `git rev-parse HEAD` for a source build; see the settings page in Cloud)
+- Setup: Standalone, Distributed or Helm, and whether you use `./bin/dev`
 - Environment: OS, Python / Node version, Docker version
 - Exact reproduction steps
 - Expected vs. actual behavior
@@ -160,6 +171,7 @@ Before requesting review:
 - [ ] `make check-all` (backend) or `yarn check-all` (frontend) passes
 - [ ] Docstrings on new public APIs
 - [ ] [CHANGELOG](https://futureagi.com/changelog) updated if user-facing
+- [ ] User docs changed in [future-agi/docs](https://github.com/future-agi/docs) (docs.futureagi.com), not under `docs/`. A new environment variable is a row in `deploy/env-reference.toml`, which the [configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference) is generated from; telemetry fields and image facts likewise live in `wire_reference.toml` and `deploy/images.toml` ([TESTING.md](TESTING.md#images-docs-and-the-helm-chart))
 - [ ] No hardcoded secrets, URLs, or PII
 - [ ] `AI use:` line filled in (tool and extent, or `none`)
 - [ ] Linked issue is labelled `accepted` (or the change is a small fix)
@@ -181,7 +193,13 @@ future-agi/
 │   ├── model_hub/    # LLM / embedding hub
 │   ├── tfc/          # Django project settings + routing
 │   └── ...
-└── frontend/         # React + Vite (JavaScript)
+├── frontend/         # React + Vite (JavaScript)
+├── fi-collector/     # OTLP trace collector (Go)
+├── agentcc-gateway/  # LLM gateway (Go)
+├── deploy/           # Standalone app image (standalone/), production overlay, Helm chart (helm/futureagi/)
+├── bin/              # install, uninstall, dev, e2e
+├── docs/             # maintainer notes; user docs live in future-agi/docs
+└── e2e/              # Playwright end-to-end flows
 ```
 
 ---

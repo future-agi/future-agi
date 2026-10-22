@@ -1747,15 +1747,19 @@ class EvaluationRunner:
 
             if not self.futureagi_eval and "few_shots" not in required_field:
                 # Match the write side's column-id keying so retrieval hits.
-                (
-                    resolved_required_field,
-                    resolved_mapping,
-                ) = self._get_required_fields_and_mappings(
-                    user_eval_metric=self.user_eval_metric,
-                    mapping=mapping,
-                    config=config,
-                    required_field=required_field,
-                )
+                if self.user_eval_metric:
+                    (
+                        resolved_required_field,
+                        resolved_mapping,
+                    ) = self._get_required_fields_and_mappings(
+                        user_eval_metric=self.user_eval_metric,
+                        mapping=mapping,
+                        config=config,
+                        required_field=required_field,
+                    )
+                else:
+                    resolved_required_field = list(required_field)
+                    resolved_mapping = list(mapping)
                 few_shot_examples = self.get_few_shot_examples(
                     resolved_mapping, resolved_required_field
                 )
@@ -2768,7 +2772,7 @@ class EvaluationRunner:
         if value == CellStatus.ERROR.value and api_call_log_row:
             try:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
-                api_call_log_row.save(update_fields=["status"])
+                api_call_log_row.save(update_fields=["status", "updated_at"])
 
                 refund_config = {"evaluation_id": str(self.user_eval_metric_id)}
                 if refund_cost_for_api_call is not None:
@@ -2778,7 +2782,7 @@ class EvaluationRunner:
         elif value == CellStatus.PASS.value and api_call_log_row:
             try:
                 api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-                api_call_log_row.save(update_fields=["status"])
+                api_call_log_row.save(update_fields=["status", "updated_at"])
             except Exception as e:
                 logger.error(f"Error updating success api call status: {str(e)}")
 

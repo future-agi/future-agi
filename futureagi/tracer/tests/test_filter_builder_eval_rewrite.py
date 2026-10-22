@@ -41,6 +41,9 @@ from tracer.services.clickhouse.query_builders.filters import (
     EvalFilterMetadata,
     resolve_eval_filter_metadata,
 )
+from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+    UnsupportedFilterShapeError,
+)
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
     rewrite_v1_sql_to_v2,
@@ -261,6 +264,24 @@ class TestRewriteLeavesDeletedUntouched:
         v1 = "AND deleted = false"
         assert rewrite_v1_sql_to_v2(v1) == "AND deleted = false"
 
+    def test_entity_graph_candidate_eval_keeps_legacy_cdc_columns(self, settings):
+        # Session/Users EVAL graphs embed their ``candidate_eval`` read in SQL
+        # the v2 builder rewrites whole. The legacy table has no ``is_deleted``,
+        # so renaming its CDC columns there is ClickHouse code 47 (HTTP 500).
+        settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
+        _, pred = eval_logger_source("candidate_eval", include_cdc_tombstone_guard=True)
+        v1 = (
+            f"WHERE {pred} ORDER BY candidate_eval._peerdb_version"
+            " AND spans._peerdb_is_deleted = 0"
+        )
+
+        assert rewrite_v1_sql_to_v2(v1) == (
+            "WHERE candidate_eval._peerdb_is_deleted = 0 AND "
+            "(candidate_eval.deleted = 0 OR candidate_eval.deleted IS NULL) "
+            "ORDER BY candidate_eval._peerdb_version"
+            " AND spans.is_deleted = 0"
+        )
+
 
 # ===========================================================================
 # 3. EVAL_METRIC — SCORE numeric path (value/100 scaling on output_float).
@@ -356,14 +377,21 @@ class TestEvalScoreCompilation:
         assert "output_float IS NOT NULL" in where
         assert "NOT IN (" in where
 
-    def test_score_is_not_null_checks_presence(self, monkeypatch):
+    @pytest.mark.parametrize("eval_count_mode", [False, True])
+    def test_score_is_not_null_checks_presence(self, monkeypatch, eval_count_mode):
         eval_id, _ = _patch_eval(monkeypatch, "SCORE")
         where, _ = _translate(
-            ClickHouseFilterBuilder, _eval_filter(eval_id, "is_not_null")
+            ClickHouseFilterBuilder,
+            _eval_filter(eval_id, "is_not_null"),
+            eval_count_mode=eval_count_mode,
         )
         assert "output_float IS NOT NULL" in where
         assert "trace_id IN (" in where
-        assert "NOT IN" not in where
+        assert ("latest_eval.completed_rank = 1" in where) is eval_count_mode
+        if eval_count_mode:
+            assert where.index("latest_eval.completed_rank = 1") < where.index(
+                "output_float IS NOT NULL"
+            )
 
 
 # ===========================================================================
@@ -437,17 +465,28 @@ class TestEvalChoiceCompilation:
         assert "output_str = " in where
         assert "yes" in params.values()
 
-    def test_multi_value_choice_or_join_is_wrapped_in_parens(self, monkeypatch):
+    @pytest.mark.parametrize("eval_count_mode", [False, True])
+    def test_multi_value_choice_or_join_is_wrapped_in_parens(
+        self, monkeypatch, eval_count_mode
+    ):
         # Precedence fix: the OR-join across values is wrapped so the
         # config/deleted/error guards scope ALL values, not just the first.
         eval_id, _ = _patch_eval(monkeypatch, "CHOICE")
         where, _ = _translate(
-            ClickHouseFilterBuilder, _eval_filter(eval_id, "in", ["a", "b", "c"])
+            ClickHouseFilterBuilder,
+            _eval_filter(eval_id, "in", ["a", "b", "c"]),
+            eval_count_mode=eval_count_mode,
         )
         assert " OR " in where
-        # The combined membership block sits inside the AND-guarded subquery,
-        # so the guards precede a parenthesised OR group.
-        assert "AND error = 0 AND ((" in where
+        # Each mode applies the error guard to the whole OR group. In count
+        # mode completion is tested before rank, and rank before membership.
+        assert "AND error = 0 AND ((has(" in where
+        assert ("latest_eval.completed_rank = 1" in where) is eval_count_mode
+        if eval_count_mode:
+            assert "physical_eval.error = 0" in where
+            assert where.index("latest_eval.completed_rank = 1") < where.index(
+                "AND error = 0 AND ((has("
+            )
         # Three membership checks OR-joined.
         assert where.count("has(") == 3
 
@@ -843,23 +882,70 @@ class TestHasEvalHasAnnotationShape:
         )
         assert "trace_id NOT IN" in where
 
-    @pytest.mark.parametrize(
-        "column_id", ["has_eval", "has_annotation", "my_annotations"]
-    )
-    @pytest.mark.parametrize("filter_op", ["not_equals", "is_null", "is_not_null"])
-    def test_boolean_meta_filters_reject_non_equals_operations(
-        self,
-        column_id: str,
-        filter_op: str,
-    ) -> None:
-        filter_item = self._bool_filter(column_id, True)[0]
+    def _meta_filter(self, column_id: str, filter_op: str, value=True) -> dict:
+        filter_item = self._bool_filter(column_id, value)[0]
         filter_item["filter_config"]["filter_op"] = filter_op
         if column_id == "my_annotations":
             filter_item["filter_config"]["user_id"] = (
                 "00000000-0000-4000-8000-000000000002"
             )
+        return filter_item
 
-        with pytest.raises(ValueError, match="supports only the equals operation"):
+    @pytest.mark.parametrize(
+        "column_id", ["has_eval", "has_annotation", "my_annotations"]
+    )
+    @pytest.mark.parametrize(
+        ("filter_op", "expected"), [("is_null", "0 = 1"), ("is_not_null", "1 = 1")]
+    )
+    def test_boolean_meta_presence_operators_compile_a_total_flag(
+        self,
+        column_id: str,
+        filter_op: str,
+        expected: str,
+    ) -> None:
+        # The flags are derived per row and are never NULL, so is_not_null
+        # constrains nothing and is_null matches nothing.
+        where, _ = ClickHouseFilterBuilder(
+            project_id="p1", candidate_ids_param="candidate_trace_ids"
+        ).translate([self._meta_filter(column_id, filter_op)])
+
+        assert where == expected
+
+    @pytest.mark.parametrize("value", [True, False])
+    def test_has_eval_not_equals_negates_the_requested_value(self, value: bool) -> None:
+        where, _ = ClickHouseFilterBuilder(
+            project_id="p1", candidate_ids_param="candidate_trace_ids"
+        ).translate([self._meta_filter("has_eval", "not_equals", value)])
+
+        expected = "trace_id IN" if value is False else "trace_id NOT IN"
+        assert where.startswith(expected)
+
+    @pytest.mark.parametrize("value", [True, False])
+    def test_has_annotation_not_equals_negates_the_requested_value(
+        self, value: bool
+    ) -> None:
+        where, _ = ClickHouseFilterBuilder(project_id="p1").translate(
+            [self._meta_filter("has_annotation", "not_equals", value)]
+        )
+
+        expected = "trace_id IN" if value is False else "trace_id NOT IN"
+        assert where.startswith(expected)
+
+    @pytest.mark.parametrize(
+        "column_id", ["has_eval", "has_annotation", "my_annotations"]
+    )
+    def test_boolean_meta_filters_reject_uncompilable_operations(
+        self, column_id: str
+    ) -> None:
+        with pytest.raises(UnsupportedFilterShapeError, match="supports only equals"):
             ClickHouseFilterBuilder(
                 project_id="p1", candidate_ids_param="candidate_trace_ids"
-            ).translate([filter_item])
+            ).translate([self._meta_filter(column_id, "contains")])
+
+    def test_unbounded_negative_has_eval_is_a_rejected_filter_not_a_crash(self) -> None:
+        # A bare ValueError here reached the views' generic handler and
+        # answered HTTP 500 for a filter the caller can correct.
+        with pytest.raises(UnsupportedFilterShapeError, match="bounded candidate"):
+            ClickHouseFilterBuilder(project_id="p1").translate(
+                [self._meta_filter("has_eval", "not_equals", True)]
+            )

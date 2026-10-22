@@ -122,6 +122,7 @@ const RightSection = ({ data, hideAnnotations = false }) => {
             sourceId={sourceId}
             secondarySourceType={secondarySourceType}
             secondarySourceId={secondarySourceId}
+            projectId={data?.project_id}
             openQueueItemOnRowClick
           />
         </ShowComponent>

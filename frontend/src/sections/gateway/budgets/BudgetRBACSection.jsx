@@ -67,12 +67,6 @@ const BUDGET_LEVEL_LABELS = {
   orgLimit: "Organization",
   hard_limit: "Hard Limit",
   hardLimit: "Hard Limit",
-  per_key: "Per API Key",
-  perKey: "Per API Key",
-  per_user: "Per User",
-  perUser: "Per User",
-  per_model: "Per Model",
-  perModel: "Per Model",
 };
 
 function getBudgetLevelLabel(level) {

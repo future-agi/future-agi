@@ -79,14 +79,14 @@ def test_positive_seed_replays_complete_prefixes_before_exact_value_filter(item)
         if f"%({name})s" in plan.raw_witness_predicate:
             assert params[name] == value
     for forbidden in (
-        "is_deleted",
-        "project_version_id",
+        "is_deleted = 0",
+        "project_version_id = ",
         "filter_before_",
         "LIMIT",
         "SAMPLE",
     ):
         assert forbidden not in inside
-    assert "SELECT * FROM spans FINAL" in inside
+    assert "argMax(tuple(" in inside and "FINAL" not in inside
     assert "AND is_deleted = 0" in outside
     assert "use_skip_indexes_if_final = 0" in sql
     # Prefix pruning does not change the independent time-discovery contract.

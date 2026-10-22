@@ -1236,3 +1236,132 @@ describe("TracingTestMode exact task attribute mapping", () => {
     expect(payload).not.toHaveProperty("trace_id");
   });
 });
+
+// The same trace id can live in several projects (replays, re-imports, shared
+// voice provider accounts). The preview lists the selected project's rows, so
+// every row-detail read must pin to that project instead of the newest copy.
+describe("TracingTestMode row detail project pin", () => {
+  const observeList = (rows) => ({
+    data: {
+      status: true,
+      result: {
+        config: [],
+        table: rows,
+        metadata: {
+          total_rows: rows.length,
+          has_more: false,
+          next_cursor: null,
+        },
+      },
+    },
+  });
+  const readsOf = (url) => mocks.get.mock.calls.filter(([u]) => u === url);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.exactFields = ["final_status"];
+    mocks.exactReadState = "complete";
+  });
+
+  it("pins the trace detail read to the selected project", async () => {
+    mocks.get.mockImplementation(async (url) => {
+      if (url === `/projects/${PROJECT_ID}`) {
+        return { data: { result: { id: PROJECT_ID, source: "api" } } };
+      }
+      if (url === "/traces/") return observeList([{ trace_id: "trace-pin" }]);
+      if (url === "/traces/trace-pin/") {
+        return {
+          data: {
+            status: true,
+            result: { trace: { trace_id: "trace-pin" }, observation_spans: [] },
+          },
+        };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    const view = renderTaskMapping(vi.fn(), { initialRowType: "traces" });
+
+    await waitFor(() => expect(readsOf("/traces/trace-pin/")).toHaveLength(1));
+    expect(readsOf("/traces/trace-pin/")[0][1].params).toEqual({
+      project_id: PROJECT_ID,
+    });
+    view.unmount();
+  });
+
+  it("pins the session's first-trace read to the selected project", async () => {
+    mocks.get.mockImplementation(async (url) => {
+      if (url === `/projects/${PROJECT_ID}`) {
+        return { data: { result: { id: PROJECT_ID, source: "api" } } };
+      }
+      if (url === "/sessions/") {
+        return observeList([{ session_id: "session-pin" }]);
+      }
+      if (url === "/sessions/session-pin/") {
+        return {
+          data: {
+            result: {
+              session_metadata: {},
+              response: [{ trace_id: "trace-session-first" }],
+            },
+          },
+        };
+      }
+      if (url === "/traces/trace-session-first/") {
+        return {
+          data: { status: true, result: { trace: {}, observation_spans: [] } },
+        };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    const view = renderTaskMapping(vi.fn(), { initialRowType: "sessions" });
+
+    await waitFor(() =>
+      expect(readsOf("/traces/trace-session-first/")).toHaveLength(1),
+    );
+    expect(readsOf("/traces/trace-session-first/")[0][1].params).toEqual({
+      project_id: PROJECT_ID,
+    });
+    view.unmount();
+  });
+
+  it("pins the voice-call detail read to the selected project", async () => {
+    mocks.get.mockImplementation(async (url) => {
+      if (url === `/projects/${PROJECT_ID}`) {
+        return { data: { result: { id: PROJECT_ID, source: "simulator" } } };
+      }
+      if (url === "/calls/") {
+        return {
+          data: {
+            count: 1,
+            count_is_lower_bound: false,
+            query_complete: true,
+            query_status: "complete",
+            total_pages: 1,
+            current_page: 1,
+            next: null,
+            previous: null,
+            results: [{ id: "call-pin", trace_id: "trace-voice-pin" }],
+            config: [],
+            has_more: false,
+            next_cursor: null,
+          },
+        };
+      }
+      if (url === "/calls/detail/") {
+        return { data: { result: { status: "completed" } } };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+
+    const view = renderTaskMapping(vi.fn(), { initialRowType: "voiceCalls" });
+
+    await waitFor(() => expect(readsOf("/calls/detail/")).toHaveLength(1));
+    expect(readsOf("/calls/detail/")[0][1].params).toEqual({
+      trace_id: "trace-voice-pin",
+      project_id: PROJECT_ID,
+    });
+    view.unmount();
+  });
+});

@@ -921,6 +921,42 @@ class TestAgentVersionCallExecutions:
         # 15 rows / 5 per page = 3 pages
         assert data["total_pages"] == 3
 
+    def test_call_executions_honour_page_size(
+        self,
+        auth_client,
+        agent_definition,
+        agent_version,
+        scenario,
+        test_execution,
+        pass_fail_config,
+    ):
+        """The call-log grid sends page_size, as the trace lists do; it must set
+        the page size here too, not fall back to the default of 10."""
+        pf_id = str(pass_fail_config.id)
+        for i in range(30):
+            CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario,
+                agent_version=agent_version,
+                phone_number=f"+9710000{i:03d}",
+                status="completed",
+                eval_outputs={
+                    pf_id: {
+                        "name": "Quality Gate",
+                        "output": "Passed",
+                        "output_type": "Pass/Fail",
+                    }
+                },
+            )
+        url = _version_url(agent_definition.id, agent_version.id, "call-executions/")
+
+        first = auth_client.get(url + "?page=1&page_size=25").json()
+        assert len(first["results"]) == 25
+        assert first["total_pages"] == 2
+
+        last = auth_client.get(url + "?page=2&page_size=25").json()
+        assert len(last["results"]) == first["count"] - 25
+
     def test_unauthenticated(self, api_client, agent_definition, agent_version):
         response = api_client.get(
             _version_url(agent_definition.id, agent_version.id, "call-executions/")

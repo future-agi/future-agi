@@ -87,12 +87,23 @@ def _renew_exact_refresh_lease_until_stopped(
 
 @contextmanager
 def _exact_observe_analytics() -> Iterator[Any]:
-    """Own one CH25 client with the reviewed exact-graph timeout ceiling."""
+    """Own one CH25 client with the reviewed exact-graph timeout ceiling.
+
+    Every statement a refresh sends through it asks ClickHouse to stop at what
+    is left of ``GRAPH_BACKGROUND_WALL_MS`` (``WallCappedAnalytics``). Without
+    that, a read past the wall ran to the end on the worker's one slot and its
+    result was then discarded by the reader's own deadline fence; now the
+    server stops it at the wall and the refresh takes the failed path.
+    """
 
     from django.conf import settings
 
     from tracer.services.clickhouse.client import ClickHouseClient
     from tracer.services.clickhouse.query_service import AnalyticsQueryService
+    from tracer.services.clickhouse.read_budget import (
+        ReadDeadline,
+        WallCappedAnalytics,
+    )
     from tracer.services.clickhouse.v2 import get_v2_config
 
     config = get_v2_config()
@@ -107,17 +118,19 @@ def _exact_observe_analytics() -> Iterator[Any]:
         read_timeout_ceiling_ms=read_timeout_ceiling_ms,
     )
     try:
-        yield AnalyticsQueryService(
-            ch_client=client,
-            read_timeout_ceiling_ms=read_timeout_ceiling_ms,
+        yield WallCappedAnalytics(
+            AnalyticsQueryService(
+                ch_client=client,
+                read_timeout_ceiling_ms=read_timeout_ceiling_ms,
+            ),
+            ReadDeadline.start(read_timeout_ceiling_ms),
+            floor_ms=int(settings.EXACT_GRAPH_MIN_REMAINING_MS),
         )
     finally:
         client.close()
 
 
 def _observe_payload(namespace: str, identity: dict[str, Any]) -> Any:
-    from django.conf import settings
-
     from tracer.services.clickhouse.exact_graph_reads import (
         read_exact_agent_graph,
         read_exact_all_system_metrics,
@@ -127,7 +140,7 @@ def _observe_payload(namespace: str, identity: dict[str, Any]) -> Any:
         read_exact_user_system_graph,
     )
     from tracer.services.clickhouse.graph_dispatch import (
-        _fetch_direct_raw_system_metric_graph,
+        fetch_background_raw_system_metric_graph,
     )
 
     _reauthorize_exact_observe_project(identity)
@@ -145,11 +158,14 @@ def _observe_payload(namespace: str, identity: dict[str, Any]) -> Any:
             "interval": str(identity["interval"]),
         }
         if namespace == "observe-system-graph":
-            return _fetch_direct_raw_system_metric_graph(
+            # Cost-gated against this worker's own wall. The raw filtered graph
+            # read is the one statement on this surface that can outlast any
+            # wall, and this is the only door it has left; entering it uncosted
+            # is the defect the interactive gate exists to remove.
+            return fetch_background_raw_system_metric_graph(
                 **common,
                 metric_id=str(identity.get("metric_id") or ""),
                 observe_type=str(identity.get("observe_type") or "trace"),
-                timeout_ms=int(settings.GRAPH_BACKGROUND_WALL_MS),
             )
         if namespace == "observe-all-system-graphs":
             return read_exact_all_system_metrics(**common)
@@ -282,7 +298,19 @@ def _attribute_detail_payload(identity: dict[str, Any]) -> Any:
 
 def _load_exact_payload(namespace: str, identity: dict[str, Any]) -> Any:
     if namespace.startswith("observe-"):
-        return _observe_payload(namespace, identity)
+        from tracer.services.clickhouse.graph_metric_statistic import (
+            stamp_snapshot_statistic,
+        )
+
+        # The statistic travels in the cached payload. Readers serve a latency
+        # snapshot only when it says "mean", so one an older worker cached
+        # during a rolling deploy (unmarked) is a miss
+        # (graph_metric_statistic.snapshot_names_its_statistic).
+        return stamp_snapshot_statistic(
+            namespace,
+            identity.get("metric_id"),
+            _observe_payload(namespace, identity),
+        )
     if namespace == "dashboard-query":
         return _dashboard_payload(identity)
     if namespace == "eval-usage":

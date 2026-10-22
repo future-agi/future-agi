@@ -893,6 +893,16 @@ class QueueForSourceQuerySerializer(StrictInputSerializer):
     )
     source_id = serializers.CharField(required=False, allow_blank=True)
     sources = QueueSourceListQueryParamField(required=False, allow_blank=True)
+    project_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text=(
+            "Tracer project the trace / span was opened from. The same id can "
+            "exist in several projects; when supplied, only that project's "
+            "queue items are listed."
+        ),
+    )
 
     def validate(self, attrs):
         sources = attrs.get("sources") or []

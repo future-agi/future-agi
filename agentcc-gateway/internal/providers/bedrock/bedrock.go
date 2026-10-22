@@ -56,6 +56,7 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		MaxIdleConnsPerHost: poolSize,
 		IdleConnTimeout:     90 * time.Second,
 		ForceAttemptHTTP2:   true,
+		DialContext:         cfg.DialContext,
 	}
 
 	region := extractRegion(cfg.BaseURL, cfg.Headers, cfg.AWSRegion)
@@ -75,6 +76,11 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 }
 
 func (p *Provider) ID() string { return p.id }
+
+// ClientTimeout reports the timeout on this provider's HTTP client. It bounds
+// the whole exchange, a streamed body included, so it is a hard ceiling on any
+// request this provider serves.
+func (p *Provider) ClientTimeout() time.Duration { return p.httpClient.Timeout }
 
 func (p *Provider) acquireSemaphore(ctx context.Context) error {
 	select {

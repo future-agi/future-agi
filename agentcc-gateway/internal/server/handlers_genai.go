@@ -37,6 +37,11 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	rc.RequestID = models.GetRequestID(r.Context())
 	rc.TraceID = w.Header().Get("x-agentcc-trace-id")
 	rc.Model = model
+	// Retain provider-qualified routing identity, but send only the model name
+	// upstream on the native Google API (e.g. vertex_ai/gemini-3.8-flash).
+	if prefix := r.URL.Query().Get("provider"); prefix != "" {
+		rc.Model = prefix + "/" + model
+	}
 	rc.RequestHeaders = cloneRequestHeaders(r)
 
 	switch action {
@@ -114,10 +119,13 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	h.applyOrgModelDatabaseOverrides(orgCfg, rc)
 	h.applyOrgModelMapOverrides(orgCfg, rc)
 
-	provider, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, model)
+	provider, upstreamModel, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, rc.Model)
 	if err != nil {
 		writeGenAIErrorFromError(w, err)
 		return
+	}
+	if upstreamModel != rc.Model {
+		model = providers.ResolveModelName(upstreamModel)
 	}
 
 	// Collect Google-specific headers to forward (only used on native path).
@@ -146,11 +154,15 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		if action == "embedContent" {
-			h.handleGenAIEmbed(ctx, w, rc, gp, model, body, googleHeaders)
-		} else {
-			h.handleGenAICountTokens(ctx, w, rc, gp, model, body, googleHeaders)
+		call := func(ctx context.Context) ([]byte, int, error) {
+			return gp.GenAICountTokens(ctx, model, body, googleHeaders)
 		}
+		if action == "embedContent" {
+			call = func(ctx context.Context) ([]byte, int, error) {
+				return gp.EmbedContent(ctx, model, body, googleHeaders)
+			}
+		}
+		h.handleGenAINativeOnly(ctx, w, rc, call)
 		return
 	}
 
@@ -189,7 +201,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		rc.Metadata["translation_drops"] = joined
 		w.Header().Set("x-agentcc-translation-drops", joined)
 	}
-	canonicalReq.Model = rc.Model
+	canonicalReq.Model = upstreamModel
 	canonicalReq.Stream = action == "streamGenerateContent"
 
 	switch action {
@@ -396,45 +408,31 @@ func (h *Handlers) writeGenAIShortCircuit(w http.ResponseWriter, rc *models.Requ
 	w.Write(out)
 }
 
-func (h *Handlers) handleGenAICountTokens(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, gp providers.GenAINativeProvider, model string, reqBody []byte, headers map[string]string) {
-	respBody, statusCode, err := gp.GenAICountTokens(ctx, model, reqBody, headers)
-	if err != nil {
+// handleGenAINativeOnly serves countTokens and embedContent. They have no
+// canonical form, but still go through the pipeline: without it the key is
+// never authenticated, and the call is neither rate-limited nor logged.
+func (h *Handlers) handleGenAINativeOnly(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, call func(context.Context) ([]byte, int, error)) {
+	var respBody []byte
+	var statusCode int
+	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		var callErr error
+		respBody, statusCode, callErr = call(ctx)
+		return callErr
+	}); err != nil {
 		writeGenAIErrorFromError(w, err)
 		return
 	}
-
-	if statusCode >= 400 {
-		h.setAgentccHeaders(w, rc)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(statusCode)
-		w.Write(respBody)
+	if respBody == nil {
+		writeGenAIErrorFromError(w, models.ErrInternal("no response from provider"))
 		return
 	}
 
 	h.setAgentccHeaders(w, rc)
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write(respBody)
-}
-
-func (h *Handlers) handleGenAIEmbed(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, gp providers.GenAINativeProvider, model string, reqBody []byte, headers map[string]string) {
-	respBody, statusCode, err := gp.EmbedContent(ctx, model, reqBody, headers)
-	if err != nil {
-		writeGenAIErrorFromError(w, err)
-		return
+	if statusCode < 400 {
+		statusCode = http.StatusOK
 	}
-
-	if statusCode >= 400 {
-		h.setAgentccHeaders(w, rc)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(statusCode)
-		w.Write(respBody)
-		return
-	}
-
-	h.setAgentccHeaders(w, rc)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(statusCode)
 	w.Write(respBody)
 }
 

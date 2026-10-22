@@ -1,10 +1,8 @@
 from rest_framework import serializers
 
 from tfc.utils.serializer_fields import JsonValueField
-from tracer.services.clickhouse.attribute_reads import (
-    validate_attribute_key,
-    validate_attribute_search,
-)
+from tracer.serializers.attribute_key import ExactAttributeKeyField
+from tracer.services.clickhouse.attribute_reads import validate_attribute_search
 
 SPAN_ATTRIBUTE_TYPES = ("string", "number", "boolean", "array", "map", "json")
 SPAN_ATTRIBUTE_KEY_TYPES = SPAN_ATTRIBUTE_TYPES
@@ -23,11 +21,7 @@ class SpanAttributeProjectQuerySerializer(serializers.Serializer):
             "evaluation mapping can resolve."
         ),
     )
-    q = serializers.CharField(
-        required=False,
-        allow_blank=False,
-        max_length=512,
-    )
+    q = ExactAttributeKeyField(required=False)
     page_size = serializers.IntegerField(required=False, min_value=1, max_value=50)
     cursor = serializers.CharField(
         required=False,
@@ -56,28 +50,16 @@ class SpanAttributeProjectQuerySerializer(serializers.Serializer):
         # against a different attribute name.
         return attrs
 
-    def validate_q(self, value):
-        try:
-            return validate_attribute_key(value)
-        except ValueError as exc:
-            raise serializers.ValidationError(str(exc)) from exc
-
 
 class SpanAttributeValuesQuerySerializer(serializers.Serializer):
     project_id = serializers.UUIDField()
-    key = serializers.CharField(max_length=512)
+    key = ExactAttributeKeyField()
     q = serializers.CharField(
         required=False,
         allow_blank=True,
         max_length=512,
     )
     limit = serializers.IntegerField(required=False, min_value=1, max_value=500)
-
-    def validate_key(self, value):
-        try:
-            return validate_attribute_key(value)
-        except ValueError as exc:
-            raise serializers.ValidationError(str(exc)) from exc
 
     def validate_q(self, value):
         try:
@@ -88,14 +70,8 @@ class SpanAttributeValuesQuerySerializer(serializers.Serializer):
 
 class SpanAttributeDetailQuerySerializer(serializers.Serializer):
     project_id = serializers.UUIDField()
-    key = serializers.CharField(max_length=512)
+    key = ExactAttributeKeyField()
     refresh = serializers.BooleanField(required=False, default=False)
-
-    def validate_key(self, value):
-        try:
-            return validate_attribute_key(value)
-        except ValueError as exc:
-            raise serializers.ValidationError(str(exc)) from exc
 
 
 class SpanAttributeKeySerializer(serializers.Serializer):

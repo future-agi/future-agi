@@ -1845,14 +1845,24 @@ export const useOrgMembersInfinite = (orgId, search = "", options = {}) => {
 // ---------------------------------------------------------------------------
 /**
  * Fetch annotation queue items for one or more sources.
+ *
+ * The same trace / span id can exist in several projects, each with its own
+ * queue items; `projectId` lists only the items of the copy the drawer shows.
  * @param {Array<{sourceType: string, sourceId: string, spanNotesSourceId?: string}>} sources
  */
-export const useQueueItemsForSource = (sources = [], options = {}) => {
+export const useQueueItemsForSource = (
+  sources = [],
+  { projectId, ...options } = {},
+) => {
   // Filter out entries with missing values
   const validSources = sources.filter((s) => s.sourceType && s.sourceId);
 
   return useQuery({
-    queryKey: ["annotation-queues", "for-source", validSources],
+    // The project goes last, so invalidating ["annotation-queues",
+    // "for-source"] also refreshes every project-pinned read.
+    queryKey: projectId
+      ? ["annotation-queues", "for-source", validSources, projectId]
+      : ["annotation-queues", "for-source", validSources],
     queryFn: () =>
       axios.get(annotationQueueEndpoints.forSource, {
         params: {
@@ -1863,6 +1873,7 @@ export const useQueueItemsForSource = (sources = [], options = {}) => {
               span_notes_source_id: s.spanNotesSourceId,
             })),
           ),
+          ...(projectId ? { project_id: projectId } : {}),
         },
       }),
     select: (d) =>

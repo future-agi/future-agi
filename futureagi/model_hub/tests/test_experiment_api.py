@@ -937,6 +937,19 @@ class TestExperimentActionWorkspaceIsolation:
         other_experiment.refresh_from_db()
         assert other_experiment.deleted is False
 
+    def test_v2_get_rejects_other_workspace_experiment(
+        self, auth_client, organization, user, other_workspace
+    ):
+        other_experiment, _, _, _ = self._create_experiment_in_workspace(
+            organization, user, other_workspace, v2=True
+        )
+
+        response = auth_client.get(
+            f"/model-hub/experiments/v2/{other_experiment.id}/"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
     @patch("tfc.temporal.experiments.start_experiment_v2_workflow")
     def test_v2_rerun_rejects_other_workspace_experiment(
         self, mock_workflow, auth_client, organization, user, other_workspace

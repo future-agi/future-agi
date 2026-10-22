@@ -947,3 +947,48 @@ def test_update_column_type_falls_back_to_sync_conversion_when_dispatch_fails():
     assert column.status == "Completed"
     assert cell.status == "pass"
     assert cell.value == "42"
+
+
+def test_add_rows_request_contract_keeps_cells_optional():
+    """``{"rows": [{}]}`` has always meant "one empty row"; the contract must not
+    turn that into a 400 or require clients to send an empty ``cells`` list."""
+    from model_hub.serializers.contracts import DatasetAddRowsRequestSerializer
+
+    serializer = DatasetAddRowsRequestSerializer(data={"rows": [{}]})
+
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["rows"] == [{"cells": []}]
+
+
+@pytest.mark.django_db
+def test_add_rows_accepts_a_row_without_cells(auth_client, user, workspace):
+    dataset = Dataset.objects.create(
+        name="Empty Row Dataset",
+        organization=user.organization,
+        workspace=workspace,
+        user=user,
+        column_order=[],
+        column_config={},
+    )
+    column = Column.objects.create(
+        name="question",
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.OTHERS.value,
+        dataset=dataset,
+    )
+
+    with patch(
+        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
+        None,
+    ):
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/add_rows/",
+            {"rows": [{}, {"cells": [{"column_name": "question", "value": "hi"}]}]},
+            format="json",
+        )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    rows = list(Row.objects.filter(dataset=dataset).order_by("order"))
+    assert len(rows) == 2
+    assert Cell.objects.get(row=rows[0], column=column).value == ""
+    assert Cell.objects.get(row=rows[1], column=column).value == "hi"

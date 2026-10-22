@@ -565,29 +565,98 @@ const nodeTypes = { agentNode: AgentNode };
 // ---------------------------------------------------------------------------
 // Dagre layout — direction-aware (LR for trace list, TB for trace detail)
 // ---------------------------------------------------------------------------
+
+// Stop closes the drawing; its edges record no relation between spans. If
+// they took part in the layout, a leaf's distance to its parent and to Stop
+// would cost the same, so dagre sank leaf siblings onto the row above Stop
+// while siblings with nested work stayed one level below the parent:
+// parallel steps landed on different levels and read as a sequence
+// (TH-4321). Lay out the recorded graph alone, then put Stop one level past
+// its deepest node.
+const SENTINEL_WIDTH = 50;
+const SENTINEL_HEIGHT = 32;
+
+const isStopNode = (node) => node.data?.type === "end";
+
+// Read rankdir the way dagre does: case-insensitive, LR/RL lay ranks along
+// x, BT/RL reverse the rank axis, anything else is top-to-bottom.
+const rankAxis = (direction) => {
+  const dir = String(direction).toLowerCase();
+  return {
+    horizontal: dir === "lr" || dir === "rl",
+    reversed: dir === "bt" || dir === "rl",
+  };
+};
+
+const placeStop = (g, laidOutIds, direction, ranksep) => {
+  if (!laidOutIds.length) return { x: 0, y: 0 };
+  const boxes = laidOutIds.map((id) => g.node(id));
+  const min = (pick) => Math.min(...boxes.map(pick));
+  const max = (pick) => Math.max(...boxes.map(pick));
+  const { horizontal, reversed } = rankAxis(direction);
+  const [main, mainSize, stopSize, cross, crossSize] = horizontal
+    ? ["x", "width", SENTINEL_WIDTH, "y", "height"]
+    : ["y", "height", SENTINEL_HEIGHT, "x", "width"];
+  const stopMain = reversed
+    ? min((b) => b[main] - b[mainSize] / 2) - ranksep - stopSize / 2
+    : max((b) => b[main] + b[mainSize] / 2) + ranksep + stopSize / 2;
+  const stopCross =
+    (min((b) => b[cross] - b[crossSize] / 2) +
+      max((b) => b[cross] + b[crossSize] / 2)) /
+    2;
+  return { [main]: stopMain, [cross]: stopCross };
+};
+
+// A row means "runs after everything above it", so each node sits on the
+// first row after its deepest recorded parent. dagre's default ranker only
+// minimises total edge length, and whenever two rows cost the same it may
+// push a node down next to an unrelated deeper branch (for example when
+// every ChatOpenAI call is grouped into one node with parents on two
+// levels). Called on dagre's internal graph after its acyclic pass, so a
+// topological order exists; `minlen` already includes dagre's own spacing.
+const rankAtEarliestLevel = (g) => {
+  Dagre.graphlib.alg.topsort(g).forEach((v) => {
+    g.node(v).rank = g
+      .inEdges(v)
+      .reduce(
+        (rank, edge) =>
+          Math.max(rank, g.node(edge.v).rank + g.edge(edge).minlen),
+        0,
+      );
+  });
+};
+
 const layoutGraph = (nodes, edges, direction = "LR") => {
+  const ranksep = direction === "LR" ? 80 : 50;
   const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
   g.setGraph({
     rankdir: direction,
-    ranksep: direction === "LR" ? 80 : 50,
+    ranksep,
     nodesep: 25,
+    ranker: rankAtEarliestLevel,
   });
 
+  const stopIds = new Set(nodes.filter(isStopNode).map((node) => node.id));
+  const laidOutIds = [];
   nodes.forEach((node) => {
-    const isSentinel = node.data?.type === "start" || node.data?.type === "end";
+    if (stopIds.has(node.id)) return;
+    const isSentinel = node.data?.type === "start";
     g.setNode(node.id, {
-      width: isSentinel ? 50 : 140,
-      height: isSentinel ? 32 : 44,
+      width: isSentinel ? SENTINEL_WIDTH : 140,
+      height: isSentinel ? SENTINEL_HEIGHT : 44,
     });
+    laidOutIds.push(node.id);
   });
   edges.forEach((edge) => {
+    if (stopIds.has(edge.source) || stopIds.has(edge.target)) return;
     g.setEdge(edge.source, edge.target);
   });
 
   Dagre.layout(g);
+  const stop = placeStop(g, laidOutIds, direction, ranksep);
 
   return nodes.map((node) => {
-    const pos = g.node(node.id);
+    const pos = stopIds.has(node.id) ? stop : g.node(node.id);
     return { ...node, position: { x: pos.x - 70, y: pos.y - 22 } };
   });
 };

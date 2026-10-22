@@ -134,6 +134,7 @@ const TraceDetailDrawerV2 = ({
   hasNext = true,
   initialFullscreen = false,
   initialSpanId = null,
+  initialEvalFocus = false,
   refreshParentGrid,
 }) => {
   const navigate = useNavigate();
@@ -506,7 +507,9 @@ const TraceDetailDrawerV2 = ({
   }, []);
 
   const queryClient = useQueryClient();
-  const { data, isLoading } = useGetTraceDetail(open ? traceId : null);
+  const { data, isLoading } = useGetTraceDetail(open ? traceId : null, {
+    projectId,
+  });
 
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["trace-detail", traceId] });
@@ -641,6 +644,13 @@ const TraceDetailDrawerV2 = ({
 
   const handleSelectSpan = useCallback((spanId) => {
     setSelectedSpanId((prev) => (prev === spanId ? null : spanId));
+  }, []);
+
+  // Evaluation-rollup "View span" is navigation, not a tree toggle. In
+  // particular, viewing the already-selected root must keep the detail pane
+  // visible instead of clearing the selection.
+  const handleViewSpan = useCallback((spanId) => {
+    setSelectedSpanId(spanId);
   }, []);
 
   const handleAction = useCallback(
@@ -880,6 +890,8 @@ const TraceDetailDrawerV2 = ({
 
       {/* Header */}
       <DrawerHeader
+        open={open}
+        closeOnEscape={!initialFullscreen}
         traceId={traceId}
         projectId={projectId}
         onClose={onClose}
@@ -1211,7 +1223,8 @@ const TraceDetailDrawerV2 = ({
                   projectId={projectId}
                   onClose={() => setSelectedSpanId(null)}
                   onAction={handleAction}
-                  onSelectSpan={handleSelectSpan}
+                  onSelectSpan={handleViewSpan}
+                  initialEvalFocus={initialEvalFocus}
                   drawerOpen={open}
                 />
               </Box>
@@ -1294,7 +1307,8 @@ const TraceDetailDrawerV2 = ({
                   projectId={projectId}
                   onClose={() => setSelectedSpanId(null)}
                   onAction={handleAction}
-                  onSelectSpan={handleSelectSpan}
+                  onSelectSpan={handleViewSpan}
+                  initialEvalFocus={initialEvalFocus}
                   drawerOpen={open}
                 />
               ) : (
@@ -1438,6 +1452,7 @@ const TraceDetailDrawerV2 = ({
             traceId,
             spanId: annotateDrawerOpen?.spanId || rootSpanId,
             sessionId: data?.trace?.session,
+            projectId,
           })}
           onClose={() => setAnnotateDrawerOpen(null)}
           onAddLabel={() => setAddLabelDrawerOpen(true)}
@@ -1549,6 +1564,7 @@ TraceDetailDrawerV2.propTypes = {
   hasNext: PropTypes.bool,
   initialFullscreen: PropTypes.bool,
   initialSpanId: PropTypes.string,
+  initialEvalFocus: PropTypes.bool,
   refreshParentGrid: PropTypes.func,
 };
 

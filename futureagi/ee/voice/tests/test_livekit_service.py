@@ -947,6 +947,54 @@ class TestRunAsync:
 # ============================================================================
 
 
+class TestRecordingSpeakerTracks:
+    @pytest.mark.unit
+    def test_speaker_tracks_are_cut_from_the_side_each_speaker_is_on(
+        self, livekit_service
+    ):
+        from livekit.protocol.egress import EgressStatus
+
+        call = MagicMock()
+        call.provider_call_data = {PROVIDER_KEY: {"egress_id": "EG_1"}}
+        call.asave = AsyncMock()
+        egress_info = MagicMock()
+        egress_info.status = EgressStatus.EGRESS_COMPLETE
+        egress_info.file_results = [MagicMock(filename="raw/room.mp3")]
+        cuts = {}
+
+        def fake_stream(_config, _object_key, s3_key, ffargs):
+            cuts[s3_key.rsplit("_", 2)[-2]] = ffargs
+            return f"https://media/{s3_key}"
+
+        with (
+            patch(
+                "simulate.models.test_execution.CallExecution.objects.aget",
+                new=AsyncMock(return_value=call),
+            ),
+            patch.object(livekit_service, "_create_api", return_value=AsyncMock()),
+            patch(
+                "ee.voice.services.livekit.recording.poll_egress_completion",
+                new=AsyncMock(return_value=egress_info),
+            ),
+            patch(
+                "ee.voice.services.livekit.recording.stream_egress_to_s3",
+                side_effect=fake_stream,
+            ),
+            patch("ee.voice.services.livekit.recording.delete_egress_recording"),
+        ):
+            result = asyncio.run(
+                livekit_service.extract_and_persist_recordings("call-1")
+            )
+
+        assert cuts["customer"] == ["-filter_complex", "pan=mono|c0=c0"]
+        assert cuts["assistant"] == ["-filter_complex", "pan=mono|c0=c1"]
+        stored = call.provider_call_data[PROVIDER_KEY]["recording"]
+        assert stored["customer"] == result.customer_recording_url
+        assert stored["assistant"] == result.assistant_recording_url
+        assert result.customer_recording_url.endswith("_customer_recording.mp3")
+        assert result.assistant_recording_url.endswith("_assistant_recording.mp3")
+
+
 class TestProviderKey:
     @pytest.mark.unit
     def test_provider_key_matches_enum(self):

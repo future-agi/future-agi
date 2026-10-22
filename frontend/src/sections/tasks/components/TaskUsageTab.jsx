@@ -35,7 +35,7 @@ import { DATE_OPTION_TO_PERIOD } from "src/sections/evals/Helpers/evalUsageColum
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
 
 // ── Inline stat ──
-const StatPill = ({ label, value, color }) => (
+const StatPill = ({ label, value }) => (
   <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
     <Typography
       variant="caption"
@@ -44,12 +44,7 @@ const StatPill = ({ label, value, color }) => (
     >
       {label}:
     </Typography>
-    <Typography
-      variant="caption"
-      fontWeight={700}
-      color={color}
-      sx={{ fontSize: "12px" }}
-    >
+    <Typography variant="caption" fontWeight={700} sx={{ fontSize: "12px" }}>
       {value}
     </Typography>
   </Box>
@@ -1106,37 +1101,10 @@ const TaskUsageTab = ({ taskId }) => {
                 py: 0.5,
               }}
             >
+              {/* Usage counts successful runs only; errors stay in the logs. */}
               <StatPill
                 label="Runs"
                 value={`${stats.runs_period ?? 0}${lowerBoundSuffix}`}
-              />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Success"
-                value={`${stats.success_count ?? 0}${lowerBoundSuffix}`}
-                color="success.main"
-              />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Errors"
-                value={`${stats.error_count ?? 0}${lowerBoundSuffix}`}
-                color="error.main"
-              />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label={
-                  summaryIsSampled
-                    ? "Sample completion rate"
-                    : "Task Completion Rate"
-                }
-                value={`${stats.pass_rate ?? 0}%`}
-                color="info.main"
               />
             </Box>
           )}

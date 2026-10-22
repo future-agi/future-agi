@@ -10,6 +10,7 @@ never uploads bytes (same pattern as the Vapi provider adapter).
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -18,13 +19,16 @@ from typing import Any
 
 import structlog
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
+from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import (
     AgentDefinition,
     CallExecution,
     RunTest,
     Scenarios,
+    SimulateEvalConfig,
     SimulatorAgent,
     TestExecution,
 )
@@ -32,6 +36,13 @@ from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.chat import ChatRole
 from simulate.semantics import SupportedProviders
+from simulate.services.harness_run_evals import stamp_eval_queued
+from simulate.services.scoring_status import (
+    CSAT_STAMP_KEY,
+    TRANSPORT_RUN_STATUSES,
+    locked_call_metadata_update,
+    settle_run_after_commit,
+)
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
@@ -61,6 +72,17 @@ _RESERVED_CALL_METADATA_KEYS = frozenset(
         "eval_started",
         "eval_dispatch_failed",
         "csat_dispatch_failed",
+        "csat_status",
+        "csat_error",
+        # The scoring clocks and the run gate read these; a caller setting them
+        # could hold a call open, time it out early, or close it unscored.
+        "eval_completed",
+        "eval_queued",
+        "eval_progress_at",
+        "csat_stamped_at",
+        "alk_result_digest",
+        "alk_artifact_manifest_digest",
+        "alk_recording_artifacts",
     }
 )
 
@@ -82,6 +104,12 @@ _TRANSCRIPT_ROLE_TO_METRIC_ROLE = {
     CallTranscript.SpeakerRole.USER: "user",
     CallTranscript.SpeakerRole.ASSISTANT: "bot",
 }
+
+# Stable IDs let externally-computed harness checks live in ``eval_outputs``
+# without creating a new global EvalTemplate for every deterministic database
+# assertion. Platform-backed checks use their real SimulateEvalConfig ID; only
+# execution-native checks use this namespace.
+_HARNESS_EVAL_NAMESPACE = uuid.UUID("754ea237-3306-4c91-a718-c3e1c304689c")
 
 
 @dataclass(frozen=True)
@@ -136,6 +164,8 @@ def store_alk_recording(
     audio_bytes: bytes,
     *,
     filename: str | None = None,
+    expected_sha256: str | None = None,
+    kind: str = "combined",
 ) -> RecordingUploadResult:
     """Persist an ALK-supplied recording to the shared upload bucket.
 
@@ -152,22 +182,70 @@ def store_alk_recording(
     if not audio_bytes:
         raise ALKSimulateIngestionError("recording upload was empty")
 
-    ext = _extension_from_filename(filename)
-    content_type = _CONTENT_TYPE_BY_EXT.get(ext, "application/octet-stream")
-    object_key = f"{_ALK_RECORDING_PREFIX}/{call_execution.id}/{uuid.uuid4().hex}.{ext}"
-    client = get_storage_client()
-    client.put_object(
-        bucket_name=UPLOAD_BUCKET_NAME,
-        object_name=object_key,
-        data=BytesIO(audio_bytes),
-        length=len(audio_bytes),
-        content_type=content_type,
-    )
-    recording_url = get_object_url(UPLOAD_BUCKET_NAME, object_key)
-    return RecordingUploadResult(
-        recording_url=recording_url,
-        object_key=object_key,
-    )
+    digest = hashlib.sha256(audio_bytes).hexdigest()
+    expected = (expected_sha256 or "").removeprefix("sha256:").lower()
+    if expected and digest != expected:
+        raise ALKSimulateIngestionError("recording sha256 did not match uploaded bytes")
+
+    # Distinct tracks can arrive concurrently. Lock the row while checking and
+    # extending the per-kind artifact map so one upload cannot overwrite another.
+    # The object key is content addressed, which makes a retry after a database
+    # failure safe even if storage already accepted the bytes.
+    with transaction.atomic():
+        call_execution = CallExecution.objects.select_for_update().get(
+            id=call_execution.id
+        )
+        metadata = dict(call_execution.call_metadata or {})
+        artifacts = dict(metadata.get("alk_recording_artifacts") or {})
+        existing_artifact = dict(artifacts.get(kind) or {})
+        existing_digest = existing_artifact.get("sha256")
+        if existing_digest and existing_digest != digest:
+            raise ALKSimulateIngestionError(
+                "recording digest conflicts with the previously ingested artifact"
+            )
+        existing_key = existing_artifact.get("object_key")
+        existing_url = existing_artifact.get("recording_url")
+        if existing_digest == digest and existing_key and existing_url:
+            return RecordingUploadResult(
+                recording_url=existing_url,
+                object_key=existing_key,
+            )
+
+        ext = _extension_from_filename(filename)
+        content_type = _CONTENT_TYPE_BY_EXT.get(ext, "application/octet-stream")
+        object_key = (
+            f"{_ALK_RECORDING_PREFIX}/{call_execution.id}/{kind}/{digest}.{ext}"
+        )
+        client = get_storage_client()
+        client.put_object(
+            bucket_name=UPLOAD_BUCKET_NAME,
+            object_name=object_key,
+            data=BytesIO(audio_bytes),
+            length=len(audio_bytes),
+            content_type=content_type,
+        )
+        recording_url = get_object_url(UPLOAD_BUCKET_NAME, object_key)
+        update_fields = ["call_metadata"]
+        if kind == "combined":
+            call_execution.recording_url = recording_url
+            call_execution.recording_available = True
+            update_fields.extend(["recording_url", "recording_available"])
+        elif kind == "stereo":
+            call_execution.stereo_recording_url = recording_url
+            call_execution.recording_available = True
+            update_fields.extend(["stereo_recording_url", "recording_available"])
+        artifacts[kind] = {
+            "sha256": digest,
+            "object_key": object_key,
+            "recording_url": recording_url,
+        }
+        metadata["alk_recording_artifacts"] = artifacts
+        call_execution.call_metadata = metadata
+        call_execution.save(update_fields=update_fields)
+        return RecordingUploadResult(
+            recording_url=recording_url,
+            object_key=object_key,
+        )
 
 
 def _extension_from_filename(filename: str | None) -> str:
@@ -178,58 +256,81 @@ def _extension_from_filename(filename: str | None) -> str:
     return tail if tail and 1 <= len(tail) <= 5 else "wav"
 
 
-def _provision_text_agent_definition(
-    organization, agent_definition_id, agent_name, description
+def _provision_agent_definition(
+    organization,
+    agent_definition_id,
+    agent_name,
+    description,
+    modality="text",
+    workspace=None,
 ):
-    """Resolve the RunTest's agent definition for provisioning.
+    """Resolve a modality-correct agent definition for an external ALK run.
 
-    Explicit id must resolve to a non-VOICE agent (voice is entitlement-gated in
-    CreateRunTestView; provisioning must not bypass that gate). Otherwise a TEXT
-    agent is created — chat call type follows the agent definition's type.
+    This endpoint does not originate a platform-hosted voice call. It records a call
+    already executed by an authenticated ALK runner, so the definition must preserve
+    the submitted modality for the transcript, recording and analytics UI.
     """
+    expected_type = (
+        AgentDefinition.AgentTypeChoices.VOICE
+        if modality == "voice"
+        else AgentDefinition.AgentTypeChoices.TEXT
+    )
     if agent_definition_id:
         try:
             agent_definition = AgentDefinition.objects.get(
-                id=agent_definition_id, organization=organization, deleted=False
+                id=agent_definition_id,
+                organization=organization,
+                workspace=workspace,
+                deleted=False,
             )
         except AgentDefinition.DoesNotExist as exc:
             raise ALKSimulateIngestionError(
                 f"agent definition {agent_definition_id} not found"
             ) from exc
-        if agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE:
+        if agent_definition.agent_type != expected_type:
             raise ALKSimulateIngestionError(
-                "voice agent definitions cannot be provisioned via ALK ingestion"
+                "agent definition modality does not match the ALK run modality"
             )
         return agent_definition
     return AgentDefinition.objects.create(
         agent_name=agent_name or "alk-sdk-agent",
-        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
-        inbound=True,  # NOT NULL; call-direction is a no-op for chat
-        description=description or "SDK-provisioned chat agent (ALK ingestion).",
+        agent_type=expected_type,
+        inbound=True,
+        description=description or f"SDK-provisioned {modality} agent (ALK ingestion).",
         organization=organization,
+        workspace=workspace,
     )
 
 
 def provision_alk_sim_run_test(
     organization,
     *,
+    workspace=None,
     name: str,
     personas: list[dict] | None = None,
     scenario_ids: list | None = None,
     agent_definition_id: str | None = None,
     agent_name: str | None = None,
     description: str = "",
+    modality: str = "text",
+    enable_tool_evaluation: bool = False,
 ) -> tuple[RunTest, list[Scenarios], AgentDefinition]:
-    """Stand up a chat RunTest for an SDK-first run, two ways (exactly one):
+    """Stand up a modality-correct RunTest for an SDK-first run, two ways.
 
     * ``scenario_ids`` — attach existing (natively generated) scenarios. Nothing
       is fabricated or mutated; the scenarios keep their real datasets so they
       render in the UI. A run-test-level ``simulator_agent`` is set from the
       scenarios so the batch never writes ``simulator_agent`` back onto the
       shared scenario. Preferred.
-    * ``personas`` — fabricate one COMPLETED persona-dataset scenario per persona
-      (see ``_build_persona_scenario_dataset``). Self-contained fallback; the
-      dataset lacks the generated ``column_config`` the scenarios UI reads.
+    * ``personas`` — create one COMPLETED dataset scenario whose rows are the
+      supplied personas (see ``_build_persona_scenario_dataset``). This matches
+      the platform's native dataset model: a scenario suite is one dataset and
+      every conversation case is one datapoint.
+
+    ``enable_tool_evaluation`` starts the run test with the tool-call judge on.
+    Defaults to off, since it costs an extra judge per call. A v3 environment
+    leaves it off here and turns it on later through
+    ``PUT /simulate/api/harness-environments/{id}/evaluations/tool-call/``.
 
     One CallExecution is created per dataset row at batch time, so keep the row
     count (== persona count, or the reused scenarios' rows) equal to the
@@ -237,13 +338,19 @@ def provision_alk_sim_run_test(
     """
     from django.db import transaction
 
-    from model_hub.models.choices import StatusType
-
     with transaction.atomic():
+        # Resolved before the agent definition so a bad scenario id is still
+        # the first thing reported (everything here is inside one
+        # transaction, so the ordering buys error precedence, not less
+        # rollback).
+        scenarios: list[Scenarios] = []
         if scenario_ids:
             scenarios = list(
                 Scenarios.objects.filter(
-                    id__in=scenario_ids, organization=organization, deleted=False
+                    id__in=scenario_ids,
+                    organization=organization,
+                    workspace=workspace,
+                    deleted=False,
                 ).select_related("agent_definition", "simulator_agent")
             )
             found = {str(s.id) for s in scenarios}
@@ -252,9 +359,29 @@ def provision_alk_sim_run_test(
                 raise ALKSimulateIngestionError(
                     f"scenario(s) not found: {', '.join(missing)}"
                 )
-            agent_definition = _provision_text_agent_definition(
-                organization, agent_definition_id, agent_name, description
+
+        agent_definition = _provision_agent_definition(
+            organization,
+            agent_definition_id,
+            agent_name,
+            description,
+            modality,
+            workspace,
+        )
+        # Both provisioning shapes refuse the same thing on the same terms, so
+        # the refusal is stated once, here, rather than once per shape: a voice
+        # agent with no version yet exposes no credentials for the tool-call
+        # judge to read, so the switch cannot be honoured for it.
+        if (
+            enable_tool_evaluation
+            and agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE
+            and agent_definition.latest_version is None
+        ):
+            raise ALKSimulateIngestionError(
+                "Tool-call evaluation is not available for a voice environment yet"
             )
+
+        if scenario_ids:
             simulator_agent = next(
                 (s.simulator_agent for s in scenarios if s.simulator_agent), None
             )
@@ -266,6 +393,7 @@ def provision_alk_sim_run_test(
                     name=f"{name} · simulator",
                     prompt=generate_simulator_agent_prompt(agent_version=None),
                     organization=organization,
+                    workspace=workspace,
                 )
             run_test = RunTest.objects.create(
                 name=name,
@@ -273,55 +401,120 @@ def provision_alk_sim_run_test(
                 agent_definition=agent_definition,
                 simulator_agent=simulator_agent,
                 organization=organization,
+                workspace=workspace,
+                enable_tool_evaluation=enable_tool_evaluation,
             )
             run_test.scenarios.set(scenarios)
             return run_test, scenarios, agent_definition
 
-        agent_definition = _provision_text_agent_definition(
-            organization, agent_definition_id, agent_name, description
+        scenarios = _create_persona_scenarios(
+            organization,
+            workspace,
+            agent_definition,
+            personas,
+            suite_name=name,
+            description=description,
         )
-
-        scenarios: list[Scenarios] = []
-        for idx, persona in enumerate(personas):
-            persona = dict(persona or {})
-            persona_name = (persona.get("name") or f"persona-{idx + 1}").strip()
-            situation = (persona.get("situation") or "").strip()
-            scenario_name = f"{name} · {persona_name}"[:255]
-            # A real 1-row dataset (persona/situation/outcome) makes the scenario
-            # render with persona rows AND lets the simulator prompt's
-            # {{persona}}/{{situation}} placeholders resolve — without it the
-            # placeholders ship to the model unsubstituted.
-            dataset = _build_persona_scenario_dataset(
-                organization, scenario_name, persona
-            )
-            scenarios.append(
-                Scenarios.objects.create(
-                    name=scenario_name,
-                    # ``clean()`` rejects blank source; fall back to the name.
-                    source=situation or persona_name,
-                    scenario_type=Scenarios.ScenarioTypes.DATASET,
-                    source_type=Scenarios.SourceTypes.AGENT_DEFINITION,
-                    agent_definition=agent_definition,
-                    organization=organization,
-                    dataset=dataset,
-                    status=StatusType.COMPLETED.value,
-                    metadata={"origin": "alk_sdk_ingestion", "persona": persona},
-                )
-            )
 
         run_test = RunTest.objects.create(
             name=name,
             description=description,
             agent_definition=agent_definition,
             organization=organization,
+            workspace=workspace,
+            enable_tool_evaluation=enable_tool_evaluation,
         )
         run_test.scenarios.set(scenarios)
 
     return run_test, scenarios, agent_definition
 
 
-def _build_persona_scenario_dataset(organization, scenario_name: str, persona: dict):
-    """Materialize one SDK persona as a 1-row scenario dataset.
+def append_alk_sim_scenarios(run_test, personas):
+    """Append persona rows to an existing ALK scenario dataset.
+
+    Returns ``(scenario, rows)`` so the hosted registration can retain the exact
+    scenario-key -> dataset-row identity. Jobs provisioned before grouped
+    datasets existed retain the legacy one-scenario-per-persona representation.
+    """
+    from django.db import transaction
+
+    with transaction.atomic():
+        existing = list(run_test.scenarios.filter(deleted=False).order_by("created_at"))
+        if (
+            len(existing) == 1
+            and (existing[0].metadata or {}).get("origin")
+            == "alk_sdk_ingestion_grouped"
+            and existing[0].dataset_id
+        ):
+            scenario = existing[0]
+            rows = _append_persona_dataset_rows(scenario.dataset, personas)
+            metadata = dict(scenario.metadata or {})
+            metadata["persona_count"] = scenario.dataset.row_set.filter(
+                deleted=False
+            ).count()
+            scenario.metadata = metadata
+            scenario.save(update_fields=["metadata", "updated_at"])
+            return scenario, rows
+
+        created = _create_persona_scenarios_legacy(
+            run_test.organization,
+            run_test.workspace,
+            run_test.agent_definition,
+            personas,
+            name_offset=run_test.scenarios.count(),
+        )
+        run_test.scenarios.add(*created)
+        return None, created
+
+
+def _create_persona_scenarios(
+    organization,
+    workspace,
+    agent_definition,
+    personas,
+    *,
+    suite_name,
+    description="",
+):
+    """Create one DATASET scenario with one row per authored persona."""
+    from model_hub.models.choices import StatusType
+
+    personas = [dict(persona or {}) for persona in (personas or [])]
+    only_persona = personas[0] if len(personas) == 1 else None
+    scenario_name = str(
+        (only_persona or {}).get("scenario_name")
+        or (only_persona or {}).get("situation")
+        or suite_name
+        or "ALK scenario suite"
+    ).strip()[:255]
+    dataset, _rows = _build_persona_scenario_dataset(
+        organization, scenario_name, personas, workspace=workspace
+    )
+    first_situation = str((personas[0] if personas else {}).get("situation") or "")
+    scenario = Scenarios.objects.create(
+        name=scenario_name,
+        source=str(description or first_situation or scenario_name),
+        description=description or None,
+        scenario_type=Scenarios.ScenarioTypes.DATASET,
+        source_type=Scenarios.SourceTypes.AGENT_DEFINITION,
+        agent_definition=agent_definition,
+        organization=organization,
+        workspace=workspace,
+        dataset=dataset,
+        status=StatusType.COMPLETED.value,
+        metadata={
+            "origin": "alk_sdk_ingestion_grouped",
+            "persona_count": len(personas),
+            **({"persona": only_persona} if only_persona is not None else {}),
+        },
+    )
+    return [scenario]
+
+
+def _build_persona_scenario_dataset(
+    organization, scenario_name: str, personas: list[dict], *, workspace=None
+):
+    """Materialize an SDK scenario suite as one multi-row dataset.
 
     Mirrors the native dataset-scenario grid (persona / situation / outcome
     columns) minus the async LLM generation — the SDK already carries the
@@ -329,32 +522,19 @@ def _build_persona_scenario_dataset(organization, scenario_name: str, persona: d
     the scenarios tab) and lets ``_generate_dynamic_prompt`` resolve the
     ``{{persona}}`` / ``{{situation}}`` placeholders against it.
     """
-    import json
-
     from model_hub.models.choices import (
         DatasetSourceChoices,
         DataTypeChoices,
         SourceChoices,
         StatusType,
     )
-    from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-
-    persona = dict(persona or {})
-    identity = persona.get("persona")
-    if not isinstance(identity, dict):
-        identity = {
-            key: value
-            for key, value in (
-                ("name", persona.get("name")),
-                ("role", persona.get("role")),
-            )
-            if value
-        }
+    from model_hub.models.develop_dataset import Column, Dataset
 
     dataset = Dataset.objects.create(
-        name=f"{scenario_name} · personas"[:2000],
+        name=f"{scenario_name} · scenarios"[:2000],
         source=DatasetSourceChoices.SCENARIO.value,
         organization=organization,
+        workspace=workspace,
     )
     column_specs = (
         ("persona", DataTypeChoices.PERSONA.value),
@@ -371,26 +551,128 @@ def _build_persona_scenario_dataset(organization, scenario_name: str, persona: d
         )
         for col_name, data_type in column_specs
     }
-    row = Row.objects.create(dataset=dataset, order=0)
-    values = {
-        "persona": json.dumps(identity, ensure_ascii=False),
-        "situation": (persona.get("situation") or "").strip(),
-        "outcome": (persona.get("outcome") or "").strip(),
-    }
-    Cell.objects.bulk_create(
-        [
+    # The dotted-path walker's no-context branch reads only `column_order`;
+    # without it `scenario_columns.situation.value` resolves to an empty
+    # string on every harness call, silently.
+    dataset.column_order = [
+        str(columns[col_name].id) for col_name, _type in column_specs
+    ]
+    # `updated_at` alongside the field that actually changed: a save that
+    # omits it leaves `updated_at` silently stale on a row that did change.
+    dataset.save(update_fields=["column_order", "updated_at"])
+    rows = _append_persona_dataset_rows(dataset, personas, columns=columns)
+    return dataset, rows
+
+
+def _append_persona_dataset_rows(dataset, personas, *, columns=None):
+    """Append persona datapoints, preserving stable row order."""
+    import json
+
+    from model_hub.models.develop_dataset import Cell, Column, Row
+
+    if columns is None:
+        columns = {
+            column.name: column for column in Column.objects.filter(dataset=dataset)
+        }
+    required = {"persona", "situation", "outcome"}
+    if not required.issubset(columns):
+        raise ALKSimulateIngestionError(
+            "ALK scenario dataset is missing persona, situation, or outcome columns"
+        )
+    last_order = (
+        Row.objects.filter(dataset=dataset, deleted=False)
+        .order_by("-order")
+        .values_list("order", flat=True)
+        .first()
+    )
+    start_order = 0 if last_order is None else last_order + 1
+    rows = []
+    cells = []
+    for offset, raw_persona in enumerate(personas or []):
+        persona = dict(raw_persona or {})
+        identity = persona.get("persona")
+        if not isinstance(identity, dict):
+            identity = {
+                key: value
+                for key, value in (
+                    ("name", persona.get("name")),
+                    ("role", persona.get("role")),
+                )
+                if value
+            }
+        row = Row(
+            dataset=dataset,
+            order=start_order + offset,
+            metadata={"scenario_name": persona.get("scenario_name") or ""},
+        )
+        rows.append(row)
+    Row.objects.bulk_create(rows)
+    for row, raw_persona in zip(rows, personas or [], strict=True):
+        persona = dict(raw_persona or {})
+        identity = persona.get("persona")
+        if not isinstance(identity, dict):
+            identity = {
+                key: value
+                for key, value in (
+                    ("name", persona.get("name")),
+                    ("role", persona.get("role")),
+                )
+                if value
+            }
+        values = {
+            "persona": json.dumps(identity, ensure_ascii=False),
+            "situation": str(persona.get("situation") or "").strip(),
+            "outcome": str(persona.get("outcome") or "").strip(),
+        }
+        cells.extend(
             Cell(dataset=dataset, column=columns[key], row=row, value=value)
             for key, value in values.items()
-        ]
-    )
-    return dataset
+        )
+    Cell.objects.bulk_create(cells)
+    return rows
+
+
+def _create_persona_scenarios_legacy(
+    organization, workspace, agent_definition, personas, *, name_offset=0
+):
+    """Compatibility path for extending jobs created before grouped datasets."""
+    from model_hub.models.choices import StatusType
+
+    created = []
+    for idx, persona in enumerate(personas or []):
+        persona = dict(persona or {})
+        persona_name = str(persona.get("name") or f"persona-{name_offset + idx + 1}")
+        situation = str(persona.get("situation") or "").strip()
+        scenario_name = str(
+            persona.get("scenario_name") or situation or persona_name
+        ).strip()[:255]
+        dataset, _rows = _build_persona_scenario_dataset(
+            organization, scenario_name, [persona], workspace=workspace
+        )
+        created.append(
+            Scenarios.objects.create(
+                name=scenario_name,
+                source=situation or persona_name,
+                scenario_type=Scenarios.ScenarioTypes.DATASET,
+                source_type=Scenarios.SourceTypes.AGENT_DEFINITION,
+                agent_definition=agent_definition,
+                organization=organization,
+                workspace=workspace,
+                dataset=dataset,
+                status=StatusType.COMPLETED.value,
+                metadata={"origin": "alk_sdk_ingestion", "persona": persona},
+            )
+        )
+    return created
 
 
 def create_alk_sim_test_execution(
     run_test: RunTest,
     *,
     scenario_ids: list[str] | None = None,
+    scenario_selectors: list[dict[str, str]] | None = None,
     simulator_agent: SimulatorAgent | None = None,
+    harness_job_id: str | None = None,
 ) -> TestExecution:
     """Create a TestExecution shell for an ALK-owned run.
 
@@ -410,6 +692,34 @@ def create_alk_sim_test_execution(
             raise ALKSimulateIngestionError(
                 f"Scenarios not attached to this run test: {sorted(missing)}"
             )
+    elif scenario_selectors:
+        attached = list(run_test.scenarios.filter(deleted=False))
+        chosen = []
+        used: set[str] = set()
+        for selector in scenario_selectors:
+            scenario_key = str(selector.get("scenario_key") or "").strip()
+            persona_name = str(selector.get("persona_name") or "").strip()
+            exact = []
+            fallback = []
+            for scenario in attached:
+                if str(scenario.id) in used:
+                    continue
+                persona = (scenario.metadata or {}).get("persona") or {}
+                if str(persona.get("scenario_key") or "") == scenario_key:
+                    exact.append(scenario)
+                identity = persona.get("persona") or {}
+                stored_name = str(identity.get("name") or persona.get("name") or "")
+                if persona_name and stored_name == persona_name:
+                    fallback.append(scenario)
+            matches = exact or fallback
+            if len(matches) != 1:
+                label = scenario_key or persona_name or "<empty>"
+                raise ALKSimulateIngestionError(
+                    f"Scenario selector {label!r} matched {len(matches)} saved scenarios"
+                )
+            selected = matches[0]
+            chosen.append(str(selected.id))
+            used.add(str(selected.id))
     else:
         chosen = [str(sid) for sid in active_scenario_ids]
 
@@ -418,7 +728,7 @@ def create_alk_sim_test_execution(
             "run_test has no scenarios; attach at least one before starting an ALK execution"
         )
 
-    return TestExecution.objects.create(
+    test_execution = TestExecution.objects.create(
         run_test=run_test,
         status=TestExecution.ExecutionStatus.PENDING,
         started_at=timezone.now(),
@@ -428,7 +738,24 @@ def create_alk_sim_test_execution(
         simulator_agent=simulator_agent or run_test.simulator_agent,
         agent_definition=run_test.agent_definition,
         agent_version=run_test.agent_version,
+        execution_metadata=(
+            {"harness_job_id": str(harness_job_id)} if harness_job_id else {}
+        ),
     )
+    # A repository rerun creates a new execution while the user may still be
+    # viewing the previous one. Publish its identity immediately rather than
+    # waiting for the first call result.
+    try:
+        notify_simulation_update(
+            organization_id=str(run_test.organization_id),
+            run_test_id=str(run_test.id),
+            test_execution_id=str(test_execution.id),
+        )
+    except Exception:
+        logger.exception(
+            "alk_sim_start_notify_failed", test_execution_id=str(test_execution.id)
+        )
+    return test_execution
 
 
 def create_alk_sim_call_execution_batch(
@@ -497,10 +824,25 @@ def create_alk_sim_call_execution_batch(
 
         if adopted:
             CallExecution.objects.bulk_update(adopted, ["call_metadata"])
+        update_fields = []
         if new_calls:
             CallExecution.objects.bulk_create(new_calls)
             locked_execution.total_calls = len(existing_calls) + len(new_calls)
-            locked_execution.save(update_fields=["total_calls"])
+            update_fields.append("total_calls")
+        # An SDK pages its calls, so an earlier page may already have settled
+        # the run, or failed it because every call on that page failed. That
+        # verdict did not see this page: back in transport, the roll-up and
+        # the settle count it too, and completed_at is stamped again once
+        # these calls finish scoring. A stopped run stays stopped.
+        if locked_execution.status in (
+            TestExecution.ExecutionStatus.EVALUATING,
+            TestExecution.ExecutionStatus.COMPLETED,
+            TestExecution.ExecutionStatus.FAILED,
+        ):
+            locked_execution.status = TestExecution.ExecutionStatus.RUNNING
+            update_fields.append("status")
+        if update_fields:
+            locked_execution.save(update_fields=update_fields)
 
         return BatchCreateResult(
             call_execution_ids=[str(call.id) for call, _ in selected],
@@ -568,6 +910,8 @@ def ingest_alk_sim_result(
     Idempotent for evaluation dispatch: a second call updates fields but does
     not dispatch a second evaluation (guarded by `call_metadata['eval_started']`).
     """
+    from simulate.services.harness_evals import _tool_evaluation_on
+
     if call_execution.simulation_call_type not in (
         CallExecution.SimulationCallType.VOICE,
         CallExecution.SimulationCallType.TEXT,
@@ -576,18 +920,57 @@ def ingest_alk_sim_result(
             "ALK result can only be submitted to VOICE or TEXT call executions"
         )
 
-    _apply_payload(call_execution, payload)
+    with transaction.atomic():
+        call_execution = CallExecution.objects.select_for_update().get(
+            id=call_execution.id
+        )
+        _claim_result_digest(call_execution, payload)
+        _apply_payload(call_execution, payload)
 
     eval_dispatched = False
     if call_execution.status == CallExecution.CallStatus.COMPLETED:
-        # Chat CSAT is computed synchronously by _aggregate_chat_metrics during
-        # _apply_payload; only voice needs the async CSAT task.
+        # Chat attempts CSAT synchronously with its native metric aggregation.
+        # If that scorer is unavailable, the same durable async path used by
+        # voice retries it instead of silently leaving a completed call with a
+        # null score.
+        _dispatch_csat_once(call_execution)
+        call_metadata = call_execution.call_metadata or {}
+        # Dispatched only once the row is COMPLETED, with the config ids chosen at provision.
+        selected_eval_config_ids = _selected_eval_config_ids(call_execution)
+        # The tool-call judge switch is independent of the eval catalogue, so
+        # a switched-on run test must still take the dispatch arm below even
+        # with no catalogue eval selected.
+        run_test_id = getattr(call_execution.test_execution, "run_test_id", None)
         if (
-            call_execution.simulation_call_type
-            == CallExecution.SimulationCallType.VOICE
+            "harness_evaluations" in call_metadata
+            and not selected_eval_config_ids
+            and not _tool_evaluation_on(run_test_id)
         ):
-            _dispatch_csat_once(call_execution)
-        eval_dispatched = _dispatch_evaluations_once(call_execution)
+            # An ALK harness result already contains the execution-backed
+            # checks. Starting the platform evaluator as well leaves the call
+            # permanently `eval_started` when no platform eval templates are
+            # configured, and therefore leaves the parent run pending. Mark
+            # this evaluation source complete instead of double-evaluating it.
+            call_metadata["eval_started"] = True
+            call_metadata["eval_completed"] = True
+            call_execution.call_metadata = call_metadata
+            call_execution.save(update_fields=["call_metadata"])
+        else:
+            # A harness receipt's selection must reach the dispatcher
+            # unchanged -- `[]` stays `[]`, never widened to `None` ("every
+            # config on the run test") -- so a switch-driven dispatch cannot
+            # re-grade a harness result column. A non-harness ALK run keeps
+            # its pre-existing `or None` fallback.
+            eval_dispatched = _dispatch_evaluations_once(
+                call_execution,
+                eval_config_ids=(
+                    selected_eval_config_ids
+                    if "harness_evaluations" in call_metadata
+                    else (selected_eval_config_ids or None)
+                ),
+            )
+
+    _roll_up_external_execution(call_execution.test_execution_id)
 
     try:
         notify_simulation_update(
@@ -622,6 +1005,85 @@ def ingest_alk_sim_result(
     )
 
 
+def _claim_result_digest(
+    call_execution: CallExecution, payload: dict[str, Any]
+) -> None:
+    """Atomically make retries idempotent and reject conflicting evidence."""
+    incoming = payload.get("result_digest")
+    manifest = payload.get("artifact_manifest_digest")
+    metadata = dict(call_execution.call_metadata or {})
+    existing = metadata.get("alk_result_digest")
+    if existing and not incoming:
+        raise ALKSimulateIngestionError(
+            "result_digest is required when retrying a sealed result"
+        )
+    if existing and existing != incoming:
+        raise ALKSimulateIngestionError(
+            "result digest conflicts with the previously ingested result"
+        )
+    existing_manifest = metadata.get("alk_artifact_manifest_digest")
+    if existing_manifest and manifest and existing_manifest != manifest:
+        raise ALKSimulateIngestionError(
+            "artifact manifest digest conflicts with this execution"
+        )
+    if incoming:
+        metadata["alk_result_digest"] = incoming
+    if manifest:
+        metadata["alk_artifact_manifest_digest"] = manifest
+    call_execution.call_metadata = metadata
+
+
+def _roll_up_external_execution(test_execution_id) -> None:
+    """Synchronously close an SDK-owned parent once all child calls finish.
+
+    The regular platform executor has Temporal/Celery monitoring its lifecycle.
+    An external SDK runner does not, so ingestion itself must make the terminal
+    transition deterministic. Async monitoring still runs for summaries and
+    notifications, but the list view no longer depends on a worker race.
+    """
+    calls = CallExecution.objects.filter(
+        test_execution_id=test_execution_id, deleted=False
+    )
+    if not calls.exists():
+        return
+    terminal = (
+        CallExecution.CallStatus.COMPLETED,
+        CallExecution.CallStatus.FAILED,
+        CallExecution.CallStatus.CANCELLED,
+    )
+    if calls.exclude(status__in=terminal).exists():
+        return
+
+    # Transport, not verdicts; scenario outcomes are counted on the job.
+    completed_calls = calls.filter(status=CallExecution.CallStatus.COMPLETED).count()
+    failed_calls = calls.filter(
+        status__in=(
+            CallExecution.CallStatus.FAILED,
+            CallExecution.CallStatus.CANCELLED,
+        )
+    ).count()
+    counts = {
+        "total_calls": calls.count(),
+        "completed_calls": completed_calls,
+        "failed_calls": failed_calls,
+    }
+    # Only a run still in transport is moved, so a replayed ingest neither
+    # re-stamps nor bounces a finished run, nor overrides a cancel.
+    in_transport = TestExecution.objects.filter(
+        id=test_execution_id, status__in=TRANSPORT_RUN_STATUSES
+    )
+    if completed_calls:
+        # Its calls may still be scoring: the settle decides when it is done.
+        in_transport.update(status=TestExecution.ExecutionStatus.EVALUATING, **counts)
+        settle_run_after_commit(test_execution_id)
+    else:
+        in_transport.update(
+            status=TestExecution.ExecutionStatus.FAILED,
+            completed_at=timezone.now(),
+            **counts,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -630,6 +1092,11 @@ def ingest_alk_sim_result(
 def _build_expected_call_executions(
     test_execution: TestExecution,
 ) -> list[CallExecution]:
+    execution_manifest = list(
+        (test_execution.execution_metadata or {}).get("harness_executions") or []
+    )
+    if execution_manifest:
+        return _build_manifest_call_executions(test_execution, execution_manifest)
     run_test = test_execution.run_test
     agent_definition = run_test.agent_definition
     selected_version = test_execution.agent_version or agent_definition.latest_version
@@ -691,11 +1158,88 @@ def _build_expected_call_executions(
     return expected_calls
 
 
-def _call_execution_key(call_execution: CallExecution) -> tuple[str, str | None]:
+def _build_manifest_call_executions(
+    test_execution: TestExecution,
+    execution_manifest: list[dict[str, Any]],
+) -> list[CallExecution]:
+    """Build exactly the immutable scenario/trial rows frozen by the environment Run."""
+
+    run_test = test_execution.run_test
+    agent_definition = run_test.agent_definition
+    selected_version = test_execution.agent_version or agent_definition.latest_version
+    call_type = (
+        getattr(agent_definition, "agent_type", None)
+        or CallExecution.SimulationCallType.VOICE
+    )
+    scenario_ids = {
+        str(entry["scenario_id"])
+        for entry in execution_manifest
+        if entry.get("scenario_id")
+    }
+    scenarios = {
+        str(scenario.id): scenario
+        for scenario in Scenarios.objects.select_related(
+            "simulator_agent", "dataset", "agent_definition"
+        ).filter(id__in=scenario_ids, deleted=False)
+    }
+    if len(scenarios) != len(scenario_ids):
+        raise ALKSimulateIngestionError(
+            "a selected harness scenario is no longer available"
+        )
+
+    test_executor = TestExecutor(initialize_voice_service=False)
+    expected: list[CallExecution] = []
+    for entry in execution_manifest:
+        scenario = scenarios[str(entry["scenario_id"])]
+        simulator_agent = _resolve_simulator_agent(scenario, run_test, selected_version)
+        base_prompt = simulator_agent.prompt
+        row_id = entry.get("dataset_row_id")
+        row_data_info = (
+            test_executor._get_row_data_and_generate_prompt(
+                row_id=row_id,
+                base_prompt=base_prompt,
+                agent_version=selected_version,
+            )
+            if row_id
+            else None
+        )
+        call = _build_call_execution(
+            test_execution=test_execution,
+            scenario=scenario,
+            agent_definition=agent_definition,
+            selected_version=selected_version,
+            simulator_agent=simulator_agent,
+            base_prompt=base_prompt,
+            row_id=row_id,
+            row_data_info=row_data_info,
+            call_type=call_type,
+        )
+        call.call_metadata.update(
+            {
+                "harness_execution_key": entry["execution_key"],
+                "harness_scenario_key": entry["scenario_key"],
+                "harness_trial_index": entry["trial_index"],
+            }
+        )
+        expected.append(call)
+    return expected
+
+
+def _call_execution_key(call_execution: CallExecution) -> tuple[str, ...]:
+    execution_key = (call_execution.call_metadata or {}).get("harness_execution_key")
+    if execution_key:
+        return ("harness", str(execution_key))
     return (
         str(call_execution.scenario_id),
-        str(call_execution.row_id) if call_execution.row_id else None,
+        str(call_execution.row_id) if call_execution.row_id else "",
     )
+
+
+def _simulator_llm_model() -> str:
+    """The model the simulated caller runs on, so the stored value matches the one that spoke."""
+    import os
+
+    return str(os.environ.get("SIMULATOR_LLM_MODEL") or "gpt-4").strip()
 
 
 def _resolve_simulator_agent(scenario, run_test, selected_version) -> SimulatorAgent:
@@ -708,7 +1252,7 @@ def _resolve_simulator_agent(scenario, run_test, selected_version) -> SimulatorA
         prompt=fallback_prompt,
         voice_provider="livekit",
         voice_name="alk-simulator",
-        model="gpt-4",
+        model=_simulator_llm_model(),
         llm_temperature=0.7,
         initial_message="Hi!",
         max_call_duration_in_minutes=30,
@@ -755,6 +1299,7 @@ def _build_call_execution(
             "dataset_id": row_data_info.get("dataset_id"),
             "base_prompt": base_prompt,
             "agent_description": agent_definition.description,
+            "agent_prompt": agent_definition.description,
             "dynamic_prompt": row_data_info.get("dynamic_prompt"),
             "language": "en",
             "initial_message": simulator_agent.initial_message,
@@ -831,6 +1376,7 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
         call_execution.call_metadata = merged
 
     segments = payload.get("transcript") or []
+    _apply_harness_evaluation_outputs(call_execution, transcript_segments=segments)
     is_text = (
         call_execution.simulation_call_type == CallExecution.SimulationCallType.TEXT
     )
@@ -953,6 +1499,8 @@ def _store_alk_chat_messages(
             speaker = (seg.get("speaker_role") or "").lower()
             if speaker in {"tool_calls", "tool_call_result"}:
                 item["kind"] = speaker
+            if isinstance(seg.get("start_time_ms"), int):
+                item["start_time_ms"] = seg["start_time_ms"]
             content_items.append(item)
         joined = "\n".join(t for t in texts if t)
         return ChatMessageModel(
@@ -1102,10 +1650,12 @@ def _apply_conversation_metrics(call_execution: CallExecution) -> None:
     ]
     full_user_count = full_metric_roles.count("user")
     full_bot_count = full_metric_roles.count("bot")
+    # message_count is every message; turn_count and agent_turn_count are the agent's only.
     detailed_data.update(
         {
             "message_count": len(full_metric_roles),
             "turn_count": full_bot_count,
+            "agent_turn_count": full_bot_count,
             "user_message_count": full_user_count,
             "bot_message_count": full_bot_count,
         }
@@ -1202,13 +1752,203 @@ def _coerce_token(value) -> int | None:
         return None
 
 
+def _render_harness_transcript(segments: list[dict[str, Any]]) -> str:
+    """Render the submitted conversation as stable localizer input."""
+    lines = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        content = str(segment.get("content") or "").strip()
+        if not content:
+            continue
+        speaker = str(segment.get("speaker_role") or "unknown").strip().lower()
+        lines.append(f"{speaker}: {content}")
+    return "\n".join(lines)
+
+
+def _apply_harness_evaluation_outputs(
+    call_execution: CallExecution,
+    *,
+    transcript_segments: list[dict[str, Any]] | None = None,
+) -> None:
+    """Normalize execution-backed harness checks into the platform eval shape.
+
+    The harness has already run these checks; executing the platform evaluator a
+    second time would both waste money and risk producing a different answer.
+    Platform-backed judgements are attached to their existing EvalTemplate via a
+    run-scoped SimulateEvalConfig. Deterministic code checks have no template by
+    design, so they receive a stable external-result ID and remain explicitly
+    marked ``source=harness``.
+    """
+    metadata = call_execution.call_metadata or {}
+    evaluations = metadata.get("harness_evaluations")
+    if not isinstance(evaluations, list):
+        return
+
+    outputs = dict(call_execution.eval_outputs or {})
+    run_test = call_execution.test_execution.run_test
+    for evaluation in evaluations:
+        if not isinstance(evaluation, dict):
+            continue
+        name = str(evaluation.get("name") or "").strip()[:255]
+        if not name:
+            continue
+        kind = str(evaluation.get("kind") or "checkpoint").strip()[:50]
+        template = _resolve_harness_eval_template(run_test, evaluation, name)
+        config = None
+        if template is not None:
+            config = _get_or_create_harness_eval_config(run_test, template, name)
+            output_id = str(config.id)
+        else:
+            output_id = str(
+                uuid.uuid5(
+                    _HARNESS_EVAL_NAMESPACE,
+                    f"{run_test.id}:{kind}:{name}",
+                )
+            )
+
+        if evaluation.get("score") is not None:
+            try:
+                output = float(evaluation["score"])
+            except (TypeError, ValueError):
+                output = evaluation["score"]
+            output_type = "score"
+        else:
+            output = "Passed" if bool(evaluation.get("passed")) else "Failed"
+            output_type = "Pass/Fail"
+
+        outputs[output_id] = {
+            "name": name,
+            "output": output,
+            "output_type": output_type,
+            "reason": str(evaluation.get("reason") or "")[:10000],
+            "status": "completed",
+            "source": "harness",
+            "kind": kind,
+            "platform_template": str(evaluation.get("platform_template") or "")[:2000],
+        }
+        # Harness judgements are already computed and therefore bypass the
+        # platform evaluator. Explicitly create the same durable localizer task
+        # that the native evaluator would create; merely setting
+        # SimulateEvalConfig.error_localizer does not dispatch one. The task's
+        # deterministic (call, config) source ID keeps result retries idempotent.
+        if config is not None and config.error_localizer:
+            transcript = _render_harness_transcript(transcript_segments or [])
+            if transcript:
+                from model_hub.tasks.user_evaluation import (
+                    trigger_error_localization_for_simulate,
+                )
+
+                trigger_error_localization_for_simulate(
+                    eval_template=template,
+                    call_execution=call_execution,
+                    eval_config=config,
+                    value=output,
+                    mapping={"transcript": transcript},
+                    eval_explanation=str(evaluation.get("reason") or "")[:10000],
+                    log_id=None,
+                )
+    call_execution.eval_outputs = outputs
+
+
+def _resolve_harness_eval_template(
+    run_test: RunTest,
+    evaluation: dict[str, Any],
+    fallback_name: str,
+) -> EvalTemplate | None:
+    """Find the reusable template that produced a harness judgement.
+
+    New runners send ``platform_template`` explicitly. Built-in suite evals
+    historically sent only their template name as ``name``, so eval-kind checks
+    retain that exact-name fallback. We deliberately do not guess for code or
+    locally judged checks.
+    """
+    template_name = str(evaluation.get("platform_template") or "").strip()
+    if not template_name and evaluation.get("kind") == "eval":
+        template_name = fallback_name
+    if not template_name:
+        return None
+
+    visible_scope = Q(organization=run_test.organization) | Q(organization__isnull=True)
+    workspace_scope = Q(workspace=run_test.workspace) | Q(workspace__isnull=True)
+    return (
+        EvalTemplate.no_workspace_objects.filter(
+            visible_scope,
+            workspace_scope,
+            name=template_name,
+            deleted=False,
+        )
+        .order_by("-organization_id", "-created_at")
+        .first()
+    )
+
+
+def _get_or_create_harness_eval_config(
+    run_test: RunTest,
+    template: EvalTemplate,
+    name: str,
+) -> SimulateEvalConfig:
+    """Idempotently bind one external result column to its originating run.
+
+    The id is fixed by the run, the template and the name, so a column a
+    person removed is found again here, soft deleted, rather than created a
+    second time under the same primary key. The harness graded it again, so
+    it is listed again.
+    """
+    config_id = uuid.uuid5(
+        _HARNESS_EVAL_NAMESPACE,
+        f"{run_test.id}:{template.id}:{name}",
+    )
+    config, _ = SimulateEvalConfig.all_objects.get_or_create(
+        id=config_id,
+        defaults={
+            "eval_template": template,
+            "name": name,
+            "config": template.config or {},
+            "mapping": {},
+            "run_test": run_test,
+            "filters": {},
+            "model": template.model,
+            "error_localizer": True,
+        },
+    )
+    if config.deleted:
+        config.deleted = False
+        config.deleted_at = None
+        config.save(update_fields=["deleted", "deleted_at", "updated_at"])
+    return config
+
+
 def _dispatch_csat_once(call_execution: CallExecution) -> None:
     call_metadata = call_execution.call_metadata or {}
-    if call_metadata.get("csat_dispatched"):
+    existing_csat = (call_execution.conversation_metrics_data or {}).get("csat_score")
+    if existing_csat is not None:
+        if call_metadata.get("csat_status") != "completed":
+            call_metadata["csat_status"] = "completed"
+            call_metadata.pop("csat_error", None)
+            call_execution.call_metadata = call_metadata
+            call_execution.save(update_fields=["call_metadata"])
         return
-    call_metadata["csat_dispatched"] = True
+    now = timezone.now()
+
+    def _mark_pending(metadata: dict) -> bool:
+        if metadata.get("csat_dispatched") and metadata.get("csat_status") not in {
+            "failed"
+        }:
+            return False
+        metadata["csat_dispatched"] = True
+        metadata["csat_status"] = "pending"
+        metadata[CSAT_STAMP_KEY] = now.isoformat()
+        metadata.pop("csat_error", None)
+        return True
+
+    # One locked write, so a re-ingest holding an older copy cannot dispatch
+    # twice; the caller's copy is rebound so its own later save keeps it.
+    written = locked_call_metadata_update(call_execution.id, _mark_pending)
+    if written is None:
+        return
+    call_metadata = written
     call_execution.call_metadata = call_metadata
-    call_execution.save(update_fields=["call_metadata"])
     try:
         from simulate.tasks.alk_sim import calculate_alk_voice_csat_score
 
@@ -1219,28 +1959,62 @@ def _dispatch_csat_once(call_execution: CallExecution) -> None:
             call_execution_id=str(call_execution.id),
         )
         call_metadata["csat_dispatched"] = False
+        call_metadata["csat_status"] = "failed"
+        call_metadata["csat_error"] = str(dispatch_error)[:2000]
         call_metadata["csat_dispatch_failed"] = str(dispatch_error)
         call_execution.call_metadata = call_metadata
         call_execution.save(update_fields=["call_metadata"])
 
 
-def _dispatch_evaluations_once(call_execution: CallExecution) -> bool:
-    call_metadata = call_execution.call_metadata or {}
-    if call_metadata.get("eval_started"):
+def _selected_eval_config_ids(call_execution: CallExecution) -> list[str]:
+    """Platform evals this run selected, empty when it selected none."""
+    from simulate.services.harness_evals import runnable_eval_config_ids
+
+    run_test_id = getattr(call_execution.test_execution, "run_test_id", None)
+    if not run_test_id:
+        return []
+    return runnable_eval_config_ids(run_test_id)
+
+
+def _dispatch_evaluations_once(
+    call_execution: CallExecution, eval_config_ids: list[str] | None = None
+) -> bool:
+    now = timezone.now()
+
+    def _claim(metadata: dict) -> bool:
+        if metadata.get("eval_started"):
+            return False
+        metadata["eval_started"] = True
+        if eval_config_ids is not None:
+            stamp_eval_queued(metadata, eval_config_ids, now=now)
+        return True
+
+    # The latch and the dispatch stamps are one locked write, so a redelivered
+    # result holding an older copy of the row cannot dispatch a second job,
+    # and the scoring clock starts from this dispatch.
+    call_metadata = locked_call_metadata_update(call_execution.id, _claim)
+    if call_metadata is None:
         return False
-    call_metadata["eval_started"] = True
     call_execution.call_metadata = call_metadata
-    call_execution.save(update_fields=["call_metadata"])
     try:
-        _run_simulate_evaluations_task.apply_async(args=(str(call_execution.id),))
+        _run_simulate_evaluations_task.apply_async(
+            args=(str(call_execution.id), eval_config_ids)
+        )
         return True
     except Exception as dispatch_error:
         logger.exception(
             "livekit_eval_dispatch_failed",
             call_execution_id=str(call_execution.id),
         )
-        call_metadata["eval_started"] = False
-        call_metadata["eval_dispatch_failed"] = str(dispatch_error)
-        call_execution.call_metadata = call_metadata
-        call_execution.save(update_fields=["call_metadata"])
+        error_text = str(dispatch_error)
+
+        def _release(metadata: dict) -> None:
+            metadata["eval_started"] = False
+            metadata["eval_dispatch_failed"] = error_text
+
+        # Locked too: a CSAT state or stamp written while the broker timed out
+        # must survive this write.
+        call_execution.call_metadata = locked_call_metadata_update(
+            call_execution.id, _release
+        )
         return False

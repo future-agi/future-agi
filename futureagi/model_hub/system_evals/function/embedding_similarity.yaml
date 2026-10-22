@@ -27,7 +27,8 @@ config:
         import re
         import urllib.request
 
-        BASE = "http://serving:8080/model/v1"
+        # Set by the engine's preprocessing from MODEL_SERVING_URL.
+        BASE = (kwargs.get("_model_serving_url") or "http://serving:8080").rstrip("/") + "/model/v1"
 
         generated = output
         reference = expected

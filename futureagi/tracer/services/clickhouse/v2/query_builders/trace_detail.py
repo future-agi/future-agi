@@ -26,6 +26,7 @@ from tracer.services.clickhouse.query_builders.trace_detail import (
 )
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
+from tracer.services.eval_tiles import build_eval_rollup
 from tracer.utils.helper import _normalize_eval_output_type
 
 if TYPE_CHECKING:
@@ -62,10 +63,18 @@ class TraceDetailHandlerV2(V2RewriteMixin, TraceDetailHandler):
     # every v2 builder to carry it, so the exclude set is empty.
     _v2_rewrite_exclude = frozenset()
 
+    def __init__(self, *, project_id: str | None = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.project_id = project_id
+
     def fetch(self) -> TraceDetail:
         """Return the assembled trace-detail dict from ClickHouse."""
         return retrieve_trace_detail_ch(
-            self.view, self.request, self.pk, self.analytics
+            self.view,
+            self.request,
+            self.pk,
+            self.analytics,
+            project_id=self.project_id,
         )
 
 
@@ -74,6 +83,8 @@ def retrieve_trace_detail_ch(
     request: Request,
     trace_id: str,
     analytics: AnalyticsQueryService,
+    *,
+    project_id: str | None = None,
 ) -> TraceDetail:
     """V2 trace detail from ClickHouse.
 
@@ -82,6 +93,9 @@ def retrieve_trace_detail_ch(
     and tenant-gated against PG ``Project`` (Project stays in PG). Trace
     metadata is taken from the PG ``Trace`` row when present and otherwise
     synthesized from the root span. Returns the response dict.
+
+    ``project_id`` pins the read to the project the trace was opened from; a
+    project outside the caller's scope resolves like a missing trace.
     """
     from django.db.utils import ProgrammingError
 
@@ -101,11 +115,13 @@ def retrieve_trace_detail_ch(
     # the selected project afterward; at scale that was both slow and an
     # avoidable cross-tenant probe. Project remains a small PG dimension.
     project_manager = getattr(Project, "no_workspace_objects", Project.objects)
+    project_scope = project_manager.filter(
+        _project_workspace_scope_q(request, project_prefix="")
+    )
+    if project_id:
+        project_scope = project_scope.filter(id=project_id)
     authorized_project_ids = [
-        str(value)
-        for value in project_manager.filter(
-            _project_workspace_scope_q(request, project_prefix="")
-        ).values_list("id", flat=True)[:4097]
+        str(value) for value in project_scope.values_list("id", flat=True)[:4097]
     ]
 
     # The eval logger has no project column. Resolve the selected project's
@@ -253,6 +269,7 @@ def retrieve_trace_detail_ch(
 
     # ----- Phase 8: Batch fetch eval scores from CH -----
     eval_map = {}
+    rollup_rows = []
     try:
         from model_hub.utils.eval_list import derive_output_type
 
@@ -278,6 +295,21 @@ def retrieve_trace_detail_ch(
                     if config.eval_template
                     else None
                 ),
+                "choices": (
+                    list(getattr(config.eval_template, "choices", None) or [])
+                    if config.eval_template
+                    else []
+                ),
+                "choices_map": (
+                    dict(
+                        getattr(config.eval_template, "config", {}).get(
+                            "choices_map", {}
+                        )
+                        or {}
+                    )
+                    if config.eval_template
+                    else {}
+                ),
             }
             for config_id, config in authorized_eval_configs.items()
             if config_id in authorized_eval_config_ids
@@ -291,6 +323,13 @@ def retrieve_trace_detail_ch(
             if sid not in eval_map:
                 eval_map[sid] = []
             info = config_lookup[cid]
+            rollup_rows.append(
+                {
+                    **row,
+                    "span_id": sid,
+                    "span_name": span_map[sid]["observation_span"].get("name") or sid,
+                }
+            )
             # Score is type-dependent; the CH mirror coerces unused typed
             # columns to 0, so route by type (choices → str_list, Pass/Fail →
             # bool, percentage → float) instead of trusting a populated column.
@@ -371,6 +410,7 @@ def retrieve_trace_detail_ch(
                     "error": is_errored,
                     "skipped": status == "skipped",
                     "skipped_reason": skipped_reason,
+                    "target_type": row.get("target_type"),
                 }
             )
     except Exception:
@@ -428,6 +468,27 @@ def retrieve_trace_detail_ch(
             span_map[parent_id]["children"].append(entry)
         else:
             orphan_spans.append(entry)
+
+    root_span_id = (
+        str(root_spans[0]["observation_span"].get("id") or "") if root_spans else None
+    )
+    if detail_read.eval_unavailable:
+        for sid, entry in span_map.items():
+            entry["eval_rollup"] = {
+                "scope": "trace" if sid == root_span_id else "span",
+                "evals": [],
+                "error": True,
+            }
+    else:
+        rollups = build_eval_rollup(rollup_rows, config_lookup, root_span_id)
+        for sid, entry in span_map.items():
+            entry["eval_rollup"] = rollups.get(
+                sid,
+                {
+                    "scope": "trace" if sid == root_span_id else "span",
+                    "evals": [],
+                },
+            )
 
     # Clean up internal fields
     def _clean_entry(entry):

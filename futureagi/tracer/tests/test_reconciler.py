@@ -22,6 +22,10 @@ from tracer.services.eval_tasks.entries import soft_delete_live
 from tracer.services.eval_tasks.reconciler import (
     _CONTINUOUS_CURSOR_OVERLAP,
     _advance_continuous_cursor,
+    _apply_resolved,
+    _continuous_requires_full_reclassification,
+    _evals_revision,
+    _requeue_and_drop,
     reconcile,
 )
 from tracer.tests._ch_seed import seed_ch_spans
@@ -279,23 +283,273 @@ class TestEvalChanges:
         assert result.requeued == 0
         assert _live(task, status=EvalEntryStatus.COMPLETED).count() == 4
 
-    def test_errored_entries_requeued(self, project, custom_eval_config):
+    def test_errored_entries_not_requeued_when_config_unchanged(
+        self, project, custom_eval_config
+    ):
+        # A terminal error under the *current* config is a converged result:
+        # re-running it every pass cannot change the outcome (and on a
+        # continuous task it would loop forever, re-downloading media).
         _make_spans(project, 4)
         task = _task(project, evals=[custom_eval_config])
         reconcile(task)
         _mark(task, EvalEntryStatus.ERRORED)
         result = reconcile(task)
-        assert result.requeued == 4
-        assert _live(task, status=EvalEntryStatus.PENDING).count() == 4
+        assert result.requeued == 0
+        assert _live(task, status=EvalEntryStatus.ERRORED).count() == 4
 
-    def test_skipped_entries_requeued(self, project, custom_eval_config):
+    def test_skipped_entries_not_requeued_when_config_unchanged(
+        self, project, custom_eval_config
+    ):
         _make_spans(project, 4)
         task = _task(project, evals=[custom_eval_config])
         reconcile(task)
         _mark(task, EvalEntryStatus.SKIPPED)
         result = reconcile(task)
+        assert result.requeued == 0
+        assert _live(task, status=EvalEntryStatus.SKIPPED).count() == 4
+
+    def test_errored_and_skipped_entries_requeued_when_config_hash_stale(
+        self, project, custom_eval_config
+    ):
+        # An eval edit (hash changes) is the signal to give failures another go.
+        _make_spans(project, 4)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        _mark(task, EvalEntryStatus.ERRORED)
+        _live(task).update(config_hash="stale-hash")
+        result = reconcile(task)
         assert result.requeued == 4
         assert _live(task, status=EvalEntryStatus.PENDING).count() == 4
+
+    def test_requeue_clears_the_previous_runs_error_message(
+        self, project, custom_eval_config
+    ):
+        """A requeue already cleared ``error`` and ``skipped_reason`` but kept
+        ``error_message``, so a pending entry carried a message from a run that
+        no longer exists. That residue is what made requeued production rows
+        readable as fresh inserts, and it is what a user sees on a row that has
+        not run yet."""
+        _make_spans(project, 4)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        _live(task).update(
+            status=EvalEntryStatus.ERRORED,
+            error=True,
+            error_message="Error during evaluation: boom",
+            config_hash="stale-hash",
+        )
+
+        assert reconcile(task).requeued == 4
+
+        pending = _live(task, status=EvalEntryStatus.PENDING)
+        assert pending.count() == 4
+        assert list(pending.values_list("error_message", flat=True)) == [None] * 4
+
+    def test_skipped_entry_requeued_when_its_row_changed_in_delta_pass(
+        self, project, custom_eval_config
+    ):
+        # A continuous delta names the rows in the arrival window (candidates).
+        # Candidacy alone is not proof of change — the entry must also have
+        # terminalized *before* the window floor, which places the row's change
+        # version after the state the entry was evaluated against. Here the
+        # skipped entry is stamped before the floor, so it gets exactly one more
+        # attempt; the other two, stamped after the floor, stay put.
+        t = timezone.now()
+        spans = _make_spans(project, 3)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        _mark(task, EvalEntryStatus.SKIPPED)
+        floor = t - timedelta(minutes=5)
+        EvalTask.objects.filter(id=task.id).update(
+            run_type=RunType.CONTINUOUS, continuous_cursor=floor
+        )
+        task.refresh_from_db()
+        changed = spans[0].id
+        # Stale stamp = terminalized before the floor; fresh = after it.
+        _live(task, observation_span_id=changed).update(
+            updated_at=floor - timedelta(minutes=1)
+        )
+        _live(task).exclude(observation_span_id=changed).update(
+            updated_at=floor + timedelta(minutes=1)
+        )
+        requeued, dropped = _requeue_and_drop(
+            task,
+            resolved=ResolvedRowSet(
+                # All three are candidates: the overlap re-reads them all.
+                candidate_ids=tuple(s.id for s in spans),
+                matched_ids=tuple(s.id for s in spans),
+                full_state=False,
+            ),
+        )
+        assert (requeued, dropped) == (1, 0)
+        assert list(
+            _live(task, status=EvalEntryStatus.PENDING).values_list(
+                "observation_span_id", flat=True
+            )
+        ) == [changed]
+
+    def test_unchanged_candidate_stays_terminal_across_consecutive_polls(
+        self, project, custom_eval_config
+    ):
+        # Regression for the overlap re-read. The cursor is parked an overlap
+        # behind the ceiling, so a row that arrived inside that window is a
+        # candidate on *every* poll while it ages out — candidacy alone would
+        # re-run an errored entry (and re-download its media) on each one.
+        # Consecutive delta passes over the same unchanged candidates must
+        # requeue nothing, even as the floor advances underneath them.
+        t = timezone.now()
+        spans = _make_spans(project, 3)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        _mark(task, EvalEntryStatus.ERRORED)
+        EvalTask.objects.filter(id=task.id).update(
+            run_type=RunType.CONTINUOUS,
+            # A task older than the overlap, so the start floor does not clamp
+            # the parked cursor (see _advance_continuous_cursor).
+            start_time=t - timedelta(minutes=60),
+            continuous_cursor=t - _CONTINUOUS_CURSOR_OVERLAP,
+        )
+        task.refresh_from_db()
+        # The entries terminalized just now — after the parked floor, as they
+        # always are while their row is still inside the overlap.
+        _live(task).update(updated_at=t)
+        delta = ResolvedRowSet(
+            candidate_ids=tuple(s.id for s in spans),
+            matched_ids=tuple(s.id for s in spans),
+            full_state=False,
+        )
+
+        # Three polls a minute apart: the floor walks forward each time and
+        # stays behind the terminal stamps, so nothing is re-run.
+        for minute in range(1, 4):
+            assert _requeue_and_drop(task, resolved=delta) == (0, 0)
+            _advance_continuous_cursor(task, t + timedelta(minutes=minute))
+            task.refresh_from_db()
+
+        assert _live(task, status=EvalEntryStatus.ERRORED).count() == 3
+        assert _live(task, status=EvalEntryStatus.PENDING).count() == 0
+
+    def test_errored_entry_retried_once_when_floor_passes_its_terminal_stamp(
+        self, project, custom_eval_config
+    ):
+        # The other half of the watermark: converged does not mean frozen. Once
+        # the floor has moved past the entry's terminal stamp, a row that is
+        # still a candidate must have changed after the entry ran, so it earns
+        # exactly one retry — and its new stamp closes the window again.
+        t = timezone.now()
+        spans = _make_spans(project, 2)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        _mark(task, EvalEntryStatus.ERRORED)
+        EvalTask.objects.filter(id=task.id).update(
+            run_type=RunType.CONTINUOUS,
+            start_time=t - timedelta(minutes=60),
+            continuous_cursor=t - timedelta(minutes=10),
+        )
+        task.refresh_from_db()
+        stamped_at = t - timedelta(minutes=8)
+        _live(task).update(updated_at=stamped_at)
+        changed = spans[0].id
+        delta = ResolvedRowSet(
+            # Only one row is still in the arrival/change window.
+            candidate_ids=(changed,),
+            matched_ids=tuple(s.id for s in spans),
+            full_state=False,
+        )
+
+        # Floor now sits after the terminal stamp -> the candidate changed.
+        EvalTask.objects.filter(id=task.id).update(
+            continuous_cursor=t - timedelta(minutes=5)
+        )
+        task.refresh_from_db()
+        assert _requeue_and_drop(task, resolved=delta) == (1, 0)
+        assert list(
+            _live(task, status=EvalEntryStatus.PENDING).values_list(
+                "observation_span_id", flat=True
+            )
+        ) == [changed]
+
+        # The retry runs and re-stamps the entry (what mark_terminal does);
+        # the same candidate must not fire again on the next poll.
+        _live(task, observation_span_id=changed).update(
+            status=EvalEntryStatus.ERRORED, updated_at=t
+        )
+        assert _requeue_and_drop(task, resolved=delta) == (0, 0)
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestContinuousReclassification:
+    """A cursor-less full pass is expensive (whole history) and re-queues every
+    in-scope stale entry, so it must run once per eval-config revision, not on
+    every poll. The trigger is the persisted revision marker, never the entry
+    table: legacy NULL hashes and out-of-scope completed rows carrying an old
+    hash can never be re-stamped and used to latch the trigger permanently."""
+
+    def _continuous_with_entries(self, project, custom_eval_config):
+        _make_spans(project, 3)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        _mark(task, EvalEntryStatus.COMPLETED)
+        EvalTask.objects.filter(id=task.id).update(
+            run_type=RunType.CONTINUOUS, continuous_cursor=timezone.now()
+        )
+        task.refresh_from_db()
+        return task
+
+    def test_unstamped_task_adopts_current_revision_as_baseline(
+        self, project, custom_eval_config
+    ):
+        # Rollout / first-cursor case: nothing is known to have changed, so no
+        # surprise full pass (which would re-admit pre-cursor history); the
+        # current eval set becomes the baseline the next edit is compared to.
+        task = self._continuous_with_entries(project, custom_eval_config)
+        assert task.reclassified_evals_revision is None
+        assert _continuous_requires_full_reclassification(task) is False
+        task.refresh_from_db()
+        assert task.reclassified_evals_revision == _evals_revision(task)
+
+    def test_stamped_revision_suppresses_full_pass_despite_stale_rows(
+        self, project, custom_eval_config
+    ):
+        task = self._continuous_with_entries(project, custom_eval_config)
+        # Legacy NULL hashes and an out-of-scope stale hash both present.
+        first = _live(task).order_by("id").first()
+        _live(task, id=first.id).update(config_hash=None)
+        _live(task).exclude(id=first.id).update(config_hash="stale-hash")
+        EvalTask.objects.filter(id=task.id).update(
+            reclassified_evals_revision=_evals_revision(task)
+        )
+        task.refresh_from_db()
+        assert _continuous_requires_full_reclassification(task) is False
+
+    def test_eval_config_edit_changes_revision_and_forces_full_pass(
+        self, project, custom_eval_config
+    ):
+        task = self._continuous_with_entries(project, custom_eval_config)
+        EvalTask.objects.filter(id=task.id).update(
+            reclassified_evals_revision=_evals_revision(task)
+        )
+        task.refresh_from_db()
+        CustomEvalConfig.objects.filter(id=custom_eval_config.id).update(
+            config={"threshold": 0.9}
+        )
+        task = EvalTask.objects.get(id=task.id)
+        assert _continuous_requires_full_reclassification(task) is True
+
+    def test_full_state_pass_stamps_revision_but_delta_does_not(
+        self, project, custom_eval_config
+    ):
+        task = self._continuous_with_entries(project, custom_eval_config)
+        now = timezone.now()
+        _apply_resolved(
+            task, resolved=ResolvedRowSet((), (), False), now=now
+        )
+        task.refresh_from_db()
+        assert task.reclassified_evals_revision is None
+        _apply_resolved(task, resolved=ResolvedRowSet((), (), True), now=now)
+        task.refresh_from_db()
+        assert task.reclassified_evals_revision == _evals_revision(task)
 
 
 @pytest.mark.integration

@@ -1005,6 +1005,38 @@ def test_prompt_versions_endpoint_returns_prompt_version_rows(
 
 
 @pytest.mark.django_db
+def test_prompt_versions_keeps_accepting_large_limits(
+    auth_client, organization, workspace, user
+):
+    """Documenting the versions list must not cap `limit`; limit=200 worked
+    before the query serializer existed."""
+    template, _version = _create_prompt_template(
+        organization, workspace, user, "Prompt versions large limit"
+    )
+
+    response = auth_client.get(
+        f"/model-hub/prompt-templates/{template.id}/versions/?limit=200"
+    )
+
+    assert response.status_code == 200, response.content
+
+
+@pytest.mark.django_db
+def test_prompt_versions_still_rejects_non_positive_limit(
+    auth_client, organization, workspace, user
+):
+    template, _version = _create_prompt_template(
+        organization, workspace, user, "Prompt versions zero limit"
+    )
+
+    response = auth_client.get(
+        f"/model-hub/prompt-templates/{template.id}/versions/?limit=0"
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
 def test_prompt_sdk_code_accepts_dict_prompt_config_snapshot(
     auth_client, organization, workspace, user
 ):

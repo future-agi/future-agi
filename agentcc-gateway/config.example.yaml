@@ -4,12 +4,19 @@
 server:
   port: 8080
   host: "0.0.0.0"
-  read_timeout: 5s
+  read_header_timeout: 5s
+  read_timeout: 60s
   write_timeout: 300s
   idle_timeout: 120s
   shutdown_timeout: 30s
   max_request_body_size: 10485760 # 10MB
   default_request_timeout: 60s
+  # The one ceiling on a request, over any x-agentcc-timeout header or
+  # per-model timeout. Unset, it becomes write_timeout, where the response
+  # write fails anyway; at that value the write deadline cuts the connection
+  # a moment before the timeout answers. Read at startup, like the rest of
+  # this block.
+  max_request_timeout: 300s
 
 providers:
   openai:
@@ -174,6 +181,20 @@ providers:
   #     api-version: "2024-10-21"
   #   models:
   #     - gpt-4o
+
+  # Speech vendors, relayed over their own streaming WebSocket APIs at /deepgram/... and
+  # /cartesia/... (point the vendor SDK's base URL there and use a gateway key as its key).
+  # Only internal keys may use them, since they run on the platform's vendor credentials.
+  # deepgram:
+  #   base_url: "https://api.deepgram.com"
+  #   api_key: "${DEEPGRAM_API_KEY}"
+  #   api_format: "deepgram"
+  #   auto_discover: false
+  # cartesia:
+  #   base_url: "https://api.cartesia.ai"
+  #   api_key: "${CARTESIA_API_KEY}"
+  #   api_format: "cartesia"
+  #   auto_discover: false
 
   # groq:
   #   api_key: "${GROQ_API_KEY}"
@@ -622,9 +643,9 @@ logging:
 #       provider: "openai"
 #       max_input_tokens: 128000
 #       max_output_tokens: 16384
-#       pricing:
-#         input_per_mtok: 2.50
-#         output_per_mtok: 10.00
+#       pricing:                             # USD per TOKEN (not per million)
+#         input_per_token: 0.0000025         # = $2.50 / 1M tokens
+#         output_per_token: 0.00001          # = $10.00 / 1M tokens
 #       deprecation_date: "2026-12-31"
 #       regions: ["us-east-1", "us-west-2"]
 
@@ -697,6 +718,11 @@ logging:
 #     max_size: 1048576                # 1MB per entry
 
 # Pull config (keys, budgets, RBAC) from a Django control plane.
+# Env: AGENTCC_CONTROL_PLANE_URL, AGENTCC_CONTROL_PLANE_TOKEN (defaults to the
+# admin token), AGENTCC_WEBHOOK_SECRET, AGENTCC_SYNC_ON_STARTUP,
+# AGENTCC_SYNC_INTERVAL. Without sync_on_startup, keys created in the UI stop
+# working when the gateway restarts; with more than one replica, set an
+# interval so a key created on one reaches the others.
 # control_plane:
 #   url: "http://localhost:8000"
 #   admin_token: "${CONTROL_PLANE_ADMIN_TOKEN}"
@@ -704,11 +730,19 @@ logging:
 #   sync_on_startup: true
 #   sync_interval: 5m                  # 0 = disabled
 
+# Providers orgs add through the control plane (Gateway > Providers).
+# org_providers:
+#   # Let an org provider's base_url point at private/LAN addresses (RFC 1918,
+#   # 100.64.0.0/10, fc00::/7, Docker service names): a local Ollama or vLLM.
+#   # Off by default; enable only when every org on this gateway is trusted.
+#   # Loopback, link-local, cloud metadata, multicast and unspecified addresses
+#   # are refused regardless. Env: AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS=true
+#   # (set it on the backend too, for model discovery and saving providers).
+#   allow_private_urls: false
+
 # OpenAI-compatible Assistants API proxy.
 # assistants:
 #   enabled: true
-#   run_timeout: 5m
-#   stream_read_timeout: 60s
 
 # Model Context Protocol — expose tools from registered MCP servers to models.
 # mcp:

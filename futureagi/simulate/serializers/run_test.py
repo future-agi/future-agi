@@ -10,6 +10,7 @@ The view layer should use:
 """
 
 import structlog
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from simulate.models import (
@@ -23,8 +24,29 @@ from simulate.serializers.response.agent_definition import (
 )
 from simulate.serializers.response.scenarios import ScenarioResponseSerializer
 from simulate.serializers.simulator_agent import SimulatorAgentSerializer
+from simulate.services.eval_config_edit import has_own_mapping
+from simulate.services.harness_evals import (
+    harness_run_test_ids,
+    is_harness_run_test,
+    regrade_mapping,
+)
 
 logger = structlog.get_logger(__name__)
+
+# Serializer context key holding {run test id: is a harness run}.
+HARNESS_RUN_TESTS_CONTEXT_KEY = "_harness_run_tests"
+
+
+def harness_run_tests_context(run_tests) -> dict:
+    """Serializer context that answers every run test's harness lookup in one query.
+
+    A list page passes this to ``RunTestSerializer(..., many=True)`` so its
+    evals' ``regradable`` costs one query for the page rather than one per
+    run test. ``run_tests`` must already be evaluated (a list or a page).
+    """
+    ids = [run_test.id for run_test in run_tests]
+    owned = harness_run_test_ids(ids)
+    return {HARNESS_RUN_TESTS_CONTEXT_KEY: {rt_id: rt_id in owned for rt_id in ids}}
 
 
 class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
@@ -36,6 +58,10 @@ class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
     template_id = serializers.PrimaryKeyRelatedField(
         source="eval_template", read_only=True
     )
+    # The run page tags each eval with the type the picker shows for it.
+    eval_type = serializers.CharField(source="eval_template.eval_type", read_only=True)
+    regradable = serializers.SerializerMethodField()
+    editable = serializers.SerializerMethodField()
 
     class Meta:
         model = SimulateEvalConfig
@@ -50,6 +76,9 @@ class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
             "status",
             "eval_group",
             "template_id",
+            "eval_type",
+            "regradable",
+            "editable",
         ]
 
     def get_eval_group(self, obj):
@@ -60,6 +89,28 @@ class SimulateEvalConfigSimpleSerializer(serializers.ModelSerializer):
         if obj.eval_group:
             return obj.eval_group.name
         return None
+
+    # The rule run-new-evals refuses by, so the page never offers to grade
+    # what the endpoint would turn away. Only a harness run can hold a result
+    # column the platform can't grade, and that lookup is made once per run
+    # test for the whole response, however many configs it lists. A list page
+    # answers it for every run test up front (harness_run_tests_context).
+    @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
+    def get_regradable(self, obj) -> bool:
+        harness_runs = self.context.setdefault(HARNESS_RUN_TESTS_CONTEXT_KEY, {})
+        if obj.run_test_id not in harness_runs:
+            harness_runs[obj.run_test_id] = is_harness_run_test(obj.run_test_id)
+        return not harness_runs[obj.run_test_id] or regrade_mapping(obj) is not None
+
+    # The rule the environment's eval edit refuses by. A row the harness fills
+    # is the harness's: later harness runs write into it by its fixed id, so
+    # changing it would change what they write into. Shares the lookup above.
+    @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
+    def get_editable(self, obj) -> bool:
+        harness_runs = self.context.setdefault(HARNESS_RUN_TESTS_CONTEXT_KEY, {})
+        if obj.run_test_id not in harness_runs:
+            harness_runs[obj.run_test_id] = is_harness_run_test(obj.run_test_id)
+        return not harness_runs[obj.run_test_id] or has_own_mapping(obj)
 
 
 class RunTestListAgentSerializer(serializers.ModelSerializer):

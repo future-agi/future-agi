@@ -3,6 +3,7 @@
 from datetime import timedelta
 
 import pytest
+from django.conf import settings as django_settings
 
 from tracer.services.clickhouse.query_service import QueryResult
 from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
@@ -109,11 +110,9 @@ def test_active_recent_full_page_does_not_pay_for_discovery():
 
 @pytest.mark.unit
 @pytest.mark.parametrize("width_days", [1, 7])
-@pytest.mark.parametrize(
-    "caller_workers,expected_broad", [(None, 2), (1, 1), (2, 2), (4, 2)]
-)
-def test_broad_key_discovery_uses_finite_workers_and_preserves_explicit_caps(
-    monkeypatch, width_days, caller_workers, expected_broad
+@pytest.mark.parametrize("caller_workers", [None, 1, 2, 4])
+def test_key_discovery_owns_its_worker_budget_and_preserves_explicit_caps(
+    monkeypatch, width_days, caller_workers
 ):
     from tracer.selectors import trace_filter_reads as selector
 
@@ -132,10 +131,10 @@ def test_broad_key_discovery_uses_finite_workers_and_preserves_explicit_caps(
         settings for query, _, settings in executor.envelopes if query == "root_probe"
     ]
     assert probes
-    assert all(
-        settings["max_threads"] == (expected_broad if width_days > 1 else 1)
-        for settings in probes
-    )
+    # The probe's worker budget is its own runtime setting at every width. A
+    # caller's page-read worker count sizes hydration, not this proof, so it
+    # no longer clamps the probe; the caller's byte/memory caps still hold.
+    assert all(settings["max_threads"] == 2 for settings in probes)
     assert all(settings["max_memory_usage"] == 64 * 1024**2 for settings in probes)
     assert all(settings["result_overflow_mode"] == "throw" for settings in probes)
 
@@ -363,6 +362,86 @@ def test_engine_selector_preserves_latest_typed_membership(
     assert payload.complete
     assert [row["id"] for row in payload.rows] == ["good"]
     assert any(a.kind == "population_time_discovery" for a in payload.attempts)
+
+
+@pytest.mark.integration
+def test_exact_sampled_sparse_selection_preserves_latest_membership(request):
+    from tracer.selectors.trace_filter_reads import read_bounded_filter_page
+
+    execute, insert = request.getfixturevalue("engine")
+    sampled_ids = execute(
+        """SELECT concat('sample-', toString(number)) AS id
+           FROM numbers(100)
+           WHERE modulo(
+               cityHash64(
+                   'task-id', %(project)s, 'trace',
+                   concat('sample-', toString(number))
+               ), 100
+           ) < 50
+           LIMIT 2""",
+        {"project": PROJECT},
+    )
+    excluded_id = execute(
+        """SELECT concat('excluded-', toString(number)) AS id
+           FROM numbers(100)
+           WHERE modulo(
+               cityHash64(
+                   'task-id', %(project)s, 'trace',
+                   concat('excluded-', toString(number))
+               ), 100
+           ) >= 50
+           LIMIT 1""",
+        {"project": PROJECT},
+    )[0]["id"]
+    good_id, deleted_id = [row["id"] for row in sampled_ids]
+    stamp = START + timedelta(minutes=20)
+    insert(id=good_id, start_time=stamp)
+    insert(id=excluded_id, start_time=stamp + timedelta(minutes=1))
+    insert(id=deleted_id, start_time=stamp + timedelta(minutes=2))
+    insert(
+        id=deleted_id,
+        start_time=stamp + timedelta(minutes=2),
+        _version=2,
+        is_deleted=1,
+    )
+
+    filters = [time_filter(START - timedelta(days=365), START + timedelta(days=1))]
+    subject = SpanListQueryBuilderV2(
+        project_id=PROJECT,
+        filters=filters,
+        bounded_internal_scan=True,
+        bounded_identity_only=True,
+        bounded_sampling_salt="task-id",
+        bounded_sampling_rate=50,
+    )
+
+    class Executor:
+        supports_bounded_speculative_reads = False
+
+        def execute_ch_query(self, sql, params, **_kwargs):
+            rows = execute(sql, params)
+            return QueryResult(rows, len(rows), "clickhouse", 0)
+
+    payload = read_bounded_filter_page(
+        builder=subject,
+        analytics=Executor(),
+        filters=filters,
+        key_field="id",
+        page_number=0,
+        page_size=25,
+        deadline_ms=30_000,
+        max_seed_attempts=64,
+        max_query_count=128,
+        exact_population_time_discovery=True,
+        query_timeout_ms=3_000,
+    )
+
+    assert payload.complete and payload.error_code is None
+    assert [row["id"] for row in payload.rows] == [good_id]
+    assert payload.query_count < 10
+    assert any(
+        attempt.kind == "population_time_discovery" for attempt in payload.attempts
+    )
 
 
 @pytest.fixture
@@ -706,20 +785,13 @@ def test_population_multi_project_scope_preserves_colliding_physical_ids(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    "mode", ["anchor", "sample_zero", "sample_half", "sort", "score_seed", "one_hour"]
-)
+@pytest.mark.parametrize("mode", ["anchor", "sort", "score_seed", "one_hour"])
 def test_population_builder_rejects_unqualified_modes(mode):
     kwargs = {"bounded_internal_scan": True}
     start, end = WINDOW_START, END
     additional_filters = []
     if mode == "anchor":
         kwargs["bounded_anchor_probe"] = True
-    elif mode.startswith("sample"):
-        kwargs.update(
-            bounded_sampling_salt="population-mode-test",
-            bounded_sampling_rate=0 if mode == "sample_zero" else 50,
-        )
     elif mode == "sort":
         kwargs["sort_params"] = [{"column_id": "cost", "direction": "asc"}]
     elif mode == "score_seed":
@@ -750,6 +822,107 @@ def test_population_builder_rejects_unqualified_modes(mode):
         subject.build_filter_population_time_discovery_query(
             slice_start=end - timedelta(hours=1), slice_end=end
         )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("rate", [50.0, 100.0])
+def test_sampled_time_only_discovery_uses_hourly_population_superset(rate):
+    subject = SpanListQueryBuilderV2(
+        project_id=PROJECT,
+        filters=[time_filter(WINDOW_START, END)],
+        bounded_internal_scan=True,
+        bounded_sampling_salt="task-id",
+        bounded_sampling_rate=rate,
+    )
+
+    assert subject.supports_filter_population_time_discovery()
+    width = END - WINDOW_START
+    assert subject.recommended_filter_population_time_discovery_window() == width
+    assert subject.recommended_filter_population_time_discovery_windows() == (width,)
+
+    sql, params = subject.build_filter_population_time_discovery_query(
+        slice_start=WINDOW_START, slice_end=END
+    )
+    normalized_sql = " ".join(sql.split())
+    assert "FROM spans PREWHERE" in normalized_sql
+    assert "FINAL" not in normalized_sql
+    assert "cityHash64" not in normalized_sql
+    assert "toStartOfHour(start_time) AS population_hour" in normalized_sql
+    assert "count() AS population_count" in normalized_sql
+    assert "GROUP BY project_id, population_hour" in normalized_sql
+    assert "greatest(newest_hour_us, %(population_start_us)s)" in normalized_sql
+    assert params["population_start_us"] == _us(WINDOW_START)
+    assert params["population_hour_start_us"] <= params["population_start_us"]
+    assert params["population_hour_end_us"] >= _us(END)
+
+
+@pytest.mark.unit
+def test_zero_sample_population_discovery_is_constant_empty():
+    subject = SpanListQueryBuilderV2(
+        project_id=PROJECT,
+        filters=[time_filter(WINDOW_START, END)],
+        bounded_internal_scan=True,
+        bounded_sampling_salt="task-id",
+        bounded_sampling_rate=0,
+    )
+
+    sql, params = subject.build_filter_population_time_discovery_query(
+        slice_start=WINDOW_START, slice_end=END
+    )
+
+    assert "FROM spans" not in sql
+    assert "CAST(NULL AS Nullable(Int64)) AS newest_raw_time_us" in sql
+    assert params["project_id"] == PROJECT
+
+
+@pytest.mark.unit
+def test_sampled_witness_discovery_retains_exact_hash():
+    subject = SpanListQueryBuilderV2(
+        project_id=PROJECT,
+        filters=[
+            time_filter(WINDOW_START, END),
+            {
+                "column_id": "latency_s",
+                "filter_config": {
+                    "col_type": "SPAN_ATTRIBUTE",
+                    "filter_type": "number",
+                    "filter_op": "greater_than",
+                    "filter_value": 1,
+                },
+            },
+        ],
+        bounded_internal_scan=True,
+        bounded_sampling_salt="task-id",
+        bounded_sampling_rate=50,
+    )
+
+    sql, params = subject.build_filter_population_time_discovery_query(
+        slice_start=WINDOW_START, slice_end=END
+    )
+    normalized_sql = " ".join(sql.split())
+    assert "cityHash64" in normalized_sql
+    assert "toString(project_id)" in normalized_sql
+    assert "toString(trace_id)" in normalized_sql
+    assert "toString(id)" in normalized_sql
+    assert params["bounded_sampling_salt"] == "task-id"
+    assert params["bounded_sampling_rate"] == 50
+
+
+@pytest.mark.unit
+def test_exact_population_discovery_does_not_require_cursor_mode(population_clock):
+    subject = fake()
+    executor = PopulationExecutor(subject)
+
+    page = run(
+        subject,
+        executor,
+        bounded_continuation=False,
+        include_incomplete_rows=False,
+        exact_population_time_discovery=True,
+    )
+
+    assert page.complete
+    assert any(query == "population_probe" for query, _ in executor.calls)
 
 
 @pytest.mark.unit
@@ -800,7 +973,7 @@ def test_population_real_application_wrapper_clears_caps_and_restores_context(
         server_enforced_readonly = False
         server_profile_locked = False
 
-        def execute_read(self, query, params, *, timeout_ms, settings):
+        def execute_read_with_progress(self, query, params, *, timeout_ms, settings):
             assert is_application_read()
             assert timeout_ms is None
             assert all(settings[key] == 0 for key in UNLIMITED_STATEMENT_SETTINGS)
@@ -822,6 +995,8 @@ def test_population_real_application_wrapper_clears_caps_and_restores_context(
                 [tuple(row[key] for key in columns) for row in result.data],
                 [(key, "String") for key in columns],
                 0.0,
+                len(result.data),
+                0,
             )
 
     monkeypatch.setattr(query_service, "get_v2_query_client", lambda: LocalClient())
@@ -840,4 +1015,8 @@ def test_population_real_application_wrapper_clears_caps_and_restores_context(
             assert any(a.error_code for a in page.attempts)
     assert not is_application_read()
     probes = [settings for query, settings in envelopes if query == "population_probe"]
-    assert len(probes) == 1 and probes[0]["max_threads"] == 1
+    assert len(probes) == 1
+    assert (
+        probes[0]["max_threads"]
+        == django_settings.FILTER_SELECTOR_POPULATION_MAX_THREADS
+    )

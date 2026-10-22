@@ -1,17 +1,36 @@
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
-import { parseTimeoutSeconds } from "./utils";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  userEvent,
+  waitFor,
+} from "src/utils/test-utils";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  DEFAULT_API_PATH_PREFIX,
+  getApiPathPrefix,
+  parseTimeoutSeconds,
+  withApiPathPrefix,
+} from "./utils";
+import { RESPONSES_ONLY_TAG } from "./modelCompatibility";
 import AddProviderDialog from "./AddProviderDialog";
 
-const { updateMutate, fetchMutate, fetchState } = vi.hoisted(() => ({
-  updateMutate: vi.fn(),
-  fetchMutate: vi.fn(),
-  // Mutable so a test can render the dialog mid-fetch.
-  fetchState: { isPending: false },
-}));
+const { updateMutate, fetchMutate, fetchState, refreshState, snackbars } =
+  vi.hoisted(() => ({
+    updateMutate: vi.fn(),
+    fetchMutate: vi.fn(),
+    // Mutable so a test can render the dialog mid-fetch.
+    fetchState: { isPending: false },
+    // Whether the post-save config re-read failed.
+    refreshState: { failed: false },
+    snackbars: [],
+  }));
 
 vi.mock("./hooks/useGatewayConfig", () => ({
+  gatewayConfigRefreshFailed: () => refreshState.failed,
   useUpdateProvider: () => ({
     mutate: updateMutate,
     isPending: false,
@@ -24,6 +43,10 @@ vi.mock("./hooks/useGatewayConfig", () => ({
   }),
 }));
 
+vi.mock("notistack", () => ({
+  enqueueSnackbar: (message, options) => snackbars.push({ message, options }),
+}));
+
 // Responses land on a later task, as a real request does; a synchronous mock
 // closes the window the dialog's ordering bugs live in.
 const deferred =
@@ -31,17 +54,27 @@ const deferred =
   (...args) =>
     setTimeout(() => impl(...args), 0);
 
+// The dialog reads the query cache to tell a clean save from one whose
+// follow-up re-read failed, so it needs a client in scope.
+const withClient = (ui) => (
+  <QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>
+);
+
 const renderCreateDialog = () =>
-  render(<AddProviderDialog open onClose={vi.fn()} gatewayId="gw-1" />);
+  render(
+    withClient(<AddProviderDialog open onClose={vi.fn()} gatewayId="gw-1" />),
+  );
 
 const renderEditDialogFor = (name, config) =>
   render(
-    <AddProviderDialog
-      open
-      onClose={vi.fn()}
-      gatewayId="gw-1"
-      provider={{ name, config }}
-    />,
+    withClient(
+      <AddProviderDialog
+        open
+        onClose={vi.fn()}
+        gatewayId="gw-1"
+        provider={{ name, config }}
+      />,
+    ),
   );
 
 const renderEditDialog = (config) => renderEditDialogFor("openai", config);
@@ -62,6 +95,8 @@ describe("AddProviderDialog validation", () => {
   beforeEach(() => {
     updateMutate.mockReset();
     fetchState.isPending = false;
+    refreshState.failed = false;
+    snackbars.length = 0;
     // The dialog fetches the provider's models when it opens in edit mode.
     fetchMutate.mockReset();
     fetchMutate.mockImplementation(
@@ -69,6 +104,45 @@ describe("AddProviderDialog validation", () => {
         opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] }),
       ),
     );
+  });
+
+  it("offers Vertex with pasted service-account JSON, without an API key or model fetch", async () => {
+    renderCreateDialog();
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(
+      screen.getByRole("option", { name: "Google Vertex AI" }),
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Google Cloud project ID/), {
+      target: { value: "demo-project" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Service-account JSON/), {
+      target: {
+        value: JSON.stringify({
+          type: "service_account",
+          project_id: "demo-project",
+          client_email: "demo@example.iam.gserviceaccount.com",
+          private_key: "test-key",
+          token_uri: "https://oauth2.googleapis.com/token",
+        }),
+      },
+    });
+    const modelInput = screen.getByPlaceholderText(/model IDs/i);
+    await userEvent.type(modelInput, "vertex_ai/gemini-3.7-flash{enter}");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    expect(fetchMutate).not.toHaveBeenCalled();
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    const payload = updateMutate.mock.calls[0][0];
+    expect(payload.name).toBe("vertex");
+    expect(payload.config.api_format).toBe("gemini");
+    expect(payload.config.gcp_project).toBe("demo-project");
+    expect(payload.config.gcp_location).toBe("us-central1");
+    expect(payload.config.models).toContain("vertex_ai/gemini-3.7-flash");
+    expect(payload.config.service_account_json).toContain(
+      '"type":"service_account"',
+    );
+    expect(payload.config).not.toHaveProperty("api_key");
   });
 
   it("saves an edited provider whose stored timeout came back as a number", async () => {
@@ -79,6 +153,51 @@ describe("AddProviderDialog validation", () => {
 
     expect(updateMutate).toHaveBeenCalledTimes(1);
     expect(updateMutate.mock.calls[0][0].config.default_timeout).toBe(30);
+  });
+
+  const saveEditedProvider = async () => {
+    renderEditDialog({ default_timeout: 30, models: ["gpt-4o"] });
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    const [, callbacks] = updateMutate.mock.calls[0];
+    await act(async () => callbacks.onSuccess?.({}));
+  };
+
+  it("reports a clean save as a success", async () => {
+    refreshState.failed = false;
+
+    await saveEditedProvider();
+
+    expect(snackbars).toEqual([
+      { message: 'Provider "openai" updated', options: { variant: "success" } },
+    ]);
+  });
+
+  it("names the half that failed when only the config re-read failed", async () => {
+    // The POST landed; the follow-up read did not. Reporting this as a failed
+    // save is what made users distrust the screen.
+    refreshState.failed = true;
+
+    await saveEditedProvider();
+
+    expect(snackbars).toHaveLength(1);
+    expect(snackbars[0].options.variant).toBe("warning");
+    expect(snackbars[0].message).toBe(
+      'Provider "openai" updated, but the provider list could not be reloaded — refresh the page to see it.',
+    );
+  });
+
+  it("shows the server's reason when the save itself fails", async () => {
+    renderEditDialog({ default_timeout: 30, models: ["gpt-4o"] });
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    const [, callbacks] = updateMutate.mock.calls[0];
+
+    await act(async () =>
+      callbacks.onError?.({ statusCode: 400, result: "Unknown provider name" }),
+    );
+
+    expect(snackbars).toEqual([
+      { message: "Unknown provider name", options: { variant: "error" } },
+    ]);
   });
 
   it("blocks Save, and says why, when no model is selected", async () => {
@@ -226,6 +345,7 @@ describe("AddProviderDialog validation", () => {
       baseUrl: "https://api.openai.com/v1",
       apiKey: "sk-good",
       apiFormat: "openai",
+      apiPathPrefix: "/v1",
     });
 
     // Only once it lists models does Save open up.
@@ -486,5 +606,152 @@ describe("AddProviderDialog validation", () => {
 
     const save = await screen.findByRole("button", { name: "Save Changes" });
     expect(save.disabled).toBe(false);
+  });
+});
+
+describe("getApiPathPrefix", () => {
+  it("preserves an explicitly empty prefix", () => {
+    expect(getApiPathPrefix({ api_path_prefix: "" })).toBe("");
+  });
+
+  it("uses the default for providers saved before the field existed", () => {
+    expect(getApiPathPrefix({})).toBe(DEFAULT_API_PATH_PREFIX);
+  });
+
+  it("includes an explicit empty prefix in the saved OpenAI config", () => {
+    expect(
+      withApiPathPrefix(
+        { base_url: "https://api.perplexity.ai" },
+        "openai",
+        "",
+      ),
+    ).toEqual({
+      base_url: "https://api.perplexity.ai",
+      api_path_prefix: "",
+    });
+  });
+
+  it("does not add a path prefix for non-OpenAI formats", () => {
+    // A non-empty prefix, so the branch has a real value to drop rather than a
+    // blank that would look absent either way.
+    const config = { base_url: "https://api.anthropic.com" };
+    expect(withApiPathPrefix(config, "anthropic", "/v1")).toEqual(config);
+    expect(withApiPathPrefix(config, "anthropic", "/v1")).not.toHaveProperty(
+      "api_path_prefix",
+    );
+  });
+});
+
+describe("AddProviderDialog model discovery", () => {
+  beforeEach(() => {
+    updateMutate.mockReset();
+    fetchState.isPending = false;
+    fetchMutate.mockReset();
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) => opts?.onSuccess?.({ models: ["sonar"] })),
+    );
+  });
+
+  it("lists models against the stored provider's own path prefix", async () => {
+    renderEditDialogFor("perplexity", {
+      base_url: "https://api.perplexity.ai",
+      api_format: "openai",
+      api_path_prefix: "/openai/v1",
+      models: ["sonar"],
+    });
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled());
+    expect(fetchMutate.mock.calls[0][0]).toMatchObject({
+      providerName: "perplexity",
+      apiFormat: "openai",
+      apiPathPrefix: "/openai/v1",
+    });
+  });
+
+  it("lists again when the prefix is edited, with the stored key untouched", async () => {
+    // The debounced key effect returns early on a blank key in edit mode, so
+    // without its own effect this change would never reach the provider.
+    renderEditDialogFor("perplexity", {
+      base_url: "https://api.perplexity.ai",
+      api_format: "openai",
+      api_path_prefix: "/v1",
+      models: ["sonar"],
+    });
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalledTimes(1));
+
+    const prefix = screen.getByLabelText("API Path Prefix");
+    await userEvent.clear(prefix);
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalledTimes(2), {
+      timeout: 3000,
+    });
+    expect(fetchMutate.mock.calls[1][0]).toMatchObject({
+      providerName: "perplexity",
+      apiPathPrefix: "",
+    });
+    // A blank key still means "keep the stored one", so none is sent.
+    expect(fetchMutate.mock.calls[1][0].apiKey).toBeUndefined();
+  });
+
+  it("does not list again when the dialog merely hydrates the prefix", async () => {
+    renderEditDialogFor("perplexity", {
+      base_url: "https://api.perplexity.ai",
+      api_format: "openai",
+      api_path_prefix: "/openai/v1",
+      models: ["sonar"],
+    });
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 900));
+    expect(fetchMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("carries the prefix on a typed-key fetch", async () => {
+    renderCreateDialog();
+
+    const prefix = screen.getByLabelText("API Path Prefix");
+    await userEvent.clear(prefix);
+    await userEvent.type(prefix, "/openai/v1");
+    fireEvent.change(screen.getByLabelText(/^API Key/), {
+      target: { value: "sk-test" },
+    });
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled(), {
+      timeout: 3000,
+    });
+    const last = fetchMutate.mock.calls[fetchMutate.mock.calls.length - 1][0];
+    expect(last).toMatchObject({
+      apiKey: "sk-test",
+      apiFormat: "openai",
+      apiPathPrefix: "/openai/v1",
+    });
+  });
+
+  it("tags a catalogue model but never a hand-typed one the catalogue didn't list", async () => {
+    // Perplexity's catalogue never lists `sonar`/`sonar-pro` — those are
+    // typed by hand for chat completions — but it does list aggregator IDs
+    // like `openai/gpt-4o`, which must still get tagged.
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) => opts?.onSuccess?.({ models: ["openai/gpt-4o"] })),
+    );
+    renderEditDialogFor("perplexity", {
+      base_url: "https://api.perplexity.ai",
+      api_format: "openai",
+      api_path_prefix: "/v1",
+      models: ["sonar", "openai/gpt-4o"],
+    });
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getAllByText(RESPONSES_ONLY_TAG).length).toBe(1),
+    );
+
+    const sonarChip = screen.getByText("sonar").closest("li, [class*='MuiChip']");
+    expect(sonarChip?.textContent).not.toContain(RESPONSES_ONLY_TAG);
+
+    const catalogueChip = screen
+      .getByText("openai/gpt-4o")
+      .closest("li, [class*='MuiChip']");
+    expect(catalogueChip?.textContent).toContain(RESPONSES_ONLY_TAG);
   });
 });

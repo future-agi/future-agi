@@ -4,6 +4,7 @@ import { Box, Button, CircularProgress, Stack } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import { useParams } from "react-router";
+import { useUrlState } from "src/routes/hooks/use-url-state";
 
 import DrawerToolbar from "src/components/traceDetail/DrawerToolbar";
 import ImagineTab from "src/components/imagine/ImagineTab";
@@ -23,6 +24,7 @@ import {
 import VoiceDrawerHeader from "./VoiceDrawerHeader";
 import VoiceLeftPanel from "./VoiceLeftPanel";
 import VoiceRightPanel from "./VoiceRightPanel";
+import { shareResourceFor } from "./shareResource";
 
 const VOICE_IMAGINE_PROMPTS = [
   { label: "Summarize this call", icon: "mdi:text-box-outline" },
@@ -70,11 +72,15 @@ const VoiceDetailDrawerV2 = ({
   // the call body so it fits the host's layout.
   embedded = false,
   hiddenActionIds = [],
+  hidePathTabs = false,
   hideAnnotationTab = false,
+  showFixWithFalcon = true,
 }) => {
   const queryClient = useQueryClient();
   const { observeId } = useParams();
+  const [evalFocus, , removeEvalFocus] = useUrlState("evalFocus", false);
   const projectId = observeId || data?.project_id;
+  const shareResource = shareResourceFor(data);
 
   const [leftPanelWidth, setLeftPanelWidth] = useState(50); // percentage
   const [isFullscreen, setIsFullscreen] = useState(initialFullscreen);
@@ -85,6 +91,10 @@ const VoiceDetailDrawerV2 = ({
   const [deleteTabId, setDeleteTabId] = useState(null); // for confirm dialog
   // Outer drawer width (vw). Matches trace drawer default and is draggable.
   const [drawerWidth, setDrawerWidth] = useState(60);
+  const handleClose = useCallback(() => {
+    removeEvalFocus();
+    onClose();
+  }, [onClose, removeEvalFocus]);
 
   // ── Saved views (Imagine tabs) ────────────────────────────────────────────
   const { data: savedViewsData } = useGetSavedViews(projectId);
@@ -328,7 +338,7 @@ const VoiceDetailDrawerV2 = ({
       {!embedded && (
         <VoiceDrawerHeader
           callId={data?.provider_call_id || data?.id || data?.trace_id}
-          onClose={onClose}
+          onClose={handleClose}
           onPrev={onPrev}
           onNext={onNext}
           hasPrev={hasPrev}
@@ -451,7 +461,11 @@ const VoiceDetailDrawerV2 = ({
                 borderColor: "divider",
               }}
             >
-              <VoiceLeftPanel data={data} scenarioId={scenarioId} />
+              <VoiceLeftPanel
+                data={data}
+                scenarioId={scenarioId}
+                hidePathTabs={hidePathTabs}
+              />
             </Box>
 
             {/* Resizable divider */}
@@ -503,26 +517,22 @@ const VoiceDetailDrawerV2 = ({
                 onAction={handleVoiceAction}
                 hiddenActionIds={hiddenActionIds}
                 hideAnnotationTab={hideAnnotationTab}
+                showFixWithFalcon={showFixWithFalcon}
+                initialEvalFocus={evalFocus === true}
               />
             </Box>
           </>
         )}
       </Box>
 
-      {/* Share dialog — voice calls share via trace_id, same backend as
-          the trace drawer. The fallback URL points at the voice full-page
-          route so authenticated recipients land directly on the voice UI. */}
-      {(data?.trace_id || data?.id) && (
+      {/* Share dialog — Observe voice calls share their trace; simulation
+          calls share their CallExecution. */}
+      {shareResource && (
         <ShareDialog
           open={shareDialogOpen}
           onClose={() => setShareDialogOpen(false)}
-          resourceType="trace"
-          resourceId={data?.trace_id || data?.id}
-          fallbackShareUrl={
-            projectId && (data?.trace_id || data?.id)
-              ? `${window.location.origin}/dashboard/observe/${projectId}/voice/${data?.trace_id || data?.id}`
-              : undefined
-          }
+          resourceType={shareResource.resourceType}
+          resourceId={shareResource.resourceId}
         />
       )}
 
@@ -624,7 +634,9 @@ VoiceDetailDrawerV2.propTypes = {
   initialFullscreen: PropTypes.bool,
   embedded: PropTypes.bool,
   hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
+  hidePathTabs: PropTypes.bool,
   hideAnnotationTab: PropTypes.bool,
+  showFixWithFalcon: PropTypes.bool,
 };
 
 export default VoiceDetailDrawerV2;

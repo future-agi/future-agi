@@ -118,7 +118,8 @@ def test_legacy_and_v2_identity_and_keyset_are_separate():
             before_start_time=sample["start_time"],
             before_id=target.bounded_filter_row_order_token(sample),
         )
-        assert ("FROM spans FINAL" in sql) is not legacy
+        assert ("argMax(tuple(" in sql) is not legacy
+        assert "FINAL" not in sql
         assert ("filter_before_service_name" in sql) is not legacy
 
 

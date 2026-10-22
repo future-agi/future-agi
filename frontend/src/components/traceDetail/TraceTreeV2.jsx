@@ -21,6 +21,7 @@ import {
 // Type config — icon path + color
 // ---------------------------------------------------------------------------
 import { getTypeConfig } from "./spanTypeConfig";
+import { getOwnEvalScores } from "./evalScores";
 
 function getSpan(entry) {
   return entry?.observation_span || {};
@@ -37,7 +38,7 @@ function countErrors(entry) {
 
 /** Collect all eval scores from a subtree (recursive) */
 function collectSubtreeEvals(entry) {
-  const evals = entry?.eval_scores || [];
+  const evals = getOwnEvalScores(entry);
   let pass = 0;
   let fail = 0;
   let total = evals.length;
@@ -271,7 +272,7 @@ const TreeNodeRow = ({
   const evalTotal = subtreeEvals.total;
 
   // This span's own evals — check if THIS span has failed evals (for red dot indicator)
-  const ownEvals = entry?.eval_scores || [];
+  const ownEvals = getOwnEvalScores(entry);
   const hasOwnFailedEval = ownEvals.some((e) => {
     const score =
       e?.score ?? (e?.result === true ? 100 : e?.result === false ? 0 : null);

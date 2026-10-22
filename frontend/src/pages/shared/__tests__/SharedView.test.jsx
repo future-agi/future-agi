@@ -32,6 +32,28 @@ vi.mock("src/components/traceDetail/SpanDetailPane", () => ({
   default: () => <div>span detail</div>,
 }));
 
+vi.mock("src/components/VoiceDetailDrawerV2/CallDetailsBar", () => ({
+  default: ({ data }) => (
+    <div data-testid="call-details-bar" data-module={data?.module}>
+      {data?.status}
+    </div>
+  ),
+}));
+
+vi.mock("src/components/VoiceDetailDrawerV2/VoiceAudioBridge", () => ({
+  default: ({ data }) => (
+    <div data-testid="voice-audio">{data?.recordings?.stereo}</div>
+  ),
+}));
+
+vi.mock("src/components/VoiceDetailDrawerV2/TranscriptView", () => ({
+  default: ({ transcript }) => (
+    <div data-testid="voice-transcript">
+      {transcript.map((turn) => turn.content).join("|")}
+    </div>
+  ),
+}));
+
 describe("SharedView dashboard rendering", () => {
   beforeEach(() => {
     mocks.useResolveSharedLink.mockReset();
@@ -143,5 +165,95 @@ describe("SharedView dashboard rendering", () => {
     expect(screen.getByText("Shared eval_run")).toBeInTheDocument();
     expect(screen.getByText("Viewing shared eval_run")).toBeInTheDocument();
     expect(screen.getByText(/Unsupported eval/)).toBeInTheDocument();
+  });
+});
+
+describe("SharedView simulation call rendering", () => {
+  beforeEach(() => {
+    mocks.useResolveSharedLink.mockReset();
+  });
+
+  const resolved = (data) => ({
+    data: {
+      resource_type: "call_execution",
+      resource_id: "call-execution-1234567890",
+      access_type: "public",
+      data,
+    },
+    isLoading: false,
+    isError: false,
+    error: null,
+  });
+
+  it("renders a shared simulation voice call with recording and transcript", () => {
+    mocks.useResolveSharedLink.mockReturnValue(
+      resolved({
+        id: "call-execution-1234567890",
+        simulation_call_type: "voice",
+        scenario: "Refund request",
+        status: "completed",
+        duration: 42,
+        recordings: { stereo: "https://audio.example/stereo.wav" },
+        transcript: [
+          {
+            speaker_role: "agent",
+            content: "Hello, how can I help?",
+            start_time: 0,
+            end_time: 2,
+          },
+          {
+            speaker_role: "customer",
+            content: "I want a refund.",
+            start_time: 2,
+            end_time: 4,
+          },
+        ],
+        function_calls: [],
+      }),
+    );
+
+    render(<SharedView />);
+
+    expect(screen.getByText("Shared voice call")).toBeInTheDocument();
+    expect(screen.getByText("Refund request")).toBeInTheDocument();
+    expect(screen.getByTestId("call-details-bar")).toHaveAttribute(
+      "data-module",
+      "simulate",
+    );
+    expect(screen.getByTestId("voice-audio")).toHaveTextContent(
+      "https://audio.example/stereo.wav",
+    );
+    expect(screen.getByTestId("voice-transcript")).toHaveTextContent(
+      "Hello, how can I help?|I want a refund.",
+    );
+    expect(screen.queryByText(/Viewing shared/)).not.toBeInTheDocument();
+  });
+
+  it("renders a shared simulation chat as a read-only transcript", () => {
+    mocks.useResolveSharedLink.mockReturnValue(
+      resolved({
+        id: "call-execution-1234567890",
+        simulation_call_type: "text",
+        scenario: "Cancel subscription",
+        status: "completed",
+        turn_count: 2,
+        transcript: [
+          { role: "user", content: "Please cancel my plan." },
+          { role: "assistant", content: "Your plan is cancelled." },
+        ],
+        function_calls: [],
+      }),
+    );
+
+    render(<SharedView />);
+
+    expect(screen.getByText("Shared chat")).toBeInTheDocument();
+    expect(screen.getByText("Cancel subscription")).toBeInTheDocument();
+    expect(screen.getByText("Please cancel my plan.")).toBeInTheDocument();
+    expect(screen.getByText("Your plan is cancelled.")).toBeInTheDocument();
+    expect(screen.queryByTestId("voice-transcript")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /annotate|rerun|edit/i }),
+    ).not.toBeInTheDocument();
   });
 });

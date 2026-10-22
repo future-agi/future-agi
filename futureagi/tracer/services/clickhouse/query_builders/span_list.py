@@ -16,6 +16,7 @@ span IDs, grouped by ``(observation_span_id, label_id)``.
 The three result sets are merged in Python to produce the final response.
 """
 
+import math
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -23,9 +24,11 @@ from typing import Any
 from django.conf import settings
 
 from tracer.services.clickhouse.eval_logger_table import (
+    count_mode_choice_array,
     eval_logger_live_state_columns,
     eval_logger_source,
     eval_logger_version_column,
+    latest_completed_eval_rows,
 )
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.eval_status import (
@@ -85,6 +88,23 @@ def _unix_microseconds(value: datetime) -> int:
     )
     delta = utc_value - datetime(1970, 1, 1, tzinfo=UTC)
     return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
+
+
+# The latest-state aggregates every classifier statement carries, whatever the
+# filter shape: the published timestamp, the tombstone and the root test.
+_SPAN_MATCH_INVARIANT_AGGREGATES_SQL = (
+    "argMax(start_time, _peerdb_version) AS latest_start_time,\n"
+    "                    argMax(is_deleted, _peerdb_version) AS latest_is_deleted,\n"
+    "                    argMax(tuple(parent_span_id), _peerdb_version).1"
+    " AS latest_parent_span_id"
+)
+
+
+_NORMAL_SPAN_PRESENTATION_COLUMNS_SQL = (
+    "project_id, id, trace_id, name, observation_type, status, start_time, "
+    "end_time, latency_ms, cost, total_tokens, prompt_tokens, "
+    "completion_tokens, model, provider, end_user_id, created_at, is_deleted"
+)
 
 
 class SpanListQueryBuilder(BaseQueryBuilder):
@@ -157,7 +177,13 @@ class SpanListQueryBuilder(BaseQueryBuilder):
               )
         """
 
-    def _filter_seed_source_sql(self, *, raw_key_predicate: str = "") -> str:
+    def _filter_seed_source_sql(
+        self, *, raw_key_predicate: str = "", consumer_sql: str = ""
+    ) -> str:
+        """The acquisition source. ``consumer_sql`` is every variable fragment
+        of the consuming statement that may reference a span column, so a
+        latest-state source can project exactly what its caller reads."""
+
         return self.TABLE
 
     def _filter_seed_plan_predicate(self, plan: Any, *, ordinary_seed: bool) -> str:
@@ -174,10 +200,10 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             return plan.raw_key_witness_predicate
         return None
 
-    def _filter_anchor_source_sql(self) -> str:
+    def _filter_anchor_source_sql(self, *, consumer_sql: str = "") -> str:
         return self.TABLE
 
-    def _normal_span_source_sql(self) -> str:
+    def _normal_span_source_sql(self, *, consumer_sql: str = "") -> str:
         return self.TABLE
 
     def _normal_span_identity_extra_sql(self) -> str:
@@ -199,7 +225,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             f"            toString(project_id) {order}"
         )
 
-    def _filter_match_source_sql(self, candidate_scope: str) -> str:
+    def _filter_match_source_sql(
+        self, candidate_scope: str, *, consumer_sql: str = ""
+    ) -> str:
         return self.TABLE
 
     def _filter_match_outer_scope_sql(self, candidate_scope: str) -> str:
@@ -298,6 +326,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         bounded_anchor_probe: bool = False,
         bounded_sampling_salt: str | None = None,
         bounded_sampling_rate: float | None = None,
+        eval_count_mode: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
@@ -320,6 +349,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             else None
         )
         self.eval_filter_metadata = eval_filter_metadata
+        self.eval_count_mode = eval_count_mode
         self.end_user_id = end_user_id
         self.project_version_id = project_version_id
         self._bounded_internal_scan = bool(bounded_internal_scan)
@@ -1075,6 +1105,19 @@ class SpanListQueryBuilder(BaseQueryBuilder):
               ) < %(bounded_sampling_rate)s
             """
 
+        # Every variable fragment below that may name a span column. A
+        # latest-state source projects the union of these and its own
+        # invariant floor, so nothing it collapses is read needlessly.
+        anchor_consumer_sql = " ".join(
+            (
+                self._filter_seed_extra_columns_sql(),
+                project_version_fragment,
+                predicate,
+                datetime_fragment,
+                sampling_fragment,
+            )
+        )
+
         if self._supports_time_only_cursor_sparse_probe() and not _graph_key_witness:
             # Deliberately unordered and without LIMIT 1 BY. ClickHouse may stop
             # after reading the sentinel instead of sorting/deduplicating a
@@ -1085,7 +1128,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             # superset for the unchanged latest-state classifier.
             query = f"""
             SELECT project_id, id, trace_id, start_time{self._filter_seed_extra_columns_sql()}
-            FROM {self._filter_anchor_source_sql()}
+            FROM {self._filter_anchor_source_sql(consumer_sql=anchor_consumer_sql)}
             {self._FILTER_SOURCE_SCOPE} {self.project_filter_sql()}
               AND is_deleted = 0
               {project_version_fragment}
@@ -1099,7 +1142,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
 
         query = f"""
         SELECT project_id, id, trace_id, start_time{self._filter_seed_extra_columns_sql()}
-        FROM {self._filter_anchor_source_sql()}
+        FROM {self._filter_anchor_source_sql(consumer_sql=anchor_consumer_sql)}
         {self._FILTER_SOURCE_SCOPE} {self.project_filter_sql()}
           AND is_deleted = 0
           {project_version_fragment}
@@ -1253,6 +1296,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             if necessary_leaf is None or _unindexed_positive_micro_seed:
                 raise ValueError("span annotation candidate seed is unavailable")
             relation = self._FILTER_BUILDER_CLS(
+                eval_count_mode=self.eval_count_mode,
                 table=self.TABLE,
                 query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
                 project_id=self.project_id,
@@ -1328,9 +1372,20 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                     if f"%({key})s" in raw_key_predicate
                 }
             )
+        seed_consumer_sql = " ".join(
+            (
+                self._filter_seed_extra_columns_sql(),
+                project_version_fragment,
+                predicate,
+                datetime_fragment,
+                sampling_fragment,
+                keyset_fragment,
+                order_fragment,
+            )
+        )
         query = f"""
         SELECT project_id, id, trace_id, start_time{self._filter_seed_extra_columns_sql()}
-        FROM {self._filter_seed_source_sql(raw_key_predicate=raw_key_predicate)}
+        FROM {self._filter_seed_source_sql(raw_key_predicate=raw_key_predicate, consumer_sql=seed_consumer_sql)}
         {self._FILTER_SOURCE_SCOPE} {self.project_filter_sql()}
           AND is_deleted = 0
           {project_version_fragment}
@@ -1560,6 +1615,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                         ]
                         branch_label_set_known = True
                     branch_builder = self._FILTER_BUILDER_CLS(
+                        eval_count_mode=self.eval_count_mode,
                         table=self.TABLE,
                         query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
                         annotation_label_ids=branch_label_ids,
@@ -1623,6 +1679,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                     for item in residual_filters
                 )
                 residual_builder = self._FILTER_BUILDER_CLS(
+                    eval_count_mode=self.eval_count_mode,
                     table=self.TABLE,
                     query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
                     annotation_label_ids=self.annotation_label_ids,
@@ -1692,6 +1749,17 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 argMax(created_at, _peerdb_version) AS latest_created_at"""
 
         identity_select, identity_aggregates = self._filter_match_identity_fragments()
+        match_consumer_sql = " ".join(
+            (
+                _SPAN_MATCH_INVARIANT_AGGREGATES_SQL,
+                identity_aggregates,
+                hydrate_aggregate_fragment,
+                aggregate_fragment,
+                project_version_fragment,
+                candidate_scope_fragment,
+                self._filter_match_outer_scope_sql(candidate_scope_fragment),
+            )
+        )
         select_fragment += identity_select
         hydrate_aggregate_fragment += identity_aggregates
         latest_time_fragment = (
@@ -1714,12 +1782,10 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 SELECT
                     project_id AS grouped_project_id,
                     id AS grouped_id,
-                    argMax(start_time, _peerdb_version) AS latest_start_time,
-                    argMax(is_deleted, _peerdb_version) AS latest_is_deleted,
-                    argMax(tuple(parent_span_id), _peerdb_version).1 AS latest_parent_span_id
+                    {_SPAN_MATCH_INVARIANT_AGGREGATES_SQL}
                     {hydrate_aggregate_fragment}
                     {aggregate_fragment}
-                FROM {self._filter_match_source_sql(candidate_scope_fragment)}
+                FROM {self._filter_match_source_sql(candidate_scope_fragment, consumer_sql=match_consumer_sql)}
                 {self._FILTER_SOURCE_SCOPE} {self.project_filter_sql()}
                   {project_version_fragment}
                   AND id IN %(candidate_span_ids)s
@@ -1787,6 +1853,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = end_date
 
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
@@ -1867,6 +1934,20 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         # bare-`spans` query verbatim (out of scope). Pre-flip even the user path
         # is byte-identical — NO span matches a `new_id`, so the resolved id ==
         # the span's own id (gate B).
+        list_consumer_sql = " ".join(
+            (
+                _NORMAL_SPAN_PRESENTATION_COLUMNS_SQL,
+                self._normal_span_identity_extra_sql(),
+                self._NORMAL_TIME_WHERE,
+                datetime_fragment,
+                slice_fragment,
+                end_user_fragment,
+                pv_fragment,
+                filter_fragment,
+                order_clause,
+            )
+        )
+
         if self.end_user_id:
             remap_join = remap_left_join("rs.end_user_id", "end_user_id_remap")
             resolved_eu = resolved_id_expr("rs.end_user_id")
@@ -1889,7 +1970,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 provider,
                 end_user_id,
                 created_at{self._normal_span_identity_extra_sql()}
-            FROM {self._normal_span_source_sql()}
+            FROM {self._normal_span_source_sql(consumer_sql=list_consumer_sql)}
             {self.project_where()}
               {self._NORMAL_TIME_WHERE}
               {slice_fragment}
@@ -1960,7 +2041,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             provider,
             end_user_id,
             created_at{self._normal_span_identity_extra_sql()}
-        FROM {self._normal_span_source_sql()}
+        FROM {self._normal_span_source_sql(consumer_sql=list_consumer_sql)}
         {self.project_where()}
           {self._NORMAL_TIME_WHERE}{datetime_fragment}
           {slice_fragment}
@@ -2006,6 +2087,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = end_date
 
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
@@ -2140,6 +2222,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         if error_code := self.bounded_filter_degraded_error_code():
             raise ValueError(f"unsafe legacy filtered span count blocked: {error_code}")
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
@@ -2226,6 +2309,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         created_after: Any = None,
         *,
         span_entities: list[tuple[str, str]] | None = None,
+        count_mode: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Build the Phase-2 eval-scores query for a page of span IDs.
 
@@ -2315,40 +2399,26 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         # ``output_str`` is Nullable(String); ClickHouse 3-valued logic makes
         # ``NULL != 'ERROR'`` NULL (not TRUE), so use ``ifNull(...)`` to keep
         # the comparison NULL-safe.
-        query = f"""
-        SELECT
-            {trace_select}
-            observation_span_id,
-            toString(custom_eval_config_id) AS eval_config_id,
-            -- ifNotFinite(, NULL): avgIf over an all-NULL group returns NaN, which
-            -- json.dumps(allow_nan=False) rejects. NULL serializes as null.
-            ifNotFinite(avgIf(
-                output_float,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ), NULL) AS avg_score,
-            ifNotFinite(avgIf(
-                CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ), NULL) AS pass_rate,
-            countIf(
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ) AS success_count,
-            countIf(
-                error = 1 OR ifNull(output_str, '') = 'ERROR' OR status = 'errored'
-            ) AS error_count,
-            countIf(status = 'skipped') AS skipped_count,
-            countIf(status = 'running') AS running_count,
-            countIf(status = 'pending') AS pending_count,
-            anyIf(skipped_reason, status = 'skipped') AS skipped_reason,
-            count() AS eval_count,
-            groupArrayIf(
-                output_str_list,
-                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
-            ) AS str_lists
-        -- Candidate-scoped latest replay. Live/tombstone predicates are
-        -- intentionally outside LIMIT 1 BY id so a newest deletion marker
-        -- cannot resurrect an older score.
-        FROM (
+        count_projection = ""
+        count_inner_projection = ""
+        if count_mode:
+            # Only the Observe span list opts into exact tile counts.  The
+            # non-Observe list continues to use its percentage pivot below.
+            count_projection = """
+            , countIf(
+                if(isNull(output_bool), output_float >= 0.5, output_bool = 1) AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS pass_count
+            , countIf(
+                if(isNull(output_bool), output_float < 0.5, output_bool = 0) AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS fail_count
+            , argMax(target_type, created_at) AS target_type
+            """
+            count_inner_projection = (
+                ",\n                id,\n                created_at,"
+                "\n                target_type"
+            )
+
+        collapsed = f"""(
             SELECT
                 {trace_inner_select}
                 observation_span_id,
@@ -2360,7 +2430,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 error,
                 {status_projection},
                 {skipped_reason_projection},
-                {live_projection}
+                {live_projection}{count_inner_projection}
             FROM {eval_table}
             WHERE observation_span_id IN %(span_ids)s
               {entity_fragment}
@@ -2368,8 +2438,54 @@ class SpanListQueryBuilder(BaseQueryBuilder):
               {created_fragment}
             ORDER BY {eval_version_col} DESC
             LIMIT 1 BY id
-        )
-        WHERE {live_predicate}
+        )"""
+        if count_mode:
+            # A tile shows the span's newest completed result, the row the
+            # trace-detail rollup shows for that span.
+            eval_source = latest_completed_eval_rows(
+                collapsed,
+                live_predicate,
+                f"{trace_group}observation_span_id, custom_eval_config_id",
+            )
+        else:
+            eval_source = f"""{collapsed}
+        WHERE {live_predicate}"""
+
+        query = f"""
+        SELECT
+            {trace_select}
+            observation_span_id,
+            toString(custom_eval_config_id) AS eval_config_id,
+            -- ifNotFinite(, NULL): avgIf over an all-NULL group returns NaN, which
+            -- json.dumps(allow_nan=False) rejects. NULL serializes as null.
+            ifNotFinite(avgIf(
+                output_float,
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ), NULL) AS avg_score,
+            ifNotFinite(avgIf(
+                CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ), NULL) AS pass_rate,
+            countIf(
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS success_count,
+            countIf(
+                error = 1 OR ifNull(output_str, '') = 'ERROR' OR status = 'errored'
+            ) AS error_count,
+            countIf(status = 'skipped') AS skipped_count,
+            countIf(status = 'running') AS running_count,
+            countIf(status = 'pending') AS pending_count,
+            anyIf(skipped_reason, status = 'skipped') AS skipped_reason,
+            count() AS eval_count,
+            groupArrayIf(
+                {count_mode_choice_array() if count_mode else "output_str_list"},
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS str_lists
+            {count_projection}
+        -- Candidate-scoped latest replay. Live/tombstone predicates are
+        -- intentionally outside LIMIT 1 BY id so a newest deletion marker
+        -- cannot resurrect an older score.
+        FROM {eval_source}
         GROUP BY {trace_group}observation_span_id, custom_eval_config_id
         SETTINGS max_bytes_before_external_group_by = 1073741824, max_bytes_before_external_sort = 1073741824
         """
@@ -2385,6 +2501,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         created_after: Any = None,
         *,
         span_entities: list[tuple[str, str]] | None = None,
+        by_project: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Build the Phase-3 annotation query for a page of span IDs.
 
@@ -2393,6 +2510,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 rationale as ``build_eval_query`` (``model_hub_score`` is also
                 ``PARTITION BY toYYYYMM(created_at)``; a score row cannot
                 pre-date its span row).
+            by_project: Also group by and return ``tracer_project_id`` so an
+                organization-scoped page can attribute each score to its own
+                project's copy of a trace/span id held by several projects.
         """
         entities = self._normalize_span_entities(span_entities)
         if entities is not None:
@@ -2428,17 +2548,22 @@ class SpanListQueryBuilder(BaseQueryBuilder):
               AND toString(trace_id) IN %(annotation_trace_ids)s
               AND (toString(trace_id), observation_span_id) IN %(annotation_span_entities)s
             """
+        project_select = project_inner_select = project_group = ""
+        if by_project:
+            project_select = "toString(tracer_project_id) AS tracer_project_id, "
+            project_inner_select = "tracer_project_id, "
+            project_group = "tracer_project_id, "
 
         # Candidate-scoped latest replay. Deletion predicates remain outside
         # LIMIT 1 BY id so an unmerged tombstone cannot resurrect an old score.
         query = f"""
         SELECT
-            {trace_select}
+            {project_select}{trace_select}
             observation_span_id,
             toString(label_id) AS label_id,
             anyLast(value) AS value
         FROM (
-            SELECT {trace_inner_select} observation_span_id, label_id, value,
+            SELECT {project_inner_select}{trace_inner_select} observation_span_id, label_id, value,
                    _peerdb_is_deleted AS latest_cdc_deleted,
                    deleted AS latest_soft_deleted
             FROM {self.ANNOTATION_TABLE}
@@ -2451,7 +2576,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         )
         WHERE latest_cdc_deleted = 0
           AND latest_soft_deleted = false
-        GROUP BY {trace_group}observation_span_id, label_id
+        GROUP BY {project_group}{trace_group}observation_span_id, label_id
         """
         return query, params
 
@@ -2464,6 +2589,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         eval_rows: list[dict],
         *,
         key_by_trace: bool = False,
+        count_mode: bool = False,
+        output_types: dict[str, str | None] | None = None,
+        declared_choices: dict[str, list[str]] | None = None,
     ) -> dict[Any, dict[str, Any]]:
         """Pivot eval query results into a nested dict keyed by span_id.
 
@@ -2479,6 +2607,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         import json as _json
 
         result: dict[Any, dict[str, Any]] = {}
+        output_types = output_types or {}
+        declared_choices = declared_choices or {}
         for row in eval_rows:
             span_id = str(row.get("observation_span_id", ""))
             trace_id = str(row.get("trace_id") or "")
@@ -2498,6 +2628,59 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             # UI can render an error state (distinct from "no eval run").
             if success_count == 0 and error_count > 0:
                 result.setdefault(span_key, {})[config_id] = {"error": True}
+                continue
+
+            if count_mode:
+                output_type = (
+                    (output_types.get(config_id) or "")
+                    .replace("/", "_")
+                    .replace(" ", "_")
+                    .upper()
+                )
+                if success_count == 0:
+                    marker = non_terminal_eval_marker(row)
+                    if marker is not None:
+                        result.setdefault(span_key, {})[config_id] = marker
+                    continue
+
+                if output_type == "PASS_FAIL":
+                    result.setdefault(span_key, {})[config_id] = {
+                        "pass": row.get("pass_count", 0) or 0,
+                        "fail": row.get("fail_count", 0) or 0,
+                    }
+                    continue
+
+                if output_type == "CHOICES":
+                    counts = {
+                        str(choice): 0
+                        for choice in declared_choices.get(config_id, [])
+                        if choice not in (None, "")
+                    }
+                    for sl in str_lists:
+                        if isinstance(sl, str) and sl.startswith("["):
+                            try:
+                                sl = _json.loads(sl)
+                            except _json.JSONDecodeError:
+                                sl = []
+                        if not isinstance(sl, list):
+                            continue
+                        for choice in {
+                            str(value) for value in sl if value not in (None, "")
+                        }:
+                            counts[choice] = counts.get(choice, 0) + 1
+                    result.setdefault(span_key, {})[config_id] = counts
+                    continue
+
+                if (
+                    isinstance(avg_score, (int, float))
+                    and not isinstance(avg_score, bool)
+                    and math.isfinite(avg_score)
+                ):
+                    result.setdefault(span_key, {})[config_id] = round(
+                        avg_score * 100, 2
+                    )
+                else:
+                    result.setdefault(span_key, {})[config_id] = None
                 continue
 
             # CHOICES eval: compute per-choice percentage across all

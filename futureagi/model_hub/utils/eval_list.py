@@ -31,6 +31,9 @@ def build_run_config_view(eval_config) -> dict:
     binding_json = getattr(eval_config, "config", None) or {}
     run_config = binding_json.get("run_config") or {}
     view = {k: run_config.get(k, deepcopy(v)) for k, v in _RUN_CONFIG_DEFAULTS.items()}
+    for key in ("model", "choice_scores", "multi_choice"):
+        if key in run_config:
+            view[key] = run_config[key]
     summary = view["summary"]
     if isinstance(summary, dict):
         view["summary"] = summary.get("type", _RUN_CONFIG_DEFAULTS["summary"])

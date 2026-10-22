@@ -15,6 +15,7 @@ const KEYS = {
   list: (params) => ["errorFeed", "list", params],
   stats: (params) => ["errorFeed", "stats", params],
   detail: (clusterId) => ["errorFeed", "detail", clusterId],
+  redirect: (clusterId) => ["errorFeed", "redirect", clusterId],
   overview: (clusterId) => ["errorFeed", "overview", clusterId],
   traces: (clusterId, params) => ["errorFeed", "traces", clusterId, params],
   trends: (clusterId, params) => ["errorFeed", "trends", clusterId, params],
@@ -87,6 +88,19 @@ export const useErrorFeedDetail = (clusterId, options = {}) => {
     queryFn: () => axios.get(endpoints.errorFeed.detail(clusterId)),
     select: (res) => res?.data?.result,
     enabled,
+  });
+};
+
+export const useErrorFeedRedirect = (clusterId, options = {}) => {
+  const enabled = !!clusterId && (options.enabled ?? true);
+
+  return useQuery({
+    ...options,
+    queryKey: KEYS.redirect(clusterId),
+    queryFn: () => axios.get(endpoints.errorFeed.redirect(clusterId)),
+    select: (res) => res?.data?.result,
+    enabled,
+    retry: false,
   });
 };
 

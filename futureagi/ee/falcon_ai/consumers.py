@@ -15,6 +15,7 @@ from ee.usage.schemas.events import UsageEvent
 from ee.usage.services.config import BillingConfig
 from ee.usage.services.emitter import emit
 from ee.usage.services.metering import check_usage
+from sockets.saml_guard import SamlSocketGuard
 from tfc.ee_gating import EEFeature, FeatureUnavailable, check_ee_feature
 
 logger = structlog.get_logger(__name__)
@@ -39,6 +40,7 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         self._message_timestamps = []  # For rate limiting
         self._rate_limit = 10  # max messages per window
         self._rate_window = 60  # seconds
+        self._guard = SamlSocketGuard(self)
 
     async def connect(self):
         user = self.scope.get("user")
@@ -47,6 +49,8 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             return
 
         self.user = user
+        if not await self._guard.ensure_live(inbound=True):
+            return
 
         # Parse workspace_id from query string FIRST — it determines the org
         params = parse_qs(self.scope.get("query_string", b"").decode())
@@ -64,6 +68,12 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
 
         if self.organization is None:
             await self.close(code=4002)
+            return
+        auth_scope = self.scope.get("auth_scope")
+        if auth_scope is not None and str(self.organization.id) != str(
+            auth_scope.org_id
+        ):
+            await self.close(code=4003)
             return
         self.organization_id = str(self.organization.id)
 
@@ -88,6 +98,8 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         )
 
     async def receive_json(self, content):
+        if not await self._guard.ensure_live(inbound=True):
+            return
         msg_type = content.get("type")
 
         # Rate limiting — only for actionable message types, not ping/reconnect
@@ -148,9 +160,9 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             parts = message_content.split(" ", 1)
             slug = parts[0][1:]  # strip leading "/"
             if slug:
-                from ee.falcon_ai.models import Skill
-
                 from django.db.models import Q
+
+                from ee.falcon_ai.models import Skill
 
                 slash_skill = await database_sync_to_async(
                     lambda: Skill.no_workspace_objects.filter(
@@ -368,9 +380,9 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
             # Resolve skill from DB if skill_id provided
             skill = None
             if skill_id:
-                from ee.falcon_ai.models import Skill
-
                 from django.db.models import Q
+
+                from ee.falcon_ai.models import Skill
 
                 skill = await database_sync_to_async(
                     lambda: Skill.no_workspace_objects.filter(
@@ -544,6 +556,8 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
         # Only cancel if the user explicitly clicked "Stop" (handled in _handle_stop).
 
     async def send_json(self, content, close=False):
+        if not await self._guard.ensure_live(inbound=False):
+            return
         try:
             await super().send_json(content, close=close)
         except Exception as e:

@@ -23,7 +23,14 @@ from django.db import transaction
 logger = structlog.get_logger(__name__)
 
 # Bump this when system evals change. Seeder skips if DB is already at this version.
-SYSTEM_EVALS_VERSION = 16
+# 19: dev's voice-agent evals (18) plus this branch's MODEL_SERVING_URL-aware
+# embedding evals (17), so a database seeded at either one re-seeds.
+# 21: conversation-evidence criteria for task, field intake, queries, and hallucination.
+# 23: word_info_preserved counts hits from the alignment, so insertions lower the score.
+# 24: ndcg_at_k no longer counts duplicate retrievals, so it stays within 1.0.
+# 25: matthews_correlation computes multiclass MCC instead of rescaled accuracy.
+# 26: the 24 ndcg_at_k fix landed after 25, so it ships as 26.
+SYSTEM_EVALS_VERSION = 27
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any
@@ -31,38 +38,10 @@ SYSTEM_EVALS_VERSION = 16
 _SEED_EVALS_LOCK_KEY = 0x5EED_E7A1
 
 SYSTEM_EVALS_DIR = Path(__file__).resolve().parent.parent.parent / "system_evals"
-CATALOG_YAML = (
-    Path(__file__).resolve().parent.parent.parent.parent
-    / "evaluations"
-    / "catalog"
-    / "system_evals.yaml"
-)
-
-
-def _load_catalog_tags():
-    """Load UI-facing tags from the evaluations catalog YAML.
-
-    Returns a dict mapping eval name → list of tags.
-    """
-    if not CATALOG_YAML.exists():
-        return {}
-    try:
-        with open(CATALOG_YAML) as f:
-            catalog = yaml.safe_load(f) or {}
-        return {
-            name: entry.get("tags", [])
-            for name, entry in catalog.items()
-            if isinstance(entry, dict) and entry.get("tags")
-        }
-    except Exception as e:
-        logger.warning("catalog_tags_load_error", error=str(e))
-        return {}
 
 
 def load_yaml_evals():
     """Load all YAML eval definitions from the system_evals directory."""
-    catalog_tags = _load_catalog_tags()
-
     evals = []
     for subdir in ("function", "agent", "specialty"):
         dirpath = SYSTEM_EVALS_DIR / subdir
@@ -75,10 +54,6 @@ def load_yaml_evals():
                 if data:
                     data["_source_file"] = str(filepath.relative_to(SYSTEM_EVALS_DIR))
                     data["_track"] = subdir
-                    # Merge UI tags from catalog (keyed by eval name)
-                    eval_name = data.get("name") or filepath.stem
-                    if eval_name in catalog_tags:
-                        data["eval_tags"] = catalog_tags[eval_name]
                     evals.append(data)
             except Exception as e:
                 logger.error("yaml_load_error", file=str(filepath), error=str(e))
