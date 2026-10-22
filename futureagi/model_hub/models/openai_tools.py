@@ -74,17 +74,79 @@ def openai_tool_envelope(name, description, config):
                 "description": body.get("description") or description or "",
             },
         }
-    parameters = config.get("parameters")
-    if not isinstance(parameters, dict) or not parameters:
-        parameters = {"type": "object", "properties": {}}
-    return {
-        "type": OPENAI_TOOL_TYPE,
-        OPENAI_TOOL_BODY_KEY: {
-            "name": openai_function_name(name),
-            "description": description or "",
-            "parameters": parameters,
-        },
-    }
+    if "parameters" in config:
+        parameters = config.get("parameters")
+        if isinstance(parameters, dict):
+            if not parameters:
+                parameters = {"type": "object", "properties": {}}
+            return {
+                "type": OPENAI_TOOL_TYPE,
+                OPENAI_TOOL_BODY_KEY: {
+                    "name": openai_function_name(name),
+                    "description": description or "",
+                    "parameters": parameters,
+                },
+            }
+        # Malformed parameters schema (e.g. non-dict like string or int)
+        return config
+
+    if isinstance(config.get("properties"), dict) or config.get("type") == "object":
+        return {
+            "type": OPENAI_TOOL_TYPE,
+            OPENAI_TOOL_BODY_KEY: {
+                "name": openai_function_name(name),
+                "description": description or "",
+                "parameters": config,
+            },
+        }
+
+    # Pass malformed schema through as written so it still fails loudly
+    return config
+
+
+def ensure_openai_tool_envelope(tool, name=None, description=None):
+    """Wrap any tool representation into the OpenAI function envelope.
+
+    Handles:
+    - Model instance of Tools: calls tool.as_openai_tool()
+    - Dict already in the function envelope: preserves body, fills name/description if missing
+    - Dict with top-level 'parameters': wraps in function envelope
+    - Dict with top-level 'properties' or type 'object': wraps in function envelope
+    - Dict with nested 'config': wraps via openai_tool_envelope
+    - Malformed schemas and non-dicts: passed through as written to fail loudly
+    """
+    if hasattr(tool, "as_openai_tool") and callable(tool.as_openai_tool):
+        return tool.as_openai_tool()
+    if not isinstance(tool, dict):
+        return tool
+
+    body = tool.get(OPENAI_TOOL_BODY_KEY)
+    if tool.get("type") == OPENAI_TOOL_TYPE and isinstance(body, dict):
+        return {
+            **tool,
+            OPENAI_TOOL_BODY_KEY: {
+                **body,
+                "name": openai_function_name(
+                    body.get("name") or name or tool.get("name")
+                ),
+                "description": body.get("description")
+                or description
+                or tool.get("description")
+                or "",
+            },
+        }
+
+    tool_name = tool.get("name") or name
+    tool_desc = tool.get("description") or description
+
+    if "config" in tool and isinstance(tool["config"], dict):
+        return openai_tool_envelope(tool_name, tool_desc, tool["config"])
+
+    if "parameters" in tool or "properties" in tool or tool.get("type") == "object":
+        return openai_tool_envelope(tool_name, tool_desc, tool)
+
+    # Malformed schema: pass through as written so it still fails loudly
+    return tool
 
 
 class Tools(BaseModel):
