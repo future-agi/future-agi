@@ -57,6 +57,7 @@ Layout (every file except `release.json` is listed in `files[]`; symlinks,
 release.json             manifest
 tools.json               canonical tool definitions
 policy.json              rules and parameters
+servers.json             optional: attached MCP servers (§2.1.1)
 world/                   a world snapshot (fi.alk.harness.world.snapshot layout)
   manifest.json            tool_implementation "environment", runtime_tools []
   world.sqlite             schema, invariants and seed
@@ -116,6 +117,35 @@ Sealing refuses:
 
 Authoring rule (not mechanically checkable): no agent-internal tools
 (handoffs, transfer-to-phase, end-call) in an environment.
+
+#### 2.1.1 Attached MCP servers
+
+`servers.json` attaches MCP servers from ALK's registry
+(`fi.alk.harness.mcp_servers.REGISTRY`, each pinned to what that ALK ships) to
+every world:
+
+```json
+[{"id": "sql", "server": "sql", "tools": ["query"],
+  "attach": {"database_reader": {"tables": ["providers", "slots"]}}}]
+```
+
+- Each server starts over stdio, fresh for the world, on first use. Its listed
+  `tools` (an allowlist) reach the agent as `<id>__<tool>`; native tool names do
+  not change. A call to one is traced exactly like a native call (§6.1).
+- `database_reader` gives the server a login of its own in the `world_reader`
+  role. The seed grants that role `SELECT` on the listed tables, so every world
+  cloned from the template keeps the grant. Internal tables (`_alk_*`,
+  `environment_policy`) cannot be listed.
+- `sql` is ALK's read-only SQL server: one `query` tool, a single prepared
+  statement in a read-only transaction, a 5 s statement timeout and 200 rows.
+
+Sealing refuses an unknown server, a duplicate id, a tool name that clashes with
+a native tool, a server that does not take the attach it is given, and a table
+that does not exist or is internal. An extension cannot change its parent's
+`servers.json`. A scenario whose reference solution calls an attached tool is
+checked for readiness on SQLite and proved in full on PostgreSQL (§2.3), so such
+a suite needs a PostgreSQL DSN to seal. A provider agent without the tool cannot
+pass that scenario; adaptation reports it unscorable (§7.5).
 
 ### 2.2 Extensions (mixed environments)
 
@@ -472,8 +502,8 @@ deterministic: the same inputs give the same bundle digest.
 
 | Part | Content |
 |---|---|
-| `world-db` | managed PostgreSQL 16, store `world_db`, `template_database` baseline, seeded by `seed/world.sql`: the shared prefix (readiness sentinel, `_alk_tool_trace`), the request-binding tables (§6.2), the release world converted by the agent-first converter, then the suite profile written into `environment_policy` |
-| `tool-server` | source process from `generated/tool-server` (§6.1) with the release's `tools.json`, `handlers/` and the run's `binding.json`, user `svc-tools`, one per world, environment `REQUEST_BINDING=1` |
+| `world-db` | managed PostgreSQL 16, store `world_db`, `template_database` baseline, seeded by `seed/world.sql`: the shared prefix (readiness sentinel, `_alk_tool_trace`), the request-binding tables (§6.2), the release world converted by the agent-first converter, then the suite profile written into `environment_policy`, then the reader role's grants (§2.1.1) |
+| `tool-server` | source process from `generated/tool-server` (§6.1) with the release's `tools.json`, `servers.json`, `handlers/` and the run's `binding.json`, user `svc-tools`, one per world, environment `REQUEST_BINDING=1` |
 | capabilities | `world_db` (postgres), `tools` (http, `tool-server`, health `/health`) |
 | runtime | `kind: process`, `evidence_seam: tool_trace` |
 | `metadata.provider_import` | `type` `retell` (connectors `retell`, `retell_chat`) or `vapi`; `source_target_id` from `job.agent.config` `agent_id` (Retell) or `assistant_id` (Vapi); public capability `tools`; `environment_tools` = the release's tool names (`canonical`) or the binding's `agent_tools` names (`tool_routed`); `target_modality` `chat` for `retell_chat`, else `voice`; `admission: "per_tool"`; `request_binding: true`; `profile_digest` = the binding's `agent.provider_digest` |
@@ -498,7 +528,9 @@ world's PostgreSQL. Handlers may use `?` placeholders, which it translates to
 psycopg's. Their SQL must be valid on both SQLite and PostgreSQL (for example
 `ON CONFLICT ... DO NOTHING`, never `INSERT OR IGNORE`); the runtime proof in
 §2.3 enforces this. Every agent call goes through `run_bound_call` (§2.4.1)
-with the run's binding, in one transaction.
+with the run's binding, in one transaction, by `fi.alk.harness.world_tools`,
+which the PostgreSQL proofs use too; a call to an attached server (§2.1.1) goes
+to that server instead of a handler.
 
 | Route | Request | Response |
 |---|---|---|
