@@ -31,7 +31,3 @@ futureagi/bin/test                  text eol=lf
 # Container and SQL inputs read by Linux tooling.
 Dockerfile*     text eol=lf
 *.sql           text eol=lf
-
-# PowerShell is the Windows-native path and keeps CRLF. Listed after bin/*
-# entries so it wins for bin/install.ps1 and bin/property-catalog-backfill.ps1.
-*.ps1           text eol=crlf
