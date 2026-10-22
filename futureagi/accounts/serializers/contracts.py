@@ -654,6 +654,7 @@ class AcceptInvitationPreviewResponseSerializer(serializers.Serializer):
     valid = serializers.BooleanField()
     email = serializers.EmailField()
     org_name = serializers.CharField()
+    existing_user = serializers.BooleanField()
 
 
 class UserInfoOrganizationSerializer(serializers.Serializer):

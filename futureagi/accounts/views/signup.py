@@ -667,6 +667,60 @@ def _activate_memberships(user):
     ).update(is_active=True)
 
 
+INVITE_LINK_INVALID = "Invitation link is invalid or has expired."
+INVITE_NOT_PENDING = "This invitation has been cancelled or expired."
+INVITE_EXPIRED = "This invitation has expired. Ask your admin to resend it."
+INVITE_ALREADY_ACCEPTED = "This invitation has already been accepted. Please log in."
+
+
+def resolve_invite_for_link(user, token):
+    """Return ``(invite, None)`` for the invite an accept link names, or
+    ``(None, error_message)``.
+
+    New links carry a signed invite id, so each organization's email accepts
+    its own invite. Older links carry a password-reset token and resolve to
+    the pending invite of ``user.organization``.
+    """
+    from accounts.invite_tokens import read_invite_token
+    from accounts.models.organization_invite import InviteStatus, OrganizationInvite
+
+    invite_id = read_invite_token(token)
+    if invite_id:
+        invite = (
+            OrganizationInvite.objects.select_related("organization")
+            .filter(id=invite_id)
+            .first()
+        )
+        if not invite or invite.target_email.lower() != user.email.lower():
+            return None, INVITE_LINK_INVALID
+    else:
+        # Legacy links sent before per-invite tokens; they die within
+        # PASSWORD_RESET_TIMEOUT, so remove this branch a week after release.
+        if not default_token_generator.check_token(user, token):
+            return None, INVITE_LINK_INVALID
+        if not user.organization:
+            return None, INVITE_LINK_INVALID
+        invite = (
+            OrganizationInvite.objects.select_related("organization")
+            .filter(
+                target_email__iexact=user.email,
+                organization=user.organization,
+                status=InviteStatus.PENDING,
+            )
+            .first()
+        )
+        if not invite:
+            return None, INVITE_NOT_PENDING
+
+    if invite.status == InviteStatus.ACCEPTED:
+        return None, INVITE_ALREADY_ACCEPTED
+    if invite.status != InviteStatus.PENDING:
+        return None, INVITE_NOT_PENDING
+    if invite.is_expired:
+        return None, INVITE_EXPIRED
+    return invite, None
+
+
 @swagger_auto_schema(
     method="get",
     responses={
@@ -699,26 +753,9 @@ def accept_invitation_mail(request, uidb64, token):
         uid = force_str(urlsafe_base64_decode(uidb64))
         user = User.objects.select_related("organization").get(pk=uid)
 
-        if not default_token_generator.check_token(user, token):
-            return _gm.bad_request("Invitation link is invalid or has expired.")
-
-        # ------------------------------------------------------------------
-        # Check if invite was cancelled - OrganizationInvite must be pending
-        # ------------------------------------------------------------------
-        from accounts.models.organization_invite import InviteStatus, OrganizationInvite
-
-        org = user.organization
-        if not org:
-            return _gm.bad_request("Invitation link is invalid or has expired.")
-
-        invite_exists = OrganizationInvite.objects.filter(
-            target_email__iexact=user.email,
-            organization=org,
-            status=InviteStatus.PENDING,
-        ).exists()
-
-        if not invite_exists:
-            return _gm.bad_request("This invitation has been cancelled or expired.")
+        invite, invite_error = resolve_invite_for_link(user, token)
+        if invite_error:
+            return _gm.bad_request(invite_error)
 
         # ------------------------------------------------------------------
         # Security check: If another user is logged in, reject the request.
@@ -740,7 +777,7 @@ def accept_invitation_mail(request, uidb64, token):
                 # Token decryption failed - ignore and continue (treat as unauthenticated)
                 pass
 
-        org = user.organization
+        org = invite.organization
         org_name = org.display_name if org.display_name else org.name
 
         # ------------------------------------------------------------------
@@ -753,6 +790,7 @@ def accept_invitation_mail(request, uidb64, token):
                     "valid": True,
                     "email": user.email,
                     "org_name": org_name,
+                    "existing_user": user.is_active,
                 },
                 status=status.HTTP_200_OK,
             )
