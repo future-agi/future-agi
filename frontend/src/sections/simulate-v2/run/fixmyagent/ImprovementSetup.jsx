@@ -8,6 +8,8 @@ import {
 import Iconify from "src/components/iconify";
 import { clickable, focusRing } from "../../components/clickable";
 import { connectedAgentPath } from "../../improvements/improvementNav";
+import AgentPicker from "../../improvements/AgentPicker";
+import { agentPickerChoice, agentPickerHelper } from "../../improvements/agentPickerChoices";
 import { useSimStore, useConnectedAgents, useEnvState } from "../../store";
 import { agentDefinitionOf } from "../../_mock/agentRegistry";
 import { getEval } from "../../_mock/evals";
@@ -254,7 +256,20 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
       </Stack>
 
       <Stack spacing={2.5} sx={{ px: 2.5, py: 2.5, overflowY: "auto", ...(bare ? { flex: 1, minHeight: 0 } : { maxHeight: "62vh" }) }}>
-        {agentField}
+        {agentField || (agent && (
+          /* Debug failures: the same field as New improvement, fixed to the agent this run tested. */
+          <Box>
+            <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>Agent</Typography>
+            <AgentPicker
+              choices={[agentPickerChoice(agent, main)]}
+              value={agent.key}
+              locked="Debug failures improves the agent this run tested. To improve another agent, start a new improvement from Improvements."
+            />
+            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>
+              {agentPickerHelper(agentPickerChoice(agent, main), main?.name)}
+            </Typography>
+          </Box>
+        ))}
         {!main && agentField && (
           <Typography sx={{ typography: "s3", color: "text.subtitle", mt: "-12px !important" }}>
             Its goals, budget and cost show here once it&apos;s picked.

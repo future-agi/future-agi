@@ -55,17 +55,21 @@ export default function TemplateBuildPanel({ template, showName = false, initial
   const build = useBuildForAgent();
   /* "cloud" — our hosted sandbox; "local" — the person's own machine. */
   const [where, setWhere] = useState("cloud");
-  /* On their machine: what the Build environment dialog settled, while the
-     CLI steps run; then the machine checks in and the build opens. */
-  const [localChoice, setLocalChoice] = useState(null);
+  /* On their machine there's nothing to build here: the CLI steps show as
+     soon as the agent is picked, we wait for the machine to check in, and
+     the build opens once it has. */
+  const [ranUp, setRanUp] = useState(false);
   const [checkedIn, setCheckedIn] = useState(false);
   useEffect(() => {
-    if (!localChoice) return undefined;
+    setRanUp(false);
     setCheckedIn(false);
-    /* Demo: the machine checks in a moment after the steps run. */
+  }, [agentId, where]);
+  useEffect(() => {
+    if (!ranUp) return undefined;
+    /* Demo: the machine checks in a moment after its last command is copied. */
     const t = setTimeout(() => setCheckedIn(true), 4000);
     return () => clearTimeout(t);
-  }, [localChoice]);
+  }, [ranUp]);
   const startBuild = (choice, runsOn) => build(agent, choice, { ...templateWorldSource(template), ...(runsOn === "local" && { runsOn: "local" }) });
 
   if (!template) return null;
@@ -141,7 +145,7 @@ export default function TemplateBuildPanel({ template, showName = false, initial
         subtitle="The world is the starting point; the agent is what's tested."
       >
         <Stack sx={{ p: 2.5 }} spacing={2}>
-          <WorldAgentPicker value={agentId} onChange={(id) => { setAgentId(id); setLocalChoice(null); }} surface={worldChannelOf(template)} />
+          <WorldAgentPicker value={agentId} onChange={setAgentId} surface={worldChannelOf(template)} />
           {agent && replicationOf(agent).proofLabel === "Live" && (
             <Stack direction="row" spacing={1.25} alignItems="flex-start" sx={{ px: 1.5, py: 1.25, borderRadius: 1, border: "1px solid", borderColor: "divider", bgcolor: "background.neutral" }}>
               <Iconify icon="solar:info-circle-linear" width={16} sx={{ color: "text.secondary", flexShrink: 0, mt: "1px" }} />
@@ -155,7 +159,7 @@ export default function TemplateBuildPanel({ template, showName = false, initial
             <Box sx={{ display: "grid", gap: 1, gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" } }}>
               <WhereOption
                 icon="solar:cloud-linear" label="In Future AGI" on={where === "cloud"}
-                onClick={() => { setWhere("cloud"); setLocalChoice(null); }}
+                onClick={() => setWhere("cloud")}
                 short="Our hosted sandbox · ready to run in seconds"
                 hint="Built in an isolated sandbox from this world's tables, tools and rules. Runs are metered by the minute."
               />
@@ -167,7 +171,7 @@ export default function TemplateBuildPanel({ template, showName = false, initial
               />
             </Box>
           </Box>
-          <Stack spacing={1.25}>
+          {where === "cloud" && <Stack spacing={1.25}>
             {[
               { icon: "solar:box-minimalistic-linear", text: "Seeded with this world's tables, tools and hard rules." },
               { icon: "solar:user-speak-rounded-linear", text: "Your agent is read and its tools are checked against the world.", hint: "A tool the world doesn't answer is named before anything runs." },
@@ -180,19 +184,24 @@ export default function TemplateBuildPanel({ template, showName = false, initial
                 </Typography>
               </Stack>
             ))}
-          </Stack>
+          </Stack>}
         </Stack>
-        {localChoice && agent && (
+        {where === "local" && (agent ? (
           <LocalRun
             template={template}
             agent={agent}
-            choice={localChoice}
+            choice={localChoiceOf(template, agent)}
+            ranUp={ranUp}
             checkedIn={checkedIn}
-            onOpen={() => startBuild(localChoice, "local")}
-            onBack={() => setLocalChoice(null)}
+            onRanUp={() => setRanUp(true)}
+            onOpen={() => startBuild(localChoiceOf(template, agent), "local")}
           />
-        )}
-        {!localChoice && <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider" }}>
+        ) : (
+          <Typography sx={{ typography: "s3", color: "text.subtitle", px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider" }}>
+            Pick the agent this environment is for — the commands to run on your machine show here.
+          </Typography>
+        ))}
+        {where === "cloud" && <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider" }}>
           <Button
             variant="contained" color="primary"
             disabled={!agent}
@@ -204,9 +213,6 @@ export default function TemplateBuildPanel({ template, showName = false, initial
           </Button>
           {!agent && (
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Pick the agent this environment is for</Typography>
-          )}
-          {agent && where === "local" && (
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Then run three commands on your machine</Typography>
           )}
         </Stack>}
       </SectionCard>
@@ -256,8 +262,7 @@ export default function TemplateBuildPanel({ template, showName = false, initial
           defaultVersion={agent.production || agent.latest}
           onBuild={(choice) => {
             setDialogOpen(false);
-            if (where === "local") setLocalChoice(choice);
-            else startBuild(choice, "cloud");
+            startBuild(choice, "cloud");
           }}
         />
       )}
@@ -266,22 +271,30 @@ export default function TemplateBuildPanel({ template, showName = false, initial
 }
 TemplateBuildPanel.propTypes = { template: PropTypes.object, showName: PropTypes.bool, initialMode: PropTypes.oneOf(["try", "agent"]) };
 
+/* What the commands build on the machine: the agent's production version and
+   10 scenarios to start — both are flags the person can change in the command. */
+function localChoiceOf(template, agent) {
+  return { name: `${agent.name} · ${template.name}`, version: agent.production || agent.latest, count: 10 };
+}
+
 /* On their machine: the CLI steps for this world and agent, then the wait
    for the machine to check in, then the build — as it is in Future AGI. */
-function LocalRun({ template, agent, choice, checkedIn, onOpen, onBack }) {
-  const slug = (choice.name || template.name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+function LocalRun({ template, agent, choice, ranUp, checkedIn, onRanUp, onOpen }) {
+  const slug = choice.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   const steps = [
     { title: "Install the CLI", body: "Once per machine.", cmd: "pip install futureagi" },
     {
       title: "Pull this world for your agent",
-      body: `This world's tables, tools and rules, and ${agent.name} at ${choice.version || agent.latest}.`,
-      cmd: `fai env init ${slug} --world ${template.id} --agent "${agent.name}" --scenarios ${choice.count}`,
+      body: `This world's tables, tools and rules, and ${agent.name} at ${choice.version}.`,
+      hint: `Change --version for another of the agent's versions, and --scenarios for 10 to 1,000 scenarios.`,
+      cmd: `fai env init ${slug} --world ${template.id} --agent "${agent.name}" --version ${choice.version} --scenarios ${choice.count}`,
     },
     {
       title: "Build it on your machine",
       body: "Builds the world locally and opens a secure tunnel back to this workspace.",
       hint: "Nothing in the world leaves your machine — the tunnel carries results, traces and scores.",
       cmd: `fai env up ${slug}`,
+      onCopy: onRanUp,
     },
   ];
   return (
@@ -293,13 +306,16 @@ function LocalRun({ template, agent, choice, checkedIn, onOpen, onBack }) {
       <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 2.5, py: 1.75 }}>
         {checkedIn ? (
           <Iconify icon="solar:check-circle-bold" width={16} sx={{ color: "#16A34A", flexShrink: 0 }} />
-        ) : (
+        ) : ranUp ? (
           <CircularProgress size={14} thickness={5} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+        ) : (
+          <Iconify icon="solar:laptop-2-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0 }} />
         )}
         <Typography sx={{ typography: "s2", color: checkedIn ? "text.primary" : "text.secondary", flex: 1, minWidth: 0 }}>
-          {checkedIn ? "Your machine checked in — the build continues here." : "Waiting for your machine to check in…"}
+          {checkedIn ? "Your machine checked in — follow the build here."
+            : ranUp ? "Waiting for your machine to check in…"
+              : "Run these on your machine — it shows here when it checks in."}
         </Typography>
-        <Button size="small" onClick={onBack} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary" }}>Back</Button>
         <Button
           size="small" variant="contained" color="primary"
           disabled={!checkedIn}
@@ -314,7 +330,7 @@ function LocalRun({ template, agent, choice, checkedIn, onOpen, onBack }) {
 }
 LocalRun.propTypes = {
   template: PropTypes.object.isRequired, agent: PropTypes.object.isRequired, choice: PropTypes.object.isRequired,
-  checkedIn: PropTypes.bool, onOpen: PropTypes.func.isRequired, onBack: PropTypes.func.isRequired,
+  ranUp: PropTypes.bool, checkedIn: PropTypes.bool, onRanUp: PropTypes.func.isRequired, onOpen: PropTypes.func.isRequired,
 };
 
 function Line({ label, value, muted = false }) {

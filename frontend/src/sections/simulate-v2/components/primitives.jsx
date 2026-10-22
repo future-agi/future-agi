@@ -355,10 +355,11 @@ SectionCard.propTypes = {
 
 /* ── copy-to-clipboard field ─────────────────────────────────────────────── */
 
-export function CopyField({ label, value, mono = true, wrap = false }) {
+export function CopyField({ label, value, mono = true, wrap = false, onCopy = null }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
     navigator.clipboard?.writeText(value);
+    onCopy?.();
     setCopied(true);
     setTimeout(() => setCopied(false), 1600);
   };
@@ -404,7 +405,7 @@ export function CopyField({ label, value, mono = true, wrap = false }) {
 }
 CopyField.propTypes = {
   label: PropTypes.string, value: PropTypes.string,
-  mono: PropTypes.bool, wrap: PropTypes.bool,
+  mono: PropTypes.bool, wrap: PropTypes.bool, onCopy: PropTypes.func,
 };
 
 /* ── metric tile ─────────────────────────────────────────────────────────── */

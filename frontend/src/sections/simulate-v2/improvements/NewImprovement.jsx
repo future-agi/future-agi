@@ -10,7 +10,7 @@ import { isComingSoon } from "../_mock/rsiModel";
 import ImprovementSetup from "../run/fixmyagent/ImprovementSetup";
 import SideDrawer from "../components/SideDrawer";
 import AgentPicker from "./AgentPicker";
-import { agentSourceOf } from "../_mock/agentRegistry";
+import { agentPickerChoice, agentPickerHelper } from "./agentPickerChoices";
 import { improvementPath } from "./improvementNav";
 
 /*
@@ -61,22 +61,10 @@ export default function NewImprovement({ open, onClose }) {
     search, agent types and sources on the left, a row per agent — and the
     main environment is said under the field once one is picked.
   */
-  const typeOf = (c) => (c.main?.env?.surface === "voice" ? "Voice" : "Chat");
-  const pickerChoices = useMemo(() => [...choices]
-    .map((c) => ({
-      key: c.agent.key,
-      name: c.agent.name,
-      type: typeOf(c),
-      /* Where it lives, without its connection state ("GitHub · app not installed" is GitHub). */
-      source: String(agentSourceOf(c.agent).label || "").split(" · ")[0],
-      version: c.agent.production || "—",
-      envs: (c.agent.usedIn || []).length,
-      off: !!c.status && c.status.status !== "connected",
-      offReason: c.status?.label,
-    }))
-    .sort((a, b) => Number(a.off) - Number(b.off) || a.name.localeCompare(b.name)), [choices]); // eslint-disable-line react-hooks/exhaustive-deps
-  const pickedChoice = choices.find((c) => c.agent.key === picked?.key) || null;
-  const envCount = (c) => (c.agent.usedIn || []).length;
+  const pickerChoices = useMemo(() => choices
+    .map((c) => agentPickerChoice(c.agent, c.main?.env, c.status))
+    .sort((a, b) => Number(a.off) - Number(b.off) || a.name.localeCompare(b.name)), [choices]);
+  const pickedChoice = pickerChoices.find((c) => c.key === picked?.key) || null;
   const agentField = (
     <Box>
       <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>Agent</Typography>
@@ -87,7 +75,7 @@ export default function NewImprovement({ open, onClose }) {
       />
       {pickedChoice && (
         <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>
-          {`${typeOf(pickedChoice)} · in production ${pickedChoice.agent.production || "—"} · runs in ${pickedChoice.main?.envName || "its main environment"}${envCount(pickedChoice) > 1 ? ` · ${envCount(pickedChoice) - 1} more ${envCount(pickedChoice) === 2 ? "environment" : "environments"}` : ""}`}
+          {agentPickerHelper(pickedChoice, main?.envName)}
         </Typography>
       )}
     </Box>

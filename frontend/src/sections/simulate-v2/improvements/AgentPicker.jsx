@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Box, Chip, ClickAwayListener, Divider, InputAdornment, Paper, Popper, Stack, TextField, Typography,
+  Box, Chip, ClickAwayListener, Divider, InputAdornment, Paper, Popper, Stack, TextField, Tooltip, Typography,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
@@ -16,8 +16,11 @@ const TYPE_ICON = { Voice: "solar:phone-calling-rounded-linear", Chat: "solar:ch
  * one click and a scan, not a scroll.
  *
  *   choices: [{ key, name, type: "Voice" | "Chat", source, version, envs, off, offReason }]
+ *
+ * `locked` keeps the same field but fixes it to `value` — Debug failures
+ * improves the agent its run tested — and says why on hover.
  */
-export default function AgentPicker({ choices, value, onChange }) {
+export default function AgentPicker({ choices, value, onChange, locked = null }) {
   const theme = useTheme();
   const anchor = useRef(null);
   const [open, setOpen] = useState(false);
@@ -38,6 +41,24 @@ export default function AgentPicker({ choices, value, onChange }) {
     ...["Voice", "Chat"].filter((t) => countOf(t)).map((t) => ({ key: t, label: t, icon: TYPE_ICON[t] })),
   ];
   const pick = (c) => { onChange(c.key); setOpen(false); };
+
+  if (locked) {
+    return (
+      <Tooltip arrow placement="bottom-start" title={locked}>
+        <Stack
+          direction="row" alignItems="center" spacing={1} tabIndex={0} aria-disabled="true"
+          sx={{ ...focusRing, px: 1.5, height: 40, borderRadius: 1, border: "1px solid", borderColor: "divider", bgcolor: "action.hover" }}
+        >
+          {picked && <Iconify icon={TYPE_ICON[picked.type]} width={15} sx={{ color: "text.secondary", flexShrink: 0 }} />}
+          <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0 }}>{picked?.name || "—"}</Typography>
+          {picked?.version && (
+            <Chip size="small" variant="outlined" label={picked.version} sx={{ height: 18, fontSize: 10, flexShrink: 0, fontFamily: "ui-monospace, Menlo, monospace" }} />
+          )}
+          <Iconify icon="solar:lock-keyhole-minimalistic-linear" width={14} sx={{ color: "text.disabled", flexShrink: 0 }} />
+        </Stack>
+      </Tooltip>
+    );
+  }
 
   return (
     <>
@@ -169,7 +190,9 @@ AgentPicker.propTypes = {
     offReason: PropTypes.string,
   })).isRequired,
   value: PropTypes.string,
-  onChange: PropTypes.func.isRequired,
+  onChange: PropTypes.func,
+  /* Why the agent can't be changed here — shown on hover. */
+  locked: PropTypes.string,
 };
 
 function RailItem({ cat, on, count, onClick }) {

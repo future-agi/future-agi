@@ -31,7 +31,7 @@ export default function LocalSteps({ steps }) {
               {s.hint ? <HintLine hint={s.hint}>{s.body}</HintLine> : s.body}
             </Typography>
             {s.extra}
-            <CopyField value={s.cmd} wrap />
+            <CopyField value={s.cmd} wrap onCopy={s.onCopy} />
           </Box>
         </Stack>
       ))}
@@ -39,6 +39,6 @@ export default function LocalSteps({ steps }) {
   );
 }
 LocalSteps.propTypes = {
-  /* [{ title, body, hint?, cmd, extra? }] — `extra` sits above the command (e.g. an OS picker). */
+  /* [{ title, body, hint?, cmd, extra?, onCopy? }] — `extra` sits above the command (e.g. an OS picker). */
   steps: PropTypes.arrayOf(PropTypes.object).isRequired,
 };
