@@ -23,19 +23,27 @@ import { getNewTaskFilters } from "../schema";
 
 import {
   defaultSamplingPolicy,
+  samplingPolicyErrors,
   samplingStratumLabel,
+  selectionMode,
 } from "./samplingPolicyForm";
 
 const SOURCES = ["span", "resource", "metadata"];
+// The active selection key (rate or target_n) is required: clearing it keeps
+// the key with an explicit empty value so the mode cannot change and the
+// policy cannot be previewed or saved until a value is entered. Optional
+// floors, caps and census thresholds are removed when cleared.
 const numberUpdate = (rule, key, text) => {
   const next = { ...rule };
-  if (text === "") delete next[key];
-  else next[key] = Number(text);
+  if (text !== "") next[key] = Number(text);
+  else if (key === selectionMode(rule)) next[key] = "";
+  else delete next[key];
   return next;
 };
 
-function RuleControls({ rule, onChange, live }) {
-  const target = Object.hasOwn(rule, "target_n");
+function RuleControls({ rule, onChange, live, errors = {} }) {
+  const mode = selectionMode(rule);
+  const target = mode === "target_n";
   return (
     <Stack spacing={1}>
       <Stack direction="row" spacing={1}>
@@ -43,7 +51,7 @@ function RuleControls({ rule, onChange, live }) {
           select
           size="small"
           label="Selection"
-          value={target ? "target_n" : "rate"}
+          value={mode}
           onChange={(event) => {
             const next = { ...rule };
             delete next.rate;
@@ -62,16 +70,12 @@ function RuleControls({ rule, onChange, live }) {
           size="small"
           type="number"
           label={target ? "Target units" : "Rate (%)"}
-          value={target ? rule.target_n : rule.rate}
+          value={rule[mode] ?? ""}
+          error={Boolean(errors[mode])}
+          helperText={errors[mode] || undefined}
           inputProps={{ min: 0, max: target ? 1000000 : 100 }}
           onChange={(event) =>
-            onChange(
-              numberUpdate(
-                rule,
-                target ? "target_n" : "rate",
-                event.target.value,
-              ),
-            )
+            onChange(numberUpdate(rule, mode, event.target.value))
           }
         />
       </Stack>
@@ -88,6 +92,8 @@ function RuleControls({ rule, onChange, live }) {
               type="number"
               label={label}
               value={rule[key] ?? ""}
+              error={Boolean(errors[key])}
+              helperText={errors[key] || undefined}
               inputProps={{ min: 0, max: 1000000 }}
               onChange={(event) =>
                 onChange(numberUpdate(rule, key, event.target.value))
@@ -103,7 +109,15 @@ RuleControls.propTypes = {
   rule: PropTypes.object.isRequired,
   onChange: PropTypes.func.isRequired,
   live: PropTypes.bool,
+  errors: PropTypes.object,
 };
+
+const ruleErrors = (errors, prefix) =>
+  Object.fromEntries(
+    Object.entries(errors)
+      .filter(([path]) => path.startsWith(`${prefix}.`))
+      .map(([path, message]) => [path.slice(prefix.length + 1), message]),
+  );
 
 function PredicateEditor({ predicate, onChange, onRemove }) {
   return (
@@ -227,6 +241,8 @@ export default function SamplingPolicyEditor({ control, getValues }) {
     setBusy(false);
   }, [scopeKey]);
   const policy = field.value;
+  const policyErrors = samplingPolicyErrors(policy);
+  const invalid = Object.keys(policyErrors).length > 0;
   const update = (next) => {
     requestRef.current += 1;
     setBusy(false);
@@ -240,6 +256,7 @@ export default function SamplingPolicyEditor({ control, getValues }) {
       strata: policy.strata.map((r, i) => (i === index ? rule : r)),
     });
   const runPreview = async () => {
+    if (invalid) return;
     const requestId = ++requestRef.current;
     setBusy(true);
     setError("");
@@ -516,6 +533,7 @@ export default function SamplingPolicyEditor({ control, getValues }) {
                 rule={rule}
                 onChange={(next) => setRule(index, next)}
                 live={policy.mode === "live"}
+                errors={ruleErrors(policyErrors, `strata.${index}`)}
               />
             </Stack>
           ))}
@@ -542,6 +560,7 @@ export default function SamplingPolicyEditor({ control, getValues }) {
             rule={policy.default}
             onChange={(rule) => update({ ...policy, default: rule })}
             live={policy.mode === "live"}
+            errors={ruleErrors(policyErrors, "default")}
           />
           <Typography variant="caption" color="text.secondary">
             Rare-cell census includes every eligible unit below the threshold,
@@ -552,10 +571,15 @@ export default function SamplingPolicyEditor({ control, getValues }) {
           <Button
             variant="outlined"
             onClick={runPreview}
-            disabled={busy || !project}
+            disabled={busy || !project || invalid}
           >
             {busy ? "Previewing population…" : "Preview sampling policy"}
           </Button>
+          {invalid && (
+            <Typography variant="caption" color="error" role="status">
+              Fix the highlighted sampling values before previewing or saving.
+            </Typography>
+          )}
           {error && <Alert severity="error">{error}</Alert>}
           {preview && (
             <Box aria-label="Sampling population preview">

@@ -5,6 +5,7 @@ import {
   presetToToken,
 } from "src/sections/projects/timeWindowPresets";
 import { serializeTaskFilterRowsForApi } from "src/sections/common/EvalsTasks/task_filter_serialization";
+import { samplingPolicyErrors } from "src/sections/tasks/components/samplingPolicyForm";
 
 const TASK_FILTER_PROPERTY_TO_API = {
   span_kind: "observation_type",
@@ -96,7 +97,9 @@ export const getNewTaskFilters = (data, projectId, ignoreDate = false) => {
   const attributeFilters = extractAttributeFilters(data?.filters);
   Object.assign(filters, extractSiblingFilters(data?.filters));
 
-  if (data?.runType === "historical" && !ignoreDate) {
+  // A sampling policy's own event-time window is the only time authority for
+  // its population. Never send a second, hidden task date range with it.
+  if (data?.runType === "historical" && !ignoreDate && !data?.samplingPolicy) {
     // A relative preset re-anchors to now on save; Custom is kept verbatim.
     // Writing the key every save is also what migrates pre-existing tasks.
     const preset = data?.datePreset || "Custom";
@@ -122,7 +125,23 @@ export const NewTaskValidationSchema = () =>
         getNumberValidation("Max Spans is required"),
       ]),
       samplingRate: getNumberValidation("Sampling Rate is required"),
-      samplingPolicy: z.object({}).passthrough().nullable().optional(),
+      samplingPolicy: z
+        .object({})
+        .passthrough()
+        .nullable()
+        .optional()
+        .superRefine((policy, ctx) => {
+          // Blank or invalid quotas block save; they never serialize as a
+          // different selection mode, 0, NaN or an implied 100%.
+          Object.entries(samplingPolicyErrors(policy)).forEach(
+            ([path, message]) =>
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: path.split("."),
+                message,
+              }),
+          );
+        }),
       evalsDetails: z
         .array(z.any())
         .min(1, { message: "At least one evaluation is required" })
@@ -200,7 +219,9 @@ export const NewTaskValidationSchema = () =>
             ? Number(data.spansLimit)
             : data?.spansLimit,
         samplingRate: data?.samplingRate,
-        ...(data.samplingPolicy !== undefined ? { samplingPolicy: data.samplingPolicy } : {}),
+        ...(data.samplingPolicy !== undefined
+          ? { samplingPolicy: data.samplingPolicy }
+          : {}),
         evals: data?.evalsDetails,
         runType: data?.runType,
         rowType: data?.rowType ?? "spans",
