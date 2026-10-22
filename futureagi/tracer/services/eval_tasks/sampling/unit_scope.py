@@ -36,13 +36,28 @@ def physical_unit_scope(
     sampling_unit: str,
     row_type: str,
     attribute_value_sql: str | None,
+    bounds_sql: str | None = None,
+    span_closure: str = "span",
+    param_prefix: str = "sp_new",
 ) -> tuple[str, dict]:
     """Return an immutable-coordinate seed, never filter values before replay.
 
     Old/new remapped IDs and mutable custom contact attributes only discover a
     superset. All versions of the touched physical rows/traces are replayed by
     the caller before exact canonical membership is tested.
+
+    ``bounds_sql`` restricts every physical ``spans`` scan to immutable
+    coordinates (event hour/partition) and, optionally, a physical-arrival
+    ceiling. It must only contain predicates that every version of an
+    admitted identity shares, so it can never hide a newer version from the
+    caller's latest-state replay. ``span_closure="trace"`` replays the whole
+    trace of every seeded span for span rows, which keeps trace-local row
+    filters identical to a full-window read.
     """
+    if span_closure not in ("span", "trace"):
+        raise ValueError("Unsupported sampling unit closure.")
+    if not param_prefix.replace("_", "").isalnum():
+        raise ValueError("Sampling unit scope parameter prefix is invalid.")
     by_kind = {}
     fallback = {"spans": "span", "traces": "trace", "sessions": "session"}[row_type]
     for unit in unit_ids:
@@ -50,10 +65,11 @@ def physical_unit_scope(
         if not separator or not value or kind not in {sampling_unit, fallback}:
             raise ValueError("Sampling unit escaped the policy namespace.")
         by_kind.setdefault(kind, []).append(value)
+    bounds = f" AND {bounds_sql}" if bounds_sql else ""
     predicates = []
     params = {}
     for kind, values in by_kind.items():
-        param = f"sp_new_{kind}_ids"
+        param = f"{param_prefix}_{kind}_ids"
         params[param] = tuple(values)
         placeholder = f"%({param})s"
         if kind in ("span", "trace"):
@@ -75,8 +91,10 @@ def physical_unit_scope(
                 )
             predicates.append(f"({attribute_value_sql}) IN {placeholder}")
     seed = " OR ".join(f"({predicate})" for predicate in predicates)
-    scoped_seed = f"FROM spans PREWHERE project_id = %(sp_project)s WHERE {seed}"
-    if row_type == "spans":
+    scoped_seed = (
+        f"FROM spans PREWHERE project_id = %(sp_project)s{bounds} WHERE {seed}"
+    )
+    if row_type == "spans" and span_closure == "span":
         coordinates = (
             "(observation_type, service_name, toStartOfHour(start_time), trace_id, id)"
         )
@@ -84,7 +102,7 @@ def physical_unit_scope(
             f"project_id = %(sp_project)s AND {coordinates} IN (SELECT {coordinates} {scoped_seed})",
             params,
         )
-    if row_type == "traces":
+    if row_type in ("spans", "traces"):
         return (
             f"project_id = %(sp_project)s AND trace_id IN (SELECT trace_id {scoped_seed})",
             params,
@@ -99,7 +117,7 @@ def physical_unit_scope(
         ) GROUP BY new_id"""
     return (
         f"""project_id = %(sp_project)s AND trace_id IN (
-        SELECT trace_id FROM spans PREWHERE project_id = %(sp_project)s
+        SELECT trace_id FROM spans PREWHERE project_id = %(sp_project)s{bounds}
         WHERE trace_session_id IN ({sessions}) OR trace_session_id IN ({aliases})
     )""",
         params,
