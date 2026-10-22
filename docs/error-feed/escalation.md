@@ -16,15 +16,22 @@ issue status revisions and membership revisions fence concurrent updates.
 ## Schema and rollout
 
 Migration 0117 adds one workspace policy table, issue ownership/evidence fields,
-and finding occurrence timestamps. Migration 0118 runs the frozen algorithm
-through bounded batches. Existing issues whose ownership cannot be proven remain
-`legacy_unknown`; an old Escalating value alone is not proof of system ownership.
+and finding occurrence timestamps. Migration 0118 resets every live legacy Error
+Feed issue with status Escalating to For review and system ownership, in bounded
+batches. This intentionally includes past user-selected Escalating values because
+the old schema cannot distinguish them from the creation default. Other legacy
+statuses, deleted issues, and explicit manual choices recorded by the new code
+are preserved. Rerunning the migration does not reset already adopted issues.
 No AuditLog or source-configuration/task schema changes are included.
 
-For historical evidence preparation, migrate to 0117, run
-`python manage.py prepare_feed_escalation_evidence --help` and prepare the selected
-workspaces, then migrate to 0118. Repeat preparation as needed for bounded batches;
-unavailable timestamps are not replaced with migration time.
+The migration does not replay historical growth or immediately re-escalate issues.
+It schedules runtime checks, which require fresh confirmation before escalation
+and honor the rollout controls below. Missing source timestamps block automatic
+transitions; runtime retries recover original scanner/eval completion times in
+bounded batches. Unavailable timestamps are never replaced with migration time.
+Omega completion times available in PostgreSQL are recovered during migration.
+For proactive preparation or retrying unavailable evidence, run
+`python manage.py prepare_feed_escalation_evidence --help` for selected workspaces.
 
 Automation defaults to `ERROR_FEED_ESCALATION_MODE=shadow` and scanner sources.
 After checking shadow results, select workspace UUIDs in

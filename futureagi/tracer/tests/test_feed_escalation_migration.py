@@ -1,134 +1,184 @@
-"""Frozen policy parity and the real historical-model RunPython path."""
+"""Real pre-escalation upgrades and bounded, repeatable legacy resets."""
 
 import importlib
+import uuid
 from datetime import timedelta
 
 import pytest
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 
-from tracer.services.feed_escalation_policy import Counts, Policy, evaluate
 from tracer.tests.test_feed_escalation_policy import T
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    "count,history,expected",
-    [
-        (20, 0, "escalating"),
-        (20, 120, "escalating"),
-        (19, 0, "for_review"),
-        (150, 2400, "for_review"),
-    ],
-)
-def test_migration_policy_matches_independent_expected_cases(count, history, expected):
-    frozen = importlib.import_module("tracer.migrations._feed_escalation_v1")
-    state = frozen_state = {}
-    for minute in (0, 5, 10, 15):
-        kwargs = {
-            "status": "for_review",
-            "origin": "system",
-            "boundary": T + timedelta(minutes=minute),
-            "input_revision": 1,
-        }
-        runtime = evaluate(
-            **kwargs, state=state, counts=Counts(count, history), policy=Policy()
-        )
-        result = frozen.evaluate(
-            **kwargs,
-            state=frozen_state,
-            counts=frozen.Counts(count, history),
-            policy=frozen.Policy(),
-        )
-        assert result.status == runtime.status
-        assert result.state == runtime.state
-        state, frozen_state = runtime.state, result.state
-    assert result.status == expected
 
 
 @pytest.mark.integration
 @pytest.mark.django_db(transaction=True)
-def test_runpython_preserves_manual_unknown_and_backfills_proven_system(
-    observe_project, monkeypatch
+def test_upgrade_resets_legacy_escalating_and_preserves_other_statuses(
+    observe_project, monkeypatch, settings
 ):
-    import uuid
-
+    from simulate.models import RunTest, TestExecution
     from tracer.models.trace_error_analysis import TraceErrorGroup
-    from tracer.models.trace_scan import TraceScanIssue, TraceScanResult
-    from tracer.tests.test_feed_escalation_inputs import add_scan_finding
+    from tracer.models.trace_scan import TraceScanIssue
+    from tracer.services.feed_escalation import evaluate_issue, sweep_issues
 
+    settings.ERROR_FEED_ESCALATION_MODE = "enabled"
+    settings.ERROR_FEED_ESCALATION_WORKSPACE_IDS = ("*",)
+    settings.ERROR_FEED_ESCALATION_SOURCES = ("scanner",)
     migration = importlib.import_module(
         "tracer.migrations.0118_backfill_feed_issue_statuses"
     )
-    monkeypatch.setattr(migration, "migration_now", lambda: T + timedelta(minutes=10))
-    cluster = TraceErrorGroup.no_workspace_objects.create(
-        project=observe_project,
-        cluster_id="MIGRATE-GROWTH",
-        error_type="tool",
-        status="escalating",
-        status_origin="system",
-    )
-    scan = TraceScanResult.no_workspace_objects.create(
-        project=observe_project,
-        trace_id=uuid.uuid4(),
-        status="completed",
-        has_issues=True,
-    )
-    for _ in range(20):
-        add_scan_finding(cluster, scan, T - timedelta(minutes=25))
-    # Independent historical fixture: these findings were already published
-    # before the first replayed confirmation, not inserted as final statuses.
-    TraceScanIssue.no_workspace_objects.filter(cluster=cluster).update(
-        created_at=T - timedelta(hours=2)
-    )
-    manual = TraceErrorGroup.no_workspace_objects.create(
-        project=observe_project,
-        cluster_id="MIGRATE-MANUAL",
-        error_type="tool",
-        status="for_review",
-        status_origin="manual",
-    )
-    unknown = TraceErrorGroup.no_workspace_objects.create(
-        project=observe_project,
-        cluster_id="MIGRATE-UNKNOWN",
-        error_type="tool",
-        status="escalating",
-        status_origin="legacy_unknown",
-    )
-    below = TraceErrorGroup.no_workspace_objects.create(
-        project=observe_project,
-        cluster_id="MIGRATE-BELOW",
-        error_type="tool",
-        status="escalating",
-        status_origin="system",
-    )
+    # More than one batch exercises cursor progression and restart safety.
+    monkeypatch.setattr(migration, "BATCH", 2)
     executor = MigrationExecutor(connection)
-    executor.migrate([("tracer", "0117_feed_escalation_policy")])
+    latest = executor.loader.graph.leaf_nodes()
+    assert not executor.loader.detect_conflicts()
+    run = RunTest.no_workspace_objects.create(
+        name="Upgrade scope",
+        organization_id=observe_project.organization_id,
+        workspace_id=observe_project.workspace_id,
+    )
+    execution = TestExecution.no_workspace_objects.create(run_test=run)
+    executor.migrate([("tracer", "0116_error_feed_alert_models")])
     try:
-        executor = MigrationExecutor(connection)
-        executor.migrate([("tracer", "0118_backfill_feed_issue_statuses")])
-        for issue in (cluster, manual, unknown, below):
-            issue.refresh_from_db()
-        assert cluster.status == "escalating"
-        assert cluster.escalation_state["migration_completed"] == migration.MIGRATION_ID
-        assert cluster.escalation_state["reason"]["current_count"] == 20
-        assert below.status == "for_review"
-        assert manual.status == "for_review" and manual.status_origin == "manual"
-        assert (
-            unknown.status == "escalating" and unknown.status_origin == "legacy_unknown"
-        )
-        before = cluster.status_revision, cluster.escalation_state
-        apps = executor.loader.project_state(
-            [("tracer", "0118_backfill_feed_issue_statuses")]
+        old_apps = executor.loader.project_state(
+            [("tracer", "0116_error_feed_alert_models")]
         ).apps
+        Issue = old_apps.get_model("tracer", "TraceErrorGroup")
+        Scan = old_apps.get_model("tracer", "TraceScanResult")
+        Finding = old_apps.get_model("tracer", "TraceScanIssue")
+        statuses = ("escalating", "for_review", "acknowledged", "resolved")
+        issues = {
+            status: Issue.objects.create(
+                project_id=observe_project.pk,
+                cluster_id=f"UPGRADE-{status}",
+                error_type="tool",
+                status=status,
+            )
+            for status in statuses
+        }
+        defaults = [
+            Issue.objects.create(
+                project_id=observe_project.pk,
+                cluster_id=f"UPGRADE-DEFAULT-{index}",
+                error_type="tool",
+            )
+            for index in range(3)
+        ]
+        assert all(issue.status == "escalating" for issue in defaults)
+        deleted = Issue.objects.create(
+            project_id=observe_project.pk,
+            cluster_id="UPGRADE-DELETED",
+            error_type="tool",
+            deleted=True,
+        )
+        simulation = Issue.objects.create(
+            project_id=observe_project.pk,
+            cluster_id="UPGRADE-SIMULATION",
+            error_type="tool",
+            target_type="simulation",
+            test_execution_id=execution.pk,
+        )
+        scan = Scan.objects.create(
+            project_id=observe_project.pk,
+            trace_id=uuid.uuid4(),
+            status="completed",
+            has_issues=True,
+        )
+        # Actual old-schema findings have no occurrence timestamp fields.
+        for _ in range(20):
+            Finding.objects.create(
+                scan_result_id=scan.pk,
+                cluster_id=issues["escalating"].pk,
+                category="tool",
+                group="Tools",
+                fix_layer="Tools",
+                brief="Old finding",
+            )
+        executor = MigrationExecutor(connection)
+        executor.migrate([("tracer", "0117_feed_escalation_policy")])
+        # New writers record ownership; a manual edit during rollout must survive.
+        manual = TraceErrorGroup.no_workspace_objects.create(
+            project=observe_project,
+            cluster_id="UPGRADE-NEW-MANUAL",
+            error_type="tool",
+            status="escalating",
+            status_origin="manual",
+        )
+        system = TraceErrorGroup.no_workspace_objects.create(
+            project=observe_project,
+            cluster_id="UPGRADE-NEW-SYSTEM",
+            error_type="tool",
+            status="escalating",
+            status_origin="system",
+        )
+        executor = MigrationExecutor(connection)
+        executor.migrate(latest)
+        reset_ids = [issues["escalating"].pk, *(issue.pk for issue in defaults)]
+        for issue in TraceErrorGroup.no_workspace_objects.filter(pk__in=reset_ids):
+            assert issue.status == "for_review"
+            assert issue.status_origin == "system"
+            assert issue.status_revision == 1
+            assert issue.status_changed_at is not None
+            assert issue.status_changed_by_id is None
+            assert issue.escalation_state == {}
+            assert issue.escalation_next_evaluation_at is not None
+        for status in statuses[1:]:
+            issue = TraceErrorGroup.no_workspace_objects.get(pk=issues[status].pk)
+            assert issue.status == status
+            assert issue.status_origin == "legacy_unknown"
+            assert issue.status_revision == 0
+        for old in (deleted, simulation, manual, system):
+            issue = TraceErrorGroup.all_objects.get(pk=old.pk)
+            assert issue.status == "escalating"
+            assert issue.status_revision == 0
+        cluster = TraceErrorGroup.no_workspace_objects.get(pk=issues["escalating"].pk)
+        assert (
+            TraceScanIssue.no_workspace_objects.filter(
+                cluster=cluster,
+                occurred_at__isnull=True,
+            ).count()
+            == 20
+        )
+
+        # Runtime preserves the reset while timestamps are missing, then repairs
+        # real source times and requires fresh confirmation before escalating.
+        monkeypatch.setattr(
+            "tracer.services.feed_escalation_evidence.capture_occurrence",
+            lambda **kwargs: (None, ""),
+        )
+        now = T + timedelta(minutes=10)
+        assert evaluate_issue(cluster.pk, now=now) == "error"
+        assert evaluate_issue(cluster.pk, now=now) == "error"
+        cluster.refresh_from_db()
+        assert cluster.status == "for_review"
+        assert cluster.escalation_state["evaluation_error"] == "CountUnavailable"
+        monkeypatch.setattr(
+            "tracer.services.feed_escalation_evidence.capture_occurrence",
+            lambda **kwargs: (T - timedelta(minutes=20), "trace_end"),
+        )
+        monkeypatch.setattr(
+            "tracer.services.feed_escalation._wake_issue", lambda pk: None
+        )
+        assert evaluate_issue(cluster.pk, now=now) == "stale"
+        assert set(
+            TraceScanIssue.no_workspace_objects.filter(cluster=cluster).values_list(
+                "occurred_at",
+                flat=True,
+            )
+        ) == {T - timedelta(minutes=20)}
+        for minute in (0, 5, 10, 15):
+            sweep_issues(now=now + timedelta(minutes=minute))
+            cluster.refresh_from_db()
+            assert cluster.status == ("escalating" if minute == 15 else "for_review")
+        before = cluster.status_revision, cluster.escalation_state
+        apps = executor.loader.project_state(latest).apps
         with connection.schema_editor(atomic=False) as editor:
             migration.backfill_feed_issue_statuses(apps, editor)
         cluster.refresh_from_db()
+        assert cluster.status == "escalating"
         assert (cluster.status_revision, cluster.escalation_state) == before
     finally:
-        MigrationExecutor(connection).migrate(
-            [("tracer", "0118_backfill_feed_issue_statuses")]
-        )
+        MigrationExecutor(connection).migrate(latest)
 
 
 @pytest.mark.integration
@@ -182,54 +232,3 @@ def test_old_writer_can_insert_after_additive_schema_without_claiming_system_own
         ).occurrence_time_source
         == ""
     )
-
-
-@pytest.mark.integration
-@pytest.mark.django_db
-def test_migration_ignores_a_failure_superseded_by_a_passing_eval(custom_eval_config):
-    import uuid
-
-    from django.apps import apps
-
-    from tracer.models.observation_span import EvalLogger
-    from tracer.models.trace_error_analysis import ErrorClusterTraces, TraceErrorGroup
-
-    migration = importlib.import_module(
-        "tracer.migrations.0118_backfill_feed_issue_statuses"
-    )
-    issue = TraceErrorGroup.no_workspace_objects.create(
-        project=custom_eval_config.project,
-        source="eval",
-        eval_target_type="span",
-        eval_config=custom_eval_config,
-        cluster_id="MIGRATE-PASS",
-        error_type="quality",
-    )
-    shape = {"trace_id": uuid.uuid4(), "observation_span_id": "repaired-span"}
-    failed = EvalLogger.no_workspace_objects.create(
-        custom_eval_config=custom_eval_config,
-        target_type="span",
-        **shape,
-        output_bool=False,
-        config_hash="a" * 64,
-        eval_task_id="failed",
-    )
-    member = ErrorClusterTraces.no_workspace_objects.create(
-        cluster=issue,
-        eval_logger=failed,
-        trace_id=shape["trace_id"],
-        occurred_at=T - timedelta(minutes=20),
-        occurrence_time_source="span_end",
-    )
-    ErrorClusterTraces.no_workspace_objects.filter(pk=member.pk).update(
-        created_at=T - timedelta(hours=1)
-    )
-    EvalLogger.no_workspace_objects.create(
-        custom_eval_config=custom_eval_config,
-        target_type="span",
-        **shape,
-        output_bool=True,
-        config_hash="a" * 64,
-        eval_task_id="passed",
-    )
-    assert migration._counts(apps, connection.alias, issue, T).current == 0

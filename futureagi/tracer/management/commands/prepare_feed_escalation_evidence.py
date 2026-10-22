@@ -1,4 +1,4 @@
-"""Bounded preparation between the additive schema and status backfill."""
+"""Bounded preparation or repair of historical escalation evidence."""
 
 from django.core.management.base import BaseCommand, CommandError
 
