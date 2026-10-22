@@ -1134,6 +1134,32 @@ def test_latency_is_missing_when_the_span_never_ended(metric_ch):
     assert values == [(False, 0.0), (False, 100.0), (True, None)]
 
 
+def test_a_latency_reported_without_an_end_time_is_still_a_measurement(metric_ch):
+    """Provider imports can store a latency for a call that has no end timestamp."""
+    scope, now = (
+        Scope(uuid4(), uuid4(), uuid4()),
+        datetime.now(UTC).replace(microsecond=0),
+    )
+    at = now - timedelta(hours=1)
+    seed_measured_span(metric_ch, scope, "reported", at, latency_ms=300)
+    seed_measured_span(
+        metric_ch,
+        scope,
+        "ended",
+        at,
+        end_time=(at + timedelta(milliseconds=100)).strftime("%Y-%m-%d %H:%M:%S.%f"),
+        latency_ms=100,
+    )
+    # Neither ended nor reported: the stored 0 is the column DEFAULT.
+    seed_measured_span(metric_ch, scope, "open", at)
+    row = execute_formula(
+        metric_ch, measure_recipe("latency_ms", "mean(value)"), scope, now
+    )[0]
+    assert row["status"] == "ok"
+    assert float(row["value"]) == pytest.approx(200)  # (300 + 100) / 2
+    assert int(row["valid_count"]) == 2 and int(row["missing_count"]) == 1
+
+
 def test_only_an_open_span_population_has_no_latency_value(metric_ch):
     scope, now = (
         Scope(uuid4(), uuid4(), uuid4()),

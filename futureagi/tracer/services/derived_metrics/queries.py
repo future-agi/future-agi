@@ -77,8 +77,11 @@ PREVIEW_QUERY_SETTINGS = {
 # The v2 spans store keeps these measures in non-Nullable columns with DEFAULT 0,
 # so the physical zero written for "the collector never saw a value" is identical
 # to a measured zero. Rules (documented in docs/derived-metrics.rst):
-#   * latency_ms is measured only when the span ended: end_time IS NULL is missing.
-#     A span that ended with 0 ms keeps a real 0.
+#   * latency_ms is missing when the span never ended (end_time IS NULL) and no
+#     latency was stored for it: the collector writes latency only for an ended
+#     span, so that 0 is the column DEFAULT. A span that ended with 0 ms keeps a
+#     real 0, and a non-zero latency reported without an end time (a provider
+#     import for a call that has no end timestamp yet) is a reported measurement.
 #   * cost and token counts of exactly 0 are treated as NOT REPORTED (missing), never
 #     as a measurement. Only non-zero stored values are measurements. When an
 #     explicit zero must count, bind an attribute_number input to the reported
@@ -86,7 +89,7 @@ PREVIEW_QUERY_SETTINGS = {
 # Missing values are excluded as complete-case omissions and counted in
 # missing_count; they are never silently averaged in as zero.
 SPAN_MEASURE_SQL = {
-    "latency_ms": "if(isNull(s.end_time), NULL, toFloat64(s.latency_ms))",
+    "latency_ms": "if(isNull(s.end_time) AND s.latency_ms = 0, NULL, toFloat64(s.latency_ms))",
     "cost": "nullIf(toFloat64(s.cost), 0)",
     "total_tokens": "nullIf(toFloat64(s.total_tokens), 0)",
     "prompt_tokens": "nullIf(toFloat64(s.prompt_tokens), 0)",

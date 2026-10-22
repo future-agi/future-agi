@@ -74,7 +74,11 @@ Semantics
   measured. The rules are:
 
   - ``latency_ms`` is missing when the span has no ``end_time`` (it never
-    ended). A span that ended with 0 ms keeps a real 0.
+    ended) and no latency was stored for it; the collector writes a latency
+    only for an ended span, so that 0 is the column default. A span that ended
+    with 0 ms keeps a real 0, and a non-zero latency stored without an end time
+    (a provider import for a call with no end timestamp yet) is kept as a
+    reported measurement.
   - ``cost``, ``total_tokens``, ``prompt_tokens`` and ``completion_tokens``
     treat a stored 0 as NOT REPORTED (missing); only non-zero stored values are
     measurements. Tool/chain spans and unpriced models therefore no longer pull
