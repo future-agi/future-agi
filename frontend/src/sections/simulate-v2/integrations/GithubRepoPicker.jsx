@@ -133,7 +133,7 @@ export default function GithubRepoPicker({ repo, agentId, onPick, onManual, show
                 },
               }}
             >
-              Missing a repository? Change access on GitHub
+              Missing a repository or an account? Add it on GitHub
             </Typography>
           </Stack>
           <Select

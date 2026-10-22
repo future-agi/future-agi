@@ -19,6 +19,7 @@ import { paths } from "src/routes/paths";
 import { useConnectedAgents } from "../../store";
 import { agentIdOf } from "../../_mock/agentRegistry";
 import FoundAgentsList from "./FoundAgentsList";
+import LiveKitAgentFlow from "./LiveKitAgentFlow";
 
 const MONO = "ui-monospace, Menlo, monospace";
 /* One screen: the platform, the key, the assistant — then Connect. The rest
@@ -43,6 +44,8 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
   /* Picked on the directory ("Vapi", "Retell chat"): the drawer is that
      platform's — its header names it — so there is nothing to switch. */
   const platformLocked = !!initial?.platform;
+  /* A platform that does both (Vapi, Retell…) asks which, in its own setup. */
+  const bothChannels = platformLocked && (initial?.channels || []).length > 1;
   /* No "Others" here: a prompt with no platform behind it is an agent built
      in Future AGI, which has its own way in. */
   const platforms = (HOSTED_PLATFORMS_BY_TYPE[agentType] || []).filter((p) => !p.isOther);
@@ -110,9 +113,10 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
 
   const pickType = (id) => {
     setAgentType(id);
-    setPlatformId(firstLive((HOSTED_PLATFORMS_BY_TYPE[id] || []).filter((p) => !p.isOther))?.id || "");
-    setKeyRef("");
-    setScopeChoice(null);
+    /* Picked on the directory: the platform stays — only the channel changes. */
+    if (!platformLocked) setPlatformId(firstLive((HOSTED_PLATFORMS_BY_TYPE[id] || []).filter((p) => !p.isOther))?.id || "");
+    /* One key per platform: the same key serves its voice and chat agents. */
+    if (!platformLocked) { setKeyRef(""); setScopeChoice(null); }
     setPickedId(null);
     setChatChannel(null);
     setImportCopy(false);
@@ -175,6 +179,11 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
     onClick: () => onSave({ ...source, name: (name || picked?.name || "").trim() }),
   };
 
+  /* LiveKit connects by its project, not an API key and an assistant list. */
+  if (platform?.id === "livekit") {
+    return <LiveKitAgentFlow title={title} onSave={onSave} initial={initial} note={platform.idNote} />;
+  }
+
   return (
     <ConnectSteps
       title={title}
@@ -184,10 +193,10 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
       next={next}
     >
       <Stack spacing={1.75}>
-        {!lockedType && !platformLocked && <Box>
-          <Label>Agent type</Label>
+        {!lockedType && (!platformLocked || bothChannels) && <Box>
+          <Label>{bothChannels ? `Voice or chat — ${platform?.name || "this platform"} does both` : "Agent type"}</Label>
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mt: 0.75 }}>
-            {AGENT_TYPES.map((t) => (
+            {AGENT_TYPES.filter((t) => !bothChannels || initial.channels.includes(t.id)).map((t) => (
               <ChipCard key={t.id} icon={t.icon} label={t.label} comingSoon={t.comingSoon} on={agentType === t.id} onClick={() => pickType(t.id)} />
             ))}
           </Box>

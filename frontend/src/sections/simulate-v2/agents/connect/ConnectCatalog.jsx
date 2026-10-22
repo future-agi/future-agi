@@ -399,7 +399,7 @@ function CatalogRow({ item, selected, onPick, showGroup, sub, single = false, re
           }}
         >
           {selected && <Iconify icon="solar:check-circle-linear" width={14} />}
-          {selected ? "Selected" : "Connect"}
+          {selected ? "Selected" : ready?.action || "Connect"}
         </Box>
       )}
     </ButtonBase>

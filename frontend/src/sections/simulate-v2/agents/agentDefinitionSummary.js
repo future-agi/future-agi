@@ -167,7 +167,7 @@ export const areaValueOf = ({ agent, definition, source, id, member }) => {
       if (!definition?.knowledge?.visible) return { value: definition?.knowledge?.why || "Not visible", hidden: true };
       return { value: (definition.knowledge.items || []).map((k) => k.name).join(", ") || "None attached" };
     case "structure":
-      return member ? { value: member.role || `One of ${definition?.members?.length || 1} members` } : { value: definition?.structure?.summary || "Single agent" };
+      return member ? { value: member.role || `One of ${definition?.members?.length || 1} members` } : { value: definition?.structure?.summary || (definition?.members?.length ? `${definition.members.length} members working as one agent — each with its own instructions, model and tools` : "Single agent") };
     case "variables": {
       const vars = VARIABLES[voice ? "voice" : "chat"];
       const n = member ? Math.max(1, vars.length - 1 - (member.index || 0)) : vars.length;

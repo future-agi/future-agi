@@ -19,10 +19,12 @@ const frameworkItems = Object.entries(FRAMEWORK_META).map(([id, f]) => ({
   initial: { framework: id },
 }));
 
-/* Hosted platforms beyond the five with bundled logos — their brand mark
-   from Iconify, or a generic one where none exists. */
-const hosted = (id, name, channel, extra = {}) => ({
-  id: channel === "chat" ? `${id}-chat` : id, name, kind: "hosted", fix: "In your account", channels: [channel], initial: { agentType: channel, platform: id }, ...extra,
+/* A hosted platform, listed once: voice, chat or both. Its setup asks which
+   when it does both — one key per platform either way. */
+const platformItem = (id, name, channels, extra = {}) => ({
+  id, name, kind: "hosted", fix: "In your account", channels,
+  initial: { platform: id, channels, ...(channels.length === 1 && { agentType: channels[0] }) },
+  ...extra,
 });
 
 /* Closed platforms: test only, by phone, chat or conversation API. */
@@ -40,32 +42,19 @@ const closedItems = CLOSED_PLATFORMS.map((c) => ({
 
 export const AGENT_CONNECT_GROUPS = [
   {
-    id: "voice",
-    title: "Voice platforms",
-    reach: "Your API key and assistant — tested in your account on a copy, draft or branch.",
+    id: "platforms",
+    title: "Hosted platforms",
+    reach: "Your API key and agent — voice or chat, tested in your account on a copy, draft or branch.",
     items: [
-      { id: "vapi", name: "Vapi", fix: "In your account", logo: "vapi", need: "API key · assistant", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "vapi" } },
-      { id: "retell", name: "Retell AI", fix: "In your account", logo: "retell", need: "API key · agent", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "retell" } },
-      { id: "elevenlabs", name: "ElevenLabs", fix: "In your account", logo: "elevenlabs", need: "Agents API key", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "elevenlabs" } },
-      { id: "bland", name: "Bland.ai", fix: "In your account", logo: "bland", need: "API key · agent", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "bland" } },
-      hosted("telnyx", "Telnyx", "voice", { icon: "solar:phone-calling-linear", need: "API key · assistant" }),
-      hosted("google_cx", "Google CX Agent Studio", "voice", { icon: "simple-icons:dialogflow", need: "Service account · agent" }),
-      hosted("voiceflow", "Voiceflow", "voice", { icon: "solar:routing-2-linear", need: "API key · project" }),
-    ],
-  },
-  {
-    id: "chat",
-    title: "Chat and built here",
-    reach: "The same platforms over chat, chat-first platforms, or one you build here.",
-    items: [
-      { id: "vapi-chat", name: "Vapi chat", fix: "In your account", logo: "vapi", need: "Same assistant, over chat", kind: "hosted", channels: ["chat"], initial: { agentType: "chat", platform: "vapi" } },
-      hosted("retell", "Retell chat", "chat", { logo: "retell", need: "API key · chat agent" }),
-      hosted("elevenlabs", "ElevenLabs chat", "chat", { logo: "elevenlabs", need: "Chat or WhatsApp agent" }),
-      hosted("bland", "Bland messaging", "chat", { logo: "bland", need: "API key · messaging agent" }),
-      hosted("google_cx", "Google CX Agent Studio", "chat", { icon: "simple-icons:dialogflow", need: "Service account · agent" }),
-      hosted("voiceflow", "Voiceflow", "chat", { icon: "solar:routing-2-linear", need: "API key · project" }),
-      hosted("agentforce", "Salesforce Agentforce", "chat", { icon: "simple-icons:salesforce", need: "Connected app · agent" }),
-      hosted("copilot_studio", "Microsoft Copilot Studio", "chat", { icon: "simple-icons:microsoft", need: "Entra app · agent" }),
+      platformItem("vapi", "Vapi", ["voice", "chat"], { logo: "vapi", need: "API key · assistant" }),
+      platformItem("retell", "Retell AI", ["voice", "chat"], { logo: "retell", need: "API key · agent" }),
+      platformItem("elevenlabs", "ElevenLabs", ["voice", "chat"], { logo: "elevenlabs", need: "Agents API key · agent" }),
+      platformItem("bland", "Bland.ai", ["voice", "chat"], { logo: "bland", need: "API key · agent" }),
+      platformItem("telnyx", "Telnyx", ["voice"], { icon: "solar:phone-calling-linear", need: "API key · assistant" }),
+      platformItem("google_cx", "Google CX Agent Studio", ["voice", "chat"], { icon: "simple-icons:dialogflow", need: "Service account · agent" }),
+      platformItem("voiceflow", "Voiceflow", ["voice", "chat"], { icon: "solar:routing-2-linear", need: "API key · project" }),
+      platformItem("agentforce", "Salesforce Agentforce", ["chat"], { icon: "simple-icons:salesforce", need: "Connected app · agent" }),
+      platformItem("copilot_studio", "Microsoft Copilot Studio", ["chat"], { icon: "simple-icons:microsoft", need: "Entra app · agent" }),
       { id: "builtin", name: "Build in Future AGI", icon: "solar:widget-add-linear", need: "Prompt, model and tools", kind: "builtin", channels: ["chat", "voice"] },
     ],
   },
@@ -113,7 +102,7 @@ export const AGENT_CONNECT_GROUPS = [
    tagged with other channels drops out, and every option that's left opens
    with the agent type set. Code is untagged — the code says what it is. A
    group left with only "built here" is named for that. */
-const CHANNEL_GROUP_TITLES = { chat: { voice: { title: "Built here", reach: "Defined and run in Future AGI. Fixes ship as a new version." } } };
+const CHANNEL_GROUP_TITLES = {};
 export const connectGroupsFor = (channel) => (!channel ? AGENT_CONNECT_GROUPS : AGENT_CONNECT_GROUPS
   .map((g) => ({
     ...g,
@@ -156,7 +145,6 @@ export const newAgentChoicesFor = (channel) => {
       }
       return {
         ...g,
-        ...(g.id === "chat" && { title: "Chat platforms", reach: "The same platforms over chat, and chat-first platforms." }),
         items: g.items.filter((it) => it.kind !== "builtin" && it.kind !== "upload").map(withNext),
       };
     })
@@ -176,7 +164,6 @@ const NEXT_BY_ID = {
   bitbucket: "Add a workspace token, then pick the repository",
   upload: "Drop a folder or a .zip",
   "direct-api": "Connect the repository, then name where the agent starts",
-  "vapi-chat": "Add your Vapi API key, then pick the assistant",
   "traces-project": "Pick the Observe project its traces land in",
   "traces-new": "Add traceAI to your agent, then send a trace",
   running: "Paste the URL we should call",
@@ -227,8 +214,7 @@ const KEYWORDS = {
   "fw-smolagents": "hugging face huggingface python",
   "fw-dspy": "stanford python",
   "fw-microsoft-agent-framework": "microsoft autogen semantic kernel dotnet python",
-  vapi: "voice phone calls assistant",
-  "vapi-chat": "chat assistant",
+  vapi: "voice phone calls assistant chat",
   retell: "voice phone calls",
   elevenlabs: "eleven labs 11labs voice",
   bland: "bland ai voice phone calls",
@@ -243,9 +229,11 @@ const KEYWORDS = {
   phone: "call calls number twilio sip pstn",
   livekit: "voice webrtc room",
 };
+/* Which channels a hosted platform does, said on its row. */
+const CHANNEL_WORDS = { "voice,chat": "Voice and chat", voice: "Voice", chat: "Chat" };
 const withNext = (it) => ({
   ...it,
-  next: nextStepOf(it),
+  next: it.kind === "hosted" && it.channels?.length ? `${nextStepOf(it)} · ${CHANNEL_WORDS[it.channels.join(",")] || ""}` : nextStepOf(it),
   keywords: [KEYWORDS[it.id] || KEYWORDS[it.initial?.platform] || "", it.kind === "closed" ? "support helpdesk tickets test only" : "", ...(it.channels || [])].filter(Boolean).join(" "),
 });
 

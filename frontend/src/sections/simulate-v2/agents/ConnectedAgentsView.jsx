@@ -8,6 +8,7 @@ import {
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
+import FilterPanel from "src/components/filter-panel/FilterPanel";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useSnackbar } from "notistack";
 import { paths } from "src/routes/paths";
@@ -35,6 +36,9 @@ export default function ConnectedAgentsView({ onConnect }) {
   /* Old Simulate agent definitions join this list on their own. */
   useMoveLegacyDefinitions();
   const [query, setQuery] = useState("");
+  /* Filters like the Improvements list: source, owner, whether it's tested, its Observe project. */
+  const [filters, setFilters] = useState({});
+  const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [params, setParams] = useSearchParams();
   const justConnected = agents.find((a) => a.id === params.get("connected"));
   const dismiss = () => setParams({ tab: "connected" }, { replace: true });
@@ -46,19 +50,39 @@ export default function ConnectedAgentsView({ onConnect }) {
     state: { presetSource: buildPresetFor(buildFor, choice) },
   });
 
+  /* A template's stand-in isn't anyone's agent — it lives in its environment. */
+  const all = useMemo(() => agents
+    .filter((a) => !a.placeholder)
+    .map((a) => ({
+      ...a, source: agentSourceOf(a), identity: identityOf(a), project: observeProjectOf(a, state, agents),
+      tested: (a.usedIn || []).length ? "In an environment" : "No environment yet",
+    })), [agents, state]);
+  const filterFields = useMemo(() => {
+    const choicesOf = (pick) => [...new Set(all.map(pick).filter(Boolean))].sort();
+    return [
+      { value: "source", label: "Source", type: "enum", choices: choicesOf((a) => a.source.label) },
+      { value: "owner", label: "Owner", type: "enum", choices: choicesOf((a) => a.identity.owner) },
+      { value: "tested", label: "Environments", type: "enum", choices: choicesOf((a) => a.tested) },
+      { value: "observe", label: "Observe project", type: "enum", choices: ["Linked", "Not linked"] },
+    ];
+  }, [all]);
+  const activeFilterCount = Object.values(filters).filter((v) => v?.length).length;
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    /* A template's stand-in isn't anyone's agent — it lives in its environment. */
-    return agents
-      .filter((a) => !a.placeholder)
-      .map((a) => ({ ...a, source: agentSourceOf(a), identity: identityOf(a), project: observeProjectOf(a, state, agents) }))
-      .filter((a) => !q || `${a.name} ${a.source.label} ${a.source.where} ${a.identity.owner} ${a.identity.description}`.toLowerCase().includes(q));
-  }, [agents, query, state]);
+    return all.filter((a) => {
+      if (q && !`${a.name} ${a.source.label} ${a.source.where} ${a.identity.owner} ${a.identity.description}`.toLowerCase().includes(q)) return false;
+      if (filters.source?.length && !filters.source.includes(a.source.label)) return false;
+      if (filters.owner?.length && !filters.owner.includes(a.identity.owner)) return false;
+      if (filters.tested?.length && !filters.tested.includes(a.tested)) return false;
+      if (filters.observe?.length && !filters.observe.includes(a.project ? "Linked" : "Not linked")) return false;
+      return true;
+    });
+  }, [all, query, filters]);
 
   /* Paged like the other lists; a search starts back on page one. */
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
-  useEffect(() => { setPage(0); }, [query]);
+  useEffect(() => { setPage(0); }, [query, filters]);
   const currentPage = Math.min(page, Math.max(0, Math.ceil(rows.length / pageSize) - 1));
   const pageRows = rows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
 
@@ -239,7 +263,8 @@ export default function ConnectedAgentsView({ onConnect }) {
       ),
     },
     {
-      id: "connectedAt", accessorKey: "connectedAt", header: "Connected", size: 140, enableSorting: false,
+      /* When it was connected — a date, not a state. Every agent here is connected. */
+      id: "connectedAt", accessorKey: "connectedAt", header: "Connected on", size: 140, enableSorting: false,
       cell: ({ row }) => <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>{ago(row.original.connectedAt)}</Typography>,
     },
   ];
@@ -300,12 +325,34 @@ export default function ConnectedAgentsView({ onConnect }) {
           <IconButton size="small" onClick={dismiss} aria-label="Dismiss"><Iconify icon="eva:close-fill" width={16} /></IconButton>
         </Stack>
       )}
-      <FormSearchField
-        searchQuery={query}
-        onChange={(e) => setQuery(e.target.value)}
-        size="small"
-        placeholder="Search"
-        sx={{ width: 250, "& .MuiOutlinedInput-root": { height: "30px" } }}
+      <Stack direction="row" alignItems="center" spacing={1}>
+        <FormSearchField
+          searchQuery={query}
+          onChange={(e) => setQuery(e.target.value)}
+          size="small"
+          placeholder="Search"
+          sx={{ width: 250, "& .MuiOutlinedInput-root": { height: "30px" } }}
+        />
+        <Button
+          size="small" variant="outlined"
+          startIcon={<Iconify icon="mage:filter" width={16} />}
+          endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
+          onClick={(e) => setFilterAnchorEl(e.currentTarget)}
+          sx={{ textTransform: "none", fontSize: "13px", height: "30px", borderColor: activeFilterCount ? "primary.main" : "divider", color: activeFilterCount ? "primary.main" : "text.secondary" }}
+        >
+          {`Filter${activeFilterCount ? ` (${activeFilterCount})` : ""}`}
+        </Button>
+        <Box flex={1} />
+        {/* What "connected" means, once, where the list starts. */}
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          Connected = we can reach it: its repo, platform, endpoint or traces.
+        </Typography>
+      </Stack>
+      <FilterPanel
+        anchorEl={filterAnchorEl} open={Boolean(filterAnchorEl)} onClose={() => setFilterAnchorEl(null)}
+        filterFields={filterFields} currentFilters={filters}
+        onApply={(f) => { setFilters(f || {}); setFilterAnchorEl(null); }}
+        placement="bottom-start"
       />
       {picked.length > 0 && (
         <Stack direction="row" alignItems="center" spacing={1.5} sx={{ flexShrink: 0, px: 2, py: 1, borderRadius: 1.5, border: "1px solid", borderColor: "divider", bgcolor: "background.paper" }}>

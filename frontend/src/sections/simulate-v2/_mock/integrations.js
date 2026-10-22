@@ -418,7 +418,12 @@ export const accountOf = (login) => GITHUB_ACCOUNTS.find((a) => a.login === logi
 export const githubInstalls = (s = state) => s.github?.installations || [];
 export const installationFor = (account, s = state) => githubInstalls(s).find((i) => i.account === account) || null;
 /** "acme-inc" or "acme-inc and you" — for one-line summaries. */
-export const githubAccountsLabel = (s = state) => githubInstalls(s).map((i) => i.account).join(" and ");
+/* "acme-inc, your account and acme-labs" — a personal install is "your account". */
+export const githubAccountsLabel = (s = state) => {
+  const names = githubInstalls(s).map((i) => (i.account === "you" ? "your account" : i.account));
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0] || "";
+};
+export const githubAccountCount = (s = state) => githubInstalls(s).length;
 
 const withInstalls = (installations) => (installations.length ? { github: { installations } } : { github: null });
 

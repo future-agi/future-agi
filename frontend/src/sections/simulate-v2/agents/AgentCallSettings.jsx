@@ -268,9 +268,20 @@ function LanguagePicker({ value, onChange }) {
         <Select
           size="small" value="" displayEmpty
           onChange={(e) => e.target.value && onChange([...value, e.target.value], `${e.target.value} added.`)}
-          renderValue={() => "Add language"}
+          renderValue={() => (
+            <Stack direction="row" alignItems="center" spacing={0.5} component="span">
+              <Iconify icon="mingcute:add-line" width={13} />
+              <span>Add language</span>
+            </Stack>
+          )}
           MenuProps={{ PaperProps: { sx: { maxHeight: 280 } } }}
-          sx={{ height: 24, typography: "s3", color: "text.secondary", "& .MuiSelect-select": { typography: "s3", py: 0, pl: 1 } }}
+          /* Outlined like the page's other buttons, so it reads as one. */
+          sx={{
+            height: 24, color: "text.primary",
+            "& .MuiSelect-select": { typography: "s3", fontWeight: 700, py: 0, pl: 1 },
+            "& .MuiOutlinedInput-notchedOutline": { borderColor: "text.disabled" },
+            "&:hover .MuiOutlinedInput-notchedOutline": { borderColor: "text.secondary" },
+          }}
         >
           {rest.map((l) => <MenuItem key={l} value={l} sx={{ typography: "s2" }}>{l}</MenuItem>)}
         </Select>

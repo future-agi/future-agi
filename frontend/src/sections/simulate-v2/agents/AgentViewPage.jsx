@@ -87,6 +87,8 @@ import {
   ago,
   buildPresetFor,
   fixDepthLine,
+  FIX_DEPTH_OPTIONS,
+  REACHED_AT_OPTIONS,
   isFinishedRun,
   parentLabel,
   passRate,
@@ -887,6 +889,7 @@ export default function AgentViewPage() {
           onOpenEnv={(envId) => navigate(paths.dashboard.simulate.environmentDetail(envId))}
           onTab={(t) => setQuery({ tab: t })}
           protectedMembers={limitsOf(state, agent.key).protectedMembers || []}
+          onVersion={(v) => setQuery({ v })}
         />
       )}
       {/* Pass rate by version, above the versions it scores. */}
@@ -1240,12 +1243,14 @@ function EnvironmentsTab({ agent, runs, onBuild, onRun, onOpen, mainEnvId, mainP
                     {u.envId !== mainEnvId && onMakeMain && (
                       <Button
                         size="small"
+                        variant="outlined"
                         onClick={() => onMakeMain(u.envId, u.envName)}
                         sx={{
                           typography: "s3",
                           fontWeight: 700,
                           height: 26,
-                          color: "text.secondary",
+                          color: "text.primary",
+                          borderColor: "divider",
                         }}
                       >
                         Make main
@@ -1269,12 +1274,14 @@ function EnvironmentsTab({ agent, runs, onBuild, onRun, onOpen, mainEnvId, mainP
                     )}
                     <Button
                       size="small"
+                      variant="outlined"
                       onClick={() => onOpen(u.envId)}
                       sx={{
                         typography: "s3",
                         fontWeight: 700,
                         height: 26,
-                        color: "text.secondary",
+                        color: "text.primary",
+                        borderColor: "divider",
                       }}
                     >
                       Open
@@ -1378,6 +1385,7 @@ function ConnectionTab({
           ? `${source.label} API — needs the assistant ID below`
           : "Not set — simulations need it",
       edit: editableRuntime,
+      options: REACHED_AT_OPTIONS,
     },
     ...(source.idMissing
       ? [{ label: "Assistant ID", value: "Missing", idRow: true }]
@@ -1388,7 +1396,7 @@ function ConnectionTab({
       : []),
     /* How deep an improvement can go for how it came in — plainly, for an
        agent we can only call. */
-    { label: "How far a fix can go", value: fixDepthLine(agent), hint: fixDepthOf(agent).note },
+    { label: "How far a fix can go", value: fixDepthLine(agent), hint: `${fixDepthOf(agent).note} ${FIX_DEPTH_OPTIONS}` },
     ...definition.connection
       .filter((r) => !/^(endpoint|agent id|provider)$/i.test(r.label))
       .filter(
@@ -1411,6 +1419,14 @@ function ConnectionTab({
         : "—",
       /* Where it first came in — said on hover, not as its own row. */
       hint: `First seen ${agent.origin === "agents" ? "on the Agents page" : agent.origin === "github" ? "in Settings → GitHub" : `in ${agent.firstEnvName || "an environment"}`} · ${ORIGIN_LABEL(agent.versions[0], source).toLowerCase()} as v1.`,
+    },
+    /* The last sync, beside the connection it reads — not only under Source and sync. */
+    {
+      label: "Last synced",
+      value: syncs.length
+        ? `${ago(syncs[0].createdAt || syncs[0].connectedAt)} · saved as ${syncs[0].label}`
+        : source.syncable ? "Never synced" : "Can't be synced — use Add version when it changes",
+      ...(source.syncable && onSync && { action: { label: "Sync now", onClick: onSync } }),
     },
   ];
   const lastReadAt = agent.lastSyncedAt || syncs[0]?.createdAt || null;
@@ -1559,7 +1575,9 @@ function ConnectionTab({
                     }}
                   >
                     {r.value}
+                    {r.options && <InfoTip text={r.options} />}
                   </Typography>
+                  {r.action && <ActionText onClick={r.action.onClick}>{r.action.label}</ActionText>}
                   {r.edit && (
                     <ActionText onClick={() => setEditingRuntime(true)}>
                       {source.runtime.where ? "Edit" : "Add"}

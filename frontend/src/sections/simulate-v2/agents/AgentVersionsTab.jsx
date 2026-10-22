@@ -14,6 +14,9 @@ import { nextMajorLabel } from "../_mock/versions";
 import { branchesOf, commitsOn, defaultBranchOf, isGitAgent, versionNameOf } from "../_mock/codeRefs";
 import { OUTSIDE_CHANGE_LABEL, isOutsideChange } from "../_mock/agentSync";
 import { MAKE_ACTIVE_ADMIN_ONLY, activeVersionOf, currentWorkspaceRole } from "./agentProfile";
+
+/* A version's actions are buttons, outlined like Mark released — not links. */
+const VERSION_ACTION = { typography: "s3", fontWeight: 700, minWidth: 0, height: 24, px: 1, color: "text.primary", borderColor: "divider" };
 import { versionChecksLine, versionChecksOf } from "../_mock/versionChecks";
 
 
@@ -225,17 +228,17 @@ export default function AgentVersionsTab({ agent, source, filesOf, toolsOf, stat
                   {/* What was checked when it was saved — said per check, not as one gate. */}
                   <VersionChecks result={versionChecksOf(agent, source, v)} />
                   {/* One row of actions under every version, so they line up down the list. */}
-                  <Stack direction="row" alignItems="center" spacing={0.5} flexWrap="wrap" sx={{ mt: 0.5, ml: -0.75, "& .MuiButton-root": { px: 0.75, height: 24 } }}>
-                    <Button size="small" onClick={() => onView(v.label)} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", minWidth: 0 }}>
+                  <Stack direction="row" alignItems="center" gap={0.75} flexWrap="wrap" sx={{ mt: 0.75 }}>
+                    <Button size="small" onClick={() => onView(v.label)} variant="outlined" sx={VERSION_ACTION}>
                       View definition
                     </Button>
                     {!isLatest && !unreleased && onRunIn && others.length > 0 && (
-                      <Button size="small" onClick={(e) => runIn(e, v.label, others)} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", minWidth: 0 }}>
+                      <Button size="small" onClick={(e) => runIn(e, v.label, others)} variant="outlined" sx={VERSION_ACTION}>
                         {others.length === 1 ? `Make ${shortOf(v.label)} the default in ${others[0].envName}…` : `Make ${shortOf(v.label)} an environment's default…`}
                       </Button>
                     )}
                     {!isLatest && !unreleased && (
-                      <Button size="small" onClick={() => setRollbackTo(v.label)} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", minWidth: 0 }}>
+                      <Button size="small" onClick={() => setRollbackTo(v.label)} variant="outlined" sx={VERSION_ACTION}>
                         {git ? `Revert to ${shortOf(v.label)}` : `Roll back to ${v.label}`}
                       </Button>
                     )}
@@ -279,11 +282,20 @@ export default function AgentVersionsTab({ agent, source, filesOf, toolsOf, stat
         anchorEl={runPick?.anchor} open={!!runPick} onClose={() => setRunPick(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
-        slotProps={{ paper: { sx: { minWidth: 180, mt: 0.5 } } }}
+        slotProps={{ paper: { sx: { width: 340, mt: 0.5 } } }}
       >
+        {/* Says what it's asking: which environment should test this version
+            from now on — and what each tests today. */}
+        <Box sx={{ px: 1.75, pt: 1, pb: 0.75 }}>
+          <Typography sx={{ typography: "s2", fontWeight: 700 }}>{`Which environment should test ${runPick ? versionNameOf(agent, runPick.label).main : ""}?`}</Typography>
+          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Its next runs test this version instead. Production doesn&apos;t change.</Typography>
+        </Box>
         {(runPick?.envs || []).map((u) => (
-          <MenuItem key={u.envId} onClick={() => { onRunIn(u.envId, runPick.label); setRunPick(null); }} sx={{ typography: "s2" }}>
-            {u.envName}
+          <MenuItem key={u.envId} onClick={() => { onRunIn(u.envId, runPick.label); setRunPick(null); }} sx={{ display: "block", py: 0.875 }}>
+            <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{u.envName}</Typography>
+            <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+              {`Tests ${u.running ? versionNameOf(agent, u.running).main : "production"} now · ${u.pinned ? "pinned to it" : "following production"}`}
+            </Typography>
           </MenuItem>
         ))}
       </Menu>
@@ -576,17 +588,17 @@ function CommitLog({ agent, selected, onSelect, statsOf, scopeName, running, onV
                   {on && (
                     <Box onClick={(e) => e.stopPropagation()} sx={{ cursor: "default" }}>
                       <VersionChecks result={checksOf(v)} />
-                      <Stack direction="row" alignItems="center" spacing={0.5} flexWrap="wrap" sx={{ mt: 0.5, ml: -0.75, "& .MuiButton-root": { px: 0.75, height: 24 } }}>
-                        <Button size="small" onClick={() => onView(c.label)} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", minWidth: 0 }}>
+                      <Stack direction="row" alignItems="center" gap={0.75} flexWrap="wrap" sx={{ mt: 0.75 }}>
+                        <Button size="small" onClick={() => onView(c.label)} variant="outlined" sx={VERSION_ACTION}>
                           View definition
                         </Button>
                         {!c.draft && c.label !== headOfMain && onRunIn && others.length > 0 && (
-                          <Button size="small" onClick={(e) => onRunIn(e, c.label)} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", minWidth: 0 }}>
+                          <Button size="small" onClick={(e) => onRunIn(e, c.label)} variant="outlined" sx={VERSION_ACTION}>
                             {others.length === 1 ? `Make it the default in ${others[0].envName}…` : "Make it an environment's default…"}
                           </Button>
                         )}
                         {!c.draft && c.label !== headOfMain && (
-                          <Button size="small" onClick={() => onRevert(c.label)} sx={{ typography: "s3", fontWeight: 700, color: "text.secondary", minWidth: 0 }}>
+                          <Button size="small" onClick={() => onRevert(c.label)} variant="outlined" sx={VERSION_ACTION}>
                             {`Revert to ${c.sha}`}
                           </Button>
                         )}

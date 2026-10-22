@@ -275,7 +275,7 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
           <Typography component="div" sx={{ typography: "s3", color: "text.secondary", px: 1.5, py: 1, borderRadius: 1, border: "1px solid", borderColor: "divider" }}>
             {suggestedRepo
               ? <>{`Suggested from ${project.name}'s traces — service `}<Box component="span" sx={{ fontFamily: MONO }}>{tracedCode.service}</Box>{` · ${tracedFw}.`}</>
-              : <>{`None of the repositories the GitHub App can see matches ${project.name}'s traces — service `}<Box component="span" sx={{ fontFamily: MONO }}>{tracedCode.service}</Box>{` · ${tracedFw}. If its code is in another repository, give the app access with "Change access on GitHub" below.`}</>}
+              : <>{`None of the repositories the GitHub App can see matches ${project.name}'s traces — service `}<Box component="span" sx={{ fontFamily: MONO }}>{tracedCode.service}</Box>{` · ${tracedFw}. If its code is in another repository, give the app access with "Add it on GitHub" below.`}</>}
           </Typography>
         )}
         {/* Picked on the directory (GitHub, GitLab, Bitbucket): nothing to

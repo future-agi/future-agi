@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Box, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle,
-  InputAdornment, Stack, TextField, Typography,
+  InputAdornment, Stack, TextField, Tooltip, Typography,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { neutralCheckboxSx } from "../components/primitives";
@@ -158,13 +158,14 @@ export default function ImprovementSourcesList({ agent }) {
       cell: ({ row: { original: r } }) => (
         <Box minWidth={0}>
           <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{r.name}</Typography>
-          {/* Where it ran and what started it — the Source column's job, folded in. */}
+          {/* Agent · source · sub-source · what it was, then where it ran. */}
           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
             {r.kind === "dataset" ? `${r.envName} · ${r.sub}` : (
               <>
-                {r.envName}
+                {r.agentName || r.modality?.label}
                 {r.duplicate && r.agentId && <Box component="span" sx={{ fontFamily: "ui-monospace, Menlo, monospace" }}>{` · ${r.agentId}`}</Box>}
                 {r.trigger && ` · ${r.trigger.source} · ${r.trigger.label}`}
+                {` · in ${r.envName}`}
               </>
             )}
           </Typography>
@@ -202,7 +203,8 @@ export default function ImprovementSourcesList({ agent }) {
       ) : <Typography sx={{ typography: "s3", color: "text.disabled" }}>—</Typography>),
     },
     {
-      id: "output", header: "Output", size: 170, enableSorting: false,
+      /* What it handed over, and where that is now. */
+      id: "output", header: "Hand-off", renderHeader: () => <HeaderTip label="Hand-off" tip="What the improvement handed over — a pull request, a draft or test copy on the platform, a patch — and where it is now: in review, released, watching for 30 days." />, size: 170, enableSorting: false,
       cell: ({ row: { original: r } }) => (r.output?.label
         ? <Typography noWrap sx={{ typography: "s2", minWidth: 0 }}>{r.output.label}</Typography>
         : <Typography sx={{ typography: "s3", color: "text.disabled" }}>—</Typography>),
@@ -342,3 +344,19 @@ export default function ImprovementSourcesList({ agent }) {
 }
 
 ImprovementSourcesList.propTypes = { agent: PropTypes.object };
+
+/* A column header that says what the column means on hover. */
+function HeaderTip({ label, tip }) {
+  return (
+    <Stack direction="row" alignItems="center" spacing={0.5} component="span">
+      {/* The grid's own title class, so it reads like the other headers. */}
+      <span className="MuiDataGrid-columnHeaderTitle">{label}</span>
+      <Tooltip arrow title={tip}>
+        <Box component="span" sx={{ display: "flex" }}>
+          <Iconify icon="solar:info-circle-linear" width={13} sx={{ color: "text.disabled" }} />
+        </Box>
+      </Tooltip>
+    </Stack>
+  );
+}
+HeaderTip.propTypes = { label: PropTypes.string, tip: PropTypes.string };

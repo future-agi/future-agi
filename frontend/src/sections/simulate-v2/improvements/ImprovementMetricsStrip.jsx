@@ -39,11 +39,11 @@ export default function ImprovementMetricsStrip({ rows }) {
         tip="Finished improvements whose proposal someone accepted — shipped as a pull request, a draft or a new version."
       />
       <Metric
-        label="Time to proposal"
+        label="Time to a fix to review"
         value={minutesLabel(m.time.prompt ?? m.time.code)}
         sub={m.time.prompt != null && m.time.code != null
           ? `Prompt fixes · code fixes take ${minutesLabel(m.time.code)}`
-          : m.time.code != null ? "Code fixes" : m.time.prompt != null ? "Prompt fixes" : "No proposal yet"}
+          : m.time.code != null ? "Median · code fixes" : m.time.prompt != null ? "Median · prompt fixes" : "No proposal yet"}
         tip="Median time from starting an improvement to a proposal ready for review, for prompt-level and code-level changes."
       />
       <Metric

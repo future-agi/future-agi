@@ -1523,10 +1523,22 @@ function PanelPhoneNumber() {
   const [number, setNumber] = useState(prefill?.number || "");
   const [instructions, setInstructions] = useState("");
   const [closed, setClosed] = useState(null);
+  /* One prompt, or a series of steps the way Bland, Retell and Vapi
+     workflows are written — each step its own instructions and where it
+     goes next. Steps come in as the agent's members. */
+  const [shape, setShape] = useState("prompt");
+  const [steps, setSteps] = useState(() => [
+    { id: "s1", name: "Greet and identify", instructions: "", next: "" },
+    { id: "s2", name: "", instructions: "", next: "" },
+  ]);
+  const editStep = (id, patch) => setSteps((list) => list.map((st) => (st.id === id ? { ...st, ...patch } : st)));
+  const stepsOk = steps.length >= 2 && steps.every((st) => st.name.trim() && st.instructions.trim());
+  const scriptOf = () => steps.map((st, i) => `## Step ${i + 1} · ${st.name.trim()}\n${st.instructions.trim()}${st.next.trim() ? `\nThen: ${st.next.trim()}` : ""}`).join("\n\n");
+  const written = shape === "steps" ? stepsOk : !!instructions.trim();
   const dial = COUNTRY_BY_ISO[countryIso]?.dial || "+1";
   const digits = number.replace(/[^\d]/g, "");
-  const pseudo = { sourceKind: "endpoint", values: { phoneNumber: number.trim(), countryCode: dial }, definition: instructions.trim() ? { kind: "prompt" } : { kind: "none" } };
-  const canGo = digits.length >= 6 && !!instructions.trim();
+  const pseudo = { sourceKind: "endpoint", values: { phoneNumber: number.trim(), countryCode: dial }, definition: written ? { kind: "prompt" } : { kind: "none" } };
+  const canGo = digits.length >= 6 && written;
   return (
     <Stack spacing={1.75} sx={{ p: 2.5 }}>
       <Typography component="div" sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -1556,18 +1568,71 @@ function PanelPhoneNumber() {
           />
         </Stack>
       </Box>
-      <Field
-        label="Its instructions"
-        required
-        multiline minRows={4}
-        placeholder="Paste the agent's system prompt or the script it follows."
-        value={instructions} onChange={setInstructions}
-        helper={(
-          <HintLine hint="We don't change the agent. A suggested fix is written against these, and a re-run on the same environment version proves it once you've applied it.">
-            Scenarios and the suggested fix are written against these.
-          </HintLine>
+      <Box>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.75 }}>
+          <Label>How it&apos;s written</Label>
+          <SegmentedToggle value={shape} onChange={setShape} options={[{ value: "prompt", label: "One prompt" }, { value: "steps", label: "Steps" }]} />
+        </Stack>
+        {shape === "prompt" ? (
+          <Field
+            label="Its instructions"
+            required
+            multiline minRows={4}
+            placeholder="Paste the agent's system prompt or the script it follows."
+            value={instructions} onChange={setInstructions}
+            helper={(
+              <HintLine hint="We don't change the agent. A suggested fix is written against these, and a re-run on the same environment version proves it once you've applied it.">
+                Scenarios and the suggested fix are written against these.
+              </HintLine>
+            )}
+          />
+        ) : (
+          <Stack spacing={1}>
+            {steps.map((st, i) => (
+              <Box key={st.id} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 1.25 }}>
+                <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+                  <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", flexShrink: 0 }}>{`Step ${i + 1}`}</Typography>
+                  <TextField
+                    size="small" fullWidth value={st.name} placeholder={i === 0 ? "Greet and identify" : "e.g. Book the appointment"}
+                    onChange={(e) => editStep(st.id, { name: e.target.value })}
+                    InputProps={{ sx: { typography: "s2" } }}
+                  />
+                  {steps.length > 2 && (
+                    <IconButton size="small" aria-label={`Remove step ${i + 1}`} onClick={() => setSteps((list) => list.filter((x) => x.id !== st.id))}>
+                      <Iconify icon="solar:trash-bin-minimalistic-linear" width={15} />
+                    </IconButton>
+                  )}
+                </Stack>
+                <TextField
+                  size="small" fullWidth multiline minRows={2} value={st.instructions}
+                  placeholder="What the agent says and does in this step."
+                  onChange={(e) => editStep(st.id, { instructions: e.target.value })}
+                  InputProps={{ sx: { typography: "s2" } }}
+                />
+                <TextField
+                  size="small" fullWidth value={st.next} sx={{ mt: 1 }}
+                  placeholder={i === steps.length - 1 ? "Then — e.g. end the call" : `Then — e.g. go to step ${i + 2} once the caller is verified; otherwise transfer`}
+                  onChange={(e) => editStep(st.id, { next: e.target.value })}
+                  InputProps={{ sx: { typography: "s3" } }}
+                />
+              </Box>
+            ))}
+            <Box>
+              <Button
+                size="small" variant="outlined"
+                startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+                onClick={() => setSteps((list) => [...list, { id: `s${Date.now()}`, name: "", instructions: "", next: "" }])}
+                sx={{ typography: "s3", fontWeight: 700, height: 26, color: "text.primary", borderColor: "divider" }}
+              >
+                Add step
+              </Button>
+            </Box>
+            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+              Each step becomes one of the agent&apos;s members, so a suggested fix names the step it changes.
+            </Typography>
+          </Stack>
         )}
-      />
+      </Box>
       <Box>
         <Label><HintLine hint={CLOSED_PLATFORM_NOTE}>On a closed platform? (optional)</HintLine></Label>
         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mt: 0.75 }}>
@@ -1580,7 +1645,7 @@ function PanelPhoneNumber() {
       <ScenarioCountRow value={scenarioCount} onChange={setScenarioCount} />
       <ContinueRow
         disabled={!canGo}
-        hint={digits.length < 6 ? "Add the number to call" : "Paste its instructions"}
+        hint={digits.length < 6 ? "Add the number to call" : shape === "steps" ? "Name each step and say what it does" : "Paste its instructions"}
         onClick={() => build({
           kind: "endpoint",
           phone: true,
@@ -1589,7 +1654,14 @@ function PanelPhoneNumber() {
           value: `tel:${dial}${digits}`,
           phoneNumber: number.trim(),
           countryCode: dial,
-          systemPrompt: instructions.trim(),
+          systemPrompt: shape === "steps" ? scriptOf() : instructions.trim(),
+          ...(shape === "steps" && {
+            members: steps.map((st, i) => ({
+              id: `step-${i + 1}`, name: st.name.trim(),
+              role: `Step ${i + 1}${st.next.trim() ? ` · then ${st.next.trim()}` : ""}`,
+              instructions: st.instructions.trim(),
+            })),
+          }),
           callDirection: "inbound",
           ...(closed && { closedPlatform: closed }),
         })}

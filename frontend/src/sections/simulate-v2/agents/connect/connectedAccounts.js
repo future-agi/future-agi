@@ -94,7 +94,8 @@ export const readyRowsOf = (agents = [], integrations, groups = []) => {
   const gh = accounts.find((a) => a.id === "github");
   if (gh) {
     const n = gh.items.reduce((sum, it) => sum + (Number((it.sub.match(/^(\d+) agents/) || [])[1]) || 1), 0);
-    out.github = { line: `${gh.label} connected · ${plural(n)}` };
+    /* Installed already: the row adds an agent from it, not a connection. */
+    out.github = { line: `Connected: ${gh.label} · ${plural(n)}`, action: "Add agent" };
   }
   accounts.filter((a) => a.id !== "github").forEach((acc) => {
     rows.filter((r) => r.kind === "hosted" && r.initial?.platform === acc.id).forEach((r) => {
@@ -104,7 +105,7 @@ export const readyRowsOf = (agents = [], integrations, groups = []) => {
       const n = assistantsFor(acc.id, type).filter((x) => fresh.has(`${acc.id}:${x.id}`)).length;
       if (!n) return;
       const { apiKeyRef, keyFrom } = acc.items[0].open.initial;
-      out[r.id] = { line: `Connected · ${plural(n)}`, initial: { apiKeyRef, keyFrom } };
+      out[r.id] = { line: `Connected · ${plural(n)}`, action: "Add agent", initial: { apiKeyRef, keyFrom } };
     });
   });
   return out;

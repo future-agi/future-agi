@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, MenuItem, Select, Stack, Typography } from "@mui/material";
 import { isGitAgent, versionNameOf } from "../_mock/codeRefs";
 import AgentFilesTab from "./AgentFilesTab";
 import AgentMembersCard from "./AgentMembersCard";
@@ -20,7 +20,7 @@ import { ActionText, KvRow, PanelCard } from "./AgentBits";
  * it was read from, with what changed since the version before.
  */
 export default function AgentDefinitionTab({
-  agent, definition, source, files, prevFiles, label, prevLabel, latest, focusPath, diffOn, observeProject, onOpenEnv, onTab, protectedMembers,
+  agent, definition, source, files, prevFiles, label, prevLabel, latest, focusPath, diffOn, observeProject, onOpenEnv, onTab, protectedMembers, onVersion,
 }) {
   const version = agent.versions.find((v) => v.label === label);
   const code = isCodeAgent(agent);
@@ -28,15 +28,36 @@ export default function AgentDefinitionTab({
   const nameOf = (l) => versionNameOf(agent, l).main;
   const shortOf = (l) => versionNameOf(agent, l).ref?.sha || l;
   const config = configRowsOf({ agent, definition, source });
+  /* "v12 · in production", "v13 · latest draft" — what each version is, in the picker. */
+  const versionTagOf = (l) => {
+    const v = agent.versions.find((x) => x.label === l);
+    const tag = l === agent.production ? "in production" : l === latest && !isGitAgent(agent) ? (v?.pendingDraft ? "latest · draft" : "latest") : null;
+    return `${nameOf(l)}${tag ? ` · ${tag}` : ""}`;
+  };
   const memberAreas = memberAreasOf({ agent, definition, source });
 
   return (
     <Stack spacing={2}>
-      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-        {"Read-only record of "}
-        <Box component="span" sx={{ fontFamily: MONO, color: "text.primary" }}>{`${nameOf(label)}${label === latest && !isGitAgent(agent) ? " (latest)" : ""}`}</Box>
-        {source.kind === "endpoint" ? " · an endpoint shows what the agent does, not how it's set up" : source.kind === "traces" ? " · read from its traces" : ` · read from ${source.label}`}
-      </Typography>
+      {/* The definition belongs to a version — picked here, the same pick as the header's. */}
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ flexWrap: "wrap", rowGap: 0.5 }}>
+        <Typography sx={{ typography: "s2", color: "text.secondary" }}>Definition of</Typography>
+        {onVersion ? (
+          <Select
+            size="small" value={label} onChange={(e) => onVersion(e.target.value)}
+            renderValue={(v) => <Box component="span" sx={{ fontFamily: MONO }}>{versionTagOf(v)}</Box>}
+            sx={{ height: 28, minWidth: 150, "& .MuiSelect-select": { typography: "s2", py: 0.25 } }}
+          >
+            {[...agent.versions].reverse().map((v) => (
+              <MenuItem key={v.label} value={v.label} sx={{ typography: "s2", fontFamily: MONO }}>{versionTagOf(v.label)}</MenuItem>
+            ))}
+          </Select>
+        ) : (
+          <Box component="span" sx={{ typography: "s2", fontFamily: MONO, color: "text.primary" }}>{versionTagOf(label)}</Box>
+        )}
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {`Read-only${source.kind === "endpoint" ? " · an endpoint shows what the agent does, not how it's set up" : source.kind === "traces" ? " · read from its traces" : ` · read from ${source.label}`}`}
+        </Typography>
+      </Stack>
 
       <Section title="Identity" action={<ActionText onClick={() => onTab("connections")}>Edit on Connections</ActionText>}>
         <Rows rows={identityRowsOf(agent)} />
@@ -124,6 +145,8 @@ AgentDefinitionTab.propTypes = {
   onOpenEnv: PropTypes.func,
   onTab: PropTypes.func,
   protectedMembers: PropTypes.array,
+  /* Picks the version shown — the same ?v= the header's picker sets. */
+  onVersion: PropTypes.func,
 };
 
 function Section({ title, note, action, children }) {

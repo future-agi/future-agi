@@ -944,14 +944,47 @@ export const agentDefinitionOf = ({ agent, version, env, envState }) => {
   /* Several agents working together (a Vapi squad, a Retell or ElevenLabs
      flow, a code app with handoffs) are one agent: each member with its own
      instructions, model and tools. */
-  const members = (def.members || []).map((m) => ({
-    id: m.id, name: m.name, role: m.role || "", instructions: m.instructions || "", model: m.model || baseModel, tools: m.tools || [],
+  const toolNames = (tools || []).map((t) => (typeof t === "string" ? t : t.name)).filter(Boolean);
+  const members = (def.members || []).map((m, i) => ({
+    id: m.id, name: m.name, role: m.role || "",
+    /* A reference name ("Node: Welcome") isn't instructions — only a sentence is. */
+    instructions: m.instructions && m.instructions !== m.promptRef && !/^(Node|Workflow node|Workflow|Topic|Flow):|· system prompt$/.test(m.instructions) ? m.instructions : memberInstructionsOf(m, i),
+    model: m.model || baseModel,
+    tools: m.tools?.length ? m.tools : memberToolsOf(m, i, toolNames),
   }));
   return {
     kind, label, instructions, model, voice: voiceSection, tools: toolsSection, knowledge, connection, structure: structureOf(def),
     ...(members.length && { members }),
     ...(kind === "framework" && { entry: def.entry || null }),
   };
+};
+
+/*
+  A member the platform gave us by name and role only (a squad's
+  assistants, a flow's nodes): its own instructions and its share of the
+  agent's tools, read the way the platform splits them — the entry member
+  checks who's calling and routes; the others get the tools their role
+  names. Every member can hand off to a person.
+*/
+const STOP = new Set(["the", "and", "takes", "tracks", "opens", "calls", "with", "from", "node", "start", "entry", "topic", "workflow", "flow", "caller", "explains", "outcome", "what", "when", "where"]);
+const stemOf = (w) => w.toLowerCase().replace(/[^a-z]/g, "").replace(/(ies)$/, "y").replace(/s$/, "");
+const memberToolsOf = (m, i, toolNames) => {
+  const entry = i === 0 || /entry|start|route|greet/i.test(m.role || "");
+  const words = `${m.name} ${m.role || ""}`.split(/[\s·,/]+/).map(stemOf).filter((w) => w.length >= 4 && !STOP.has(w));
+  const named = toolNames.filter((t) => words.some((w) => t.split("_").some((part) => stemOf(part).startsWith(w.slice(0, 5)) || w.startsWith(stemOf(part)) && stemOf(part).length >= 5)));
+  const identity = entry ? toolNames.filter((t) => /verify|otp|identity|lookup/.test(t)) : [];
+  const handoff = toolNames.filter((t) => /escalate|handoff|transfer/.test(t));
+  return [...new Set([...identity, ...named, ...handoff])];
+};
+const memberInstructionsOf = (m, i) => {
+  const role = String(m.role || "handles its part of the conversation").replace(/ · /g, " — ");
+  return [
+    `You are ${m.name}${i === 0 ? ", the first to speak with the caller" : ""}. Your role: ${role.charAt(0).toLowerCase()}${role.slice(1)}.`,
+    i === 0
+      ? "Find out what the caller needs, confirm who they are, then hand them to the member who handles it."
+      : "Stay within that job. When the caller needs something else, hand them back with a one-line summary of where things stand.",
+    "Only say something is done after the tool that does it has returned success.",
+  ].join("\n");
 };
 
 /**

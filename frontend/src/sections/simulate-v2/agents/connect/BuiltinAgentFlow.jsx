@@ -6,7 +6,7 @@ import { BUILTIN_MODELS, BUILTIN_PROMPT_PLACEHOLDER, BUILTIN_TOOL_LIBRARY } from
 import { ChipCard, Field, Label, SegmentedToggle } from "../../environments/StartEnvironment";
 import ConnectSteps from "./ConnectSteps";
 import { HintLine } from "./replicationBits";
-import { TextLink } from "./connectBits";
+import { paths } from "src/routes/paths";
 
 const MONO = "ui-monospace, Menlo, monospace";
 /* One screen: what it is (name, prompt, model) and, if it has any, its
@@ -55,12 +55,33 @@ export default function BuiltinAgentFlow({ title, onSave, initial = null, locked
   return (
     <ConnectSteps
       title={title}
-      subtitle="Write the instructions, choose the model and the tools. It runs in Future AGI — nothing to deploy."
+      subtitle="One prompt, one model and its tools. It runs in Future AGI — nothing to deploy."
       steps={STEPS}
       active={0}
       next={next}
     >
         <Stack spacing={1.75}>
+          {/* More than one prompt is a graph — Agent Playground builds those, not this form. */}
+          <Stack
+            direction="row" alignItems="center" spacing={1.25}
+            sx={{ px: 1.5, py: 1, border: "1px solid", borderColor: "divider", borderRadius: 1 }}
+          >
+            <Iconify icon="solar:routing-3-linear" width={16} sx={{ color: "text.secondary", flexShrink: 0 }} />
+            <Box flex={1} minWidth={0}>
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>Steps, branches, loops or several agents?</Typography>
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                Build it as a graph in Agent Playground — prompt nodes chained together, agents nested inside agents.
+                A long-running or background agent is connected where it runs instead — its repository, our SDK or its endpoint.
+              </Typography>
+            </Box>
+            <Button
+              size="small" variant="outlined" href={`${paths.dashboard.agents}?tab=playground`}
+              endIcon={<Iconify icon="solar:arrow-right-up-linear" width={13} />}
+              sx={{ typography: "s3", fontWeight: 700, height: 26, color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+            >
+              Open Agent Playground
+            </Button>
+          </Stack>
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "flex-end" }}>
             <Field label="Agent name" required fullWidth placeholder="e.g. Returns assistant" value={name} onChange={setName} />
             {!lockedType && <Box sx={{ flexShrink: 0 }}>
@@ -142,7 +163,16 @@ export default function BuiltinAgentFlow({ title, onSave, initial = null, locked
           )}
 
           {!ownTool ? (
-            <Box><TextLink onClick={() => setOwnTool(true)}>Describe your own tool</TextLink></Box>
+            /* A button, so it reads as something you can do — not a footnote. */
+            <Box>
+              <Button
+                size="small" variant="outlined" onClick={() => setOwnTool(true)}
+                startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+                sx={{ typography: "s3", fontWeight: 700, height: 26, color: "text.primary", borderColor: "divider" }}
+              >
+                Create a tool
+              </Button>
+            </Box>
           ) : (
           <Box>
             <Label>Describe your own</Label>

@@ -95,6 +95,10 @@ export const buildPresetFor = (agent, { name, version, count, channel = null }) 
 });
 
 /** "How deep a fix can go", in one line — said plainly for agents we can only call. */
+/* Every depth there is, so the row says what else it could be and why. */
+export const FIX_DEPTH_OPTIONS = "It depends on how the agent is connected — everything the change policy allows (a repository, or built here) · the settings the platform's API exposes (Vapi, Retell, ElevenLabs…) · changes by your own coding agent (code on your machine) · a suggested fix (a phone number or endpoint we can only call).";
+export const REACHED_AT_OPTIONS = "Set by how it's connected — a platform's API and assistant ID, an endpoint URL, a phone number, a LiveKit project, or our sandbox for code built here. A platform agent moves with Move…; an endpoint is edited here.";
+
 export const fixDepthLine = (agent) => {
   const f = fixDepthOf(agent);
   return f.depth === "suggestion" ? "We can only call this agent, so improvements end in a suggested fix" : f.label;
