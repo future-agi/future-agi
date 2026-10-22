@@ -438,7 +438,9 @@ const maxOTLPHTTPBodyBytes = 16 << 20
 // in the response media type that matches the request — the spec requires
 // echoing the content-type so client SDKs can decode the partial-success
 // field. Success acknowledges enqueue, not durable storage; project-resolution
-// drops are reported as partial success and a full row budget is retryable.
+// drops are reported as partial success. A full row budget is retryable (503 with
+// Retry-After); a request with more rows than the whole budget can never fit and
+// gets 413, which OTLP clients do not retry.
 func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)

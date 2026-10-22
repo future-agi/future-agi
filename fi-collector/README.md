@@ -137,8 +137,11 @@ the litellm table nor custom pricing applies, the span's cost is 0.
 - `server.max_pending_rows` / `FI_MAX_PENDING_ROWS` caps rows in both the pending
   buffer and the batch currently being flushed. Default: 20,000. A full budget
   rejects the **whole request before enqueue**: HTTP 503 with `Retry-After`, or
-  gRPC `RESOURCE_EXHAUSTED`. Reduce the exporter batch size if one request exceeds
-  the configured budget. Do not hot-loop retries.
+  gRPC `RESOURCE_EXHAUSTED` with `RetryInfo`; both are retryable. A request with
+  more spans than the entire budget can never be admitted, so it is refused with a
+  distinct **non-retryable** status naming the limit: HTTP 413 (no `Retry-After`)
+  or gRPC `INVALID_ARGUMENT` (no `RetryInfo`). Keep the exporter batch size at or
+  below the configured budget. Do not hot-loop retries.
 - The cap bounds retained row count, **not bytes**: large payloads, concurrent
   request decoding, converter allocations and sidecars still use memory. There
   is no Collector-framework `memory_limiter` or advertised 1,000-request queue.
