@@ -1,21 +1,44 @@
-"""Atomic cohort freezing and batched late-row materialization."""
+"""Cohort freezing and batched late-row materialization under a lease.
+
+No PostgreSQL transaction or task/evaluator row lock spans a ClickHouse
+stream. A reconcile pass takes a short-lived cohort lease, then writes each
+bounded page in its own short transaction that re-proves the lease token and
+the task revision (``_Fence``). A closed cohort is certified (``complete``)
+only after its whole membership stream has been written; an interrupted
+freeze is discarded, never read as a partial quota.
+"""
 
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterator
-from datetime import datetime
+import logging
+import time
+import uuid
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Prefetch, Q, prefetch_related_objects
+from django.db.models.functions import Now
 
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_sampling import EvalSamplingCohort, EvalSamplingMember
 from tracer.models.eval_task import EvalTask, RunType
+from tracer.selectors.eval_tasks.row_resolver import EvalTaskSelectionRejected
+from tracer.services.eval_tasks.sampling.errors import (
+    SamplingFilterRejected,
+    SamplingLeaseLost,
+    SamplingReadPressure,
+    SamplingReconcileBusy,
+)
 from tracer.services.eval_tasks.sampling.policy import (
     InvalidSamplingPolicy,
+    parse_time,
     policy_version,
+    require_policy_time_authority,
     validate_live_filter_sources,
     validate_policy,
 )
@@ -30,9 +53,43 @@ from tracer.services.eval_tasks.sampling.witnesses import TraceWitnessReader
 if TYPE_CHECKING:
     from tracer.services.eval_tasks.reconciler import ReconcileResult
 
+logger = logging.getLogger(__name__)
+# Indirection so tests can advance a controlled clock instead of sleeping.
+_sleep = time.sleep
+
 
 class SamplingPreviewTooLarge(ValueError):
     pass
+
+
+def _bounded_seconds(name: str, default: int, *, low: int, high: int) -> int:
+    value = getattr(settings, name, default)
+    if type(value) is not int or not low <= value <= high:
+        raise ValueError(f"{name} must be an integer from {low} to {high}.")
+    return value
+
+
+def closed_settle_margin() -> timedelta:
+    """Ingestion/replication allowance applied when a closed cohort freezes.
+
+    The freeze counts only rows that arrived at least this long before the
+    ClickHouse clock, and waits until that cutoff is at least this long after
+    the window end. In-window rows arriving shortly after the window closes
+    are counted, and a replica lagging by less than the margin reads the same
+    population as the primary.
+    """
+
+    return timedelta(
+        seconds=_bounded_seconds(
+            "EVAL_SAMPLING_CLOSED_SETTLE_SECONDS", 15, low=0, high=3600
+        )
+    )
+
+
+def reconcile_lease_duration() -> timedelta:
+    return timedelta(
+        seconds=_bounded_seconds("EVAL_SAMPLING_LEASE_SECONDS", 300, low=30, high=3600)
+    )
 
 
 def unit_key(unit_id: str) -> str:
@@ -53,6 +110,7 @@ def task_policy(task: EvalTask, *, now: datetime) -> tuple[dict, str]:
             "Live percentage policies require a continuous task."
         )
     validate_live_filter_sources(policy, task.filters)
+    require_policy_time_authority(task.filters)
     version = policy_version(
         policy,
         project_id=str(task.project_id),
@@ -91,7 +149,17 @@ def preview_policy(
     policy, version = task_policy(task, now=now)
     cells = []
     query = SamplingQuery(task, policy, version, now)
-    for block in stream_query(*query.preview()):
+    try:
+        statement = query.preview()
+    except EvalTaskSelectionRejected:
+        raise
+    except ValueError as exc:
+        # Compiling the row filters is pure validation, not a dependency
+        # failure: name the unsupported filter instead of reporting outage.
+        raise SamplingFilterRejected(
+            f"These task filters cannot define a sampling population: {exc}"
+        ) from exc
+    for block in stream_query(*statement):
         for (
             name,
             population,
@@ -139,6 +207,67 @@ def preview_policy(
     }
 
 
+class _Fence:
+    """Single-writer proof for one reconcile pass.
+
+    Every write runs in its own short transaction that locks the task and its
+    evaluator rows (serializing with edits, exactly like the legacy apply),
+    proves the task revision this pass started from and renews the cohort
+    lease only while it still holds the token. A pass whose lease expired, or
+    whose task was edited, raises before it writes anything else.
+    """
+
+    def __init__(self, task_id, revision: str, cohort_id, token: uuid.UUID) -> None:
+        self.task_id, self.revision = task_id, revision
+        self.cohort_id, self.token = cohort_id, token
+
+    @contextmanager
+    def write(self) -> Iterator[EvalTask]:
+        from tracer.services.eval_tasks.reconciler import (
+            EvalTaskRevisionChanged,
+            _task_revision,
+        )
+
+        with transaction.atomic():
+            task = _locked_task(self.task_id)
+            if _task_revision(task) != self.revision:
+                raise EvalTaskRevisionChanged(
+                    "Evaluation task changed while its sampling pass was running."
+                )
+            renewed = EvalSamplingCohort.objects.filter(
+                pk=self.cohort_id, lease_token=self.token
+            ).update(lease_expires_at=Now() + reconcile_lease_duration())
+            if renewed != 1:
+                raise SamplingLeaseLost(
+                    "Another sampling reconcile took over this cohort. Retry."
+                )
+            yield task
+
+    def release(self) -> None:
+        EvalSamplingCohort.objects.filter(
+            pk=self.cohort_id, lease_token=self.token
+        ).update(lease_token=None, lease_expires_at=None)
+
+
+def _locked_task(task_id) -> EvalTask:
+    task = (
+        EvalTask.objects.select_for_update(of=("self",))
+        .select_related("project")
+        .get(pk=task_id)
+    )
+    list(task.evals.select_for_update(of=("self",)).all())
+    prefetch_related_objects(
+        [task],
+        Prefetch(
+            "evals", queryset=CustomEvalConfig.objects.select_related("eval_template")
+        ),
+    )
+    return task
+
+
+WriteScope = Callable[[], AbstractContextManager]
+
+
 def prepare_live_members(
     task: EvalTask,
     policy: dict,
@@ -146,6 +275,8 @@ def prepare_live_members(
     cohort: EvalSamplingCohort,
     now: datetime,
     floor: datetime | None,
+    *,
+    write: WriteScope = transaction.atomic,
 ) -> list[dict]:
     """Freeze new-unit decisions from full snapshots, not first-day witnesses.
 
@@ -153,6 +284,8 @@ def prepare_live_members(
     IDs is classified across every already-eligible row of those units before
     any decision is persisted. Thus later day/page discovery cannot introduce
     a different priority or group witness. Earlier polls' decisions stay fixed.
+    A page is written only after its complete proof; a failed or bounded-out
+    proof writes nothing for its units.
     """
     from tracer.services.eval_tasks.sampling.unit_scope import unit_batches
 
@@ -197,10 +330,29 @@ def prepare_live_members(
                     raise ValueError(
                         "Live unit snapshot changed during first admission. Retry the bounded proof."
                     )
-                EvalSamplingMember.objects.bulk_create(
-                    list(decisions.values()), batch_size=1000
-                )
+                with write():
+                    EvalSamplingMember.objects.bulk_create(
+                        list(decisions.values()), batch_size=1000
+                    )
     return windows
+
+
+def _selected_member_pages(cohort: EvalSamplingCohort) -> Iterator[list[str]]:
+    """Keyset pages of frozen members; no cursor stays open across commits."""
+    from tracer.services.eval_tasks.sampling.unit_scope import unit_batches
+
+    last = 0
+    while True:
+        page = list(
+            EvalSamplingMember.objects.filter(cohort=cohort, selected=True, pk__gt=last)
+            .order_by("pk")
+            .values_list("pk", "unit_id")[:1000]
+        )
+        if not page:
+            return
+        last = page[-1][0]
+        # Both the unit count and encoded parameter size are finite.
+        yield from unit_batches(unit for _pk, unit in page)
 
 
 def iter_selected_row_blocks(
@@ -221,26 +373,10 @@ def iter_selected_row_blocks(
                 )
             )
         return
-    # Transfer only selected closed-cohort rows, not the unsampled population.
-    # Both the unit count and encoded parameter size are finite for custom IDs.
-    batch = []
-    byte_count = 0
-    for unit in (
-        EvalSamplingMember.objects.filter(cohort=cohort, selected=True)
-        .values_list("unit_id", flat=True)
-        .iterator(chunk_size=1000)
-    ):
-        size = len(unit.encode("utf-8")) * 2 + 8
-        if batch and (len(batch) >= 1000 or byte_count + size > 65536):
-            yield from stream_query(
-                *SamplingQuery(task, policy, version, now).rows(
-                    arrival_floor=floor, unit_ids=batch
-                )
-            )
-            batch, byte_count = [], 0
-        batch.append(unit)
-        byte_count += size
-    if batch:
+    # Transfer only selected closed-cohort rows, not the unsampled population,
+    # and push each page's unit IDs into the physical read so a page never
+    # rescans the whole window.
+    for batch in _selected_member_pages(cohort):
         yield from stream_query(
             *SamplingQuery(task, policy, version, now).rows(
                 arrival_floor=floor, unit_ids=batch
@@ -248,42 +384,53 @@ def iter_selected_row_blocks(
         )
 
 
-def reconcile_policy(task: EvalTask) -> ReconcileResult:
-    from tracer.models.observation_span import EvalEntryStatus, EvalLogger
-    from tracer.selectors.eval_tasks.row_resolver import ResolvedRowSet
-    from tracer.services.eval_tasks.entries import materialize_pending
-    from tracer.services.eval_tasks.reconciler import (
-        ReconcileResult,
-        _continuous_requires_full_reclassification,
-        _live_count,
-        _requeue_and_drop,
-        _stamp_reclassified_revision,
+def _await_closed_settle(task: EvalTask) -> datetime:
+    """Return a ClickHouse clock reading at which a new closed cohort may freeze.
+
+    Waits (without any transaction) at most twice the configured settle
+    margin, which bounds the remaining time because closed windows must
+    already have ended when the policy is validated.
+    """
+
+    now = sampling_clock()
+    margin = closed_settle_margin()
+    policy, version = task_policy(task, now=now)
+    if policy["mode"] != "closed" or not margin:
+        return now
+    if EvalSamplingCohort.objects.filter(
+        task_id=task.pk, policy_version=version, complete=True
+    ).exists():
+        return now
+    ready_at = parse_time(policy["window"]["end"]) + 2 * margin
+    for _attempt in range(3):
+        if now >= ready_at:
+            return now
+        _sleep(min((ready_at - now).total_seconds(), 2 * margin.total_seconds()))
+        now = sampling_clock()
+    if now >= ready_at:
+        return now
+    raise SamplingReadPressure(
+        "The closed sampling window is still settling. Retry shortly."
     )
 
-    # Lock serializes pollers and policy edits. A failed/partial CH stream rolls
-    # back the entire cohort and cursor, not a misleading first page of winners.
+
+def _acquire(
+    task_id, now: datetime
+) -> tuple[EvalTask, dict, str, EvalSamplingCohort, bool, _Fence]:
+    """Short locked snapshot: policy, revision, cohort and its lease."""
+    from tracer.services.eval_tasks.reconciler import _task_revision
+
+    token = uuid.uuid4()
     with transaction.atomic():
-        task = (
-            EvalTask.objects.select_for_update(of=("self",))
-            .select_related("project")
-            .get(pk=task.pk)
-        )
-        list(task.evals.select_for_update(of=("self",)).all())
-        prefetch_related_objects(
-            [task],
-            Prefetch(
-                "evals",
-                queryset=CustomEvalConfig.objects.select_related("eval_template"),
-            ),
-        )
-        now = sampling_clock()
+        task = _locked_task(task_id)
         policy, version = task_policy(task, now=now)
-        cohort, cohort_created = EvalSamplingCohort.objects.get_or_create(
+        margin = closed_settle_margin() if policy["mode"] == "closed" else timedelta(0)
+        cohort, created = EvalSamplingCohort.objects.get_or_create(
             task=task,
             policy_version=version,
             defaults={
                 "policy": policy,
-                "frozen_at": now,
+                "frozen_at": now - margin,
                 "selection_context": {
                     "project_id": str(task.project_id),
                     "organization_id": str(task.project.organization_id),
@@ -298,10 +445,43 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                 },
             },
         )
-        if policy["mode"] == "closed" and not cohort.complete:
-            for block in stream_query(
-                *SamplingQuery(task, policy, version, cohort.frozen_at).members()
-            ):
+        acquired = (
+            EvalSamplingCohort.objects.filter(pk=cohort.pk)
+            .filter(Q(lease_token__isnull=True) | Q(lease_expires_at__lt=Now()))
+            .update(
+                lease_token=token, lease_expires_at=Now() + reconcile_lease_duration()
+            )
+        )
+        if acquired != 1:
+            raise SamplingReconcileBusy(
+                "Another sampling reconcile is running for this task. Retry later."
+            )
+        fresh = created
+        if policy["mode"] == "closed" and not cohort.complete and not created:
+            # An earlier attempt stopped mid-freeze and released or lost its
+            # lease. Nothing it wrote was certified: discard it and freeze anew.
+            cohort.members.all().delete()
+            cohort.frozen_at = now - margin
+            cohort.save(update_fields=["frozen_at"])
+            fresh = True
+        cohort.refresh_from_db()
+        fence = _Fence(task.pk, _task_revision(task), cohort.pk, token)
+    return task, policy, version, cohort, fresh, fence
+
+
+def _freeze_closed(
+    task: EvalTask,
+    policy: dict,
+    version: str,
+    cohort: EvalSamplingCohort,
+    fence: _Fence,
+) -> None:
+    """Write the whole bottom-k membership, then certify it in one step."""
+    try:
+        for block in stream_query(
+            *SamplingQuery(task, policy, version, cohort.frozen_at).members()
+        ):
+            with fence.write():
                 EvalSamplingMember.objects.bulk_create(
                     [
                         EvalSamplingMember(
@@ -317,27 +497,66 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                     ],
                     batch_size=1000,
                 )
-            cohort.complete = True
-            cohort.save(update_fields=["complete"])
-        full = (
-            cohort_created
-            or task.run_type != RunType.CONTINUOUS
-            or task.continuous_cursor is None
-            or _continuous_requires_full_reclassification(task)
-        )
-        floor = None if full else task.continuous_cursor
-        before = _live_count(task)
-        stale = EvalLogger.objects.filter(
-            eval_task_id=str(task.id), status=EvalEntryStatus.PENDING
-        ).filter(
-            Q(output_metadata__isnull=True)
-            | Q(output_metadata___task_selection__sampling__policy_version__isnull=True)
-            | ~Q(output_metadata___task_selection__sampling__policy_version=version)
-        )
-        result = ReconcileResult(dropped=stale.update(deleted=True, deleted_at=now))
+        with fence.write():
+            EvalSamplingCohort.objects.filter(pk=cohort.pk).update(complete=True)
+        cohort.complete = True
+    except BaseException:
+        # A failed or incomplete stream never leaves a first page of winners
+        # behind: drop the uncertified cohort (members cascade) if we still
+        # own it. If even that cleanup fails, the cohort stays uncertified and
+        # the next lease holder discards it before freezing.
+        try:
+            with transaction.atomic():
+                EvalSamplingCohort.objects.filter(
+                    pk=cohort.pk, lease_token=fence.token, complete=False
+                ).delete()
+        except Exception:
+            logger.warning("sampling.freeze_cleanup_failed", exc_info=True)
+        raise
+
+
+def reconcile_policy(task: EvalTask) -> ReconcileResult:
+    from tracer.models.observation_span import EvalEntryStatus, EvalLogger
+    from tracer.selectors.eval_tasks.row_resolver import ResolvedRowSet
+    from tracer.services.eval_tasks.entries import materialize_pending
+    from tracer.services.eval_tasks.reconciler import (
+        ReconcileResult,
+        _continuous_requires_full_reclassification,
+        _live_count,
+        _requeue_and_drop,
+        _stamp_reclassified_revision,
+    )
+    from tracer.services.eval_tasks.sampling.pending import revalidate_pending
+
+    now = _await_closed_settle(task)
+    task, policy, version, cohort, fresh, fence = _acquire(task.pk, now)
+    try:
+        if policy["mode"] == "closed" and not cohort.complete:
+            _freeze_closed(task, policy, version, cohort, fence)
+        with fence.write() as locked:
+            full = (
+                fresh
+                or locked.run_type != RunType.CONTINUOUS
+                or locked.continuous_cursor is None
+                or _continuous_requires_full_reclassification(locked)
+            )
+            floor = None if full else locked.continuous_cursor
+            before = _live_count(locked)
+            stale = EvalLogger.objects.filter(
+                eval_task_id=str(locked.id), status=EvalEntryStatus.PENDING
+            ).filter(
+                Q(output_metadata__isnull=True)
+                | Q(
+                    output_metadata___task_selection__sampling__policy_version__isnull=True
+                )
+                | ~Q(output_metadata___task_selection__sampling__policy_version=version)
+            )
+            result = ReconcileResult(dropped=stale.update(deleted=True, deleted_at=now))
         witnesses = TraceWitnessReader(task)
         live_windows = (
-            prepare_live_members(task, policy, version, cohort, now, floor)
+            prepare_live_members(
+                task, policy, version, cohort, now, floor, write=fence.write
+            )
             if policy["mode"] == "live"
             else None
         )
@@ -365,35 +584,44 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
             materialize_options = {"sampling_metadata": metadata}
             if trace_witnesses:
                 materialize_options["trace_filter_witnesses"] = trace_witnesses
-            materialize_pending(task, metadata.keys(), **materialize_options)
-            requeued, dropped = _requeue_and_drop(
-                task,
-                resolved=ResolvedRowSet(tuple(candidates), tuple(metadata), full),
-                scope_to_candidates=True,
-            )
+            with fence.write() as locked:
+                materialize_pending(locked, metadata.keys(), **materialize_options)
+                requeued, dropped = _requeue_and_drop(
+                    locked,
+                    resolved=ResolvedRowSet(tuple(candidates), tuple(metadata), full),
+                    scope_to_candidates=True,
+                )
             result.requeued += requeued
             result.dropped += dropped
-        current_evals = task.evals.values_list("id", flat=True)
-        result.dropped += (
-            EvalLogger.objects.filter(
-                eval_task_id=str(task.id), status=EvalEntryStatus.PENDING
+        with fence.write() as locked:
+            current_evals = locked.evals.values_list("id", flat=True)
+            result.dropped += (
+                EvalLogger.objects.filter(
+                    eval_task_id=str(locked.id), status=EvalEntryStatus.PENDING
+                )
+                .exclude(custom_eval_config_id__in=current_evals)
+                .update(deleted=True, deleted_at=now)
             )
-            .exclude(custom_eval_config_id__in=current_evals)
-            .update(deleted=True, deleted_at=now)
-        )
-        from tracer.services.eval_tasks.sampling.pending import revalidate_pending
-
         result.dropped += revalidate_pending(
-            task, policy, version, cohort, sampling_clock()
+            task, policy, version, cohort, sampling_clock(), page_write=fence.write
         )
-        result.created = _live_count(task) - before + result.dropped
-        if task.run_type == RunType.CONTINUOUS:
-            from tracer.services.eval_tasks.cursor_policy import (
-                CONTINUOUS_CURSOR_OVERLAP,
-            )
+        with fence.write() as locked:
+            result.created = _live_count(locked) - before + result.dropped
+            if locked.run_type == RunType.CONTINUOUS:
+                from tracer.services.eval_tasks.cursor_policy import (
+                    CONTINUOUS_CURSOR_OVERLAP,
+                )
 
-            parked = now - CONTINUOUS_CURSOR_OVERLAP
-            if task.continuous_cursor is None or parked > task.continuous_cursor:
-                EvalTask.objects.filter(pk=task.pk).update(continuous_cursor=parked)
-        _stamp_reclassified_revision(task)
+                parked = now - CONTINUOUS_CURSOR_OVERLAP
+                # Forward-only, conditional on the stored value this pass saw.
+                EvalTask.objects.filter(pk=locked.pk).filter(
+                    Q(continuous_cursor__isnull=True) | Q(continuous_cursor__lt=parked)
+                ).update(continuous_cursor=parked)
+            _stamp_reclassified_revision(locked)
         return result
+    finally:
+        try:
+            fence.release()
+        except Exception:
+            # The lease expires on its own; never mask the pass's outcome.
+            logger.warning("sampling.lease_release_failed", exc_info=True)

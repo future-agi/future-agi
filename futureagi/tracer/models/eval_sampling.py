@@ -17,6 +17,10 @@ class EvalSamplingCohort(models.Model):
     selection_context = models.JSONField(default=dict)
     frozen_at = models.DateTimeField()
     complete = models.BooleanField(default=False)
+    # Single-writer reconcile lease. Each short write transaction renews it
+    # and proves its token, so a stale or concurrent poller cannot write.
+    lease_token = models.UUIDField(null=True, blank=True)
+    lease_expires_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "tracer_eval_sampling_cohort"
