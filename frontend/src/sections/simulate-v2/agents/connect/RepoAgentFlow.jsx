@@ -64,9 +64,11 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
   const reposOn = (h) => (h === "github" ? installedRepos(integrations) : gitHostRepos(h, integrations));
   const pasted = initial?.repo ? hostRepoNameOf(initial.repo) : null;
   const pastedVisible = !!pasted && reposOn(host).some((r) => r.name.toLowerCase() === pasted.toLowerCase());
+  /* The agent to start on: a preset's, or one picked from a connected account (New agent). */
+  const startAgentId = preset?.agent?.id || initial?.agentId || null;
   const presetFolder = useMemo(() => {
-    const repo = installedRepos(integrations).find((r) => r.name === preset?.repo);
-    return repoFolders(repo).find((f) => (f.agents || []).some((a) => a.id === preset?.agent?.id))?.path || "";
+    const repo = installedRepos(integrations).find((r) => r.name === (preset?.repo || (pastedVisible ? pasted : null)));
+    return repoFolders(repo).find((f) => (f.agents || []).some((a) => a.id === startAgentId))?.path || "";
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* GitHub: connect the app and pick from its repositories, or paste a
@@ -100,7 +102,7 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
      built at runtime come from, whether the model is chosen at runtime, the
      reference each credential key name resolves through. */
   const [detected, setDetected] = useState(null);
-  const [entryId, setEntryId] = useState(preset?.agent?.id || null);
+  const [entryId, setEntryId] = useState(startAgentId);
   /* Where a direct-API agent starts, as the person named it. */
   const [entryPoint, setEntryPoint] = useState(preset?.agent?.framework === DIRECT ? preset.agent.entry : "");
   const [pointers, setPointers] = useState({});

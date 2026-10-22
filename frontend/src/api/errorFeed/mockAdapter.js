@@ -589,6 +589,8 @@ export function useUpdateErrorFeedIssue() {
 
 /** One demo issue by id — for prototype screens outside the Error Feed. */
 export const mockCluster = (clusterId) => MOCK_CLUSTERS.find((c) => c.cluster_id === clusterId) || null;
+/** The issues an Observe project's traces raised — an agent's Overview lists its open ones. */
+export const mockClustersForProject = (projectId) => (projectId ? MOCK_CLUSTERS.filter((c) => c.project_id === projectId) : []);
 
 export function isMockClusterId(clusterId) {
   return !!findMock(clusterId);

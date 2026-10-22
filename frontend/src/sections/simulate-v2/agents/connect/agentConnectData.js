@@ -97,12 +97,12 @@ export const AGENT_CONNECT_GROUPS = [
     reach: "Anything we can call, upload or phone — and agents connected for testing only.",
     items: [
       { id: "upload", name: "Upload a folder", fix: "Patch", icon: "solar:upload-minimalistic-linear", need: "Folder or .zip, up to 200 MB", kind: "upload" },
-      { id: "running", name: "Agent endpoint", fix: "Suggested change", icon: "solar:global-linear", need: "HTTP or WebSocket URL", kind: "running", channels: ["chat", "voice"] },
-      { id: "phone", name: "Phone number", fix: "Suggested change", icon: "solar:phone-calling-rounded-linear", need: "Any agent you can call", kind: "phone", channels: ["voice"] },
       /* LiveKit Agents is a code framework (under Repo and SDK); a running
          agent can still be connected by its LiveKit project, for testing —
          its fixes end as a suggested change. */
       { id: "livekit", name: "LiveKit project", fix: "Suggested change", logo: "livekit", need: "Test only · server URL · agent name", kind: "hosted", channels: ["voice"], initial: { agentType: "voice", platform: "livekit" } },
+      { id: "running", name: "Agent endpoint", fix: "Suggested change", icon: "solar:global-linear", need: "HTTP or WebSocket URL", kind: "running", channels: ["chat", "voice"] },
+      { id: "phone", name: "Phone number", fix: "Suggested change", icon: "solar:phone-calling-rounded-linear", need: "Any agent you can call", kind: "phone", channels: ["voice"] },
       ...closedItems,
     ],
   },
@@ -140,17 +140,22 @@ export const newAgentChoicesFor = (channel) => {
     .map((g) => {
       if (g.id === "code") {
         const [first, ...rest] = g.items;
+        /* Two kinds of code way in, said once each: where the code lives, or
+           our SDK beside a framework — whose rows then say only what's
+           distinctive (Graph, Crew), not the same step seventeen times. */
+        const ordered = upload ? [first, upload, ...rest] : g.items;
         return {
-          ...g, title: "Code", card: GROUP_CARDS.code,
-          reach: "We read the repository and work out the framework — fixes come back as pull requests, or a patch for an upload.",
-          /* Frameworks and plain model calls are detected from the code, so
-             they fold under one line; search still finds each one. */
-          items: (upload ? [first, upload, ...rest] : g.items).map((it) => (it.kind === "framework" || it.id === "direct-api" ? { ...it, fold: true } : it)).map(withNext),
+          ...g, title: "Code", reach: "Fixes come back as pull requests.",
+          sections: CODE_SECTIONS,
+          items: [...ordered.filter((it) => it.kind !== "framework"), ...ordered.filter((it) => it.kind === "framework")]
+            .map(withNext)
+            .map((it) => (it.kind === "framework"
+              ? { ...it, section: "sdk", short: String(it.need || "").replace(/^SDK adapter · /, "").replace(/^./, (c) => c.toUpperCase()) }
+              : { ...it, section: it.kind === "upload" ? "upload" : "repo" })),
         };
       }
       return {
         ...g,
-        card: GROUP_CARDS[g.id] || null,
         ...(g.id === "chat" && { title: "Chat platforms", reach: "The same platforms over chat, and chat-first platforms." }),
         items: g.items.filter((it) => it.kind !== "builtin" && it.kind !== "upload").map(withNext),
       };
@@ -159,23 +164,11 @@ export const newAgentChoicesFor = (channel) => {
   return { builtin, groups: [...groups.filter((g) => g.id === "code"), ...groups.filter((g) => g.id !== "code")] };
 };
 
-/*
-  New agent opens on the question, not the catalogue: where does the agent
-  run? One card per group, each saying what you'll need and what you get, so
-  the first click is an easy one. The rows come after.
-*/
-const GROUP_CARDS = {
-  code: { title: "Code in a repository", sub: "GitHub, GitLab, Bitbucket or an upload — we work out the framework", need: "Access to the repository", gets: "Fixes come back as pull requests" },
-  voice: { title: "Voice platform", need: "An API key", gets: "Tested on a copy in your account · fixes come back as a draft" },
-  chat: { title: "Chat platform", need: "An API key", gets: "Tested in your account · fixes come back as a draft" },
-  traces: { title: "From its traces", sub: "Already sending traces to Future AGI, or add traceAI", need: "An Observe project, or a few lines of code", gets: "We read its prompt, model and tools · fixes are suggested" },
-  other: { title: "Endpoint, phone or other", need: "A URL or a phone number", gets: "Tested by calling it · fixes are suggested" },
-};
 
 /*
-  The step a row starts — said on the row, instead of how a fix comes back
-  (the group says that once). Worded from the kind, the host and what the
-  platform asks for.
+  The step a row starts — said on the row, with Connect beside it, instead
+  of how a fix comes back (each group's line says that once). Worded from the
+  kind, the host and what the platform asks for.
 */
 const NEXT_BY_ID = {
   github: "Install the GitHub app, then pick the repository",
@@ -195,20 +188,74 @@ const nextStepOf = (it) => {
   if (it.kind === "framework") return `Add our SDK where your ${it.name} agent runs`;
   if (it.kind === "closed") return `Test only — reached by ${String(it.need || "").replace(/^Test only · /, "")}`;
   if (it.kind === "hosted") {
-    const [first, second] = String(it.need || "").split(" · ");
+    const [first = "", second] = String(it.need || "").split(" · ");
     const platform = it.name.replace(/ (chat|messaging)$/i, "");
     const key = /service account/i.test(first) ? "a service account"
       : /connected app/i.test(first) ? "a connected app"
         : /entra app/i.test(first) ? "an Entra app"
           : `your ${platform} API key`;
-    /* What's picked after the key: the need's second part, else an agent. */
     const thing = (second || "agent").replace(/^(chat|messaging) /, "");
     return `Add ${key}, then pick the ${thing}`;
   }
   return it.need || "";
 };
-const withNext = (it) => ({ ...it, next: nextStepOf(it) });
+/*
+  What people type for a way in besides its name: other names for it
+  (LangChain, Dialogflow), its vendor, the language, what it is. Search
+  reads these too.
+*/
+const KEYWORDS = {
+  github: "git repo repository code",
+  gitlab: "git repo repository merge request",
+  bitbucket: "git repo repository atlassian",
+  upload: "zip folder files local code",
+  "direct-api": "openai anthropic claude gemini gpt llm api no framework python typescript",
+  "fw-langgraph": "langchain python",
+  "fw-openai-agents": "openai python handoffs",
+  "fw-crewai": "crew ai python",
+  "fw-claude-agent-sdk": "anthropic claude python typescript",
+  "fw-livekit": "voice webrtc python",
+  "fw-pipecat": "voice python daily",
+  "fw-google-adk": "google gemini vertex python",
+  "fw-mastra": "typescript javascript node",
+  "fw-vercel-ai": "vercel ai typescript javascript next",
+  "fw-strands": "aws amazon bedrock python",
+  "fw-pydantic-ai": "pydantic python",
+  "fw-agno": "phidata python",
+  "fw-haystack": "deepset python rag",
+  "fw-llamaindex": "llama index python rag",
+  "fw-smolagents": "hugging face huggingface python",
+  "fw-dspy": "stanford python",
+  "fw-microsoft-agent-framework": "microsoft autogen semantic kernel dotnet python",
+  vapi: "voice phone calls assistant",
+  "vapi-chat": "chat assistant",
+  retell: "voice phone calls",
+  elevenlabs: "eleven labs 11labs voice",
+  bland: "bland ai voice phone calls",
+  telnyx: "voice phone sip",
+  google_cx: "dialogflow google cloud ccai contact center",
+  voiceflow: "no code",
+  agentforce: "salesforce crm",
+  copilot_studio: "microsoft power virtual agents teams",
+  "traces-project": "observability tracing traces spans otel opentelemetry logs",
+  "traces-new": "traceai instrument tracing otel opentelemetry sdk",
+  running: "http https api url websocket webhook endpoint rest",
+  phone: "call calls number twilio sip pstn",
+  livekit: "voice webrtc room",
+};
+const withNext = (it) => ({
+  ...it,
+  next: nextStepOf(it),
+  keywords: [KEYWORDS[it.id] || KEYWORDS[it.initial?.platform] || "", it.kind === "closed" ? "support helpdesk tickets test only" : "", ...(it.channels || [])].filter(Boolean).join(" "),
+});
 
+/* The Code tab's two parts, each with its step said once. */
+const CODE_SECTIONS = {
+  repo: { title: "From a repository", reach: "Connect where the code lives — we read it and work out the framework." },
+  sdk: { title: "Through our SDK", reach: "Add a few lines where the agent runs — no repository access needed." },
+  /* Code that isn't in a repository: read once, fixed by a patch — the fallback, so last. */
+  upload: { title: "Without a repository", reach: "We read it once, and fixes come back as a patch to apply.", dropzone: true },
+};
 
 export const pasteExamplesFor = (channel) => (!channel ? AGENT_PASTE_EXAMPLES : AGENT_PASTE_EXAMPLES.filter((e) => !e.channels || e.channels.includes(channel)));
 

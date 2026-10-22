@@ -1,14 +1,19 @@
 import PropTypes from "prop-types";
 import { isCredentialsVersion } from "../_mock/versions";
 import { isGitAgent, versionNameOf } from "../_mock/codeRefs";
-import { useEffect, useState } from "react";
-import { Box, MenuItem, Select, Stack, Typography } from "@mui/material";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { paths } from "src/routes/paths";
+import { mockClustersForProject } from "src/api/errorFeed/mockAdapter";
+import { useIntegrations } from "../_mock/integrations";
+import { fixStatusOf, issueFixNav } from "../errorFeed/issueFixModel";
+import { Box, Button, MenuItem, Select, Stack, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import ReactApexChart from "../components/SafeApexChart";
 import { useOptionalSimStore } from "../store";
 import { runIdentityOf } from "../_mock/runIdentity";
-import { agentStatusOf, isComingSoon } from "../_mock/rsiModel";
+import { agentStatusOf } from "../_mock/rsiModel";
 import { MONO, ago, passRate, plural, showsSetup } from "./agentViewUtils";
 import { QuietTag } from "./AgentBits";
 import { clickable, focusRing } from "../components/clickable";
@@ -23,24 +28,16 @@ const NEUTRAL_BAR = "rgba(161,161,170,0.75)";
 const rateTone = (r) => (r == null ? "text.disabled" : r >= 80 ? "#16A34A" : r >= 50 ? "text.primary" : "#DC2626");
 
 /**
- * The agent at a glance — how it's doing and what to do next, nothing more:
- * three numbers (the version in production, the last simulation,
- * improvements), the one next step worth taking, then the latest runs. Pass
- * rate by version lives on Versions; real calls live in its Observe project.
+ * The agent at a glance — how it's doing, nothing more: its worst open
+ * production issues, then the latest runs. Pass rate by version lives on Versions;
+ * real calls live in its Observe project.
  */
-export default function AgentOverviewTab({
-  agent, runs, inProgress, scopedRuns, statsOf, production, improvements,
-  scopeEnv, onSwitch, onOpenRun, onTab, fresh = false,
-}) {
-  const scoped = scopedRuns || runs;
+export default function AgentOverviewTab({ agent, runs, inProgress, production, onOpenRun, fresh = false }) {
   /* Just connected, nothing set up: the Next steps card above is the page. */
   if (fresh) return null;
   return (
     <Stack spacing={2.5}>
-      <KpiStrip
-        agent={agent} runs={scoped} anyRuns={(runs || []).length > 0} statsOf={statsOf} scopeEnv={scopeEnv} production={production} improvements={improvements}
-        onSwitch={onSwitch} onOpenRun={onOpenRun} onTab={onTab}
-      />
+      <AgentHealth agent={agent} production={production} />
       {/* No environment and no runs while Next steps is up: its "Build an
           environment" already says it — an empty list would repeat it. */}
       {!(showsSetup(agent) && !agent.usedIn.length && !(runs || []).length && !(inProgress || []).length) && (
@@ -57,146 +54,116 @@ AgentOverviewTab.propTypes = {
   fresh: PropTypes.bool,
 };
 
-/* ── three numbers and the next step ───────────────────────────────────────── */
+/* ── how it's doing in production, and what needs you ─────────────────────── */
 
-function KpiStrip({ agent, runs, anyRuns, statsOf, scopeEnv, production, improvements, onSwitch, onOpenRun, onTab }) {
-  const latestStats = statsOf(agent.latest);
-  const running = scopeEnv ? agent.usedIn.find((u) => u.envId === scopeEnv.envId) : null;
-  /* Behind what's in production — a draft nobody released isn't something
-     to switch an environment to. */
-  const behind = running && running.running !== agent.production && running.behind;
-  const lastRun = runs[0];
-  const lastRate = lastRun ? passRate(lastRun) : null;
-  const failing = lastRun
-    ? [
-      lastRun.failed != null ? lastRun.failed && `${lastRun.failed} failing` : (lastRun.measured ?? lastRun.total) - lastRun.passed > 0 && `${(lastRun.measured ?? lastRun.total) - lastRun.passed} failing`,
-      lastRun.flaky ? `${lastRun.flaky} mixed` : null,
-    ].filter(Boolean).join(" · ")
-    : "";
+/* Worst first, then the most traces. */
+const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
+/* Issues the Overview lists before "All in Error Feed". */
+const TOP_ISSUES = 3;
+const SEVERITY_DOT = { critical: "#DC2626", high: "#D97706" };
+
+/*
+  How it's doing in production: its worst open Error Feed issues, each row
+  opening its fix, or the issue when there's none yet. Without an Observe project there's no production to read — it says
+  Fix is off and how to turn it on, instead of empty numbers.
+*/
+function AgentHealth({ agent, production }) {
+  const navigate = useNavigate();
+  const store = useOptionalSimStore();
+  const { prs } = useIntegrations();
   const prod = production || {};
-  const imp = improvements || { total: 0 };
-  /* Archived or deleted: read-only, so nothing new is offered — nor for a
-     kind improvements can't run on yet. */
-  const stopped = ["archived", "deleted"].includes(agentStatusOf(agent).status) || isComingSoon(agent);
-
-  /* A code agent's versions read as commits ("main @ 3f9a2c1"); others by number. */
-  const git = isGitAgent(agent);
   const nm = (l) => versionNameOf(agent, l).main;
-  const latestRef = git ? versionNameOf(agent, agent.latest).ref : null;
-  /* The one next step — the first of these that applies. */
-  const next = behind
-    ? { text: `${running.envName}'s default is still ${nm(running.running)} — ${nm(agent.production)} is in production.`, label: "Default to production", onClick: () => onSwitch(running.envId) }
-    : !latestStats && agent.latest !== agent.production && agent.usedIn.length
-      ? {
-        text: latestRef
-          ? `A fix is waiting on ${latestRef.branch} (${latestRef.sha}) and hasn't run yet — test it before it's merged.`
-          : `${agent.latest} is a draft that hasn't run yet — test it before it's released.`,
-        label: git ? "See commits" : "See versions",
-        onClick: () => onTab("versions"),
-      }
-      : failing && lastRun
-        ? { text: `${failing} in ${lastRun.ordinal ? `Run ${lastRun.ordinal}` : "the last run"}.`, label: "Open run", onClick: () => onOpenRun(lastRun) }
-        : null;
+
+  /* Its open issues, from the Observe project its traces land in. */
+  const projectId = prod.project?.project || prod.project?.id || null;
+  const issues = useMemo(() => mockClustersForProject(projectId)
+    .filter((c) => c.status !== "resolved")
+    .map((c) => ({ issue: c, fix: store?.state ? fixStatusOf(c, store.state, prs || []) : null }))
+    .sort((a, b) => (SEVERITY_RANK[a.issue.severity] ?? 9) - (SEVERITY_RANK[b.issue.severity] ?? 9) || (b.issue.trace_count || 0) - (a.issue.trace_count || 0)),
+  [projectId, store?.state, prs]);
+  const critical = issues.some((x) => x.issue.severity === "critical");
+
+  const openIssue = (x) => {
+    if (!x.fix?.envId) { navigate(paths.dashboard.errorFeed.detail(x.issue.cluster_id)); return; }
+    const [href, opts] = issueFixNav(x.fix, x.issue.cluster_id);
+    navigate(href, opts);
+  };
+
+  const columns = [
+    {
+      id: "issue", header: "Issue", meta: { flex: 1 }, minSize: 280,
+      cell: ({ row: { original: x } }) => (
+        <Typography noWrap title={x.issue.error?.name} sx={{ typography: "s2", fontWeight: 600 }}>{x.issue.error?.name}</Typography>
+      ),
+    },
+    { id: "id", header: "ID", size: 104, cell: ({ row: { original: x } }) => <Typography noWrap sx={{ typography: "s3", fontFamily: MONO, color: "text.secondary" }}>{x.issue.cluster_id}</Typography> },
+    {
+      id: "severity", header: "Severity", size: 112,
+      cell: ({ row: { original: x } }) => (
+        <Stack direction="row" alignItems="center" spacing={0.75}>
+          <Box sx={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0, bgcolor: SEVERITY_DOT[x.issue.severity] || "text.disabled" }} />
+          <Typography noWrap sx={{ typography: "s3", textTransform: "capitalize" }}>{x.issue.severity}</Typography>
+        </Stack>
+      ),
+    },
+    {
+      id: "traces", header: "Traces", size: 88,
+      cell: ({ row: { original: x } }) => <Typography sx={{ typography: "s3", fontVariantNumeric: "tabular-nums" }}>{(x.issue.trace_count || 0).toLocaleString()}</Typography>,
+    },
+    { id: "seen", header: "Last seen", size: 110, cell: ({ row: { original: x } }) => <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{x.issue.last_seen ? ago(x.issue.last_seen) : "—"}</Typography> },
+    {
+      id: "fix", header: "Fix", size: 200,
+      cell: ({ row: { original: x } }) => (
+        <Typography noWrap sx={{ typography: "s3", fontWeight: x.fix?.key === "ready" ? 700 : 400, color: x.fix ? "text.primary" : "text.subtitle" }}>
+          {x.fix?.label || "No fix yet"}
+        </Typography>
+      ),
+    },
+  ];
 
   return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, bgcolor: "background.paper", overflow: "hidden" }}>
-      <Box sx={{
-        display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(3, minmax(0, 1fr))" },
-        "& > *": { borderColor: "divider", borderStyle: "solid", borderWidth: 0 },
-        "& > *:not(:first-of-type)": { borderLeftWidth: { md: 1 }, borderTopWidth: { xs: 1, md: 0 } },
-      }}>
-        {/* The version in production; its real calls live in its Observe project. */}
-        <Kpi
-          label="In production"
-          value={agent.production ? nm(agent.production) : "—"}
-          mono
-          /* A link nobody confirmed reads as a suggestion — Next steps confirms it. */
-          sub={prod.project ? `Observe project: ${prod.project.name} · ${agent.values?.observeChosenAt || prod.project.how === "watching" ? "linked" : "suggested"}` : "Observe project not linked"}
-          action={prod.project
-            ? { label: "Open in Observe", onClick: prod.onOpenProject }
-            : { label: "Link a project", onClick: prod.onLink }}
-        />
-        <Kpi
-          label={lastRun ? <>Last simulation · <Box component="span" sx={{ fontFamily: MONO }}>{nm(lastRun.agentVersion)}</Box></> : "Last simulation"}
-          value={lastRate == null ? "—" : `${lastRate}%`}
-          tone={rateTone(lastRate)}
-          sub={lastRun
-            ? `${lastRun.passed} of ${lastRun.measured ?? lastRun.total} passed · ${ago(lastRun.finishedAt)}`
-            : anyRuns ? "No full run on the current environment version yet" : "No finished run yet"}
-          action={lastRun ? { label: "Open run", onClick: () => onOpenRun(lastRun) } : null}
-        />
-        <Kpi
-          label="Improvements"
-          value={String(imp.total)}
-          sub={imp.ready ? `${imp.ready} ready for review` : imp.running ? `${imp.running} running` : imp.total ? "None waiting on you" : "None yet"}
-          action={imp.total || !stopped ? { label: imp.total ? "Open improvements" : "Start one", onClick: () => onTab("improvements") } : null}
-        />
+    <Stack spacing={2.5}>
+      {/* ── production: the open issues its traces raised ── */}
+      <Box>
+        <Stack direction="row" alignItems="baseline" spacing={1} sx={{ mb: 0.5 }}>
+          <Typography sx={{ typography: "s1", fontWeight: 700 }}>Production</Typography>
+          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }}>
+            {prod.project
+              ? [prod.project.name, agent.production ? nm(agent.production) : null, issues.length ? `${plural(issues.length, "open issue")}${critical ? ` · ${issues.filter((x) => x.issue.severity === "critical").length} critical` : ""}` : "no open issues"].filter(Boolean).join(" · ")
+              : "Not watched"}
+          </Typography>
+          {prod.project && (
+            /* The Error Feed, filtered to this project — Observe's own pages
+               only know projects that really receive traces. */
+            <Typography
+              noWrap {...clickable(prod.onViewIssues)}
+              sx={{ typography: "s3", fontWeight: 700, cursor: "pointer", flexShrink: 0, "&:hover": { textDecoration: "underline" }, ...focusRing }}
+            >
+              {issues.length > TOP_ISSUES ? `All ${issues.length} in Error Feed →` : "Open in Error Feed →"}
+            </Typography>
+          )}
+        </Stack>
+        {!prod.project ? (
+          <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2, py: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
+            <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>
+              Fix is off for this agent — it sends no traces or call logs yet. Simulations still run and grade.
+            </Typography>
+            <Button size="small" variant="outlined" onClick={prod.onLink} sx={{ typography: "s3", fontWeight: 700, height: 28, color: "text.primary", borderColor: "divider", flexShrink: 0 }}>
+              Link a project
+            </Button>
+          </Stack>
+        ) : issues.length ? (
+          <FitDataTable columns={columns} data={issues.slice(0, TOP_ISSUES)} getRowId={(x) => x.issue.cluster_id} onRowClick={openIssue} />
+        ) : (
+          <Typography sx={{ py: 1.5, typography: "s2", color: "text.secondary" }}>
+            Error Feed hasn&apos;t found an issue in its traces.
+          </Typography>
+        )}
       </Box>
-      {/* No traces or call logs reach Observe: Fix has nothing to find this
-          agent by, so it's off — said here; "Link a project" sits in the
-          production card just above. */}
-      {!prod.project && (
-        <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 2, py: 1, borderTop: "1px solid", borderColor: "divider" }}>
-          <Iconify icon="solar:info-circle-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-          <Typography noWrap sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>
-            Fix is off for this agent — it sends no traces or call logs yet. Simulations still run and grade.
-          </Typography>
-        </Stack>
-      )}
-      {next && (
-        <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 2, py: 1, borderTop: "1px solid", borderColor: "divider" }}>
-          <Iconify icon="solar:arrow-right-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-          <Typography noWrap sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>{next.text}</Typography>
-          <Typography
-            noWrap {...clickable(next.onClick)}
-            sx={{ typography: "s2", fontWeight: 700, cursor: "pointer", flexShrink: 0, "&:hover": { textDecoration: "underline" }, ...focusRing }}
-          >
-            {next.label}
-          </Typography>
-        </Stack>
-      )}
-    </Box>
-  );
-}
-KpiStrip.propTypes = {
-  anyRuns: PropTypes.bool,
-  agent: PropTypes.object, runs: PropTypes.array, statsOf: PropTypes.func, scopeEnv: PropTypes.object, production: PropTypes.object,
-  improvements: PropTypes.object, onSwitch: PropTypes.func, onOpenRun: PropTypes.func, onTab: PropTypes.func,
-};
-
-/* One number: a label, the value, one line under it, one action. */
-function Kpi({ label, value, tone, extra, sub, action, mono }) {
-  const word = !mono && !/^[—\d]/.test(value);
-  return (
-    <Stack sx={{ px: 2, py: 1.75, minWidth: 0 }} spacing={0.5}>
-      <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{label}</Typography>
-      <Stack direction="row" alignItems="baseline" spacing={1} sx={{ minWidth: 0 }}>
-        <Typography noWrap sx={{
-          fontSize: word ? 18 : 24, fontWeight: 700, lineHeight: "30px", fontVariantNumeric: "tabular-nums",
-          color: word ? "text.secondary" : tone || "text.primary",
-          ...(mono && { fontFamily: MONO }),
-        }}>
-          {value}
-        </Typography>
-        {extra}
-      </Stack>
-      <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{sub}</Typography>
-      {action && (
-        <Typography
-          noWrap {...clickable(action.onClick)}
-          sx={{
-            typography: "s3", fontWeight: 700, width: "fit-content", maxWidth: "100%", cursor: "pointer", pt: 0.25,
-            color: action.danger ? "#DC2626" : "text.primary", "&:hover": { textDecoration: "underline" },
-            ...focusRing,
-          }}
-        >
-          {`${action.label} →`}
-        </Typography>
-      )}
     </Stack>
   );
 }
-Kpi.propTypes = { label: PropTypes.node, value: PropTypes.string, tone: PropTypes.string, extra: PropTypes.node, sub: PropTypes.node, action: PropTypes.object, mono: PropTypes.bool };
+AgentHealth.propTypes = { agent: PropTypes.object, production: PropTypes.object };
 
 /* ── pass rate by version ─────────────────────────────────────────────────── */
 

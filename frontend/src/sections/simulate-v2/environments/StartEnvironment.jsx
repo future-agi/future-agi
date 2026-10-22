@@ -1665,9 +1665,11 @@ function PanelMcpServer() {
 
 function PanelCodeUpload() {
   const build = useBuildEnvironment();
+  /* Files dropped on New agent's upload area come along, so they're not dropped twice. */
+  const dropped = useContext(PrefillContext)?.files || [];
   const [scenarioCount, setScenarioCount] = useState(DEFAULT_SCENARIOS);
-  const [files, setFiles] = useState([]);
-  const [entry, setEntry] = useState("");
+  const [files, setFiles] = useState(dropped);
+  const [entry, setEntry] = useState(dropped[0]?.name || "");
   /* What our sandbox needs to run the code, as for a repository. */
   const [envValues, setEnvValues] = useState([]);
   const [credFiles, setCredFiles] = useState([]);

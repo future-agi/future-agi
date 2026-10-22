@@ -14,6 +14,11 @@ import { canCloneProvider, keyLacksCreateScope } from "../../_mock/replication";
 import { keyRefOf } from "../../_mock/secretRefs";
 import SecretRefField from "./SecretRefField";
 import { useConnectSubmitLabel } from "./connectSubmit";
+import { useNavigate } from "react-router-dom";
+import { paths } from "src/routes/paths";
+import { useConnectedAgents } from "../../store";
+import { agentIdOf } from "../../_mock/agentRegistry";
+import FoundAgentsList from "./FoundAgentsList";
 
 const MONO = "ui-monospace, Menlo, monospace";
 /* One screen: the platform, the key, the assistant — then Connect. The rest
@@ -31,6 +36,9 @@ const STEPS = ["Connect"];
 export default function HostedAgentFlow({ title, onSave, prefill, initial = null, lockedType = null, onPlatform }) {
   const submitLabel = useConnectSubmitLabel();
   const [listing, setListing] = useState(false);
+  const navigate = useNavigate();
+  /* What's in Agents already — a platform agent connected twice is opened instead. */
+  const { agents: connectedAgents } = useConnectedAgents();
   const [agentType, setAgentType] = useState(lockedType || initial?.agentType || "voice");
   /* Picked on the directory ("Vapi", "Retell chat"): the drawer is that
      platform's — its header names it — so there is nothing to switch. */
@@ -262,13 +270,26 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
               </Box>
             ) : (
               <Box>
-                <Stack direction="row" alignItems="baseline" spacing={1} sx={{ mb: 0.75 }}>
-                  <Typography sx={{ typography: "s2", fontWeight: 700 }}>Pick the agent</Typography>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                    {`${assistants.length} on this ${platform?.name} account`}
-                  </Typography>
-                </Stack>
-                <AssistantTable assistants={assistants} voice={voice} pickedId={picked?.id} onPick={pickAssistant} />
+                {/* The same list as a repository's agents: search, radio rows,
+                    ones already in Agents marked and opened instead. */}
+                <FoundAgentsList
+                  agents={assistants}
+                  agentId={picked?.id || null}
+                  onPick={pickAssistant}
+                  heading={assistants.length === 1 ? `1 agent on this ${platform?.name} account` : `${assistants.length} agents on this ${platform?.name} account — which one do you mean?`}
+                  searchHint="name, ID or number"
+                  searchOf={(a) => `${a.name} ${a.id} ${a.phone || ""}`}
+                  describe={(a, connected) => (
+                    <>
+                      <Box component="span" sx={{ fontFamily: MONO }}>{a.id}</Box>
+                      {voice ? ` · ${a.phone || "Web only"}` : ""}
+                      {a.updated ? ` · updated ${a.updated}` : ""}
+                      {connected ? " · already in Agents" : ""}
+                    </>
+                  )}
+                  connectedOf={(a) => connectedAgents.find((x) => x.values?.provider === platform?.id && x.values?.agentId === a.id) || null}
+                  onOpenConnected={(rec) => navigate(`${paths.dashboard.agents}/connected/${agentIdOf(rec.key)}`)}
+                />
                 <TextLink onClick={() => setTyping(true)} sx={{ mt: 0.75 }}>Not listed? Enter an ID instead</TextLink>
               </Box>
             )}
@@ -398,60 +419,3 @@ function SandboxImport({ providerName, on, onToggle, files, onFiles }) {
 }
 SandboxImport.propTypes = { providerName: PropTypes.string, on: PropTypes.bool, onToggle: PropTypes.func, files: PropTypes.array, onFiles: PropTypes.func };
 
-/* The account's agents as a table: what it's called, the number it answers
-   on (voice), and when it last changed — enough to tell two apart. */
-function AssistantTable({ assistants, voice, pickedId, onPick }) {
-  /* A radio first, so the rows read as a single choice. */
-  const cols = voice ? "18px minmax(0, 1fr) 150px 110px" : "18px minmax(0, 1fr) 110px";
-  const head = { typography: "s3", fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "text.subtitle" };
-  return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
-      <Box sx={{ display: "grid", gridTemplateColumns: cols, columnGap: 2, px: 1.5, py: 0.75, bgcolor: "background.neutral", borderBottom: "1px solid", borderColor: "divider" }}>
-        <Box />
-        <Typography sx={head}>Agent</Typography>
-        {voice && <Typography sx={head}>Phone number</Typography>}
-        <Typography sx={head}>Last updated</Typography>
-      </Box>
-      {assistants.map((a, i) => {
-        const on = a.id === pickedId;
-        return (
-          <Box
-            key={a.id}
-            role="radio"
-            aria-checked={on}
-            tabIndex={0}
-            onClick={() => onPick(a)}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(a); } }}
-            sx={{
-              display: "grid", gridTemplateColumns: cols, columnGap: 2, alignItems: "center",
-              px: 1.5, py: 1, cursor: "pointer",
-              borderTop: i ? "1px solid" : "none", borderColor: "divider",
-              bgcolor: (t) => (on ? alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03) : "transparent"),
-              "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.05 : 0.025) },
-            }}
-          >
-            <Box
-              sx={{
-                width: 16, height: 16, borderRadius: "50%", display: "grid", placeItems: "center",
-                border: "1.5px solid", borderColor: on ? "text.primary" : "text.disabled",
-              }}
-            >
-              {on && <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "text.primary" }} />}
-            </Box>
-            <Box minWidth={0}>
-              <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{a.name}</Typography>
-              <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", fontFamily: MONO }}>{a.id}</Typography>
-            </Box>
-            {voice && (
-              <Typography noWrap sx={{ typography: "s2", fontFamily: a.phone ? MONO : "inherit", color: a.phone ? "text.primary" : "text.subtitle" }}>
-                {a.phone || "Web only"}
-              </Typography>
-            )}
-            <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{a.updated}</Typography>
-          </Box>
-        );
-      })}
-    </Box>
-  );
-}
-AssistantTable.propTypes = { assistants: PropTypes.array, voice: PropTypes.bool, pickedId: PropTypes.string, onPick: PropTypes.func };

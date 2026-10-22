@@ -174,9 +174,9 @@ export default function AgentViewPage() {
 
   const rawTab = params.get("tab") || "overview";
   const tab = TAB_ALIAS[rawTab] || (TABS.some((t) => t.id === rawTab) ? rawTab : "overview");
-  /* Opens on the newest version — for a code agent, on what's in production
-     (main's head), not a fix waiting on its own branch. */
-  const homeLabel = agent && isGitAgent(agent) ? agent.production : agent?.latest;
+  /* Opens on what's in production — a draft waiting to go live is one click
+     away in the picker, never what the page shows by default. */
+  const homeLabel = agent ? agent.production || agent.latest : null;
   const viewing =
     agent && agent.versions.some((v) => v.label === params.get("v"))
       ? params.get("v")
@@ -546,7 +546,8 @@ export default function AgentViewPage() {
             <Typography noWrap sx={{ typography: "m3", fontWeight: 700 }}>
               {agent.name}
             </Typography>
-            <Pill>{source.label}</Pill>
+            {/* Disconnected is said once, by the status pill beside it. */}
+            <Pill>{status.status === "disconnected" ? source.label.replace(/ · disconnected$/, "") : source.label}</Pill>
             <Tooltip arrow title={`${replication.how} ${replication.proofLabel} proof — ${replication.proofNote}`}>
               <Box
                 {...clickable(() => setQuery({ tab: "connections" }))}
@@ -804,6 +805,7 @@ export default function AgentViewPage() {
           agent={agent}
           onReconnect={() => setQuery({ tab: "connections" })}
           onRestore={() => setArchiveOpen(true)}
+          onReconnected={() => enqueueSnackbar(`${agent.name} is connected again.`, { variant: "success" })}
         />
       )}
       {/* What needs doing, as rows of one card — not a stack of banners. */}
@@ -847,6 +849,8 @@ export default function AgentViewPage() {
           production={{
             project: observeLink.project,
             onOpenProject: observeLink.openInObserve,
+            /* Error Feed, filtered to this agent's project. */
+            onViewIssues: observeLink.viewIssues,
             onLink: () => setQuery({ tab: "connections" }),
           }}
           agent={agent}
@@ -1137,11 +1141,24 @@ function EnvironmentsTab({ agent, runs, onBuild, onRun, onOpen, mainEnvId, mainP
         <Card
           title="Environments testing this agent"
           action={
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {agent.usedIn.length > 1
-                ? `Fixes run in the main one${mainPicked ? "" : " — the first built"}`
-                : "Each environment tests what's in production unless its default says otherwise"}
-            </Typography>
+            <Stack direction="row" alignItems="center" spacing={1.5} sx={{ minWidth: 0 }}>
+              <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", minWidth: 0 }}>
+                {agent.usedIn.length > 1
+                  ? `Fixes run in the main one${mainPicked ? "" : " — the first built"}`
+                  : "Each environment tests what's in production unless its default says otherwise"}
+              </Typography>
+              {/* Another world for the same agent — a second channel, a new
+                  domain, a harder caller mix. */}
+              {onBuild && (
+                <Button
+                  size="small" variant="outlined" onClick={() => onBuild()}
+                  startIcon={<Iconify icon="mingcute:add-line" width={14} />}
+                  sx={{ typography: "s3", fontWeight: 700, height: 28, flexShrink: 0, color: "text.primary", borderColor: "divider" }}
+                >
+                  Build environment
+                </Button>
+              )}
+            </Stack>
           }
         >
           <Row

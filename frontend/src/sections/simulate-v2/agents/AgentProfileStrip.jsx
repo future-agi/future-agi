@@ -1,17 +1,59 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import { alpha } from "@mui/material/styles";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { agentStatusOf, needsLiveConsent, retellPinStateOf } from "../_mock/rsiModel";
 import { replicationOf } from "../_mock/replication";
 import { QuietTag } from "./AgentBits";
+import { definitionOf, normalizeRepoUrl } from "../_mock/agentRegistry";
+import { installationFor, installedRepos, repoNameOf, useIntegrations } from "../_mock/integrations";
+import GithubInstallDialog from "../integrations/GithubInstallDialog";
+
+const btnSx = { typography: "s3", fontWeight: 700, height: 28, color: "text.primary", borderColor: "divider", flexShrink: 0 };
+
+/**
+ * The fix for a repository the GitHub App lost: reinstall it, here — on
+ * GitHub, in its own window — rather than a trip to Settings. When the
+ * account is still installed it opens that installation's repository access;
+ * once the repository is back in it, the agent reconnects on its own.
+ */
+export function ReinstallGithubButton({ agent, onReconnected, variant = "outlined" }) {
+  useIntegrations(); // re-read when the install comes back
+  const [open, setOpen] = useState(false);
+  const repo = repoNameOf(normalizeRepoUrl(definitionOf(agent).repoUrl || ""));
+  const account = repo.split("/")[0] || null;
+  const installed = account ? installationFor(account) : null;
+  return (
+    <>
+      <Button
+        size="small" variant={variant} color={variant === "contained" ? "primary" : "inherit"} onClick={() => setOpen(true)}
+        sx={variant === "contained" ? { typography: "s3", fontWeight: 700, height: 28, flexShrink: 0 } : btnSx}
+      >
+        {installed ? `Give access to ${repo.split("/")[1] || "the repository"}` : "Reinstall GitHub App"}
+      </Button>
+      <GithubInstallDialog
+        open={open}
+        configure={installed ? account : undefined}
+        onClose={() => setOpen(false)}
+        onInstalled={() => {
+          if (installedRepos().some((r) => r.name.toLowerCase() === repo.toLowerCase())) onReconnected?.();
+        }}
+      />
+    </>
+  );
+}
+ReinstallGithubButton.propTypes = { agent: PropTypes.object.isRequired, onReconnected: PropTypes.func, variant: PropTypes.string };
 
 
 /**
  * Disconnected or archived — said at the top of the agent page, with the
- * reason and the one thing to do about it.
+ * reason and the one thing that fixes it: a lost GitHub App is reinstalled
+ * from right here; a revoked key or a deleted platform agent is fixed on
+ * Connections, where the key and the agent it points at are set.
  */
-export function AgentStatusBanner({ agent, onReconnect, onRestore }) {
+export function AgentStatusBanner({ agent, onReconnect, onRestore, onReconnected }) {
+  useIntegrations(); // a reinstall clears it
   const s = agentStatusOf(agent);
   if (s.status === "connected") return null;
   const red = s.status === "disconnected";
@@ -32,19 +74,17 @@ export function AgentStatusBanner({ agent, onReconnect, onRestore }) {
         </Typography>
       </Box>
       {/* A deleted agent has nothing to restore — only its history. */}
-      {s.status !== "deleted" && (
-        <Button
-          size="small" variant="outlined"
-          onClick={red ? onReconnect : onRestore}
-          sx={{ typography: "s3", fontWeight: 700, height: 28, color: "text.primary", borderColor: "divider", flexShrink: 0 }}
-        >
-          {red ? "Open Connections" : "Restore"}
+      {red && s.cause === "app" ? (
+        <ReinstallGithubButton agent={agent} variant="contained" onReconnected={onReconnected} />
+      ) : s.status !== "deleted" && (
+        <Button size="small" variant="outlined" onClick={red ? onReconnect : onRestore} sx={btnSx}>
+          {!red ? "Restore" : s.cause === "deleted" ? "Choose another agent" : "Replace the key"}
         </Button>
       )}
     </Stack>
   );
 }
-AgentStatusBanner.propTypes = { agent: PropTypes.object.isRequired, onReconnect: PropTypes.func, onRestore: PropTypes.func };
+AgentStatusBanner.propTypes = { agent: PropTypes.object.isRequired, onReconnect: PropTypes.func, onRestore: PropTypes.func, onReconnected: PropTypes.func };
 
 /**
  * "Needs consent" — a live agent can't run until someone says we may create

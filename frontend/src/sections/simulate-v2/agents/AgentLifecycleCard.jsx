@@ -7,6 +7,7 @@ import {
 import { InfoTip, KvRow, PanelCard } from "./AgentBits";
 import { ago, plural } from "./agentViewUtils";
 import { deleteBlockOf } from "./agentDelete";
+import { ReinstallGithubButton } from "./AgentProfileStrip";
 import { useDemoMode } from "./demoMode";
 
 /**
@@ -47,7 +48,9 @@ export function LifecycleCard({ agent, onSaveValues, onArchive, onDelete }) {
             body={status.cause === "app" ? "Reinstall the GitHub App on the repository" : "Once the key is replaced"}
             hint={status.cause === "app" ? "Reinstall the GitHub App on the repository, then it reconnects on its own." : "Once the key's reference is replaced (or the agent exists again), mark it connected."}
           >
-            {status.cause !== "app" && <Button size="small" variant="outlined" onClick={reconnect} sx={btnSx}>Reconnect</Button>}
+            {status.cause === "app"
+              ? <ReinstallGithubButton agent={agent} />
+              : <Button size="small" variant="outlined" onClick={reconnect} sx={btnSx}>Reconnect</Button>}
           </ActionRow>
         )}
         <ActionRow

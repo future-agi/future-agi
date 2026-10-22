@@ -147,9 +147,10 @@ export default function AgentSetupCard({ agent, env, onTab, onBuild, onSaveValue
     {
       id: "traces",
       eyebrow: "In production",
-      title: tracesDone ? "Traces" : suggested ? "Confirm its traces" : "Get its traces",
+      /* Done: the project is the answer — "Traces" only names the step. */
+      title: tracesDone ? project.name : suggested ? "Confirm its traces" : "Get its traces",
       body: tracesDone
-        ? `${project.name} · Error Feed watches its real calls`
+        ? "Observe project · Error Feed watches its real calls"
         : suggested
           ? `Its traces look like they land in ${suggested.name}${suggested.traces ? ` (${suggested.traces.split(" · ")[0]})` : ""}. Confirm it, or pick another project.`
           : tracesHow,
@@ -167,8 +168,12 @@ export default function AgentSetupCard({ agent, env, onTab, onBuild, onSaveValue
     {
       id: "environment",
       eyebrow: "In simulation",
-      title: envDone ? "Environment" : "Build an environment",
-      body: envDone ? testedInLine(agent.usedIn) : "Simulated tools, data and callers to run scenarios against.",
+      title: envDone
+        ? `${agent.usedIn[0].envName}${agent.usedIn.length > 1 ? ` +${agent.usedIn.length - 1} more` : ""}`
+        : "Build an environment",
+      body: envDone
+        ? (agent.usedIn.length > 1 ? testedInLine(agent.usedIn) : "Environment · scenarios run against simulated tools, data and callers")
+        : "Simulated tools, data and callers to run scenarios against.",
       unlocks: envDone ? null : "Test changes, and let improvements try fixes before they ship.",
       done: envDone,
       action: envDone ? { label: "View", onClick: () => onTab("environments") } : onBuild ? { label: "Build environment", onClick: () => onBuild() } : null,
@@ -179,7 +184,9 @@ export default function AgentSetupCard({ agent, env, onTab, onBuild, onSaveValue
     <Box sx={{ mb: 2, border: "1px solid", borderColor: "divider", borderRadius: 1.5, bgcolor: "background.paper", overflow: "hidden" }}>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider" }}>
         <Typography sx={{ typography: "s1", fontWeight: 700 }}>Next steps</Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Do either first — the other is here when you need it.</Typography>
+        {!(tracesDone && envDone) && (
+          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Do either first — the other is here when you need it.</Typography>
+        )}
         <Box flex={1} />
         {!foundNeeded && (
           <Button
@@ -234,7 +241,7 @@ export default function AgentSetupCard({ agent, env, onTab, onBuild, onSaveValue
       {gates.length > 0 && (
         <>
           <Typography sx={{ px: 2, pt: 1.25, pb: 0.5, typography: "s3", fontWeight: 700, color: "text.subtitle", borderTop: "1px solid", borderColor: "divider" }}>
-            {gatesOpen ? `Needed before it runs or is fixed · ${gatesOpen} left` : "Needed before it runs or is fixed · done"}
+            {gatesOpen ? `Needed before its next run or fix · ${gatesOpen} left` : "Needed before its next run or fix · done"}
           </Typography>
           {gates.map((g) => <Row key={g.id} {...g} />)}
         </>

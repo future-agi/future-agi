@@ -10,21 +10,23 @@ const MONO = "ui-monospace, Menlo, monospace";
 const SCROLL_FROM = 6;
 
 /**
- * The agents a repository scan found, to choose the one being connected.
+ * The agents a repository scan found — or a platform account lists — to
+ * choose the one being connected. The same list in both places: search,
+ * radio rows, ones already in Agents marked "Connected · Open".
  *
  * A monorepo can hold dozens, so the list always has a search box (name,
  * framework, file or folder), and past a handful of rows it scrolls inside
  * its own frame instead of stretching the drawer. The chosen agent stays named above the list even
  * when a search hides its row, so a choice is never lost from view.
  */
-export default function FoundAgentsList({ agents, agentId, onPick, connectedOf, onOpenConnected }) {
+export default function FoundAgentsList({ agents, agentId, onPick, connectedOf, onOpenConnected, heading, searchHint = "name, framework or file", searchOf = repoSearchOf, describe = repoLineOf }) {
   const [query, setQuery] = useState("");
   const inputRef = useRef(null);
   const many = agents.length >= SCROLL_FROM;
   const q = query.trim().toLowerCase();
   const shown = useMemo(() => (q
-    ? agents.filter((a) => `${a.name} ${a.framework} ${a.sdk || ""} ${a.entry} ${(a.prompts || []).join(" ")}`.toLowerCase().includes(q))
-    : agents), [agents, q]);
+    ? agents.filter((a) => searchOf(a).toLowerCase().includes(q))
+    : agents), [agents, q, searchOf]);
   const chosen = agents.find((a) => a.id === agentId) || null;
   const chosenHidden = !!chosen && !shown.some((a) => a.id === chosen.id);
 
@@ -36,7 +38,7 @@ export default function FoundAgentsList({ agents, agentId, onPick, connectedOf, 
   return (
     <Box>
       <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>
-        {agents.length === 1 ? "We found 1 agent" : `We found ${agents.length} agents — which one do you mean?`}
+        {heading || (agents.length === 1 ? "We found 1 agent" : `We found ${agents.length} agents — which one do you mean?`)}
       </Typography>
 
       <Box
@@ -53,7 +55,7 @@ export default function FoundAgentsList({ agents, agentId, onPick, connectedOf, 
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKey}
-          placeholder={agents.length === 1 ? "Search by name, framework or file" : `Search ${agents.length} agents — name, framework or file`}
+          placeholder={agents.length === 1 ? `Search by ${searchHint}` : `Search ${agents.length} agents — ${searchHint}`}
           inputProps={{ "aria-label": "Search the agents found", spellCheck: false }}
           sx={{ typography: "s2", "& input::placeholder": { color: "text.disabled", opacity: 1 } }}
         />
@@ -69,7 +71,7 @@ export default function FoundAgentsList({ agents, agentId, onPick, connectedOf, 
         <Typography sx={{ typography: "s3", color: "text.secondary", mb: 0.75 }}>
           {"Chosen: "}
           <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>{chosen.name}</Box>
-          <Box component="span" sx={{ fontFamily: MONO }}>{` · ${chosen.entry}`}</Box>
+          {chosen.entry && <Box component="span" sx={{ fontFamily: MONO }}>{` · ${chosen.entry}`}</Box>}
         </Typography>
       )}
 
@@ -79,7 +81,7 @@ export default function FoundAgentsList({ agents, agentId, onPick, connectedOf, 
           /* Tall enough to compare most of a monorepo at once; capped by the window. */
           sx={many ? { maxHeight: "min(600px, 58vh)", overflowY: "auto", pr: 0.5, mr: -0.5 } : undefined}
         >
-          {shown.map((a) => <AgentRow key={a.id} agent={a} on={a.id === agentId} onPick={onPick} connected={connectedOf?.(a) || null} onOpenConnected={onOpenConnected} />)}
+          {shown.map((a) => <AgentRow key={a.id} agent={a} on={a.id === agentId} onPick={onPick} connected={connectedOf?.(a) || null} onOpenConnected={onOpenConnected} describe={describe} />)}
         </Stack>
       ) : (
         <Box sx={{ px: 1.5, py: 1.25, borderRadius: 1, bgcolor: "background.neutral" }}>
@@ -104,12 +106,31 @@ FoundAgentsList.propTypes = {
   /* The agent in Agents a found one already is, or null — it's opened, not connected twice. */
   connectedOf: PropTypes.func,
   onOpenConnected: PropTypes.func,
+  /* The line over the list, in place of "We found N agents". */
+  heading: PropTypes.string,
+  /* What the search box says it searches, what it searches, and each row's second line. */
+  searchHint: PropTypes.string,
+  searchOf: PropTypes.func,
+  describe: PropTypes.func,
 };
+
+/* A scanned agent: searched by name, framework, file and prompts; described by framework · entry · tools · prompt files. */
+const repoSearchOf = (a) => `${a.name} ${a.framework} ${a.sdk || ""} ${a.entry} ${(a.prompts || []).join(" ")}`;
+function repoLineOf(a, connected) {
+  return (
+    <>
+      {`${a.framework} · `}
+      <Box component="span" sx={{ fontFamily: MONO }}>{a.entry}</Box>
+      {connected ? " · already in Agents" : ""}
+      {` · ${a.tools} tool${a.tools === 1 ? "" : "s"} · ${(a.prompts || []).length} prompt file${(a.prompts || []).length === 1 ? "" : "s"}`}
+    </>
+  );
+}
 
 /* One found agent: its name, then framework · entry file · tools · prompt
    files. One that's already in Agents can't be connected again — it says so
    and opens instead. */
-function AgentRow({ agent: a, on, onPick, connected, onOpenConnected }) {
+function AgentRow({ agent: a, on, onPick, connected, onOpenConnected, describe }) {
   return (
     <Stack
       direction="row" alignItems="center" spacing={1.25}
@@ -127,12 +148,7 @@ function AgentRow({ agent: a, on, onPick, connected, onOpenConnected }) {
         : <Radio size="small" checked={on} tabIndex={-1} inputProps={{ "aria-label": `Choose ${a.name}` }} sx={{ p: 0, flexShrink: 0, color: "text.disabled", "&.Mui-checked": { color: "text.primary" } }} />}
       <Box flex={1} minWidth={0}>
         <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{a.name}</Typography>
-        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-          {`${a.framework} · `}
-          <Box component="span" sx={{ fontFamily: MONO }}>{a.entry}</Box>
-          {connected ? " · already in Agents" : ""}
-          {` · ${a.tools} tool${a.tools === 1 ? "" : "s"} · ${(a.prompts || []).length} prompt file${(a.prompts || []).length === 1 ? "" : "s"}`}
-        </Typography>
+        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{describe(a, connected)}</Typography>
       </Box>
       {connected && onOpenConnected && (
         <ButtonBase
@@ -147,5 +163,5 @@ function AgentRow({ agent: a, on, onPick, connected, onOpenConnected }) {
 }
 AgentRow.propTypes = {
   agent: PropTypes.object.isRequired, on: PropTypes.bool, onPick: PropTypes.func.isRequired,
-  connected: PropTypes.object, onOpenConnected: PropTypes.func,
+  connected: PropTypes.object, onOpenConnected: PropTypes.func, describe: PropTypes.func.isRequired,
 };

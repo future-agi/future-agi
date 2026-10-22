@@ -2,7 +2,9 @@ import PropTypes from "prop-types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSnackbar } from "notistack";
 import { Box, Stack } from "@mui/material";
-import { useSimStore } from "../../store";
+import { useConnectedAgents, useSimStore } from "../../store";
+import { useIntegrations } from "../../_mock/integrations";
+import { readyRowsOf } from "./connectedAccounts";
 import { agentRecordFromSource } from "../../_mock/agentRegistry";
 import { DEFAULT_LIMITS } from "../../_mock/optimizationRuns";
 import { emptyProfile, limitsCustomised, observeChoiceOf, observeProjectById, profileSourceOf, resolveObserve } from "../../_mock/connectAgent";
@@ -11,7 +13,7 @@ import { ConnectModeContext, InDrawerContext } from "../../environments/connectM
 import { FlowPanel } from "../../environments/StartEnvironment";
 import ConnectCatalog from "./ConnectCatalog";
 import SetupDrawer from "../../environments/SetupDrawer";
-import { detectAgentPaste, newAgentChoicesFor, pasteExamplesFor } from "./agentConnectData";
+import { detectAgentPaste, newAgentChoicesFor } from "./agentConnectData";
 import HostedAgentFlow from "./HostedAgentFlow";
 import RepoAgentFlow from "./RepoAgentFlow";
 import BuiltinAgentFlow from "./BuiltinAgentFlow";
@@ -137,10 +139,16 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
     }),
     [name, runtime, needsRuntime, submitLabel],
   );
-  /* Code first, then the platforms. Built in Future AGI is reached by pasting a prompt. */
-  const { groups } = useMemo(() => newAgentChoicesFor(channel), [channel]);
+  /* Code first, then the platforms. Built in Future AGI is one line under the
+     tabs — or a prompt pasted into the search. */
+  const { builtin, groups } = useMemo(() => newAgentChoicesFor(channel), [channel]);
+  /* Rows whose account is already connected: they say what's waiting there,
+     and open with the key or the app's access in place. */
+  const { agents: connectedAgents } = useConnectedAgents();
+  const integrations = useIntegrations();
+  const ready = useMemo(() => readyRowsOf(connectedAgents, integrations, groups), [connectedAgents, integrations, groups]);
   /* The traces flow switches between its two ways in, so its drawer is named for both. */
-  const pickItem = (item) => open(item.kind, item.initial, item.id, item.kind === "traces"
+  const pickItem = (item) => open(item.kind, ready[item.id]?.initial ? { ...(item.initial || {}), ...ready[item.id].initial } : item.initial, item.id, item.kind === "traces"
     ? { name: "An agent from its traces", icon: "solar:pulse-2-linear" }
     : { name: item.name, logo: item.logo, icon: item.icon });
   const legacy = MORE_WAYS.find((o) => o.id === choice);
@@ -181,14 +189,17 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
       <>
       <ConnectCatalog
         groups={groups}
+        /* No All tab: one group at a time, Code first. */
+        showAll={false}
+        ready={ready}
         compact={flowsIn === "inline"}
         pickedId={choice ? picked?.id : null}
         onPick={pickItem}
         detect={detectAgentPaste}
-        examples={pasteExamplesFor(channel)}
         onPaste={(kind, initial, meta) => open(kind, initial, "paste", meta)}
         emptyHint="If it runs somewhere we can call, connect it as an agent endpoint."
         onFallback={() => pickItem(groups.flatMap((g) => g.items).find((it) => it.id === "running"))}
+        onBuild={builtin ? () => pickItem(builtin) : null}
       />
       </>
       )}

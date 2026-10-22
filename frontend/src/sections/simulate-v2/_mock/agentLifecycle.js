@@ -41,7 +41,7 @@ const providerName = (agent) => PROVIDER_LABELS[agent?.values?.provider] || agen
 /** Why an agent is disconnected, said for its source. */
 export const disconnectReasonFor = (agent, cause = "key") => {
   const name = providerName(agent);
-  if (cause === "app") return "The GitHub App no longer has access to this repository. Reinstall it from Settings → Integrations → GitHub to reconnect.";
+  if (cause === "app") return "The GitHub App no longer has access to this repository, so we can't read it or open pull requests.";
   if (cause === "deleted") return `The agent was deleted on ${name} — it no longer exists in the account. Point this agent at another one, or archive it.`;
   return `The ${name} API key was revoked — ${name} refused the last read. Replace the key's reference on Connections to reconnect.`;
 };
