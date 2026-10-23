@@ -2211,7 +2211,8 @@ def _filing_problems(readers):
                     )
                 ]
                 if not any(
-                    name.endswith(("_id", "_ids")) and name not in SCOPE_IDS
+                    (name == "ids" or name.endswith(("_id", "_ids")))
+                    and name not in SCOPE_IDS
                     for name in names
                 ):
                     problems.append(
