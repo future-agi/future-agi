@@ -50,6 +50,12 @@ Implemented requirements
   count and parameter bytes, and pushes each batch's unit IDs (with their
   remap aliases) into every physical ``spans`` read, so a batch replays only
   the traces of its own members instead of rescanning the whole window.
+  ClickHouse inlines a CTE at every reference, so the canonical session/user
+  remap maps take the ids they expand from an id-only physical scan of the
+  same scope rather than from the replayed latest state: a
+  statement replays the latest state once per ``sampling_source`` reference
+  (eligibility and projection, plus one for the legacy ``observation_type``
+  filter), never once more per remap map.
   Evaluator fanout is also capped per insert batch. Membership lookups/inserts
   and evaluation entries are batched; there is no PostgreSQL query for each
   span.
@@ -344,11 +350,23 @@ The real-ClickHouse suite also proves, through ``system.query_log``, that
 adding 24 non-member contacts (one part each) grows the full-window read by at
 least their 96 spans while a closed member page returns identical rows and its
 own read grows by less than an eighth of that, and that a live proof never
-reads a 3,000-span history 40 days before the policy start; it covers min/max/
+reads a 3,000-span history 40 days before the policy start, and that a preview
+reads less than three latest-state replays of a 12-span, 8 KiB-per-span
+attribute payload (measured 204,370 uncompressed bytes against 98,304 per
+replay; the previous remap form read 606,950). It covers min/max/
 census/shortage quotas compiled to SQL, remapped sessions expanded for trace and
 session rows, the settle margin, explicit oversized-identity errors, explicit
 proof bounds and identity merges after a decision. These are correctness and
 read-scope fixtures, not throughput benchmarks.
+
+An interleaved local A/B of the previous and current remap forms on one
+synthetic 10,000-span set (2,500 sessions, twenty cells, 1 KiB attribute
+payload, five runs of each form on a heavily loaded shared host) returned
+identical rows. The preview's median read fell from 75,961,784 to 26,961,640
+uncompressed bytes and its median server time from 4.8 s to 1.7 s; with the
+legacy ``observation_type`` filter, from 113,942,676 to 40,442,460 bytes and
+from 5.5 s to 3.2 s. Read bytes are deterministic; timings on that host are
+noisy and are not a production benchmark.
 
 The native script executes the production query compiler on real ClickHouse
 25.8+ with bounded synthetic fixtures (at most 220 spans per case), including a
