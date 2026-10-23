@@ -124,9 +124,21 @@ def required_sample_size(
     variance = p * (1 - p)
     if variance == 0:
         return 1
-    n0 = z * z * variance / (margin * margin)
-    exact = n0 * population / (n0 + population - 1)
-    return max(1, min(population, math.ceil(exact - 1e-9)))
+    z_variance = z * z * variance
+    # Algebraic inversion without dividing by margin^2 (which may underflow).
+    exact = z_variance * population / (z_variance + margin * margin * (population - 1))
+    n = max(1, min(population, math.ceil(exact)))
+    # Resolve a floating-point boundary using the reported margin itself,
+    # rather than subtracting an epsilon that can understate the required n.
+    if (
+        n > 1
+        and margin_of_error(n - 1, population, proportion=p, confidence=confidence)
+        <= margin
+    ):
+        n -= 1
+    if margin_of_error(n, population, proportion=p, confidence=confidence) > margin:
+        n += 1
+    return n
 
 
 def stratified_margin_of_error(
@@ -470,7 +482,7 @@ def _binomial_tail(start: int, step: int, n: int, p: float) -> float:
     while 0 <= k <= n:
         term = math.exp(_log_binomial_pmf(k, n, p))
         total += term
-        if total > 0 and term < total * 1e-17:
+        if term == 0 or (total > 0 and term < total * 1e-17):
             break
         k += step
     return total
@@ -501,11 +513,28 @@ def binomial_two_sided_p(k: int, n: int, p: float) -> float:
     # that is no likelier. If that is the neighbour itself, k is a mode and
     # every outcome qualifies: the p-value is exactly 1.
     step = 1 if k <= mode else -1
-    boundary = k + step
-    while 0 <= boundary <= n and _log_binomial_pmf(boundary, n, p) > limit:
-        boundary += step
-    if boundary == k + step:
+    neighbour = k + step
+    if not 0 <= neighbour <= n or _log_binomial_pmf(neighbour, n, p) <= limit:
         return 1.0
+    # Locate the qualifying tail by binary search on the opposite side of
+    # the mode. A linear walk can take millions of iterations for severe SRM.
+    if step == 1:
+        low, high = mode, n + 1
+        while low < high:
+            middle = (low + high) // 2
+            if middle <= n and _log_binomial_pmf(middle, n, p) > limit:
+                low = middle + 1
+            else:
+                high = middle
+    else:
+        low, high = -1, mode
+        while low < high:
+            middle = (low + high + 1) // 2
+            if middle >= 0 and _log_binomial_pmf(middle, n, p) > limit:
+                high = middle - 1
+            else:
+                low = middle
+    boundary = low
     near = _binomial_tail(k, -step, n, p)
     far = _binomial_tail(boundary, step, n, p) if 0 <= boundary <= n else 0.0
     return min(1.0, near + far)

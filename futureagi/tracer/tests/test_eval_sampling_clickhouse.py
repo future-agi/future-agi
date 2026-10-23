@@ -1535,3 +1535,81 @@ def test_closed_audit_endpoint_reports_frozen_design_weights_and_balance(
     assert rows[("default", "en")]["population_size"] == 20  # persisted N kept
     assert rows[("default", "fr")]["population_check"] == "match"
     assert result["summary"]["integrity"] == "attention"
+
+
+def test_planned_cell_quotas_preserve_contact_groups_and_match_audit(
+    auth_client, project, custom_eval_config, ch_seed
+):
+    """Applying different targets never reassigns multi-row contacts' groups."""
+    from tracer.services.eval_tasks.sampling.audit import parse_stratum, sampling_audit
+    from tracer.services.eval_tasks.sampling.stats import margin_of_error
+
+    spans = []
+    for index, locales in enumerate((("a", "b"), ("a", "b"), ("b",), ("b",), (None,))):
+        session = TraceSession.objects.create(project=project, name=f"planned-{index}")
+        for offset, locale in enumerate(locales):
+            rows = seed_contact(
+                project,
+                session,
+                {} if locale is None else {"locale": locale},
+                traces=1,
+                seed=False,
+            )
+            for span in rows:
+                span.start_time = timezone.now() - timedelta(minutes=10 - offset)
+            spans.extend(rows)
+    seed_ch_spans(spans)
+    original = make_policy(
+        coordination="project",
+        group_by=[{"key": "locale"}],
+        default={"target_n": 1, "max_n": 1, "rare_below": 100},
+    )
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy=original,
+    )
+    task.evals.add(custom_eval_config)
+    before = preview_policy(task)
+    labels = {
+        parse_stratum(cell["stratum"])[1][0][1]: cell["stratum"]
+        for cell in before["strata"]
+    }
+    assert {
+        parse_stratum(cell["stratum"])[1][0][1]: cell["eligible_units"]
+        for cell in before["strata"]
+    } == {"a": 2, "b": 2, None: 1}
+    quotas = {labels["a"]: 1, labels["b"]: 2, labels[None]: 0}
+    task.sampling_policy = {**original, "cell_quotas": quotas}
+    task.save(update_fields=["sampling_policy"])
+    response = auth_client.post(
+        "/tracer/eval-task/sampling_preview/",
+        {"project": str(project.id), "sampling_policy": task.sampling_policy},
+        format="json",
+    )
+    assert response.status_code == 200, response.content
+    preview = response.json()["result"]
+    cells = {cell["stratum"]: cell for cell in preview["strata"]}
+    assert {key: cell["eligible_units"] for key, cell in cells.items()} == {
+        cell["stratum"]: cell["eligible_units"] for cell in before["strata"]
+    }
+    for identity, target in quotas.items():
+        assert cells[identity]["selected_units"] == target
+        assert cells[identity]["margin_of_error"] == margin_of_error(
+            target, cells[identity]["eligible_units"]
+        )
+    assert preview["precision"]["unsampled_strata"] == 1
+    assert preview["precision"]["stratified_margin_of_error"] is None
+    reconcile(task)
+    members = list(EvalSamplingMember.objects.filter(cohort__task=task))
+    assert len(members) == 3
+    assert {key: sum(m.stratum == key for m in members) for key in quotas} == quotas
+    assert EvalLogger.objects.filter(eval_task_id=str(task.id)).count() == 8
+    audit = sampling_audit(task)
+    assert audit["summary"]["integrity"] == "ok"
+    for row in audit["strata"]:
+        assert row["target"] == row["achieved"] == quotas[row["stratum"]]
+        assert row["population_size"] == cells[row["stratum"]]["eligible_units"]
+        assert row["inclusion_probability"] == row["achieved"] / row["population_size"]

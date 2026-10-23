@@ -215,16 +215,11 @@ class SamplingPreviewMixin:
         )
         if task is None:
             return _error("Evaluation task not found.", 404)
-        closed = (task.sampling_policy or {}).get("mode", "closed") == "closed"
         actor = f"{task.project.organization_id}:{getattr(request.user, 'pk', '')}"
         try:
-            # Closed audits re-read the frozen population from ClickHouse:
-            # they share the per-actor preview admission. Live audits read
-            # bounded PostgreSQL aggregates only.
-            if closed:
-                with preview_slot(actor):
-                    result = sampling_audit(task, cohort_id=query.get("cohort_id"))
-            else:
+            # Guard all audits: an explicitly requested archived cohort may
+            # be closed even when the task's current policy is live.
+            with preview_slot(actor):
                 result = sampling_audit(task, cohort_id=query.get("cohort_id"))
         except PreviewThrottled as exc:
             return _error(str(exc), 429, **{"Retry-After": str(exc.retry_after)})

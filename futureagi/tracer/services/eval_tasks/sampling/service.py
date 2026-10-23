@@ -28,6 +28,7 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_sampling import EvalSamplingCohort, EvalSamplingMember
 from tracer.models.eval_task import EvalTask, RunType
 from tracer.selectors.eval_tasks.row_resolver import EvalTaskSelectionRejected
+from tracer.services.eval_tasks.sampling import stats
 from tracer.services.eval_tasks.sampling.errors import (
     SamplingFilterRejected,
     SamplingLeaseLost,
@@ -167,6 +168,48 @@ def _member_metadata(
     }
 
 
+PLANNING_CONFIDENCE = 0.95
+PLANNING_PROPORTION = 0.5
+
+
+def preview_precision(cells: list[dict]) -> dict:
+    """Precision of the previewed design for a pass-rate-like proportion.
+
+    Adds each cell's 95% margin of error (finite-population corrected, at the
+    conservative p = 0.5) for its selected units, and summarizes the
+    stratified margin and the Kish effect of the design weights N/n.
+    """
+
+    for cell in cells:
+        cell["margin_of_error"] = stats.margin_of_error(
+            cell["selected_units"],
+            cell["eligible_units"],
+            proportion=PLANNING_PROPORTION,
+            confidence=PLANNING_CONFIDENCE,
+        )
+    weighted = [
+        (cell["eligible_units"] / cell["selected_units"], cell["selected_units"])
+        for cell in cells
+        if cell["selected_units"]
+    ]
+    return {
+        "confidence": PLANNING_CONFIDENCE,
+        "assumed_proportion": PLANNING_PROPORTION,
+        "stratified_margin_of_error": stats.stratified_margin_of_error(
+            [
+                (cell["eligible_units"], cell["selected_units"], PLANNING_PROPORTION)
+                for cell in cells
+            ],
+            confidence=PLANNING_CONFIDENCE,
+        ),
+        "kish_effective_n": stats.kish_effective_n(weighted),
+        "design_effect": stats.design_effect(weighted),
+        "unsampled_strata": sum(
+            1 for cell in cells if cell["eligible_units"] and not cell["selected_units"]
+        ),
+    }
+
+
 def preview_policy(
     task: EvalTask, *, now: datetime | None = None, evaluator_count: int = 0
 ) -> dict:
@@ -209,6 +252,7 @@ def preview_policy(
                 raise SamplingPreviewTooLarge(
                     "Preview exceeds 1000 strata. Narrow the group-by attributes or window."
                 )
+    precision = preview_precision(cells)
     return {
         "policy_version": version,
         "sampling_unit": policy["sampling_unit"],
@@ -226,6 +270,7 @@ def preview_policy(
         * evaluator_count
         if evaluator_count
         else None,
+        "precision": precision,
         "estimated_cost": None,
         "cost_note": "Cost is unavailable: evaluator token usage and provider pricing are not fixed by this policy.",
         "population_note": "Eligible units are counted once in their first matching stratum. Missing IDs follow the policy. Closed samples freeze when the task first reconciles; this preview is not a reservation.",

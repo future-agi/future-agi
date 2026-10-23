@@ -174,6 +174,7 @@ def validate_policy(
             "coordination",
             "panel",
             "prn_start",
+            "cell_quotas",
         },
         "policy",
     )
@@ -252,7 +253,52 @@ def validate_policy(
             "The default stratum cannot have filters or a name."
         )
     _coordination(policy)
+    _cell_quotas(policy)
     return policy
+
+
+def _cell_quotas(policy: dict) -> None:
+    """Optional explicit closed targets keyed by opaque preview cell identity.
+
+    Applied *after* first-match unit classification, not as extra predicates:
+    splitting a slice into priority rules would reassign multi-row contacts.
+    Unlisted cells retain the original rule, including its floors and census.
+    """
+    if "cell_quotas" not in policy:
+        return
+    quotas = policy["cell_quotas"]
+    if policy["mode"] != "closed":
+        raise InvalidSamplingPolicy("Cell quotas require a closed window.")
+    if not isinstance(quotas, dict) or len(quotas) > 1000:
+        raise InvalidSamplingPolicy("Use at most 1000 explicit cell quotas.")
+    names = {rule["name"] for rule in policy["strata"]} | {"default"}
+    for identity, count in quotas.items():
+        try:
+            name, groups = json.loads(identity)
+            if name not in names or not isinstance(groups, list):
+                raise ValueError
+            if len(groups) != len(policy["group_by"]):
+                raise ValueError
+            for encoded in groups:
+                present, value = json.loads(encoded)
+                if type(present) not in (bool, int) or present not in (0, 1):
+                    raise ValueError
+                if not isinstance(value, str):
+                    raise ValueError
+        except (TypeError, ValueError):
+            raise InvalidSamplingPolicy(
+                "Cell quota identities must come from a preview of these slices and group-by attributes."
+            ) from None
+        _integer(count, "cell quota")
+    if not quotas:
+        policy.pop("cell_quotas")
+
+
+def cell_rule(policy: dict, stratum: str, rule: dict) -> dict:
+    """An explicit target replaces all quota controls for this cell only."""
+    if stratum in policy.get("cell_quotas", {}):
+        return {"target_n": policy["cell_quotas"][stratum]}
+    return rule
 
 
 def _coordination(policy: dict) -> None:

@@ -368,6 +368,53 @@ def test_preview_counts_evaluation_runs_without_fabricated_pricing():
     assert preview["estimated_cost"] is None
 
 
+def test_preview_reports_hand_computed_precision():
+    """Y3: per-cell 95% margins (FPC, p = 0.5) and the design's precision."""
+    from tracer.models.eval_task import EvalTask
+    from tracer.models.project import Project
+    from tracer.services.eval_tasks.sampling.service import preview_policy
+
+    project = Project(id=PROJECT, sampling_contact_attribute="")
+    task = EvalTask(
+        project=project, row_type="spans", filters={}, sampling_policy=policy()
+    )
+
+    def run(rows):
+        with patch(
+            "tracer.services.eval_tasks.sampling.service.stream_query",
+            return_value=iter([rows]),
+        ):
+            return preview_policy(task, now=NOW)
+
+    preview = run(
+        [("a", 1000, 2000, 100, 200, 100, 200), ("b", 500, 1000, 50, 100, 50, 100)]
+    )
+    margins = [cell["margin_of_error"] for cell in preview["strata"]]
+    # 1.959963984540054 * sqrt(0.25/100 * 900/999) and sqrt(0.25/50 * 450/499).
+    assert margins == [
+        pytest.approx(0.09301577436565599, rel=1e-12),
+        pytest.approx(0.13161005701441758, rel=1e-12),
+    ]
+    precision = preview["precision"]
+    assert (precision["confidence"], precision["assumed_proportion"]) == (0.95, 0.5)
+    # W = 2/3, 1/3: z * sqrt(4/9 * 0.25/100 * 900/999 + 1/9 * 0.25/50 * 450/499).
+    assert precision["stratified_margin_of_error"] == pytest.approx(
+        0.07595974389307122, rel=1e-12
+    )
+    # Proportional design: every weight is N/n = 10, so n_eff = n and deff = 1.
+    assert precision["kish_effective_n"] == pytest.approx(150, rel=1e-12)
+    assert precision["design_effect"] == pytest.approx(1, rel=1e-12)
+    assert precision["unsampled_strata"] == 0
+    preview = run([("a", 40, 80, 4, 8, 4, 8), ("b", 10, 10, 0, 0, 0, 0)])
+    assert [cell["margin_of_error"] for cell in preview["strata"]] == [
+        pytest.approx(1.959963984540054 * (0.25 / 4 * 36 / 39) ** 0.5, rel=1e-12),
+        None,
+    ]
+    assert preview["precision"]["stratified_margin_of_error"] is None
+    assert preview["precision"]["unsampled_strata"] == 1
+    assert preview["precision"]["design_effect"] == pytest.approx(1, rel=1e-12)
+
+
 def test_live_policy_is_open_ended_and_discovers_future_and_backdated_event_days():
     from datetime import date, timedelta
 

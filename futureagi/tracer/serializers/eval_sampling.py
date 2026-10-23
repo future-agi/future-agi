@@ -61,6 +61,11 @@ class SamplingPolicySerializer(StrictInputSerializer):
     strata = SamplingRuleSerializer(many=True, required=False)
     group_by = SamplingAttributeSerializer(many=True, required=False)
     default = SamplingRuleSerializer(required=False)
+    cell_quotas = serializers.DictField(
+        child=serializers.IntegerField(min_value=0, max_value=1000000),
+        required=False,
+        help_text="Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+    )
     # No defaults: an omitted key is the historical independent policy, and
     # unchanged policies must round-trip byte for byte on edit.
     coordination = serializers.ChoiceField(
@@ -102,6 +107,22 @@ class SamplingPreviewCellSerializer(serializers.Serializer):
     expected_rows = serializers.FloatField()
     selected_units = serializers.IntegerField()
     selected_rows = serializers.IntegerField()
+    margin_of_error = serializers.FloatField(
+        allow_null=True,
+        help_text="95% margin of error of a proportion over this cell's selected units (finite-population corrected, p = 0.5); null when nothing is selected, 0 for a census.",
+    )
+
+
+class SamplingPrecisionSerializer(serializers.Serializer):
+    confidence = serializers.FloatField()
+    assumed_proportion = serializers.FloatField()
+    stratified_margin_of_error = serializers.FloatField(
+        allow_null=True,
+        help_text="Margin of the population-weighted proportion; null when a non-empty cell selects nothing.",
+    )
+    kish_effective_n = serializers.FloatField(allow_null=True)
+    design_effect = serializers.FloatField(allow_null=True)
+    unsampled_strata = serializers.IntegerField()
 
 
 class SamplingPreviewResultSerializer(serializers.Serializer):
@@ -115,6 +136,7 @@ class SamplingPreviewResultSerializer(serializers.Serializer):
     evaluator_count = serializers.IntegerField(min_value=0)
     expected_evaluations = serializers.FloatField(allow_null=True)
     selected_evaluations = serializers.IntegerField(allow_null=True)
+    precision = SamplingPrecisionSerializer()
     estimated_cost = serializers.FloatField(allow_null=True)
     cost_note = serializers.CharField()
     population_note = serializers.CharField()

@@ -24,6 +24,7 @@ from tracer.models.eval_task import EvalTask
 from tracer.services.eval_tasks.sampling import stats
 from tracer.services.eval_tasks.sampling.policy import (
     InvalidSamplingPolicy,
+    cell_rule,
     quota_target,
     target_size,
 )
@@ -67,7 +68,7 @@ def _rules(policy: dict) -> dict[str, dict]:
 
 def _stratum_row(policy: dict, rules: dict, cell: dict) -> dict:
     name, _groups = parse_stratum(cell["stratum"])
-    rule = rules.get(name)
+    rule = cell_rule(policy, cell["stratum"], rules.get(name))
     population, achieved = cell["population"], cell["achieved"]
     row = {
         "stratum": cell["stratum"],
@@ -236,7 +237,11 @@ def audit_report(policy: dict, cells: list[dict]) -> dict:
             if not row["exact"] or row["population_check"] != "match"
         ]
     else:
-        attention = [row for row in strata if row["srm_flagged"]]
+        attention = [
+            row
+            for row in strata
+            if row["srm_flagged"] or row["population_check"] == "changed"
+        ]
     reconstructed = sum(weight * count for weight, count in weighted)
     represented_population = sum(row["population_size"] for row in represented)
     return {
@@ -400,8 +405,10 @@ def _notes(policy: dict) -> list[str]:
     if policy["mode"] == "closed":
         return [
             "Population per stratum is re-read at the cohort's freeze time; "
-            "'changed' means it no longer reproduces the persisted membership "
-            "(deleted rows or identity merges since the freeze).",
+            "'changed' flags differing counts or probabilities. Matching counts "
+            "do not prove identical membership: same-size substitutions can go undetected.",
+            "Pearson balance p-values are descriptive, not design-adjusted inference "
+            "for stratified quotas. Kish design effect measures unequal weights only.",
             "Closed quotas are exact: achieved equals the expected size unless a "
             "stratum is flagged. Shortage is the quota a stratum could not fill "
             "because it had too few units.",
@@ -412,6 +419,10 @@ def _notes(policy: dict) -> list[str]:
     return [
         "Population per stratum is every unit decided since the policy start "
         "(selected and rejected first decisions).",
-        f"A stratum is flagged when an exact binomial test of its realized "
-        f"selections against its rate gives p < {stats.SRM_ALPHA}.",
+        f"A stratum is flagged when a binomial test of its realized "
+        f"selections against its rate gives p < {stats.SRM_ALPHA}; a continuity-corrected "
+        "normal approximation is used above binomial variance 1,000,000. Inconsistent "
+        "persisted probabilities are also flagged.",
+        "Balance differences can reflect sampling variation; Pearson p-values are "
+        "not adjusted for the stratified design. Kish design effect measures unequal weights only.",
     ]

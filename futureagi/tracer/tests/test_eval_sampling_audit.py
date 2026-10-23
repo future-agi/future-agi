@@ -342,6 +342,30 @@ def test_audit_endpoint_statuses(auth_client, project, custom_eval_config, user)
     assert freezing.complete is False
 
 
+@pytest.mark.django_db
+def test_archived_closed_audit_cannot_bypass_admission_with_a_live_task(
+    auth_client, project, custom_eval_config
+):
+    from tracer.services.eval_tasks.sampling.preview_guard import PreviewThrottled
+
+    task = _live_task(project, custom_eval_config)
+    with (
+        patch(
+            "tracer.views.eval_sampling.preview_slot",
+            side_effect=PreviewThrottled("Too many previews", retry_after=10),
+        ),
+        patch(
+            "tracer.views.eval_sampling.sampling_audit",
+            side_effect=AssertionError("an unadmitted audit must not read"),
+        ),
+    ):
+        response = auth_client.get(
+            AUDIT, {"eval_task_id": str(task.id), "cohort_id": str(uuid.uuid4())}
+        )
+    assert response.status_code == 429
+    assert response["Retry-After"] == "10"
+
+
 def test_anonymous_audit_denied(api_client):
     response = api_client.get(AUDIT, {"eval_task_id": str(uuid.uuid4())})
     assert response.status_code in (401, 403)

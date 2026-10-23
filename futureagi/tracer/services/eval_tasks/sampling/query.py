@@ -467,6 +467,16 @@ class SamplingQuery:
                 f"least(population_size, {cap}, greatest(toUInt64({self.bind(rule.get('min_n', 0))}), {count}))"
             )
         k = self._rule_case(target)
+        overrides = []
+        for identity, quota in self.policy.get("cell_quotas", {}).items():
+            overrides.extend(
+                [
+                    f"stratum = {self.bind(identity)}",
+                    f"least(population_size, toUInt64({self.bind(quota)}))",
+                ]
+            )
+        if overrides:
+            k = f"multiIf({', '.join([*overrides, k])})"
         if self.policy["mode"] == "closed":
             probability, selected = (
                 "toFloat64(sample_size) / population_size",
