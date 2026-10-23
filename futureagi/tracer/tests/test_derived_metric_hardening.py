@@ -173,6 +173,18 @@ def stored_values(values):
     return read
 
 
+def field_error(response, field):
+    """The messages for one field from the public API error envelope.
+
+    Errors use ``tfc.utils.api_errors.build_error_envelope``: field messages are
+    under ``details`` and the field is named by ``attr``, never top-level keys.
+    """
+    assert response.data["status"] is False, response.data
+    assert response.data["attr"] == field, response.data
+    assert list(response.data["details"]) == [field], response.data
+    return " ".join(response.data["details"][field])
+
+
 def seed_two_sessions(client, scope, when):
     for index in range(2):
         seed_span(
@@ -491,7 +503,7 @@ def test_weighted_metric_without_an_evaluator_hash_is_rejected_precisely(
     )
     response = auth_client.post(f"{ROOT}{path}", data, format="json")
     assert response.status_code == 400, response.data
-    message = str(response.data["inputs"])
+    message = field_error(response, "inputs")
     assert "config_hash" in message and "escalated" in message
     assert "resolved" not in message  # only the unversioned input is named
     # A field omitted entirely defaults to blank and is rejected the same way.
@@ -541,7 +553,7 @@ def test_contradictory_exact_filters_can_only_select_nothing_and_are_rejected(
         format="json",
     )
     assert response.status_code == 400
-    assert "model" in str(response.data["filters"])
+    assert "'model'" in field_error(response, "filters")
     repeated = [{"field": "model", "value": "a"}, {"field": "model", "value": "a"}]
     assert (
         auth_client.post(
@@ -575,7 +587,8 @@ def test_contradictory_exact_filters_can_only_select_nothing_and_are_rejected(
             format="json",
         )
     assert run.status_code == shown.status_code == 400
-    assert "model" in str(run.data["filters"]) and "model" in str(shown.data["filters"])
+    assert "'model'" in field_error(run, "filters")
+    assert "'model'" in field_error(shown, "filters")
     assert agreeing.status_code == 202
 
 
@@ -843,23 +856,18 @@ def test_run_pages_are_chronological_and_stable_while_rows_are_created(
 def test_unknown_or_out_of_scope_cursor_is_rejected_not_guessed(
     auth_client, observe_project, saved
 ):
-    assert auth_client.get(ROOT, {"before": str(uuid4())}).status_code == 400
-    assert (
-        auth_client.get(
-            f"{ROOT}{saved['id']}/runs/", {"before": str(uuid4())}
-        ).status_code
-        == 400
-    )
     other = auth_client.post(
         ROOT, span_body(observe_project, name="Elsewhere"), format="json"
     ).data
-    # A real metric id is not a run cursor.
-    assert (
-        auth_client.get(
-            f"{ROOT}{saved['id']}/runs/", {"before": other["id"]}
-        ).status_code
-        == 400
-    )
+    rejected = [
+        auth_client.get(ROOT, {"before": str(uuid4())}),
+        auth_client.get(f"{ROOT}{saved['id']}/runs/", {"before": str(uuid4())}),
+        # A real metric id is not a run cursor.
+        auth_client.get(f"{ROOT}{saved['id']}/runs/", {"before": other["id"]}),
+    ]
+    for response in rejected:
+        assert response.status_code == 400, response.data
+        assert "Cursor is unknown in this scope" in field_error(response, "before")
 
 
 # --- MET-5: preview is bounded ------------------------------------------------------
@@ -1004,8 +1012,9 @@ def test_preview_budget_is_enforced_by_the_server_and_never_truncates(
             f"{ROOT}{saved['id']}/preview/", window(), format="json"
         )
     assert response.status_code == 400, response.data
-    assert "interactive read budget" in str(response.data["window"])
-    assert "results" not in response.data  # an aborted read returns no partial value
+    assert "interactive read budget" in field_error(response, "window")
+    # An aborted read returns only the error envelope, never a partial value.
+    assert "results" not in response.data
     monkeypatch.undo()
     with using(metric_ch):
         recovered = auth_client.post(
