@@ -327,22 +327,32 @@ figures, and are not comparable with the figures above.
 Real ClickHouse 25.3.14.14 (a shared development container with a 2-CPU
 cgroup), real in-process collector with PostgreSQL authentication bypassed:
 
-* ``TestLiveClickHouseCollectorPipeline``, 20 spans: 20 of 20 verified by ID.
-  The insert lag (``durable_lag``) covered 20 of 20 stored spans, at p50/p99
-  49/601 ms in one run and 1304/1704 ms in another. The read-visible upper
-  bound from the scheduled send was p50/p99 401/876 ms (lower bound p50 7 ms),
-  and 1937/2337 ms in the other run. The clock offset was -30.8 +/- 4.2 ms and
-  -18.3 +/- 29.7 ms, so both runs are flagged clock-limited.
-* ``TestLiveClickHouseRecovery``, 160 spans per case:
+* ``TestLiveClickHouseCollectorPipeline``, 20 spans, three runs: 20 of 20
+  verified by ID each time, and the insert lag (``durable_lag``) covered 20 of
+  20 stored spans each time.
 
-  * A graceful collector restart lasting 0.8 s left 8 requests ambiguous. No
-    acknowledged span was missing, there were no duplicates, and recovery took
-    0.185 s.
+  * Insert lag p50/p99: 49/601, 294/1519 and 1304/1704 ms.
+  * Read-visible upper bound from the scheduled send, p50/p99: 401/876,
+    1523/1890 and 1937/2337 ms.
+  * Under the race detector, one run saw 1 of 5 sentinels within the 3 s settle
+    window; the other 4 were reported unseen, not as lag values.
+  * Measured clock offset: -30.8 +/- 4.2, +30.2 +/- 9.4 and -18.3 +/- 29.7 ms.
+    In the first run it moved to -42.3 ms by the end of the settle window. The
+    offset intervals of different runs do not overlap, so this development
+    container's clock moves by tens of milliseconds between runs. Every run is
+    flagged clock-limited, and its insert lags below that are not resolved.
+
+* ``TestLiveClickHouseRecovery``, 160 spans per case, two runs (one under the
+  race detector):
+
+  * A graceful collector restart lasting about 0.8 s left 8 requests ambiguous.
+    No acknowledged span was missing, there were no duplicates, and recovery
+    took 0.118 and 0.185 s.
   * Holding every writer request for 1.5 s against a 24-row budget filled the
-    budget (24 rows buffered), and 10 requests were refused with a retry hint.
-    No acknowledged span was missing. Recovery took 1.909 s: the backlog was
-    back at its baseline 1.909 s after the fault, and the earlier sentinels
-    were all visible after 1.736 s.
+    budget (24 rows buffered). 10 and 15 requests were refused with a retry
+    hint. No acknowledged span was missing. Recovery took 1.909 and 1.698 s,
+    bounded by the backlog's return to its baseline in one run and by sentinel
+    visibility in the other.
 
 Mock ClickHouse, real in-process collector (``recovery_test.go``,
 ``publish_test.go``):
