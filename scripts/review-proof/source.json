@@ -1,0 +1,14 @@
+{
+  "product_commit": "90b378c0df9ef55e66d7b7d53fb0fac338f58dd8",
+  "trees": {
+    "futureagi": "47ca55b43d0318cd65ad106f5c3f5015c5bcb6a6",
+    "frontend": "3ca36aae8899ae4a4d54dd367cb94915dbed62cf",
+    "agentcc-gateway": "62b98a5779385bc1e182dd78b78d2d6adfb3a63e",
+    "fi-collector": "64b514933e461f7a2e85ce79631657b075631a1b",
+    "e2e": "44d8ee7a873090e10b0d057e313bb3d28ef19bb5",
+    "deploy": "9816338f5fae493839189fd4816d3aace54c0bb5",
+    "bin": "b3648a367888dddb9c15fa1b217605a7fff8f936",
+    "docker-compose.yml": "76be9bbad53431a0ce1100d363101f65f45c1c7f",
+    "docker-compose.distributed.yml": "b10897d060be03de62876b36414c05b6347ecef2"
+  }
+}

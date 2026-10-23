@@ -1,0 +1,307 @@
+{
+ "_doc": "One-sided, single-line, test-side-only perturbations for PR #3289 E2E proof. Apply only to the shadow copy, never to the worktree. Rule: line L of file F must contain `find` exactly once; replace it with `replace`. fail_line = the spec line where the failing expect must be reported. Files are relative to e2e/. Line numbers pinned at HEAD df8e17383 (spec sha256 in plan).",
+ "spec_sha256": {
+  "flows/evals/jev-evaluator-models.spec.ts": "55f83b4c8173bfe5eff55df352e787268621ed8ba0115093e8e14e1c07a4ebee",
+  "flows/observe/instant-eval-insights-gates.spec.ts": "30cc574053020d84eea8d525713e8fc29e50a2762c3f1fec0df18d8f67a541de"
+ },
+ "mutations": [
+  {
+   "id": "M01",
+   "run": "P1",
+   "flow": "EVAL-E2E-006",
+   "check": "C1 capabilities allow jev_models",
+   "file": "flows/evals/jev-evaluator-models.spec.ts",
+   "line": 200,
+   "find": ".toBe(true);",
+   "replace": ".toBe(false);",
+   "fail_line": 200,
+   "expect_msg": [
+    "Expected: false",
+    "Received: true"
+   ]
+  },
+  {
+   "id": "M02",
+   "run": "P1",
+   "flow": "EVAL-E2E-007",
+   "check": "C1 no TypeSafe key after the drawer",
+   "file": "flows/evals/jev-evaluator-models.spec.ts",
+   "line": 335,
+   "find": ".has_key).toBe(false);",
+   "replace": ".has_key).toBe(true);",
+   "fail_line": 335,
+   "expect_msg": [
+    "Expected: true",
+    "Received: false"
+   ]
+  },
+  {
+   "id": "M03",
+   "run": "P1",
+   "flow": "EVAL-E2E-008",
+   "check": "C1 PG keeps both criteria",
+   "file": "flows/evals/jev-evaluator-models.spec.ts",
+   "line": 383,
+   "find": "pass: criteria,",
+   "replace": "pass: { ...criteria, criteria_false: '' },",
+   "fail_line": 383,
+   "expect_msg": [
+    "criteria_false",
+    "Misses the request"
+   ]
+  },
+  {
+   "id": "M04",
+   "run": "P1",
+   "flow": "EVAL-E2E-009",
+   "check": "C1 PG mapping keeps authored label order",
+   "file": "flows/evals/jev-evaluator-models.spec.ts",
+   "line": 456,
+   "find": "toEqual({ labels, descriptions })",
+   "replace": "toEqual({ labels: ['No', 'Resolved', 'Escalated'], descriptions })",
+   "fail_line": 456,
+   "expect_msg": [
+    "Resolved",
+    "Escalated"
+   ]
+  },
+  {
+   "id": "M05",
+   "run": "P1",
+   "flow": "EVAL-E2E-010",
+   "check": "C1 PG keeps four ordered levels",
+   "file": "flows/evals/jev-evaluator-models.spec.ts",
+   "line": 522,
+   "find": "score: { levels }",
+   "replace": "score: { levels: levels.slice(0, 3) }",
+   "fail_line": 522,
+   "expect_msg": [
+    "Answered with sources"
+   ]
+  },
+  {
+   "id": "M06",
+   "run": "P1",
+   "flow": "OBS-E2E-052+OBS-E2E-053",
+   "check": "C1 project row under the actor org (shared seedProject)",
+   "file": "flows/observe/instant-eval-insights-gates.spec.ts",
+   "line": 59,
+   "find": "[name, actor.organizationId]",
+   "replace": "[name, '00000000-0000-4000-8000-000000000000']",
+   "fail_line": 60,
+   "expect_msg": [
+    "toEqual"
+   ],
+   "note": "the diff shows the expected [{id: <projectId>}] against an empty received array; location line 60 (seedProject) pins it"
+  },
+  {
+   "id": "M07",
+   "run": "P2",
+   "flow": "EVAL-E2E-006",
+   "check": "C2 provider-status: TypeSafe, no key",
+   "file": "flows/evals/jev-evaluator-models.spec.ts",
+   "line": 205,
+   "find": "has_key: false",
+   "replace": "has_key: true",
+   "fail_line": 205,
+   "expect_msg": [
+    "has_key"
+   ]
+  },
+  {
+   "id": "M08",
+   "run": "P2",
+   "flow": "EVAL-E2E-010",
+   "check": "R1 reviewer 4334111428: choice_scores is SQL NULL, not {}",
+   "file": "flows/evals/jev-evaluator-models.spec.ts",
+   "line": 521,
+   "find": "toBeNull()",
+   "replace": "toEqual({})",
+   "fail_line": 521,
+   "expect_msg": [
+    "Expected: {}",
+    "Received: null"
+   ]
+  },
+  {
+   "id": "M09",
+   "run": "P2",
+   "flow": "OBS-E2E-052",
+   "check": "C2 capabilities deny instant_eval LICENSE_MISSING",
+   "file": "flows/observe/instant-eval-insights-gates.spec.ts",
+   "line": 137,
+   "find": "{ allowed: false, reason_code: DENIED }",
+   "replace": "{ allowed: true, reason_code: null }",
+   "fail_line": 137,
+   "expect_msg": [
+    "allowed",
+    "LICENSE_MISSING"
+   ]
+  },
+  {
+   "id": "M10",
+   "run": "P2",
+   "flow": "OBS-E2E-053",
+   "check": "C2 capabilities deny insights LICENSE_MISSING",
+   "file": "flows/observe/instant-eval-insights-gates.spec.ts",
+   "line": 199,
+   "find": "{ allowed: false, reason_code: DENIED }",
+   "replace": "{ allowed: true, reason_code: null }",
+   "fail_line": 199,
+   "expect_msg": [
+    "allowed",
+    "LICENSE_MISSING"
+   ]
+  },
+  {
+   "id": "M11",
+   "run": "P3",
+   "flow": "EVAL-E2E-006",
+   "check": "C3 update stores jev-latest",
+   "file": "flows/evals/jev-evaluator-models.spec.ts",
+   "line": 252,
+   "find": "model: JEV_MODEL,",
+   "replace": "model: SAVEABLE_MODEL,",
+   "fail_line": 252,
+   "expect_msg": [
+    "turing_large",
+    "jev-latest"
+   ]
+  },
+  {
+   "id": "M12",
+   "run": "P3",
+   "flow": "OBS-E2E-052",
+   "check": "C3 estimate 402 names feature instant_eval",
+   "file": "flows/observe/instant-eval-insights-gates.spec.ts",
+   "line": 160,
+   "find": "'instant_eval', testInfo",
+   "replace": "'insights', testInfo",
+   "fail_line": 100,
+   "expect_msg": [
+    "feature",
+    "instant_eval"
+   ]
+  },
+  {
+   "id": "M13",
+   "run": "P3",
+   "flow": "OBS-E2E-053",
+   "check": "C3 report list 402 names feature insights",
+   "file": "flows/observe/instant-eval-insights-gates.spec.ts",
+   "line": 219,
+   "find": "'insights', testInfo",
+   "replace": "'instant_eval', testInfo",
+   "fail_line": 100,
+   "expect_msg": [
+    "feature",
+    "insights"
+   ]
+  },
+  {
+   "id": "M14",
+   "run": "P4",
+   "flow": "EVAL-E2E-006",
+   "check": "C4 create-v2 stores one jev-latest row",
+   "file": "flows/evals/jev-evaluator-models.spec.ts",
+   "line": 265,
+   "find": "model: JEV_MODEL }])",
+   "replace": "model: null }])",
+   "fail_line": 265,
+   "expect_msg": [
+    "jev-latest"
+   ]
+  },
+  {
+   "id": "M15",
+   "run": "P5",
+   "flow": "EVAL-E2E-006",
+   "check": "R2 reviewer 4334111433: Jev row tooltip aria-label is empty",
+   "file": "flows/evals/jev-evaluator-models.spec.ts",
+   "line": 221,
+   "find": "toHaveAttribute('aria-label', '')",
+   "replace": "toHaveAttribute('aria-label', LOCKED)",
+   "fail_line": 221,
+   "expect_msg": [
+    "Not included in your plan"
+   ]
+  },
+  {
+   "id": "S1",
+   "run": "P6",
+   "optional": true,
+   "flow": "EVAL-E2E-006",
+   "check": "C1b turing_models still denied",
+   "file": "flows/evals/jev-evaluator-models.spec.ts",
+   "line": 201,
+   "find": ".toBe(false);",
+   "replace": ".toBe(true);",
+   "fail_line": 201,
+   "expect_msg": [
+    "Expected: true",
+    "Received: false"
+   ]
+  },
+  {
+   "id": "S3",
+   "run": "P6",
+   "optional": true,
+   "flow": "EVAL-E2E-009",
+   "check": "C1b choices column keeps authored order",
+   "file": "flows/evals/jev-evaluator-models.spec.ts",
+   "line": 454,
+   "find": "toEqual(labels)",
+   "replace": "toEqual(['No', 'Resolved', 'Escalated'])",
+   "fail_line": 454,
+   "expect_msg": [
+    "Resolved"
+   ]
+  },
+  {
+   "id": "S4",
+   "run": "P6",
+   "optional": true,
+   "flow": "OBS-E2E-052+OBS-E2E-053",
+   "check": "C3b refusal status is 402 (shared expectRefused)",
+   "file": "flows/observe/instant-eval-insights-gates.spec.ts",
+   "line": 100,
+   "find": "status: 402",
+   "replace": "status: 403",
+   "fail_line": 100,
+   "expect_msg": [
+    "402"
+   ]
+  },
+  {
+   "id": "S2",
+   "run": "P7",
+   "optional": true,
+   "flow": "EVAL-E2E-006",
+   "check": "C3b stored mapping is the validated noul one",
+   "file": "flows/evals/jev-evaluator-models.spec.ts",
+   "line": 254,
+   "find": "question_type: 'noul'",
+   "replace": "question_type: 'choice'",
+   "fail_line": 254,
+   "expect_msg": [
+    "noul"
+   ]
+  },
+  {
+   "id": "S5",
+   "run": "P7",
+   "optional": true,
+   "flow": "EVAL-E2E-008+EVAL-E2E-009+EVAL-E2E-010",
+   "check": "C1b V1 snapshot equals the template mapping (shared expectPublishedJev)",
+   "file": "flows/evals/jev-evaluator-models.spec.ts",
+   "line": 166,
+   "find": "toEqual(row.config.jev_mapping)",
+   "replace": "toEqual({ ...row.config.jev_mapping, revision: 'jev-map-v0' })",
+   "fail_line": 166,
+   "expect_msg": [
+    "jev-map-v0",
+    "jev-map-v1"
+   ]
+  }
+ ]
+}

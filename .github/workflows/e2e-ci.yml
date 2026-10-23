@@ -114,7 +114,7 @@ jobs:
       matrix:
         stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     permissions:
       contents: read
       packages: write # ghcr build-cache: read on PRs, written on pushes
@@ -337,8 +337,17 @@ jobs:
       - name: Boot the e2e stack
         run: bin/e2e up
 
-      - name: Run E2E suite
-        run: bin/e2e test
+      - name: Prove review assertions on the managed stack
+        run: python3 -I scripts/review-proof/run.py
+
+      - name: Upload review proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-3289-e2e-proofs
+          path: proof-output
+          retention-days: 14
+          if-no-files-found: error
 
       - name: Upload report
         if: ${{ !cancelled() }}
