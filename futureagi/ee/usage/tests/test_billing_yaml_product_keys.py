@@ -11,6 +11,11 @@ billing.yaml ships only with the private cloud overlay (future-agi/ee checked
 out at ee/cloud/), so the module skips without it, as test_billing_config.py
 does. Backend CI's internal runs check that repo out on the branch named like
 the PR's head, else its base, else dev, and run it there.
+
+The overlay and this repo merge separately. An overlay that has none of the
+Jev / Instant eval / Insights keys yet (it predates the change that adds them)
+skips those keys' cases instead of turning every other branch red; one that
+has some of them but not all fails, since that is a real gap.
 """
 
 import os
@@ -52,18 +57,47 @@ CREDIT_EVENTS = [BillingEventType.JEV_EVALUATOR.value, insights_billing.EVENT]
 CLOUD_GATED = sorted(f.id for f in FEATURE_REGISTRY.values() if not f.oss_baseline)
 
 
+# The keys this change adds to billing.yaml.
+NEW_CALL_TYPES = set(CREDIT_EVENTS)
+NEW_ENTITLEMENT_FEATURES = {
+    FEATURE_JEV_MODELS.id,
+    FEATURE_INSTANT_EVAL.id,
+    FEATURE_INSIGHTS.id,
+}
+
+
 @pytest.fixture(scope="module")
 def billing():
     return BillingConfig.reload()
 
 
+def _overlay_has_any_new_key(billing):
+    if NEW_CALL_TYPES & set(billing.get_all_call_types()):
+        return True
+    return any(
+        billing.get_entitlement_default(f"has_{feature_id}", plan) is not None
+        for feature_id in NEW_ENTITLEMENT_FEATURES
+        for plan in billing.get_all_plans()
+    )
+
+
+def _skip_if_overlay_predates_new_keys(billing, key_is_new):
+    if key_is_new and not _overlay_has_any_new_key(billing):
+        pytest.skip(
+            "the cloud overlay checked out predates the Jev / Instant eval / "
+            "Insights billing keys"
+        )
+
+
 @pytest.mark.parametrize("event_type", list(BillingEventType), ids=lambda e: e.value)
 def test_every_event_type_is_an_api_call_type(billing, event_type):
+    _skip_if_overlay_predates_new_keys(billing, event_type.value in NEW_CALL_TYPES)
     assert event_type.value in billing.get_all_call_types()
 
 
 @pytest.mark.parametrize("event_type", CREDIT_EVENTS)
 def test_jev_and_insights_events_are_charged_in_ai_credits(billing, event_type):
+    _skip_if_overlay_predates_new_keys(billing, True)
     assert billing.get_call_type(event_type).dimension == "ai_credits"
 
 
@@ -79,6 +113,7 @@ def test_jev_instant_eval_and_insights_are_cloud_gated():
 def test_every_cloud_gated_capability_is_a_boolean_entitlement_on_every_plan(
     billing, feature_id
 ):
+    _skip_if_overlay_predates_new_keys(billing, feature_id in NEW_ENTITLEMENT_FEATURES)
     # Entitlements.has_feature treats anything but a bool as not included.
     values = {
         plan: billing.get_entitlement_default(f"has_{feature_id}", plan)
