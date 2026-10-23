@@ -104,16 +104,32 @@ ORDER BY e.config_id, s.locale""",
     Example(
         "annotation-agreement",
         "Human annotation vs. evaluator agreement",
-        "Span annotations joined to span-level eval results: a confusion matrix "
-        "of human label against eval pass, with each cell's share.",
-        """SELECT a.value AS human_label,
-  e.passed AS eval_passed,
+        "One comparison per span for each human-label/evaluator pair, using the "
+        "latest human annotation and non-null span pass result in the window "
+        "(created_at, then id). Shares are within each label/evaluator pair.",
+        """WITH latest_annotations AS (
+  SELECT label_id, trace_id, span_id,
+    argMax(value, (created_at, id)) AS human_label
+  FROM annotations
+  WHERE score_source = 'human' AND span_id IS NOT NULL
+  GROUP BY label_id, trace_id, span_id
+), latest_evaluations AS (
+  SELECT config_id, trace_id, span_id,
+    argMax(passed, (created_at, id)) AS eval_passed
+  FROM eval_results
+  WHERE target_type = 'span' AND passed IS NOT NULL
+  GROUP BY config_id, trace_id, span_id
+)
+SELECT a.label_id AS label_id,
+  e.config_id AS config_id,
+  a.human_label AS human_label,
+  e.eval_passed AS eval_passed,
   count() AS spans_compared,
-  round(count() / sum(count()) OVER (), 4) AS share
-FROM annotations AS a
-INNER JOIN eval_results AS e ON a.span_id = e.span_id AND a.trace_id = e.trace_id
-GROUP BY a.value, e.passed
-ORDER BY human_label, eval_passed""",
+  round(count() / sum(count()) OVER (PARTITION BY a.label_id, e.config_id), 4) AS share
+FROM latest_annotations AS a
+INNER JOIN latest_evaluations AS e ON a.span_id = e.span_id AND a.trace_id = e.trace_id
+GROUP BY a.label_id, e.config_id, a.human_label, e.eval_passed
+ORDER BY label_id, config_id, human_label, eval_passed""",
     ),
     Example(
         "derived-metric-over-time",

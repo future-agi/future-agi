@@ -1090,9 +1090,23 @@ def _gallery_oracles(tenant):
     )
     total = sum(len(g) for g in pairs.values())
     oracles["annotation-agreement"] = (
-        ["human_label", "eval_passed", "spans_compared", "share"],
         [
-            [label, ok, len(g), round(len(g) / total, 4)]
+            "label_id",
+            "config_id",
+            "human_label",
+            "eval_passed",
+            "spans_compared",
+            "share",
+        ],
+        [
+            [
+                str(tenant.label),
+                configs["toxicity"],
+                label,
+                ok,
+                len(g),
+                round(len(g) / total, 4),
+            ]
             for (label, ok), g in sorted(pairs.items())
         ],
         True,
@@ -1249,6 +1263,110 @@ def test_estimate_withholds_short_primary_indexes_during_foreign_growth(primary_
         )
         assert observed[0] == observed[1]
         assert live.rows("SELECT count() FROM spans") == [[len(live.owned.spans)]]
+
+
+def test_annotation_gallery_deduplicates_evaluations_and_annotations():
+    from tracer.sql_workbench.examples import EXAMPLES
+
+    query = next(e.sql for e in EXAMPLES if e.id == "annotation-agreement")
+    with provisioned(label="agreement") as (live, admin):
+        before = live.rows(query)
+        database = live.scope.database
+        eval_columns = (
+            "trace_id,observation_span_id,trace_session_id,custom_eval_config_id,"
+            "target_type,output_float,output_bool,output_str,error,created_at,"
+            "eval_task_id,output_metadata,is_deleted,_version"
+        )
+        table = f"{database}.{live.scope.eval_table}"
+        admin.execute(
+            f"INSERT INTO {table} (id,{eval_columns}) SELECT generateUUIDv4(),{eval_columns} "
+            f"FROM {table} WHERE target_type = 'span'"
+        )
+        assert live.rows(query) == before
+        columns = (
+            "organization_id,workspace_id,tracer_project_id,trace_id,observation_span_id,"
+            "trace_session_id,label_id,value,created_at,score_source"
+        )
+        table = f"{database}.model_hub_score"
+        admin.execute(
+            f"INSERT INTO {table} (id,{columns}) SELECT generateUUIDv4(),{columns} FROM {table}"
+        )
+        assert live.rows(query) == before
+
+
+def test_annotation_gallery_uses_latest_values_within_each_label_evaluator_pair():
+    from tracer.sql_workbench.examples import EXAMPLES
+
+    query = next(e.sql for e in EXAMPLES if e.id == "annotation-agreement")
+    with provisioned(label="agree2") as (live, admin):
+        scope, tenant = live.scope, live.owned
+        a, b = tenant.spans[:2]
+        first_label, second_label = uuid4(), uuid4()
+        moment = scope.end - timedelta(minutes=1)
+        annotations = []
+        for span in (a, b):
+            for value, created, source in [
+                ("bad", moment - timedelta(seconds=1), "human"),
+                ("good", moment, "human"),
+                ("good", moment, "human"),
+                ("machine-only", moment + timedelta(seconds=1), "auto"),
+            ]:
+                annotations.append(
+                    (
+                        uuid4(),
+                        tenant.org,
+                        tenant.workspace,
+                        tenant.project,
+                        span.trace,
+                        span.id,
+                        first_label,
+                        value,
+                        created,
+                        source,
+                    )
+                )
+        annotations.append(
+            (
+                uuid4(),
+                tenant.org,
+                tenant.workspace,
+                tenant.project,
+                a.trace,
+                a.id,
+                second_label,
+                "other",
+                moment,
+                "human",
+            )
+        )
+        admin.execute(
+            f"INSERT INTO {scope.database}.model_hub_score "
+            "(id,organization_id,workspace_id,tracer_project_id,trace_id,observation_span_id,"
+            "label_id,value,created_at,score_source) VALUES",
+            annotations,
+        )
+        config = tenant.configs["helpfulness"]
+        # Same timestamp: the UUID tie-break, not insertion order, picks failure.
+        admin.execute(
+            f"INSERT INTO {scope.database}.{scope.eval_table} "
+            "(id,trace_id,observation_span_id,custom_eval_config_id,target_type,output_bool,created_at) VALUES",
+            [
+                (UUID(int=102), a.trace, a.id, config, "span", 0, moment),
+                (UUID(int=101), a.trace, a.id, config, "span", 1, moment),
+                (UUID(int=103), b.trace, b.id, config, "span", 1, moment),
+            ],
+        )
+        rows = [
+            r for r in live.rows(query) if r[0] in {str(first_label), str(second_label)}
+        ]
+        expected = [
+            [str(first_label), str(tenant.configs["toxicity"]), "good", 1, 2, 1.0],
+            [str(first_label), str(config), "good", 0, 1, 0.5],
+            [str(first_label), str(config), "good", 1, 1, 0.5],
+            [str(second_label), str(tenant.configs["toxicity"]), "other", 1, 1, 1.0],
+            [str(second_label), str(config), "other", 0, 1, 1.0],
+        ]
+        assert sorted(rows) == sorted(expected)
 
 
 def test_sample_gallery_does_not_multiply_spans_for_repeated_evaluations():
