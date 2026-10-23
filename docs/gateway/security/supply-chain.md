@@ -48,8 +48,9 @@ output. It does this only when every error is a failed lookup and
 `build-reproducible.sh [--out DIR]` builds for the host by default; set
 `GOOS` and `GOARCH` for another platform. With `--out`, it keeps the binary
 as `DIR/agentcc-gateway_<goos>_<goarch>` and writes its checksum line next to
-it. The flags `-s -w` are the Dockerfile's, so the binary is built the way
-the image builds it.
+it. The flags `-trimpath` and `-s -w` are the Dockerfile's, and with
+`GOTOOLCHAIN` set to the `go.mod` toolchain, as the release workflow sets it,
+so is the toolchain: the binary is built the way the image builds it.
 
 What this proves: the build does not depend on the checkout's location or on
 cached build state, for one toolchain on one host. It does not prove that two
@@ -58,10 +59,13 @@ different hosts produce the same bytes. Go builds with `CGO_ENABLED=0` and
 commit with the same toolchain should match a release's `SHA256SUMS`. You can
 check that yourself (below); this repository does not test it.
 
-The image's own binary is not one of these binaries. The Dockerfile builds it
-inside its pinned builder image, whose Go toolchain is not necessarily the
-`go.mod` toolchain, so its bytes can differ. The release binaries, the SBOM
-and the image digest are each signed or checksummed on their own.
+The Dockerfile builds the image's own binary inside its pinned builder image
+with the `go.mod` toolchain (it sets `GOTOOLCHAIN`; `cmd/agentcc`
+`TestImageBuildsTheGatewayWithGoModToolchain` fails when the two differ) and
+the same flags. On 2026-10-23 the release gate found the image's binary
+byte-identical to this script's at the same commit, on linux/amd64 and
+linux/arm64. The release binaries, the SBOM and the image digest are still
+each signed or checksummed on their own.
 
 ### SBOM
 
