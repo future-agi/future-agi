@@ -55,6 +55,8 @@ func command(ctx context.Context, args []string, stdout io.Writer) error {
 			return json.NewEncoder(stdout).Encode(result)
 		case "verify":
 			return verifyCommand(ctx, args[1:], stdout)
+		case "publish":
+			return publishCommand(args[1:], stdout)
 		case "collector-budget":
 			return budgetCommand(ctx, args[1:], stdout)
 		}
@@ -91,7 +93,10 @@ func command(ctx context.Context, args []string, stdout io.Writer) error {
 	f.Int64Var(&c.TracesPerSession, "traces-per-session", c.TracesPerSession, "consecutive traces per synthetic session")
 	f.DurationVar(&c.Timeout, "request-timeout", c.Timeout, "per-request timeout, <= 1m")
 	f.DurationVar(&c.Settle, "settle", c.Settle, "quiet settle window before independent verification, <= 10m")
-	f.DurationVar(&c.PollInterval, "poll-interval", c.PollInterval, "sample visibility polling period, >= 100ms")
+	f.DurationVar(&c.PollInterval, "poll-interval", c.PollInterval, "read-visible sentinel polling period, >= 100ms")
+	f.IntVar(&c.MaxSentinels, "max-sentinels", c.MaxSentinels, "at most this many read-visible lag sentinels (the first span of every k-th request)")
+	f.BoolVar(&c.DurableLag, "durable-lag", c.DurableLag, "measure created_at minus the scheduled send for every stored span (one extra query per verification chunk)")
+	f.DurationVar(&c.CollectorPollInterval, "collector-poll-interval", c.CollectorPollInterval, "collector /healthz backlog sampling period (with --collector-health-url)")
 	f.Int64Var(&c.VerifyChunk, "verify-chunk", c.VerifyChunk, "exact distinct verification chunk size in spans (bounded CH memory)")
 	f.DurationVar(&c.VerifyTimeout, "verify-timeout", c.VerifyTimeout, "whole verification budget; 0 derives one from the run size")
 	f.DurationVar(&c.VerifyQueryTimeout, "verify-query-timeout", c.VerifyQueryTimeout, "per chunk query limit (server and client); 0 derives one from the chunk size")
@@ -121,6 +126,8 @@ func command(ctx context.Context, args []string, stdout io.Writer) error {
 	otlpEnv := f.String("otlp-headers-env", "", "env variable containing JSON header name:value pairs, not written to artifacts")
 	chEnv := f.String("ch-headers-env", "", "env variable containing read-only ClickHouse auth headers")
 	out := f.String("out", "", "new result path; also writes .telemetry.jsonl; refuses overwriting")
+	var declared faultFlags
+	f.Var(&declared, "declare-fault", "name@offset+duration of a disruption YOU perform on an isolated stack during the load (e.g. clickhouse-stop@10m+60m); repeatable; recorded as declared, never performed by the tool")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -130,6 +137,7 @@ func command(ctx context.Context, args []string, stdout io.Writer) error {
 	if *allowHosts != "" {
 		c.AllowHosts = strings.Split(*allowHosts, ",")
 	}
+	c.DeclaredFaults = declared
 	if *containers != "" {
 		c.Containers = strings.Split(*containers, ",")
 	}
@@ -203,9 +211,88 @@ func command(ctx context.Context, args []string, stdout io.Writer) error {
 	if runErr != nil {
 		return runErr
 	}
-	if c.Execute && result.Status != "measured-profile-complete" {
+	if c.Execute && result.Status != "measured-profile-complete" && !(len(c.DeclaredFaults) > 0 && result.Status == "measured-recovery-complete") {
 		return fmt.Errorf("benchmark did not complete the requested profile without errors; inspect the written result")
 	}
+	return nil
+}
+
+// faultFlags parses repeated --declare-fault name@offset+duration values.
+type faultFlags []ingestbench.DeclaredFault
+
+func (f *faultFlags) String() string { return fmt.Sprint(*f) }
+
+func (f *faultFlags) Set(v string) error {
+	name, window, ok := strings.Cut(v, "@")
+	at, length, ok2 := strings.Cut(window, "+")
+	if !ok || !ok2 {
+		return fmt.Errorf("want name@offset+duration, e.g. clickhouse-stop@10m+60m")
+	}
+	offset, err := time.ParseDuration(at)
+	if err != nil {
+		return fmt.Errorf("fault offset: %w", err)
+	}
+	d, err := time.ParseDuration(length)
+	if err != nil {
+		return fmt.Errorf("fault duration: %w", err)
+	}
+	*f = append(*f, ingestbench.DeclaredFault{Name: name, At: offset, Duration: d})
+	return nil
+}
+
+// publishCommand renders the shareable Markdown and JSON publication of a
+// result. It never overwrites a file and makes no network request.
+func publishCommand(args []string, stdout io.Writer) error {
+	f := flag.NewFlagSet("otlpbench publish", flag.ContinueOnError)
+	f.SetOutput(stdout)
+	markdown := f.String("markdown", "", "new path for the Markdown publication")
+	jsonOut := f.String("json", "", "new path for the JSON publication")
+	telemetry := f.String("telemetry", "", "the run's .telemetry.jsonl: digested and checked line by line")
+	minSustained := f.Duration("min-sustained", ingestbench.DefaultMinSustained, "shortest load duration whose throughput may be published as sustained")
+	if err := f.Parse(args); err != nil {
+		return err
+	}
+	if len(f.Args()) != 1 || *markdown == "" || *jsonOut == "" || *minSustained <= 0 {
+		return fmt.Errorf("usage: otlpbench publish --markdown new.md --json new.json [--telemetry run.telemetry.jsonl] [--min-sustained 1h] result.json")
+	}
+	var result ingestbench.Result
+	if err := readJSON(f.Arg(0), &result); err != nil {
+		return err
+	}
+	options := ingestbench.PublishOptions{MinSustained: *minSustained}
+	if *telemetry != "" {
+		t, err := os.Open(*telemetry)
+		if err != nil {
+			return err
+		}
+		defer t.Close()
+		options.Telemetry = t
+	}
+	p, err := ingestbench.Publish(result, options)
+	if err != nil {
+		return err
+	}
+	for _, out := range []struct {
+		path  string
+		write func(io.Writer) error
+	}{{*markdown, func(w io.Writer) error { return ingestbench.WritePublicationMarkdown(w, p) }}, {*jsonOut, func(w io.Writer) error { return ingestbench.WritePublicationJSON(w, p) }}} {
+		file, err := os.OpenFile(out.path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return fmt.Errorf("create output (existing files are never overwritten): %w", err)
+		}
+		if err := out.write(file); err != nil {
+			file.Close()
+			return err
+		}
+		if err := file.Close(); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintf(stdout, "headline %s", p.Headline.Status)
+	if len(p.Headline.WithheldReasons) > 0 {
+		fmt.Fprintf(stdout, ": %s", strings.Join(p.Headline.WithheldReasons, "; "))
+	}
+	fmt.Fprintln(stdout)
 	return nil
 }
 

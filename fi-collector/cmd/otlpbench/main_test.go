@@ -142,3 +142,45 @@ func TestCLIVerifyNeedsACheckpointAndNeverOverwrites(t *testing.T) {
 		t.Fatal("a missing checkpoint was not reported")
 	}
 }
+
+// M3: 'publish' renders the Markdown and JSON publication of a result, never
+// overwrites either file, and withholds the headline of a dry run.
+func TestCLIPublishWritesBothFormatsAndNeverOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	plan := filepath.Join(dir, "plan.json")
+	args := append(append([]string{}, dryArgs...), "--out", plan, "--declare-fault", "clickhouse-stop@1s+2s")
+	if err := command(context.Background(), args, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	var r ingestbench.Result
+	b, _ := os.ReadFile(plan)
+	if err := json.Unmarshal(b, &r); err != nil || len(r.Config.DeclaredFaults) != 1 || r.Config.DeclaredFaults[0].Name != "clickhouse-stop" {
+		t.Fatalf("declared fault not recorded: %v %+v", err, r.Config.DeclaredFaults)
+	}
+	md, js := filepath.Join(dir, "report.md"), filepath.Join(dir, "report.json")
+	var out bytes.Buffer
+	if err := command(context.Background(), []string{"publish", "--markdown", md, "--json", js, plan}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "headline withheld: the run was not executed") {
+		t.Fatalf("publish output: %s", out.String())
+	}
+	mdBody, _ := os.ReadFile(md)
+	var p ingestbench.Publication
+	jsBody, _ := os.ReadFile(js)
+	if err := json.Unmarshal(jsBody, &p); err != nil || p.Headline.Status != "withheld" || !strings.Contains(string(mdBody), "## Not measured") {
+		t.Fatalf("publication: %v %+v\n%s", err, p.Headline, mdBody)
+	}
+	if err := command(context.Background(), []string{"publish", "--markdown", md, "--json", filepath.Join(dir, "other.json"), plan}, &bytes.Buffer{}); err == nil {
+		t.Fatal("overwrote a publication")
+	}
+	if again, _ := os.ReadFile(md); !bytes.Equal(again, mdBody) {
+		t.Fatal("publication changed")
+	}
+	for _, bad := range []string{"no-window", "x@1s", "Upper@1s+1s", "late@4s+2s"} {
+		args := append(append([]string{}, dryArgs...), "--declare-fault", bad)
+		if err := command(context.Background(), args, &bytes.Buffer{}); err == nil {
+			t.Fatalf("accepted --declare-fault %q", bad)
+		}
+	}
+}
