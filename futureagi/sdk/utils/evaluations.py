@@ -91,7 +91,7 @@ def _log_and_deduct_cost_for_standalone_eval(
 
 def _run_evaluation(run_params, eval_model, eval_instance, runner):
     """
-    This is a simplified version of _run_evaluation from tracer/utils/eval.py
+    This is a simplified version of _execute_evaluation from tracer/utils/eval.py
     It runs the evaluation and returns the result.
     """
     # Apply the shared empty-input rules so the SDK path is consistent

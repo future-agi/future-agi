@@ -1750,7 +1750,7 @@ read these keys.
     keys = ["JEV_MAX_CONCURRENT"]
     default = "`8`"
     setups = ["S", "D", "H"]
-    text = "Jev calls one worker process makes at once; the rest wait. An Instant eval run keeps up to 32 rows in flight, so workers that serve it want at least `32`."
+    text = "Jev calls one worker process makes at once (at least `1`); the rest wait. An Instant eval run keeps up to 32 rows in flight, so workers that serve it want at least `32`."
 
     [[part.section.row]]
     keys = ["JEV_TOTAL_DEADLINE"]
@@ -1780,19 +1780,19 @@ read these keys.
     keys = ["INSTANT_EVAL_CONFIRM_ROWS"]
     default = "`5000`"
     setups = ["S", "D", "H"]
-    text = "A run over this many rows waits for the person to confirm it before it starts."
+    text = "A run over this many rows waits for the person to confirm it before it starts. At least `1`."
 
     [[part.section.row]]
     keys = ["INSTANT_EVAL_MAX_ACTIVE_PER_ORG"]
     default = "`2`"
     setups = ["S", "D", "H"]
-    text = "Instant eval runs one organization can have going at once; another start is refused until one finishes."
+    text = "Instant eval runs one organization can have going at once; another start is refused until one finishes. At least `1`."
 
     [[part.section.row]]
     keys = ["INSTANT_EVAL_ASSUMED_ROWS_PER_MIN"]
     default = "`300`"
     setups = ["S", "D", "H"]
-    text = "Rows a minute assumed for a run's time estimate before it starts. A running run shows its measured rate."
+    text = "Rows a minute assumed for a run's time estimate before it starts. A running run shows its measured rate. At least `1`."
 
     [[part.section.row]]
     keys = ["INSTANT_EVAL_USERS_ESTIMATE_BUDGET_S"]

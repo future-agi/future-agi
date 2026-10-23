@@ -21,10 +21,11 @@ def usage_event_id(cell_or_run_id, attempt):
 
 
 def build_usage_events(evaluator, *, org_id, cell_or_run_id, amount):
-    """One event per attempt the client made, so every attempt's token units
-    are reported: a 429 then a success is two events. Only the successful
-    attempt carries ``amount``; the others are zero-amount usage records.
-    Count runs by the ``outcome == "success"`` events, not by events."""
+    """One event per attempt the client made: a 429 then a success is two
+    events. Only the successful attempt carries ``amount`` and token units (the
+    client keeps none for a failed one), so the others are zero-amount records
+    of the attempt and its outcome. Count runs by the ``outcome == "success"``
+    events, not by events."""
     actual = evaluator.last_jev or {}
     events = []
     for record in evaluator.client.attempts:

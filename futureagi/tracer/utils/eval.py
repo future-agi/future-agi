@@ -2011,7 +2011,7 @@ def _write_eval_logger(
     """Write composite eval results to EvalLogger.
 
     Composite evals return a logger_kwargs dict from _execute_composite_on_span
-    but don't persist it internally (single evals do this in _run_evaluation).
+    but don't persist it internally (single evals do this in _execute_evaluation).
     """
     logger_kwargs.pop("value", None)
     logger_kwargs.pop("log_id", None)
@@ -2125,7 +2125,7 @@ def evaluate_observation_span_observe(
         )
 
         # Composite evals return a logger_kwargs dict instead of writing
-        # to EvalLogger internally (single evals do it in _run_evaluation).
+        # to EvalLogger internally (single evals do it in _execute_evaluation).
         # Persist the composite result here.
         if isinstance(result, dict) and "trace" in result:
             _write_eval_logger(

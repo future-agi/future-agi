@@ -2973,15 +2973,19 @@ class EvalTemplateCreateV2View(APIView):
             from model_hub.utils.jev_templates import validate_jev_template_save
             from tfc.ee_gates import is_jev_model
 
-            # 5. Validate scoring fields
-            if req.output_type == "deterministic" and not is_jev_model(req.model):
+            # 5. Validate scoring fields. A Jev model reports missing choices
+            # with its own typed code (validate_jev_template_save below); the
+            # scores themselves are checked the same for every model.
+            if req.output_type == "deterministic":
                 if not req.choice_scores:
-                    return self._gm.bad_request(
-                        "choice_scores is required when output_type is 'deterministic'."
-                    )
-                errors = validate_choice_scores(req.choice_scores)
-                if errors:
-                    return self._gm.bad_request("; ".join(errors))
+                    if not is_jev_model(req.model):
+                        return self._gm.bad_request(
+                            "choice_scores is required when output_type is 'deterministic'."
+                        )
+                else:
+                    errors = validate_choice_scores(req.choice_scores)
+                    if errors:
+                        return self._gm.bad_request("; ".join(errors))
 
             threshold_errors = validate_pass_threshold(req.pass_threshold)
             if threshold_errors:

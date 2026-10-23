@@ -306,6 +306,23 @@ def test_r03_ui_draft_switched_to_llm_judge_saves_with_jev(auth_client):
 
 
 @pytest.mark.django_db
+def test_jev_create_refuses_choice_scores_outside_0_1_like_any_model(auth_client):
+    """Jev skips only the generic "choice_scores is required" (it answers a
+    missing choice with its own typed code). Its scores are checked as for
+    any model and as the update checks them: the score of the label Jev picks
+    is the eval's score."""
+    with patch("tfc.ee_gates._jev_denied_off_cloud", return_value=False):
+        response = auth_client.post(
+            "/model-hub/eval-templates/create-v2/",
+            payload("deterministic", choice_scores={"Yes": 5, "No": 0}),
+            format="json",
+        )
+    assert response.status_code == 400, response.data
+    assert "between 0 and 1" in str(response.data)
+    assert not EvalTemplate.objects.filter(name="jev-test").exists()
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("with_mapping", [False, True])
 def test_a_jev_draft_switched_to_code_saves_and_forgets_the_jev_model(
     auth_client, with_mapping
@@ -645,6 +662,8 @@ def test_byok_playground_without_a_typesafe_key_says_which_key_to_add(
         response = run()
     assert response.status_code == 400
     assert "API key not configured for typesafe" in str(response.data)
+    # Typed like the SDK path, so the frontend can key off the code.
+    assert response.data["code"] == "JEV_KEY_MISSING"
     post.assert_not_called()
 
 
@@ -696,9 +715,10 @@ def test_playground_bills_jev_with_the_metering_events(auth_client, user, jev_ga
 def test_playground_without_a_model_logs_and_limits_a_saved_jev_template_as_jev(
     auth_client, user, jev_gateway
 ):
-    """The playground sends no model for a saved Jev template: the credit
-    check and the API call log still go by the template, never Turing Large
-    (whose 50/min cap Jev does not have)."""
+    """A run whose request names no model runs Jev from its binding: the
+    credit check and the API call log go by the template and the run's config
+    (what the engine runs), never Turing Large (whose 50/min cap Jev does not
+    have)."""
     import httpx
 
     from ee.usage.services import metering

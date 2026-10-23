@@ -15,7 +15,10 @@ the PR's head, else its base, else dev, and run it there.
 The overlay and this repo merge separately. An overlay that has none of the
 Jev / Instant eval / Insights keys yet (it predates the change that adds them)
 skips those keys' cases instead of turning every other branch red; one that
-has some of them but not all fails, since that is a real gap.
+has some of them but not all fails, since that is a real gap. A run for main
+(a push to it, or a PR into it) never skips: main's code deploys with the
+overlay's main, and without the keys Cloud bills no Jev or Insights usage and
+grants no org the three features.
 """
 
 import os
@@ -81,8 +84,13 @@ def _overlay_has_any_new_key(billing):
     )
 
 
+def _testing_main():
+    # Set by backend-ci.yml: the branch under test and the PR's base.
+    return "main" in (os.environ.get("EE_REPO_BRANCH"), os.environ.get("EE_BASE_REF"))
+
+
 def _skip_if_overlay_predates_new_keys(billing, key_is_new):
-    if key_is_new and not _overlay_has_any_new_key(billing):
+    if key_is_new and not _testing_main() and not _overlay_has_any_new_key(billing):
         pytest.skip(
             "the cloud overlay checked out predates the Jev / Instant eval / "
             "Insights billing keys"
@@ -121,3 +129,61 @@ def test_every_cloud_gated_capability_is_a_boolean_entitlement_on_every_plan(
     }
     assert values
     assert all(isinstance(value, bool) for value in values.values()), values
+
+
+class _OverlayWithout:
+    """An overlay with none of the new keys; ``call_types`` and
+    ``entitlements`` add some back."""
+
+    def __init__(self, call_types=(), entitlements=()):
+        self.call_types = dict.fromkeys(call_types)
+        self.entitlements = set(entitlements)
+
+    def get_all_call_types(self):
+        return self.call_types
+
+    def get_all_plans(self):
+        return {"free": None}
+
+    def get_entitlement_default(self, feature, plan):
+        return True if feature in self.entitlements else None
+
+
+def _skips(overlay, key_is_new):
+    # The rule's tests assert on this rather than calling the rule in their
+    # body, where a wrong skip would report them skipped and leave CI green.
+    try:
+        _skip_if_overlay_predates_new_keys(overlay, key_is_new)
+    except pytest.skip.Exception:
+        return True
+    return False
+
+
+def test_an_overlay_predating_every_new_key_skips_them_off_main(monkeypatch):
+    monkeypatch.setenv("EE_REPO_BRANCH", "dev")
+    monkeypatch.setenv("EE_BASE_REF", "dev")
+    assert _skips(_OverlayWithout(), True)
+    # The keys that were there before are always checked.
+    assert not _skips(_OverlayWithout(), False)
+
+
+@pytest.mark.parametrize("variable", ["EE_REPO_BRANCH", "EE_BASE_REF"])
+def test_a_run_for_main_never_skips_a_missing_key(monkeypatch, variable):
+    monkeypatch.setenv("EE_REPO_BRANCH", "feat/x")
+    monkeypatch.setenv("EE_BASE_REF", "dev")
+    monkeypatch.setenv(variable, "main")
+    assert not _skips(_OverlayWithout(), True)
+
+
+@pytest.mark.parametrize(
+    "overlay",
+    [
+        _OverlayWithout(call_types=[BillingEventType.JEV_EVALUATOR.value]),
+        _OverlayWithout(entitlements=[f"has_{FEATURE_INSIGHTS.id}"]),
+    ],
+    ids=["call_type", "entitlement"],
+)
+def test_an_overlay_with_some_new_keys_never_skips(monkeypatch, overlay):
+    monkeypatch.delenv("EE_REPO_BRANCH", raising=False)
+    monkeypatch.delenv("EE_BASE_REF", raising=False)
+    assert not _skips(overlay, True)

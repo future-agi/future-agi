@@ -24,7 +24,7 @@ def _run_external_platform_evaluation(
     run_params, eval_model, eval_instance, external_eval_config, runner
 ):
     """
-    This is a simplified version of _run_evaluation from tracer/utils/eval.py
+    This is a simplified version of _execute_evaluation from tracer/utils/eval.py
     It runs the evaluation and returns the result.
     """
     result = eval_instance.run(**run_params)
