@@ -6,6 +6,8 @@ The default native path uses the repository's test-sidecar mutation guard.
 
 import json
 import os
+import re
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -452,6 +454,94 @@ def test_session_eval_crosses_old_new_identity_without_fanout(metric_ch):
     assert row["status"] == "ok" and float(row["value"]) == 1
     assert float(row["numerator"]) == 4 and float(row["denominator"]) == 4
     assert int(row["unit_count"]) == 1
+
+
+def test_session_eval_under_any_consolidated_alias_reaches_its_one_unit(metric_ch):
+    """Spans carry one old id and the new id; the evaluation carries ANOTHER old id."""
+    scope, now = (
+        Scope(uuid4(), uuid4(), uuid4()),
+        datetime.now(UTC).replace(microsecond=0),
+    )
+    old_a, old_b, new, user = uuid4(), uuid4(), uuid4(), uuid4()
+    configs = [uuid4(), uuid4()]
+    for old in (old_a, old_b):
+        metric_ch.execute(
+            "INSERT INTO trace_session_id_remap (old_id,new_id) VALUES (%(old)s,%(new)s)",
+            {"old": str(old), "new": str(new)},
+        )
+    survivor = min(old_a, old_b, key=str)
+    seed_span(metric_ch, scope, "pre-flip", old_a, user, now - timedelta(hours=2))
+    seed_span(metric_ch, scope, "post-flip", new, user, now - timedelta(hours=1))
+    for config, score in zip(configs, [1, 0], strict=True):
+        seed_eval(
+            metric_ch,
+            config,
+            old_b,
+            now - timedelta(minutes=10),
+            score,
+            0.25,
+            sampling_unit_id=survivor,
+        )
+    rows = execute_formula(
+        metric_ch, recipe(configs, "inverse_probability"), scope, now, "session"
+    )
+    assert [row["group_key"] for row in rows] == [str(survivor)]
+    assert rows[0]["status"] == "ok" and float(rows[0]["value"]) == 1
+    # One unit, weighted once (1 / 0.25), although three ids name the session.
+    assert float(rows[0]["numerator"]) == 4 and float(rows[0]["denominator"]) == 4
+    assert int(rows[0]["unit_count"]) == int(rows[0]["valid_count"]) == 1
+
+
+def _plan_reads(client, definition, scope, now):
+    """Physical table reads in the plan of one overall rollup over a snapshot."""
+    query, params = snapshot_select(
+        definition, scope, now - timedelta(days=1), now, now, [], ""
+    )
+    formula = compile_formula(
+        definition.formula, [item["alias"] for item in definition.inputs]
+    )
+    plan = client.execute(
+        "EXPLAIN PLAN " + aggregate_select(query, formula, rollup="overall"),
+        {**params, **formula.parameters},
+        # The plan text has one row per step; only the result row cap is lifted.
+        settings={**QUERY_SETTINGS, "max_result_rows": 0},
+    )
+    reads = Counter()
+    for (line,) in plan:
+        match = re.search(r"ReadFromMergeTree \(([^)]*)\)", line)
+        if match:
+            reads[match.group(1).rsplit(".", 1)[-1]] += 1
+    return reads
+
+
+@pytest.mark.parametrize("selection_unit", ["session", "span"])
+def test_snapshot_plan_reads_the_evaluation_log_once(metric_ch, selection_unit):
+    """ClickHouse inlines a WITH clause at every reference, so each extra
+    reference re-reads its sources. All references share one per-query read and
+    time budget: re-reading the span window or the evaluation log shrinks the
+    largest window a run can compute and multiplies planning work."""
+    scope, now = (
+        Scope(uuid4(), uuid4(), uuid4()),
+        datetime.now(UTC).replace(microsecond=0),
+    )
+    session, user, configs = uuid4(), uuid4(), [uuid4(), uuid4()]
+    # Every source holds a row so each read is planned as a MergeTree read.
+    for table in ("trace_session_id_remap", "end_user_id_remap"):
+        metric_ch.execute(
+            f"INSERT INTO {table} (old_id,new_id) VALUES (%(old)s,%(new)s)",
+            {"old": str(uuid4()), "new": str(uuid4())},
+        )
+    seed_span(metric_ch, scope, "one", session, user, now - timedelta(hours=1))
+    for config in configs:
+        seed_eval(metric_ch, config, session, now - timedelta(minutes=10), 1, 0.5)
+    definition = recipe(configs, "inverse_probability")
+    definition.selection_unit = selection_unit
+    reads = _plan_reads(metric_ch, definition, scope, now)
+    assert reads["tracer_eval_logger_v2"] == 1
+    # Units, the evaluation-target map and the three evaluation prefilter keys.
+    assert reads["spans"] <= 5
+    assert reads["trace_session_id_remap"] <= 10
+    assert reads["end_user_id_remap"] <= 4
 
 
 @pytest.mark.parametrize(
