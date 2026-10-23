@@ -1586,7 +1586,11 @@ class HostedHarnessProvider:
                 client_request_id=data["client_request_id"],
                 kind=data["kind"],
                 reply_to=data.get("reply_to"),
-                payload=data.get("payload"),
+                payload={
+                    key: value
+                    for key, value in (data.get("payload") or {}).items()
+                    if key != "from_platform"
+                },
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
