@@ -58,9 +58,10 @@ expected values.
        ``test_compiler.py`` function probes.
    * - Advisory pre-run estimate
      - Authorized, rate-limited ``POST /tracer/sql-query/estimate/`` compiles
-       the same scoped SQL and executes ``EXPLAIN ESTIMATE`` with the locked
-       read-only principal. No execution record or application admission slot
-       is consumed. Timeout/failure never prevents Run.
+       the same scoped SQL and executes ``EXPLAIN ESTIMATE`` with a separate
+       locked read-only estimate principal. No execution record or execution
+       principal slot is consumed. Missing estimate credentials, contention
+       and timeouts yield an unavailable advisory; Run remains available.
      - Live estimate and principal-contention tests in
        ``test_analytics_clickhouse.py``; permission/limiter tests in
        ``test_permissions.py``; ``QueryEstimate.test.jsx`` and the editor tests.
@@ -75,7 +76,7 @@ expected values.
    * - Personal result reuse
      - An identical ad-hoc request can return its existing completed snapshot
        without a new scan. Keys include actor, organization, workspace,
-       project, current memberships, normalized SQL, minute-rounded window,
+       project, current memberships, normalized SQL, exact UTC interval,
        catalog version, source connection, evaluation scope and limits.
        Saved/dashboard runs preserve fresh-execution behavior.
      - ``test_permissions.py`` reuse isolation/invalidation tests;
@@ -89,8 +90,10 @@ expected values.
        ``test_capability_check.py``.
 
 The estimate is an index-granule upper bound, not a billing quote or a count of
-matching rows. Sources whose sort key does not lead with project ownership
-withhold parts/marks/row estimates; raw granule row counts are never returned.
+matching rows. Sources whose actual primary index does not lead with project
+ownership withhold parts/marks/row estimates; raw granule row counts are never
+returned. ``ORDER BY`` alone is not sufficient: an explicitly shorter or empty
+``PRIMARY KEY`` is withheld even when the sorting key contains the project.
 Project-keyed sources report parts, marks and marks times index granularity.
 Boundary granules can still include adjacent projects: the live regression
 measures unchanged counts for foreign-only growth outside that key range and
@@ -102,12 +105,22 @@ claimed. ``SQL_WORKBENCH_ESTIMATES_PER_MINUTE`` defaults to 30 per actor.
 3,600). This changes only repeated ad-hoc submissions; authorization, scan,
 result and concurrency limits remain unchanged. A hit retains the original
 execution id, exact window, rows and timestamps; it is not a fresh read, and
-changes within the TTL may not appear. Windows are compared after rounding
-both endpoints down to UTC minutes, so a hit may use an earlier request's
-seconds within those minutes. Membership or catalog changes cause misses;
+changes within the TTL may not appear. Both endpoints must match exactly after
+UTC normalization, including microseconds: disjoint or shifted windows never
+reuse each other's rows. Rolling editor windows therefore normally scan anew.
+An unchanged selected saved query uses ``run-saved`` and always scans anew;
+edited SQL uses the ad-hoc route with the requested exact interval, not the
+stored definition. Membership or catalog changes cause misses;
 changes detected between admission, worker start and completion prevent that
 execution from populating the old cache key. No cache entry is shared across
 actors, tenants or projects, and expired/failed/cancelled results are not reused.
+
+The annotation-agreement example counts each (trace, span) once **within each
+label/evaluator pair**. It selects the latest human annotation per label and
+latest non-null span pass result per evaluator, ordered by ``(created_at, id)``
+within the requested window. Shares have a separate denominator per pair;
+counts from different pairs must not be added as unique spans. Multiple labels,
+evaluators, repeated runs and conflicting latest values have live value oracles.
 
 The sampled/all example de-duplicates repeated evaluations by (trace, span),
 using the latest known inclusion probability. It is illustrative weighted
@@ -375,6 +388,25 @@ existing ``CLICKHOUSE_V2`` configuration. TLS certificate verification remains o
 The service account is application-only, cross-project, read-only and limited to
 six physical sources. Never give this credential to a person, notebook or BI tool.
 Tenant authorization for this account is the AST+application boundary.
+
+Advisory estimates require a **different** application-only principal. Without
+it the estimate is unavailable; the execution connection is never a fallback::
+
+  export SQL_WORKBENCH_ESTIMATE_CH_PASSWORD='<another random password, at least 24 characters>'
+  python manage.py provision_sql_service --estimate --principal futureagi_sql_estimate \
+    --client-cidr 10.20.0.0/24 > sql-estimate.sql
+  # Review and apply with the operator's client, as for the execution account.
+
+Configure ``SQL_WORKBENCH_ESTIMATE_CH_USER=futureagi_sql_estimate`` and
+``SQL_WORKBENCH_ESTIMATE_CH_PASSWORD`` on the backend. TLS/host/port/database are
+the same as execution. The estimator gets the same explicit source SELECT grants
+and scope-filter barrier, but only **one concurrent statement**, one thread and a
+five-second server ceiling. Overlapping estimates fail fast instead of waiting or
+occupying execution's two per-user slots. No execution ceiling or retry window is
+raised. This isolates admission slots, not the server's CPU, memory or global
+limits; shared-server latency isolation is not claimed. Existing deployments
+must provision the separate account to retain estimates. The generator prints
+DDL only; it does not change running users or grant privileges automatically.
 
 Project-specific direct BI/notebook access (self-hosted operator only)::
 
