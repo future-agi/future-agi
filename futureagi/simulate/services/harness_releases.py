@@ -44,6 +44,7 @@ from simulate.models import (
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     canonical_digest,
+    canonical_json_bytes,
     create_hosted_job,
 )
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
@@ -110,6 +111,55 @@ def _read(directory: Path, name: str) -> Any:
         return json.loads((directory / name).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise _error("release_invalid", f"{directory / name}: {exc}") from exc
+
+
+def _release_digest(manifest: dict[str, Any]) -> str:
+    """ALK's release digest (`object_digest`, contract §3): the manifest without `digest` and
+    `files`, then each file record in its listed order, length-prefixed."""
+    core = {
+        key: value for key, value in manifest.items() if key not in {"digest", "files"}
+    }
+    digest = hashlib.sha256(canonical_json_bytes(core))
+    for record in manifest.get("files") or []:
+        encoded = canonical_json_bytes(record)
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+    return "sha256:" + digest.hexdigest()
+
+
+def _verified(directory: Path, name: str) -> dict[str, Any]:
+    """A sealed manifest whose digest is recomputed and whose files are exactly those listed,
+    byte for byte. A release is registered on what it holds, not on what its manifest claims."""
+    manifest = _read(directory, name)
+    if not isinstance(manifest, dict) or _release_digest(manifest) != manifest.get(
+        "digest"
+    ):
+        raise _error(
+            "release_invalid", f"{name}: the digest does not match its contents"
+        )
+    listed = {
+        record.get("path"): (record.get("sha256"), record.get("size"))
+        for record in manifest.get("files") or []
+    }
+    present = {}
+    for path in sorted(directory.rglob("*")):
+        relative = path.relative_to(directory).as_posix()
+        if path.is_symlink():
+            raise _error("release_invalid", f"{name}: {relative} is a symlink")
+        if path.is_dir() or relative == name:
+            continue
+        content = path.read_bytes()
+        present[relative] = (hashlib.sha256(content).hexdigest(), len(content))
+    if listed != present:
+        changed = sorted(
+            path
+            for path in set(listed) | set(present)
+            if listed.get(path) != present.get(path)
+        )
+        raise _error(
+            "release_invalid", f"{name}: files do not match: {', '.join(changed)}"
+        )
+    return manifest
 
 
 def _archive(directory: Path) -> bytes:
@@ -305,7 +355,7 @@ def _checked_suite(
     suite_dir: Path, environment_digest: str
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """A suite's manifest and personas after the §7.2 checks against its environment."""
-    suite = _read(suite_dir, "suite.json")
+    suite = _verified(suite_dir, "suite.json")
     if suite.get("schema_version") != SUITE_RELEASE_SCHEMA:
         raise _error("release_invalid", "suite.json is not a suite release")
     if (suite.get("environment") or {}).get("digest") != environment_digest:
@@ -392,12 +442,13 @@ def register_release(
 ) -> tuple[HarnessEnvironmentRelease, HarnessSuiteRelease]:
     """Store one sealed environment release and a suite proved against it.
 
-    The suite must carry a passing PostgreSQL proof, because hosted runs refuse one without it.
-    An extension's parent must already be registered. Re-registering identical releases returns
-    the existing rows.
+    Both digests are recomputed and every file is checked against its manifest. The suite must
+    carry a passing PostgreSQL proof, because hosted runs refuse one without it. An extension's
+    parent must already be registered. Re-registering identical releases returns the existing
+    rows.
     """
     environment_dir, suite_dir = Path(environment_dir), Path(suite_dir)
-    release = _read(environment_dir, "release.json")
+    release = _verified(environment_dir, "release.json")
     if release.get("schema_version") != ENVIRONMENT_RELEASE_SCHEMA:
         raise _error("release_invalid", "release.json is not an environment release")
     suite, personas = _checked_suite(suite_dir, release["digest"])
