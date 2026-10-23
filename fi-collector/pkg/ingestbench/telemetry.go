@@ -46,11 +46,15 @@ func newTelemetrySink(w io.Writer, runID string, start time.Time) *telemetrySink
 }
 
 func (t *telemetrySink) write(event telemetryEvent) error {
+	return t.writeAt(event, time.Now())
+}
+
+func (t *telemetrySink) writeAt(event telemetryEvent, now time.Time) error {
 	if t == nil || t.w == nil {
 		return nil
 	}
-	event.SchemaVersion, event.RunID, event.At = SchemaVersion, t.runID, time.Now().UTC()
-	event.ElapsedSeconds = time.Since(t.start).Seconds()
+	event.SchemaVersion, event.RunID, event.At = SchemaVersion, t.runID, now.UTC()
+	event.ElapsedSeconds = now.Sub(t.start).Seconds()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if err := json.NewEncoder(t.w).Encode(event); err != nil {
@@ -85,7 +89,31 @@ type progressSnapshot struct {
 func (s *runState) snapshot() progressSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.snapshotLocked()
+}
+
+func (s *runState) snapshotLocked() progressSnapshot {
 	return progressSnapshot{counters: s.counters, inFlightSpans: s.inFlightSpans, inFlightRequests: s.inFlightRequests, seen: s.seen}
+}
+
+// progressLocked uses the same schedule as the final result, frozen at the
+// producer's end rather than extending it while in-flight requests complete.
+func (s *runState) progressLocked(c Config, kind string, elapsed time.Duration) telemetryEvent {
+	if s.producerStopped {
+		elapsed = min(elapsed, s.produceEnd)
+	}
+	scheduled := c.scheduledSpans(elapsed)
+	return s.snapshotLocked().event(kind, &scheduled)
+}
+
+func (s *runState) writeProgress(c Config, sink *telemetrySink, kind string) error {
+	s.mu.Lock()
+	// Capture the clock with the counters, so a boundary-crossing send cannot
+	// appear in a snapshot whose schedule was sampled before that due time.
+	now := time.Now()
+	event := s.progressLocked(c, kind, now.Sub(sink.start))
+	s.mu.Unlock()
+	return sink.writeAt(event, now)
 }
 
 func (p progressSnapshot) event(kind string, scheduled *int64) telemetryEvent {
@@ -97,10 +125,6 @@ func startTelemetry(ctx context.Context, c Config, ch clickHouse, s *runState, s
 		return func() {}, func() error { return nil }
 	}
 	progressCtx, stopProgress := context.WithCancel(ctx)
-	scheduled := func() *int64 {
-		n := min(c.PlannedSpans(), int64(time.Since(sink.start).Seconds()*float64(c.Rate)))
-		return &n
-	}
 	var wg sync.WaitGroup
 	errors := make(chan error, 2)
 	wg.Add(2)
@@ -109,13 +133,13 @@ func startTelemetry(ctx context.Context, c Config, ch clickHouse, s *runState, s
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
-			if err := sink.write(s.snapshot().event("progress", scheduled())); err != nil {
+			if err := s.writeProgress(c, sink, "progress"); err != nil {
 				errors <- err
 				return
 			}
 			select {
 			case <-progressCtx.Done():
-				if err := sink.write(s.snapshot().event("progress-final", scheduled())); err != nil {
+				if err := s.writeProgress(c, sink, "progress-final"); err != nil {
 					errors <- err
 				}
 				return

@@ -25,7 +25,13 @@ and as a 1-second series in the telemetry stream (``run.json.telemetry.jsonl``).
 **Scheduled** (``schedule.scheduled_spans``)
     The load is open loop: request *k* is due at ``load start + k x batch_size /
     rate`` whether or not earlier requests have finished. Scheduled counts spans
-    whose due time passed while the generator ran.
+    whose due time passed while the generator ran, including the whole initial
+    batch at t=0 and only the planned spans in a partial final batch. Progress
+    telemetry and the final result share this batch schedule (not a continuous
+    ``elapsed x rate`` approximation). Exact due boundaries count as scheduled;
+    the planned-span total caps the count. If production stops early, telemetry
+    freezes this schedule horizon while already-started requests drain; their
+    independently counted in-flight and outcome stages continue to update.
     ``scheduled_but_not_started_spans`` counts those never sent: k6 calls them
     dropped iterations. A closed-loop client would silently omit them.
 

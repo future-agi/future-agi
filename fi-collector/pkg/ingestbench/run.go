@@ -47,6 +47,10 @@ type runState struct {
 	// breaks the identity on the next progress line.
 	inFlightSpans    int64
 	inFlightRequests int64
+	// Freeze scheduled-span telemetry when the producer stops, even if
+	// started requests are still draining. Final Schedule uses this horizon.
+	produceEnd      time.Duration
+	producerStopped bool
 	// Read-visible sentinels (sentinel.go).
 	sentinels           map[int64]*sentinel
 	pending             map[int64]*sentinel
@@ -240,7 +244,7 @@ func Run(ctx context.Context, c Config, options Options) (Result, error) {
 	r.StopReason = "planned-span-count"
 produce:
 	for generated < c.PlannedSpans() {
-		due := start.Add(time.Duration(float64(dispatched) / float64(c.Rate) * float64(time.Second)))
+		due := start.Add(c.batchDue(dispatched))
 		if !waitUntil(loadCtx, due) {
 			r.StopReason = "duration-or-cancel"
 			break
@@ -321,7 +325,7 @@ produce:
 			s.send(ctx, exp, b.seq, b.n, b.batch, sentinel, due, b.now)
 		}(b, isSentinel, due)
 	}
-	produceEnd := time.Since(start)
+	produceEnd := s.endProduction()
 	stopPipe()
 	r.Workload.BuildLatency, r.Workload.DispatchDelay = buildLatency.summary(), dispatchDelay.summary()
 	if r.StopReason == "planned-span-count" {
@@ -455,8 +459,7 @@ const lateStartThreshold = 10 * time.Millisecond
 // started: spans whose scheduled send passed while the producer was running,
 // how many of them never started, and how late the started ones were.
 func scheduleResult(c Config, produceEnd time.Duration, attempted int64, delay Percentiles, over10ms, over1s int64) ScheduleResult {
-	batches := int64(produceEnd.Seconds()*float64(c.Rate)/float64(c.BatchSize)) + 1
-	scheduled := min(c.PlannedSpans(), batches*int64(c.BatchSize))
+	scheduled := c.scheduledSpans(produceEnd)
 	return ScheduleResult{Method: "open-loop: request k is due at load start + k*batch_size/rate; delays are measured from that due time",
 		ScheduledSpans: scheduled, NotStartedSpans: max(0, scheduled-attempted), LateStartThresholdMS: float64(lateStartThreshold) / float64(time.Millisecond),
 		LateStartRequests: over10ms, LateStartRequestsOver1s: over1s, StartDelay: delay}
@@ -495,7 +498,7 @@ func (c Config) buildPipeline(ctx context.Context, start time.Time) (<-chan chan
 			case <-ctx.Done():
 				return
 			}
-			due := start.Add(time.Duration(float64(seq) / float64(c.Rate) * float64(time.Second)))
+			due := start.Add(c.batchDue(seq))
 			if !waitUntil(ctx, due.Add(-buildLookahead)) {
 				out <- builtBatch{seq: seq, n: n, err: ctx.Err()}
 				return
