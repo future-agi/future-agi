@@ -184,9 +184,9 @@ def test_r06_unknown_jev_rejected_before_key_lookup():
         with (
             patch(
                 "evaluations.engine.instance.resolve_version",
-                return_value=version(case["version_model"])
-                if case["version_model"]
-                else None,
+                return_value=(
+                    version(case["version_model"]) if case["version_model"] else None
+                ),
             ),
             patch("evaluations.engine.instance._get_api_key") as key_lookup,
             patch("ee.jev.client.JevSystemOneClient.evaluate") as client,

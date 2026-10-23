@@ -2327,9 +2327,7 @@ class EvaluationRunner:
         binding_config = (
             self.user_eval_metric.config
             if self.user_eval_metric
-            else config
-            if isinstance(config, dict)
-            else None
+            else config if isinstance(config, dict) else None
         )
         _mapped = merge_code_eval_kwargs(_mapped, self.eval_template, binding_config)
 
@@ -2633,16 +2631,12 @@ class EvaluationRunner:
             config["organization_id"] = (
                 str(self.eval_template.organization.id)
                 if self.eval_template.organization
-                else str(self.organization_id)
-                if self.organization_id
-                else None
+                else str(self.organization_id) if self.organization_id else None
             )
             config["workspace_id"] = (
                 str(self.eval_template.workspace.id)
                 if getattr(self.eval_template, "workspace", None)
-                else str(self.workspace_id)
-                if self.workspace_id
-                else None
+                else str(self.workspace_id) if self.workspace_id else None
             )
 
         elif eval_type_id == "CustomPromptEvaluator":

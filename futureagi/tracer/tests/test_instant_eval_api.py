@@ -25,7 +25,9 @@ def question(observe_project, eval_template):
         name="Did the customer get what they came for?",
         project=observe_project,
         eval_template=eval_template,
-        config={"instant_eval": {"question": "q", "reads": "transcript", "unit": "sessions"}},
+        config={
+            "instant_eval": {"question": "q", "reads": "transcript", "unit": "sessions"}
+        },
         mapping={"transcript": "transcript"},
         filters={},
     )
@@ -68,7 +70,11 @@ def sessions():
 def test_transcript_renders_ordered_turns_and_keeps_the_ends_when_long():
     traces = [
         SimpleNamespace(
-            input='[{"role": "user", "content": "where is order 1?"}]' if i == 0 else f"q{i}",
+            input=(
+                '[{"role": "user", "content": "where is order 1?"}]'
+                if i == 0
+                else f"q{i}"
+            ),
             output=f"a{i}",
         )
         for i in range(3)
@@ -109,23 +115,31 @@ def test_runs_opens_one_run_by_id_with_its_pending_rows(
     auth_client, observe_project, named_task, session_task, question, sessions
 ):
     EvalLogger.objects.bulk_create([log(named_task, question, sessions[0], "Yes")])
-    runs = auth_client.get(RUNS, {
-        "project_id": str(observe_project.id),
-        "task_id": str(named_task.id),
-    }).json()["result"]["runs"]
+    runs = auth_client.get(
+        RUNS,
+        {
+            "project_id": str(observe_project.id),
+            "task_id": str(named_task.id),
+        },
+    ).json()["result"]["runs"]
     assert [r["task_id"] for r in runs] == [str(named_task.id)]
     # Named rows without a log yet are pending; it isn't finished.
     assert (runs[0]["rows"], runs[0]["answered"], runs[0]["pending"]) == (3, 1, 2)
     assert runs[0]["finished_at"] is None
 
-    EvalLogger.objects.bulk_create([
-        log(named_task, question, sessions[1], "No"),
-        log(named_task, question, sessions[2], "No"),
-    ])
-    done = auth_client.get(RUNS, {
-        "project_id": str(observe_project.id),
-        "task_id": str(named_task.id),
-    }).json()["result"]["runs"][0]
+    EvalLogger.objects.bulk_create(
+        [
+            log(named_task, question, sessions[1], "No"),
+            log(named_task, question, sessions[2], "No"),
+        ]
+    )
+    done = auth_client.get(
+        RUNS,
+        {
+            "project_id": str(observe_project.id),
+            "task_id": str(named_task.id),
+        },
+    ).json()["result"]["runs"][0]
     assert done["pending"] == 0
     assert done["finished_at"]
 

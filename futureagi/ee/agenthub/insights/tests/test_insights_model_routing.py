@@ -37,7 +37,9 @@ class Gateway:
             return raw
 
         self.chat = SimpleNamespace(
-            completions=SimpleNamespace(with_raw_response=SimpleNamespace(create=create))
+            completions=SimpleNamespace(
+                with_raw_response=SimpleNamespace(create=create)
+            )
         )
 
 
@@ -106,7 +108,9 @@ def test_self_hosted_calls_turing_through_the_managed_service(deployment):
     assert timeout == 180
     # No cost header comes back: the tokens at Turing's price.
     assert (spend.calls, spend.prompt_tokens, spend.completion_tokens) == (1, 1000, 200)
-    assert spend.cost_usd == pytest.approx(llm.call_cost("turing_large", 0.0, 1000, 200))
+    assert spend.cost_usd == pytest.approx(
+        llm.call_cost("turing_large", 0.0, 1000, 200)
+    )
     assert spend.cost_usd > 0
 
 
@@ -137,7 +141,9 @@ def test_a_rejected_service_token_is_retried(deployment, monkeypatch):
     assert spend.calls == 1
 
 
-def test_managed_service_failures_reach_users_as_model_unavailable(deployment, monkeypatch):
+def test_managed_service_failures_reach_users_as_model_unavailable(
+    deployment, monkeypatch
+):
     deployment(cloud=False)
 
     def refuse(payload, *, timeout=None):
@@ -151,7 +157,9 @@ def test_managed_service_failures_reach_users_as_model_unavailable(deployment, m
     assert "SERVICE_ERROR" not in str(caught.value)
 
 
-def test_an_error_body_is_a_provider_failure_not_a_cut_off_reply(deployment, monkeypatch):
+def test_an_error_body_is_a_provider_failure_not_a_cut_off_reply(
+    deployment, monkeypatch
+):
     deployment(cloud=False)
     budgets = []
 
@@ -184,7 +192,9 @@ def test_oss_refuses_insights_before_any_model_call(deployment, monkeypatch):
         "_configured",
     ):
         monkeypatch.setattr(service, name, getattr(service, name))
-    service.configure(flavor=DeploymentFlavor.OSS, location=DeploymentLocation.SELF_HOSTED)
+    service.configure(
+        flavor=DeploymentFlavor.OSS, location=DeploymentLocation.SELF_HOSTED
+    )
 
     user = SimpleNamespace(
         is_authenticated=True, organization=SimpleNamespace(id=uuid.uuid4())

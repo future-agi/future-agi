@@ -7,60 +7,88 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('tracer', '0117_instant_eval_scale'),
+        ("tracer", "0117_instant_eval_scale"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='InstantEvalAnswer',
+            name="InstantEvalAnswer",
             fields=[
-                ('id', models.BigAutoField(primary_key=True, serialize=False)),
-                ('config_id', models.UUIDField()),
-                ('label', models.CharField(max_length=255)),
-                ('confidence', models.FloatField(blank=True, null=True)),
-                ('time', models.DateTimeField(blank=True, null=True)),
-                ('answered_at', models.DateTimeField(blank=True, null=True)),
+                ("id", models.BigAutoField(primary_key=True, serialize=False)),
+                ("config_id", models.UUIDField()),
+                ("label", models.CharField(max_length=255)),
+                ("confidence", models.FloatField(blank=True, null=True)),
+                ("time", models.DateTimeField(blank=True, null=True)),
+                ("answered_at", models.DateTimeField(blank=True, null=True)),
             ],
             options={
-                'db_table': 'tracer_instant_eval_answer',
+                "db_table": "tracer_instant_eval_answer",
             },
         ),
         migrations.AddField(
-            model_name='instantevalrun',
-            name='answers_synced',
+            model_name="instantevalrun",
+            name="answers_synced",
             field=models.BooleanField(default=False),
         ),
         migrations.AddField(
-            model_name='instantevalrun',
-            name='answers_version',
+            model_name="instantevalrun",
+            name="answers_version",
             field=models.IntegerField(default=0),
         ),
         migrations.AddField(
-            model_name='instantevalrun',
-            name='last_tz',
-            field=models.CharField(blank=True, default='', max_length=64),
+            model_name="instantevalrun",
+            name="last_tz",
+            field=models.CharField(blank=True, default="", max_length=64),
         ),
         migrations.AddField(
-            model_name='instantevalanswer',
-            name='row',
-            field=models.ForeignKey(db_constraint=False, on_delete=django.db.models.deletion.CASCADE, related_name='answers', to='tracer.instantevalrow'),
+            model_name="instantevalanswer",
+            name="row",
+            field=models.ForeignKey(
+                db_constraint=False,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="answers",
+                to="tracer.instantevalrow",
+            ),
         ),
         migrations.AddField(
-            model_name='instantevalanswer',
-            name='task',
-            field=models.ForeignKey(db_constraint=False, db_index=False, on_delete=django.db.models.deletion.CASCADE, related_name='instant_answers', to='tracer.evaltask'),
+            model_name="instantevalanswer",
+            name="task",
+            field=models.ForeignKey(
+                db_constraint=False,
+                db_index=False,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name="instant_answers",
+                to="tracer.evaltask",
+            ),
         ),
         migrations.AddIndex(
-            model_name='instantevalanswer',
-            index=models.Index(fields=['task', 'config_id', 'label', 'time'], include=('row', 'confidence'), name='instant_answer_label_time_idx'),
+            model_name="instantevalanswer",
+            index=models.Index(
+                fields=["task", "config_id", "label", "time"],
+                include=("row", "confidence"),
+                name="instant_answer_label_time_idx",
+            ),
         ),
         migrations.AddIndex(
-            model_name='instantevalanswer',
-            index=models.Index(condition=models.Q(('confidence__lt', 0.6), models.Q(('label__in', ['__error__', '__skipped__']), _negated=True)), fields=['task', 'config_id'], include=('row',), name='instant_answer_unsure_idx'),
+            model_name="instantevalanswer",
+            index=models.Index(
+                condition=models.Q(
+                    ("confidence__lt", 0.6),
+                    models.Q(
+                        ("label__in", ["__error__", "__skipped__"]), _negated=True
+                    ),
+                ),
+                fields=["task", "config_id"],
+                include=("row",),
+                name="instant_answer_unsure_idx",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='instantevalanswer',
-            constraint=models.UniqueConstraint(fields=('task', 'row', 'config_id'), name='instant_answer_task_row_cfg_uniq'),
+            model_name="instantevalanswer",
+            constraint=models.UniqueConstraint(
+                fields=("task", "row", "config_id"),
+                name="instant_answer_task_row_cfg_uniq",
+            ),
         ),
         # Runs add their rows in bulk and a new task id is unknown to the
         # planner until the table is analyzed: analyze after every 5,000

@@ -627,9 +627,10 @@ def create_eval_instance(
             resolved_version,
             runtime_config,
         )
-        return JevEvaluator(
-            **jev_config, api_key=_get_typesafe_api_key(org_id, ws_id)
-        ), None
+        return (
+            JevEvaluator(**jev_config, api_key=_get_typesafe_api_key(org_id, ws_id)),
+            None,
+        )
 
     jev_selection = any(
         isinstance(value, str) and value.lower().startswith("jev-")

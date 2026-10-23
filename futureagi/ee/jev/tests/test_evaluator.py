@@ -141,9 +141,7 @@ def test_an_unusable_answer_is_reported_with_the_gateway_call():
     instance, client = evaluator(answer={"type": "noul", "noul": 1.5})
     with pytest.raises(JevResponseError) as raised:
         instance._evaluate(input="text")
-    client.invalid_response.assert_called_once_with(
-        "invalid_answer", raised.value.code
-    )
+    client.invalid_response.assert_called_once_with("invalid_answer", raised.value.code)
 
 
 def test_a_usable_answer_reports_nothing():

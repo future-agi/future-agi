@@ -47,8 +47,12 @@ def draft_config(
     raw = chat_json(_SYSTEM, prompt, tier=THINKING, max_tokens=900, spend=spend)
     raw = raw if isinstance(raw, dict) else {}
     return {
-        "name": " ".join(str(raw.get("name", "")).split())[:120] or lens.title or "Report",
-        "question": " ".join(str(raw.get("question", "")).split())[:300] or goal or lens.title,
+        "name": " ".join(str(raw.get("name", "")).split())[:120]
+        or lens.title
+        or "Report",
+        "question": " ".join(str(raw.get("question", "")).split())[:300]
+        or goal
+        or lens.title,
         "agent_description": " ".join(
             str(raw.get("agent_description") or agent_description).split()
         )[:400],
@@ -76,26 +80,37 @@ def preview(
     spend = spend if spend is not None else Spend()
     if insight_agent.enabled():
         context = insight_agent.run_context(
-            {"lens": lens_key, "question": question, "agent_description": agent_description,
-             "instructions": instructions, "attributes": attributes},
-            unit, "preview",
+            {
+                "lens": lens_key,
+                "question": question,
+                "agent_description": agent_description,
+                "instructions": instructions,
+                "attributes": attributes,
+            },
+            unit,
+            "preview",
         )
         read = insight_agent.read_units(
-            context, [(t.unit_id, t.content) for t in loaded.values()], attributes, spend
+            context,
+            [(t.unit_id, t.content) for t in loaded.values()],
+            attributes,
+            spend,
         )
         out = []
         for text in loaded.values():
             facets = read.get(text.unit_id, {}).get("facets")
             if facets is None:
                 continue
-            out.append({
-                "unit_id": text.unit_id,
-                "label": text.label,
-                "excerpt": text.excerpt,
-                "user_id": text.user_id,
-                "facets": facets,
-                "included": included(facets, lens_key, attributes),
-            })
+            out.append(
+                {
+                    "unit_id": text.unit_id,
+                    "label": text.label,
+                    "excerpt": text.excerpt,
+                    "user_id": text.user_id,
+                    "facets": facets,
+                    "included": included(facets, lens_key, attributes),
+                }
+            )
         return out
 
     def one(text):

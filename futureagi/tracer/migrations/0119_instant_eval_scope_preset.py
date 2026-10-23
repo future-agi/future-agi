@@ -6,23 +6,23 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('tracer', '0118_instant_eval_answers'),
+        ("tracer", "0118_instant_eval_answers"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='instantevalrun',
-            name='date_preset',
+            model_name="instantevalrun",
+            name="date_preset",
             field=models.CharField(blank=True, max_length=16, null=True),
         ),
         migrations.AddField(
-            model_name='instantevalrun',
-            name='label',
+            model_name="instantevalrun",
+            name="label",
             field=models.CharField(blank=True, max_length=300, null=True),
         ),
         migrations.AddField(
-            model_name='instantevalrun',
-            name='search',
-            field=models.CharField(blank=True, default='', max_length=200),
+            model_name="instantevalrun",
+            name="search",
+            field=models.CharField(blank=True, default="", max_length=200),
         ),
     ]

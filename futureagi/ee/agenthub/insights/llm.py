@@ -49,11 +49,7 @@ def model_for(tier: str) -> str:
         configured = getattr(settings, name, None)
     except Exception:  # pragma: no cover - settings always load in the app
         configured = None
-    return (
-        configured
-        or os.environ.get(name)
-        or _DEFAULTS[tier]
-    )
+    return configured or os.environ.get(name) or _DEFAULTS[tier]
 
 
 @dataclass
@@ -66,7 +62,9 @@ class Spend:
     completion_tokens: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def add(self, cost: float, prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
+    def add(
+        self, cost: float, prompt_tokens: int = 0, completion_tokens: int = 0
+    ) -> None:
         with self._lock:
             self.cost_usd += cost or 0.0
             self.calls += 1
@@ -74,7 +72,9 @@ class Spend:
             self.completion_tokens += completion_tokens or 0
 
 
-def call_cost(model: str, gateway_cost: float, prompt_tokens: int, completion_tokens: int) -> float:
+def call_cost(
+    model: str, gateway_cost: float, prompt_tokens: int, completion_tokens: int
+) -> float:
     """What one model call cost: the gateway's figure, else the model's token
     price. The gateway prices only the models in its catalogue, not the Turing
     aliases, so a zero falls back to the platform's price list, as Falcon AI's
@@ -126,7 +126,9 @@ def _managed(model: str) -> bool:
     return is_managed_model(model) and not DeploymentMode.is_cloud()
 
 
-def _complete_managed(messages: list[dict], model: str, max_tokens: int, temperature: float):
+def _complete_managed(
+    messages: list[dict], model: str, max_tokens: int, temperature: float
+):
     from ee.licensing.managed_ai import (
         chat_completion,
         response_content,
