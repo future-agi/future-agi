@@ -66,7 +66,7 @@ export default function EnvironmentsLanding({ onPick, onBrowseWorlds, picked, ex
   };
   const onConnected = (source) => {
     const { id } = saveAgent(source);
-    onAgentConnected?.(id);
+    onAgentConnected?.(id, source.scenarioCount);
   };
   /* Prebuilt worlds sit where the ready-made examples were. */
   const ownWorldsRef = useRef(null);

@@ -8,6 +8,9 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import EnvironmentValues from "../agents/connect/EnvironmentValues";
+import ConnectPreflight from "../agents/connect/ConnectPreflight";
+import { credentialCheck, egressCheck, factCheck, parseEgress, usePreflight } from "../agents/connect/preflight";
+import { useConnectBuild } from "../agents/connect/connectSubmit";
 import { envValuesSourceOf } from "../_mock/envValues";
 import { paths } from "src/routes/paths";
 import { SectionCard } from "../components/primitives";
@@ -38,7 +41,8 @@ import { CLOSED_PLATFORMS, CLOSED_PLATFORM_NOTE, PLATFORM_TESTING } from "../_mo
 import { clickable, focusRing } from "../components/clickable";
 import WorldAgentPicker from "./AgentChoice";
 import { buildableAgentsOf, mcpWorldSource, useBuildForAgent } from "./worldSource";
-import { gatewayServersOf } from "../_mock/gatewayMcp";
+import { gatewayServerForHost, gatewayServersOf } from "../_mock/gatewayMcp";
+import { mcpServerHost } from "../_mock/mcpServers";
 
 /**
  * Variation B entry point.
@@ -122,6 +126,8 @@ export default function StartEnvironment({ entry = false }) {
   const { agents: knownAgents } = useConnectedAgents();
   /* Also set by the landing's own connect drawer, once its agent is saved. */
   const [pendingAgent, setPendingAgent] = useState(() => new URLSearchParams(window.location.search).get("agent"));
+  /* How many scenarios the connect form asked for — the build generates that many. */
+  const [pendingCount, setPendingCount] = useState(() => Number(new URLSearchParams(window.location.search).get("count")) || null);
   useEffect(() => {
     const id = pendingAgent;
     if (!id || !entry) return;
@@ -130,10 +136,13 @@ export default function StartEnvironment({ entry = false }) {
     setPendingAgent(null);
     const url = new URL(window.location.href);
     url.searchParams.delete("agent");
+    url.searchParams.delete("count");
     window.history.replaceState(null, "", url.toString());
+    const count = pendingCount;
+    setPendingCount(null);
     const built = {
       ...sourceFromAgentRecord(a),
-      scenarioCount: scenarioCountOf(DEFAULT_SCENARIOS),
+      scenarioCount: count || scenarioCountOf(DEFAULT_SCENARIOS),
       connectedAgent: a,
       agentVersion: a.production || a.latest,
     };
@@ -175,7 +184,7 @@ export default function StartEnvironment({ entry = false }) {
       {view === "landing" && (
         <EnvironmentsLanding
           onPick={pickFromLanding}
-          onAgentConnected={setPendingAgent}
+          onAgentConnected={(id, count) => { setPendingCount(Number(count) || null); setPendingAgent(id); }}
           onBrowseWorlds={() => setView("worlds")}
           examplesRef={examplesRef}
           picked={picked}
@@ -1686,8 +1695,11 @@ function PanelMcpServer() {
   /* Servers registered in the Gateway come first — no URL or token to give again.
      A pasted URL is the other way in. */
   const gwServers = gatewayServersOf();
-  const [source, setSource] = useState(gwServers.length && !prefill?.target ? "gateway" : "url");
-  const [gwPick, setGwPick] = useState(null);
+  /* A pasted URL the Gateway already has opens on that Gateway server — its
+     credentials are there, so nothing is asked twice. */
+  const pastedInGateway = prefill?.target ? gatewayServerForHost(mcpServerHost(prefill.target))?.gateway?.serverId || null : null;
+  const [source, setSource] = useState(gwServers.length && (!prefill?.target || pastedInGateway) ? "gateway" : "url");
+  const [gwPick, setGwPick] = useState(pastedInGateway);
   const gw = gwServers.find((g) => g.id === gwPick) || null;
   const [transport, setTransport] = useState(prefill?.transport === "stdio" ? "http" : prefill?.transport || "http");
   const [target, setTarget] = useState(prefill?.transport === "stdio" ? "" : prefill?.target || "");
@@ -1780,7 +1792,19 @@ function PanelCodeUpload() {
   /* What our sandbox needs to run the code, as for a repository. */
   const [envValues, setEnvValues] = useState([]);
   const [credFiles, setCredFiles] = useState([]);
+  const [egressText, setEgressText] = useState("");
+  const egress = parseEgress(egressText);
   const canGo = files.length > 0;
+  /* Preflight before a build: the upload, every secret it's given, the egress list.
+     Optional when the upload only connects the agent. */
+  const connect = useContext(ConnectModeContext);
+  const buildCtx = useConnectBuild();
+  const needsPreflight = !connect || !!buildCtx;
+  const preflight = usePreflight([
+    factCheck({ id: "files", label: "Upload", ok: canGo, okText: `${files.length} file${files.length === 1 ? "" : "s"}${entry.trim() ? ` · entry ${entry.trim()}` : ""} — unpacked in the sandbox.`, failText: "Add at least one file." }),
+    ...envValues.filter((v) => v.secret).map((v) => credentialCheck({ id: `env:${v.name}`, label: v.name, ref: v.ref })),
+    ...(egress.length ? [egressCheck(egress)] : []),
+  ], [files.map((f) => f.name).join(","), entry, envValues, egressText]);
 
   const onDrop = (list) => {
     const added = Array.from(list).map((f) => ({ name: f.name, size: f.size }));
@@ -1863,18 +1887,24 @@ function PanelCodeUpload() {
         <EnvironmentValues
           values={envValues} onValues={setEnvValues}
           files={credFiles} onFiles={setCredFiles}
+          egress={egressText} onEgress={setEgressText}
         />
       )}
       <ScenarioCountRow value={scenarioCount} onChange={setScenarioCount} />
+      <ConnectPreflight
+        preflight={preflight} required={needsPreflight} canRun={canGo}
+        blockedReason={!canGo ? "Add the files — then preflight checks them and their credentials." : null}
+      />
       <ContinueRow
-        disabled={!canGo}
-        hint="Add at least one file"
+        disabled={!canGo || (needsPreflight && !preflight.ready)}
+        hint={!canGo ? "Add at least one file" : "Run preflight first"}
         onClick={() => build({
           kind: "upload",
-          scenarioCount: scenarioCountOf(scenarioCount),
+          scenarioCount: buildCtx ? Number(buildCtx.scenarioCount) || 10 : scenarioCountOf(scenarioCount),
           entry: entry.trim(),
           files: files.map((f) => ({ name: f.name, size: f.size })),
           ...envValuesSourceOf({ values: envValues, files: credFiles }),
+          ...(egress.length && { allowedEgressDomains: egress }),
         })}
       />
     </Stack>
@@ -2338,11 +2368,15 @@ ToggleRow.propTypes = {
 const MAX_SCENARIOS = 1000;
 const DEFAULT_SCENARIOS = "10";
 
-function ScenarioCountRow({ value, onChange }) {
+function ScenarioCountRow({ value: ownValue, onChange: ownOnChange }) {
   const connect = useContext(ConnectModeContext);
+  /* Connecting an agent to build an environment: the count is the connect form's. */
+  const buildCtx = useConnectBuild();
+  const value = buildCtx ? String(buildCtx.scenarioCount) : ownValue;
+  const onChange = buildCtx ? buildCtx.setScenarioCount : ownOnChange;
   const n = Number(value) || 0;
-  /* Connecting an agent generates nothing — scenarios belong to an environment. */
-  if (connect) return null;
+  /* Connecting an agent and nothing else generates nothing — scenarios belong to an environment. */
+  if (connect && !buildCtx) return null;
   const onInput = (raw) => {
     const digits = raw.replace(/\D/g, "").replace(/^0+/, "").slice(0, 3);
     onChange(digits && Number(digits) > MAX_SCENARIOS ? String(MAX_SCENARIOS) : digits);

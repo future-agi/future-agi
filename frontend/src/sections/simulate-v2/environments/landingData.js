@@ -7,6 +7,8 @@
   Every entry opens one of the existing setup panels (StartEnvironment's
   PANELS) with what we already know filled in — `{ choice, prefill }`.
 */
+import { gatewayServerForHost } from "../_mock/gatewayMcp";
+import { mcpServerHost } from "../_mock/mcpServers";
 import { ENVIRONMENT_TEMPLATES } from "../_mock/environments";
 import { packStats } from "../_mock/scenarios";
 import { TWIN_CATALOG } from "../_mock/twins";
@@ -104,7 +106,9 @@ export const detectPaste = (raw) => {
       kind: "mcp", label: "MCP server", detail: text, logo: "mcp",
       note: transport === "stdio"
         ? "That's a command, and a pasted command never runs in our sandbox — paste the server's HTTP or SSE URL, or pick it from your Gateway."
-        : "Its tools become the world of one of your agents' environments — pick the agent next.",
+        : gatewayServerForHost(mcpServerHost(text))
+          ? `${gatewayServerForHost(mcpServerHost(text)).label} is in your Gateway — its tools become the world of one of your agents' environments, with the Gateway's credentials. Pick the agent next.`
+          : "Its tools become the world of one of your agents' environments — pick the agent next.",
       choice: "mcp", prefill: { target: text, transport },
     };
   }

@@ -7,9 +7,9 @@ import { uniqueEnvName } from "../_mock/envNames";
 import { isGitAgent, versionNameOf } from "../_mock/codeRefs";
 
 const MONO = "ui-monospace, Menlo, monospace";
-/* Quick picks; any count from 10 to 1,000 can be typed. */
+/* Quick picks; any count from 1 to 1,000 can be typed — the range the build accepts. */
 const SIZES = [10, 25, 50, 100];
-const MIN_SCENARIOS = 10;
+const MIN_SCENARIOS = 1;
 const MAX_SCENARIOS = 1000;
 
 /**

@@ -17,6 +17,7 @@ import GitHostRepoPicker from "./GitHostRepoPicker";
 import { HintLine } from "./replicationBits";
 import { recommendedRunLocation } from "../../_mock/replication";
 import { useConnectSubmitLabel } from "./connectSubmit";
+import { credentialCheck, egressCheck, factCheck, parseEgress, usePreflight } from "./preflight";
 
 const MONO = "ui-monospace, Menlo, monospace";
 /* One screen: which agent, then Connect. What reading the code finds is
@@ -113,6 +114,10 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
   const [visibility, setVisibility] = useState("public");
   const [envValues, setEnvValues] = useState([]);
   const [credFiles, setCredFiles] = useState([]);
+  /* Public hostnames the sandbox may reach while the agent runs — hardcoded
+     APIs, TURN endpoints. Everything else is blocked. */
+  const [egressText, setEgressText] = useState("");
+  const egress = parseEgress(egressText);
   const envRefOf = (name) => envValues.find((v) => v.name === name && v.secret)?.ref;
 
   /* "github" mode is picking from the host's connection, whichever host. */
@@ -202,6 +207,7 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
       ...(detected.members.length && { members: detected.members.map((m) => ({ ...m, instructions: m.promptRef })) }),
     }),
     ...envValuesSourceOf({ values: envValues, files: credFiles }),
+    ...(egress.length && { allowedEgressDomains: egress }),
     ...(pastedLink && { repoVisibility: "public" }),
     versionNote: `Read from ${repo?.name || "the repository"} @ ${branch.trim() || "main"}.`,
   };
@@ -231,6 +237,25 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
   }, [saveWanted, found]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ready = !!repo && (!!folder.trim() || pastedLink) && !!branch.trim() && !privatePasted;
+
+  /* Preflight reads the folder at the branch — files scanned, the services it
+     talks to — and checks each credential the code reads is set and accepted. */
+  const scan = useMemo(() => {
+    if (!ready) return null;
+    const dir = folder.trim().replace(/\/+$/, "");
+    const r = readAgentFolder({ repo, folder: dir, branch, entryId });
+    const d = repoDetectionOf({ repo, folder: dir, branch, found: r });
+    const keys = d.credentialKeys.value || [];
+    const files = 40 + ((`${repo.name}/${dir}`.length * 37) % 180);
+    const connectors = [...new Set(keys.map(connectorOfKey).filter(Boolean))];
+    return { files, keys, connectors };
+  }, [ready, repo?.name, folder, branch, entryId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const secretKeys = (scan?.keys || []).filter((k) => /KEY|TOKEN|SECRET|PASSWORD|DSN|_URL$/i.test(k));
+  const preflight = usePreflight([
+    factCheck({ id: "repo", label: "Repository", ok: ready, okText: `${repo?.name || ""} @ ${branch.trim() || "main"} — ${scan?.files || 0} source files scanned.`, failText: privatePasted ? "Private repositories need the GitHub App." : "Pick the repository and the agent." }),
+    ...secretKeys.map((k) => credentialCheck({ id: `env:${k}`, label: k, ref: envRefOf(k) || envValues.find((v) => v.name === k)?.value || "", provider: connectorOfKey(k) })),
+    ...(egress.length ? [egressCheck(egress)] : []),
+  ], [repo?.name, folder, branch, entryId, envValues, egressText, visibility]);
   const next = {
     label: submitLabel,
     icon: "solar:link-circle-linear",
@@ -269,6 +294,12 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
       steps={STEPS}
       active={0}
       next={next}
+      preflight={{
+        state: preflight,
+        canRun: ready && !mismatch,
+        blockedReason: !ready ? "Pick the repository and the agent — then preflight reads it and checks its credentials." : null,
+        summary: scan ? `${scan.files} source files scanned${scan.connectors.length ? ` · Detected: ${scan.connectors.join(", ")}` : ""}` : null,
+      }}
     >
       <Stack spacing={1.75}>
         {tracedCode && (
@@ -430,7 +461,8 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
           <EnvironmentValues
             values={envValues} onValues={setEnvValues}
             files={credFiles} onFiles={setCredFiles}
-            expectedNames={detected?.credentialKeys.value || []}
+            expectedNames={detected?.credentialKeys.value || scan?.keys || []}
+            egress={egressText} onEgress={setEgressText}
           />
         )}
 
@@ -494,3 +526,13 @@ function TraceMatch({ match, traced, tracedFw, projectName, found, tools }) {
 TraceMatch.propTypes = {
   match: PropTypes.object, traced: PropTypes.object, tracedFw: PropTypes.string, projectName: PropTypes.string, found: PropTypes.object, tools: PropTypes.array,
 };
+
+/* The service a credential name belongs to, for "Detected: …". */
+const CONNECTORS = [
+  [/OPENAI/i, "OpenAI"], [/ANTHROPIC|CLAUDE/i, "Anthropic"], [/GEMINI|GOOGLE/i, "Google"], [/STRIPE/i, "Stripe"],
+  [/SHOPIFY/i, "Shopify"], [/TWILIO/i, "Twilio"], [/SLACK/i, "Slack"], [/ZENDESK/i, "Zendesk"], [/HUBSPOT/i, "HubSpot"],
+  [/REDIS/i, "Redis"], [/DATABASE_URL|POSTGRES|PG_/i, "Postgres"], [/DEEPGRAM/i, "Deepgram"], [/ELEVEN/i, "ElevenLabs"], [/CARTESIA/i, "Cartesia"], [/LIVEKIT/i, "LiveKit"],
+];
+function connectorOfKey(name) {
+  return (CONNECTORS.find(([re]) => re.test(name)) || [])[1] || null;
+}

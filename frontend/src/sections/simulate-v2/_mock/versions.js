@@ -109,6 +109,8 @@ export const ENV_CHANGES = [
   { id: "tools-added", label: "Tools added", invalidates: false, blurb: "The world answers more tools — every scenario still runs as it was proved." },
   /* Removed: a scenario that calls one can no longer play out as proved. */
   { id: "tools-removed", label: "Tools removed", invalidates: true, blurb: "The world stops answering some tools — scenarios that call them can't run as proved." },
+  /* What the sandbox lets the agent reach: a call that worked may now be blocked, or the other way. */
+  { id: "network", label: "Egress changed", invalidates: false, blurb: "Which public hosts the agent may reach while it runs changed — calls to them may now succeed or be blocked." },
 ];
 
 /** What a change id reads as — never the raw id ("contract" means tools). */
@@ -215,7 +217,7 @@ export const nextEnvVersion = (env, envState, { changed = [], note, now, from, r
   seed, what a run may never call, whether the sandbox resets. Kept on every
   version, so rolling back restores them too.
 */
-export const WORLD_CONFIG_KEYS = ["toolEnv", "toolLinks", "actors", "actorEdits", "twinBacking", "twinResetBetween", "toolArgEdits"];
+export const WORLD_CONFIG_KEYS = ["toolEnv", "toolLinks", "actors", "actorEdits", "twinBacking", "twinResetBetween", "toolArgEdits", "egressDomains"];
 export const worldConfigOf = (envState) => Object.fromEntries(WORLD_CONFIG_KEYS
   .filter((k) => envState?.[k] !== undefined)
   .map((k) => [k, envState[k]]));

@@ -8,3 +8,15 @@ import { createContext, useContext } from "react";
 export const CONNECT_LABEL = "Connect agent";
 export const ConnectSubmitContext = createContext(CONNECT_LABEL);
 export const useConnectSubmitLabel = () => useContext(ConnectSubmitContext) || CONNECT_LABEL;
+
+/*
+  Set while the agent is being connected for a new environment: the build
+  starts from the connect form, so the form also asks how many scenarios to
+  generate and must pass preflight first. Null on a plain connect, where
+  preflight is optional and the count is asked when an environment is built.
+    { scenarioCount, setScenarioCount }
+*/
+export const ConnectBuildContext = createContext(null);
+export const useConnectBuild = () => useContext(ConnectBuildContext);
+export const DEFAULT_BUILD_SCENARIOS = 10;
+export const MAX_BUILD_SCENARIOS = 1000;

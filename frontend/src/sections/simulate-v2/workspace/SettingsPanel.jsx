@@ -17,6 +17,7 @@ import {
 import { validateSecretRef, looksLikeRawKey, RAW_KEY_MESSAGE } from "../_mock/secretRefs";
 import { SecretRefText, SetRefAction, SecretRefEditor, PreflightLine, RefTag } from "./SecretRefControls";
 import { envMcpServersOf } from "../_mock/worldTools";
+import { MAX_EGRESS_DOMAINS, egressCheck, parseEgress } from "../agents/connect/preflight";
 import {
   currentEnvVersion,
   pendingEnvChanges, envChangePatch, saveEnvChangesPatch, envChangeLabel, scenariosInSet,
@@ -121,6 +122,7 @@ export default function SettingsPanel({ env, envState, patch, onDelete, locked =
 
         {/* ── env vars — secrets by reference ── */}
         <EnvVarsSection envState={envState} patch={patch} locked={locked} />
+        <EgressSection envState={envState} patch={patch} locked={locked} />
         <AgentCredentialsSection envState={envState} />
         <ToolCredentialsSection env={env} envState={envState} />
 
@@ -306,6 +308,70 @@ function AgentCredentialsSection({ envState }) {
   );
 }
 AgentCredentialsSection.propTypes = { envState: PropTypes.object };
+
+/*
+  The public hosts the sandbox lets the agent reach while it runs —
+  hardcoded APIs, TURN endpoints. Everything else is firewalled. The build
+  doesn't use the list. A change is a world edit: it waits as an unsaved
+  edit once a run has pinned the version, and rollbacks restore the list.
+*/
+function EgressSection({ envState, patch, locked = false }) {
+  const domains = envState?.egressDomains || [];
+  const [text, setText] = useState("");
+  const [error, setError] = useState(null);
+  const write = (next, detail) => patch?.({ egressDomains: next, ...envChangePatch(envState, "network", detail) });
+  const add = () => {
+    const asked = parseEgress(text).filter((d) => !domains.includes(d));
+    if (!asked.length) { setText(""); return; }
+    const check = egressCheck([...domains, ...asked]);
+    if (!check.ok) { setError(check.detail); return; }
+    write([...domains, ...asked], `Egress: allowed ${asked.join(", ")}`);
+    setText("");
+    setError(null);
+  };
+  return (
+    <SectionCard
+      title={`Egress · ${domains.length}`}
+      subtitle={`Public hostnames the agent may reach while it runs — hardcoded APIs or TURN endpoints. Everything else is firewalled at the sandbox. Up to ${MAX_EGRESS_DOMAINS}.`}
+    >
+      <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+        {domains.length === 0 && (
+          <Typography sx={{ typography: "s3", color: "text.subtitle", px: 2.5, py: 1.375 }}>None — the agent can only reach what the world answers.</Typography>
+        )}
+        {domains.map((d) => (
+          <Stack key={d} direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 1 }}>
+            <Iconify icon="solar:global-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+            <Typography sx={{ typography: "s2", fontFamily: MONO, flex: 1, minWidth: 0 }}>{d}</Typography>
+            {!locked && patch && (
+              <IconButton size="small" aria-label={`Remove ${d}`} onClick={() => write(domains.filter((x) => x !== d), `Egress: removed ${d}`)}>
+                <Iconify icon="solar:trash-bin-trash-linear" width={15} sx={{ color: "text.subtitle" }} />
+              </IconButton>
+            )}
+          </Stack>
+        ))}
+        {!locked && patch && (
+          <Stack direction="row" alignItems="flex-start" spacing={1} sx={{ px: 2.5, py: 1.25 }}>
+            <Box flex={1} minWidth={0}>
+              <TextField
+                fullWidth size="small" value={text}
+                onChange={(e) => { setText(e.target.value); setError(null); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
+                placeholder="api.example.com, turn.example.com"
+                inputProps={{ spellCheck: false, "aria-label": "Add egress domains" }}
+                sx={{ "& .MuiInputBase-input": { typography: "s2", fontFamily: MONO } }}
+              />
+              {error && <Typography sx={{ typography: "s3", color: "error.main", mt: 0.5 }}>{error}</Typography>}
+            </Box>
+            <Button size="small" variant="outlined" disabled={!text.trim()} onClick={add} sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0, mt: 0.25 }}>
+              Allow
+            </Button>
+          </Stack>
+        )}
+      </Stack>
+    </SectionCard>
+  );
+}
+EgressSection.propTypes = { envState: PropTypes.object, patch: PropTypes.func, locked: PropTypes.bool };
 
 /* The tokens the world's MCP tool sources use — references, changed from World → Tool sources. */
 function ToolCredentialsSection({ env, envState }) {

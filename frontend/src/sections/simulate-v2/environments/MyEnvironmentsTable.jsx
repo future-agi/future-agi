@@ -136,7 +136,7 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false, 
            in flight surface as "Running…". */
         status: (() => {
           const lastRun = runs[runs.length - 1];
-          if (!lastRun) return env.buildStatus === "building" ? "building" : "not_run";
+          if (!lastRun) return env.buildStatus === "building" ? "building" : env.buildStatus === "canceled" ? "canceled" : env.buildStatus === "failed" ? "build_failed" : "not_run";
           if (lastRun.status === "running") return "running";
           if (lastRun.status === "failed" || lastRun.gate === "failed") return "failed";
           if (lastRun.status === "passed" || lastRun.gate === "clear") return "passed";
@@ -668,6 +668,9 @@ const pulse = keyframes`
 */
 const STATUS_META = {
   building:  { label: "Building",     color: "#7857FC", animated: true },
+  /* A build someone stopped, or one that failed part-way — open it to restart or retry. */
+  canceled:  { label: "Build canceled" },
+  build_failed: { label: "Build failed", color: "#DC2626" },
   not_run:   { label: "Not run yet" },
   running:   { label: "Running…",     color: "#2563EB", animated: true },
   passed:    { label: "Passed",       color: "#16A34A" },

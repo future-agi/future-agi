@@ -1,8 +1,11 @@
 import PropTypes from "prop-types";
 import { Fragment, useContext } from "react";
-import { Box, Button, CircularProgress, Stack, Typography } from "@mui/material";
+import { Box, Button, CircularProgress, Stack, TextField, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { InDrawerContext } from "../../environments/connectMode";
+import ConnectPreflight from "./ConnectPreflight";
+import { MAX_BUILD_SCENARIOS, useConnectBuild } from "./connectSubmit";
+import { buildCreditsCheck } from "../../_mock/metering";
 
 /**
  * The frame every New agent flow walks through: where you are, the step
@@ -10,9 +13,26 @@ import { InDrawerContext } from "../../environments/connectMode";
  * connect panels — the steps are what's new, so they get a quiet strip
  * rather than a stepper that shouts.
  */
-export default function ConnectSteps({ title, subtitle, steps, active, onBack, next, children }) {
+export default function ConnectSteps({ title, subtitle, steps, active, onBack, next: asked, preflight = null, children }) {
   /* In a drawer the header already names the flow — just the steps here. */
   const inDrawer = useContext(InDrawerContext);
+  /* Connecting for a new environment: the form also asks how many scenarios
+     to generate, and the build waits for preflight to pass. */
+  const build = useConnectBuild();
+  const count = build ? Number(build.scenarioCount) : null;
+  const countOk = !build || (Number.isInteger(count) && count >= 1 && count <= MAX_BUILD_SCENARIOS);
+  /* The build writes scenarios with AI credits — over what's left, it would stop part-way. */
+  const credits = build && countOk ? buildCreditsCheck(count) : null;
+  const waitsForPreflight = !!build && !!preflight && !preflight.state.ready;
+  const next = asked.disabled
+    ? asked
+    : !countOk
+      ? { ...asked, disabled: true, hint: `Scenarios to generate: 1 to ${MAX_BUILD_SCENARIOS.toLocaleString()}` }
+      : credits && !credits.ok
+        ? { ...asked, disabled: true, hint: "Over your AI credits — build fewer scenarios" }
+      : waitsForPreflight
+        ? { ...asked, disabled: true, hint: preflight.state.status === "done" ? "Fix what preflight found, then run it again" : "Run preflight first" }
+        : asked;
   /* One step is no journey — no strip, and in a drawer no header at all. */
   const single = steps.length <= 1;
   const showHead = !(inDrawer && single);
@@ -41,6 +61,12 @@ export default function ConnectSteps({ title, subtitle, steps, active, onBack, n
         {/* In a drawer with one step, the subtitle is the only framing — said here. */}
         {!showHead && subtitle && <Typography sx={{ typography: "s2", color: "text.subtitle", mb: 1.75 }}>{subtitle}</Typography>}
         {children}
+        {(build || preflight) && (
+          <Stack spacing={1.25} sx={{ mt: 1.75 }}>
+            {build && <ScenarioCount value={build.scenarioCount} onChange={build.setScenarioCount} ok={countOk} credits={credits} />}
+            {preflight && <ConnectPreflight preflight={preflight.state} required={!!build} canRun={preflight.canRun !== false} blockedReason={preflight.blockedReason} summary={preflight.summary} />}
+          </Stack>
+        )}
       </Box>
 
       {/* In a drawer the submit row stays pinned to its bottom edge while a
@@ -94,8 +120,49 @@ ConnectSteps.propTypes = {
   onBack: PropTypes.func,
   /* { label, onClick, disabled, hint, busy, icon } — `busy` is the line shown while it works. */
   next: PropTypes.object.isRequired,
+  /* { state: usePreflight(), canRun, blockedReason, summary } — the flow's checks. */
+  preflight: PropTypes.object,
   children: PropTypes.node,
 };
+
+/* How many scenarios the build generates — the same range the product's build accepts. */
+function ScenarioCount({ value, onChange, ok, credits = null }) {
+  const n = Number(value);
+  return (
+    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
+    <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 1.5, py: 1 }}>
+      <Box flex={1} minWidth={0}>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>Scenarios to generate</Typography>
+        <Typography sx={{ typography: "s3", color: ok ? "text.subtitle" : "error.main" }}>
+          {ok ? `We'll generate ${n.toLocaleString()} scenario${n === 1 ? "" : "s"} when it builds. Set any number up to ${MAX_BUILD_SCENARIOS.toLocaleString()}.` : `Between 1 and ${MAX_BUILD_SCENARIOS.toLocaleString()}.`}
+        </Typography>
+      </Box>
+      <TextField
+        size="small" type="number" value={value}
+        onChange={(e) => onChange(e.target.value)}
+        inputProps={{ min: 1, max: MAX_BUILD_SCENARIOS, "aria-label": "Scenarios to generate" }}
+        sx={{ width: 96, flexShrink: 0, "& .MuiInputBase-input": { typography: "s2", fontFamily: "ui-monospace, Menlo, monospace", py: 0.75 } }}
+      />
+    </Stack>
+    {/* Out of credits for this many: said before the build, with the most that fits. */}
+    {credits && !credits.ok && (
+      <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 1.5, py: 1, borderTop: "1px solid", borderColor: "divider", bgcolor: "background.neutral" }}>
+        <Iconify icon="solar:wallet-money-linear" width={16} sx={{ color: "warning.main", flexShrink: 0 }} />
+        <Box flex={1} minWidth={0}>
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>Not enough AI credits for this build</Typography>
+          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{credits.message}</Typography>
+        </Box>
+        {credits.affordable > 0 && (
+          <Button size="small" variant="outlined" onClick={() => onChange(String(credits.affordable))} sx={{ typography: "s3", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}>
+            {`Build ${credits.affordable.toLocaleString()}`}
+          </Button>
+        )}
+      </Stack>
+    )}
+    </Box>
+  );
+}
+ScenarioCount.propTypes = { value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]), onChange: PropTypes.func.isRequired, ok: PropTypes.bool, credits: PropTypes.object };
 
 function StepDot({ n, label, state }) {
   const on = state === "on";

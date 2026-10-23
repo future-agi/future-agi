@@ -21,7 +21,7 @@ import FrameworkAgentFlow from "./FrameworkAgentFlow";
 import ClosedPlatformFlow from "./ClosedPlatformFlow";
 import TracesAgentFlow from "./TracesAgentFlow";
 import { CLOSED_WAY, CONNECT_KINDS, MORE_WAYS } from "./connectKinds";
-import { useConnectSubmitLabel } from "./connectSubmit";
+import { CONNECT_LABEL, ConnectBuildContext, DEFAULT_BUILD_SCENARIOS, useConnectSubmitLabel } from "./connectSubmit";
 
 /**
  * New agent — Agents page and an environment's "Connect a new agent" alike.
@@ -35,6 +35,11 @@ import { useConnectSubmitLabel } from "./connectSubmit";
  */
 export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn = "drawer", request = null, catalogue = true, channel = null }) {
   const submitLabel = useConnectSubmitLabel();
+  /* Connecting for a new environment: the form also asks how many scenarios
+     the build generates, and that count rides along with the agent. */
+  const buildMode = submitLabel !== CONNECT_LABEL;
+  const [scenarioCount, setScenarioCount] = useState(String(DEFAULT_BUILD_SCENARIOS));
+  const buildCtx = useMemo(() => (buildMode ? { scenarioCount, setScenarioCount } : null), [buildMode, scenarioCount]);
   const { state, commit } = useSimStore();
   const { enqueueSnackbar } = useSnackbar();
   /* Who it is and how it's reached (the confirm step), and the Observe
@@ -87,6 +92,7 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
       ...source,
       ...profileSourceOf(profile, { defaultChannel: source.agentType === "voice" ? "voice" : "chat", owner: currentUser().name, flowReach }),
       ...(observeProject && { observeProject }),
+      ...(buildMode && { scenarioCount: Number(source.scenarioCount || scenarioCount) || DEFAULT_BUILD_SCENARIOS }),
       /* Connected from an issue: its project is the one — settled, not a suggestion. */
       ...(((prefill?.project && observeProject?.id === prefill.project) || source.kind === "traces") && { observeChosenAt: new Date().toISOString() }),
       /* A project created here has no traces yet — it settles with the first one. */
@@ -118,7 +124,7 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
       }
     }
     onConnect(full);
-  }, [commit, enqueueSnackbar, limits, onConnect, observe, prefill?.project, profile, state]);
+  }, [buildMode, commit, enqueueSnackbar, limits, onConnect, observe, prefill?.project, profile, scenarioCount, state]);
 
   const needsRuntime = choice === "upload";
   /* The panels' context is memoised; save is read through a ref so it's current. */
@@ -163,6 +169,7 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
   };
 
   const flows = (
+    <ConnectBuildContext.Provider value={buildCtx}>
     <Box key={picked?.at || 0}>
           {choice === "hosted" && <HostedAgentFlow {...flowProps} onSwitch={pick} onPlatform={(pl) => setPicked((cur) => (cur && cur.meta?.name !== pl.name ? { ...cur, meta: { ...cur.meta, name: pl.name, logo: pl.id } } : cur))} />}
           {choice === "repo" && <RepoAgentFlow {...flowProps} preset={preset} />}
@@ -184,6 +191,7 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
             </ConnectModeContext.Provider>
           )}
     </Box>
+    </ConnectBuildContext.Provider>
   );
 
   return (

@@ -529,6 +529,10 @@ export const agentRecordFromSource = (source, now = new Date().toISOString()) =>
     /* A repository given by its link: who can read it, and how. */
     ...(source?.repoVisibility && { repoVisibility: source.repoVisibility }),
     ...(source?.credentialFiles?.length && { credentialFiles: source.credentialFiles.map((f) => ({ name: f.name, ref: f.ref })) }),
+    /* Public hosts the sandbox may reach while it runs; everything else is firewalled. */
+    ...(source?.allowedEgressDomains?.length && { allowedEgressDomains: source.allowedEgressDomains }),
+    /* LiveKit doesn't expose the agent's prompt: the one pasted at connect seeds scenarios and the judge. */
+    ...(source?.provider === "livekit" && source?.systemPrompt && { systemPrompt: source.systemPrompt }),
   };
   /* The Observe project picked at connect: an existing one is already
      receiving traces; a new one waits for them (a hosted agent's key pulls
@@ -587,6 +591,8 @@ export const sourceFromAgentRecord = (agent) => {
     ...(v.replicationMode && { replicationMode: v.replicationMode }),
     ...(v.runLocation && { runLocation: v.runLocation }),
     ...(v.endpointConsent && { endpointConsent: v.endpointConsent }),
+    ...(v.allowedEgressDomains?.length && { allowedEgressDomains: v.allowedEgressDomains }),
+    ...(v.systemPrompt && { systemPrompt: v.systemPrompt }),
   };
   return { ...sourceOf(agent, kind, v, d, voice), ...copy };
 };
@@ -863,8 +869,10 @@ export const agentDefinitionOf = ({ agent, version, env, envState }) => {
   const voiceChange = [...upTo].reverse().flatMap((x) => x.changes || []).find((c) => c.kind === "voice");
 
   const def = definitionOf(agent);
-  const prompt = kind === "prompt" || kind === "builtin" || kind === "traces" || (kind === "platform" && def.prompt)
-    ? { text: editedPrompt ?? def.prompt ?? "", origin: editedPrompt != null ? "Edited in a later version" : kind === "platform" ? `Imported from ${PROVIDER_LABELS[v.provider] || "the platform"}` : kind === "traces" ? `Read from traces in ${def.project || "its Observe project"}` : "Written in Future AGI" }
+  /* LiveKit doesn't expose the agent's prompt: the one pasted at connect is the one shown. */
+  const pasted = kind === "platform" && !def.prompt && v.systemPrompt ? v.systemPrompt : null;
+  const prompt = kind === "prompt" || kind === "builtin" || kind === "traces" || (kind === "platform" && (def.prompt || pasted))
+    ? { text: editedPrompt ?? def.prompt ?? pasted ?? "", origin: editedPrompt != null ? "Edited in a later version" : pasted ? `Pasted when it was connected — ${PROVIDER_LABELS[v.provider] || "the platform"} doesn't expose its prompt` : kind === "platform" ? `Imported from ${PROVIDER_LABELS[v.provider] || "the platform"}` : kind === "traces" ? `Read from traces in ${def.project || "its Observe project"}` : "Written in Future AGI" }
     : agentPromptOf(
       { kind, value: def.repoUrl || agent?.location || v.endpoint || v.mcpUrl || "" },
       /* Voice or chat as the agent's Type says (agentChannelsOf), not the testing environment. */

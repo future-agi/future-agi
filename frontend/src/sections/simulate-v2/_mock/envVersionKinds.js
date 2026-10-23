@@ -14,7 +14,7 @@ import { displayEnvLabel, subGoalsOfScenario, rulesOf, ruleOfScenario } from "./
 import { snapshotOfWorld, nextSnapshotLabel } from "./envSnapshot";
 
 /* The change kinds that are the world version. */
-export const WORLD_KINDS = ["contract", "rules", "seed", "toolbehaviour", "actors", "tools-added", "tools-removed"];
+export const WORLD_KINDS = ["contract", "rules", "seed", "toolbehaviour", "actors", "tools-added", "tools-removed", "network"];
 
 /**
  * A stored world label as it reads on the surface: the environment snapshot

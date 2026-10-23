@@ -8,6 +8,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useSnackbar } from "notistack";
+import { buildCreditsCheck } from "../_mock/metering";
 import { Upload } from "src/components/upload";
 import { formatFileSize } from "src/utils/utils";
 import { paths } from "src/routes/paths";
@@ -133,6 +134,12 @@ export default function BuildFromAgent() {
   const [running, setRunning] = useState(false);
   const [chips, setChips] = useState([]);
   const timers = useRef([]);
+  /* A build stopped part-way: canceled by the person, or failed — with what
+     the job said, and whether trying again can work. A retry runs the stage
+     it stopped at again; what was done before it stays. */
+  const [halt, setHalt] = useState(null);
+  const [retryStage, setRetryStage] = useState(null);
+  const [cancelAsk, setCancelAsk] = useState(false);
   /*
     Intake: a short questionnaire between "source picked" and "builder starts".
     The chat is full-width during intake so the questionnaire card can sit
@@ -409,6 +416,30 @@ export default function BuildFromAgent() {
        so the one the third gate sends back holds the queue while it's
        rewritten and re-checked. */
     const pace = id === "scenarios" ? 650 : id === "build" ? 550 : 380;
+    /* Writing scenarios spends AI credits. Past what's left the job stops
+       before it writes any, and says so — a retry with fewer can work. */
+    const requested = Number(source?.scenarioCount) || draftCount || 0;
+    const credits = id === "scenarios" ? buildCreditsCheck(requested) : null;
+    if (credits && !credits.ok) {
+      setRunning(true);
+      setChips([]);
+      const turnId = `t-${Date.now()}`;
+      setTurns((prev) => [...prev, { id: turnId, role: "builder", title: stage.title, steps: [] }]);
+      stage.steps.slice(0, 1).forEach((step, i) => timers.current.push(setTimeout(() => {
+        setTurns((prev) => prev.map((t) => (t.id === turnId ? { ...t, steps: [...t.steps, step] } : t)));
+      }, pace * (i + 1))));
+      timers.current.push(setTimeout(() => {
+        setRunning(false);
+        setHalt({
+          kind: "failed", stage: "scenarios", stepId: "generate-scenarios",
+          title: "Out of AI credits",
+          message: `Stopped before writing any scenarios. ${credits.message}`,
+          retryable: credits.affordable > 0, affordable: credits.affordable,
+        });
+        if (env?.id) dispatch({ type: "patchEnvironment", envId: env.id, patch: { buildStatus: "failed" } });
+      }, pace * 2.5));
+      return;
+    }
     if (id === "build") {
       /* Writing handlers (steps 1–3), then seeding the world (steps 3–5). */
       streamFound("handlers", env?.tools?.length || 0, pace, pace * 3);
@@ -630,7 +661,11 @@ export default function BuildFromAgent() {
     const v1Tools = (env.tools || []).map((t) => ({ ...t }));
     /* Built from an MCP server: record it as the World tab's Add tools does. */
     const mcp = mcpBuildStateOf(v1Tools);
-    const mcpPatch = mcp ? { toolEnv: { ...(envState.toolEnv || {}), ...mcp.toolEnv } } : {};
+    const mcpPatch = {
+      ...(mcp && { toolEnv: { ...(envState.toolEnv || {}), ...mcp.toolEnv } }),
+      /* The egress list given at connect is the environment's to start with — edited later in Settings. */
+      ...(source?.allowedEgressDomains?.length && { egressDomains: source.allowedEgressDomains }),
+    };
     /* The real agent from the first moment — identity, definition (GitHub
        link, entry file) and where it runs — so leaving mid-build never leaves
        a placeholder behind for "Use a connected agent" to duplicate. */
@@ -814,6 +849,39 @@ export default function BuildFromAgent() {
      Preset-source flows (arrived here from Create Environments) skip the
      modality picker entirely — so "back" for them jumps straight to
      /environments instead of dropping into a picker they never used. */
+  /* Stopping and restarting. A restart runs the stage it stopped at, once
+     the page has the source it should use (a smaller count, say). */
+  const stageNow = STAGE_ORDER.find((sid) => !done.includes(sid)) || null;
+  const FIRST_STEP_OF = { understand: "understand", build: "generate-env", scenarios: "generate-scenarios" };
+  const building = !!source && !!stageNow && !halt && !(!intake && !presetSource);
+  /* Finished while the question was open: there's nothing left to stop. */
+  useEffect(() => { if (cancelAsk && !building) setCancelAsk(false); }, [cancelAsk, building]);
+  const cancelBuild = () => {
+    if (!stageNow) { setCancelAsk(false); return; }
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    setRunning(false);
+    setCancelAsk(false);
+    setHalt({ kind: "canceled", stage: stageNow, stepId: FIRST_STEP_OF[stageNow] });
+    setTurns((prev) => [...prev, { id: `a-${Date.now()}`, role: "assistant", steps: [{ kind: "note", text: "Build canceled. What was done before it stays; restart it from the bar at the top." }] }]);
+    if (env?.id) dispatch({ type: "patchEnvironment", envId: env.id, patch: { buildStatus: "canceled" } });
+  };
+  const restartBuild = (count) => {
+    if (count) setSource((cur) => ({ ...cur, scenarioCount: count }));
+    const from = halt?.stage || stageNow;
+    setHalt(null);
+    if (env?.id) dispatch({ type: "patchEnvironment", envId: env.id, patch: { buildStatus: "building" } });
+    setRetryStage(from);
+  };
+  useEffect(() => {
+    if (!retryStage || !source) return;
+    const from = retryStage;
+    setRetryStage(null);
+    runStage(from);
+  }, [retryStage, source]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* Said before the build gets there: this many scenarios is more than the credits left cover. */
+  const creditsAhead = building && !done.includes("scenarios") ? buildCreditsCheck(Number(source?.scenarioCount) || 0) : null;
+
   const goBack = () => {
     timers.current.forEach(clearTimeout);
     timers.current = [];
@@ -850,7 +918,24 @@ export default function BuildFromAgent() {
         onRun={runNow}
         canGo={canLeave}
         blockedReason={runBlockedReason}
+        halt={halt}
+        onCancel={building ? () => setCancelAsk(true) : null}
       />
+
+      {halt && <BuildHaltStrip halt={halt} onRestart={restartBuild} />}
+      {!halt && creditsAhead && !creditsAhead.ok && (
+        <BuildCreditsStrip credits={creditsAhead} count={Number(source?.scenarioCount) || 0} onUse={(n) => setSource((cur) => ({ ...cur, scenarioCount: n }))} />
+      )}
+      <Dialog open={cancelAsk} onClose={() => setCancelAsk(false)} PaperProps={{ sx: { width: 440, p: 2.5, borderRadius: 2, backgroundImage: "none" } }}>
+        <Typography sx={{ typography: "m3", fontWeight: 700 }}>Stop this build?</Typography>
+        <Typography sx={{ typography: "s2", color: "text.secondary", mt: 1 }}>
+          {`It stops at ${(STAGE_LABEL[stageNow] || "the current step").toLowerCase()}. What's done so far stays, and nothing more is built or charged. You can restart it from here.`}
+        </Typography>
+        <Stack direction="row" justifyContent="flex-end" spacing={1} sx={{ mt: 2.5 }}>
+          <Button size="small" onClick={() => setCancelAsk(false)} sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}>Keep building</Button>
+          <Button size="small" variant="contained" color="primary" onClick={cancelBuild} sx={{ typography: "s2", fontWeight: 700 }}>Stop build</Button>
+        </Stack>
+      </Dialog>
 
       {/* Sent here by an issue's Fix: once the environment exists, the shared
           banner says what's left and leads back (Continue fixing opens Fix). */}
@@ -1033,7 +1118,7 @@ function Header({
   onBack, backLabel, source, env, envState, patch, done, running, scenarioCount,
   scenarioProgress, agentPrompt, replication,
   name, setName, editingName, setEditingName,
-  onRun, canGo, blockedReason,
+  onRun, canGo, blockedReason, halt = null, onCancel = null,
 }) {
   const [promptOpen, setPromptOpen] = useState(false);
   const navigate = useNavigate();
@@ -1066,7 +1151,7 @@ function Header({
     not "audit the pipeline".
   */
   const [pipeAnchor, setPipeAnchor] = useState(null);
-  const pipeline = pipelineStatus(done, running, "setup");
+  const pipeline = pipelineStatus(done, running && !halt, "setup", halt?.kind === "failed" ? { stepId: halt.stepId, message: halt.message } : null);
   const pipeSummary = pipelineSummary(pipeline);
   /* True once every setup-phase stage has finished — the environment is built.
      Hoisted to the Header body so both the status chip and the Run-simulation
@@ -1154,6 +1239,14 @@ function Header({
                     <Typography sx={{ typography: "s2", fontWeight: 600, color: "#DC2626" }}>
                       Failed at {pipeSummary.failed.label.toLowerCase()}
                     </Typography>
+                  </Stack>
+                );
+              }
+              if (halt?.kind === "canceled") {
+                return (
+                  <Stack direction="row" alignItems="center" spacing={0.75} sx={{ px: 1.125, py: 0.5, borderRadius: 999, border: "1px solid", borderColor: "divider" }}>
+                    <Iconify icon="solar:stop-circle-linear" width={13} sx={{ color: "text.secondary" }} />
+                    <Typography sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}>Build canceled</Typography>
                   </Stack>
                 );
               }
@@ -1282,6 +1375,16 @@ function Header({
         </>
       )}
 
+      {/* While it builds, the one thing to do is stop it. */}
+      {onCancel && !setupDone && (
+        <Button
+          size="small" variant="outlined" onClick={onCancel}
+          startIcon={<Iconify icon="solar:stop-circle-linear" width={15} />}
+          sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+        >
+          Cancel build
+        </Button>
+      )}
       {source && setupDone && (() => {
         const totalCount = scenarioCount || envState?.scenarios?.length || 0;
         const runCount = selectionCount > 0 ? selectionCount : totalCount;
@@ -1369,6 +1472,8 @@ RunButton.propTypes = {
 };
 
 Header.propTypes = {
+  /* A build stopped part-way ({ kind: "canceled" | "failed", … }), and how to stop one. */
+  halt: PropTypes.object, onCancel: PropTypes.func,
   onBack: PropTypes.func, backLabel: PropTypes.string,
   source: PropTypes.object, env: PropTypes.object, envState: PropTypes.object, patch: PropTypes.func, scenarioCount: PropTypes.number, done: PropTypes.array, running: PropTypes.bool,
   scenarioProgress: PropTypes.object, agentPrompt: PropTypes.object, replication: PropTypes.object,
@@ -2814,3 +2919,58 @@ function agentForBuild(source, env, now) {
     note: "Environment source",
   };
 }
+
+/* What each derivation stage reads as, for "it stops at …". */
+const STAGE_LABEL = { understand: "Understanding the agent", build: "Building the environment", scenarios: "Writing scenarios" };
+
+/*
+  A build that stopped part-way, under the header: canceled (restart it), or
+  failed — the job's own message, and Retry when trying again can work. Out
+  of credits, the retry offers the most scenarios the credits left cover.
+*/
+function BuildHaltStrip({ halt, onRestart }) {
+  const failed = halt.kind === "failed";
+  return (
+    <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 2, py: 1.125, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0, bgcolor: "background.neutral" }}>
+      <Iconify icon={failed ? "solar:danger-triangle-bold" : "solar:stop-circle-linear"} width={16} sx={{ color: failed ? "error.main" : "text.secondary", flexShrink: 0 }} />
+      <Box flex={1} minWidth={0}>
+        <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+          {failed ? `Build failed at ${(STAGE_LABEL[halt.stage] || "a step").toLowerCase()} — ${halt.title}` : `Build canceled at ${(STAGE_LABEL[halt.stage] || "a step").toLowerCase()}`}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {failed ? halt.message : "What was done before it stays. Restart to carry on from there."}
+        </Typography>
+      </Box>
+      {failed && halt.affordable > 0 && (
+        <Button size="small" variant="contained" color="primary" onClick={() => onRestart(halt.affordable)} sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}>
+          {`Retry with ${halt.affordable.toLocaleString()} scenarios`}
+        </Button>
+      )}
+      {(!failed || halt.retryable) && !(failed && halt.affordable > 0) && (
+        <Button size="small" variant="outlined" onClick={() => onRestart()} startIcon={<Iconify icon="solar:refresh-linear" width={14} />} sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}>
+          {failed ? "Retry" : "Restart build"}
+        </Button>
+      )}
+    </Stack>
+  );
+}
+BuildHaltStrip.propTypes = { halt: PropTypes.object.isRequired, onRestart: PropTypes.func.isRequired };
+
+/* Out of credits for the scenarios still to come — said while there's time to build fewer. */
+function BuildCreditsStrip({ credits, count, onUse }) {
+  return (
+    <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 2, py: 1.125, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0, bgcolor: "background.neutral" }}>
+      <Iconify icon="solar:wallet-money-linear" width={16} sx={{ color: "warning.main", flexShrink: 0 }} />
+      <Box flex={1} minWidth={0}>
+        <Typography sx={{ typography: "s2", fontWeight: 700 }}>{`Not enough AI credits for ${count.toLocaleString()} scenarios`}</Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{`${credits.message} The build stops when it gets there.`}</Typography>
+      </Box>
+      {credits.affordable > 0 && (
+        <Button size="small" variant="outlined" onClick={() => onUse(credits.affordable)} sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}>
+          {`Build ${credits.affordable.toLocaleString()} instead`}
+        </Button>
+      )}
+    </Stack>
+  );
+}
+BuildCreditsStrip.propTypes = { credits: PropTypes.object.isRequired, count: PropTypes.number.isRequired, onUse: PropTypes.func.isRequired };

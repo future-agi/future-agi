@@ -5,7 +5,8 @@ import { Box, Button, CircularProgress, IconButton, Stack, Typography } from "@m
 import Iconify from "src/components/iconify";
 import { CALL_LOG_PROVIDERS, SANDBOX_IMPORT_PROVIDERS, assistantsFor, importedStructureOf, observeSlugOf, phoneParts } from "../../_mock/connectAgent";
 import { AGENT_TYPES, COUNTRY_BY_ISO, HOSTED_PLATFORMS_BY_TYPE, PLATFORM_KEY_HELPER, PLATFORM_LOGOS, firstLive, isLivePlatform } from "../../environments/connectOptions";
-import { ChipCard, Field, Label, NoteLine, PlatformLogo } from "../../environments/StartEnvironment";
+import { ChipCard, ContactInformation, Field, Label, NoteLine, PlatformLogo } from "../../environments/StartEnvironment";
+import { credentialCheck, e164Of, factCheck, phoneNumberError, usePreflight } from "./preflight";
 import { PLATFORM_TESTING } from "../../_mock/rsiModel";
 import ConnectSteps from "./ConnectSteps";
 import { TextLink } from "./connectBits";
@@ -22,10 +23,11 @@ import FoundAgentsList from "./FoundAgentsList";
 import LiveKitAgentFlow from "./LiveKitAgentFlow";
 
 const MONO = "ui-monospace, Menlo, monospace";
-/* One screen: the platform, the key, the assistant — then Connect. The rest
-   (how calls reach it, a linked repository, constraints, ElevenLabs
-   versioning) has working defaults and is set on the agent's page, in Finish
-   setting up. A sealed copy (Vapi, Retell) is an optional choice here. */
+/* One screen: the platform, the key, the assistant, how test calls reach a
+   voice agent (web or a phone number) — then Connect. The rest (a linked
+   repository, constraints, ElevenLabs versioning) has working defaults and is
+   set on the agent's page, in Finish setting up. A sealed copy (Vapi, Retell)
+   is an optional choice here. */
 const STEPS = ["Connect"];
 
 /**
@@ -98,18 +100,22 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
 
   /* A typed ID's name, when the call logs that gave the ID carried it too. */
   const [name, setName] = useState(initial?.name || "");
-  /* Defaults until the agent's page says otherwise: reach it as a web call,
-     inbound, the caller speaks first. Vapi, Retell and Bland call logs are
-     read with the same key, so those agents are linked to an Observe project
-     straight away; any other platform picks its project in Finish setting up. */
+  /* How test calls reach a voice agent: a web call (no telephony), or a
+     phone number dialled over PSTN — the agent's own number by default.
+     Inbound, and who speaks first, can be changed later on the agent's page
+     too. Vapi, Retell and Bland call logs are read with the same key, so
+     those agents are linked to an Observe project straight away; any other
+     platform picks its project in Finish setting up. */
   const linkedRepo = "";
   const watch = CALL_LOG_PROVIDERS.includes(platform?.id);
-  const simMode = "web";
+  const [simMode, setSimMode] = useState("web");
   const [countryIso, setCountryIso] = useState("US");
   const [contactNumber, setContactNumber] = useState("");
-  const inboundCalls = true;
-  const agentSpeaksFirst = false;
+  const [inboundCalls, setInboundCalls] = useState(true);
+  const [agentSpeaksFirst, setAgentSpeaksFirst] = useState(false);
   const voice = agentType === "voice";
+  const dial = COUNTRY_BY_ISO[countryIso]?.dial || "";
+  const phoneError = voice && simMode === "phone" ? phoneNumberError(dial, contactNumber) : null;
 
   const pickType = (id) => {
     setAgentType(id);
@@ -153,7 +159,7 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
       callDirection: inboundCalls ? "inbound" : "outbound",
       contact: {
         mode: simMode, inboundCalls, agentSpeaksFirst,
-        ...(simMode === "phone" ? { countryIso, countryCode: COUNTRY_BY_ISO[countryIso]?.dial || "", number: contactNumber.trim() } : {}),
+        ...(simMode === "phone" ? { countryIso, countryCode: dial, number: contactNumber.trim(), e164: e164Of(dial, contactNumber) } : {}),
       },
       /* Reach the Agent step already asked — the confirm step adds the rest. */
       flowReach: { direction: inboundCalls ? "inbound" : "outbound", whoSpeaksFirst: agentSpeaksFirst ? "agent" : "caller" },
@@ -169,13 +175,20 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
     return () => clearTimeout(t);
   }, [refOk, platform?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* Preflight: the key, the assistant on that account, and the number a phone test dials. */
+  const preflight = usePreflight([
+    credentialCheck({ id: "key", label: platform?.keyLabel || `${platform?.name || "Platform"} API key`, ref: refOk ? savedRef : "", provider: platform?.name }),
+    factCheck({ id: "agent", label: "Assistant", ok: !!agentId && !/missing|unknown/i.test(agentId), okText: `${name.trim() || agentId} found on ${platform?.name}${imported.structure ? ` · ${imported.structure}` : ""}`, failText: `No assistant ${agentId} on this ${platform?.name} account.` }),
+    ...(lacksScope ? [factCheck({ id: "scope", label: "Create scope", ok: scopeChoice === "mocked", okText: "The key can't create a test copy — tests use settings overridden for one call, still live.", failText: "The key can't create a test copy." })] : []),
+    ...(voice && simMode === "phone" ? [factCheck({ id: "phone", label: "Number to call", ok: !phoneError, okText: `Dials ${e164Of(dial, contactNumber)} over PSTN.`, failText: phoneError || "" })] : []),
+  ], [platform?.id, savedRef, agentId, scopeChoice, simMode, countryIso, contactNumber]);
   const next = {
     label: submitLabel,
     icon: "solar:link-circle-linear",
-    disabled: !platform || !refOk || (lacksScope && !scopeChoice) || !agentId || (canImport && importCopy && !toolFiles.length),
+    disabled: !platform || !refOk || (lacksScope && !scopeChoice) || !agentId || !!phoneError || (canImport && importCopy && !toolFiles.length),
     hint: !platform ? "No platform for this agent type yet" : !refOk ? "Add the key"
       : lacksScope && !scopeChoice ? "Choose how to go on without create scope" : !agentId ? "Pick the agent"
-        : "Upload the code behind its tools, or don't import a copy",
+        : phoneError || "Upload the code behind its tools, or don't import a copy",
     onClick: () => onSave({ ...source, name: (name || picked?.name || "").trim() }),
   };
 
@@ -191,6 +204,12 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
       steps={STEPS}
       active={0}
       next={next}
+      preflight={{
+        state: preflight,
+        canRun: !!platform && refOk && !!agentId && !phoneError,
+        blockedReason: !refOk || !agentId ? "Add the key and pick the agent — then preflight checks them." : phoneError ? "Add a valid number to call — then run preflight." : null,
+        summary: agentId ? `Read ${name.trim() || agentId}'s config from ${platform?.name}.` : null,
+      }}
     >
       <Stack spacing={1.75}>
         {!lockedType && (!platformLocked || bothChannels) && <Box>
@@ -312,6 +331,19 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
                   {`Read from ${platform?.name}: ${imported.structure}.`}
                 </HintLine>
               </Typography>
+            )}
+            {/* How test calls reach it — a web call, or its number over PSTN. */}
+            {voice && agentId && (
+              <ContactInformation
+                mode={simMode} onMode={setSimMode}
+                countryIso={countryIso} onCountryIso={setCountryIso}
+                contactNumber={contactNumber} onContactNumber={setContactNumber}
+                inboundCalls={inboundCalls} onInboundCalls={setInboundCalls}
+                agentSpeaksFirst={agentSpeaksFirst} onAgentSpeaksFirst={setAgentSpeaksFirst}
+              />
+            )}
+            {voice && agentId && phoneError && simMode === "phone" && contactNumber.trim() && (
+              <Typography sx={{ typography: "s3", color: "error.main", mt: -1 }}>{phoneError}</Typography>
             )}
             {/* Optional (Vapi, Retell): a sealed copy instead of the live assistant. */}
             {agentId && canImport && (sealedOpen ? (

@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { Box, Button, IconButton, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { credentialFileRefOf, mergeEnvValues, parseEnvText } from "../../_mock/envValues";
+import { MAX_EGRESS_DOMAINS, parseEgress } from "./preflight";
 
 const MONO = "ui-monospace, Menlo, monospace";
 const KEY_W = 210;
@@ -11,16 +12,19 @@ const MAX_FILE = 5 * 1024 * 1024;
 /**
  * Environment values for a code agent, as in the product's repo and upload
  * panels: the test credentials and settings our sandbox runs the code with —
- * .env values and a credential file. Test credentials only, never a
- * production key. (No egress domains: the sandbox has no route out.) Optional and folded until asked
- * for; the credential file stays reachable while it's folded, since a
- * source that needs one must never hide it behind "optional".
+ * .env values, a credential file, and the public hostnames the sandbox may
+ * reach while the agent runs (hardcoded APIs, TURN endpoints — everything
+ * else is blocked). Test credentials only, never a production key. Optional
+ * and folded until asked for; the credential file stays reachable while
+ * it's folded, since a source that needs one must never hide it behind
+ * "optional".
  *
  * Secrets go in as references into the team's secret manager (vault://…),
  * never the value — the same rule as Settings → Environment variables.
  */
-export default function EnvironmentValues({ values, onValues, files, onFiles, expectedNames = [] }) {
-  const [open, setOpen] = useState(values.length > 0);
+export default function EnvironmentValues({ values, onValues, files, onFiles, expectedNames = [], egress = null, onEgress = null }) {
+  const [open, setOpen] = useState(values.length > 0 || !!egress);
+  const domains = parseEgress(egress);
   const [text, setText] = useState("");
   const [note, setNote] = useState(null);
   const [fileError, setFileError] = useState(null);
@@ -59,7 +63,7 @@ export default function EnvironmentValues({ values, onValues, files, onFiles, ex
           startIcon={<Iconify icon={open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"} width={12} />}
           sx={{ typography: "s3", fontWeight: 600, color: "text.secondary", px: 0.5 }}
         >
-          {open ? "Hide environment values" : `Environment values (optional)${values.length ? ` · ${values.length}` : ""}`}
+          {open ? "Hide environment values" : `Environment values (optional)${values.length + domains.length ? ` · ${values.length + domains.length}` : ""}`}
         </Button>
         <Button
           size="small"
@@ -147,6 +151,24 @@ export default function EnvironmentValues({ values, onValues, files, onFiles, ex
             </Stack>
           </Box>
 
+          {onEgress && (
+            <Box>
+              <FieldLabel>Additional egress domains</FieldLabel>
+              <TextField
+                fullWidth
+                value={egress || ""}
+                onChange={(e) => onEgress(e.target.value)}
+                placeholder="api.example.com, turn.example.com"
+                inputProps={{ spellCheck: false, autoComplete: "off", "aria-label": "Additional egress domains" }}
+                sx={{ "& .MuiInputBase-input": { typography: "s2", fontFamily: MONO } }}
+              />
+              <Typography sx={{ typography: "s3", color: domains.length > MAX_EGRESS_DOMAINS ? "error.main" : "text.subtitle", mt: 0.5 }}>
+                {domains.length > MAX_EGRESS_DOMAINS
+                  ? `${domains.length} domains — the sandbox allows at most ${MAX_EGRESS_DOMAINS}.`
+                  : "Comma or newline-separated public hostnames for hardcoded APIs or TURN endpoints. Everything else is firewalled at the sandbox while the agent runs; the build itself doesn't use this list."}
+              </Typography>
+            </Box>
+          )}
         </Stack>
       )}
     </Box>
@@ -167,4 +189,7 @@ EnvironmentValues.propTypes = {
   onFiles: PropTypes.func.isRequired,
   /* Names the code is known to read (.env.example), when they're known. */
   expectedNames: PropTypes.arrayOf(PropTypes.string),
+  /* The egress allow-list as typed, and its setter — shown only when given. */
+  egress: PropTypes.string,
+  onEgress: PropTypes.func,
 };

@@ -71,7 +71,9 @@ export default function ConnectAgentPage() {
   const onConnect = useCallback((source) => {
     const { id, exists } = saveAgent(source);
     if (returnTo) {
-      navigate(returnTo.replace("{agent}", encodeURIComponent(id)));
+      /* Back to build an environment: the scenario count asked on the form comes too. */
+      const to = returnTo.replace("{agent}", encodeURIComponent(id));
+      navigate(source.scenarioCount ? `${to}${to.includes("?") ? "&" : "?"}count=${source.scenarioCount}` : to);
       return;
     }
     /* Straight to the agent — its page has Finish setting up for a new one. */

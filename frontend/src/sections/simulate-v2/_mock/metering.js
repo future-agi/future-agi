@@ -195,3 +195,27 @@ export const estimateRegrade = ({ calls = 0, judgedSubGoals = 0, evals = [] }) =
   const judge = judgedSubGoals * JUDGE_CREDITS + evals.reduce((a, e) => a + (evalRailOf(e).credits || 0), 0);
   return calls * (1 + judge);
 };
+
+/* ── building an environment ─────────────────────────────────────────────── */
+
+/* Writing and proving one scenario at build — the AI credits it takes. */
+export const BUILD_CREDITS_PER_SCENARIO = 9;
+
+/**
+ * Whether the AI credits left this period cover writing `scenarioCount`
+ * scenarios — asked on the connect form, shown on the build screen, and
+ * where a build that runs out stops.
+ *   → { ok, need, left, affordable, message } — `affordable` is the most scenarios the credits left cover.
+ */
+export const buildCreditsCheck = (scenarioCount, usage = ORG_USAGE) => {
+  const d = usage.dimensions.ai_credits;
+  const need = Math.max(0, Math.round(Number(scenarioCount) || 0)) * BUILD_CREDITS_PER_SCENARIO;
+  const left = Math.max(0, (d.limit ?? Infinity) - d.current);
+  const affordable = Math.floor(left / BUILD_CREDITS_PER_SCENARIO);
+  const ok = d.limit == null || need <= left;
+  return {
+    ok, need, left, affordable,
+    message: ok ? null
+      : `Writing ${Math.round(Number(scenarioCount)).toLocaleString()} scenarios needs about ${need.toLocaleString()} AI credits; ${left.toLocaleString()} of ${d.limit.toLocaleString()} are left this ${usage.period}.`,
+  };
+};
