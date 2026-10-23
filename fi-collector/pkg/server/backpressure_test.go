@@ -75,12 +75,6 @@ func TestPendingRowBudgetIncludesBlockedInflightInsert(t *testing.T) {
 
 func TestPendingBudgetWholeRequestRejectionAndConcurrency(t *testing.T) {
 	s := New(Config{MaxPendingRows: 10}, nil, nil, nil, nil)
-	if got := s.enqueue(make([]map[string]any, 11), nil); got != enqueueOversize {
-		t.Fatalf("request over the whole budget got %v, want enqueueOversize", got)
-	}
-	if len(s.pend) != 0 || s.bufferedRows != 0 {
-		t.Fatalf("oversized request left rows behind: pending=%d reserved=%d", len(s.pend), s.bufferedRows)
-	}
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
@@ -89,6 +83,38 @@ func TestPendingBudgetWholeRequestRejectionAndConcurrency(t *testing.T) {
 	wg.Wait()
 	if len(s.pend) != 10 || s.bufferedRows != 10 {
 		t.Fatalf("budget exceeded: pending=%d reserved=%d", len(s.pend), s.bufferedRows)
+	}
+	if r := s.Admission().Refusals; r.FullRequests != 90 || r.FullRows != 90 || r.OverBudgetAdmittedRequests != 0 {
+		t.Fatalf("refusal counters = %+v, want 90 budget-full requests and rows", r)
+	}
+}
+
+// Concurrent requests larger than the whole budget: at most one is let in while
+// the buffer is below the budget, so the buffer exceeds the budget by at most
+// one request; every other one is refused as retryable (budget full).
+func TestOverBudgetRequestsOvershootTheBudgetByAtMostOneRequest(t *testing.T) {
+	const budget = 10
+	s := New(Config{MaxPendingRows: budget, BatchMaxAge: time.Hour}, nil, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	outcomes := map[enqueueOutcome]int{}
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got := s.enqueue(make([]map[string]any, budget+5), nil)
+			mu.Lock()
+			outcomes[got]++
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	if outcomes[enqueueAccepted] != 1 || outcomes[enqueueFull] != 49 || s.bufferedRows != budget+5 || len(s.pend) != budget+5 {
+		t.Fatalf("outcomes %v buffered %d pending %d; want exactly one over-budget request admitted", outcomes, s.bufferedRows, len(s.pend))
+	}
+	r := s.Admission().Refusals
+	if r.OverBudgetAdmittedRequests != 1 || r.OverBudgetAdmittedRows != budget+5 || r.FullRequests != 49 || r.FullRows != 49*(budget+5) {
+		t.Fatalf("refusal counters = %+v", r)
 	}
 }
 
@@ -228,48 +254,71 @@ func exportHTTP(s *Server, req ptraceotlp.ExportRequest, protocol string) *httpt
 	return w
 }
 
-// A request with more rows than the whole budget can never be admitted, so it
-// must not be answered with a status that tells the client to retry it.
-func TestOversizedRequestIsNotRetryable(t *testing.T) {
+// A request with more rows than the whole budget is never refused for good: an
+// unbounded buffer used to accept it, and OTLP clients drop a non-retryable
+// refusal. It is admitted while the buffer is below the budget, and while the
+// buffer is over the budget every request is refused as retryable.
+func TestOverBudgetRequestIsAdmittedBelowTheBudget(t *testing.T) {
 	const budget = 4
 	for _, protocol := range []string{"json", "protobuf", "grpc"} {
 		t.Run(protocol, func(t *testing.T) {
-			s := New(Config{MaxPendingRows: budget}, nil, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
-			req := ptraceotlp.NewExportRequestFromTraces(spansTraces(budget + 1))
-			if protocol == "grpc" {
-				_, err := (&otlpHandler{s: s}).Export(context.Background(), req)
-				st, _ := status.FromError(err)
-				if st.Code() != codes.InvalidArgument {
-					t.Fatalf("oversized gRPC request got %v, want InvalidArgument", err)
+			s := New(Config{MaxPendingRows: budget, BatchMaxAge: time.Hour}, nil, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+			export := func(n int) (ok bool, retryable bool, message string) {
+				req := ptraceotlp.NewExportRequestFromTraces(spansTraces(n))
+				if protocol == "grpc" {
+					_, err := (&otlpHandler{s: s}).Export(context.Background(), req)
+					if err == nil {
+						return true, false, ""
+					}
+					st, _ := status.FromError(err)
+					return false, otlpGRPCRetryable(err), st.Message()
 				}
-				if len(st.Details()) != 0 {
-					t.Fatal("a non-retryable refusal must not carry RetryInfo")
-				}
-				if !strings.Contains(st.Message(), "max_pending_rows (4)") || !strings.Contains(st.Message(), "5 spans") {
-					t.Fatalf("message does not name the request size and the limit: %q", st.Message())
-				}
-			} else {
 				w := exportHTTP(s, req, protocol)
-				if w.Code != http.StatusRequestEntityTooLarge {
-					t.Fatalf("oversized HTTP request got %d, want 413", w.Code)
+				if w.Code == http.StatusOK {
+					return true, false, ""
 				}
-				if w.Header().Get("Retry-After") != "" {
-					t.Fatal("a non-retryable refusal must not carry Retry-After")
-				}
-				if !strings.Contains(w.Body.String(), "max_pending_rows (4)") {
-					t.Fatalf("body does not name the limit: %q", w.Body.String())
-				}
+				return false, otlpHTTPRetryable(w.Code) && w.Header().Get("Retry-After") == "1", w.Body.String()
 			}
-			if len(s.pend) != 0 || s.bufferedRows != 0 {
-				t.Fatalf("oversized request changed the queue: pending=%d reserved=%d", len(s.pend), s.bufferedRows)
+			if ok, _, msg := export(budget + 1); !ok {
+				t.Fatalf("a request larger than the budget was refused by an empty buffer: %q", msg)
+			}
+			if s.bufferedRows != budget+1 || len(s.pend) != budget+1 {
+				t.Fatalf("over-budget request parked %d rows reserving %d, want %d", len(s.pend), s.bufferedRows, budget+1)
+			}
+			// The buffer is over the budget now: any request waits for the drain.
+			ok, retryable, msg := export(1)
+			if ok || !retryable || !strings.Contains(msg, "retry with backoff") {
+				t.Fatalf("request while over the budget: ok=%v retryable=%v %q; want a retryable refusal", ok, retryable, msg)
+			}
+			// Drained to exactly the budget (full): an over-budget request is
+			// refused as retryable and the message tells the sender to split.
+			s.pendMu.Lock()
+			s.pend, s.bufferedRows = s.pend[:budget], budget
+			s.pendMu.Unlock()
+			ok, retryable, msg = export(budget + 1)
+			if ok || !retryable || !strings.Contains(msg, "max_pending_rows (4)") || !strings.Contains(msg, "5 spans") {
+				t.Fatalf("over-budget request into a full buffer: ok=%v retryable=%v %q", ok, retryable, msg)
+			}
+			if s.bufferedRows != budget || len(s.pend) != budget {
+				t.Fatalf("refusals changed the queue: pending=%d reserved=%d", len(s.pend), s.bufferedRows)
+			}
+			// One row free: the over-budget request is admitted again.
+			s.pendMu.Lock()
+			s.pend, s.bufferedRows = s.pend[:budget-1], budget-1
+			s.pendMu.Unlock()
+			if ok, _, msg := export(budget + 1); !ok {
+				t.Fatalf("over-budget request with the buffer below the budget refused: %q", msg)
+			}
+			if r := s.Admission().Refusals; r.OverBudgetAdmittedRequests != 2 || r.OverBudgetAdmittedRows != 2*(budget+1) || r.FullRequests != 2 {
+				t.Fatalf("refusal counters = %+v", r)
 			}
 		})
 	}
 }
 
-// The status of a request over a full buffer and of one that can never fit must
-// differ, and a request that exactly fills an empty buffer is admitted.
-func TestFullBufferRetryableOversizeNotAndExactFitAdmitted(t *testing.T) {
+// A request that exactly fills an empty buffer is admitted; one more row is a
+// retryable refusal.
+func TestExactFitAdmittedAndFullBufferRetryable(t *testing.T) {
 	const budget = 4
 	s := New(Config{MaxPendingRows: budget}, nil, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 	if w := exportHTTP(s, ptraceotlp.NewExportRequestFromTraces(spansTraces(budget)), "json"); w.Code != http.StatusOK {
@@ -279,12 +328,72 @@ func TestFullBufferRetryableOversizeNotAndExactFitAdmitted(t *testing.T) {
 	if full.Code != http.StatusServiceUnavailable || full.Header().Get("Retry-After") != "1" {
 		t.Fatalf("a request over a full buffer got %d (Retry-After %q), want 503 with Retry-After", full.Code, full.Header().Get("Retry-After"))
 	}
-	oversize := exportHTTP(s, ptraceotlp.NewExportRequestFromTraces(spansTraces(budget+1)), "json")
-	if oversize.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("oversize request got %d while the buffer was full, want 413 (never a retryable status)", oversize.Code)
-	}
 	if s.bufferedRows != budget || len(s.pend) != budget {
 		t.Fatalf("refusals changed the queue: pending=%d reserved=%d", len(s.pend), s.bufferedRows)
+	}
+}
+
+// A flush size above the budget could never trigger (parked rows stay within
+// the budget), leaving only the age timer to drain a full buffer. It is clamped
+// to the budget, so filling the budget wakes the flusher at once.
+func TestBatchSizeAboveTheBudgetIsClampedSoAFullBufferFlushes(t *testing.T) {
+	var logs bytes.Buffer
+	s := New(Config{MaxPendingRows: 3, BatchMaxRows: 5000, BatchMaxAge: time.Hour}, nil, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+	if l := s.Limits(); l.BatchMaxRows != 3 || l.MaxPendingRows != 3 {
+		t.Fatalf("limits = %+v, want the flush size clamped to the budget", l)
+	}
+	if !strings.Contains(logs.String(), "batch_max_rows is above max_pending_rows") {
+		t.Fatalf("the clamp was not logged: %q", logs.String())
+	}
+	if s.enqueue(spansRows(3), nil) != enqueueAccepted {
+		t.Fatal("rows within the budget refused")
+	}
+	select {
+	case <-s.pendCh:
+	default:
+		t.Fatal("a buffer filled to the budget did not wake the flusher")
+	}
+	// A consistent configuration is left alone.
+	if l := New(Config{MaxPendingRows: 20000, BatchMaxRows: 5000}, nil, nil, nil, nil).Limits(); l.BatchMaxRows != 5000 {
+		t.Fatalf("limits = %+v", l)
+	}
+}
+
+// A handler that outlives the HTTP shutdown timeout must not acknowledge rows
+// after the final drain: nothing would ever flush them. Once admission is
+// closed every request is refused as retryable and nothing is parked.
+func TestRequestsAfterTheFinalDrainAreRefusedAsRetryable(t *testing.T) {
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.Copy(io.Discard, r.Body) }))
+	defer stub.Close()
+	writer, err := chwriter.New(chwriter.Config{URL: stub.URL, Database: "default", Table: "spans", MaxRetries: 1, DeadLetterFile: t.TempDir() + "/dl.jsonl"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	s := New(Config{GRPCAddr: testTCPAddr(t), HTTPAddr: testTCPAddr(t), MaxPendingRows: 100, BatchMaxAge: time.Hour}, writer, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = s.Run(ctx); close(done) }()
+	if !waitPort(s.cfg.HTTPAddr, 2*time.Second) {
+		cancel()
+		t.Fatal("server did not start")
+	}
+	cancel()
+	<-done
+	// What a straggling handler does after Run returned.
+	for _, protocol := range []string{"json", "grpc"} {
+		req := ptraceotlp.NewExportRequestFromTraces(spansTraces(2))
+		if protocol == "grpc" {
+			_, err := (&otlpHandler{s: s}).Export(context.Background(), req)
+			if status.Code(err) != codes.Unavailable || !otlpGRPCRetryable(err) {
+				t.Fatalf("gRPC export after the final drain: %v, want retryable UNAVAILABLE", err)
+			}
+		} else if w := exportHTTP(s, req, protocol); w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") == "" {
+			t.Fatalf("HTTP export after the final drain: %d (Retry-After %q), want 503 with Retry-After", w.Code, w.Header().Get("Retry-After"))
+		}
+	}
+	if a := s.Admission(); a.BufferedRows != 0 || a.PendingRows != 0 || a.Refusals.ShuttingDownRequests != 2 {
+		t.Fatalf("admission after shutdown = %+v; rows parked after the final drain would never be flushed", a)
 	}
 }
 
@@ -321,13 +430,26 @@ func TestSplitRoutedRequestIsAdmittedAtomically(t *testing.T) {
 	if len(s.pend) != 4 || s.bufferedRows != 4 {
 		t.Fatalf("retry stored %d rows reserving %d, want 4/4", len(s.pend), s.bufferedRows)
 	}
-	// The whole request over the entire budget is not retryable even though
-	// each parcel alone would fit.
-	s2 := New(Config{MaxPendingRows: 3}, nil, nil, nil, nil)
-	if got := s2.enqueueRouted(rows, nil, auth.RouteOutcome{}, "org", "ws", visibleSet, hiddenSet); got != enqueueOversize {
-		t.Fatalf("split request larger than the budget got %v, want enqueueOversize", got)
+	// A split request larger than the whole budget is also one unit: refused
+	// (retryable, nothing parked) by a full buffer, and admitted with both
+	// parcels by a buffer below the budget.
+	s2 := New(Config{MaxPendingRows: 3}, nil, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	if got := s2.enqueue(spansRows(3), nil); got != enqueueAccepted {
+		t.Fatalf("setup: %v", got)
 	}
-	if len(s2.pend) != 0 || s2.bufferedRows != 0 {
-		t.Fatal("oversized split request left rows behind")
+	if got := s2.enqueueRouted(rows, nil, auth.RouteOutcome{}, "org", "ws", visibleSet, hiddenSet); got != enqueueFull {
+		t.Fatalf("split request larger than the budget into a full buffer got %v, want enqueueFull", got)
+	}
+	if len(s2.pend) != 3 || s2.bufferedRows != 3 {
+		t.Fatal("refused over-budget split request left a parcel behind")
+	}
+	s2.pendMu.Lock()
+	s2.pend, s2.bufferedRows = nil, 0
+	s2.pendMu.Unlock()
+	if got := s2.enqueueRouted(rows, nil, auth.RouteOutcome{}, "org", "ws", visibleSet, hiddenSet); got != enqueueAccepted {
+		t.Fatalf("split request larger than the budget into an empty buffer got %v, want enqueueAccepted", got)
+	}
+	if len(s2.pend) != 4 || s2.bufferedRows != 4 {
+		t.Fatalf("over-budget split request stored %d rows reserving %d, want 4/4", len(s2.pend), s2.bufferedRows)
 	}
 }

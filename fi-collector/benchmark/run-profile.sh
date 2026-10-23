@@ -106,8 +106,10 @@ this script cannot change them):
     printed below. The collector default is 20000, which the sustained and burst
     profiles exceed; an undersized budget turns load into HTTP 503 / gRPC
     RESOURCE_EXHAUSTED whole-request rejections that the result counts separately.
-  * batch size $batch <= max_pending_rows, or every request is refused as
-    non-retryable (HTTP 413 / gRPC INVALID_ARGUMENT).
+  * batch size $batch <= max_pending_rows. A larger request is admitted only while
+    the collector's buffer is below the budget and otherwise refused as retryable
+    (collectors that predate this rule refuse it as non-retryable: HTTP 413 /
+    gRPC INVALID_ARGUMENT).
   * FI_BUILD_REVISION (or a VCS-stamped build) so /healthz names the revision.
 EOF
 if [[ -z "${BENCH_COLLECTOR_HEALTH_URL:-}" ]]; then

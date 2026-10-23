@@ -155,9 +155,10 @@ func TestLiveClickHouseCollectorPipeline(t *testing.T) {
 	t.Logf("real ClickHouse %s: 20 attempted/acknowledged/distinct persisted spans, run_id=%s; small functional smoke, NOT a throughput capacity benchmark", r.Provenance.ClickHouse.Version, c.RunID)
 }
 
-// B11 on real ClickHouse: a real collector with a tiny row budget is driven
-// into backpressure (retryable whole-request refusals) and sent requests larger
-// than its whole budget (non-retryable), over HTTP and gRPC. The independent
+// B11 on real ClickHouse: a real collector with a tiny row budget behind a slow
+// insert path is driven into backpressure (retryable whole-request refusals) and
+// sent requests larger than its whole budget (admitted into an empty buffer,
+// refused as retryable while over it), over HTTP and gRPC. The independent
 // verification must find every acknowledged span and none of the refused ones.
 func TestLiveClickHouseBackpressureAccounting(t *testing.T) {
 	lt := requireLiveTarget(t)
@@ -169,7 +170,7 @@ func TestLiveClickHouseBackpressureAccounting(t *testing.T) {
 		name := fmt.Sprintf("%s-gzip-%t", tc.encoding, tc.gzip)
 		t.Run(name, func(t *testing.T) {
 			results[name+"/backpressure"] = runBackpressureCase(t, lt.url, lt.headers, lt.writer, tc.encoding, tc.gzip, lt.apply)
-			results[name+"/oversize"] = runOversizeCase(t, lt.url, lt.headers, lt.writer, tc.encoding, tc.gzip, lt.apply)
+			results[name+"/over-budget"] = runOverBudgetCase(t, lt.url, lt.headers, lt.writer, tc.encoding, tc.gzip, lt.apply)
 		})
 	}
 	writeLiveArtifact(t, "OTLPBENCH_LIVE_BACKPRESSURE_RESULT", results)

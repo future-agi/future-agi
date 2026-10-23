@@ -94,11 +94,16 @@ type Server struct {
 	// `pend` so the curated dual-write flushes with the span batch.
 	pendMu       sync.Mutex
 	bufferedRows int // includes the batch currently being flushed
-	pend         []map[string]any
-	pendCurated  *curatedwriter.Batch
-	pendProperty []observedcatalog.ScopedSpan
-	pendRoots    []traceavailable.Root
-	pendCh       chan struct{}
+	// admissionClosed is set by shutdown before the final drain: a handler
+	// that is still running then is refused (retryable) instead of parking rows
+	// that no later drain would flush.
+	admissionClosed bool
+	refusals        Refusals
+	pend            []map[string]any
+	pendCurated     *curatedwriter.Batch
+	pendProperty    []observedcatalog.ScopedSpan
+	pendRoots       []traceavailable.Root
+	pendCh          chan struct{}
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -164,6 +169,14 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	if cfg.MaxPendingRows <= 0 {
 		cfg.MaxPendingRows = 20000
 	}
+	// The size trigger counts parked rows, which can never exceed the budget
+	// (except for one larger-than-budget request). A trigger above the budget
+	// would never fire, so the flusher would run only on the age timer while
+	// every other request is refused: clamp it below.
+	clampedBatchRows := 0
+	if cfg.BatchMaxRows > cfg.MaxPendingRows {
+		clampedBatchRows, cfg.BatchMaxRows = cfg.BatchMaxRows, cfg.MaxPendingRows
+	}
 	if cfg.GRPCMaxRecvMiB <= 0 {
 		// Go gRPC's default 4 MiB rejects large single-span exports (e.g. an
 		// ended voice call with full transcript) with RESOURCE_EXHAUSTED.
@@ -198,6 +211,10 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		if o.propertyCatalog != nil {
 			propertyCatalogWriter = o.propertyCatalog
 		}
+	}
+	if clampedBatchRows > 0 {
+		log.Warn("batch_max_rows is above max_pending_rows and could never trigger a flush; using max_pending_rows as the flush size",
+			"batch_max_rows", clampedBatchRows, "max_pending_rows", cfg.MaxPendingRows)
 	}
 
 	s := &Server{
@@ -249,18 +266,38 @@ func (s *Server) Limits() Limits {
 // endpoint so a benchmark can follow the backlog over time. BufferedRows is what
 // the budget bounds: rows parked for the next flush plus rows of the flush in
 // progress (including its retries). PendingRows is the parked part only.
-// Acknowledged rows in BufferedRows are not in ClickHouse yet.
+// Acknowledged rows in BufferedRows are not in ClickHouse yet. BufferedRows can
+// exceed MaxPendingRows by at most one request: see enqueueParcels.
 type Admission struct {
-	BufferedRows   int `json:"buffered_rows"`
-	PendingRows    int `json:"pending_rows"`
-	MaxPendingRows int `json:"max_pending_rows"`
+	BufferedRows   int      `json:"buffered_rows"`
+	PendingRows    int      `json:"pending_rows"`
+	MaxPendingRows int      `json:"max_pending_rows"`
+	Refusals       Refusals `json:"refusals"`
+}
+
+// Refusals count, since the process started, the requests the admission budget
+// turned away and the requests larger than the whole budget it let in. Rows are
+// converted span rows.
+type Refusals struct {
+	// FullRequests/FullRows: refused with a retryable status (HTTP 503 with
+	// Retry-After, gRPC RESOURCE_EXHAUSTED with RetryInfo) because the budget
+	// could not hold them at that moment.
+	FullRequests int64 `json:"budget_full_requests"`
+	FullRows     int64 `json:"budget_full_rows"`
+	// OverBudgetAdmittedRequests/Rows: requests with more rows than the whole
+	// budget, admitted because the buffer was below the budget.
+	OverBudgetAdmittedRequests int64 `json:"over_budget_admitted_requests"`
+	OverBudgetAdmittedRows     int64 `json:"over_budget_admitted_rows"`
+	// ShuttingDownRequests: refused (retryable) because the server had closed
+	// admission for its final drain.
+	ShuttingDownRequests int64 `json:"shutting_down_requests"`
 }
 
 // Admission returns the current admission state.
 func (s *Server) Admission() Admission {
 	s.pendMu.Lock()
 	defer s.pendMu.Unlock()
-	return Admission{BufferedRows: s.bufferedRows, PendingRows: len(s.pend), MaxPendingRows: s.cfg.MaxPendingRows}
+	return Admission{BufferedRows: s.bufferedRows, PendingRows: len(s.pend), MaxPendingRows: s.cfg.MaxPendingRows, Refusals: s.refusals}
 }
 
 // Run blocks until ctx is cancelled or a serve error occurs. On shutdown
@@ -342,6 +379,12 @@ func (s *Server) Run(ctx context.Context) error {
 // shutdown stops both listeners, waits for the flusher to exit, drains the
 // in-flight batch. Called once from Run on either ctx cancel or a serve
 // error. Safe to call when one of grpc/httpd is nil.
+//
+// gRPC's GracefulStop waits for every handler; HTTP Shutdown gives up after 5 s
+// and leaves slower handlers running. Admission is closed before the final
+// drain, so such a handler is refused with a retryable status instead of
+// acknowledging rows after the last drain (which nothing would ever flush).
+// Every request acknowledged before the close is in that drain.
 func (s *Server) shutdown() {
 	if s.grpc != nil {
 		s.grpc.GracefulStop()
@@ -353,7 +396,15 @@ func (s *Server) shutdown() {
 	}
 	close(s.stopCh)
 	s.wg.Wait()
+	s.closeAdmission()
 	s.drainNow(context.Background())
+}
+
+// closeAdmission makes every later enqueue return enqueueClosed.
+func (s *Server) closeAdmission() {
+	s.pendMu.Lock()
+	s.admissionClosed = true
+	s.pendMu.Unlock()
 }
 
 // grpcErrLogger surfaces transport-level message-size rejections. A message
@@ -801,13 +852,13 @@ const (
 	// enqueueAccepted: every row of the request is parked.
 	enqueueAccepted enqueueOutcome = iota
 	// enqueueFull: the pending and in-flight budget cannot hold the request
-	// now. Nothing is parked; the same request can fit once the writer frees
-	// budget, so it is the one outcome a client should retry.
+	// now. Nothing is parked; the same request fits once the writer frees
+	// budget, so a client should retry it.
 	enqueueFull
-	// enqueueOversize: the request alone is larger than the whole budget, so
-	// it can never be admitted however long a client waits. Nothing is
-	// parked; retrying the same request is pointless.
-	enqueueOversize
+	// enqueueClosed: the server is shutting down and has closed admission for
+	// its final drain. Nothing is parked; a client should retry (elsewhere or
+	// after the restart).
+	enqueueClosed
 )
 
 // parcel is a group of rows parked together under one tenant scope.
@@ -853,6 +904,15 @@ func (s *Server) enqueueScoped(
 // against the rows of all parcels together, under the same lock that reserves
 // them, so a concurrent request can never slip between the check and the
 // reservation.
+//
+// A request that fits in the free budget is admitted. A request with more rows
+// than the WHOLE budget can never fit that way; refusing it outright (as
+// non-retryable) would lose an export that an unbounded buffer used to accept,
+// and refusing it as retryable forever would loop the client. It is admitted
+// whenever the buffer is below the budget, so the buffer can exceed the budget
+// by at most this one request (bounded by the transport's message size cap):
+// while it is over, every request is refused as retryable until the writer
+// drains below the budget.
 func (s *Server) enqueueParcels(parcels ...parcel) enqueueOutcome {
 	total := 0
 	for _, p := range parcels {
@@ -861,11 +921,25 @@ func (s *Server) enqueueParcels(parcels ...parcel) enqueueOutcome {
 	if total == 0 {
 		return enqueueAccepted
 	}
-	if total > s.cfg.MaxPendingRows {
-		return enqueueOversize
-	}
 	s.pendMu.Lock()
-	if total > s.cfg.MaxPendingRows-s.bufferedRows {
+	if s.admissionClosed {
+		s.refusals.ShuttingDownRequests++
+		s.pendMu.Unlock()
+		return enqueueClosed
+	}
+	free := s.cfg.MaxPendingRows - s.bufferedRows
+	switch {
+	case total <= free:
+	case total > s.cfg.MaxPendingRows && free > 0:
+		s.refusals.OverBudgetAdmittedRequests++
+		s.refusals.OverBudgetAdmittedRows += int64(total)
+		if s.refusalLog.Allow("over-budget", time.Now()) {
+			s.log.Warn("request larger than the whole pending row budget admitted while the buffer was below it; keep exporter batches at or below max_pending_rows",
+				"rows", total, "max_pending_rows", s.cfg.MaxPendingRows, "buffered_rows", s.bufferedRows)
+		}
+	default:
+		s.refusals.FullRequests++
+		s.refusals.FullRows += int64(total)
 		s.pendMu.Unlock()
 		return enqueueFull
 	}
@@ -920,18 +994,16 @@ func (s *Server) appendLocked(p parcel) {
 	}
 }
 
-// grpcRefusal is the gRPC status of a request that was not admitted.
-//
-// A request that merely met a full buffer is RESOURCE_EXHAUSTED with RetryInfo,
-// the one form OTLP clients retry. A request larger than the whole budget is
-// INVALID_ARGUMENT, which no OTLP client retries and which names the limit, so
-// the sender can split the export instead of looping on it.
+// grpcRefusal is the gRPC status of a request that was not admitted. Both
+// refusals are retryable per the OTLP specification: a full buffer is
+// RESOURCE_EXHAUSTED with RetryInfo (RESOURCE_EXHAUSTED without it is not
+// retryable), and a server closing admission for its final drain is
+// UNAVAILABLE.
 func (s *Server) grpcRefusal(outcome enqueueOutcome, rows int) error {
-	if outcome == enqueueOversize {
-		s.logOversize(rows)
-		return status.Error(codes.InvalidArgument, oversizeMessage(rows, s.cfg.MaxPendingRows))
+	if outcome == enqueueClosed {
+		return status.Error(codes.Unavailable, "collector is shutting down; retry")
 	}
-	retry, err := status.New(codes.ResourceExhausted, "collector pending row budget exhausted; retry with backoff").WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(time.Second)})
+	retry, err := status.New(codes.ResourceExhausted, budgetFullMessage(rows, s.cfg.MaxPendingRows)).WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(time.Second)})
 	if err != nil {
 		return status.Error(codes.Unavailable, "collector pending row budget exhausted")
 	}
@@ -939,29 +1011,25 @@ func (s *Server) grpcRefusal(outcome enqueueOutcome, rows int) error {
 }
 
 // writeRefusal answers an OTLP/HTTP request that was not admitted: 503 with
-// Retry-After for a full buffer (retryable per the OTLP spec), 413 for a
-// request that can never fit (not retryable per the OTLP spec).
+// Retry-After, which the OTLP specification makes retryable.
 func (s *Server) writeRefusal(w http.ResponseWriter, contentType string, outcome enqueueOutcome, rows int) {
-	if outcome == enqueueOversize {
-		s.logOversize(rows)
-		writeOTLPError(w, contentType, http.StatusRequestEntityTooLarge, oversizeMessage(rows, s.cfg.MaxPendingRows))
+	w.Header().Set("Retry-After", "1")
+	if outcome == enqueueClosed {
+		writeOTLPError(w, contentType, http.StatusServiceUnavailable, "collector is shutting down; retry")
 		return
 	}
-	w.Header().Set("Retry-After", "1")
-	writeOTLPError(w, contentType, http.StatusServiceUnavailable, "collector pending row budget exhausted; retry with backoff")
+	writeOTLPError(w, contentType, http.StatusServiceUnavailable, budgetFullMessage(rows, s.cfg.MaxPendingRows))
 }
 
-func oversizeMessage(rows, limit int) string {
-	return "request carries " + strconv.Itoa(rows) + " spans, more than the collector's max_pending_rows (" +
-		strconv.Itoa(limit) + "), so it can never be admitted; split the export into batches of at most " +
-		strconv.Itoa(limit) + " spans or raise max_pending_rows"
-}
-
-func (s *Server) logOversize(rows int) {
-	if s.refusalLog.Allow("oversize", time.Now()) {
-		s.log.Error("request over the pending row budget refused as not retryable",
-			"rows", rows, "max_pending_rows", s.cfg.MaxPendingRows)
+// budgetFullMessage names the budget, and for a request larger than all of it
+// says that it waits for an empty-enough buffer and should be split.
+func budgetFullMessage(rows, limit int) string {
+	if rows > limit {
+		return "collector pending row budget exhausted; retry with backoff. This request carries " + strconv.Itoa(rows) +
+			" spans, more than max_pending_rows (" + strconv.Itoa(limit) + "): it is admitted only while the buffer is below the budget, so split exports into batches of at most " +
+			strconv.Itoa(limit) + " spans"
 	}
+	return "collector pending row budget exhausted; retry with backoff"
 }
 
 // flushLoop runs until stopCh closes. Wakes on either an explicit kick

@@ -599,7 +599,7 @@ func TestCollectorBudgetCheck(t *testing.T) {
 		t.Fatalf("smoke: %+v", smoke)
 	}
 	oversize := CheckBudget(100, 30, 1, nil, 16)
-	if oversize.BatchFits || !strings.Contains(strings.Join(oversize.Warnings(), " "), "non-retryable") {
+	if oversize.BatchFits || !strings.Contains(strings.Join(oversize.Warnings(), " "), "admitted only while the collector's buffer is below the budget") {
 		t.Fatalf("oversize: %+v", oversize)
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

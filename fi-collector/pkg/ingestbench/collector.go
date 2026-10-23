@@ -94,7 +94,7 @@ func CheckBudget(rate int64, batchSize, concurrency int, reported *CollectorLimi
 func (b BudgetCheck) Warnings() []string {
 	var out []string
 	if !b.BatchFits {
-		out = append(out, fmt.Sprintf("batch size exceeds the collector budget of %d rows (%s): every request will be refused as non-retryable (HTTP 413 / gRPC INVALID_ARGUMENT)", b.AvailablePendingRows, b.Source))
+		out = append(out, fmt.Sprintf("batch size exceeds the collector budget of %d rows (%s): each request is admitted only while the collector's buffer is below the budget and is refused as retryable otherwise (collectors that predate this rule refuse it as non-retryable: HTTP 413 / gRPC INVALID_ARGUMENT)", b.AvailablePendingRows, b.Source))
 	}
 	if !b.Sufficient {
 		out = append(out, fmt.Sprintf("collector pending-row budget %d (%s) is smaller than the %d this profile needs by the documented heuristic; expect 429/503 whole-request rejections. Set %s on the collector under test before a capacity run",

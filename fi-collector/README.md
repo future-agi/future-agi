@@ -138,10 +138,18 @@ the litellm table nor custom pricing applies, the span's cost is 0.
   buffer and the batch currently being flushed. Default: 20,000. A full budget
   rejects the **whole request before enqueue**: HTTP 503 with `Retry-After`, or
   gRPC `RESOURCE_EXHAUSTED` with `RetryInfo`; both are retryable. A request with
-  more spans than the entire budget can never be admitted, so it is refused with a
-  distinct **non-retryable** status naming the limit: HTTP 413 (no `Retry-After`)
-  or gRPC `INVALID_ARGUMENT` (no `RetryInfo`). Keep the exporter batch size at or
-  below the configured budget. Do not hot-loop retries.
+  more spans than the entire budget is admitted whenever the buffer is below the
+  budget, so the buffer can exceed the budget by at most that one request (itself
+  bounded by the 16 MiB size caps); while it is over, every request gets the same
+  retryable refusal. No request is refused as non-retryable because of the budget.
+  Keep exporter batches at or below the budget anyway: under sustained overload a
+  larger one waits like every other request. Do not hot-loop retries.
+- `batch_max_rows` above `max_pending_rows` could never trigger a flush, so it is
+  clamped to `max_pending_rows` with a startup warning.
+- On graceful shutdown, admission closes before the final drain. An HTTP handler
+  still running after the 5 s shutdown timeout is refused (HTTP 503 with
+  `Retry-After`, gRPC `UNAVAILABLE`) instead of acknowledging rows after the last
+  drain.
 - Every OTLP/HTTP 4xx/5xx response body is a `google.rpc.Status` message, as the
   OTLP/HTTP specification requires: protobuf for `application/x-protobuf` requests
   and for failures before the media type is known, JSON for `application/json`
@@ -171,12 +179,33 @@ the litellm table nor custom pricing applies, the span's cost is 0.
   `GOMAXPROCS`, OS/arch and any Go memory limit) and the admission `limits` in force
   (`max_pending_rows`, `batch_max_rows`, `batch_max_age_ms`, gRPC and HTTP size
   caps) so a benchmark can record the revision and budget it measured instead of
-  assuming them. The stock binary does not expose the `/metrics` endpoint claimed
+  assuming them. Its `admission` object reports the current backlog and, since
+  start, the requests and rows refused because the budget was full, the
+  larger-than-budget requests admitted, and the requests refused during shutdown.
+  The stock binary does not expose the `/metrics` endpoint claimed
   by older docs. `/healthz` is not a loss detector or a proof that every
   acknowledged span landed.
 - OTLP/HTTP accepts `Content-Encoding: gzip` (and identity). The 16 MiB cap applies
   to the compressed bytes read and to the decoded bytes; any other coding gets 415.
   gRPC accepts gzip-compressed messages, bounded by the gRPC receive limit.
+
+### Client-visible changes from the previous collector (release note)
+
+The previous collector buffered every request in memory without a row limit and
+always answered full success. Exporters see these differences:
+
+1. When ClickHouse is slower than the incoming load and the 20,000-row budget is
+   full, requests get HTTP 503 with `Retry-After` or gRPC `RESOURCE_EXHAUSTED`
+   with `RetryInfo` (retryable) instead of being buffered without limit. Size the
+   budget for the load (see the benchmark's collector settings).
+2. Spans whose project cannot be resolved are reported as OTLP partial success
+   (`rejected_spans`, counted as spans) instead of a full success that silently
+   dropped them.
+3. A request larger than the whole budget is admitted only while the buffer is
+   below the budget (see above); it is never refused as non-retryable.
+4. Requests that arrive after the final shutdown drain are refused as retryable.
+5. OTLP/HTTP error bodies are `google.rpc.Status` messages; gzip request bodies
+   are accepted on both transports.
 
 ## End-to-end benchmark and current evidence
 

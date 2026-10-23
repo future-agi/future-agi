@@ -35,10 +35,11 @@ server:
   http_addr: ":4318"
   # Whole exports over the pending + in-flight budget get HTTP 503 with
   # Retry-After / gRPC RESOURCE_EXHAUSTED with RetryInfo; both are retryable. A
-  # single export with more spans than this whole budget can never be admitted
-  # and gets HTTP 413 / gRPC INVALID_ARGUMENT, which clients must not retry:
-  # keep exporter batches at or below this value. This bounds rows, not bytes or
-  # all process memory.
+  # single export with more spans than this whole budget is admitted while the
+  # buffer is below the budget (the buffer then exceeds it by at most that one
+  # export); keep exporter batches at or below this value so they never wait for
+  # that. batch_max_rows above this value is clamped to it. This bounds rows, not
+  # bytes or all process memory.
   max_pending_rows: 20000
   batch_max_rows: 5000
   batch_max_age: 5s

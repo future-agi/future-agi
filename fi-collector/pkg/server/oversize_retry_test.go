@@ -3,11 +3,13 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -84,15 +86,17 @@ func postWithSpecRetry(t *testing.T, url string, body []byte, contentType string
 	return attempts, last
 }
 
-// A spec-following exporter must send an oversize export exactly once and must
-// retry one that merely met a full buffer, over a real HTTP listener.
-func TestSpecFollowingHTTPClientDoesNotRetryOversizeButRetriesFullBuffer(t *testing.T) {
+// Over a real HTTP listener, a spec-following exporter delivers an export
+// larger than the whole budget: in one attempt into an empty buffer, and after
+// retrying (never giving up) when it met a full buffer. One that merely met a
+// full buffer is retried to success.
+func TestSpecFollowingHTTPClientDeliversOverBudgetAndRetriesFullBuffer(t *testing.T) {
 	for _, tc := range []struct {
 		encoding, contentType string
 	}{{"json", "application/json"}, {"protobuf", "application/x-protobuf"}} {
 		t.Run(tc.encoding, func(t *testing.T) {
 			const budget = 4
-			s := quietServer(Config{MaxPendingRows: budget})
+			s := quietServer(Config{MaxPendingRows: budget, BatchMaxAge: time.Hour})
 			var calls atomic.Int32
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
@@ -108,29 +112,41 @@ func TestSpecFollowingHTTPClientDoesNotRetryOversizeButRetriesFullBuffer(t *test
 				b, _ := req.MarshalProto()
 				return b
 			}
-
-			attempts, resp := postWithSpecRetry(t, ts.URL, encode(budget+1), tc.contentType, 50, nil)
-			defer resp.Body.Close()
-			if attempts != 1 || calls.Load() != 1 {
-				t.Fatalf("a spec-following client retried an oversize export: %d attempts, %d server calls", attempts, calls.Load())
-			}
-			if resp.StatusCode != http.StatusRequestEntityTooLarge || resp.Header.Get("Retry-After") != "" {
-				t.Fatalf("oversize export: %d Retry-After=%q", resp.StatusCode, resp.Header.Get("Retry-After"))
-			}
-
-			// Fill the buffer; a client that sees 503 must retry and succeed once it drains.
-			if s.enqueue(spansRows(budget), nil) != enqueueAccepted {
-				t.Fatal("could not fill the buffer")
-			}
-			calls.Store(0)
-			attempts, resp2 := postWithSpecRetry(t, ts.URL, encode(2), tc.contentType, 10, func() {
+			drain := func() {
 				s.pendMu.Lock()
 				s.pend, s.bufferedRows = nil, 0 // the flush loop would do this
 				s.pendMu.Unlock()
-			})
+			}
+
+			attempts, resp := postWithSpecRetry(t, ts.URL, encode(budget+1), tc.contentType, 50, nil)
+			defer resp.Body.Close()
+			if attempts != 1 || calls.Load() != 1 || resp.StatusCode != http.StatusOK {
+				t.Fatalf("over-budget export into an empty buffer: %d attempts, %d server calls, final %d; want one 200", attempts, calls.Load(), resp.StatusCode)
+			}
+			if s.bufferedRows != budget+1 {
+				t.Fatalf("over-budget export parked %d rows, want %d", s.bufferedRows, budget+1)
+			}
+
+			// With the buffer full, the over-budget export is retried, not dropped.
+			drain()
+			if s.enqueue(spansRows(budget), nil) != enqueueAccepted {
+				t.Fatal("could not fill the buffer")
+			}
+			attempts, resp2 := postWithSpecRetry(t, ts.URL, encode(budget+1), tc.contentType, 10, drain)
 			defer resp2.Body.Close()
 			if attempts != 2 || resp2.StatusCode != http.StatusOK {
-				t.Fatalf("a retryable refusal was not retried to success: %d attempts, final %d", attempts, resp2.StatusCode)
+				t.Fatalf("over-budget export into a full buffer: %d attempts, final %d; want a retryable refusal then 200", attempts, resp2.StatusCode)
+			}
+
+			// Fill the buffer; a client that sees 503 must retry and succeed once it drains.
+			drain()
+			if s.enqueue(spansRows(budget), nil) != enqueueAccepted {
+				t.Fatal("could not fill the buffer")
+			}
+			attempts, resp3 := postWithSpecRetry(t, ts.URL, encode(2), tc.contentType, 10, drain)
+			defer resp3.Body.Close()
+			if attempts != 2 || resp3.StatusCode != http.StatusOK {
+				t.Fatalf("a retryable refusal was not retried to success: %d attempts, final %d", attempts, resp3.StatusCode)
 			}
 		})
 	}
@@ -157,8 +173,8 @@ func TestHTTPRefusalsCarryAnOTLPStatusBody(t *testing.T) {
 		retryAfter        bool
 		wantInMessage     string
 	}{
-		{"oversize-json", "application/json", budget + 1, 0, http.StatusRequestEntityTooLarge, false, "max_pending_rows (4)"},
-		{"oversize-protobuf", "application/x-protobuf", budget + 1, 0, http.StatusRequestEntityTooLarge, false, "max_pending_rows (4)"},
+		{"over-budget-full-json", "application/json", budget + 1, budget, http.StatusServiceUnavailable, true, "max_pending_rows (4)"},
+		{"over-budget-full-protobuf", "application/x-protobuf", budget + 1, budget, http.StatusServiceUnavailable, true, "max_pending_rows (4)"},
 		{"full-json", "application/json", 2, budget, http.StatusServiceUnavailable, true, "retry with backoff"},
 		{"full-protobuf", "application/x-protobuf", 2, budget, http.StatusServiceUnavailable, true, "retry with backoff"},
 	} {
@@ -242,20 +258,31 @@ func TestOtherHTTPFailuresCarryAnOTLPStatusBody(t *testing.T) {
 	}
 }
 
-// Over a real gRPC listener, a spec-following exporter must give up on an
-// oversize export at once (INVALID_ARGUMENT, no RetryInfo) and retry a full
-// buffer (RESOURCE_EXHAUSTED with RetryInfo).
-func TestSpecFollowingGRPCClientDoesNotRetryOversize(t *testing.T) {
+// Over a real gRPC listener with a real writer, a spec-following exporter
+// delivers an export larger than the whole budget in one attempt into an empty
+// buffer, and a request that meets the buffer over the budget (the big insert
+// still in flight) is refused with RetryInfo and retried to success once the
+// insert completes.
+func TestSpecFollowingGRPCClientDeliversOverBudgetAndRetriesFullBuffer(t *testing.T) {
 	const budget = 4
-	// A real writer on a stub ClickHouse, so shutdown can drain what was admitted.
-	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.Copy(io.Discard, r.Body) }))
+	// A real writer on a stub ClickHouse whose first insert blocks until released,
+	// so the admitted over-budget batch holds the budget while in flight.
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once, releaseOnce sync.Once
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		once.Do(func() { close(entered) })
+		<-release
+	}))
 	defer stub.Close()
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
 	writer, err := chwriter.New(chwriter.Config{URL: stub.URL, Database: "default", Table: "spans", MaxRetries: 1, DeadLetterFile: t.TempDir() + "/dl.jsonl"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer writer.Close()
-	s := New(Config{GRPCAddr: testTCPAddr(t), MaxPendingRows: budget, BatchMaxRows: 1000, BatchMaxAge: time.Hour}, writer, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	s := New(Config{GRPCAddr: testTCPAddr(t), MaxPendingRows: budget, BatchMaxAge: time.Hour}, writer, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 	s.cfg.HTTPAddr = ""
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -285,22 +312,30 @@ func TestSpecFollowingGRPCClientDoesNotRetryOversize(t *testing.T) {
 	}
 
 	attempts, err := export(budget+1, 50, nil)
-	if attempts != 1 || status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("oversize gRPC export: %d attempts, %v; want 1 attempt and INVALID_ARGUMENT", attempts, err)
+	if attempts != 1 || err != nil {
+		t.Fatalf("over-budget gRPC export into an empty buffer: %d attempts, %v; want 1 attempt and success", attempts, err)
 	}
-	if !strings.Contains(status.Convert(err).Message(), "max_pending_rows (4)") {
-		t.Fatalf("message does not name the limit: %v", err)
+	// The admitted batch fills past the budget and wakes the flusher at once.
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the over-budget batch was not flushed")
 	}
-
-	if s.enqueue(spansRows(budget), nil) != enqueueAccepted {
-		t.Fatal("could not fill the buffer")
-	}
+	var refusal error
 	attempts, err = export(2, 10, func() {
-		s.pendMu.Lock()
-		s.pend, s.bufferedRows = nil, 0
-		s.pendMu.Unlock()
+		if refusal == nil {
+			refusal = errors.New("first attempt was refused")
+		}
+		unblock()
+		deadline := time.Now().Add(5 * time.Second)
+		for s.Admission().BufferedRows != 0 && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
 	})
-	if attempts != 2 || err != nil {
-		t.Fatalf("full-buffer gRPC export: %d attempts, %v; want 2 attempts then success", attempts, err)
+	if attempts != 2 || err != nil || refusal == nil {
+		t.Fatalf("export while the over-budget insert was in flight: %d attempts, %v; want a retryable refusal then success", attempts, err)
+	}
+	if r := s.Admission().Refusals; r.OverBudgetAdmittedRequests != 1 || r.FullRequests != 1 {
+		t.Fatalf("refusal counters = %+v", r)
 	}
 }

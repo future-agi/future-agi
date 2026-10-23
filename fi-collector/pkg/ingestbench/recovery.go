@@ -183,9 +183,11 @@ type RecoveryResult struct {
 	VisibleDuplicates   uint64 `json:"duplicate_rows_visible"`
 	AmbiguousPersisted  uint64 `json:"ambiguous_but_persisted_spans"`
 	// A crash can lose at most the rows buffered when it happened, which the
-	// admission budget bounds: faults x max_pending_rows. The bound is a
-	// property of the collector design, stated so a crash case can be checked
-	// against it; it is not a measurement.
+	// admission budget bounds: max_pending_rows, plus one request when the
+	// requests are larger than the whole budget (the collector admits one such
+	// request while it is below the budget), per fault. The bound is a property
+	// of the collector design, stated so a crash case can be checked against
+	// it; it is not a measurement.
 	LossBound       int64  `json:"acknowledged_loss_bound_rows,omitempty"`
 	LossBoundSource string `json:"acknowledged_loss_bound_source,omitempty"`
 	LossWithinBound *bool  `json:"acknowledged_loss_within_bound,omitempty"`
@@ -334,7 +336,11 @@ func (r *RecoveryResult) attachVerification(c Config, v Verification, backlog Ba
 	r.VisibleDuplicates = v.DuplicateRows
 	r.AmbiguousPersisted = v.PersistedBy.AmbiguousPersisted
 	if budget.AvailablePendingRows > 0 && len(r.Faults) > 0 {
-		r.LossBound, r.LossBoundSource = int64(len(r.Faults))*budget.AvailablePendingRows, budget.Source
+		perFault := budget.AvailablePendingRows
+		if int64(c.BatchSize) > perFault {
+			perFault += int64(c.BatchSize)
+		}
+		r.LossBound, r.LossBoundSource = int64(len(r.Faults))*perFault, budget.Source
 		within := v.Complete && int64(v.MissingBy.AcknowledgedMissing) <= r.LossBound
 		r.LossWithinBound = &within
 	}
