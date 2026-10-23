@@ -296,7 +296,8 @@ type IngestStats struct {
 	Rejected         map[string]int64 `json:"rejected"` // by transport/reason/code
 	// ConnectionsClosed counts connections the listeners closed: past the
 	// connection cap (grpc_over_cap, http_over_cap), and gRPC connections
-	// that sent too many small DATA frames (grpc_small_frames).
+	// that sent too many small DATA frames (grpc_small_frames) or had too
+	// many calls refused before they were accepted (grpc_refused_calls).
 	ConnectionsClosed map[string]int64 `json:"connections_closed"`
 }
 
@@ -324,7 +325,7 @@ func (s *Server) IngestStats() IngestStats {
 		Rejected: map[string]int64{},
 		ConnectionsClosed: map[string]int64{
 			"grpc_over_cap": s.grpcConnsRefused.Load(), "http_over_cap": s.httpConnsRefused.Load(),
-			"grpc_small_frames": s.smallFrameConns.Load(),
+			"grpc_small_frames": s.smallFrameConns.Load(), "grpc_refused_calls": s.tapRefusalConns.Load(),
 		},
 	}
 	s.pendMu.Lock()

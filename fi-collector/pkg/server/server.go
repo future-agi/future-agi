@@ -109,6 +109,10 @@ type Server struct {
 	// gRPC connections closed for small DATA frames (frameGuardConn).
 	grpcConnsRefused, httpConnsRefused atomic.Int64
 	smallFrameConns                    atomic.Int64
+	tapRefusalConns                    atomic.Int64 // closed at grpcMaxTapRefusals
+	// grpcConns holds the open OTLP/gRPC connections by remote address, for
+	// grpcConnTracker.
+	grpcConns sync.Map
 
 	// Batching: the receiver handler pushes converted rows onto `pending` and
 	// signals via `pendCh`. A single flusher goroutine drains it on either
@@ -271,7 +275,7 @@ func (s *Server) Run(ctx context.Context) error {
 		// Past FI_OTLP_MAX_CONNECTIONS open connections (when set), new ones
 		// are closed at once. Every connection's frames are watched for
 		// small DATA frames (frameGuardConn).
-		lis = frameGuardListener{Listener: newConnLimitListener(lis, s.limits.maxConns, &s.grpcConnsRefused), closed: &s.smallFrameConns}
+		lis = frameGuardListener{Listener: newConnLimitListener(lis, s.limits.maxConns, &s.grpcConnsRefused), closed: &s.smallFrameConns, conns: &s.grpcConns}
 		s.log.Info("grpc listener", "addr", s.cfg.GRPCAddr, "max_recv_mib", float64(s.limits.maxRecv)/(1<<20))
 		// No gzip decompressor is registered, on purpose: gRPC stays
 		// uncompressed-only. A grpc-go decompressor is handed only the

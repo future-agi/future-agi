@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
@@ -16,6 +18,7 @@ import (
 	"google.golang.org/grpc/experimental"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/mem"
+	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/tap"
 )
@@ -64,6 +67,7 @@ func (s *Server) grpcServerOptions() []grpc.ServerOption {
 		// before reading it; exportStream answers that refusal itself.
 		grpc.MaxRecvMsgSize(int(s.limits.maxRecv)),
 		grpc.StatsHandler(&grpcErrLogger{log: s.log}),
+		grpc.StatsHandler(grpcConnTracker{s: s}),
 		// Raw bytes for the export, which the handler scans and prices
 		// before decoding; the nesting limit for any trace request decoded
 		// by the codec itself.
@@ -159,6 +163,7 @@ func (sl *grpcSlot) moveTo(pool *semaphore.Weighted) bool {
 // slot, given back when the call ends.
 func (s *Server) grpcTap(ctx context.Context, info *tap.Info) (context.Context, error) {
 	if s.requireCreds && !auth.HasGRPCCredentials(info.Header) {
+		s.tapRefused(ctx)
 		r := &rejection{reason: "no_credentials"}
 		if ok, held := s.countRejection("grpc", codes.Unauthenticated.String(), r); ok {
 			s.logRejection("grpc", codes.Unauthenticated.String(), r, held)
@@ -170,6 +175,7 @@ func (s *Server) grpcTap(ctx context.Context, info *tap.Info) (context.Context, 
 		pool, rej = s.grpcPending, rejectUnverified
 	}
 	if !pool.TryAcquire(1) {
+		s.tapRefused(ctx)
 		return nil, s.rejectGRPC(rej)
 	}
 	slot := &grpcSlot{pool: pool}
@@ -342,4 +348,57 @@ func readWithin(deadline time.Time, read func() error, after func()) error {
 		}
 		return errRecvTimeout
 	}
+}
+
+// grpc-go keeps the context of a call its tap handle refused until the
+// connection's context ends, and a timer with it when the call set a
+// deadline: it never cancels it. grpcConnTracker gives each connection a
+// context it cancels when the connection ends, and closes a connection once
+// grpcMaxTapRefusals of its calls have been refused, so what refused calls
+// leave behind is released then.
+const grpcMaxTapRefusals = 256
+
+// grpcConn is a connection's state, in the context of its calls.
+type grpcConn struct {
+	conn    net.Conn // nil when the listener did not register it
+	refused atomic.Int64
+	cancel  context.CancelFunc
+}
+
+type grpcConnKey struct{}
+
+// grpcConnTracker is a stats.Handler for the connection events only.
+type grpcConnTracker struct{ s *Server }
+
+func (h grpcConnTracker) TagConn(ctx context.Context, info *stats.ConnTagInfo) context.Context {
+	gc := &grpcConn{}
+	if info.RemoteAddr != nil {
+		if c, ok := h.s.grpcConns.Load(info.RemoteAddr.String()); ok {
+			gc.conn = c.(net.Conn)
+		}
+	}
+	ctx, gc.cancel = context.WithCancel(ctx)
+	return context.WithValue(ctx, grpcConnKey{}, gc)
+}
+
+func (h grpcConnTracker) HandleConn(ctx context.Context, cs stats.ConnStats) {
+	if _, ok := cs.(*stats.ConnEnd); ok {
+		if gc, ok := ctx.Value(grpcConnKey{}).(*grpcConn); ok {
+			gc.cancel()
+		}
+	}
+}
+
+func (grpcConnTracker) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context { return ctx }
+func (grpcConnTracker) HandleRPC(context.Context, stats.RPCStats)                       {}
+
+// tapRefused counts a call the tap handle refused against its connection,
+// and closes the connection at grpcMaxTapRefusals.
+func (s *Server) tapRefused(ctx context.Context) {
+	gc, ok := ctx.Value(grpcConnKey{}).(*grpcConn)
+	if !ok || gc.refused.Add(1) != grpcMaxTapRefusals || gc.conn == nil {
+		return
+	}
+	s.tapRefusalConns.Add(1)
+	_ = gc.conn.Close()
 }

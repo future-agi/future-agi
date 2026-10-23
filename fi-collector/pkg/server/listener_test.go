@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 )
 
@@ -408,4 +409,43 @@ func TestFrameGuardCounts(t *testing.T) {
 	if err := feed(newGuard(), bigs...); err != nil {
 		t.Errorf("1 KiB frames: %v, want allowed", err)
 	}
+}
+
+// grpc-go never cancels the context of a call its tap handle refused (nor
+// the timer of its deadline), so what such calls leave behind is held until
+// the connection's context ends. A connection gets a context that ends with
+// it, and is closed once grpcMaxTapRefusals of its calls were refused.
+// (Before, each refused call that set a deadline held a timer until the
+// deadline, however far off, and one connection could leave any number.)
+func TestGRPCRefusedCallsAreReleasedWithTheirConnection(t *testing.T) {
+	t.Run("connection context", func(t *testing.T) {
+		h := grpcConnTracker{s: New(Config{}, nil, nil, nil, nil)}
+		ctx := h.TagConn(context.Background(), &stats.ConnTagInfo{RemoteAddr: &net.TCPAddr{}})
+		call, cancel := context.WithTimeout(ctx, time.Hour) // as grpc-go makes a call's context
+		defer cancel()
+		h.HandleConn(ctx, &stats.ConnEnd{})
+		select {
+		case <-call.Done():
+		case <-time.After(time.Second):
+			t.Fatal("a call's context outlived its connection")
+		}
+	})
+	t.Run("closed after many refusals", func(t *testing.T) {
+		s, conn, _ := startGRPCServer(t, Config{}, func(s *Server) { s.requireCreds = true })
+		for i := 0; i < grpcMaxTapRefusals+8; i++ {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+			err := exportRaw(conn, ctx, emptySpans(t, 1))
+			cancel()
+			if c := status.Code(err); c != codes.Unauthenticated && c != codes.Unavailable {
+				t.Fatalf("call %d without keys: %v", i, err)
+			}
+		}
+		if got := s.IngestStats().ConnectionsClosed["grpc_refused_calls"]; got != 1 {
+			t.Errorf("connections closed for refused calls: %d, want 1", got)
+		}
+		s.grpcAuth = func(ctx context.Context) (context.Context, error) { return ctx, nil }
+		if err := exportRaw(conn, withKeys(context.Background()), emptySpans(t, 1)); err != nil {
+			t.Errorf("the client's next call, on a new connection: %v", err)
+		}
+	})
 }

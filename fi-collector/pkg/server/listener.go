@@ -53,9 +53,12 @@ func (c *limitedConn) Close() error {
 }
 
 // frameGuardListener wraps every OTLP/gRPC connection in a frameGuardConn.
+// It also keeps every open connection in conns, by remote address, so that
+// grpcConnTracker can close one.
 type frameGuardListener struct {
 	net.Listener
 	closed *atomic.Int64 // connections closed for small frames
+	conns  *sync.Map     // remote address -> *frameGuardConn
 }
 
 func (l frameGuardListener) Accept() (net.Conn, error) {
@@ -63,7 +66,11 @@ func (l frameGuardListener) Accept() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &frameGuardConn{Conn: c, preface: len(http2ClientPreface), streams: map[uint32]int64{}, closed: l.closed}, nil
+	fg := &frameGuardConn{Conn: c, preface: len(http2ClientPreface), streams: map[uint32]int64{}, closed: l.closed, conns: l.conns}
+	if l.conns != nil {
+		l.conns.Store(c.RemoteAddr().String(), fg)
+	}
+	return fg, nil
 }
 
 // HTTP/2 framing, as much of it as frameGuardConn reads (RFC 9113).
@@ -112,6 +119,17 @@ type frameGuardConn struct {
 	streams map[uint32]int64
 	err     error
 	closed  *atomic.Int64
+	conns   *sync.Map
+	once    sync.Once
+}
+
+func (c *frameGuardConn) Close() error {
+	c.once.Do(func() {
+		if c.conns != nil {
+			c.conns.CompareAndDelete(c.Conn.RemoteAddr().String(), c)
+		}
+	})
+	return c.Conn.Close()
 }
 
 func (c *frameGuardConn) Read(p []byte) (int, error) {
