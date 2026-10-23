@@ -238,7 +238,7 @@ func (s *Server) leaseWork(ctx context.Context, body []byte, jsonBody bool) (wor
 	switch {
 	case errors.Is(err, errLeaseTooLarge):
 		return nil, nil, &rejection{reason: "budget", tooLarge: true,
-			msg: fmt.Sprintf("payload too large: processing it needs about %d MiB, over the %d MiB this server can give one request; send smaller batches, or raise FI_INGEST_BUDGET_MIB (or GOMEMLIMIT)",
+			msg: fmt.Sprintf("payload too large: processing it needs about %d MiB, over the %d MiB this server can give one request; send smaller batches (OpenTelemetry Collector: lower send_batch_max_size), or raise FI_INGEST_BUDGET_MIB (or GOMEMLIMIT)",
 				p.total()>>20, s.work.size>>20)}
 	case err != nil:
 		return nil, nil, rejectWorkBusy

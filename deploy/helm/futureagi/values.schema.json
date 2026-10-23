@@ -2241,7 +2241,7 @@
         },
         "ingestBudgetMiB": {
           "type": "integer",
-          "description": "[FI_INGEST_BUDGET_MIB] memory, in MiB, that all OTLP requests may hold at once, from reading a body to storing its spans; past it, requests wait, then get 503 / UNAVAILABLE, which exporters retry. A request that could never fit gets 413 / INVALID_ARGUMENT. 0: derived from `goMemLimit` (about half of it, less a fixed allowance: 419 with the default)."
+          "description": "[FI_INGEST_BUDGET_MIB] memory, in MiB, that all OTLP requests may hold at once, from reading a body to storing its spans; past it, requests wait their turn, then get 503 / UNAVAILABLE, which exporters retry. A request that could never fit gets 413 / INVALID_ARGUMENT. 0: derived from `goMemLimit` (about half of it, less a fixed allowance: 419 with the default)."
         },
         "maxBodyMiB": {
           "type": "integer",
@@ -2249,11 +2249,11 @@
         },
         "grpcMaxRecvMiB": {
           "type": "integer",
-          "description": "[FI_GRPC_MAX_RECV_MIB] largest OTLP/gRPC message, in MiB (RESOURCE_EXHAUSTED above it). 0: the OTLP/HTTP body cap, lowered like it."
+          "description": "[FI_GRPC_MAX_RECV_MIB] largest OTLP/gRPC message, in MiB (INVALID_ARGUMENT above it). 0: the OTLP/HTTP body cap, lowered like it."
         },
         "maxConnections": {
           "type": "integer",
-          "description": "[FI_OTLP_MAX_CONNECTIONS] open connections each OTLP listener (gRPC and HTTP) accepts; past it, new connections wait. 0: 1024."
+          "description": "[FI_OTLP_MAX_CONNECTIONS] open connections each OTLP listener (gRPC and HTTP) accepts. 0: no cap."
         },
         "resources": {
           "type": "object",
