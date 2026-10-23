@@ -17805,6 +17805,55 @@ export interface HarnessJobReadApi {
   usage_limit?: HarnessJobReadApiUsageLimit;
 }
 
+export type HarnessDesignRequestApiModality =
+  (typeof HarnessDesignRequestApiModality)[keyof typeof HarnessDesignRequestApiModality];
+
+export const HarnessDesignRequestApiModality = {
+  chat: "chat",
+  voice: "voice",
+} as const;
+
+export interface HarnessDesignRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 20000
+   */
+  requirements: string;
+  modality?: HarnessDesignRequestApiModality;
+  template_suite_id?: string;
+  /** @maxItems 100 */
+  document_ids?: string[];
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  idempotency_key: string;
+}
+
+export interface HarnessDesignDocumentResponseApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  content_type: string;
+  /** @minLength 1 */
+  sha256: string;
+  size: number;
+}
+
+export interface HarnessDesignContinueRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  idempotency_key: string;
+}
+
 export type HarnessEnvironmentApiAgentType =
   (typeof HarnessEnvironmentApiAgentType)[keyof typeof HarnessEnvironmentApiAgentType];
 
@@ -19156,6 +19205,35 @@ export interface HarnessReleaseParentApi {
   name: string;
 }
 
+/**
+ * The template a designed release was customized from.
+ */
+export interface HarnessReleaseDerivedFromApi {
+  /** @minLength 1 */
+  digest: string;
+  /**
+   * Null when the template is not visible to you.
+   * @minLength 1
+   */
+  name: string;
+}
+
+export interface HarnessReleaseProvenanceApi {
+  /**
+   * `table:<name>` for imported rows, else the attached file's path.
+   * @minLength 1
+   */
+  target: string;
+  /** @minLength 1 */
+  document: string;
+  part?: string;
+  /** @minLength 1 */
+  sha256: string;
+  rows?: number;
+  /** Personal details replaced with made-up ones. */
+  replaced?: number;
+}
+
 export interface HarnessReleaseToolApi {
   /** @minLength 1 */
   name: string;
@@ -19227,6 +19305,8 @@ export interface HarnessReleaseApi {
   name: string;
   system: boolean;
   parent: HarnessReleaseParentApi;
+  derived_from: HarnessReleaseDerivedFromApi;
+  provenance: HarnessReleaseProvenanceApi[];
   tools: HarnessReleaseToolApi[];
   policy: HarnessReleasePolicyApi;
   suites: HarnessSuiteSummaryApi[];
@@ -35882,6 +35962,11 @@ export type SimulateApiCallExecutionsListParams = {
    * @minimum 1
    */
   limit?: number;
+};
+
+export type SimulateApiHarnessEnvironmentDesignsDocumentsBody = {
+  /** One document: PDF, DOCX, XLSX, CSV, TSV, JSON, JSONL, TXT or MD. */
+  file: Blob;
 };
 
 export type SimulateApiHarnessEnvironmentsListParams = {

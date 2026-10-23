@@ -35477,6 +35477,72 @@ export const SimulateApiHarnessAdaptationsCreateBody = zod.object({
 });
 
 /**
+ * Environment designs: the harness designs an environment from requirements (and a root
+template and documents) and seals it as the organization's own release. The job is followed
+like any harness job.
+ */
+export const simulateApiHarnessEnvironmentDesignsCreateBodyNameMax = 255;
+
+export const simulateApiHarnessEnvironmentDesignsCreateBodyRequirementsMax = 20000;
+
+export const simulateApiHarnessEnvironmentDesignsCreateBodyModalityDefault = `chat`;
+export const simulateApiHarnessEnvironmentDesignsCreateBodyDocumentIdsMax = 100;
+
+export const simulateApiHarnessEnvironmentDesignsCreateBodyIdempotencyKeyMax = 255;
+
+export const SimulateApiHarnessEnvironmentDesignsCreateBody = zod.object({
+  name: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentDesignsCreateBodyNameMax),
+  requirements: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentDesignsCreateBodyRequirementsMax),
+  modality: zod
+    .enum(["chat", "voice"])
+    .default(simulateApiHarnessEnvironmentDesignsCreateBodyModalityDefault),
+  template_suite_id: zod.string().uuid().optional(),
+  document_ids: zod
+    .array(zod.string().uuid())
+    .max(simulateApiHarnessEnvironmentDesignsCreateBodyDocumentIdsMax)
+    .optional(),
+  idempotency_key: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentDesignsCreateBodyIdempotencyKeyMax),
+});
+
+/**
+ * Environment designs: the harness designs an environment from requirements (and a root
+template and documents) and seals it as the organization's own release. The job is followed
+like any harness job.
+ */
+export const SimulateApiHarnessEnvironmentDesignsDocumentsBody = zod.object({
+  file: zod.instanceof(File),
+});
+
+/**
+ * Continue a design that stopped at an unanswered question, as a new design job.
+ */
+export const SimulateApiHarnessEnvironmentDesignsContinueDesignParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentDesignsContinueDesignBodyIdempotencyKeyMax = 255;
+
+export const SimulateApiHarnessEnvironmentDesignsContinueDesignBody =
+  zod.object({
+    idempotency_key: zod
+      .string()
+      .min(1)
+      .max(
+        simulateApiHarnessEnvironmentDesignsContinueDesignBodyIdempotencyKeyMax,
+      ),
+  });
+
+/**
  * An environment is the job that built it (the world itself lives in object
 storage, addressed from the job's metadata), so these endpoints project the
 same rows the harness-jobs API serves. They exist separately because the
@@ -38277,6 +38343,33 @@ export const SimulateApiHarnessReleasesListResponse = zod.object({
         digest: zod.string().min(1),
         name: zod.string().min(1),
       }),
+      derived_from: zod
+        .object({
+          digest: zod.string().min(1),
+          name: zod
+            .string()
+            .min(1)
+            .describe("Null when the template is not visible to you."),
+        })
+        .describe("The template a designed release was customized from."),
+      provenance: zod.array(
+        zod.object({
+          target: zod
+            .string()
+            .min(1)
+            .describe(
+              "`table:<name>` for imported rows, else the attached file's path.",
+            ),
+          document: zod.string().min(1),
+          part: zod.string().optional(),
+          sha256: zod.string().min(1),
+          rows: zod.number().optional(),
+          replaced: zod
+            .number()
+            .optional()
+            .describe("Personal details replaced with made-up ones."),
+        }),
+      ),
       tools: zod.array(
         zod.object({
           name: zod.string().min(1),

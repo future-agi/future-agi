@@ -50817,6 +50817,157 @@
             },
             "parameters": []
         },
+        "/simulate/api/harness-environment-designs/": {
+            "post": {
+                "operationId": "simulate_api_harness-environment-designs_create",
+                "description": "Environment designs: the harness designs an environment from requirements (and a root\ntemplate and documents) and seals it as the organization's own release. The job is followed\nlike any harness job.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessDesignRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessJobRead"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/simulate/api/harness-environment-designs/documents/": {
+            "post": {
+                "operationId": "simulate_api_harness-environment-designs_documents",
+                "description": "Environment designs: the harness designs an environment from requirements (and a root\ntemplate and documents) and seals it as the organization's own release. The job is followed\nlike any harness job.",
+                "parameters": [
+                    {
+                        "name": "file",
+                        "in": "formData",
+                        "description": "One document: PDF, DOCX, XLSX, CSV, TSV, JSON, JSONL, TXT or MD.",
+                        "required": true,
+                        "type": "file"
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessDesignDocumentResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "415": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": []
+        },
+        "/simulate/api/harness-environment-designs/{id}/continue/": {
+            "post": {
+                "operationId": "simulate_api_harness-environment-designs_continue_design",
+                "description": "Continue a design that stopped at an unanswered question, as a new design job.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessDesignContinueRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessJobRead"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_list",
@@ -125312,6 +125463,107 @@
                 }
             }
         },
+        "HarnessDesignRequest": {
+            "required": [
+                "name",
+                "requirements",
+                "idempotency_key"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "requirements": {
+                    "title": "Requirements",
+                    "type": "string",
+                    "maxLength": 20000,
+                    "minLength": 1
+                },
+                "modality": {
+                    "title": "Modality",
+                    "type": "string",
+                    "enum": [
+                        "chat",
+                        "voice"
+                    ],
+                    "default": "chat"
+                },
+                "template_suite_id": {
+                    "title": "Template suite id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "document_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 100
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessDesignDocumentResponse": {
+            "required": [
+                "id",
+                "name",
+                "content_type",
+                "sha256",
+                "size"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "content_type": {
+                    "title": "Content type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sha256": {
+                    "title": "Sha256",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "size": {
+                    "title": "Size",
+                    "type": "integer"
+                }
+            }
+        },
+        "HarnessDesignContinueRequest": {
+            "required": [
+                "idempotency_key"
+            ],
+            "type": "object",
+            "properties": {
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                }
+            }
+        },
         "HarnessEnvironment": {
             "required": [
                 "id",
@@ -128566,6 +128818,69 @@
             },
             "x-nullable": true
         },
+        "HarnessReleaseDerivedFrom": {
+            "description": "The template a designed release was customized from.",
+            "required": [
+                "digest",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "description": "Null when the template is not visible to you.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessReleaseProvenance": {
+            "required": [
+                "target",
+                "document",
+                "sha256"
+            ],
+            "type": "object",
+            "properties": {
+                "target": {
+                    "title": "Target",
+                    "description": "`table:<name>` for imported rows, else the attached file's path.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "document": {
+                    "title": "Document",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "part": {
+                    "title": "Part",
+                    "type": "string"
+                },
+                "sha256": {
+                    "title": "Sha256",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "rows": {
+                    "title": "Rows",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "replaced": {
+                    "title": "Replaced",
+                    "description": "Personal details replaced with made-up ones.",
+                    "type": "integer"
+                }
+            }
+        },
         "HarnessReleaseTool": {
             "required": [
                 "name",
@@ -128734,6 +129049,8 @@
                 "name",
                 "system",
                 "parent",
+                "derived_from",
+                "provenance",
                 "tools",
                 "policy",
                 "suites"
@@ -128761,6 +129078,15 @@
                 },
                 "parent": {
                     "$ref": "#/definitions/HarnessReleaseParent"
+                },
+                "derived_from": {
+                    "$ref": "#/definitions/HarnessReleaseDerivedFrom"
+                },
+                "provenance": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseProvenance"
+                    }
                 },
                 "tools": {
                     "type": "array",

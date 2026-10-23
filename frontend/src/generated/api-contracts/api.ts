@@ -602,6 +602,9 @@ import type {
   HarnessConversationTranscriptAppendApi,
   HarnessConversationTranscriptAppendResponseApi,
   HarnessConversationWorkspaceResponseApi,
+  HarnessDesignContinueRequestApi,
+  HarnessDesignDocumentResponseApi,
+  HarnessDesignRequestApi,
   HarnessEnvironmentAddEvaluationApi,
   HarnessEnvironmentAvailableEvalsApi,
   HarnessEnvironmentDetailApi,
@@ -1156,6 +1159,7 @@ import type {
   SimulateApiCallExecutionsListParams,
   SimulateApiHarnessConversationsCommandsParams,
   SimulateApiHarnessConversationsSessionStoreParams,
+  SimulateApiHarnessEnvironmentDesignsDocumentsBody,
   SimulateApiHarnessEnvironmentsListParams,
   SimulateApiHarnessEnvironmentsRunsRunReportParams,
   SimulateApiHarnessJobsSecretFileUploadBody,
@@ -58819,6 +58823,195 @@ export const simulateApiHarnessAdaptationsCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessReleaseAgentRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentDesignsCreateResponse202 = {
+  data: HarnessJobReadApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentDesignsCreateResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessEnvironmentDesignsCreateResponse422 = {
+  data: ApiTextErrorResponseApi;
+  status: 422;
+};
+
+export type simulateApiHarnessEnvironmentDesignsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 404 | 422>;
+};
+
+export type simulateApiHarnessEnvironmentDesignsCreateResponseSuccess =
+  simulateApiHarnessEnvironmentDesignsCreateResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentDesignsCreateResponseError = (
+  | simulateApiHarnessEnvironmentDesignsCreateResponse404
+  | simulateApiHarnessEnvironmentDesignsCreateResponse422
+  | simulateApiHarnessEnvironmentDesignsCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessEnvironmentDesignsCreateResponse =
+  | simulateApiHarnessEnvironmentDesignsCreateResponseSuccess
+  | simulateApiHarnessEnvironmentDesignsCreateResponseError;
+
+export const getSimulateApiHarnessEnvironmentDesignsCreateUrl = () => {
+  return `/simulate/api/harness-environment-designs/`;
+};
+
+/**
+ * Environment designs: the harness designs an environment from requirements (and a root
+template and documents) and seals it as the organization's own release. The job is followed
+like any harness job.
+ */
+export const simulateApiHarnessEnvironmentDesignsCreate = async (
+  harnessDesignRequestApi: HarnessDesignRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentDesignsCreateResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentDesignsCreateResponse>(
+    getSimulateApiHarnessEnvironmentDesignsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessDesignRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentDesignsDocumentsResponse201 = {
+  data: HarnessDesignDocumentResponseApi;
+  status: 201;
+};
+
+export type simulateApiHarnessEnvironmentDesignsDocumentsResponse413 = {
+  data: ApiTextErrorResponseApi;
+  status: 413;
+};
+
+export type simulateApiHarnessEnvironmentDesignsDocumentsResponse415 = {
+  data: ApiTextErrorResponseApi;
+  status: 415;
+};
+
+export type simulateApiHarnessEnvironmentDesignsDocumentsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201 | 413 | 415>;
+};
+
+export type simulateApiHarnessEnvironmentDesignsDocumentsResponseSuccess =
+  simulateApiHarnessEnvironmentDesignsDocumentsResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentDesignsDocumentsResponseError = (
+  | simulateApiHarnessEnvironmentDesignsDocumentsResponse413
+  | simulateApiHarnessEnvironmentDesignsDocumentsResponse415
+  | simulateApiHarnessEnvironmentDesignsDocumentsResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessEnvironmentDesignsDocumentsResponse =
+  | simulateApiHarnessEnvironmentDesignsDocumentsResponseSuccess
+  | simulateApiHarnessEnvironmentDesignsDocumentsResponseError;
+
+export const getSimulateApiHarnessEnvironmentDesignsDocumentsUrl = () => {
+  return `/simulate/api/harness-environment-designs/documents/`;
+};
+
+/**
+ * Environment designs: the harness designs an environment from requirements (and a root
+template and documents) and seals it as the organization's own release. The job is followed
+like any harness job.
+ */
+export const simulateApiHarnessEnvironmentDesignsDocuments = async (
+  simulateApiHarnessEnvironmentDesignsDocumentsBody?: SimulateApiHarnessEnvironmentDesignsDocumentsBody,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentDesignsDocumentsResponse> => {
+  const formData = new FormData();
+  if (simulateApiHarnessEnvironmentDesignsDocumentsBody?.file !== undefined) {
+    formData.append(
+      `file`,
+      simulateApiHarnessEnvironmentDesignsDocumentsBody.file,
+    );
+  }
+
+  return apiMutator<simulateApiHarnessEnvironmentDesignsDocumentsResponse>(
+    getSimulateApiHarnessEnvironmentDesignsDocumentsUrl(),
+    {
+      ...options,
+      method: "POST",
+      body: formData,
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentDesignsContinueDesignResponse202 = {
+  data: HarnessJobReadApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentDesignsContinueDesignResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessEnvironmentDesignsContinueDesignResponse409 = {
+  data: ApiTextErrorResponseApi;
+  status: 409;
+};
+
+export type simulateApiHarnessEnvironmentDesignsContinueDesignResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202 | 404 | 409>;
+  };
+
+export type simulateApiHarnessEnvironmentDesignsContinueDesignResponseSuccess =
+  simulateApiHarnessEnvironmentDesignsContinueDesignResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentDesignsContinueDesignResponseError = (
+  | simulateApiHarnessEnvironmentDesignsContinueDesignResponse404
+  | simulateApiHarnessEnvironmentDesignsContinueDesignResponse409
+  | simulateApiHarnessEnvironmentDesignsContinueDesignResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessEnvironmentDesignsContinueDesignResponse =
+  | simulateApiHarnessEnvironmentDesignsContinueDesignResponseSuccess
+  | simulateApiHarnessEnvironmentDesignsContinueDesignResponseError;
+
+export const getSimulateApiHarnessEnvironmentDesignsContinueDesignUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environment-designs/${id}/continue/`;
+};
+
+/**
+ * Continue a design that stopped at an unanswered question, as a new design job.
+ */
+export const simulateApiHarnessEnvironmentDesignsContinueDesign = async (
+  id: string,
+  harnessDesignContinueRequestApi: HarnessDesignContinueRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentDesignsContinueDesignResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentDesignsContinueDesignResponse>(
+    getSimulateApiHarnessEnvironmentDesignsContinueDesignUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessDesignContinueRequestApi),
     },
   );
 };
