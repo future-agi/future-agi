@@ -11,7 +11,8 @@
 //  1. Defaults coded into chwriter.New / server.New
 //  2. YAML file path from --config (or /etc/fi-collector/config.yaml)
 //  3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
-//     FI_GRPC_MAX_RECV_MIB, FI_GZIP_INFLIGHT_MIB, FI_DEAD_LETTER_FILE, ...)
+//     FI_INGEST_BUDGET_MIB, FI_OTLP_MAX_BODY_MIB, FI_GRPC_MAX_RECV_MIB,
+//     FI_OTLP_MAX_CONNECTIONS, FI_DEAD_LETTER_FILE, ...)
 //
 // Health surfaces:
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
@@ -63,6 +64,7 @@ func main() {
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
+	applyContainerMemoryLimit(log, os.Getenv("GOMEMLIMIT"), cgroupRoot)
 	cfg := loadConfig(log, configPath)
 	if err := applyEnvOverrides(log, &cfg); err != nil {
 		log.Error("invalid environment override", "err", err)
@@ -175,7 +177,7 @@ func main() {
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
 	// Admin HTTP server — internal only, health check endpoint.
-	go runAdmin(":9464", writer, log)
+	go runAdmin(":9464", writer, srv, log)
 
 	go authenticator.WatchRevocations(ctx)
 
@@ -284,11 +286,21 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	if v := os.Getenv("FI_CH_PASSWORD"); v != "" {
 		c.Writer.Password = v
 	}
-	if v := os.Getenv("FI_GZIP_INFLIGHT_MIB"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			c.Server.GzipInflightMiB = n
-		} else {
-			log.Warn("ignoring invalid FI_GZIP_INFLIGHT_MIB", "value", v)
+	for _, o := range []struct {
+		env    string
+		target *int
+	}{
+		{"FI_INGEST_BUDGET_MIB", &c.Server.IngestBudgetMiB},
+		{"FI_OTLP_MAX_BODY_MIB", &c.Server.MaxBodyMiB},
+		{"FI_OTLP_MAX_CONNECTIONS", &c.Server.MaxConnections},
+		{"FI_GZIP_INFLIGHT_MIB", &c.Server.GzipInflightMiB}, // deprecated name of FI_INGEST_BUDGET_MIB
+	} {
+		if v := os.Getenv(o.env); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				*o.target = n
+			} else {
+				log.Warn("ignoring invalid "+o.env, "value", v)
+			}
 		}
 	}
 	if v := os.Getenv("FI_GRPC_ADDR"); v != "" {
@@ -375,19 +387,26 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	return nil
 }
 
-// runAdmin serves /healthz for container health checks.
-func runAdmin(addr string, w *chwriter.Writer, log *slog.Logger) {
+// ingestReporter is the part of the server /healthz reads.
+type ingestReporter interface {
+	IngestStats() server.IngestStats
+}
+
+// runAdmin serves /healthz for container health checks. The ingest budget's
+// use and the OTLP requests refused, by transport, reason and code, are in
+// the body only; they never change the status code.
+func runAdmin(addr string, w *chwriter.Writer, ingest ingestReporter, log *slog.Logger) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
 		s := w.Snapshot()
 		denom := s.BatchesInserted + s.BatchesFailed
 		if denom > 100 && s.BatchesFailed*2 > denom {
 			rw.WriteHeader(503)
-			_ = json.NewEncoder(rw).Encode(map[string]any{"status": "unhealthy", "stats": s})
+			_ = json.NewEncoder(rw).Encode(map[string]any{"status": "unhealthy", "stats": s, "ingest": ingest.IngestStats()})
 			return
 		}
 		rw.WriteHeader(200)
-		_ = json.NewEncoder(rw).Encode(map[string]any{"status": "ok", "stats": s})
+		_ = json.NewEncoder(rw).Encode(map[string]any{"status": "ok", "stats": s, "ingest": ingest.IngestStats()})
 	})
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

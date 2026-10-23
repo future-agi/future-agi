@@ -3,12 +3,12 @@ package server
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // otlpContentCoding reports whether the body is gzip-compressed, and false
@@ -36,51 +36,131 @@ func otlpContentCoding(h http.Header) (gzipped, ok bool) {
 }
 
 // errInflatedBodyTooLarge reports a body whose decompressed size passes the
-// 16 MiB OTLP/HTTP cap.
+// OTLP/HTTP body cap.
 var errInflatedBodyTooLarge = errors.New("decompressed body over size cap")
 
-// readOTLPHTTPBody reads the request body with limit applied twice, as the
+// readChunk is the unit a body of unknown length is read in, so that reading
+// it never needs a buffer that grows by copying.
+const readChunk = 64 << 10
+
+// readOTLPHTTPBody reads the request body with the cap applied twice, as the
 // upstream Collector's confighttp applies max_request_body_size: to the body
 // as sent (http.MaxBytesReader, a 413), and for gzip to the decompressed body
 // too (errInflatedBodyTooLarge, a 413).
 //
-// A gzip body is read off the wire in full before it touches the inflate
-// budget, so a slow or stalled upload holds a connection and its compressed
-// bytes, as a plain body does, but no lease. The lease is held from inflation
-// until the handler returns; the caller calls release.
-func readOTLPHTTPBody(w http.ResponseWriter, r *http.Request, gzipped bool, limit int64, budget *inflateBudget) (body []byte, release func(), err error) {
-	wire, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
-	if err != nil || !gzipped {
-		return wire, noRelease, err
+// Before it reads a byte it leases what reading can hold from the wire pool:
+//   - a plain body with a Content-Length: that length (read into a buffer of
+//     exactly that size);
+//   - a plain body without one: twice the cap (read in chunks, then joined);
+//   - gzip: the compressed body as above, plus the cap for the decompressed
+//     body. The first inflate pass only counts the output; the lease then
+//     shrinks to the compressed body plus the decompressed size, the second
+//     pass inflates into a buffer of exactly that size, and the compressed
+//     part is given back.
+//
+// The returned lease covers the returned body; the caller releases it when
+// the handler returns. The body must arrive within otlpReadTimeout of the
+// lease being granted.
+func (s *Server) readOTLPHTTPBody(w http.ResponseWriter, r *http.Request, gzipped bool) (body []byte, wire *lease, err error) {
+	limit := s.limits.maxBody
+	cl := r.ContentLength
+	if cl > limit {
+		return nil, nil, &http.MaxBytesError{Limit: limit}
 	}
-	return inflateGzip(r.Context(), wire, limit, budget)
+	wireNeed := 2 * limit
+	if cl >= 0 {
+		wireNeed = cl
+	}
+	if gzipped {
+		wireNeed = limit + limit
+		if cl >= 0 {
+			wireNeed = cl + limit
+		}
+	}
+	wire, err = s.wire.acquire(r.Context(), wireNeed)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Best effort: an in-process ResponseWriter (tests) has no deadline.
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(s.readTimeout))
+
+	in := http.MaxBytesReader(w, r.Body, limit)
+	var sent [][]byte // the body as sent, in one or more pieces
+	var sentLen int64
+	if cl >= 0 {
+		buf := make([]byte, cl)
+		if _, err = io.ReadFull(in, buf); err != nil {
+			wire.release()
+			return nil, nil, err
+		}
+		sent, sentLen = [][]byte{buf}, cl
+	} else {
+		if sent, sentLen, err = readChunks(in); err != nil {
+			wire.release()
+			return nil, nil, err
+		}
+	}
+	if !gzipped {
+		if len(sent) == 1 {
+			body = sent[0]
+		} else {
+			body = make([]byte, 0, sentLen)
+			for _, c := range sent {
+				body = append(body, c...)
+			}
+		}
+		wire.shrink(sentLen)
+		return body, wire, nil
+	}
+	body, err = inflateGzip(sent, limit, func(n int64) { wire.shrink(sentLen + readChunk + n) })
+	if err != nil {
+		wire.release()
+		return nil, nil, err
+	}
+	wire.shrink(int64(len(body))) // the compressed body is no longer referenced
+	return body, wire, nil
 }
 
-func noRelease() {}
+// readChunks reads r to the end in readChunk-sized pieces.
+func readChunks(r io.Reader) ([][]byte, int64, error) {
+	var chunks [][]byte
+	var total int64
+	for {
+		c := make([]byte, readChunk)
+		n, err := io.ReadFull(r, c)
+		if n > 0 {
+			chunks = append(chunks, c[:n])
+			total += int64(n)
+		}
+		switch {
+		case err == io.EOF || err == io.ErrUnexpectedEOF:
+			return chunks, total, nil
+		case err != nil:
+			return nil, 0, err
+		}
+	}
+}
+
+func multiReader(pieces [][]byte) io.Reader {
+	rs := make([]io.Reader, len(pieces))
+	for i, p := range pieces {
+		rs[i] = bytes.NewReader(p)
+	}
+	return io.MultiReader(rs...)
+}
 
 // inflateGzip decompresses a gzip body that is already in memory into a
-// buffer of exactly its decompressed size, leased from budget.
+// buffer of exactly its decompressed size.
 //
-// It reserves limit bytes before either inflate pass, but only after the
-// complete wire body has arrived. The first pass only counts the output,
-// stopping at limit+1 bytes; it allocates no decompressed buffer. A corrupt
-// stream is a 400 and an over-cap one a 413, and either error releases the
-// reservation. For a valid body, the lease shrinks to the exact decompressed
-// size, and the second pass inflates into a buffer of exactly that size. Thus
-// all decompression is under a lease, while the wire upload is not. The price
-// is decompressing an accepted body twice.
-//
-// The lease counts the decompressed body only. Decoding it into a request and
-// rows allocates more, for gzip and plain bodies alike.
-func inflateGzip(ctx context.Context, wire []byte, limit int64, budget *inflateBudget) ([]byte, func(), error) {
-	lease, err := budget.reserve(ctx, limit)
+// The first pass only counts the output, stopping at limit+1 bytes; it
+// allocates no decompressed buffer. A corrupt stream is a 400 and an over-cap
+// one a 413. For a valid body, sized is told the decompressed size before the
+// second pass inflates into a buffer of exactly that size. The price is
+// decompressing an accepted body twice.
+func inflateGzip(wire [][]byte, limit int64, sized func(n int64)) ([]byte, error) {
+	zr, err := gzip.NewReader(multiReader(wire))
 	if err != nil {
-		return nil, noRelease, errInflateBudgetBusy
-	}
-	zr, err := gzip.NewReader(bytes.NewReader(wire))
-	if err != nil {
-		lease.release()
-		return nil, noRelease, gzipBodyError(err)
+		return nil, gzipBodyError(err)
 	}
 	n, err := io.Copy(io.Discard, io.LimitReader(zr, limit+1))
 	if err == nil {
@@ -88,30 +168,27 @@ func inflateGzip(ctx context.Context, wire []byte, limit int64, budget *inflateB
 	}
 	switch {
 	case err != nil:
-		lease.release()
-		return nil, noRelease, gzipBodyError(err)
+		return nil, gzipBodyError(err)
 	case n > limit:
-		lease.release()
-		return nil, noRelease, errInflatedBodyTooLarge
+		return nil, errInflatedBodyTooLarge
 	case n == 0:
-		lease.release()
-		return []byte{}, noRelease, nil
+		sized(0)
+		return []byte{}, nil
 	}
 
-	lease.shrink(n)
+	sized(n)
 	body := make([]byte, n)
 	if err := gunzipExactly(zr, wire, body); err != nil {
-		lease.release()
-		return nil, noRelease, gzipBodyError(err)
+		return nil, gzipBodyError(err)
 	}
-	return body, lease.release, nil
+	return body, nil
 }
 
 // gunzipExactly inflates wire into body, which must be exactly its
 // decompressed size. The first pass already checked that size and the
 // checksums, so an error here means the two passes disagree.
-func gunzipExactly(zr *gzip.Reader, wire, body []byte) error {
-	if err := zr.Reset(bytes.NewReader(wire)); err != nil {
+func gunzipExactly(zr *gzip.Reader, wire [][]byte, body []byte) error {
+	if err := zr.Reset(multiReader(wire)); err != nil {
 		return err
 	}
 	if _, err := io.ReadFull(zr, body); err != nil {

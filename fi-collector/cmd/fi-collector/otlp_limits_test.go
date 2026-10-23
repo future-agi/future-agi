@@ -51,3 +51,23 @@ func TestApplyEnvOverridesGzipInflightMiB(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyEnvOverridesIngestLimits(t *testing.T) {
+	clearCollectorEnv(t)
+	t.Setenv("FI_INGEST_BUDGET_MIB", "300")
+	t.Setenv("FI_OTLP_MAX_BODY_MIB", "8")
+	t.Setenv("FI_GRPC_MAX_RECV_MIB", "12")
+	t.Setenv("FI_OTLP_MAX_CONNECTIONS", "lots")
+	var logs bytes.Buffer
+	cfg := rootConfig{}
+	if err := applyEnvOverrides(slog.New(slog.NewTextHandler(&logs, nil)), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	s := cfg.Server
+	if s.IngestBudgetMiB != 300 || s.MaxBodyMiB != 8 || s.GRPCMaxRecvMiB != 12 || s.MaxConnections != 0 {
+		t.Errorf("budget %d body %d recv %d conns %d; want 300 8 12 0", s.IngestBudgetMiB, s.MaxBodyMiB, s.GRPCMaxRecvMiB, s.MaxConnections)
+	}
+	if !strings.Contains(logs.String(), "FI_OTLP_MAX_CONNECTIONS") {
+		t.Errorf("an invalid value must be logged: %q", logs.String())
+	}
+}

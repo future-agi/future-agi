@@ -187,22 +187,45 @@ for models not in the litellm table. Custom model pricing is stored in the Djang
 (scoped by organization); the collector reads it on-demand and caches for 24 hours. When neither
 the litellm table nor custom pricing applies, the span's cost is 0.
 
-## Operational backpressure model
+## Ingest limits and backpressure
 
 ```
-SDK   ──HTTP/gRPC──►   fi-collector
-                        ├─ OTLP receiver       (default queue: 1K requests)
-                        ├─ memory_limiter      (hard ceiling — drops if exceeded)
-                        ├─ batch processor     (10K spans / 5s, whichever first)
-                        ├─ retry-on-failure    (exponential, max 5 min)
-                        └─ persistent queue    (disk-backed, survives restart)
-                                ▼
-                        ClickHouse 25.3 (async_insert=1 server-side batching)
+SDK ──OTLP/HTTP or gRPC──► fi-collector
+                            ├─ auth, quota, live-heap check     (nothing read yet)
+                            ├─ wire lease, then read the body   (capped; read deadline)
+                            ├─ scan the body, work lease        (limits; price of decode + rows)
+                            ├─ decode, convert, park the rows   (the rows keep their lease)
+                            └─ flush: inserts of a bounded size ─► ClickHouse 25.3
 ```
 
-If ClickHouse is briefly unavailable, the persistent queue absorbs the
-backlog. If memory crosses the limit, the receiver returns 429 and SDKs
-back off — no silent drops, no OOM crashes. Same pattern SigNoz uses.
+One budget bounds the memory that all OTLP requests (plain, gzip and gRPC)
+hold at once, from reading a body until ClickHouse has stored its rows. A
+request leases its body before reading it and the price of decoding and
+storing it (measured from the body before it is decoded) before decoding it.
+When the budget is full, requests wait their turn for up to 2 s, then get
+**503 + Retry-After** (HTTP) or **UNAVAILABLE** (gRPC), which OTLP exporters
+retry. A request that can never succeed (over a cap, too large for the whole
+budget, malformed) gets **413/400** or **INVALID_ARGUMENT**, which exporters
+do not retry. gRPC calls are authenticated before their message is read.
+
+| Setting | Default | What |
+|---|---|---|
+| `FI_INGEST_BUDGET_MIB` (`server.ingest_budget_mib`) | about half of the Go memory limit, less a fixed allowance | the budget. Without GOMEMLIMIT the collector sets the Go memory limit to 90% of its container's memory limit; with neither, the budget is 256 MiB. |
+| `FI_OTLP_MAX_BODY_MIB` (`server.otlp_max_body_mib`) | 16 | largest OTLP/HTTP body, as sent and after gzip decompression; lowered to fit a sixth of the budget |
+| `FI_GRPC_MAX_RECV_MIB` (`server.grpc_max_recv_mib`) | the body cap | largest OTLP/gRPC message |
+| `FI_OTLP_MAX_CONNECTIONS` (`server.otlp_max_connections`) | 1024 | open connections per listener |
+| `FI_GZIP_INFLIGHT_MIB` | | deprecated name of `FI_INGEST_BUDGET_MIB` |
+
+Per request, a body may also hold at most 65,536 spans, 10,000 ResourceSpans,
+1,048,576 attributes (array entries included), 64 KiB of resource attributes
+per ResourceSpans, attribute values nested at most 64 levels, and rows of at
+most 8 times the body cap once encoded for ClickHouse. The resolved limits
+are logged at startup ("ingest limits"), and `/healthz` reports the budget's
+use and the requests refused by transport, reason and code under `ingest`.
+
+If ClickHouse is slow or down, the pending rows keep their share of the
+budget until their inserts finish (or are dead-lettered), so new requests
+wait and then get 503 / UNAVAILABLE instead of growing memory.
 
 ## Migration relationship
 
