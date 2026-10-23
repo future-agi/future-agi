@@ -3,8 +3,8 @@ OTLP ingestion benchmark methodology
 
 This document states exactly what each number reported by ``otlpbench`` means,
 how it is measured, and which comparisons it does not support. It describes
-the tool, result schema ``fi.otlpbench.v3`` and publication schema
-``fi.otlpbench.publication.v1``. It is not a capacity claim: the TH-8687
+the tool, result schema ``fi.otlpbench.v4`` and publication schema
+``fi.otlpbench.publication.v2``. It is not a capacity claim: the TH-8687
 acceptance profiles (15,000 spans/s for 24 hours, 60,000 spans/s for 60 seconds)
 have **not** been run. The evidence section at the end lists only small runs,
 each labelled with where it ran.
@@ -39,14 +39,22 @@ and as a 1-second series in the telemetry stream (``run.json.telemetry.jsonl``).
         attempted = acknowledged + otlp_partial_rejected + whole_request_rejected + ambiguous
 
     is checked on every result. Every telemetry progress line keeps the same
-    identity with ``in_flight_spans`` added (``otlpbench publish --telemetry``
-    checks each line).
+    identity with ``in_flight_spans`` added, and the request identity with
+    ``in_flight_requests`` (``otlpbench publish --telemetry`` checks each line).
+    The in-flight counts are kept on their own (added when a request starts,
+    removed when it finishes), not derived from the outcome classes, so a
+    finished request missing from its class breaks the line's identity; the final
+    line must have nothing in flight.
 
 **Accepted** (``counters.acknowledged_spans``)
     The collector answered OTLP success, minus partial rejections. **This is not
     durability.** The fi-collector acknowledges an export when the rows enter its
     buffer, before the ClickHouse insert. A crash can lose every buffered row,
-    which the admission budget (``max_pending_rows``, 20,000 by default) bounds.
+    which an explicitly enabled admission budget (``max_pending_rows`` > 0) bounds.
+    The compatibility default is 0 (disabled): retained rows and crash loss have
+    no configured bound. With a positive budget, the buffer can exceed it by one
+    request that is larger than the whole budget
+    (admitted while the buffer is below the budget).
     The collector reports its insert mode on ``/healthz`` (``writer``). With
     ``async_insert`` the writer does not wait for the flush, so an acknowledged
     insert is not even a stored one.
@@ -128,11 +136,20 @@ Latency figures
   how late requests started, and how many started more than 10 ms (and more
   than 1 s) late.
 
-Every latency is a histogram with 1 ms buckets to 10 s and 1 s buckets to 24 h.
-A quantile is reported as its bucket's upper edge, capped at the exact
-maximum, so it is never below the true value and never above the max. Raw
-buckets are kept in the result for the read-visible upper bound and the durable
-lag.
+Every latency is a log-linear histogram over whole microseconds: exact below
+0.256 ms, then 128 sub-buckets per power of two up to 2^37 us (38 hours), so a
+bucket is at most 1/128 (0.79%) as wide as its lower edge. From 1 ms to 24 hours
+a reported quantile is within 0.79% of the value it stands for (the result's
+``latency_histogram`` states this). A quantile of a measured or upper-bound
+series is its bucket's upper edge, capped at the exact maximum, so it is never
+below the true value and never above the max. A quantile of a **lower-bound**
+series (``read_visible_lag_lower_bound_from_scheduled_send``, the durable lag
+``insert_lag_from_scheduled_send``, and the elapsed time of censored probe
+queries) is its bucket's lower edge, so it never overstates the bound. Raw
+buckets, with both edges, are kept in the result for the read-visible upper bound
+and the durable lag. The per-window read-visible summaries use the same
+histogram. The durable lag is bucketed server-side by SQL that a live test checks
+against the Go bucketing value by value.
 
 Clock offset
 ------------
@@ -192,7 +209,8 @@ For each fault the result reports:
 * the time from the fault's end to the first acknowledgement (100 ms
   resolution, an upper bound);
 * the pre-fault 95th percentile of buffered rows (the baseline), the peak, and
-  the time until the backlog was back at that baseline;
+  the time until the backlog was back at that baseline. This needs the collector's
+  ``/healthz`` (``--collector-health-url``; the recovery profile requires it);
 * the time until every acknowledged sentinel scheduled before the fault ended
   was visible, and how many never were;
 * the acknowledged-but-missing spans the exact-ID verification places in its
@@ -200,7 +218,9 @@ For each fault the result reports:
 
 The **recovery time** is the largest of the acknowledgement, backlog and
 sentinel figures. A fault counts as recovered only when all three were observed
-within the run.
+within the run: without backlog samples, or without a sample before the fault
+(no baseline), its drain is unknown and the fault is reported as not recovered,
+with that reason.
 
 A recovery run passes (``measured-recovery-complete``) only when all of these
 hold:
@@ -214,9 +234,11 @@ hold:
 Visible duplicates and ambiguous-but-persisted spans are reported, not hidden.
 
 ``acknowledged_loss_bound_rows`` is the number of faults times
-``max_pending_rows``, with its source. It is the most a crash can lose by the
+``max_pending_rows`` (plus one request when the requests are larger than the
+whole budget), with its source. It is the most a crash can lose by the
 collector's design. It is a statement to check a crash case against, not a
-measurement. Rows the writer dead-lettered are reported from ``/healthz``: they
+measurement. With row admission disabled no finite bound is reported.
+Rows the writer dead-lettered are reported from ``/healthz``: they
 are acknowledged and missing from ClickHouse until an operator replays them.
 
 Publication
@@ -232,15 +254,20 @@ structure. A publication contains:
 * all 24 disclosure fields, each marked captured, partial or not captured;
 * an explicit **Not measured** list, with the result's limitations and warnings.
 
-The headline, **verified sustained throughput**, is the acknowledged spans the
-exact-ID verification found stored, divided by the scheduled load duration. It
-is printed only when all of these hold; otherwise every reason is listed and no
-throughput figure appears:
+The headline is a **pass at the offered rate**, not a capacity figure: "sustained
+the offered N spans/s for D s (verified)". The rules below require every offered
+span to be started, acknowledged and found stored, so the only rate it can state
+is the offered one. Next to it, the publication gives one measured figure: the
+acknowledged spans divided by the measured load window (from the start of the
+load to the completion of its last export), which is at most the offered rate.
+The headline is printed only when all of these hold; otherwise every reason is
+listed and no throughput statement appears:
 
 * the run was executed;
 * it lasted at least ``--min-sustained`` (1 hour by default; the acceptance
   profile is 24 hours);
-* its verification completed with no missing and no unexpected span;
+* its verification completed with no missing and no unexpected span, and no
+  stored span of a refused request (each tested on its own);
 * it started and acknowledged the whole offered load;
 * every sentinel became visible;
 * it had no fault;
@@ -270,8 +297,9 @@ Comparisons this tool does not support
   * Arize reports a P50-only ingest-to-read figure that includes UI load
     (https://arize.com/docs/ax/concepts/adb/performance).
 
-  None of these is a per-span read-visible lag under sustained load from the
-  scheduled send.
+  These quoted figures do not establish an equivalent per-span read-visible
+  measurement from the scheduled send for this workload. They are not evidence
+  that the vendors lack such instrumentation.
 * **Do not compare runs across ClickHouse default changes.** CI pins
   25.3.14.14; insert deduplication and async-insert defaults differ in 26.2 and
   later.
@@ -317,8 +345,14 @@ against them.
 * Langfuse documents a manual four-step runbook for missing events
   (https://langfuse.com/faq/all/self-hosting-missing-events-after-ingestion).
 
-Evidence so far (small runs, 2026-10-22)
-----------------------------------------
+Historical v3 notes (small runs, 2026-10-22)
+-------------------------------------------
+
+The figures below are historical notes from v3, not validation of the current
+v4 implementation. The original complete test logs were not retained for every
+case; do not use these notes alone as release proof. Current evidence requires a
+fresh test log, result artifact and exact tested revision, including the latency
+schema. Hosted CI and full-scale acceptance profiles remain unverified here.
 
 These are functional measurements on a development machine (Apple M2 Pro), where
 the load average was 35 to 93 from unrelated jobs. They are not capacity

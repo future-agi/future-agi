@@ -84,10 +84,11 @@ From ``fi-collector``::
 The mock integration tests run the real receiver/converter/writer against a small
 in-memory **MOCK ClickHouse HTTP fixture** that emulates only the verification and
 probe queries. They verify protocol and accounting over every wire path, the
-backpressure and oversize cases, HTTP 429 with ``Retry-After`` from a throttling
+backpressure and larger-than-budget cases, HTTP 429 with ``Retry-After`` from a throttling
 proxy in front of the collector, the per-request decomposition of missing and
 refused-but-stored spans, resumable verification and the rejection of invalid or
-changing responses, the read-visible sentinel bracket and the backlog summary,
+changing responses, exactly K missing and J duplicate spans reported when a proxy
+drops K stored rows and stores J twice, the read-visible sentinel bracket and the backlog summary,
 the falsifiability of the insert lag (a forged ``created_at``, a skewed server
 clock, inserts before the scheduled send, a failing lag query), a 1.4 s collector
 stall at 1,000 spans/s timed from the actual and the scheduled send, a collector
@@ -98,7 +99,7 @@ throughput or production behaviour. To save the explicitly labelled artifact to 
     OTLPBENCH_MOCK_RESULT=/path/to/new/mock-result.json \
       go test ./pkg/ingestbench -run TestMockCollectorPipelineAndIndependentLossDetection -count=1
 
-Three opt-in real ClickHouse tests run the in-process real collector (PostgreSQL
+Five opt-in real ClickHouse tests run the in-process real collector (PostgreSQL
 authentication bypassed ONLY in this fixture) against an ALREADY provisioned
 isolated v2 schema. They never start/stop containers or create/delete tables, and
 leave their run-tagged rows for inspection. The normal suite skips them::
@@ -109,21 +110,34 @@ leave their run-tagged rows for inspection. The normal suite skips them::
     OTLPBENCH_LIVE_RESULT=/path/to/new/live-result.json \
     OTLPBENCH_LIVE_BACKPRESSURE_RESULT=/path/to/new/live-backpressure.json \
     OTLPBENCH_LIVE_RECOVERY_RESULT=/path/to/new/live-recovery.json \
+    OTLPBENCH_LIVE_TAMPER_RESULT=/path/to/new/live-tamper.json \
       go test ./pkg/ingestbench -count=1 -v \
-        -run '^(TestLiveClickHouseCollectorPipeline|TestLiveClickHouseBackpressureAccounting|TestLiveClickHouseRecovery)$'
+        -run '^TestLiveClickHouse'
+
 
 * ``TestLiveClickHouseCollectorPipeline``: 20 spans, multi-chunk verification,
   read-visible sentinels, the insert lag of all 20 stored spans, the clock probe,
   the settings, DDL-hash and storage provenance, and direct ClickHouse reads that
   must find the acknowledged data.
 * ``TestLiveClickHouseBackpressureAccounting``: a real collector with a 16-row
-  budget (the in-process equivalent of ``FI_MAX_PENDING_ROWS=16``) over HTTP
-  protobuf, HTTP JSON+gzip and gRPC+gzip. Load must produce whole-request 503 /
+  budget (the in-process equivalent of ``FI_MAX_PENDING_ROWS=16``) whose span
+  inserts are held 300 ms by a proxy (a slow database), over HTTP protobuf, HTTP
+  JSON+gzip and gRPC+gzip. Load must produce whole-request 503 /
   ``RESOURCE_EXHAUSTED`` refusals, each with ``Retry-After`` / ``RetryInfo``,
-  counted as rejected; requests larger than the whole budget must be refused as
-  non-retryable 413 / ``INVALID_ARGUMENT`` without a retry hint, exactly once each.
-  Independent verification must find every acknowledged span, no refused span and
-  attribute every missing span to a rejection.
+  counted as rejected. Of two requests larger than the whole budget, the first
+  meets an empty buffer and must be acknowledged and stored; the second meets the
+  first still in flight (inserts held 2 s) and must be refused as retryable, with
+  a retry hint. Independent verification must find every acknowledged span, no
+  refused span and attribute every missing span to a rejection.
+* ``TestLiveClickHouseVerifierCountsDroppedAndDuplicatedSpans``: a proxy in front
+  of ClickHouse drops 3 rows of acknowledged spans and stores 3 spans twice (the
+  copy differs only in ``service_name``, an ORDER BY column, so no merge can
+  collapse it). The exact-ID SQL must report exactly 3 missing (acknowledged but
+  missing: data loss) and 3 duplicate rows despite an unchanged total row count,
+  and must not certify the run.
+* ``TestLiveClickHouseLatencyBucketsMatchGo``: the durable lag's server-side SQL
+  bucketing must put every probe value (bucket edges, powers of two, the clamp)
+  in the same bucket as the Go histogram.
 * ``TestLiveClickHouseRecovery``: 160 spans per case. The real collector is
   restarted gracefully in the middle of the load; separately, every writer request
   to ClickHouse is held for 1.5 s against a 24-row budget. Every acknowledged span
@@ -139,7 +153,7 @@ passing live test is functional integration evidence, NOT a capacity benchmark.
 The ``otlp-benchmark-smoke`` job in ``.github/workflows/fi-collector-ci.yml``
 provisions one disposable, pinned ClickHouse 25.3.14.14 container on the hosted CI
 runner (2 CPUs/2 GiB), applies the actual canonical spans SQL and the existing
-curated-table DDL, runs the three live tests under ``-race``, requires an explicit
+curated-table DDL, runs the five live tests under ``-race``, requires an explicit
 PASS of each (including the three backpressure and two recovery sub-tests) rather
 than a skip, publishes the smoke result (its headline must be withheld) and
 uploads the JSON results and the publication. It deletes only its uniquely named CI Compose project and
@@ -219,9 +233,12 @@ Collector settings each profile needs
 -------------------------------------
 
 The collector refuses whole requests when its pending plus in-flight rows would
-exceed ``server.max_pending_rows`` / ``FI_MAX_PENDING_ROWS`` (default 20,000):
+exceed a positive ``server.max_pending_rows`` / ``FI_MAX_PENDING_ROWS``. The
+compatibility default is 0 (row admission disabled, unbounded retained rows).
+Explicitly size and enable the budget for isolated bounded runs. When enabled:
 HTTP 503 with ``Retry-After`` or gRPC ``RESOURCE_EXHAUSTED`` with ``RetryInfo``.
-A request larger than the whole budget is refused as non-retryable (413 /
+A request larger than the whole budget is admitted only while the buffer is below
+the budget (collectors that predate this rule refuse it as non-retryable 413 /
 ``INVALID_ARGUMENT``). A capacity run against an undersized budget therefore
 measures the budget, not the storage path. The scripts cannot change the
 collector; they state the requirement and check it::
@@ -278,7 +295,10 @@ changes flags.
 The scheduler paces batches with bounded concurrent requests, not an unbounded
 work queue. Requests are built (span planning, text assembly, serialisation,
 compression) on GOMAXPROCS worker goroutines, in order, at most one second ahead
-of their scheduled dispatch. The result reports the build latency and how far
+of their scheduled dispatch. This holds for every wire path: a gRPC message is
+encoded (and gzip-compressed) by the build workers like an HTTP body, and the
+gRPC exporter sends those bytes as they are, so no transport's timed send or
+concurrency slot includes generator serialisation or compression. The result reports the build latency and how far
 behind schedule each dispatch was (``workload.dispatch_delay_behind_schedule``); a
 slow generator or collector shows as missed scheduled work (``attempted_spans <
 planned_spans``) and a growing dispatch delay. CPU-starved generators must not be
@@ -466,9 +486,15 @@ own client) and checks EVERY attempted span by BOTH deterministic IDs:
   finished, rechecked verification. An unfinished one reports
   ``scanned_attempted_spans`` and ``unscanned_attempted_spans`` (counted as missing)
   and decomposes the scanned part only; it concludes nothing.
-* **Budgets.** ``--verify-timeout`` (default: 10 minutes plus one second per
-  50,000 attempted spans, two seconds with the durable lag's extra query per chunk,
-  at most 48h; the sustained script uses 12h),
+* **Budgets.** ``--verify-timeout`` bounds the exact-ID verification (default: 10
+  minutes plus one second per 50,000 attempted spans, at most 48h; the sustained
+  script uses 12h). The durable lag's extra query per chunk has its own
+  ``--durable-lag-timeout`` (default: the size of the exact-ID budget; the
+  sustained script sets 12h) and never spends the exact-ID budget: the time its
+  queries take extends the exact-ID deadline, and when its own budget runs out the
+  durable lag stops with status ``errors`` while the exact-ID verification
+  carries on. ``durable_lag_timeout_seconds`` and ``durable_lag_elapsed_seconds``
+  record both;
   ``--verify-query-timeout`` (default: the larger of 30s and one second per 20,000
   chunk spans, at most 30 minutes; sent to ClickHouse as ``max_execution_time`` and
   enforced by a client deadline 10s later), ``--verify-max-memory`` (default 1 GiB
@@ -505,9 +531,14 @@ poll/query delay and neither is a commit timestamp. The insert lag
 (``verification.durable_lag``) is ClickHouse's ``created_at`` minus the scheduled
 send for every stored span, a lower bound on commit latency; ``--durable-lag=false``
 skips its one query per chunk. Unseen sentinels and query failures remain
-visible. Histograms have bounded memory: 1 ms upper-edge buckets to 10 s, 1 s
-above, quantiles capped at the exact maximum. Exact definitions:
-``METHODOLOGY.rst``.
+visible. Latency histograms have bounded memory (about 31 KiB each): log-linear
+over whole microseconds, exact below 0.256 ms and then 128 sub-buckets per power
+of two, so every bucket from 0.256 ms to 38 h is at most 0.79% wide relative to
+its lower edge (``latency_histogram`` in the result). A measured or upper-bound
+quantile is its bucket's upper edge capped at the exact maximum (never below the
+true value); a lower-bound series (the read-visible lower bound, the insert lag,
+censored probe elapsed times) reads lower edges (never above the true value).
+Exact definitions: ``METHODOLOGY.rst``.
 
 Direct ClickHouse reads
 -----------------------
@@ -532,7 +563,11 @@ separately with success/error counts, latency percentiles, rows returned, how
 many results were non-empty (``skipped-no-candidate`` when no acknowledged request
 was old enough in any round; a query cut off by the end of its phase is counted in
 ``window_censored_queries``, never as a success or an error, and the probe is
-``measured-with-censoring``, or ``window-censored`` when no query completed) and,
+``measured-with-censoring``, or ``window-censored`` when no query completed; how
+long each cut-off query had already run is kept in
+``censored_query_elapsed_lower_bound``, a right-censored lower bound on its
+latency: those are the slowest queries, so the successful latency alone
+understates the database's latency whenever any query was censored) and,
 for the trace and session probes, the payload text bytes each query read
 (``payload_text_bytes_read``). Results are aggregated
 server-side, so the latency covers reading the payload columns but not
@@ -576,7 +611,8 @@ Example STRUCTURE, deliberately not an invented working route::
 
 A request interrupted by normal load-window completion is counted in
 ``window_censored_requests`` (``measured-with-censoring``), not as a server error
-or a successful latency sample. An HTTP failure or a client timeout while the load
+or a successful latency sample; its elapsed time when cut off is kept in
+``censored_response_elapsed_lower_bound`` (a lower bound on its latency). An HTTP failure or a client timeout while the load
 window remains open is still an error. The harness does not seed dashboards or
 authenticate a browser; those are dependencies, not fabricated measurements.
 
@@ -584,8 +620,9 @@ Artifacts, provenance and resource measurements
 -----------------------------------------------
 
 ``--out run.json`` creates a new mode-0600 JSON result with schema
-``fi.otlpbench.v3`` (older results are refused by ``report`` and ``publish``
-because measurement meanings changed) and a separate ``run.json.telemetry.jsonl``
+``fi.otlpbench.v4`` (older results are refused by ``report`` and ``publish``
+because measurement meanings changed: v4 changed the latency histogram, the
+per-window lag summaries and the in-flight telemetry) and a separate ``run.json.telemetry.jsonl``
 stream. ``provenance`` records:
 
 * ``command_line``: the exact invocation with credential-like flag values,
@@ -616,15 +653,23 @@ stream. ``provenance`` records:
 run.json.telemetry.jsonl run.json`` renders the shareable form: stages, outcomes,
 verification with missing ranges, the latency table, backlog, recovery, the 24
 disclosure fields (captured, partial or not captured), a "Not measured" section,
-limitations and warnings. Its headline throughput is withheld, with every reason,
-unless the run is executed, at least ``--min-sustained`` long (default 1 hour),
-completely verified with nothing missing or unexpected, started and acknowledged
-all offered load, saw every sentinel and had no fault. A telemetry stream of
-another run is refused; each progress line's accounting identity is checked.
+limitations and warnings. Its headline is a pass at the offered rate, not a
+capacity figure: it states that the offered spans/s was sustained (verified), and
+the measured acknowledged spans/s over the actual load window (load start to the
+completion of the last export). It is withheld, with every reason, unless the run
+is executed, at least ``--min-sustained`` long (default 1 hour), completely
+verified with nothing missing or unexpected and no stored span of a refused
+request, started and acknowledged all offered load, saw every sentinel and had
+no fault. A telemetry stream of another run is refused. Each progress line's
+accounting identity is checked against in-flight spans and requests that the
+generator counts on their own (added when a request starts, removed when it
+finishes), not derived from the outcome classes, so a finished request missing
+from its class breaks the identity (and nothing may be in flight on the final
+line).
 
 First/last resource snapshots are in the main result; periodic resources (10s
 cadence, serial bounded queries) and 1s cumulative-counter samples (with in-flight
-spans) go to the stream. Every stream line has a schema version, run ID and kind.
+spans and requests) go to the stream. Every stream line has a schema version, run ID and kind.
 Do not commit unreviewed artifacts: URLs, queries, project names and
 machine/container labels can identify a private deployment even though credential
 headers are excluded. Per-node optional queries collect ClickHouse
@@ -723,8 +768,11 @@ LLM-observability vendors (vendor-published claims, not measurements here):
   https://clickhouse.com/blog/helicones-migration-from-postgres-to-clickhouse-for-advanced-llm-monitoring
 * OTLP response and retry semantics: https://opentelemetry.io/docs/specs/otlp/
 
-What this harness implements that the cited material does not describe, each
-covered by tests in this repository but NOT yet exercised at full scale:
+What this harness implements, each covered by tests in this repository but NOT
+yet exercised at full scale. This is a list of its features, not a claim that the
+tools and vendors above lack them: reading their public material leaves that
+unknown, and several (the testbed, Tempo vulture, Arize's benchmark) measure some
+of the same things in their own way.
 
 1. Every attempted span verified by both IDs in the real database, with exact
    distinct counts and visible duplicates, instead of item counters at a mock
@@ -732,10 +780,13 @@ covered by tests in this repository but NOT yet exercised at full scale:
 2. Missing spans attributed to the collector's own answer per request, so data loss
    (acknowledged but missing) is separated from load shedding (rejected) and from
    unknown outcomes, and stored-but-refused spans are caught.
-3. Retryable and non-retryable refusals counted with their retry hints, end to end
-   against a real collector driven into backpressure (CI case above).
-4. Database read latency (trace, session, filter) measured during load and after
-   settle, separately from application API latency.
+3. Retryable and non-retryable refusals classified by the OTLP retry rules and
+   counted with their retry hints; retryable refusals exercised end to end against
+   a real collector driven into backpressure (CI case above).
+4. Direct database read latency per probe type (trace, session, attribute filter),
+   during the sustained load and after settle, from the same run whose ingestion
+   is verified, reported separately from application API latency and with cut-off
+   queries kept as lower bounds.
 5. A machine-readable record of the command, generator, hardware, database
    topology, collector limits and system-under-test revision for every result.
 6. The same seeded workload over OTLP/HTTP protobuf, JSON and gRPC, with and

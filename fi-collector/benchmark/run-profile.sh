@@ -61,7 +61,7 @@ case "$profile" in
     rate=15000 batch=500 concurrency=16
     load=(--rate "$rate" --duration 3h --max-duration 3h --max-bytes 900000000000
       --batch-size "$batch" --concurrency "$concurrency" --settle 10m)
-    verify=(--verify-chunk 1000000 --verify-query-timeout 5m --verify-timeout 6h --verify-max-memory 4294967296
+    verify=(--verify-chunk 1000000 --verify-query-timeout 5m --verify-timeout 6h --durable-lag-timeout 6h --verify-max-memory 4294967296
       --direct-probe-interval 10s --direct-probe-min-age 30s --direct-probe-after-settle 20)
     read -r -a declared <<<"$BENCH_DECLARED_FAULTS"
     for fault in "${declared[@]}"; do verify+=(--declare-fault "$fault"); done ;;
@@ -108,8 +108,9 @@ cat >&2 <<EOF
 Collector settings this profile needs (set them on the collector under test;
 this script cannot change them):
   * FI_MAX_PENDING_ROWS (server.max_pending_rows) at least the required_pending_rows
-    printed below. The collector default is 20000, which the sustained and burst
-    profiles exceed; an undersized budget turns load into HTTP 503 / gRPC
+    printed below for a bounded run. The collector default is 0 (row admission
+    disabled); explicitly size and enable it for isolated runs. An undersized
+    budget turns load into HTTP 503 / gRPC
     RESOURCE_EXHAUSTED whole-request rejections that the result counts separately.
   * batch size $batch <= max_pending_rows. A larger request is admitted only while
     the collector's buffer is below the budget and otherwise refused as retryable
