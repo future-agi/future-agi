@@ -1769,6 +1769,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "AGENTCC_BASE_URL": "https://gateway.example.test",
         "AGENTCC_API_KEY": "harness-virtual-key",
         "SIMULATOR_STT_PROVIDER": "deepgram",
+        "HARNESS_SUB_ACTORS": "1",
     }
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
@@ -1814,6 +1815,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
+    assert client.sandbox.process.session_request.env["HARNESS_SUB_ACTORS"] == "1"
     assert job.conversation.messages.get().content.startswith("Build the test environment")
     assert "; fi &&" in client.sandbox.process.session_request.command
     # Authoring and call execution are distinct bounded phases. The sandbox must survive the
@@ -2863,7 +2865,7 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     gateway.client = client
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: {},
+        lambda: {"HARNESS_SUB_ACTORS": "1"},
     )
     barrier = Barrier(2)
 
@@ -2887,6 +2889,7 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     assert states == ["starting", "starting"]
     assert client.sandbox.process.sessions == [_CHAT_SESSION]
     assert "hosted_chat_entrypoint" in client.sandbox.process.session_request.command
+    assert client.sandbox.process.session_request.env["HARNESS_SUB_ACTORS"] == "1"
     assert client.deleted is False
 
 
