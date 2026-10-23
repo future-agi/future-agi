@@ -4,8 +4,8 @@
 # Proves, on this tree:
 #   1. 00_baseline.sh and 01_selftest.sh pass on this binary;
 #   2. the benchmark guard holds against the pin: interleaved runs of
-#      BenchmarkChatCompletion* from the pin and from this tree, judged by
-#      lib/bench_guard.py.
+#      BenchmarkChatCompletion* from the pin and from this tree, both built
+#      with this tree's Go toolchain, judged by lib/bench_guard.py.
 #
 # Usage: baseline_bench.sh <pin-sha>
 #        baseline_bench.sh release   the pin, allocation budget and unpinned
@@ -96,11 +96,19 @@ else
   bench=$GATE_HOME/bench
   rm -rf "$bench" && mkdir -p "$bench/pin-tree"
   git -C "$REPO" archive "$PIN" agentcc-gateway | tar -x -C "$bench/pin-tree"
-  if ! (cd "$bench/pin-tree/agentcc-gateway" && go test -c -o "$bench/pin.test" ./internal/server) ||
-     ! (cd "$GW" && go test -c -o "$bench/head.test" ./internal/server); then
-    echo "baseline_bench part 2: FAIL (could not build the benchmark binaries)"
+  # Both sides are built with this tree's Go (its go.mod toolchain under the
+  # default GOTOOLCHAIN=auto), not each with its own: the pin's go.mod may
+  # name an older Go, and a Go release moves allocs/op and ns/op on both
+  # sides (go1.26.10 adds one allocation per chat completion over go1.25.0),
+  # while the guard and its allocs budget measure the code.
+  bench_go=$(cd "$GW" && go env GOVERSION)
+  bench_go=${bench_go%% *}
+  if ! (cd "$bench/pin-tree/agentcc-gateway" && GOTOOLCHAIN=$bench_go go test -c -o "$bench/pin.test" ./internal/server) ||
+     ! (cd "$GW" && GOTOOLCHAIN=$bench_go go test -c -o "$bench/head.test" ./internal/server); then
+    echo "baseline_bench part 2: FAIL (could not build the benchmark binaries with $bench_go)"
     status=1
   else
+    echo "baseline_bench part 2: both sides built with $bench_go: $(go version "$bench/pin.test" | sed 's#^.*/##'), $(go version "$bench/head.test" | sed 's#^.*/##')"
     : >"$bench/pin.txt"; : >"$bench/head.txt"
     run_side() { # side dir
       (cd "$2/internal/server" && "$bench/$1.test" -test.run '^$' -test.bench '^BenchmarkChatCompletion' \

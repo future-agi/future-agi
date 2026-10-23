@@ -8,7 +8,12 @@
 #
 #   CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w"
 #
-# -s -w are the Dockerfile's flags, so the binary is the one the image ships.
+# -trimpath and -s -w are the Dockerfile's flags, and the Dockerfile compiles
+# with go.mod's toolchain. Run with GOTOOLCHAIN set to that toolchain, as the
+# release workflow runs it, the binary is byte-identical to the image's
+# /app/agentcc-gateway for the same commit and platform (-buildvcs=false
+# changes nothing there: the image's build context has no .git). Another Go
+# release gives other bytes.
 # SOURCE_DATE_EPOCH is fixed (the caller's, else the last commit's time, else
 # 315532800): the Go toolchain embeds no timestamp, and the variable pins any
 # step that would. GOOS and GOARCH pass through (default: the host's).

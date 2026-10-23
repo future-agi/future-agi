@@ -12,6 +12,9 @@ scn_up
 
 ORG=$SCN_ORG
 SONNET='{"model":"anthropic/claude-sonnet-5.5","messages":[{"role":"user","content":"hi"}]}'
+# A stream's usage chunk goes only to a client that asks for it (OpenAI's
+# stream_options.include_usage contract).
+SONNET_USAGE='{"model":"anthropic/claude-sonnet-5.5","stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}'
 GPT4O='{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}'
 GRANTED=5
 BILLED=0 # USD billed so far, from x-agentcc-cost and streamed usage.cost
@@ -96,8 +99,9 @@ scn_org_config "$ORG" '{"managed_models":{"enabled":true}}'
 scn_check "8. a managed stream is billed, and shows the billed cost, not the upstream's"
 balance_before=$(balance)
 charged=$(scn_charges)
-scn_assert_eq 8.status 200 "$(scn_stream "$SONNET")"
+scn_assert_eq 8.status 200 "$(scn_stream "$SONNET_USAGE")"
 scn_assert_eq 8.ends_with_done '[DONE]' "$(scn_json 'd[-1]')"
+scn_assert_eq 8.one_usage_chunk_before_done 1,True "$(scn_json '"%d,%s" % (len([c for c in d if isinstance(c, dict) and not c.get("choices")]), isinstance(d[-2], dict) and d[-2].get("choices") == [])')"
 scn_assert_eq 8.final_usage_cost 0.00567 "$(scn_json '[c for c in d if isinstance(c, dict) and c.get("usage")][-1]["usage"]["cost"]')"
 add_billed 0.00567
 scn_assert_eq 8.upstream_charge_micros 5400 "$(( $(scn_charges) - charged ))"

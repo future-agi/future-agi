@@ -6,7 +6,11 @@
 #      cannot pass by matching nothing: the capability catalog, capability
 #      core, embeddings, server-tool, egress and probe acceptance tests, and
 #      the wiring and integration rows. The capability core runs on the test
-#      Redis (TEST_REDIS_ADDR) under -race.
+#      Redis (TEST_REDIS_ADDR) under -race, and so does the Redis cache
+#      backend case (TEST_CACHE_REDIS_ADDR, TEST_CACHE_REDIS_DB): a response
+#      cached for one org is never served to another org or to a request with
+#      no org (TestBackendMatrix_ExactNeverCrossesOrgs/redis, which must PASS,
+#      not skip).
 #   2. Scenarios: 06_capmock.sh, 07_capability_core.sh, 10_embeddings.sh,
 #      04_server_tools.sh (a BYOK Anthropic fixture with
 #      web_search_requests=3 estimates $0.03 plus tokens) and 71_probe.sh,
@@ -22,10 +26,11 @@
 #      supplies the base commit), which runs call_order_seams.sh and the earlier checks.
 #
 # Usage: capability_core.sh   (set BENCH_BASELINE to the base commit unless GATE_SKIP_EARLIER=1)
-# Environment: SCN_REDIS, SCN_REDIS_DB (required); BENCH_BASELINE, and PIN and
-# MOVE_COMMIT for mcp_seams.sh (required unless GATE_SKIP_EARLIER=1); GATE_HOME;
-# GATE_DJANGO_TEST and GATE_DJANGO_MANAGE (mcp_seams.sh's parts 4 and 5 need both);
-# GATE_SKIP_EARLIER.
+# Environment: SCN_REDIS, SCN_REDIS_DB (required; TEST_REDIS_ADDR and then
+# TEST_CACHE_REDIS_ADDR default to SCN_REDIS, both on DB SCN_REDIS_DB); BENCH_BASELINE,
+# and PIN and MOVE_COMMIT for mcp_seams.sh (required unless GATE_SKIP_EARLIER=1);
+# GATE_HOME; GATE_DJANGO_TEST and GATE_DJANGO_MANAGE (mcp_seams.sh's parts 4 and 5
+# need both); GATE_SKIP_EARLIER.
 # Exit status: 0 when every part passes, 1 otherwise.
 set -u
 
@@ -110,12 +115,18 @@ REST=("${CATALOG_TESTS[@]}" "${CORE_ROUTE_TESTS[@]}" "${EMBEDDING_TESTS[@]}" "${
 (cd "$GW" && env -u AGENTCC_MCP_STATE_KEYS go test ./... -run "^($(join "${REST[@]}"))\$" -count=1 -v &&
   go test ./cmd/agentcc-capmock/... ./catalog/... -count=1) >"$p1" 2>&1
 rc1=$?
-(cd "$GW" && TEST_REDIS_ADDR=${TEST_REDIS_ADDR:-$SCN_REDIS} TEST_REDIS_DB=$SCN_REDIS_DB \
-  go test -race ./internal/capability/... -run "^($(join "${CORE_TESTS[@]}"))\$" -count=1 -v) >"$p1r" 2>&1
+# The Redis cache backend case reads only TEST_CACHE_REDIS_ADDR and
+# TEST_CACHE_REDIS_DB (opt-in, apart from TEST_REDIS_ADDR); without them it
+# skips, which the SKIP check below turns into a FAIL.
+CACHE_REDIS=(TestBackendMatrix_ExactNeverCrossesOrgs TestBackendMatrix_ExactNeverCrossesOrgs/redis)
+(cd "$GW" && export TEST_REDIS_ADDR=${TEST_REDIS_ADDR:-$SCN_REDIS} TEST_REDIS_DB=$SCN_REDIS_DB &&
+  export TEST_CACHE_REDIS_ADDR=${TEST_CACHE_REDIS_ADDR:-$TEST_REDIS_ADDR} TEST_CACHE_REDIS_DB=$SCN_REDIS_DB &&
+  go test -race ./internal/capability/... -run "^($(join "${CORE_TESTS[@]}"))\$" -count=1 -v &&
+  go test -race ./internal/plugins/cache/ -run '^TestBackendMatrix_ExactNeverCrossesOrgs$' -count=1 -v) >"$p1r" 2>&1
 rc2=$?
-if [ $rc1 -eq 0 ] && [ $rc2 -eq 0 ] && expect_passed "$p1" "${REST[@]}" && expect_passed "$p1r" "${CORE_TESTS[@]}" &&
-  ! grep -q -- "--- SKIP" "$p1r"; then
-  echo "capability_core part 1: PASS ($((${#REST[@]} + ${#CORE_TESTS[@]})) named tests, none skipped on Redis)"
+if [ $rc1 -eq 0 ] && [ $rc2 -eq 0 ] && expect_passed "$p1" "${REST[@]}" &&
+  expect_passed "$p1r" "${CORE_TESTS[@]}" "${CACHE_REDIS[@]}" && ! grep -q -- "--- SKIP" "$p1r"; then
+  echo "capability_core part 1: PASS ($((${#REST[@]} + ${#CORE_TESTS[@]})) named tests and the Redis cache backend case, none skipped on Redis)"
 else
   echo "capability_core part 1: FAIL (exit $rc1/$rc2; logs $p1 $p1r)"
   grep -E -- "^(--- FAIL|FAIL|panic)" "$p1" "$p1r" | head -20
