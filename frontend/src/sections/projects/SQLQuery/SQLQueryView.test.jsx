@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import SQLQueryView from "./SQLQueryView";
 import { sqlApi } from "./api";
+import { closeSnackbar, enqueueSnackbar } from "notistack";
 
 const editorState = vi.hoisted(() => ({ provider: null }));
 vi.mock("@monaco-editor/react", () => ({
@@ -38,7 +39,10 @@ vi.mock("src/hooks/useDashboards", () => ({
 vi.mock("src/auth/hooks", () => ({
   useAuthContext: () => ({ user: { id: "owner" } }),
 }));
-vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+vi.mock("notistack", () => ({
+  enqueueSnackbar: vi.fn(),
+  closeSnackbar: vi.fn(),
+}));
 vi.mock("./api", () => ({
   errorMessage: (error) => error.message,
   sqlApi: {
@@ -226,5 +230,43 @@ describe("SQL workbench page", () => {
     await waitFor(() => expect(sqlApi.run).toHaveBeenCalledTimes(1));
     // The estimate opens no dialog (the E2E flow asserts none is open).
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it("inserts a vetted example in one click and offers Undo", async () => {
+    sqlApi.catalog.mockResolvedValue({
+      ...schema,
+      examples: [
+        {
+          id: "cost-tokens-by-model",
+          title: "Cost and tokens by model",
+          description: "Spans, total tokens and total cost per model.",
+          sql: "SELECT model, count() AS span_count\nFROM spans\nGROUP BY model",
+          datasets: ["spans"],
+        },
+      ],
+    });
+    renderPage();
+    const editor = await screen.findByLabelText("SQL query editor");
+    const typed = editor.value;
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Use example: Cost and tokens by model",
+      }),
+    );
+    expect(editor.value).toBe(
+      "SELECT model, count() AS span_count\nFROM spans\nGROUP BY model",
+    );
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "Inserted example: Cost and tokens by model",
+      expect.objectContaining({ action: expect.any(Function) }),
+    );
+    // Run stays the same single control the E2E flow clicks.
+    expect(
+      screen.getAllByRole("button", { name: "Run query", exact: true }),
+    ).toHaveLength(1);
+    const { action } = enqueueSnackbar.mock.calls.at(-1)[1];
+    render(action("snack-1"));
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(editor.value).toBe(typed);
+    expect(closeSnackbar).toHaveBeenCalledWith("snack-1");
   });
 });

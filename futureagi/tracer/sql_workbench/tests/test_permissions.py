@@ -339,6 +339,17 @@ def test_catalog_api_and_saved_api_are_scoped_and_no_store(tenants):
         "eval_results",
         "derived_metrics",
     }
+    # The vetted example gallery travels with the catalog it was written for.
+    from tracer.sql_workbench.examples import EXAMPLES
+
+    gallery = response.data["examples"]
+    assert [item["id"] for item in gallery] == [example.id for example in EXAMPLES]
+    assert len(gallery) >= 12
+    for item in gallery:
+        assert item["title"] and item["description"] and item["sql"]
+        assert set(item["datasets"]) <= {
+            entry["name"] for entry in response.data["datasets"]
+        }
     response = view(
         api_request(
             actor,

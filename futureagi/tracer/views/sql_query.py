@@ -37,6 +37,7 @@ from tracer.sql_workbench.catalog import (
     catalog,
 )
 from tracer.sql_workbench.compiler import MAX_RESULT_ROWS, UnsafeQuery
+from tracer.sql_workbench.examples import examples
 from tracer.sql_workbench.runner import QueryUnavailable, derived_metrics_availability
 
 
@@ -111,6 +112,8 @@ class SQLQueryViewSet(SQLViewMixin, ViewSet):
                     reason,
                     service.eval_results_unavailable_reason(project),
                 ),
+                # Vetted examples: ordinary SQL, compiled and scoped like any query.
+                "examples": list(examples()),
                 "max_rows": MAX_RESULT_ROWS,
                 "max_window_days": 31,
                 "can_save": can_save,

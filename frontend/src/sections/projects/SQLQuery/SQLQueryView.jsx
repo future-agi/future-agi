@@ -23,11 +23,12 @@ import {
 } from "@mui/material";
 import { useDashboardList } from "src/hooks/useDashboards";
 import { useAuthContext } from "src/auth/hooks";
-import { enqueueSnackbar } from "notistack";
+import { closeSnackbar, enqueueSnackbar } from "notistack";
 import { errorMessage, sqlApi } from "./api";
 import useSQLExecution from "./useSQLExecution";
 import QueryResults from "./QueryResults";
 import QueryEstimate from "./QueryEstimate";
+import QueryExamples from "./QueryExamples";
 
 const INITIAL_SQL =
   "SELECT model, count() AS spans, sum(total_tokens) AS tokens\nFROM spans\nGROUP BY model\nORDER BY spans DESC";
@@ -115,6 +116,30 @@ export default function SQLQueryView() {
       sql,
       start: new Date(end.getTime() - hours * 3600000).toISOString(),
       end: end.toISOString(),
+    });
+  };
+  // An example replaces the editor text and starts a new, unsaved query, so
+  // saving it never overwrites the saved query that was open. Undo restores.
+  const applyExample = (example) => {
+    const previous = { sql, selected, chart };
+    setSQL(example.sql);
+    setSelected(null);
+    setChart({ type: "table" });
+    enqueueSnackbar(`Inserted example: ${example.title}`, {
+      action: (key) => (
+        <Button
+          size="small"
+          color="inherit"
+          onClick={() => {
+            setSQL(previous.sql);
+            setSelected(previous.selected);
+            setChart(previous.chart);
+            closeSnackbar(key);
+          }}
+        >
+          Undo
+        </Button>
+      ),
     });
   };
   const insert = (text) => {
@@ -315,6 +340,11 @@ export default function SQLQueryView() {
                 </List>
               </Box>
             ))}
+            <QueryExamples
+              examples={catalog?.examples}
+              datasets={catalog?.datasets}
+              onUse={applyExample}
+            />
             <Divider sx={{ my: 1 }} />
             <Typography variant="overline" sx={{ px: 2 }}>
               Saved queries

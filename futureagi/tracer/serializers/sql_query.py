@@ -78,10 +78,19 @@ class SQLDatasetSerializer(serializers.Serializer):
     columns = SQLColumnSerializer(many=True)
 
 
+class SQLExampleSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    title = serializers.CharField()
+    description = serializers.CharField()
+    sql = serializers.CharField()
+    datasets = serializers.ListField(child=serializers.CharField())
+
+
 class SQLCatalogSerializer(serializers.Serializer):
     identity_semantics = serializers.CharField()
     version = serializers.IntegerField()
     datasets = SQLDatasetSerializer(many=True)
+    examples = SQLExampleSerializer(many=True)
     max_rows = serializers.IntegerField()
     max_window_days = serializers.IntegerField()
     can_save = serializers.BooleanField()

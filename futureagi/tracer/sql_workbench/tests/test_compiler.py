@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
@@ -11,6 +11,7 @@ from tracer.sql_workbench.compiler import (
     UnsafeQuery,
     compile_query,
 )
+from tracer.sql_workbench.examples import EXAMPLES
 
 
 @pytest.fixture
@@ -777,3 +778,69 @@ WINDOW_REJECTIONS = [
 def test_windows_outside_the_reviewed_set_are_rejected(query, scope):
     with pytest.raises(UnsafeQuery):
         compile_query(query, scope)
+
+
+# ---------------------------------------------------------------------------
+# Example gallery: every vetted example is ordinary user SQL that compiles
+# with each physical source scoped (live values: test_analytics_clickhouse).
+
+GALLERY_TOPICS = {
+    "cost-tokens-by-model",
+    "latency-percentiles-by-day",
+    "error-rate-by-day",
+    "slowest-traces",
+    "sessions-per-user",
+    "eval-score-by-evaluator-and-locale",
+    "annotation-agreement",
+    "derived-metric-over-time",
+    "lowest-scoring-sessions",
+    "costly-users-ranked",
+    "sampled-vs-all-by-model",
+    "retention-cohorts",
+}
+
+
+def _gallery_scope():
+    end = datetime(2026, 10, 21, tzinfo=UTC)
+    return Scope(
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        end - timedelta(days=7),
+        end,
+        (uuid4(), uuid4()),
+        "tracer_eval_logger_v2",
+        "analytics",
+        True,
+    )
+
+
+def test_the_gallery_covers_the_documented_analyses():
+    from tracer.sql_workbench.compiler import validate
+    from tracer.sql_workbench.examples import examples
+
+    ids = [example.id for example in EXAMPLES]
+    assert len(ids) == len(set(ids)) >= 12
+    assert GALLERY_TOPICS <= set(ids)
+    for example, wire in zip(EXAMPLES, examples(), strict=True):
+        assert wire["sql"] == example.sql and wire["id"] == example.id
+        assert wire["datasets"] == sorted(
+            {table.name for table in validate(example.sql)[1]}
+        )
+
+
+@pytest.mark.parametrize(
+    "example",
+    EXAMPLES,
+    ids=lambda example: example.id,
+)
+def test_every_gallery_example_compiles_fully_scoped(example):
+    scope = _gallery_scope()
+    compiled = compile_query(example.sql, scope)
+    tree = sqlglot.parse_one(compiled, read="clickhouse")
+    assert tree.args["limit"].expression.this == str(MAX_RESULT_ROWS + 1)
+    physical = [t for t in tree.find_all(exp.Table) if t.db]
+    assert physical and all(t.db == "analytics" for t in physical)
+    # No catalog name survives as a table: each became a scoped subquery.
+    assert not any(t.name in COLUMNS for t in tree.find_all(exp.Table) if not t.db)
+    assert f"toUUID('{scope.project_id}')" in compiled

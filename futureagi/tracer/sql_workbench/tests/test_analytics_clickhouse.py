@@ -871,3 +871,234 @@ def test_a_run_waits_out_brief_contention_for_the_principal(
     print(
         f"principal contention: {len(retries)} retries, run finished in {waited:.2f} s"
     )
+
+
+# ---------------------------------------------------------------------------
+# Example gallery: every vetted example runs through the production path and
+# returns exactly what Python computes from the owned seed rows.
+
+
+def _quantile(values, level):
+    """ClickHouse ``quantile`` on fewer than 8,192 values: linear interpolation."""
+    ordered = sorted(values)
+    index = max(0.0, min(len(ordered) - 1.0, level * (len(ordered) - 1)))
+    left = int(index)
+    if left + 1 == len(ordered):
+        return float(ordered[left])
+    return ordered[left] * (left + 1 - index) + ordered[left + 1] * (index - left)
+
+
+def _span_end(span):
+    return span.start + timedelta(milliseconds=span.latency)
+
+
+def _gallery_oracles(tenant):
+    """Expected (columns, rows, ordered) per example id; floats rounded like SQL."""
+    spans, evals = tenant.spans, tenant.evals
+    users = {user: (external, seen) for user, external, seen in tenant.users}
+    sessions = {s: (external, locale) for s, external, _, locale in tenant.sessions}
+    configs = {name: str(config) for name, config in tenant.configs.items()}
+    by_model = _partitions(spans, lambda s: s.model)
+    by_day = _partitions(spans, lambda s: s.start.date().isoformat())
+    by_trace = _partitions(spans, lambda s: str(s.trace))
+    by_user = _partitions(spans, lambda s: s.user)
+    oracles = {}
+    oracles["cost-tokens-by-model"] = (
+        ["model", "span_count", "tokens", "total_cost"],
+        sorted(
+            (
+                [m, len(g), sum(s.tokens for s in g), round(sum(s.cost for s in g), 6)]
+                for m, g in by_model.items()
+            ),
+            key=lambda r: (-r[3], r[0]),
+        ),
+        True,
+    )
+    oracles["latency-percentiles-by-day"] = (
+        ["day", "span_count", "p50_ms", "p95_ms", "p99_ms"],
+        [
+            [d, len(g)]
+            + [_quantile([s.latency for s in g], q) for q in (0.5, 0.95, 0.99)]
+            for d, g in sorted(by_day.items())
+        ],
+        True,
+    )
+    oracles["error-rate-by-day"] = (
+        ["day", "span_count", "errors", "error_rate"],
+        [
+            [
+                d,
+                len(g),
+                sum(s.status == "ERROR" for s in g),
+                round(sum(s.status == "ERROR" for s in g) / len(g), 4),
+            ]
+            for d, g in sorted(by_day.items())
+        ],
+        True,
+    )
+    traces = [
+        [
+            t,
+            len(g),
+            round(
+                (max(map(_span_end, g)) - min(s.start for s in g)).total_seconds()
+                * 1000
+            ),
+            round(sum(s.cost for s in g), 6),
+        ]
+        for t, g in by_trace.items()
+    ]
+    oracles["slowest-traces"] = (
+        ["trace_id", "span_count", "duration_ms", "total_cost"],
+        sorted(traces, key=lambda r: (-r[2], r[0]))[:20],
+        True,
+    )
+    oracles["sessions-per-user"] = (
+        ["user_id", "external_user_id", "session_count", "span_count"],
+        [
+            [str(u), users[u][0], len({s.session for s in g}), len(g)]
+            for u, g in by_user.items()
+        ],
+        False,
+    )
+    groups = _partitions(
+        evals, lambda e: (configs[e["config"]], sessions[e["session"]][1])
+    )
+    oracles["eval-score-by-evaluator-and-locale"] = (
+        ["config_id", "locale", "results", "avg_score", "pass_rate"],
+        [
+            [
+                config,
+                locale,
+                len(g),
+                round(sum(e["score"] for e in g) / len(g), 4),
+                round(sum(e["passed"] for e in g) / len(g), 4),
+            ]
+            for (config, locale), g in groups.items()
+        ],
+        False,
+    )
+    passed_by_span = {e["span"]: e["passed"] for e in evals if e["target"] == "span"}
+    pairs = _partitions(
+        [(a["value"], passed_by_span[a["span"]]) for a in tenant.annotations],
+        lambda pair: pair,
+    )
+    total = sum(len(g) for g in pairs.values())
+    oracles["annotation-agreement"] = (
+        ["human_label", "eval_passed", "spans_compared", "share"],
+        [
+            [label, ok, len(g), round(len(g) / total, 4)]
+            for (label, ok), g in sorted(pairs.items())
+        ],
+        True,
+    )
+    oracles["derived-metric-over-time"] = (
+        ["metric_id", "window_start", "latest_value", "attempts"],
+        [
+            [str(tenant.metric), m["window_start"], m["value"], 1]
+            for m in sorted(tenant.metrics, key=lambda m: m["window_start"])
+        ],
+        True,
+    )
+    session_evals = [e for e in evals if e["target"] == "session"]
+    oracles["lowest-scoring-sessions"] = (
+        ["session_external_id", "locale", "results", "avg_score"],
+        sorted(
+            (
+                [
+                    sessions[e["session"]][0],
+                    sessions[e["session"]][1],
+                    1,
+                    round(e["score"], 4),
+                ]
+                for e in session_evals
+            ),
+            key=lambda r: (r[3], r[0]),
+        ),
+        True,
+    )
+    spend = {u: sum(s.cost for s in g) for u, g in by_user.items()}
+    ranks = {c: i + 1 for i, c in enumerate(sorted(set(spend.values()), reverse=True))}
+    oracles["costly-users-ranked"] = (
+        ["user_id", "total_cost", "span_count", "cost_rank", "cost_share"],
+        sorted(
+            (
+                [
+                    str(u),
+                    round(c, 6),
+                    len(by_user[u]),
+                    ranks[c],
+                    round(c / sum(spend.values()), 4),
+                ]
+                for u, c in spend.items()
+            ),
+            key=lambda r: r[3],
+        ),
+        True,
+    )
+    sampled = {
+        e["span"]: e["probability"]
+        for e in evals
+        if e["target"] == "span" and e["probability"] is not None
+    }
+    oracles["sampled-vs-all-by-model"] = (
+        ["model", "all_spans", "sampled_spans", "estimated_spans"],
+        [
+            [
+                m,
+                len(g),
+                sum(s.id in sampled for s in g),
+                round(sum(1 / sampled[s.id] for s in g if s.id in sampled), 4),
+            ]
+            for m, g in sorted(by_model.items())
+        ],
+        True,
+    )
+    cohorts = defaultdict(set)
+    for span in spans:
+        cohort = users[span.user][1].date()
+        cohorts[(cohort.isoformat(), (span.start.date() - cohort).days)].add(span.user)
+    oracles["retention-cohorts"] = (
+        ["cohort_day", "days_later", "active_users"],
+        [
+            [day, later, len(members)]
+            for (day, later), members in sorted(cohorts.items())
+        ],
+        True,
+    )
+    return oracles
+
+
+def _normalized(value):
+    """One comparable form for driver values: dates by day, times as UTC."""
+    if isinstance(value, float):
+        return round(value, 6)
+    if isinstance(value, datetime):
+        value = value if value.tzinfo else value.replace(tzinfo=UTC)
+        return value.astimezone(UTC).isoformat()
+    if isinstance(value, str) and len(value) >= 19 and value[10] == "T":
+        parsed = datetime.fromisoformat(value)
+        parsed = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC).isoformat()
+    if isinstance(value, str) and len(value) == 10 and value[4] == "-":
+        return value
+    return value
+
+
+def test_every_gallery_example_returns_the_expected_rows(live):
+    from tracer.sql_workbench.examples import EXAMPLES
+
+    oracles = _gallery_oracles(live.owned)
+    assert set(oracles) == {example.id for example in EXAMPLES}
+    for example in EXAMPLES:
+        columns, expected, ordered = oracles[example.id]
+        result = live.run(example.sql)
+        assert [c["name"] for c in result["columns"]] == columns, example.id
+        assert result["truncated"] is False, example.id
+        actual = [[_normalized(v) for v in row] for row in result["rows"]]
+        wanted = [[_normalized(v) for v in row] for row in expected]
+        if not ordered:
+            actual, wanted = sorted(actual, key=repr), sorted(wanted, key=repr)
+        assert actual == wanted, (example.id, actual, wanted)
+        # No foreign identifier or foreign-scale value leaks into any example.
+        assert "foreign" not in repr(result["rows"]), example.id
