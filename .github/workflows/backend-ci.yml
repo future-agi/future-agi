@@ -181,6 +181,16 @@ jobs:
           enable-cache: true
           cache-dependency-glob: futureagi/uv.lock
 
+      # The mock-gateway tests (agentcc/tests/test_openrouter_provisioning.py)
+      # build agentcc-gateway/cmd/agentcc-mockup offline. The runner's own Go
+      # is older than go.mod's go line, so install go.mod's Go; a host with no
+      # Go at all skips those tests.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agentcc-gateway/go.mod
+          cache: true
+          cache-dependency-path: agentcc-gateway/go.sum
+
       - name: Install ffmpeg (pydub reads recordings through ffprobe, as in the runtime image)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg xmlsec1
 

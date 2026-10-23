@@ -45,10 +45,11 @@
     },
     {
       "image": "futureagi/agentcc-gateway",
-      "budget_mb": 9,
+      "budget_mb": 11,
       "projected_mb": 8.0,
-      "measured_mb": 6.5,
-      "note": "projected 7.2 + 0.8: the static HEALTHCHECK probe (/usr/local/bin/healthcheck, 0.79 MB gzip on amd64; scratch has no shell or wget). fi-collector carries the same probe within its budget."
+      "measured_mb": 9.9,
+      "note": "projected 7.2 + 0.8: the static HEALTHCHECK probe (/usr/local/bin/healthcheck, 0.79 MB gzip on amd64; scratch has no shell or wget). fi-collector carries the same probe within its budget.",
+      "reason": "Raised from 9 to 11 on 2026-10-23: the gateway is now compiled with go.mod's toolchain (go1.26.10, the Go its release is built and tested with), whose binary of this code is 28.5 MB against 22.2 MB with go1.25. Measured as this check reads it, from a registry push of agentcc-gateway/Dockerfile's image (already -trimpath -ldflags=\"-s -w\", byte-identical to the release binary): 9.9 MB compressed on linux/amd64 (9,945,515 bytes of layers), 8.9 MB on linux/arm64. The budget is the amd64 size plus 10%, rounded up to a whole MB."
     },
     {
       "image": "futureagi/serving",
