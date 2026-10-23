@@ -28,6 +28,13 @@ def controlled_sampling_clock(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def immediate_closed_freeze(settings):
+    # These DB-contract tests seed and freeze at one controlled instant. The
+    # ingestion/replication settle margin has dedicated tests below.
+    settings.EVAL_SAMPLING_CLOSED_SETTLE_SECONDS = 0
+
+
+@pytest.fixture(autouse=True)
 def controlled_pending_source(monkeypatch):
     # Most engine tests model an unchanged source independently of delta pages.
     # The pending revalidation control flow/locks are real; CH integration tests
@@ -442,12 +449,21 @@ def test_cohort_snapshot_retains_original_scope_after_task_edit(
     assert EvalSamplingCohort.objects.filter(task=task).count() == 2
 
 
+@pytest.mark.parametrize(
+    "failure,status,text",
+    [
+        # A refused/reset connection is a genuine outage: retryable 503.
+        (ConnectionResetError, 503, "Narrow the window"),
+        # A generic runtime failure is a defect, not an outage: sanitized 500.
+        (RuntimeError, 500, "failed unexpectedly"),
+    ],
+)
 def test_preview_dependency_failure_is_sanitized(
-    auth_client, project, custom_eval_config
+    auth_client, project, custom_eval_config, failure, status, text
 ):
     with patch(
         "tracer.views.eval_sampling.preview_policy",
-        side_effect=RuntimeError("private SQL password"),
+        side_effect=failure("private SQL password"),
     ):
         response = auth_client.post(
             "/tracer/eval-task/sampling_preview/",
@@ -459,9 +475,9 @@ def test_preview_dependency_failure_is_sanitized(
             },
             format="json",
         )
-    assert response.status_code == 503
+    assert response.status_code == status
     assert "private SQL password" not in response.content.decode()
-    assert "Narrow the window" in response.content.decode()
+    assert text in response.content.decode()
 
 
 def test_generic_patch_policy_scope_resets_arrival_cursor(
@@ -930,3 +946,584 @@ def test_live_first_admission_classifies_all_changed_days_before_freezing_priori
         entry.observation_span_id
         for entry in EvalLogger.objects.filter(eval_task_id=str(task.id))
     } == {"ordinary-span", "rare-span"}
+
+
+def closed_stream(*, members=None, rows=None, hook=None):
+    members = members or [("session:one", "cell", 1, 1)]
+    rows = rows or [("span-1", "session:one", "", 0, False)]
+
+    def stream(sql, params):
+        if hook is not None:
+            hook("members" if "WHERE selected" in sql else "rows", "start")
+        yield members if "WHERE selected" in sql else rows
+        if hook is not None:
+            hook("members" if "WHERE selected" in sql else "rows", "end")
+
+    return stream
+
+
+def _other_connection(work):
+    """Run ``work`` on a separate PostgreSQL connection and return its error."""
+    from threading import Thread
+
+    from django.db import close_old_connections
+
+    errors = []
+
+    def run():
+        close_old_connections()
+        try:
+            work()
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            close_old_connections()
+
+    worker = Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(10)
+    assert not worker.is_alive(), "probe connection hung on a lock"
+    return errors
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("mode", ["closed", "live"])
+def test_no_transaction_or_task_lock_spans_a_clickhouse_stream(
+    project, custom_eval_config, monkeypatch, mode
+):
+    from django.db import connection, transaction
+
+    from tracer.models.custom_eval_config import CustomEvalConfig
+
+    assert connection.vendor == "postgresql", "Lock scope needs real PostgreSQL."
+    task = make_task(project, custom_eval_config, mode=mode)
+    stub_materialization(monkeypatch, task)
+    observed = []
+
+    def probe(kind, phase):
+        def edit_while_streaming():
+            with transaction.atomic():
+                EvalTask.objects.select_for_update(nowait=True).get(pk=task.pk)
+                CustomEvalConfig.objects.select_for_update(nowait=True).get(
+                    pk=custom_eval_config.pk
+                )
+                EvalTask.objects.filter(pk=task.pk).update(status="paused")
+
+        observed.append(
+            (
+                kind,
+                phase,
+                connection.in_atomic_block,
+                _other_connection(edit_while_streaming),
+            )
+        )
+
+    if mode == "closed":
+        stream = closed_stream(hook=probe)
+    else:
+        monkeypatch.setattr(
+            "tracer.services.eval_tasks.sampling.service.live_scan_windows",
+            lambda *_: iter(
+                [
+                    {
+                        "start": task.sampling_policy["window"]["start"],
+                        "end": timezone.now().isoformat(),
+                    }
+                ]
+            ),
+        )
+        rows = [[("span-1", "session:one", "cell", 0.5, True)]]
+
+        def stream(sql, params):
+            probe("proof" if "sp_new_units" in params else "rows", "start")
+            yield from live_stream(rows, params)
+            probe("proof" if "sp_new_units" in params else "rows", "end")
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.stream_query", stream
+    )
+    reconcile(task)
+    assert {kind for kind, *_ in observed} >= (
+        {"members", "rows"} if mode == "closed" else {"proof", "rows"}
+    )
+    # While ClickHouse is read, this pass holds no transaction and no task or
+    # evaluator row lock: an edit on another connection commits immediately.
+    assert all(not in_atomic and not errors for *_, in_atomic, errors in observed), (
+        observed
+    )
+    assert EvalTask.objects.get(pk=task.pk).status == "paused"
+    assert list(
+        EvalLogger.objects.filter(eval_task_id=str(task.id)).values_list(
+            "observation_span_id", flat=True
+        )
+    ) == ["span-1"]
+    assert EvalSamplingCohort.objects.get(task=task).lease_token is None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_lease_excludes_second_writer_and_takeover_discards_uncertified_freeze(
+    project, custom_eval_config, monkeypatch
+):
+    import uuid
+
+    from tracer.services.eval_tasks.sampling.errors import SamplingReconcileBusy
+    from tracer.services.eval_tasks.sampling.service import task_policy, unit_key
+
+    task = make_task(project, custom_eval_config)
+    stub_materialization(monkeypatch, task)
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.stream_query", closed_stream()
+    )
+    policy, version = task_policy(task, now=timezone.now())
+    holder = uuid.uuid4()
+    cohort = EvalSamplingCohort.objects.create(
+        task=task,
+        policy_version=version,
+        policy=policy,
+        frozen_at=timezone.now() - timedelta(hours=1),
+        lease_token=holder,
+        lease_expires_at=timezone.now() + timedelta(minutes=5),
+    )
+    EvalSamplingMember.objects.create(
+        cohort=cohort,
+        unit_key=unit_key("session:half-written"),
+        unit_id="session:half-written",
+        stratum="cell",
+        selected=True,
+        inclusion_probability=1,
+        population_size=1,
+    )
+    with pytest.raises(SamplingReconcileBusy):
+        reconcile(task)
+    cohort.refresh_from_db()
+    assert cohort.lease_token == holder and not cohort.complete
+    assert not EvalLogger.objects.filter(eval_task_id=str(task.id)).exists()
+    assert EvalTask.objects.get(pk=task.pk).continuous_cursor is None
+    # The holder died: its lease expires and its uncertified members are never
+    # read. The next pass discards them and freezes the whole cohort anew.
+    EvalSamplingCohort.objects.filter(pk=cohort.pk).update(
+        lease_expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    reconcile(task)
+    cohort.refresh_from_db()
+    assert cohort.complete and cohort.lease_token is None
+    assert cohort.frozen_at > timezone.now() - timedelta(minutes=5)
+    assert list(cohort.members.values_list("unit_id", flat=True)) == ["session:one"]
+    assert list(
+        EvalLogger.objects.filter(eval_task_id=str(task.id)).values_list(
+            "observation_span_id", flat=True
+        )
+    ) == ["span-1"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("interruption", ["lease", "edit"])
+def test_fenced_pass_stops_writing_after_lease_takeover_or_task_edit(
+    project, custom_eval_config, monkeypatch, interruption
+):
+    import uuid
+
+    from tracer.services.eval_tasks.reconciler import EvalTaskRevisionChanged
+    from tracer.services.eval_tasks.sampling.errors import SamplingLeaseLost
+
+    task = make_task(project, custom_eval_config)
+    stub_materialization(monkeypatch, task)
+    other = uuid.uuid4()
+
+    def interrupt(kind, phase):
+        if kind != "rows" or phase != "start":
+            return
+        if interruption == "lease":
+            EvalSamplingCohort.objects.filter(task=task).update(lease_token=other)
+        else:
+            EvalTask.objects.filter(pk=task.pk).update(
+                filters={"observation_type": ["llm"]}
+            )
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.stream_query",
+        closed_stream(hook=interrupt),
+    )
+    expected = SamplingLeaseLost if interruption == "lease" else EvalTaskRevisionChanged
+    with pytest.raises(expected):
+        reconcile(task)
+    cohort = EvalSamplingCohort.objects.get(task=task)
+    # Membership was certified before the interruption; nothing was written
+    # after it, and a lease owned by another worker is never released by us.
+    assert cohort.complete
+    assert not EvalLogger.objects.filter(eval_task_id=str(task.id)).exists()
+    assert EvalTask.objects.get(pk=task.pk).continuous_cursor is None
+    assert cohort.lease_token == (other if interruption == "lease" else None)
+
+
+def test_closed_freeze_waits_for_settle_margin_and_excludes_unsettled_arrivals(
+    project, custom_eval_config, monkeypatch, settings
+):
+    from tracer.services.eval_tasks.sampling.policy import parse_time
+
+    settings.EVAL_SAMPLING_CLOSED_SETTLE_SECONDS = 60
+    task = make_task(project, custom_eval_config)
+    stub_materialization(monkeypatch, task)
+    clock = [timezone.now()]
+    sleeps = []
+
+    def advance(seconds):
+        sleeps.append(seconds)
+        clock[0] += timedelta(seconds=seconds)
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.sampling_clock", lambda: clock[0]
+    )
+    monkeypatch.setattr("tracer.services.eval_tasks.sampling.service._sleep", advance)
+    snapshots = []
+
+    def stream(sql, params):
+        if "WHERE selected" in sql:
+            snapshots.append(params["sp_snapshot"])
+            yield [("session:one", "cell", 1, 1)]
+        else:
+            yield [("span-1", "session:one", "", 0, False)]
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.stream_query", stream
+    )
+    reconcile(task)
+    end = parse_time(task.sampling_policy["window"]["end"])
+    cohort = EvalSamplingCohort.objects.get(task=task)
+    assert sleeps and 0 < sum(sleeps) <= 120
+    assert clock[0] >= end + timedelta(seconds=120)
+    # Rows that arrived within the margin before the read are not counted, and
+    # in-window rows had at least the margin after the window end to arrive.
+    assert cohort.frozen_at == clock[0] - timedelta(seconds=60)
+    assert cohort.frozen_at >= end + timedelta(seconds=60)
+    assert snapshots == [cohort.frozen_at]
+    entry = EvalLogger.objects.get(eval_task_id=str(task.id))
+    assert (
+        entry.output_metadata["_task_selection"]["sampling"]["cohort_frozen_at"]
+        == cohort.frozen_at.isoformat()
+    )
+    # A certified cohort never waits again: later polls only expand members.
+    sleeps.clear()
+    reconcile(task)
+    assert sleeps == []
+
+
+@pytest.mark.parametrize("value", [-1, 3601, "15"])
+def test_settle_margin_setting_is_validated(settings, value):
+    from tracer.services.eval_tasks.sampling.service import closed_settle_margin
+
+    settings.EVAL_SAMPLING_CLOSED_SETTLE_SECONDS = value
+    with pytest.raises(ValueError, match="EVAL_SAMPLING_CLOSED_SETTLE_SECONDS"):
+        closed_settle_margin()
+
+
+def _preview(auth_client, project, policy, **extra):
+    return auth_client.post(
+        "/tracer/eval-task/sampling_preview/",
+        {"project": str(project.id), "sampling_policy": policy, **extra},
+        format="json",
+    )
+
+
+@pytest.mark.parametrize(
+    "error,status,text",
+    [
+        ("filter", 400, "cannot define a sampling population"),
+        ("oversized", 400, "'contact_id'"),
+        ("ceiling", 400, "row/byte ceiling"),
+        ("pressure", 503, "Narrow the window"),
+        ("unavailable", 503, "Narrow the window"),
+        ("network", 503, "Narrow the window"),
+        ("dropped", 503, "Narrow the window"),
+        ("server_busy", 503, "Narrow the window"),
+        ("server_defect", 500, "failed unexpectedly"),
+        ("bug", 500, "failed unexpectedly"),
+    ],
+)
+def test_preview_maps_failures_to_precise_statuses(
+    auth_client, project, custom_eval_config, monkeypatch, error, status, text
+):
+    from clickhouse_driver import errors as driver_errors
+    from django.core.cache import cache
+
+    from tracer.services.eval_tasks.sampling import errors
+
+    cache.clear()
+    policy = make_task(project, custom_eval_config).sampling_policy
+    policy.update(
+        sampling_unit="attribute",
+        unit_attribute={"key": "contact_id"},
+        group_by=[{"key": "locale"}],
+    )
+
+    def fail(sql, params):
+        if error == "oversized":
+            raise errors.classify_read_error(
+                RuntimeError("Code: 395. EVAL_SAMPLING_OVERSIZED_UNIT"), policy=policy
+            )
+        if error == "ceiling":
+            exc = RuntimeError("Code: 158. Limit for rows exceeded")
+            exc.code = 158
+            raise errors.classify_read_error(exc, policy=policy)
+        if error == "pressure":
+            raise errors.classify_read_error(TimeoutError("deadline"), policy=policy)
+        if error == "unavailable":
+            raise ConnectionRefusedError("private host detail")
+        if error == "network":
+            raise driver_errors.NetworkError("private host detail")
+        if error == "dropped":
+            # The native driver's error when the server closes mid-read.
+            raise EOFError("private host detail")
+        if error == "server_busy":
+            raise driver_errors.ServerException("private host detail", code=202)
+        if error == "server_defect":
+            # A server-side defect (here: an unknown identifier) is not an
+            # outage and must not be reported as one.
+            raise driver_errors.ServerException("private SQL detail", code=47)
+        raise TypeError("private SQL detail")
+        yield  # pragma: no cover - generator shape of stream_query
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.stream_query", fail
+    )
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.sampling_clock", timezone.now
+    )
+    if error == "filter":
+        monkeypatch.setattr(
+            "tracer.selectors.eval_tasks.row_resolver._build_sample_query",
+            lambda **_: (_ for _ in ()).throw(
+                ValueError("date_range must contain exactly two values")
+            ),
+        )
+    response = _preview(auth_client, project, policy)
+    body = response.content.decode()
+    assert response.status_code == status, body
+    assert text in body
+    assert "private" not in body
+
+
+def test_preview_rejects_a_statement_over_its_compiler_budget_as_a_client_error(
+    auth_client, project, custom_eval_config, monkeypatch
+):
+    from django.core.cache import cache
+
+    from tracer.services.eval_tasks.sampling import query
+
+    cache.clear()
+    # The real compiler and stream_query run; only the byte budget is lowered
+    # so an ordinary policy exceeds it. No statement may reach ClickHouse.
+    monkeypatch.setitem(query.READ_SETTINGS, "max_query_size", 64)
+    with patch(
+        "tracer.services.clickhouse.v2.query_service.get_v2_query_client"
+    ) as client:
+        response = _preview(
+            auth_client, project, make_task(project, custom_eval_config).sampling_policy
+        )
+    assert response.status_code == 400, response.content
+    assert "compiler budget" in response.content.decode()
+    client.assert_not_called()
+
+
+def test_preview_principal_and_time_filter_errors_are_client_errors(
+    auth_client, project, custom_eval_config
+):
+    from django.core.cache import cache
+
+    from tracer.services.filter_principal_context import FilterPrincipalContextError
+
+    cache.clear()
+    policy = make_task(project, custom_eval_config).sampling_policy
+    with patch("tracer.views.eval_sampling.preview_policy") as preview:
+        timed = _preview(
+            auth_client,
+            project,
+            policy,
+            filters={
+                "filters": [
+                    {
+                        "column_id": "start_time",
+                        "filter_config": {
+                            "filter_type": "datetime",
+                            "filter_op": "between",
+                            "filter_value": [
+                                "2026-10-01T00:00:00Z",
+                                "2026-10-02T00:00:00Z",
+                            ],
+                        },
+                    }
+                ]
+            },
+        )
+        with patch(
+            "tracer.views.eval_sampling.bind_request_my_annotations_principal",
+            side_effect=FilterPrincipalContextError("principal mismatch"),
+        ):
+            principal = _preview(auth_client, project, policy)
+    assert timed.status_code == 400 and "policy window" in timed.content.decode()
+    assert principal.status_code == 400
+    preview.assert_not_called()
+
+
+def test_preview_strips_hidden_task_window_before_reading(
+    auth_client, project, custom_eval_config
+):
+    from django.core.cache import cache
+
+    cache.clear()
+    policy = make_task(project, custom_eval_config).sampling_policy
+    seen = []
+
+    def preview(task, **_):
+        seen.append(task.filters)
+        return {"strata": []}
+
+    with patch("tracer.views.eval_sampling.preview_policy", side_effect=preview):
+        response = _preview(
+            auth_client,
+            project,
+            policy,
+            filters={
+                "date_range": ["2026-10-01T00:00:00Z", "2026-10-01T01:00:00Z"],
+                "date_preset": "custom",
+                "observation_type": ["llm"],
+            },
+        )
+    assert response.status_code == 200, response.content
+    assert seen == [{"observation_type": ["llm"], "project_id": str(project.id)}]
+
+
+def test_preview_guard_limits_concurrency_and_rate_per_actor(
+    auth_client, user, project, custom_eval_config, settings, monkeypatch
+):
+    from django.core.cache import cache
+
+    from tracer.services.eval_tasks.sampling.preview_guard import (
+        PreviewThrottled,
+        preview_slot,
+    )
+
+    cache.clear()
+    settings.EVAL_SAMPLING_PREVIEW_PER_MINUTE = 3
+    # One fixed minute bucket: the assertions never straddle a boundary.
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.preview_guard._clock",
+        lambda: 1_800_000_000.0,
+    )
+    policy = make_task(project, custom_eval_config).sampling_policy
+    actor = f"{project.organization_id}:{user.pk}"
+    with patch(
+        "tracer.views.eval_sampling.preview_policy", return_value={"strata": []}
+    ) as preview:
+        with preview_slot(actor):  # this actor already has a read in flight
+            busy = _preview(auth_client, project, policy)
+            with preview_slot(f"{project.organization_id}:someone-else"):
+                pass  # other actors are not blocked
+        first = _preview(auth_client, project, policy)
+        second = _preview(auth_client, project, policy)
+        third = _preview(auth_client, project, policy)
+    assert busy.status_code == 429 and "already running" in busy.content.decode()
+    assert int(busy["Retry-After"]) >= 1
+    assert first.status_code == 200 and second.status_code == 200
+    assert third.status_code == 429 and "per minute" in third.content.decode()
+    assert int(third["Retry-After"]) >= 1
+    assert preview.call_count == 2
+    with pytest.raises(PreviewThrottled, match="per minute"):
+        with preview_slot(actor):
+            pass
+
+
+def test_preview_guard_fails_closed_when_its_cache_is_unavailable(
+    auth_client, project, custom_eval_config
+):
+    policy = make_task(project, custom_eval_config).sampling_policy
+    with (
+        patch(
+            "tracer.services.eval_tasks.sampling.preview_guard.cache.add",
+            side_effect=ConnectionError("cache down"),
+        ),
+        patch("tracer.views.eval_sampling.preview_policy") as preview,
+    ):
+        response = _preview(auth_client, project, policy)
+    assert response.status_code == 503
+    preview.assert_not_called()
+
+
+def test_policy_task_saves_without_hidden_task_window(
+    auth_client, project, custom_eval_config
+):
+    policy = make_task(project, custom_eval_config).sampling_policy
+    created = auth_client.post(
+        "/tracer/eval-task/",
+        {
+            "project": str(project.id),
+            "name": "historical policy",
+            "run_type": "historical",
+            "sampling_rate": 100,
+            "sampling_policy": policy,
+            "evals": [str(custom_eval_config.id)],
+            "filters": {
+                "project_id": str(project.id),
+                "date_range": ["2026-10-01T00:00:00Z", "2026-10-01T01:00:00Z"],
+                "date_preset": "custom",
+            },
+        },
+        format="json",
+    )
+    assert created.status_code == 200, created.data
+    task = EvalTask.objects.get(pk=created.data["result"]["id"])
+    assert task.filters == {"project_id": str(project.id)}
+    # Older edit drawers always send a date range; it is neither stored nor
+    # treated as a population change for a policy task.
+    edited = auth_client.patch(
+        "/tracer/eval-task/update_eval_task/",
+        {
+            "eval_task_id": str(task.id),
+            "edit_type": "edit_rerun",
+            "name": "renamed",
+            "filters": {
+                "project_id": str(project.id),
+                "date_range": ["2026-10-05T00:00:00Z", "2026-10-06T00:00:00Z"],
+            },
+        },
+        format="json",
+    )
+    assert edited.status_code == 200, edited.data
+    task.refresh_from_db()
+    assert task.name == "renamed"
+    assert task.filters == {"project_id": str(project.id)}
+    timed = auth_client.patch(
+        f"/tracer/eval-task/{task.id}/",
+        {
+            "filters": {
+                "filters": [
+                    {
+                        "column_id": "created_at",
+                        "filter_config": {
+                            "filter_type": "datetime",
+                            "filter_op": "greater_than",
+                            "filter_value": "2026-10-01T00:00:00Z",
+                        },
+                    }
+                ]
+            }
+        },
+        format="json",
+    )
+    assert timed.status_code == 400
+    assert "policy window" in timed.content.decode()
+
+
+def test_stored_policy_task_with_hidden_window_fails_closed(
+    project, custom_eval_config
+):
+    from tracer.services.eval_tasks.sampling.policy import InvalidSamplingPolicy
+    from tracer.services.eval_tasks.sampling.service import task_policy
+
+    task = make_task(project, custom_eval_config)
+    EvalTask.objects.filter(pk=task.pk).update(
+        filters={"date_range": ["2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"]}
+    )
+    task.refresh_from_db()
+    with pytest.raises(InvalidSamplingPolicy, match="task date range"):
+        task_policy(task, now=timezone.now())
