@@ -274,16 +274,23 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// post-plugins (cost, credits, logging, otel, prometheus). Must be called
 	// before every return from the streaming loop. When detach is true, uses
 	// a background context so post-plugins run even after client disconnect.
-	finalizeStream := func(detach bool) *models.StreamChunk {
+	// It returns the stream's final chunk (empty choices, the billed usage,
+	// the metadata when asked for), or nil when the client gets none: it
+	// asked for neither usage nor metadata (wantsFinalStreamChunk), or the
+	// request's context ended (detach). usage is the usage the client sees,
+	// the one billed: the upstream's, or a managed stream's estimate when the
+	// upstream sent none (nil when neither is known).
+	finalizeStream := func(detach bool) (final *models.StreamChunk, usage *models.Usage) {
+		metered := lastUsage // nil is OK — means provider didn't send usage
+		if metered == nil {
+			metered = estimatedManagedStreamUsage(rc, &streamed)
+		}
 		rc.Response = &models.ChatCompletionResponse{
 			ID:      streamID,
 			Object:  "chat.completion",
 			Created: streamCreated,
 			Model:   rc.ResolvedModel,
-			Usage:   lastUsage, // nil is OK — means provider didn't send usage
-		}
-		if lastUsage == nil {
-			rc.Response.Usage = estimatedManagedStreamUsage(rc, &streamed)
+			Usage:   metered,
 		}
 		capture.applyTo(rc.Response)
 		pluginCtx := ctx
@@ -293,9 +300,55 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		h.engine.RunPostPlugins(pluginCtx, rc)
 		h.recordGenerationFor(rc)
 		if detach {
+			return nil, billedUsage(rc, metered)
+		}
+		if wantsFinalStreamChunk(rc) {
+			final = h.buildStreamingMetadataChunk(rc, streamID, streamCreated, metered)
+		}
+		return final, billedUsage(rc, metered)
+	}
+
+	// For a client that did not ask for usage, each choice's finish chunk
+	// waits for the upstream's end and goes out with the billed usage
+	// (finishHold). send writes every other chunk as it comes.
+	hold := newFinishHold(rc)
+	send := func(chunk models.StreamChunk) error {
+		release, held := hold.take(chunk)
+		for _, c := range release {
+			if err := sseWriter.WriteChunk(c); err != nil {
+				return err
+			}
+		}
+		if held {
 			return nil
 		}
-		return h.buildStreamingMetadataChunk(rc, streamID, streamCreated, lastUsage)
+		return sseWriter.WriteChunk(chunk)
+	}
+	writeHeld := func(usage *models.Usage) {
+		for _, c := range hold.drain(usage) {
+			if err := sseWriter.WriteChunk(c); err != nil {
+				slog.Warn("error writing held stream finish chunk",
+					"request_id", rc.RequestID,
+					"error", err,
+				)
+				return
+			}
+		}
+	}
+	// failStream ends the stream with apiErr's error event and no [DONE]
+	// (an upstream error, the deadline, a block mid-stream). A held finish
+	// chunk goes out first, in its place in the stream, with the billed
+	// usage, so the post-plugins then run before the error event; with
+	// nothing held the error event goes out first.
+	failStream := func(apiErr *models.APIError) {
+		if !hold.pending() {
+			sseWriter.WriteError(apiErr)
+			finalizeStream(false)
+			return
+		}
+		_, usage := finalizeStream(false)
+		writeHeld(usage)
+		sseWriter.WriteError(apiErr)
 	}
 
 	for {
@@ -313,20 +366,22 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			}
 			if chunk.Usage != nil {
 				lastUsage = chunk.Usage
-				chunk.Usage = clientStreamUsage(rc, chunk.Usage)
+				chunk.Usage = nil // metered, never forwarded (see the loop below)
 			}
 			capture.observe(chunk)
 			streamed.observe(chunk)
 
 			if streamChecker != nil {
 				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
-					blockStream(sseWriter, rc, res.Message)
-					finalizeStream(false)
+					failStream(markStreamBlocked(rc, res.Message))
 					return
 				}
 			}
 
-			if err := sseWriter.WriteChunk(chunk); err != nil {
+			if !clientGetsStreamChunk(chunk) {
+				continue
+			}
+			if err := send(chunk); err != nil {
 				slog.Warn("error writing stream chunk",
 					"request_id", rc.RequestID,
 					"error", err,
@@ -342,18 +397,23 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			if !ok && streamCutError(upstreamStreamCtx, rc) != nil {
 				// The deadline cut the stream; the provider closed it
 				// without an error. Never a [DONE] for a cut answer.
-				sseWriter.WriteError(streamCutError(upstreamStreamCtx, rc))
-				finalizeStream(false)
+				failStream(streamCutError(upstreamStreamCtx, rc))
 				return
 			}
 			if !ok {
 				// Stream complete — run final guardrail check. answered is
 				// set once the checker ended the stream with its error or
-				// its disclaimer.
+				// its disclaimer. A block's error event follows the held
+				// finish chunk, when there is one.
 				answered := false
+				var blockErr *models.APIError
 				if streamChecker != nil {
 					if res := streamChecker.Finish(streamCtx); res.Blocked {
-						blockStream(sseWriter, rc, res.Message)
+						blockErr = markStreamBlocked(rc, res.Message)
+						if !hold.pending() {
+							sseWriter.WriteError(blockErr)
+							blockErr = nil
+						}
 						answered = true
 					} else if res.Disclaimer != "" {
 						disclaimer := res.Disclaimer
@@ -366,7 +426,11 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 						answered = true
 					}
 				}
-				metadataChunk := finalizeStream(false)
+				metadataChunk, usage := finalizeStream(false)
+				writeHeld(usage)
+				if blockErr != nil {
+					sseWriter.WriteError(blockErr)
+				}
 				if !answered {
 					// The output checks the post-plugins ran on the assembled
 					// answer (a static rule, or an org's check) refused it:
@@ -396,9 +460,16 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			if len(chunk.Choices) > 0 && rc.ResolvedModel == "" {
 				rc.ResolvedModel = chunk.Model
 			}
+			// A provider's usage is metered here and never forwarded, on
+			// whatever chunk it rides: its usage chunk, its finish chunk (the
+			// Anthropic adapter), Bedrock Converse's metadata chunk (one
+			// empty choice and the usage), or every chunk (Gemini's
+			// cumulative usageMetadata). The client gets the billed usage
+			// once, from the gateway: on the final chunk when it asked
+			// (wantsFinalStreamChunk), else on the held finish chunk.
 			if chunk.Usage != nil {
 				lastUsage = chunk.Usage
-				chunk.Usage = clientStreamUsage(rc, chunk.Usage)
+				chunk.Usage = nil
 			}
 			capture.observe(chunk)
 			streamed.observe(chunk)
@@ -406,13 +477,17 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			// Run streaming guardrail check.
 			if streamChecker != nil {
 				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
-					blockStream(sseWriter, rc, res.Message)
-					finalizeStream(false)
+					failStream(markStreamBlocked(rc, res.Message))
 					return
 				}
 			}
 
-			if err := sseWriter.WriteChunk(chunk); err != nil {
+			// A chunk with no choice (the upstream's usage chunk) is metered
+			// above and not sent.
+			if !clientGetsStreamChunk(chunk) {
+				continue
+			}
+			if err := send(chunk); err != nil {
 				slog.Warn("error writing stream chunk",
 					"request_id", rc.RequestID,
 					"error", err,
@@ -423,41 +498,50 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 		case err, ok := <-errCh:
 			if ok && err != nil {
-				if apiErr, isAPI := err.(*models.APIError); isAPI {
-					sseWriter.WriteError(apiErr)
-				} else {
-					sseWriter.WriteError(models.ErrInternal(err.Error()))
+				apiErr, isAPI := err.(*models.APIError)
+				if !isAPI {
+					apiErr = models.ErrInternal(err.Error())
 				}
-				finalizeStream(false)
+				failStream(apiErr)
 				return
 			}
 
 		case <-ctx.Done():
-			// Client disconnected — streamCancel() in defer will stop guardrail goroutines.
-			// Drain remaining chunks to unblock the provider goroutine.
+			// The request's context ended before the upstream's stream did:
+			// the client disconnected, or a server-side timeout fired while
+			// it may still be reading (x-agentcc-request-timeout,
+			// x-agentcc-timeout, the org's or the model's timeout, the
+			// ceiling). streamCancel() in defer will stop guardrail
+			// goroutines. Drain remaining chunks to unblock the provider
+			// goroutine.
 			go func() {
 				for range chunks {
 				}
 			}()
 			// Run post-plugins synchronously with detached context to avoid
-			// data race with defer rc.Release() in the caller.
-			finalizeStream(true)
+			// data race with defer rc.Release() in the caller. A held finish
+			// chunk is then written, best effort, with the billed usage: a
+			// client still reading gets its finish_reason; for a client that
+			// is gone the write fails. The stream ends there, with neither
+			// [DONE] nor an error event.
+			_, usage := finalizeStream(true)
+			writeHeld(usage)
 			return
 		}
 	}
 }
 
-// blockStream ends a stream the streaming guardrail checker stopped: the
-// client gets the guardrail's error event (stream_blocked), and the request
-// records the block, so its log entry carries that status (403) and the
-// guardrail action. Called before finalizeStream runs the post-plugins.
-func blockStream(sse *streaming.SSEWriter, rc *models.RequestContext, message string) {
+// markStreamBlocked records that the streaming guardrail checker stopped the
+// stream, so its log entry carries that status (403) and the guardrail
+// action, and returns the error event the client gets (stream_blocked).
+// Called before finalizeStream runs the post-plugins.
+func markStreamBlocked(rc *models.RequestContext, message string) *models.APIError {
 	apiErr := models.ErrGuardrailBlocked("stream_blocked", message)
 	rc.Flags.GuardrailTriggered = true
 	rc.Flags.AnswerRefused = true
 	rc.SetMetadata("guardrail_action", "blocked")
 	rc.AddError(apiErr)
-	sse.WriteError(apiErr)
+	return apiErr
 }
 
 func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChunk, errCh <-chan error) (*models.StreamChunk, error) {

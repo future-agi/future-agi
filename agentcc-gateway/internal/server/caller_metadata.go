@@ -273,7 +273,7 @@ var reservedMetadataKeys = setOf(
 	"endpoint_type", "endpoint_format", "translation_drops",
 	"privacy_mode", "privacy_redacted", // the request's redaction mode comes from the org and the gateway, never the caller
 	"tools_requested", "tools_filtered",
-	"assistants_operation", "vector_stores_operation",
+	"assistants_operation", "vector_stores_operation", "files_operation",
 	"edge_cache", "edge_cache_control", "edge_cache_etag", "edge_cache_vary",
 	capability.MetaNoPerfDisclosure,
 )

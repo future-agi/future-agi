@@ -1408,7 +1408,10 @@ func TestChatCompletionStreaming_WritesFinalMetadataChunkBeforeDone(t *testing.T
 
 	srv := createAuthRequiredTestServerWithPlugins(t, mock.URL, &metadataPostPlugin{})
 
-	reqBody := `{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}],"stream":true}`
+	// The spec case: a client that asked for usage (stream_options) and for
+	// the gateway's metadata gets one final chunk with empty choices that
+	// carries both, right before [DONE] (OpenAI's include_usage contract).
+	reqBody := `{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}],"stream":true,"stream_options":{"include_usage":true}}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer sk-test-key-001")
@@ -1476,7 +1479,9 @@ func TestChatCompletionStreaming_OmitsFinalMetadataByDefault(t *testing.T) {
 
 	srv := createAuthRequiredTestServerWithPlugins(t, mock.URL, &metadataPostPlugin{})
 
-	reqBody := `{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}],"stream":true}`
+	// The client asks for usage, so the stream has its final chunk; without
+	// x-agentcc-include-metadata that chunk carries no agentcc_metadata.
+	reqBody := `{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}],"stream":true,"stream_options":{"include_usage":true}}`
 	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer sk-test-key-001")
@@ -1499,6 +1504,9 @@ func TestChatCompletionStreaming_OmitsFinalMetadataByDefault(t *testing.T) {
 
 	if len(dataLines) < 3 {
 		t.Fatalf("expected at least 3 data lines, got %d: %s", len(dataLines), body)
+	}
+	if !strings.Contains(dataLines[len(dataLines)-2], `"usage"`) {
+		t.Fatalf("the line before [DONE] is not the final usage chunk: %s", dataLines[len(dataLines)-2])
 	}
 	if strings.Contains(dataLines[len(dataLines)-2], `"agentcc_metadata"`) {
 		t.Fatalf("final chunk unexpectedly included agentcc_metadata: %s", dataLines[len(dataLines)-2])

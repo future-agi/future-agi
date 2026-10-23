@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -24,10 +25,20 @@ const (
 )
 
 // aclUpstream counts every request it is sent, on any path, except the
-// registry's connectivity check and model discovery (GET /v1/models).
+// registry's connectivity check and model discovery (GET /v1/models), and
+// keeps the body of the last one.
 type aclUpstream struct {
 	*httptest.Server
 	calls atomic.Int32
+	last  atomic.Pointer[[]byte]
+}
+
+// lastBody is the body of the last request the upstream was sent.
+func (u *aclUpstream) lastBody() []byte {
+	if b := u.last.Load(); b != nil {
+		return *b
+	}
+	return nil
 }
 
 func startACLUpstream(t *testing.T) *aclUpstream {
@@ -39,6 +50,8 @@ func startACLUpstream(t *testing.T) *aclUpstream {
 			_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
 			return
 		}
+		body, _ := io.ReadAll(r.Body)
+		u.last.Store(&body)
 		u.calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"x","object":"chat.completion","model":"m-chat","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))

@@ -872,6 +872,10 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 // that answers 200 is sent traffic. One whose control plane syncs keys is not
 // ready until its first key sync has loaded them: before that it knows only
 // its config.yaml keys, and would answer every key made in the app 401.
+// Until a list loads, the control plane's answer that its database has no key
+// table yet (AppHasNoKeyTable: no key made in the app) counts as one, so a
+// new install whose migrations run after the gateway is ready (the Helm
+// chart's post-install bootstrap job under `helm install --wait`) can finish.
 // Liveness (/healthz, /livez) does not wait.
 func (s *Server) readyHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -879,7 +883,7 @@ func (s *Server) readyHandler(w http.ResponseWriter, r *http.Request) {
 	case !s.ready.Load():
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte(`{"status":"not_ready"}`))
-	case s.waitForKeyList && !s.keyStore.KeyListLoaded():
+	case s.waitForKeyList && !s.keyStore.KeyListLoaded() && !s.keyStore.AppHasNoKeyTable():
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte(`{"status":"not_ready","reason":"waiting for the first key sync from the control plane"}`))
 	default:

@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/requestview"
@@ -28,7 +27,10 @@ const openAIProviderID = "openai"
 
 // resolveOpenAIProvider returns the org's own "openai" provider when it has
 // one configured, and otherwise the global one, which keys limited to their
-// org's providers may not use.
+// org's providers may not use. A global "openai" provider that is managed
+// (config.yaml managed: true, FutureAGI's credentials) never serves these
+// APIs, to any key: the gateway prices none of their usage, so managed
+// credentials serve only what it meters (501 not_supported).
 func (h *Handlers) resolveOpenAIProvider(ctx context.Context, rc *models.RequestContext) (providers.Provider, error) {
 	orgID, orgCfg := h.resolveOrgConfig(rc)
 	if orgID != "" && orgCfg != nil && h.orgProviderCache != nil {
@@ -49,6 +51,14 @@ func (h *Handlers) resolveOpenAIProvider(ctx context.Context, rc *models.Request
 	}
 
 	p, ok := h.registry.GetProvider(openAIProviderID)
+	if ok && h.registry.IsManaged(openAIProviderID) {
+		return nil, &models.APIError{
+			Status:  http.StatusNotImplemented,
+			Type:    models.ErrTypeServer,
+			Code:    "not_supported",
+			Message: fmt.Sprintf("this API is served only with your organization's own OpenAI key or the operator's; the managed provider %q does not serve it", openAIProviderID),
+		}
+	}
 	if !ok || h.orgProvidersOnly(ctx, rc) {
 		return nil, &models.APIError{
 			Status:  http.StatusNotImplemented,
@@ -61,13 +71,32 @@ func (h *Handlers) resolveOpenAIProvider(ctx context.Context, rc *models.Request
 	return p, nil
 }
 
-// resolveAssistantsProvider resolves the provider for an Assistants API request.
+// resolveAssistantsProvider resolves the provider for an Assistants API
+// request and applies the key's ACL before the provider is called, in chat's
+// order and with chat's refusals, on the model the request names, rc.Model
+// (an assistant's model, or a run's model override): a request a license
+// authorized is held to the "internal" access group, as on chat
+// (applyLicenseInternalGroup), then its access groups (keyAccessGroups,
+// which may resolve an alias in rc.Model), a model OpenAI does not serve
+// (assistantsModel; chat's answer for a model no provider serves), its
+// allowed providers (keyProviderACL), then its allowed models and access
+// groups (keyModelACL).
 func (h *Handlers) resolveAssistantsProvider(ctx context.Context, rc *models.RequestContext) (providers.AssistantsProvider, error) {
+	applyLicenseInternalGroup(ctx, rc)
+	if apiErr := h.keyAccessGroups(rc); apiErr != nil {
+		return nil, apiErr
+	}
+	if _, ok := assistantsModel(rc.Model); rc.Model != "" && !ok {
+		return nil, errModelNotAvailable(rc.Model)
+	}
 	provider, err := h.resolveOpenAIProvider(ctx, rc)
 	if err != nil {
 		return nil, err
 	}
 	if apiErr := h.keyProviderACL(rc); apiErr != nil {
+		return nil, apiErr
+	}
+	if apiErr := h.keyModelACL(rc); apiErr != nil {
 		return nil, apiErr
 	}
 
@@ -88,76 +117,39 @@ func (h *Handlers) resolveAssistantsProvider(ctx context.Context, rc *models.Req
 // ---------------------------------------------------------------------------
 
 func (h *Handlers) setupAssistantsRC(r *http.Request, operation string) *models.RequestContext {
-	rc := models.AcquireRequestContext()
-	rc.RequestID = models.GetRequestID(r.Context())
-	rc.TraceID = r.Header.Get("x-agentcc-trace-id")
-	rc.EndpointType = "assistants"
-	rc.Metadata["assistants_operation"] = operation
-	rc.Metadata["client_ip"] = middleware.ClientIP(r)
-
-	setAuthMetadataFromRequest(rc, r)
-	// Caller dimensions, from the x-agentcc-metadata header.
-	applyCallerMetadata(rc, r, nil)
-
-	// Peek key org_id before resolving org config (same as ChatCompletion).
-	h.peekKeyOrgID(rc)
-
-	// Resolve per-org config.
-	orgID, orgCfg := h.resolveOrgConfig(rc)
-	if orgID != "" {
-		rc.Metadata["org_id"] = orgID
-	}
-	h.applyOrgRoutingOverrides(orgCfg, rc)
-	h.applyOrgCacheOverrides(orgCfg, rc)
-	h.applyOrgRateLimitOverrides(orgCfg, rc)
-	h.applyOrgBudgetOverrides(orgCfg, rc)
-	h.applyOrgCostTrackingOverrides(orgCfg, rc)
-	h.applyOrgIPACLOverrides(orgCfg, rc)
-	h.applyOrgAlertingOverrides(orgCfg, rc)
-	h.applyOrgPrivacyOverrides(orgCfg, rc)
-	h.applyOrgToolPolicyOverrides(orgCfg, rc)
-	h.applyOrgAuditOverrides(orgCfg, rc)
-	h.applyOrgModelDatabaseOverrides(orgCfg, rc)
-	h.applyOrgModelMapOverrides(orgCfg, rc)
-
-	return rc
-}
-
-// ---------------------------------------------------------------------------
-// Helper: the checks on the request of a body proxied outside the pipeline
-// ---------------------------------------------------------------------------
-
-// checkProxiedRequest runs the checks on the request of a body the handler
-// proxies to the provider without the pipeline (the Assistants API, vector
-// store search): view reads the body in the chat shape. The key is
-// authenticated as the pipeline authenticates it (the auth plugin, which
-// writes the identity the guardrail plugin reads), and X-Guardrail-Policy
-// applies, as on chat; then the guardrail plugin's checks on the request run
-// (requestview's reader for the route), and a check's rewrite of the body
-// is in the body returned. A check that would block or rewrite a body the
-// gateway cannot read refuses it (request_unavailable), as on the routes
-// that pass a body through. On a refusal it writes the error and reports
-// false: the provider is never called. These routes have no request log
-// entry; the refusal is the client's 403.
-func (h *Handlers) checkProxiedRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, rc *models.RequestContext, view *requestview.View) ([]byte, bool) {
-	readGuardrailPolicyHeader(rc, r)
-	rc.PassThrough = view
-	if err := h.engine.RunRequestPlugins(ctx, rc, "auth", "guardrails"); err != nil {
-		models.WriteError(w, err)
-		return nil, false
-	}
-	return view.Body(), true
+	return h.setupPassedThroughRC(r, "assistants", operation)
 }
 
 // ---------------------------------------------------------------------------
 // Helper: proxy non-streaming Assistants request
 // ---------------------------------------------------------------------------
 
-func (h *Handlers) proxyAssistantsNonStream(w http.ResponseWriter, ctx context.Context, rc *models.RequestContext, ap providers.AssistantsProvider, method, upstreamPath string, body []byte, queryParams url.Values) []byte {
-	respBody, statusCode, respHeaders, err := ap.ProxyAssistantsRequest(ctx, method, upstreamPath, body, queryParams)
+// proxyAssistantsNonStream sends the request to the provider through the
+// pipeline (runPassedThrough) and passes its answer back as it is. view,
+// for a body the checks on the request read, is that body in the chat
+// shape; nil for a body they do not read, or none.
+func (h *Handlers) proxyAssistantsNonStream(w http.ResponseWriter, r *http.Request, ctx context.Context, rc *models.RequestContext, ap providers.AssistantsProvider, method, upstreamPath string, body []byte, view *requestview.View, queryParams url.Values) {
+	var respBody []byte
+	var respHeaders http.Header
+	statusCode := 0
+	err := h.runPassedThrough(ctx, r, rc, body, view, func(ctx context.Context, send []byte) (int, error) {
+		var callErr error
+		respBody, statusCode, respHeaders, callErr = ap.ProxyAssistantsRequest(ctx, method, upstreamPath, send, queryParams)
+		if callErr != nil {
+			return 0, callErr
+		}
+		if statusCode == 0 {
+			statusCode = http.StatusOK
+		}
+		return statusCode, nil
+	})
 	if err != nil {
 		models.WriteErrorFromError(w, err)
-		return nil
+		return
+	}
+	if statusCode == 0 {
+		models.WriteError(w, errNoPassedThroughAnswer())
+		return
 	}
 
 	h.setAgentccHeaders(w, rc)
@@ -172,25 +164,41 @@ func (h *Handlers) proxyAssistantsNonStream(w http.ResponseWriter, ctx context.C
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if statusCode == 0 {
-		statusCode = http.StatusOK
-	}
 	w.WriteHeader(statusCode)
 	w.Write(respBody)
-	return respBody
 }
 
 // ---------------------------------------------------------------------------
 // Helper: proxy streaming Assistants request (SSE relay)
 // ---------------------------------------------------------------------------
 
-func (h *Handlers) proxyAssistantsStream(w http.ResponseWriter, ctx context.Context, rc *models.RequestContext, ap providers.AssistantsProvider, upstreamPath string, body []byte) {
-	stream, _, respHeaders, err := ap.StreamAssistantsRequest(ctx, "POST", upstreamPath, body, nil)
+// proxyAssistantsStream opens the stream through the pipeline
+// (runPassedThrough) and relays it. The response plugins (the rate limits'
+// settlement, the request log) run once the stream has ended, whether it
+// ended or the client went away.
+func (h *Handlers) proxyAssistantsStream(w http.ResponseWriter, r *http.Request, ctx context.Context, rc *models.RequestContext, ap providers.AssistantsProvider, upstreamPath string, body []byte, view *requestview.View) {
+	var stream io.ReadCloser
+	var respHeaders http.Header
+	err := h.runPassedThrough(ctx, r, rc, body, view, func(ctx context.Context, send []byte) (int, error) {
+		s, _, hdr, callErr := ap.StreamAssistantsRequest(ctx, "POST", upstreamPath, send, nil)
+		if callErr != nil {
+			return 0, callErr
+		}
+		stream, respHeaders = s, hdr
+		return http.StatusOK, nil
+	})
 	if err != nil {
 		models.WriteErrorFromError(w, err)
 		return
 	}
+	if stream == nil {
+		models.WriteError(w, errNoPassedThroughAnswer())
+		return
+	}
 	defer stream.Close()
+	// The pipeline skips the response plugins of a stream; they run here,
+	// after the relay, with a context the client's leaving does not cancel.
+	defer h.engine.RunPostPlugins(context.WithoutCancel(ctx), rc)
 
 	h.setAgentccHeaders(w, rc)
 
@@ -270,6 +278,38 @@ func (h *Handlers) readAssistantsBody(w http.ResponseWriter, r *http.Request) ([
 	return body, true
 }
 
+// readAssistantsFields reads a body that may name a model or ask for a
+// stream as OpenAI reads it (models.ParseAssistantsBody). A body chat
+// refuses is refused here with chat's answer, before the provider is
+// resolved.
+func readAssistantsFields(w http.ResponseWriter, body []byte) (*models.AssistantsBody, bool) {
+	fields, err := models.ParseAssistantsBody(body)
+	if err != nil {
+		models.WriteErrorFromError(w, err)
+		return nil, false
+	}
+	return fields, true
+}
+
+// assistantsSendBody is the body sent for fields: with the model the key's
+// ACL was checked on (rc.Model, which an access group's alias may have
+// resolved), without an "openai/" prefix, as the only "model". A model
+// OpenAI does not serve is refused here too, as resolveAssistantsProvider
+// refuses it, so no other name is ever sent in its place.
+func assistantsSendBody(w http.ResponseWriter, rc *models.RequestContext, fields *models.AssistantsBody) ([]byte, bool) {
+	send, ok := assistantsModel(rc.Model)
+	if rc.Model != "" && !ok {
+		models.WriteError(w, errModelNotAvailable(rc.Model))
+		return nil, false
+	}
+	body, err := fields.WithModel(send)
+	if err != nil {
+		models.WriteError(w, models.ErrInvalidAssistantsBody(err.Error()))
+		return nil, false
+	}
+	return body, true
+}
+
 // ===========================================================================
 // Assistants CRUD: POST /v1/assistants, GET /v1/assistants, etc.
 // ===========================================================================
@@ -284,7 +324,14 @@ func (h *Handlers) CreateAssistant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	modelName := models.ExtractModelFromBody(body)
+	// The assistant's model, which the key's allowed models and access
+	// groups are checked against as on chat (resolveAssistantsProvider
+	// reads rc.Model).
+	fields, ok := readAssistantsFields(w, body)
+	if !ok {
+		return
+	}
+	rc.Model = fields.Model
 	timeout := h.resolveTimeout(rc, r)
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
@@ -295,17 +342,10 @@ func (h *Handlers) CreateAssistant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Replace model name with resolved (strip prefix).
-	if modelName != "" && rc.Model != modelName {
-		if replaced, replErr := models.ReplaceModelInBody(body, resolveModelNameForAssistants(modelName)); replErr == nil {
-			body = replaced
-		}
-	}
-	if body, ok = h.checkProxiedRequest(ctx, w, r, rc, requestview.Assistant(body)); !ok {
+	if body, ok = assistantsSendBody(w, rc, fields); !ok {
 		return
 	}
-
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", "/v1/assistants", body, nil)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "POST", "/v1/assistants", body, requestview.Assistant(body), nil)
 }
 
 // ListAssistants handles GET /v1/assistants.
@@ -331,7 +371,7 @@ func (h *Handlers) ListAssistants(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "GET", "/v1/assistants", nil, qp)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "GET", "/v1/assistants", nil, nil, qp)
 }
 
 // GetAssistant handles GET /v1/assistants/{assistant_id}.
@@ -356,7 +396,7 @@ func (h *Handlers) GetAssistant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "GET", "/v1/assistants/"+assistantID, nil, nil)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "GET", "/v1/assistants/"+assistantID, nil, nil, nil)
 }
 
 // UpdateAssistant handles POST /v1/assistants/{assistant_id}.
@@ -376,7 +416,13 @@ func (h *Handlers) UpdateAssistant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	modelName := models.ExtractModelFromBody(body)
+	// The assistant's new model, checked against the key's allowed models
+	// and access groups as on chat.
+	fields, ok := readAssistantsFields(w, body)
+	if !ok {
+		return
+	}
+	rc.Model = fields.Model
 	timeout := h.resolveTimeout(rc, r)
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
@@ -387,16 +433,10 @@ func (h *Handlers) UpdateAssistant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if modelName != "" {
-		if replaced, replErr := models.ReplaceModelInBody(body, resolveModelNameForAssistants(modelName)); replErr == nil {
-			body = replaced
-		}
-	}
-	if body, ok = h.checkProxiedRequest(ctx, w, r, rc, requestview.Assistant(body)); !ok {
+	if body, ok = assistantsSendBody(w, rc, fields); !ok {
 		return
 	}
-
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", "/v1/assistants/"+assistantID, body, nil)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "POST", "/v1/assistants/"+assistantID, body, requestview.Assistant(body), nil)
 }
 
 // DeleteAssistant handles DELETE /v1/assistants/{assistant_id}.
@@ -421,7 +461,7 @@ func (h *Handlers) DeleteAssistant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "DELETE", "/v1/assistants/"+assistantID, nil, nil)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "DELETE", "/v1/assistants/"+assistantID, nil, nil, nil)
 }
 
 // ===========================================================================
@@ -448,11 +488,7 @@ func (h *Handlers) CreateThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if body, ok = h.checkProxiedRequest(ctx, w, r, rc, requestview.Thread(body)); !ok {
-		return
-	}
-
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", "/v1/threads", body, nil)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "POST", "/v1/threads", body, requestview.Thread(body), nil)
 }
 
 // GetThread handles GET /v1/threads/{thread_id}.
@@ -477,7 +513,7 @@ func (h *Handlers) GetThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "GET", "/v1/threads/"+threadID, nil, nil)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "GET", "/v1/threads/"+threadID, nil, nil, nil)
 }
 
 // UpdateThread handles POST /v1/threads/{thread_id}.
@@ -507,7 +543,7 @@ func (h *Handlers) UpdateThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", "/v1/threads/"+threadID, body, nil)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "POST", "/v1/threads/"+threadID, body, nil, nil)
 }
 
 // DeleteThread handles DELETE /v1/threads/{thread_id}.
@@ -532,7 +568,7 @@ func (h *Handlers) DeleteThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "DELETE", "/v1/threads/"+threadID, nil, nil)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "DELETE", "/v1/threads/"+threadID, nil, nil, nil)
 }
 
 // ===========================================================================
@@ -566,11 +602,7 @@ func (h *Handlers) CreateMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if body, ok = h.checkProxiedRequest(ctx, w, r, rc, requestview.ThreadMessage(body)); !ok {
-		return
-	}
-
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", "/v1/threads/"+threadID+"/messages", body, nil)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "POST", "/v1/threads/"+threadID+"/messages", body, requestview.ThreadMessage(body), nil)
 }
 
 // ListMessages handles GET /v1/threads/{thread_id}/messages.
@@ -603,7 +635,7 @@ func (h *Handlers) ListMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "GET", "/v1/threads/"+threadID+"/messages", nil, qp)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "GET", "/v1/threads/"+threadID+"/messages", nil, nil, qp)
 }
 
 // GetMessage handles GET /v1/threads/{thread_id}/messages/{message_id}.
@@ -630,7 +662,7 @@ func (h *Handlers) GetMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "GET", "/v1/threads/"+threadID+"/messages/"+messageID, nil, nil)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "GET", "/v1/threads/"+threadID+"/messages/"+messageID, nil, nil, nil)
 }
 
 // UpdateMessage handles POST /v1/threads/{thread_id}/messages/{message_id}.
@@ -662,7 +694,7 @@ func (h *Handlers) UpdateMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", "/v1/threads/"+threadID+"/messages/"+messageID, body, nil)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "POST", "/v1/threads/"+threadID+"/messages/"+messageID, body, nil, nil)
 }
 
 // DeleteMessage handles DELETE /v1/threads/{thread_id}/messages/{message_id}.
@@ -689,7 +721,7 @@ func (h *Handlers) DeleteMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "DELETE", "/v1/threads/"+threadID+"/messages/"+messageID, nil, nil)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "DELETE", "/v1/threads/"+threadID+"/messages/"+messageID, nil, nil, nil)
 }
 
 // ===========================================================================
@@ -713,9 +745,16 @@ func (h *Handlers) CreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	modelName := models.ExtractModelFromBody(body)
-	isStream := models.ExtractStreamFromBody(body)
-	rc.IsStream = isStream
+	// The run's model override, checked against the key's allowed models
+	// and access groups as on chat. A run that names no model runs on its
+	// assistant's stored model, which is checked when the assistant is
+	// created or updated through the gateway (keyModelACL).
+	fields, ok := readAssistantsFields(w, body)
+	if !ok {
+		return
+	}
+	rc.Model = fields.Model
+	rc.IsStream = fields.Stream
 
 	timeout := h.resolveTimeout(rc, r)
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
@@ -727,29 +766,16 @@ func (h *Handlers) CreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if modelName != "" {
-		if replaced, replErr := models.ReplaceModelInBody(body, resolveModelNameForAssistants(modelName)); replErr == nil {
-			body = replaced
-		}
-	}
-
-	if body, ok = h.checkProxiedRequest(ctx, w, r, rc, requestview.Run(body)); !ok {
+	if body, ok = assistantsSendBody(w, rc, fields); !ok {
 		return
 	}
 
 	upstreamPath := "/v1/threads/" + threadID + "/runs"
 
-	if isStream {
-		h.proxyAssistantsStream(w, ctx, rc, ap, upstreamPath, body)
+	if fields.Stream {
+		h.proxyAssistantsStream(w, r, ctx, rc, ap, upstreamPath, body, requestview.Run(body))
 	} else {
-		respBody := h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", upstreamPath, body, nil)
-		// Extract usage for cost tracking.
-		if respBody != nil {
-			if usage := models.ExtractRunUsage(respBody); usage != nil {
-				rc.Metadata["prompt_tokens"] = fmt.Sprintf("%d", usage.PromptTokens)
-				rc.Metadata["completion_tokens"] = fmt.Sprintf("%d", usage.CompletionTokens)
-			}
-		}
+		h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "POST", upstreamPath, body, requestview.Run(body), nil)
 	}
 }
 
@@ -782,7 +808,7 @@ func (h *Handlers) ListRuns(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "GET", "/v1/threads/"+threadID+"/runs", nil, qp)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "GET", "/v1/threads/"+threadID+"/runs", nil, nil, qp)
 }
 
 // GetRun handles GET /v1/threads/{thread_id}/runs/{run_id}.
@@ -809,14 +835,7 @@ func (h *Handlers) GetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respBody := h.proxyAssistantsNonStream(w, ctx, rc, ap, "GET", "/v1/threads/"+threadID+"/runs/"+runID, nil, nil)
-	// Extract usage from completed run for cost tracking on polling.
-	if respBody != nil {
-		if usage := models.ExtractRunUsage(respBody); usage != nil {
-			rc.Metadata["prompt_tokens"] = fmt.Sprintf("%d", usage.PromptTokens)
-			rc.Metadata["completion_tokens"] = fmt.Sprintf("%d", usage.CompletionTokens)
-		}
-	}
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "GET", "/v1/threads/"+threadID+"/runs/"+runID, nil, nil, nil)
 }
 
 // UpdateRun handles POST /v1/threads/{thread_id}/runs/{run_id}.
@@ -848,7 +867,7 @@ func (h *Handlers) UpdateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", "/v1/threads/"+threadID+"/runs/"+runID, body, nil)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "POST", "/v1/threads/"+threadID+"/runs/"+runID, body, nil, nil)
 }
 
 // CancelRun handles POST /v1/threads/{thread_id}/runs/{run_id}/cancel.
@@ -875,7 +894,7 @@ func (h *Handlers) CancelRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", "/v1/threads/"+threadID+"/runs/"+runID+"/cancel", nil, nil)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "POST", "/v1/threads/"+threadID+"/runs/"+runID+"/cancel", nil, nil, nil)
 }
 
 // ===========================================================================
@@ -919,7 +938,7 @@ func (h *Handlers) ListRunSteps(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "GET", "/v1/threads/"+threadID+"/runs/"+runID+"/steps", nil, qp)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "GET", "/v1/threads/"+threadID+"/runs/"+runID+"/steps", nil, nil, qp)
 }
 
 // GetRunStep handles GET /v1/threads/{thread_id}/runs/{run_id}/steps/{step_id}.
@@ -955,7 +974,7 @@ func (h *Handlers) GetRunStep(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.proxyAssistantsNonStream(w, ctx, rc, ap, "GET", "/v1/threads/"+threadID+"/runs/"+runID+"/steps/"+stepID, nil, qp)
+	h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "GET", "/v1/threads/"+threadID+"/runs/"+runID+"/steps/"+stepID, nil, nil, qp)
 }
 
 // ===========================================================================
@@ -972,9 +991,14 @@ func (h *Handlers) CreateThreadAndRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	modelName := models.ExtractModelFromBody(body)
-	isStream := models.ExtractStreamFromBody(body)
-	rc.IsStream = isStream
+	// The run's model override, checked against the key's allowed models
+	// and access groups as on chat (a run that names none: CreateRun).
+	fields, ok := readAssistantsFields(w, body)
+	if !ok {
+		return
+	}
+	rc.Model = fields.Model
+	rc.IsStream = fields.Stream
 
 	timeout := h.resolveTimeout(rc, r)
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
@@ -986,26 +1010,14 @@ func (h *Handlers) CreateThreadAndRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if modelName != "" {
-		if replaced, replErr := models.ReplaceModelInBody(body, resolveModelNameForAssistants(modelName)); replErr == nil {
-			body = replaced
-		}
-	}
-
-	if body, ok = h.checkProxiedRequest(ctx, w, r, rc, requestview.ThreadAndRun(body)); !ok {
+	if body, ok = assistantsSendBody(w, rc, fields); !ok {
 		return
 	}
 
-	if isStream {
-		h.proxyAssistantsStream(w, ctx, rc, ap, "/v1/threads/runs", body)
+	if fields.Stream {
+		h.proxyAssistantsStream(w, r, ctx, rc, ap, "/v1/threads/runs", body, requestview.ThreadAndRun(body))
 	} else {
-		respBody := h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", "/v1/threads/runs", body, nil)
-		if respBody != nil {
-			if usage := models.ExtractRunUsage(respBody); usage != nil {
-				rc.Metadata["prompt_tokens"] = fmt.Sprintf("%d", usage.PromptTokens)
-				rc.Metadata["completion_tokens"] = fmt.Sprintf("%d", usage.CompletionTokens)
-			}
-		}
+		h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "POST", "/v1/threads/runs", body, requestview.ThreadAndRun(body), nil)
 	}
 }
 
@@ -1028,8 +1040,12 @@ func (h *Handlers) SubmitToolOutputs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isStream := models.ExtractStreamFromBody(body)
-	rc.IsStream = isStream
+	// Whether the outputs' run streams on, read as OpenAI reads it.
+	fields, ok := readAssistantsFields(w, body)
+	if !ok {
+		return
+	}
+	rc.IsStream = fields.Stream
 
 	timeout := h.resolveTimeout(rc, r)
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
@@ -1041,32 +1057,31 @@ func (h *Handlers) SubmitToolOutputs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if body, ok = h.checkProxiedRequest(ctx, w, r, rc, requestview.ToolOutputs(body)); !ok {
-		return
-	}
-
 	upstreamPath := "/v1/threads/" + threadID + "/runs/" + runID + "/submit_tool_outputs"
 
-	if isStream {
-		h.proxyAssistantsStream(w, ctx, rc, ap, upstreamPath, body)
+	if fields.Stream {
+		h.proxyAssistantsStream(w, r, ctx, rc, ap, upstreamPath, body, requestview.ToolOutputs(body))
 	} else {
-		respBody := h.proxyAssistantsNonStream(w, ctx, rc, ap, "POST", upstreamPath, body, nil)
-		if respBody != nil {
-			if usage := models.ExtractRunUsage(respBody); usage != nil {
-				rc.Metadata["prompt_tokens"] = fmt.Sprintf("%d", usage.PromptTokens)
-				rc.Metadata["completion_tokens"] = fmt.Sprintf("%d", usage.CompletionTokens)
-			}
-		}
+		h.proxyAssistantsNonStream(w, r, ctx, rc, ap, "POST", upstreamPath, body, requestview.ToolOutputs(body), nil)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// resolveModelNameForAssistants strips provider prefix from model name.
+// assistantsModel: the model name an Assistants request sends.
 // ---------------------------------------------------------------------------
 
-func resolveModelNameForAssistants(model string) string {
-	if idx := strings.Index(model, "/"); idx > 0 {
-		return model[idx+1:]
+// assistantsModel is the name sent for model, the name the key's ACL was
+// checked on, and whether OpenAI, the only provider these APIs go to, can
+// serve it. An "openai/" prefix, in any letter case, is stripped, as chat
+// strips a prefix that names the provider it routes to (orgModelMatches).
+// Any other name is sent as named. ok is false for a name that still has a
+// "/" (another prefix, as in "gpt-4o-mini/gpt-4o" or "anthropic/claude-x":
+// no OpenAI model id has one) or is empty ("openai/" alone, or no model).
+// Such a name is refused, not stripped, so the model sent is always the
+// model the key's ACL checked.
+func assistantsModel(model string) (string, bool) {
+	if n := len(openAIProviderID) + 1; len(model) >= n && strings.EqualFold(model[:n], openAIProviderID+"/") {
+		model = model[n:]
 	}
-	return model
+	return model, model != "" && !strings.Contains(model, "/")
 }

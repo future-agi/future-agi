@@ -17,13 +17,15 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 )
 
-// BenchmarkChatCompletionNonStreaming measures pure gateway wall time per
-// request — no TCP, no loopback. Mock upstream is in-process (httptest).
-// The reported ns/op is everything the gateway does per chat-completion
-// request: parse, auth, resolve model, invoke pipeline plugins (cost +
-// logging + rate limit), proxy to provider, serialize response.
+// BenchmarkChatCompletionNonStreaming measures one chat-completion request
+// through the server's HTTP handler, in process: the request goes straight to
+// ServeHTTP with an httptest.NewRecorder, so the client side opens no socket.
+// The mock upstream is an httptest.NewServer on 127.0.0.1, so each op also
+// makes one HTTP round trip over loopback TCP to it. The bench server loads
+// only the auth plugin (no cost, logging or rate-limit plugin). ns/op is not
+// end-to-end latency, nor the gateway's overhead in a deployment.
 //
-// Reproduce: go test -bench=BenchmarkChatCompletion -benchmem ./internal/server/
+// Reproduce: GOMAXPROCS=4 go test ./internal/server -run '^$' -bench '^BenchmarkChatCompletion' -benchmem -count 40
 func BenchmarkChatCompletionNonStreaming(b *testing.B) {
 	mock := startBenchMockOpenAI(b)
 	defer mock.Close()
@@ -45,9 +47,10 @@ func BenchmarkChatCompletionNonStreaming(b *testing.B) {
 	}
 }
 
-// BenchmarkChatCompletionParallel measures gateway throughput under
-// concurrent load — RunParallel with GOMAXPROCS workers. Useful for
-// gauging contention on shared pipeline state.
+// BenchmarkChatCompletionParallel sends the same request from GOMAXPROCS
+// goroutines at once (RunParallel). ns/op is the wall time divided by all
+// requests completed, not the time one request takes, and not throughput
+// under load. Useful for gauging contention on shared pipeline state.
 func BenchmarkChatCompletionParallel(b *testing.B) {
 	mock := startBenchMockOpenAI(b)
 	defer mock.Close()
@@ -71,8 +74,7 @@ func BenchmarkChatCompletionParallel(b *testing.B) {
 	})
 }
 
-// BenchmarkModelsEndpoint measures the cost of a trivial read-only
-// endpoint — a floor on gateway overhead per request.
+// BenchmarkModelsEndpoint measures GET /v1/models through the same handler.
 func BenchmarkModelsEndpoint(b *testing.B) {
 	mock := startBenchMockOpenAI(b)
 	defer mock.Close()

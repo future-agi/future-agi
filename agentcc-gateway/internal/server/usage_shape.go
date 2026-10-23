@@ -47,18 +47,6 @@ func billedUsage(rc *models.RequestContext, u *models.Usage) *models.Usage {
 	return &cp
 }
 
-// clientStreamUsage is a stream chunk's usage as the client may see it: a
-// managed stream's upstream charge is withheld (the billed cost is computed
-// once the stream ends).
-func clientStreamUsage(rc *models.RequestContext, u *models.Usage) *models.Usage {
-	if u == nil || !hasUpstreamCharge(u) || rc.Metadata["billing_mode"] != billingManaged {
-		return u
-	}
-	cp := *u
-	withholdUpstreamCharge(&cp)
-	return &cp
-}
-
 // hasUpstreamCharge reports whether u carries any part of the upstream's
 // charge: cost, cost_details or is_byok.
 func hasUpstreamCharge(u *models.Usage) bool {

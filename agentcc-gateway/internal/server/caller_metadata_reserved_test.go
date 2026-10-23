@@ -72,7 +72,7 @@ var reservedCallerKeys = []string{
 	"route_reason.strategy", "route_reason.conditional_rule", "route_reason.complexity_tier",
 	// Telemetry.
 	"endpoint_type", "endpoint_format", "translation_drops", "privacy_redacted",
-	"tools_requested", "tools_filtered", "assistants_operation", "vector_stores_operation",
+	"tools_requested", "tools_filtered", "assistants_operation", "vector_stores_operation", "files_operation",
 	"edge_cache", "edge_cache_control", "edge_cache_etag", "edge_cache_vary", "no_perf_disclosure",
 }
 

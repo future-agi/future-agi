@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,14 +16,16 @@ import (
 
 // On a route whose answer is not model text (embeddings, images, speech,
 // a transcription's or translation's text, rerank, search, OCR,
-// embedContent, and the two routes that count a request's tokens), the post
+// embedContent, and the two routes that count a request's tokens), or whose
+// answer the gateway passes back unread (the Assistants API and vector store
+// search), the post
 // stage has no answer it can withhold: the handler serves what the provider
 // answered whatever a check there says. So the response's headers and the
 // request log never say a check there blocked a served answer. A check
 // there that reads the request gets none (it reads it before the provider,
 // if it runs there), and a check that fails anyway records the action it
-// took: logged. The Assistants API, vector store search and /v1/videos run
-// no post stage: no check there records anything.
+// took: logged. /v1/videos runs no post stage: no check there records
+// anything.
 
 // postAlarmCheck fails whatever it is given, at the post stage: a check on
 // the answer that fails without reading one (an evaluator or a webhook that
@@ -68,7 +71,8 @@ func (g *postBlockGateway) doCapturingHeaders(t *testing.T, path, body string) (
 // assertNoBlockRecorded: the log of a served answer records no block; when
 // want is set, it records the check's trigger as the action taken, logged,
 // and so does X-Agentcc-Guardrail-Triggered, unless the route streams its
-// answer (speech/stream), whose headers go out before the post stage runs.
+// answer (speech/stream, a streamed run), whose headers go out before the
+// post stage runs.
 func assertNoBlockRecorded(t *testing.T, e map[string]any, header http.Header, code int, want string, streamed bool) {
 	t.Helper()
 	if e["status_code"] != float64(code) {
@@ -146,7 +150,7 @@ func TestAnswerCheck_PostStageBlockIsRecordedAsLoggedWhereNoAnswerCanBeWithheld(
 				if shape.setup.staticRule != "" {
 					name = shape.setup.staticRule
 				}
-				assertNoBlockRecorded(t, g.entry(t), header, code, name, sf.path == "/v1/audio/speech/stream")
+				assertNoBlockRecorded(t, g.entry(t), header, code, name, sf.path == "/v1/audio/speech/stream" || strings.HasSuffix(sf.name, ", streamed"))
 			})
 		}
 		for _, sf := range countTokensSurfaces {
@@ -169,9 +173,8 @@ func TestAnswerCheck_PostStageBlockIsRecordedAsLoggedWhereNoAnswerCanBeWithheld(
 	}
 }
 
-// The Assistants API, vector store search and /v1/videos run no post
-// stage: a check there in block mode never runs, and nothing says it
-// blocked the answer they serve.
+// /v1/videos runs no post stage: a check there in block mode never runs,
+// and nothing says it blocked the answer it serves.
 func TestAnswerCheck_PostStageCheckNeverRunsOnTheProxiedRoutes(t *testing.T) {
 	for _, shape := range postStageShapes {
 		for _, sf := range otherAPISurfaces {
@@ -208,5 +211,53 @@ func TestAnswerCheck_PostStageBlockWithholdsAChatAnswer(t *testing.T) {
 			}
 			assertBlockLogged(t, g.entry(t), name)
 		})
+	}
+}
+
+// passedThroughRoutesWithoutAView are routes of the Assistants, Vector
+// Stores and Files APIs whose request the checks do not read (the handler
+// gives it no request view): an update, a store created, a cancel, a list,
+// and the gateway's own file store. upstream is how many calls the loopback
+// upstream records (it records POSTs only); headers says whether the route
+// sets the x-agentcc headers (the Files API sets none).
+var passedThroughRoutesWithoutAView = []struct {
+	name, method, path, body string
+	upstream                 int
+	headers                  bool
+}{
+	{"thread update", http.MethodPost, "/v1/threads/thread_1", `{"metadata":{"a":"b"}}`, 1, true},
+	{"vector stores create", http.MethodPost, "/v1/vector_stores", `{"name":"v"}`, 1, true},
+	{"run cancel", http.MethodPost, "/v1/threads/thread_1/runs/run_1/cancel", "", 1, true},
+	{"assistants list", http.MethodGet, "/v1/assistants", "", 0, true},
+	{"files list", http.MethodGet, "/v1/files", "", 0, false},
+}
+
+// A check at the post stage in block mode that fails without reading the
+// answer records what it did on the passed-through routes whose request no
+// check reads too, logged; the answer is served.
+func TestAnswerCheck_PostStageBlockIsRecordedAsLoggedWhereTheRequestIsNotRead(t *testing.T) {
+	for _, shape := range postStageShapes {
+		for _, rt := range passedThroughRoutesWithoutAView {
+			t.Run(shape.name+" / "+rt.name, func(t *testing.T) {
+				g := newOtherAPIsGateway(t, shape.setup)
+				req := httptest.NewRequest(rt.method, rt.path, strings.NewReader(rt.body))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", "Bearer "+postBlockKey)
+				ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
+				defer cancel()
+				w := httptest.NewRecorder()
+				g.srv.httpServer.Handler.ServeHTTP(w, req.WithContext(ctx))
+				if w.Code != http.StatusOK || g.providerCalls() != rt.upstream {
+					t.Fatalf("status %d, provider calls %d; want 200 and %d; body %.200s", w.Code, g.providerCalls(), rt.upstream, w.Body)
+				}
+				name := postAlarmCheck
+				if shape.setup.staticRule != "" {
+					name = shape.setup.staticRule
+				}
+				// A route that sets no x-agentcc headers is checked as a
+				// stream is: on its log alone.
+				assertNoBlockRecorded(t, g.entry(t), w.Result().Header, w.Code, name, !rt.headers)
+			})
+		}
 	}
 }

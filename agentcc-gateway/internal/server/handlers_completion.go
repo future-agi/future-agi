@@ -69,6 +69,10 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 	rc.Request = chatReq
 	rc.IsStream = req.Stream
 	rc.UserID = req.User
+	// Only a client that asked for usage gets a stream's usage chunk
+	// (handleCompletionStream), as on /v1/chat/completions; another gets the
+	// usage on the last text chunk.
+	rc.Flags.ClientIncludeUsage = req.Stream && req.StreamOptions != nil && req.StreamOptions.IncludeUsage
 
 	// Extract client IP for audit.
 	rc.Metadata["client_ip"] = middleware.ClientIP(r)
@@ -370,6 +374,9 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 
 	// Track last usage from stream chunks for post-plugin cost/credits tracking.
 	var lastUsage *models.Usage
+	// The stream's id and created, for the final usage chunk.
+	var streamID string
+	var streamCreated int64
 	// The answer the stream sends, assembled for the request log and for an
 	// output check that reads it at the stream's end, whether or not the log
 	// keeps bodies.
@@ -377,7 +384,9 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 
 	// finalizeStream populates rc.Response with accumulated usage and runs
 	// post-plugins (cost, credits, logging). Must be called before every return.
-	finalizeStream := func(detach bool) {
+	// It returns the usage the client sees, the one billed (nil when the
+	// upstream sent none).
+	finalizeStream := func(detach bool) *models.Usage {
 		rc.Response = &models.ChatCompletionResponse{
 			Object: "chat.completion",
 			Model:  rc.ResolvedModel,
@@ -389,6 +398,36 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 			pluginCtx = context.Background()
 		}
 		h.engine.RunPostPlugins(pluginCtx, rc)
+		return billedUsage(rc, lastUsage)
+	}
+
+	// writeChunk writes a chat chunk to the client as a legacy completion
+	// chunk.
+	writeChunk := func(chunk models.StreamChunk) error {
+		data, err := json.Marshal(models.CompletionStreamChunkFromChat(chunk))
+		if err != nil {
+			slog.Warn("error marshaling completion stream chunk",
+				"request_id", rc.RequestID,
+				"error", err,
+			)
+			return nil
+		}
+		return sseWriter.WriteRaw(data)
+	}
+	// For a client that did not ask for usage, each choice's finish chunk
+	// waits for the upstream's end and goes out with the billed usage
+	// (finishHold), as on a chat stream.
+	hold := newFinishHold(rc)
+	writeHeld := func(usage *models.Usage) {
+		for _, c := range hold.drain(usage) {
+			if err := writeChunk(c); err != nil {
+				slog.Warn("error writing held completion finish chunk",
+					"request_id", rc.RequestID,
+					"error", err,
+				)
+				return
+			}
+		}
 	}
 
 	for {
@@ -399,32 +438,64 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 				// an output check that refuses the answer the stream sent (the
 				// request log assembles it when it keeps bodies) ends the
 				// stream with the guardrail's error event.
-				finalizeStream(false)
+				usage := finalizeStream(false)
+				writeHeld(usage)
 				if apiErr := withheldAnswerError(rc); apiErr != nil {
 					sseWriter.WriteError(apiErr)
+				}
+				// A client that asked for usage, or for the gateway's
+				// metadata, gets it once, right before [DONE], with empty
+				// choices (OpenAI's streaming contract).
+				if wantsFinalStreamChunk(rc) {
+					final := models.CompletionStreamChunkFromChat(*h.buildStreamingMetadataChunk(rc, streamID, streamCreated, lastUsage))
+					if data, err := json.Marshal(final); err == nil {
+						if err := sseWriter.WriteRaw(data); err != nil {
+							slog.Warn("error writing final completion usage chunk",
+								"request_id", rc.RequestID,
+								"error", err,
+							)
+						}
+					}
 				}
 				sseWriter.WriteDone()
 				return
 			}
+			if streamID == "" && chunk.ID != "" {
+				streamID = chunk.ID
+			}
+			if streamCreated == 0 && chunk.Created != 0 {
+				streamCreated = chunk.Created
+			}
 			if len(chunk.Choices) > 0 && rc.ResolvedModel == "" {
 				rc.ResolvedModel = chunk.Model
 			}
+			// A provider's usage is metered here and never forwarded, on
+			// whatever chunk it rides (as on a chat stream): the client gets
+			// the billed usage once, on the final chunk when it asked, else
+			// on the held finish chunk.
 			if chunk.Usage != nil {
 				lastUsage = chunk.Usage
+				chunk.Usage = nil
 			}
 			capture.observe(chunk)
 
-			// Convert chat chunk to legacy completion chunk.
-			completionChunk := models.CompletionStreamChunkFromChat(chunk)
-			data, err := json.Marshal(completionChunk)
-			if err != nil {
-				slog.Warn("error marshaling completion stream chunk",
-					"request_id", rc.RequestID,
-					"error", err,
-				)
+			// A chunk with no choice (an upstream's usage chunk) is metered
+			// above and not sent.
+			if !clientGetsStreamChunk(chunk) {
 				continue
 			}
-			if err := sseWriter.WriteRaw(data); err != nil {
+
+			release, held := hold.take(chunk)
+			var err error
+			for _, c := range release {
+				if err = writeChunk(c); err != nil {
+					break
+				}
+			}
+			if err == nil && !held {
+				err = writeChunk(chunk)
+			}
+			if err != nil {
 				slog.Warn("error writing completion stream chunk",
 					"request_id", rc.RequestID,
 					"error", err,
@@ -435,22 +506,32 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 
 		case err, ok := <-errCh:
 			if ok && err != nil {
-				if apiErr, isAPI := err.(*models.APIError); isAPI {
-					sseWriter.WriteError(apiErr)
-				} else {
-					sseWriter.WriteError(models.ErrInternal(err.Error()))
+				apiErr, isAPI := err.(*models.APIError)
+				if !isAPI {
+					apiErr = models.ErrInternal(err.Error())
 				}
-				finalizeStream(false)
+				// A held finish chunk goes out before the error event, in
+				// its place in the stream, with the billed usage.
+				if !hold.pending() {
+					sseWriter.WriteError(apiErr)
+					finalizeStream(false)
+					return
+				}
+				writeHeld(finalizeStream(false))
+				sseWriter.WriteError(apiErr)
 				return
 			}
 
 		case <-ctx.Done():
-			// Client disconnected — drain channel and run post-plugins.
+			// The request's context ended (the client disconnected, or a
+			// server-side timeout fired): drain the channel and run the
+			// post-plugins, then write a held finish chunk, best effort, as on
+			// a chat stream.
 			go func() {
 				for range chunks {
 				}
 			}()
-			finalizeStream(true)
+			writeHeld(finalizeStream(true))
 			return
 		}
 	}

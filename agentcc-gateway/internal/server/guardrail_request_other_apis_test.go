@@ -52,9 +52,17 @@ const (
 // otherAPIsUpstream answers every API the non-chat routes call, after recording
 // the call: embeddings, images, speech, transcriptions, translations, OCR,
 // Cohere's rerank, Gemini's embedContent, and the Assistants and Vector
-// Stores APIs. A run created with stream true is answered as a stream.
+// Stores APIs. A run created with stream true is answered as a stream. A
+// GET on the Assistants and Vector Stores APIs (a list, a retrieval) is
+// answered with an empty list, unrecorded (calls records POSTs).
 func otherAPIsUpstream(calls *upstreamCalls) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && (strings.HasPrefix(r.URL.Path, "/v1/assistants") ||
+			strings.HasPrefix(r.URL.Path, "/v1/threads") || strings.HasPrefix(r.URL.Path, "/v1/vector_stores")) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"object":"list","data":[]}`)
+			return
+		}
 		if r.Method != http.MethodPost {
 			return
 		}
@@ -164,8 +172,7 @@ type otherAPISurface struct {
 	body      func(text string) string
 	multipart bool
 	// logged: the route goes through the pipeline, so its request log
-	// records the refusal. The Assistants API, vector store search and
-	// /v1/videos have no request log entry.
+	// records the refusal. /v1/videos has no request log entry.
 	logged bool
 	// ok is the status of a request that goes on.
 	ok int
@@ -202,20 +209,20 @@ var otherAPISurfaces = []otherAPISurface{
 	{name: "embedContent, the title", path: "/v1beta/models/" + postBlockGemini + ":embedContent", body: jsonBody(`{"content":{"parts":[{"text":"a page"}]},"taskType":"RETRIEVAL_DOCUMENT","title":%s}`), logged: true, ok: 200, format: genaiWire},
 	{name: "transcription, the prompt", path: "/v1/audio/transcriptions", body: func(text string) string { return text }, multipart: true, logged: true, ok: 200, unread: true},
 	{name: "translation, the prompt", path: "/v1/audio/translations", body: func(text string) string { return text }, multipart: true, logged: true, ok: 200, unread: true},
-	{name: "assistants create", path: "/v1/assistants", body: jsonBody(`{"model":"gpt-4o","instructions":%s}`), ok: 200},
-	{name: "assistants update", path: "/v1/assistants/asst_1", body: jsonBody(`{"instructions":%s}`), ok: 200},
-	{name: "threads create", path: "/v1/threads", body: jsonBody(`{"messages":[{"role":"user","content":%s}]}`), ok: 200},
-	{name: "threads create, text parts", path: "/v1/threads", body: jsonBody(`{"messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"type":"text","text":%s}]}]}`), ok: 200},
-	{name: "messages create", path: "/v1/threads/thread_1/messages", body: jsonBody(`{"role":"user","content":%s}`), ok: 200},
-	{name: "runs create, instructions", path: "/v1/threads/thread_1/runs", body: jsonBody(`{"assistant_id":"asst_1","instructions":%s}`), ok: 200},
-	{name: "runs create, additional instructions", path: "/v1/threads/thread_1/runs", body: jsonBody(`{"assistant_id":"asst_1","additional_instructions":%s}`), ok: 200},
-	{name: "runs create, additional messages", path: "/v1/threads/thread_1/runs", body: jsonBody(`{"assistant_id":"asst_1","additional_messages":[{"role":"user","content":%s}]}`), ok: 200},
-	{name: "runs create, streamed", path: "/v1/threads/thread_1/runs", body: jsonBody(`{"assistant_id":"asst_1","stream":true,"additional_messages":[{"role":"user","content":%s}]}`), ok: 200},
-	{name: "thread and run", path: "/v1/threads/runs", body: jsonBody(`{"assistant_id":"asst_1","thread":{"messages":[{"role":"user","content":%s}]}}`), ok: 200},
-	{name: "thread and run, instructions", path: "/v1/threads/runs", body: jsonBody(`{"assistant_id":"asst_1","instructions":%s}`), ok: 200},
-	{name: "submit tool outputs", path: "/v1/threads/thread_1/runs/run_1/submit_tool_outputs", body: jsonBody(`{"tool_outputs":[{"tool_call_id":"call_1","output":%s}]}`), ok: 200},
-	{name: "vector store search", path: "/v1/vector_stores/vs_1/search", body: jsonBody(`{"query":%s}`), ok: 200},
-	{name: "vector store search, a list", path: "/v1/vector_stores/vs_1/search", body: jsonBody(`{"query":["refunds",%s]}`), ok: 200},
+	{name: "assistants create", path: "/v1/assistants", body: jsonBody(`{"model":"gpt-4o","instructions":%s}`), logged: true, ok: 200},
+	{name: "assistants update", path: "/v1/assistants/asst_1", body: jsonBody(`{"instructions":%s}`), logged: true, ok: 200},
+	{name: "threads create", path: "/v1/threads", body: jsonBody(`{"messages":[{"role":"user","content":%s}]}`), logged: true, ok: 200},
+	{name: "threads create, text parts", path: "/v1/threads", body: jsonBody(`{"messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"type":"text","text":%s}]}]}`), logged: true, ok: 200},
+	{name: "messages create", path: "/v1/threads/thread_1/messages", body: jsonBody(`{"role":"user","content":%s}`), logged: true, ok: 200},
+	{name: "runs create, instructions", path: "/v1/threads/thread_1/runs", body: jsonBody(`{"assistant_id":"asst_1","instructions":%s}`), logged: true, ok: 200},
+	{name: "runs create, additional instructions", path: "/v1/threads/thread_1/runs", body: jsonBody(`{"assistant_id":"asst_1","additional_instructions":%s}`), logged: true, ok: 200},
+	{name: "runs create, additional messages", path: "/v1/threads/thread_1/runs", body: jsonBody(`{"assistant_id":"asst_1","additional_messages":[{"role":"user","content":%s}]}`), logged: true, ok: 200},
+	{name: "runs create, streamed", path: "/v1/threads/thread_1/runs", body: jsonBody(`{"assistant_id":"asst_1","stream":true,"additional_messages":[{"role":"user","content":%s}]}`), logged: true, ok: 200},
+	{name: "thread and run", path: "/v1/threads/runs", body: jsonBody(`{"assistant_id":"asst_1","thread":{"messages":[{"role":"user","content":%s}]}}`), logged: true, ok: 200},
+	{name: "thread and run, instructions", path: "/v1/threads/runs", body: jsonBody(`{"assistant_id":"asst_1","instructions":%s}`), logged: true, ok: 200},
+	{name: "submit tool outputs", path: "/v1/threads/thread_1/runs/run_1/submit_tool_outputs", body: jsonBody(`{"tool_outputs":[{"tool_call_id":"call_1","output":%s}]}`), logged: true, ok: 200},
+	{name: "vector store search", path: "/v1/vector_stores/vs_1/search", body: jsonBody(`{"query":%s}`), logged: true, ok: 200},
+	{name: "vector store search, a list", path: "/v1/vector_stores/vs_1/search", body: jsonBody(`{"query":["refunds",%s]}`), logged: true, ok: 200},
 	{name: "videos", path: "/v1/videos", body: jsonBody(`{"model":"` + otherAPIsVideo + `","prompt":%s}`), ok: 202},
 }
 

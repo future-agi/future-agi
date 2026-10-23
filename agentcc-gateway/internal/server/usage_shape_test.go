@@ -74,7 +74,9 @@ func TestUsageShapeCacheHitWithholdsUpstreamCharge(t *testing.T) {
 }
 
 // A managed response shows the amount billed, never FutureAGI's upstream
-// cost_details or is_byok, on the body, the evidence usage and a stream chunk.
+// cost_details or is_byok, on the body and on the usage a stream's final or
+// finish chunk carries (billedUsage). A stream never forwards the provider's
+// own usage (TestChatStreamUsage_ProviderUsageOnAChoiceChunkGoesOutOnce).
 func TestUsageShapeManagedWithholdsUpstreamCharge(t *testing.T) {
 	resp := decodeOpenRouterShaped(t, openRouterShapedBody)
 	rc := models.AcquireRequestContext()
@@ -92,13 +94,12 @@ func TestUsageShapeManagedWithholdsUpstreamCharge(t *testing.T) {
 		t.Errorf("managed body carries the upstream's cost_details or is_byok: %+v", rc.Response.Usage)
 	}
 	assertNoUpstreamCharge(t, "managed evidence usage", billedUsage(rc, resp.Usage))
-	assertNoUpstreamCharge(t, "managed stream chunk usage", clientStreamUsage(rc, resp.Usage))
 
 	// is_byok or cost_details alone, with no cost yet, are withheld too.
 	byokOnly := &models.Usage{TotalTokens: 3, IsByok: resp.Usage.IsByok}
-	assertNoUpstreamCharge(t, "managed stream chunk with is_byok only", clientStreamUsage(rc, byokOnly))
+	assertNoUpstreamCharge(t, "managed usage with is_byok only", billedUsage(rc, byokOnly))
 	if byokOnly.IsByok == nil {
-		t.Error("clientStreamUsage modified the chunk it was handed")
+		t.Error("billedUsage modified the usage it was handed")
 	}
 }
 
@@ -116,7 +117,7 @@ func TestUsageShapeByokKeepsUpstreamCharge(t *testing.T) {
 		rc.Response.UpstreamProvider != "Anthropic" {
 		t.Errorf("BYOK response changed: %+v", rc.Response)
 	}
-	if got := clientStreamUsage(rc, resp.Usage); got != resp.Usage {
-		t.Error("BYOK stream chunk usage changed")
+	if got := billedUsage(rc, resp.Usage); got != resp.Usage {
+		t.Error("BYOK stream usage changed")
 	}
 }

@@ -38,13 +38,41 @@ func (h *Handlers) buildStreamingMetadataChunk(rc *models.RequestContext, stream
 		Choices: []models.StreamChoice{},
 		Usage:   billedUsage(rc, usage),
 	}
-	if include := rc.RequestHeaders.Get("x-agentcc-include-metadata"); include == "1" || strings.EqualFold(include, "true") {
+	if wantsStreamMetadata(rc) {
 		chunk.AgentccMetadata = &models.AgentccStreamMetadata{
 			Cost:      cost,
 			LatencyMs: rc.Elapsed().Milliseconds(),
 		}
 	}
 	return chunk
+}
+
+// wantsStreamMetadata reports whether the client asked for the gateway's
+// metadata on a stream's final chunk (x-agentcc-include-metadata: 1 or true).
+func wantsStreamMetadata(rc *models.RequestContext) bool {
+	include := rc.RequestHeaders.Get("x-agentcc-include-metadata")
+	return include == "1" || strings.EqualFold(include, "true")
+}
+
+// wantsFinalStreamChunk reports whether a stream ends with the gateway's
+// final chunk, the one chunk with empty choices a client may get (OpenAI's
+// streaming contract): only when the client asked for usage
+// (stream_options.include_usage) or for the gateway's metadata, on chat and
+// on /v1/completions. Without either, every chunk the client gets has a
+// choice, so the usual SDK loop over choices[0] reaches [DONE], and the
+// usage rides on the finish chunk (finishHold).
+func wantsFinalStreamChunk(rc *models.RequestContext) bool {
+	return rc.Flags.ClientIncludeUsage || wantsStreamMetadata(rc)
+}
+
+// clientGetsStreamChunk reports whether a chunk from the upstream goes to the
+// client. A chunk with no choice (the upstream's usage chunk, which the
+// gateway asks for on every chat stream, Azure's prompt_filter_results
+// chunk, or another chunk with empty or null choices) does not: its usage
+// is metered, and the client gets it once, on the gateway's final chunk when
+// it asked for usage, else on the finish chunk (finishHold).
+func clientGetsStreamChunk(chunk models.StreamChunk) bool {
+	return len(chunk.Choices) > 0
 }
 
 // setAgentccHeaders writes the gateway's response headers (call-order step

@@ -46,12 +46,10 @@ func (h *Handlers) proxyVectorStores(w http.ResponseWriter, r *http.Request, met
 
 // proxyVectorStoresChecked is proxyVectorStores for a body whose text the
 // model reads (a search's query): view reads it, for the checks on the
-// request (checkProxiedRequest), before the provider is called. view is nil
-// for a body the checks do not read.
+// request, before the provider is called. view is nil for a body the checks
+// do not read. The request runs the pipeline (runPassedThrough).
 func (h *Handlers) proxyVectorStoresChecked(w http.ResponseWriter, r *http.Request, method, upstreamPath string, body []byte, queryParams url.Values, operation string, view func([]byte) *requestview.View) {
-	rc := h.setupAssistantsRC(r, operation)
-	rc.EndpointType = "vector_stores"
-	rc.Metadata["vector_stores_operation"] = operation
+	rc := h.setupPassedThroughRC(r, "vector_stores", operation)
 	defer rc.Release()
 
 	timeout := h.resolveTimeout(rc, r)
@@ -63,16 +61,31 @@ func (h *Handlers) proxyVectorStoresChecked(w http.ResponseWriter, r *http.Reque
 		models.WriteErrorFromError(w, err)
 		return
 	}
+	var checked *requestview.View
 	if view != nil {
-		var ok bool
-		if body, ok = h.checkProxiedRequest(ctx, w, r, rc, view(body)); !ok {
-			return
-		}
+		checked = view(body)
 	}
 
-	respBody, statusCode, respHeaders, proxyErr := vsp.ProxyVectorStoresRequest(ctx, method, upstreamPath, body, queryParams)
-	if proxyErr != nil {
-		models.WriteErrorFromError(w, proxyErr)
+	var respBody []byte
+	var respHeaders http.Header
+	statusCode := 0
+	err = h.runPassedThrough(ctx, r, rc, body, checked, func(ctx context.Context, send []byte) (int, error) {
+		var proxyErr error
+		respBody, statusCode, respHeaders, proxyErr = vsp.ProxyVectorStoresRequest(ctx, method, upstreamPath, send, queryParams)
+		if proxyErr != nil {
+			return 0, proxyErr
+		}
+		if statusCode == 0 {
+			statusCode = http.StatusOK
+		}
+		return statusCode, nil
+	})
+	if err != nil {
+		models.WriteErrorFromError(w, err)
+		return
+	}
+	if statusCode == 0 {
+		models.WriteError(w, errNoPassedThroughAnswer())
 		return
 	}
 
@@ -86,9 +99,6 @@ func (h *Handlers) proxyVectorStoresChecked(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if statusCode == 0 {
-		statusCode = http.StatusOK
-	}
 	w.WriteHeader(statusCode)
 	w.Write(respBody)
 }

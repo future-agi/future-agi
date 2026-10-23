@@ -42,6 +42,9 @@ type recordingUpstream struct {
 	status  atomic.Int32 // non-zero: reply with this status
 	failFor sync.Map     // model → status to reply with for that model
 	noUsage atomic.Bool  // streams end without a usage chunk
+	// stream, when set, is the script a streaming chat request is answered
+	// with, in place of the default chunks.
+	stream atomic.Pointer[streamScript]
 }
 
 func (u *recordingUpstream) calls() int {
@@ -83,10 +86,15 @@ func startRecordingUpstream(t *testing.T) *recordingUpstream {
 			w.Write([]byte(`{"error":{"message":"upstream down","type":"server_error"}}`))
 			return
 		}
+		if s := u.stream.Load(); s != nil && req.Stream {
+			writeSSE(w, (*s)(scriptChunk(req.Model)))
+			return
+		}
 		usage := fmt.Sprintf(`{"prompt_tokens":1000,"completion_tokens":500,"total_tokens":1500,"cost":%g}`, upstreamCost)
 		if req.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprintf(w, "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":%q,\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hi\"}}]}\n\n", req.Model)
+			fmt.Fprintf(w, "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":%q,\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n", req.Model)
 			if !u.noUsage.Load() {
 				fmt.Fprintf(w, "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":%q,\"choices\":[],\"usage\":%s}\n\n", req.Model, usage)
 			}
@@ -344,7 +352,9 @@ func TestManagedStreamWithholdsUpstreamCost(t *testing.T) {
 	g := newManagedTestGateway(t, managedOptIn())
 	g.ledger.SetMicros("org-m", auth.USDToMicros(1))
 
-	w := g.chat(t, `{"model":"anthropic/claude-sonnet-5.5","stream":true,"messages":[{"role":"user","content":"hi"}]}`, nil)
+	// The client asks for usage (stream_options.include_usage), so its stream
+	// ends with the usage chunk, which must show the billed cost.
+	w := g.chat(t, `{"model":"anthropic/claude-sonnet-5.5","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}`, nil)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d; body %s", w.Code, w.Body)

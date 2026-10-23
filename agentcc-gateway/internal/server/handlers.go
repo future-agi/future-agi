@@ -420,10 +420,12 @@ func (h *Handlers) callerIdentity(r *http.Request) (authpkg.Identity, bool) {
 // copies the key's provider and model ACL (recordKeyACL), so the provider-ACL
 // exits and eligibility apply them before the provider is called.
 func (h *Handlers) peekKeyOrgID(rc *models.RequestContext) {
-	apiKey := h.lookupRequestKey(rc)
-	if apiKey == nil {
+	found := h.lookupRequestKey(rc)
+	if found == nil {
 		return
 	}
+	// Read under the store lock: an admin key update may run alongside.
+	apiKey := h.keyStore.Peek(found)
 	recordKeyACL(rc, apiKey)
 	if orgID, ok := apiKey.Metadata["org_id"]; ok && orgID != "" {
 		rc.Metadata["key_org_id"] = orgID
@@ -1073,8 +1075,12 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	rc.UserID = req.User
 
 	// Ensure streaming requests always include usage in the final chunk
-	// so post-plugins (cost, logging) have accurate token counts.
+	// so post-plugins (cost, logging) have accurate token counts. Whether
+	// the client asked for it is kept first: only then does the client get
+	// the usage chunk; another client gets the usage on the finish chunk
+	// (handleStream, finishHold).
 	if req.Stream {
+		rc.Flags.ClientIncludeUsage = req.StreamOptions != nil && req.StreamOptions.IncludeUsage
 		if req.StreamOptions == nil {
 			req.StreamOptions = &models.StreamOptions{IncludeUsage: true}
 		} else {
@@ -1271,6 +1277,13 @@ func (h *Handlers) unavailableModelError(rc *models.RequestContext, orgCfg *tena
 			return orgProviderError(model, providerID, err)
 		}
 	}
+	return errModelNotAvailable(model)
+}
+
+// errModelNotAvailable is the 403 for a model no provider the key may use
+// serves, as chat answers it when none of the org's providers lists the
+// model (unavailableModelError).
+func errModelNotAvailable(model string) *models.APIError {
 	return models.ErrForbidden(fmt.Sprintf("model %q is not available for this API key", model))
 }
 

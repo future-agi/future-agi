@@ -175,6 +175,19 @@ logging:
 	}
 }
 
+// freePort returns a port on 127.0.0.1 for a gateway the test starts, and
+// keeps it from every other listener until that gateway binds it, a second
+// or more after the start for a child process under -race: no listener that
+// asks for any free port in that window (an httptest server here or in
+// another package's test binary) is handed it
+// (TestFreePortIsNotHandedToAnotherListener).
+//
+// freePort accepts one connection on the port and closes the accepted
+// end first: that end, whose local port is the picked one, waits in
+// TIME_WAIT for a minute. Linux hands no listener that asks for any free
+// port a port in that state, while a listener that names the port with
+// SO_REUSEADDR binds it at once, and net.Listen sets SO_REUSEADDR, so the
+// gateway's ListenAndServe does.
 func freePort(t *testing.T) int {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -182,7 +195,22 @@ func freePort(t *testing.T) int {
 		t.Fatal(err)
 	}
 	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
+	port := l.Addr().(*net.TCPAddr).Port
+	c, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close() // after the accepted end: its FIN moves that end on to TIME_WAIT
+	s, err := l.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := c.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatalf("keeping port %d: the accepted end closed, but the dialing end read %v, want EOF", port, err)
+	}
+	return port
 }
 
 // chat sends a chat request whose message is content.

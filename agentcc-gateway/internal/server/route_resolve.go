@@ -47,10 +47,7 @@ func (h *Handlers) resolveRoute(ctx context.Context, r *http.Request, rc *models
 	orgID := rc.Metadata["org_id"]
 	var route RouteResult
 
-	if middleware.IsLicenseAuthorized(r.Context()) && rc.Metadata["key_access_groups"] == "" {
-		rc.Metadata["key_access_groups"] = "internal"
-		rc.Metadata["key_type"] = "internal"
-	}
+	applyLicenseInternalGroup(r.Context(), rc)
 
 	// 1. Model access group alias resolution and access check. The literal
 	// auto is not checked: eligibility judges the key's groups on every auto
@@ -66,9 +63,7 @@ func (h *Handlers) resolveRoute(ctx context.Context, r *http.Request, rc *models
 		if !routing.IsAutoModel(rc.Model) {
 			matchedGroup, allowed := h.accessGroupChecker.Check(rc.Model, keyGroups)
 			if !allowed {
-				desc := h.accessGroupChecker.DescribeAllowed(keyGroups)
-				return nil, RouteResult{}, models.ErrForbidden(
-					fmt.Sprintf("Model %q is not available for this API key. %s", rc.Model, desc))
+				return nil, RouteResult{}, h.errModelNotInAccessGroups(rc.Model, keyGroups)
 			}
 			if matchedGroup != "" {
 				rc.SetMetadata("access_group_matched", matchedGroup)
@@ -175,4 +170,18 @@ func (h *Handlers) resolveRoute(ctx context.Context, r *http.Request, rc *models
 		return nil, RouteResult{}, v.apiError()
 	}
 	return provider, route, nil
+}
+
+// applyLicenseInternalGroup holds a request a license authorized, which has
+// no key and so no access groups of its own, to the gateway's "internal"
+// access group as an internal service key: the access-group check and alias
+// resolution that follow judge it by that group. Chat's routing
+// (resolveRoute) and the Assistants API (resolveAssistantsProvider) both run
+// it first, before they check the request's access groups. Inside the
+// pipeline the auth plugin records the same for the request.
+func applyLicenseInternalGroup(ctx context.Context, rc *models.RequestContext) {
+	if middleware.IsLicenseAuthorized(ctx) && rc.Metadata["key_access_groups"] == "" {
+		rc.Metadata["key_access_groups"] = "internal"
+		rc.Metadata["key_type"] = "internal"
+	}
 }
