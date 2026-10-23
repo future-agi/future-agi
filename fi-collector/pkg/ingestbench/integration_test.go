@@ -756,6 +756,8 @@ func TestDirectProbeCutOffByThePhaseIsCensored(t *testing.T) {
 				answering.Store(false)
 			}
 			d.round(ctx, "during-load", candidate{seq: 0, ok: true})
+			// A round that starts after the phase ended runs and counts nothing.
+			d.round(ctx, "during-load", candidate{seq: 0, ok: true})
 			wantStatus, wantSuccesses := "window-censored", int64(0)
 			if answeredFirst {
 				wantStatus, wantSuccesses = "measured-with-censoring", 1

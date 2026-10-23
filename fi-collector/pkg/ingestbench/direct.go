@@ -119,6 +119,11 @@ func (d *directRunner) round(ctx context.Context, phase string, cand candidate) 
 		from = lookback
 	}
 	for _, p := range directProbes {
+		if ctx.Err() != nil {
+			// The phase is over: a query that never started is neither run nor
+			// censored. (A ticker can fire together with the end of the load.)
+			return
+		}
 		params := map[string]string{"project": cfg.ProjectID}
 		switch p.name {
 		case "trace-by-id":
