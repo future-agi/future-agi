@@ -17,6 +17,14 @@ type ProviderLockResolver struct {
 }
 
 // NewProviderLockResolver creates a resolver from config.
+//
+// Locking is on unless the config sets it up otherwise (an empty
+// provider_lock section enables it). That default is safe because a lock can
+// only narrow the choice of provider, never widen what a key may use: the
+// server resolves an org-limited key's lock target among its org's own
+// providers for the model and refuses any other (Handlers.lockedProvider);
+// only internal keys, license-authorized requests and requests with auth off
+// lock to the global providers.
 func NewProviderLockResolver(cfg config.ProviderLockConfig) *ProviderLockResolver {
 	// Default to enabled if not explicitly set.
 	enabled := cfg.Enabled

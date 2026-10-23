@@ -298,6 +298,51 @@ def test_standalone_compose_bind_mounts_exist() -> None:
     assert (ROOT / "agentcc-gateway" / "config.example.yaml").exists()
 
 
+def _standalone_gateway_config() -> dict:
+    """The gateway config the standalone app container mounts by default."""
+    app = _compose(STANDALONE_COMPOSE)["services"]["app"]
+    for volume in app["volumes"]:
+        source, target = re.sub(r":(ro|rw)$", "", volume).rsplit(":", 1)
+        if target == f"{SECRETS_DIR}/agentcc.yaml":
+            default = re.fullmatch(r"\./\$\{AGENTCC_CONFIG_PATH:-([^}]+)\}", source)
+            assert default, source
+            return yaml.safe_load((ROOT / default.group(1)).read_text(encoding="utf-8"))
+    raise AssertionError("the app container mounts no gateway config")
+
+
+def test_standalone_gateway_lists_its_own_backend_for_org_callbacks() -> None:
+    # The gateway
+    # refuses an org guardrail callback to a loopback address unless the
+    # operator lists it in mcp.egress.private_allow. In the standalone
+    # container the gateway runs next to the API, and the platform fills an
+    # org FutureAGI eval check's base_url with its own BASE_URL, which defaults
+    # to http://localhost:8000 on a self-hosted install. The standalone config
+    # lists exactly that host and port, so that check keeps working with
+    # guardrails on, and nothing else on loopback opens.
+    settings_py = (ROOT / "futureagi" / "tfc" / "settings" / "settings.py").read_text(
+        encoding="utf-8"
+    )
+    default = re.search(
+        r'BASE_URL = os\.getenv\(\s*"BASE_URL",\s*\(\s*"https://api\.futureagi\.com"'
+        r'\s*if .*?\s*else "(http://[^"]+)"',
+        settings_py,
+        re.S,
+    )
+    assert default, "the self-hosted BASE_URL default moved; update this test"
+    base_url = default.group(1)
+    host_port = re.fullmatch(r"http://([^/]+)", base_url).group(1)
+    assert host_port == "localhost:8000", base_url
+
+    app_env = _compose(STANDALONE_COMPOSE)["services"]["app"]["environment"]
+    assert "BASE_URL" not in app_env, "compose sets BASE_URL; list that host"
+    assert "FI_BASE_URL" not in _programs()["gateway"].get("environment", "")
+
+    gateway = _standalone_gateway_config()
+    mcp = gateway.get("mcp") or {}
+    assert not mcp.get("enabled"), "the egress list must not turn MCP on"
+    assert mcp.get("egress", {}).get("private_allow") == [host_port]
+
+
 def test_standalone_and_distributed_postgres_share_one_image() -> None:
     # Volumes move between the two files; glibc and musl builds sort text
     # differently and would corrupt each other's indexes.
@@ -408,6 +453,14 @@ def test_the_gateway_loads_keys_from_the_app_and_sends_it_request_logs() -> None
     assert gateway["AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS"] == private
     assert backend["AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS"] == private
 
+    # The dev-only admin-token opt-in reaches the gateway and the API alike:
+    # the E2E stack runs the compose default, and the API accepts it there for
+    # the gateway's key and org-config syncs.
+    insecure = "${AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN:-}"
+    assert app["AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN"] == insecure
+    assert gateway["AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN"] == insecure
+    assert backend["AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN"] == insecure
+
 
 @pytest.mark.parametrize("configured", ["", "from-dot-env"])
 def test_start_makes_a_webhook_secret_only_when_none_is_set(
@@ -429,6 +482,53 @@ def test_start_makes_a_webhook_secret_only_when_none_is_set(
         assert result.stdout == configured
     else:
         assert re.fullmatch(r"[0-9a-f]{64}", result.stdout)
+
+
+@pytest.mark.parametrize(
+    "configured, allow_insecure, replaced",
+    [
+        pytest.param("", "", True, id="empty"),
+        pytest.param(
+            "local-dev-only-admin-token-replace-me", "", True, id="compose-default"
+        ),
+        pytest.param("CHANGEME-set-by-bin-install", "", True, id="placeholder"),
+        pytest.param("a" * 64, "", False, id="from-dot-env"),
+        pytest.param(
+            "local-dev-only-admin-token-replace-me", "1", False, id="dev-opt-in"
+        ),
+        pytest.param(
+            "local-dev-only-admin-token-replace-me", "TRUE", False, id="dev-opt-in-true"
+        ),
+    ],
+)
+def test_start_replaces_an_empty_or_published_admin_token(
+    configured, allow_insecure, replaced
+) -> None:
+    """The gateway refuses to start on the compose default and shares the app
+    container with the API and UI; the API's admin endpoints refuse it too.
+    The token holds no state, so bin/start makes one for this start, for both
+    ends, unless .env has one or the dev opt-in is on."""
+    section = _start_section("admin_token_needs_replacing() {", "fi\n")
+    out = _run_start_section(
+        section,
+        {
+            "AGENTCC_ADMIN_TOKEN": configured,
+            "AGENTCC_CONTROL_PLANE_TOKEN": configured,
+            "AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN": allow_insecure,
+        },
+        'printf "\\n%s %s" "$AGENTCC_ADMIN_TOKEN" "$AGENTCC_CONTROL_PLANE_TOKEN"',
+    )
+    log, tokens = out.rsplit("\n", 1)
+    admin, control_plane = tokens.split(" ")
+    if replaced:
+        assert re.fullmatch(r"[0-9a-f]{64}", admin)
+        assert control_plane == admin
+        assert "random one for this start" in log
+        # Never printed: it is the admin credential.
+        assert admin not in log
+    else:
+        assert (admin, control_plane) == (configured, configured)
+        assert "random one" not in log
 
 
 def test_supervisor_keeps_secrets_off_command_lines_and_out_of_tmp() -> None:

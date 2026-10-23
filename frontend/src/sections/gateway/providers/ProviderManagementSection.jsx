@@ -12,8 +12,7 @@ import {
 import { useOrgConfig } from "./hooks/useOrgConfig";
 import { useGatewayContext } from "../context/useGatewayContext";
 
-import { useAuthContext } from "src/auth/hooks";
-import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 import ProviderHealthTable from "./ProviderHealthTable";
 import ProviderConfigView from "./ProviderConfigView";
 import RoutingConfigView from "./RoutingConfigView";
@@ -28,9 +27,10 @@ function tabSlugToIndex(slug) {
 }
 
 const ProviderManagementSection = () => {
-  const { role } = useAuthContext();
-  const canWrite =
-    RolePermission.OBSERVABILITY[PERMISSIONS.CREATE_EDIT_PROJECT][role];
+  // Adding a provider writes the org's gateway config: Owner or Admin only
+  // (the role check). Everyone sees the button, disabled with the reason for
+  // Members and Viewers.
+  const { canEdit, disabledReason } = useGatewayAdmin();
   const { tab: tabSlug } = useParams();
   const navigate = useNavigate();
   const tab = tabSlugToIndex(tabSlug);
@@ -116,17 +116,15 @@ const ProviderManagementSection = () => {
         title="Providers"
         subtitle="Manage LLM providers, routing rules, and cache settings"
         actions={[
-          ...(canWrite
-            ? [
-                {
-                  label: "Add Provider",
-                  variant: "contained",
-                  size: "small",
-                  icon: "mdi:plus",
-                  onClick: () => setAddProviderOpen(true),
-                },
-              ]
-            : []),
+          {
+            label: "Add Provider",
+            variant: "contained",
+            size: "small",
+            icon: "mdi:plus",
+            onClick: () => setAddProviderOpen(true),
+            disabled: !canEdit,
+            tooltip: disabledReason || undefined,
+          },
           {
             label: reloadMutation.isPending ? "Reloading..." : "Reload Config",
             variant: "outlined",

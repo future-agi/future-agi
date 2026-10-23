@@ -52,6 +52,25 @@ type Config struct {
 	MCP           MCPConfig                 `yaml:"mcp" json:"mcp"`
 	A2A           A2AConfig                 `yaml:"a2a" json:"a2a"`
 	Redis         RedisStateConfig          `yaml:"redis" json:"redis"`
+	Async         AsyncConfig               `yaml:"async" json:"async"`
+}
+
+// AsyncConfig bounds async inference (x-agentcc-async: true). All orgs'
+// jobs share one pool of workers; these limits keep one org from holding
+// it. A zero field takes its default.
+type AsyncConfig struct {
+	// MaxWorkers is how many jobs run at once, across all orgs. Default 10.
+	MaxWorkers int `yaml:"max_workers" json:"max_workers"`
+	// MaxWorkersPerOrg is how many of them one org's jobs may hold at once.
+	// Default half of max_workers (at least 1). A single-tenant gateway can
+	// set it to max_workers to let its one org use every worker.
+	MaxWorkersPerOrg int `yaml:"max_workers_per_org" json:"max_workers_per_org"`
+	// MaxJobTimeout is the longest one job may run. A request's timeout
+	// header and its org's config can shorten a job, never lengthen it past
+	// this. Default: the longest timeout this config gives a request or a
+	// provider (server.default_request_timeout, routing.model_timeouts,
+	// providers.*.default_timeout), read at startup.
+	MaxJobTimeout time.Duration `yaml:"max_job_timeout" json:"max_job_timeout"`
 }
 
 // RedisStateConfig configures Redis for shared state across replicas.
@@ -121,6 +140,10 @@ type MCPConfig struct {
 	Servers         map[string]MCPServerConfig   `yaml:"servers" json:"servers"`
 	Guardrails      MCPGuardrailConfig           `yaml:"guardrails" json:"guardrails"`
 	ToolVersions    map[string]ToolVersionConfig `yaml:"tool_versions" json:"tool_versions"`
+	// Egress is the operator's exception list for the egress guard
+	// (mcp_egress.go), the guard the callbacks an org config names dial through.
+	// It is read whether or not MCP is enabled.
+	Egress MCPEgressConfig `yaml:"egress" json:"egress"`
 }
 
 // ToolVersionConfig holds version and deprecation info for an MCP tool.
@@ -335,6 +358,18 @@ type ServerConfig struct {
 	// write deadline at this ceiling, so WriteTimeout no longer decides when
 	// a request the gateway resolved a deadline for can still answer.
 	MaxRequestTimeout time.Duration `yaml:"max_request_timeout" json:"max_request_timeout"`
+	// TrustedProxies are the addresses or CIDRs of the proxies in front of
+	// the gateway (load balancer, ingress). Only a request whose TCP peer is
+	// one of them has its X-Forwarded-For read, right to left past every
+	// trusted entry. Empty, with TrustedHops 0: every IP rule uses the TCP
+	// peer address and ignores X-Forwarded-For and X-Real-IP. Read at start-up.
+	TrustedProxies []string `yaml:"trusted_proxies" json:"trusted_proxies"`
+	// TrustedHops, instead of TrustedProxies, for proxies whose addresses are
+	// not known: the client is the TrustedHops-th X-Forwarded-For entry from
+	// the right, i.e. the number of entries the proxies append, the client's
+	// included. Set it only when every path to the gateway passes through
+	// those proxies. Read at start-up.
+	TrustedHops int `yaml:"trusted_hops" json:"trusted_hops"`
 }
 
 type ProviderConfig struct {
@@ -888,6 +923,13 @@ type AlertChannelConfig struct {
 
 type AdminConfig struct {
 	Token string `yaml:"token" json:"-"`
+	// AllowInsecureToken lets the gateway start with an empty, short, default
+	// or placeholder admin token. Set only from AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN,
+	// never from a config file. Local development only.
+	AllowInsecureToken bool `yaml:"-" json:"-"`
+	// tokenSet records that admin auth was configured even if the token is
+	// empty: the file has an admin.token key, or AGENTCC_ADMIN_TOKEN is present.
+	tokenSet bool
 }
 
 // RotationConfig controls key rotation for a provider.
@@ -976,7 +1018,7 @@ type CORSConfig struct {
 // IPACLConfig controls IP-based access control lists.
 type IPACLConfig struct {
 	Enabled        bool     `yaml:"enabled" json:"enabled"`
-	TrustedProxies int      `yaml:"trusted_proxies" json:"trusted_proxies"` // number of trusted proxy hops for X-Forwarded-For
+	TrustedProxies int      `yaml:"trusted_proxies" json:"trusted_proxies"` // not read: set server.trusted_proxies or server.trusted_hops (start-up warning)
 	Allow          []string `yaml:"allow" json:"allow"`                     // allowed IPs/CIDRs (empty = all allowed)
 	Deny           []string `yaml:"deny" json:"deny"`                       // denied IPs/CIDRs (takes precedence over allow)
 }
@@ -1208,8 +1250,19 @@ func loadFromEnv(cfg *Config) {
 	if v := os.Getenv("AGENTCC_LOG_LEVEL"); v != "" {
 		cfg.Logging.Level = v
 	}
-	if v := os.Getenv("AGENTCC_ADMIN_TOKEN"); v != "" {
-		cfg.Admin.Token = v
+	if v, ok := os.LookupEnv("AGENTCC_ADMIN_TOKEN"); ok {
+		cfg.Admin.tokenSet = true
+		if v != "" {
+			cfg.Admin.Token = v
+		}
+	}
+	if v := os.Getenv(EnvAllowInsecureAdminToken); v != "" {
+		if allow, err := strconv.ParseBool(strings.ToLower(strings.TrimSpace(v))); err == nil {
+			cfg.Admin.AllowInsecureToken = allow
+		} else {
+			slog.Warn("ignoring unrecognised value; expected true or false",
+				"env", EnvAllowInsecureAdminToken, "value", v)
+		}
 	}
 	envDuration("AGENTCC_DEFAULT_REQUEST_TIMEOUT", &cfg.Server.DefaultRequestTimeout)
 	envDuration("AGENTCC_MAX_REQUEST_TIMEOUT", &cfg.Server.MaxRequestTimeout)
@@ -1305,6 +1358,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("server.default_request_timeout (%s) is above the ceiling server.max_request_timeout (%s)",
 			c.Server.DefaultRequestTimeout, c.Server.MaxRequestTimeout)
 	}
+	if c.Async.MaxWorkers < 0 || c.Async.MaxWorkersPerOrg < 0 || c.Async.MaxJobTimeout < 0 {
+		return fmt.Errorf("async.max_workers, async.max_workers_per_org and async.max_job_timeout must not be negative")
+	}
 
 	for name, p := range c.Providers {
 		if p.BaseURL == "" {
@@ -1319,12 +1375,24 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	if err := c.validateAdminTokens(); err != nil {
+		return err
+	}
+
+	if _, err := ParseTrustedProxies(c.Server.TrustedProxies, c.Server.TrustedHops); err != nil {
+		return err
+	}
+
 	validLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 	if !validLevels[strings.ToLower(c.Logging.Level)] {
 		return fmt.Errorf("logging.level must be one of debug, info, warn, error; got %q", c.Logging.Level)
 	}
 
 	if err := c.validateOTel(); err != nil {
+		return err
+	}
+
+	if err := c.MCP.Egress.validate(); err != nil {
 		return err
 	}
 

@@ -80,7 +80,11 @@ function gatewayValues({ gateway, controlPlane }: MockTopology) {
   // credential or network allowance: private provider URLs stay refused.
   const wiring: Record<string, string> = { AGENTCC_CONTROL_PLANE_URL: controlPlane,
     AGENTCC_CONTROL_PLANE_TOKEN: allowed.AGENTCC_ADMIN_TOKEN, AGENTCC_SYNC_ON_STARTUP: 'true',
-    AGENTCC_SYNC_INTERVAL: '60s', AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: 'false' };
+    AGENTCC_SYNC_INTERVAL: '60s', AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: 'false',
+    // The stack keeps the published admin token, which the gateway and the
+    // API's admin endpoints refuse without this dev-only opt-in (e2e/stack/*.env
+    // set it; the backend and workers carry it too).
+    AGENTCC_ALLOW_INSECURE_ADMIN_TOKEN: '1' };
   return { allowed, wiring };
 }
 

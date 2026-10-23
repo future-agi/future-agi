@@ -81,9 +81,15 @@ func (h *Handlers) SubmitVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
+
 	now := time.Now()
 	job := &video.VideoJob{
 		ID:             fmt.Sprintf("video-%s", rc.RequestID),
+		OrgID:          orgID,
 		Status:         video.StatusQueued,
 		Model:          req.Model,
 		Prompt:         req.Prompt,
@@ -127,7 +133,12 @@ func (h *Handlers) GetVideoStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.videoStore.Get(videoID)
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
+	// Another org's job answers 404, the same as a missing one.
+	job, err := h.videoStore.GetForOrg(videoID, orgID)
 	if err != nil {
 		models.WriteError(w, models.ErrNotFound("video_not_found", "Video job not found"))
 		return
@@ -156,7 +167,12 @@ func (h *Handlers) DeleteVideo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.videoStore.Get(videoID)
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
+	// Another org's job answers 404, the same as a missing one.
+	job, err := h.videoStore.GetForOrg(videoID, orgID)
 	if err != nil {
 		models.WriteError(w, models.ErrNotFound("video_not_found", "Video job not found"))
 		return
@@ -221,8 +237,11 @@ func (h *Handlers) ListVideos(w http.ResponseWriter, r *http.Request) {
 		filters.Order = "desc"
 	}
 
-	// Use empty orgID for now (no org filtering in basic implementation).
-	jobs, total, err := h.videoStore.ListByOrg("", filters)
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
+	jobs, total, err := h.videoStore.ListByOrg(orgID, filters)
 	if err != nil {
 		models.WriteError(w, models.ErrInternal("failed to list videos: "+err.Error()))
 		return

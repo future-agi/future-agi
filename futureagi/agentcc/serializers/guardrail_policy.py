@@ -3,8 +3,10 @@ import copy
 import structlog
 from rest_framework import serializers
 
-from integrations.services.credentials import CredentialManager
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
+from agentcc.services import guardrail_urls
+from agentcc.validators import env_reference_error, find_checks_env_reference
+from integrations.services.credentials import CredentialManager
 
 logger = structlog.get_logger(__name__)
 
@@ -93,6 +95,34 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Check at index {i} must have a 'name' field"
                 )
+            # Policy sync merges checks by name and the push keys them by
+            # name, so a check's name must be a string.
+            if not isinstance(check["name"], str):
+                raise serializers.ValidationError(
+                    f"checks[{i}].name must be a string.",
+                    code="guardrail_bad_name",
+                )
+        # Checked before create() and update() encrypt api_key and
+        # secret_key, so every value is checked as sent.
+        # The org-config save turns this off (context) when it posts the
+        # active version's guardrails back unchanged.
+        if self.context.get("check_env_references", True):
+            found = find_checks_env_reference(value, "checks")
+            if found:
+                raise serializers.ValidationError(env_reference_error(found))
+        # A check's callback URL must be well-formed before a policy sync
+        # pushes it into the org config and the gateway dials it: policy
+        # writes do not pass through the gateway view's save helper. An update
+        # is checked against the policy's stored checks, so editing another
+        # check is never refused for a URL it leaves as stored. The org-config
+        # save turns this off
+        # (context): its write serializer has checked the same checks.
+        if self.context.get("check_callback_urls", True):
+            stored = getattr(self.instance, "checks", None)
+            try:
+                guardrail_urls.reject_changed_bad_policy_check_urls(value, stored)
+            except guardrail_urls.BadGuardrailURL as e:
+                raise serializers.ValidationError(str(e), code=e.code) from None
         return value
 
     def validate_scope(self, value):

@@ -7,15 +7,39 @@ from agentcc.org_config_defaults import (
     normalize_cache_config,
     normalize_cost_tracking_config,
 )
+from agentcc.services import guardrail_urls
+from agentcc.services.config_push import nonstring_check_name_path
+from agentcc.validators import env_reference_error, find_guardrail_env_reference
 
 
 class AgentccOrgConfigSerializer(serializers.ModelSerializer):
+    # Read-only and not a model field: the base representation skips it (no
+    # such attribute), and mask_config_data fills it in after the sections are
+    # normalised, so it always lists the pointers of the masks this response
+    # carries.
+    secrets_set = serializers.ListField(
+        child=serializers.CharField(),
+        read_only=True,
+        help_text=(
+            "JSON pointers of the infrastructure secrets stored in this config "
+            "(cache, a2a, audit, alerting and mcp). Each one reads as a mask, "
+            "never its value."
+        ),
+    )
+
     def to_representation(self, instance):
+        from agentcc.services.org_config_secrets import mask_config_data
+
         data = super().to_representation(instance)
         data["cost_tracking"] = normalize_cost_tracking_config(
             data.get("cost_tracking")
         )
         data["cache"] = normalize_cache_config(data.get("cache"))
+        # Every infrastructure secret (cache, a2a, audit, alerting and MCP) is
+        # returned as a mask and listed in secrets_set; its clear value goes
+        # only into the gateway push. Provider and guardrail credentials are
+        # masked on their own serializers.
+        mask_config_data(data)
         return data
 
     class Meta:
@@ -44,6 +68,7 @@ class AgentccOrgConfigSerializer(serializers.ModelSerializer):
             "change_description",
             "created_at",
             "updated_at",
+            "secrets_set",
         ]
         read_only_fields = [
             "id",
@@ -83,6 +108,34 @@ class AgentccOrgConfigWriteSerializer(serializers.Serializer):
     def validate_guardrails(self, value):
         if not isinstance(value, dict):
             raise serializers.ValidationError("guardrails must be a JSON object")
+        # A check's name keys it everywhere (the URL check below, the push),
+        # so a name that is not a string is refused first, naming the field.
+        bad_name = nonstring_check_name_path(value)
+        if bad_name:
+            raise serializers.ValidationError(
+                f"{bad_name} must be a string.", code="guardrail_bad_name"
+            )
+        found = find_guardrail_env_reference(value, "guardrails")
+        if found:
+            # A save that posts the active version's guardrails back unchanged
+            # (the Fallbacks page saves routing that way) does not set them,
+            # so a "${" already stored there does not refuse it. The
+            # view passes "stored_guardrails", a callable that returns the
+            # active version's guardrails.
+            stored = self.context.get("stored_guardrails")
+            if not (callable(stored) and value == stored()):
+                raise serializers.ValidationError(env_reference_error(found))
+        # A check's callback URL (url, endpoint, base_url) must be a
+        # well-formed http(s) URL before the gateway dials it. Only a URL this
+        # save introduces or changes against the active version's guardrails
+        # is checked, so posting the stored section back (the Fallbacks page)
+        # is never refused for a URL it leaves as stored.
+        try:
+            guardrail_urls.reject_changed_bad_guardrail_urls(
+                value, _stored_section(self.context, "stored_guardrails")
+            )
+        except guardrail_urls.BadGuardrailURL as e:
+            raise serializers.ValidationError(str(e), code=e.code) from None
         return value
 
     def validate_routing(self, value):
@@ -124,7 +177,7 @@ class AgentccOrgConfigWriteSerializer(serializers.Serializer):
                     except (TypeError, ValueError):
                         raise serializers.ValidationError(
                             f"budgets.{level_key}.{name}.limit must be a number"
-                        )
+                        ) from None
                 if "period" in entry and entry["period"] not in valid_periods:
                     raise serializers.ValidationError(
                         f"budgets.{level_key}.{name}.period must be one of: "
@@ -146,7 +199,7 @@ class AgentccOrgConfigWriteSerializer(serializers.Serializer):
                         except (TypeError, ValueError):
                             raise serializers.ValidationError(
                                 f"budgets.{level_key}.{name}.per_model.{model_name} must be a number"
-                            )
+                            ) from None
         return value
 
     def validate_cost_tracking(self, value):
@@ -162,6 +215,14 @@ class AgentccOrgConfigWriteSerializer(serializers.Serializer):
     def validate_alerting(self, value):
         if not isinstance(value, dict):
             raise serializers.ValidationError("alerting must be a JSON object")
+        # An alert channel's URL must be well-formed before the gateway dials
+        # it; changed-only, as above.
+        try:
+            guardrail_urls.reject_changed_bad_alerting_urls(
+                value, _stored_section(self.context, "stored_alerting")
+            )
+        except guardrail_urls.BadAlertingURL as e:
+            raise serializers.ValidationError(str(e), code=e.code) from None
         return value
 
     def validate_privacy(self, value):
@@ -227,3 +288,10 @@ class AgentccOrgConfigWriteSerializer(serializers.Serializer):
                     "model_map must be a mapping of string model names to string provider IDs"
                 )
         return value
+
+
+def _stored_section(context, key):
+    """The active version's section a write serializer's context names under
+    ``key`` (a callable the view passes), or {} when there is none."""
+    stored = context.get(key)
+    return stored() if callable(stored) else {}

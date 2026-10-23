@@ -12,12 +12,25 @@ from rest_framework.viewsets import ModelViewSet
 from agentcc.models import AgentccOrgConfig
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
 from agentcc.org_config_defaults import default_cost_tracking_config
+from agentcc.permissions import GatewayAdminActionsMixin
 from agentcc.serializers.guardrail_policy import AgentccGuardrailPolicySerializer
 from agentcc.serializers.org_config import (
     AgentccOrgConfigSerializer,
     AgentccOrgConfigWriteSerializer,
 )
+from agentcc.services import guardrail_urls
 from agentcc.services.config_push import validate_org_config
+from agentcc.services.guardrail_policy_scope import (
+    GuardrailPolicyNotInOrg,
+    log_policy_refused,
+    reject_unowned_guardrail_policies,
+)
+from agentcc.services.org_config_secrets import (
+    SECRET_SECTIONS,
+    OrgConfigSecretRejected,
+    encrypt_section_secrets,
+    masked_section,
+)
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
@@ -29,10 +42,16 @@ _GATEWAY_SYNC_WARNING = (
 )
 
 
-class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
+class AgentccOrgConfigViewSet(
+    GatewayAdminActionsMixin, BaseModelViewSetMixinWithUserOrg, ModelViewSet
+):
     """Per-org gateway configuration management. Configs are versioned and immutable."""
 
     permission_classes = [IsAuthenticated]
+    # Writes are an org Owner's or Admin's; every member reads.
+    gateway_admin_actions = frozenset(
+        {"create", "update", "partial_update", "destroy", "activate"}
+    )
     serializer_class = AgentccOrgConfigSerializer
     queryset = AgentccOrgConfig.no_workspace_objects.all()
     _gm = GeneralMethods()
@@ -60,12 +79,47 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     def create(self, request, *args, **kwargs):
         """Create a new config version. Auto-increments version and activates it."""
         try:
-            write_serializer = AgentccOrgConfigWriteSerializer(data=request.data)
+            org = getattr(request, "organization", None)
+            # Every create is a whole new version. When its guardrails are the
+            # active version's, as stored (the Fallbacks page posts the active
+            # config back to save routing), this save does not set them, and
+            # their "${" check is not this save's to make. Looked up only when
+            # needed, after the checks that need no org config.
+            stored = []
+
+            def stored_guardrails():
+                if not stored:
+                    stored.append(
+                        AgentccOrgConfig.no_workspace_objects.filter(
+                            organization=org, is_active=True, deleted=False
+                        )
+                        .values_list("guardrails", flat=True)
+                        .first()
+                        or {}
+                    )
+                return stored[0]
+
+            def stored_alerting():
+                return (
+                    AgentccOrgConfig.no_workspace_objects.filter(
+                        organization=org, is_active=True, deleted=False
+                    )
+                    .values_list("alerting", flat=True)
+                    .first()
+                    or {}
+                )
+
+            write_serializer = AgentccOrgConfigWriteSerializer(
+                data=request.data,
+                context={
+                    "stored_guardrails": stored_guardrails,
+                    "stored_alerting": stored_alerting,
+                },
+            )
             if not write_serializer.is_valid():
                 return self._gm.bad_request(write_serializer.errors)
 
             data = write_serializer.validated_data
-            org = getattr(request, "organization", None)
             if org is None:
                 return self._gm.bad_request("Organization context is required")
 
@@ -74,8 +128,14 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
                 check_ee_feature(EEFeature.DATA_MASKING, org_id=str(org.id))
 
+            guardrails_changed = data.get("guardrails", {}) != stored_guardrails()
+
             # Route guardrail credentials through AgentccGuardrailPolicy for encryption
             guardrails = data.get("guardrails", {})
+            # A check may name only a policy the org may name, checked as sent
+            # and before anything is written, the console policy upsert below
+            # included.
+            reject_unowned_guardrail_policies(org, guardrails, stored_guardrails())
             raw_checks = guardrails.get("checks")
             raw_rules = guardrails.get("rules")
 
@@ -95,18 +155,28 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             with transaction.atomic():
                 if checks_list:
                     # Upsert a UI guardrails policy for this org
-                    policy, _ = AgentccGuardrailPolicy.no_workspace_objects.get_or_create(
-                        organization=org,
-                        name="__ui_guardrails__",
-                        deleted=False,
-                        defaults={
-                            "checks": [],
-                            "scope": AgentccGuardrailPolicy.SCOPE_GLOBAL,
-                            "is_active": True,
-                        },
+                    policy, _ = (
+                        AgentccGuardrailPolicy.no_workspace_objects.get_or_create(
+                            organization=org,
+                            name="__ui_guardrails__",
+                            deleted=False,
+                            defaults={
+                                "checks": [],
+                                "scope": AgentccGuardrailPolicy.SCOPE_GLOBAL,
+                                "is_active": True,
+                            },
+                        )
                     )
                     policy_serializer = AgentccGuardrailPolicySerializer(
-                        policy, data={"checks": checks_list}, partial=True
+                        policy,
+                        data={"checks": checks_list},
+                        partial=True,
+                        # The write serializer has checked this save's
+                        # callback URLs against the active version.
+                        context={
+                            "check_env_references": guardrails_changed,
+                            "check_callback_urls": False,
+                        },
                     )
                     policy_serializer.is_valid(raise_exception=True)
                     policy_serializer.save()
@@ -128,9 +198,30 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         data["guardrails"] = {**guardrails, "rules": sanitized_rules}
 
                 # Lock active config to prevent concurrent version creation
-                AgentccOrgConfig.no_workspace_objects.select_for_update().filter(
-                    organization=org, is_active=True, deleted=False
-                ).first()
+                active = (
+                    AgentccOrgConfig.no_workspace_objects.select_for_update()
+                    .filter(organization=org, is_active=True, deleted=False)
+                    .first()
+                )
+
+                # Every infrastructure secret this version holds is stored
+                # encrypted. The console posts each section it read
+                # back, masks included: a blank or a read-back mask keeps the
+                # active version's secret (never across an origin change), and
+                # a new one, MCP ones included, is encrypted. Inside the
+                # transaction, so a refusal also rolls back the policy upsert.
+                encrypt_section_secrets(
+                    {name: data[name] for name in SECRET_SECTIONS if name in data},
+                    active,
+                )
+                # An alert channel URL sent as a read-back mask is checked
+                # once resolved to the value it keeps (the write serializer
+                # skips masks): only a URL this save introduces or changes,
+                # read as its decrypted value.
+                if "alerting" in data:
+                    guardrail_urls.reject_changed_bad_alerting_urls(
+                        data["alerting"], (active.alerting if active else None) or {}
+                    )
 
                 # Compute next version number
                 max_version = (
@@ -173,7 +264,7 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 )
                 # Fail closed: a version the gateway contract rejects must not
                 # become active. Raising here rolls the whole save back.
-                validate_org_config(config)
+                validate_org_config(config, check_guardrails=guardrails_changed)
 
             # Push to gateway
             synced = self._push_config_to_gateway(org.id, config)
@@ -185,6 +276,19 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.success_response(data)
         except FeatureUnavailable:
             raise
+        except GuardrailPolicyNotInOrg as e:
+            log_policy_refused("org_config_create_rejected", org, e)
+            return self._gm.bad_request(e)
+        except OrgConfigSecretRejected as e:
+            # The refusal's code (secret_not_kept, secret_origin_changed) goes
+            # back to the client; the log names the field, never a value.
+            logger.warning(
+                "org_config_create_rejected",
+                org_id=str(org.id) if org is not None else None,
+                code=e.code,
+                path=e.pointer,
+            )
+            return self._gm.bad_request(e)
         except Exception as e:
             logger.exception("org_config_create_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -222,8 +326,10 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 )
 
             org = instance.organization
-            # Fail closed: an older version can hold keys the gateway contract
-            # no longer accepts.
+            # Fail closed: activation refuses a version the gateway contract
+            # does not accept or whose switched-on guardrail checks hold a
+            # "${" where the gateway refuses one; the 400 names the field and
+            # nothing is pushed.
             validate_org_config(instance)
 
             with transaction.atomic():
@@ -284,12 +390,19 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             if not other:
                 return self._gm.not_found("Comparison config not found")
 
+            # The secret sections (cache, a2a, audit, alerting, mcp) are
+            # masked on both sides before the diff, so a rotated secret shows
+            # as a change (the masks differ) without revealing either value,
+            # and an unchanged one is not a change.
             diff = {
                 "from_version": other.version,
                 "to_version": instance.version,
                 "guardrails": _json_diff(other.guardrails, instance.guardrails),
                 "routing": _json_diff(other.routing, instance.routing),
-                "cache": _json_diff(other.cache or {}, instance.cache or {}),
+                "cache": _json_diff(
+                    masked_section("cache", other.cache or {}),
+                    masked_section("cache", instance.cache or {}),
+                ),
                 "rate_limiting": _json_diff(
                     other.rate_limiting or {}, instance.rate_limiting or {}
                 ),
@@ -298,14 +411,26 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     other.cost_tracking or {}, instance.cost_tracking or {}
                 ),
                 "ip_acl": _json_diff(other.ip_acl or {}, instance.ip_acl or {}),
-                "alerting": _json_diff(other.alerting or {}, instance.alerting or {}),
+                "alerting": _json_diff(
+                    masked_section("alerting", other.alerting or {}),
+                    masked_section("alerting", instance.alerting or {}),
+                ),
                 "privacy": _json_diff(other.privacy or {}, instance.privacy or {}),
                 "tool_policy": _json_diff(
                     other.tool_policy or {}, instance.tool_policy or {}
                 ),
-                "mcp": _json_diff(other.mcp or {}, instance.mcp or {}),
-                "a2a": _json_diff(other.a2a or {}, instance.a2a or {}),
-                "audit": _json_diff(other.audit or {}, instance.audit or {}),
+                "mcp": _json_diff(
+                    masked_section("mcp", other.mcp or {}),
+                    masked_section("mcp", instance.mcp or {}),
+                ),
+                "a2a": _json_diff(
+                    masked_section("a2a", other.a2a or {}),
+                    masked_section("a2a", instance.a2a or {}),
+                ),
+                "audit": _json_diff(
+                    masked_section("audit", other.audit or {}),
+                    masked_section("audit", instance.audit or {}),
+                ),
                 "model_database": _json_diff(
                     other.model_database or {}, instance.model_database or {}
                 ),

@@ -293,12 +293,25 @@ type WebhookChannel struct {
 	client  *http.Client
 }
 
-// NewWebhookChannel creates a webhook alert channel.
+// ChannelTimeout bounds one alert delivery.
+const ChannelTimeout = 10 * time.Second
+
+// NewWebhookChannel creates a webhook alert channel with a plain client. The
+// operator's config.yaml channels (NewManager) use it. An organization's
+// channels go through the guarded egress dialer instead
+// (NewWebhookChannelWithClient), so an org-set URL reaches only the
+// addresses the egress guard allows.
 func NewWebhookChannel(url string, headers map[string]string) *WebhookChannel {
+	return NewWebhookChannelWithClient(&http.Client{Timeout: ChannelTimeout}, url, headers)
+}
+
+// NewWebhookChannelWithClient creates a webhook alert channel that sends
+// through client, so a caller can give it the guarded egress client.
+func NewWebhookChannelWithClient(client *http.Client, url string, headers map[string]string) *WebhookChannel {
 	return &WebhookChannel{
 		url:     url,
 		headers: headers,
-		client:  &http.Client{Timeout: 10 * time.Second},
+		client:  client,
 	}
 }
 
@@ -332,11 +345,19 @@ type SlackChannel struct {
 	client *http.Client
 }
 
-// NewSlackChannel creates a Slack alert channel.
+// NewSlackChannel creates a Slack alert channel with a plain client (the
+// operator's config.yaml channels). An organization's channels use the
+// guarded egress client through NewSlackChannelWithClient.
 func NewSlackChannel(url string) *SlackChannel {
+	return NewSlackChannelWithClient(&http.Client{Timeout: ChannelTimeout}, url)
+}
+
+// NewSlackChannelWithClient creates a Slack alert channel that sends through
+// client.
+func NewSlackChannelWithClient(client *http.Client, url string) *SlackChannel {
 	return &SlackChannel{
 		url:    url,
-		client: &http.Client{Timeout: 10 * time.Second},
+		client: client,
 	}
 }
 

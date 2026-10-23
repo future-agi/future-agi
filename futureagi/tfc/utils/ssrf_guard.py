@@ -41,7 +41,8 @@ class IPClass(enum.Enum):
 
 # Never reachable, beyond what ipaddress flags: "this network", broadcast,
 # and the metadata services outside link-local (Alibaba's inside CGNAT, AWS
-# IMDS over IPv6 inside fc00::/7, Azure's WireServer in public space).
+# IMDS and GCP's metadata server over IPv6 inside fc00::/7, Azure's
+# WireServer in public space): netguard's forbiddenNets.
 _NEVER_ALLOWED_NETWORKS = tuple(
     ipaddress.ip_network(n)
     for n in (
@@ -49,6 +50,7 @@ _NEVER_ALLOWED_NETWORKS = tuple(
         "255.255.255.255/32",
         "100.100.100.200/32",
         "fd00:ec2::254/128",
+        "fd20:ce::254/128",
         "168.63.129.16/32",
     )
 )
@@ -82,7 +84,11 @@ class SsrfResponse:
         # HTTPHeaderDict is case-insensitive (matches requests.Response's
         # CaseInsensitiveDict contract): callers can look up 'Content-Type'
         # regardless of the casing the server sent (or a test constructed).
-        self.headers = urllib3.HTTPHeaderDict(headers) if headers is not None else urllib3.HTTPHeaderDict()
+        self.headers = (
+            urllib3.HTTPHeaderDict(headers)
+            if headers is not None
+            else urllib3.HTTPHeaderDict()
+        )
         self.content = content
         self.final_url = final_url
 
@@ -110,12 +116,57 @@ def is_valid_url(url_string: str) -> bool:
     return parsed.scheme in ("http", "https") and bool(parsed.hostname)
 
 
+# The IPv6 forms that carry an IPv4 address a translator or tunnel connects
+# to, besides IPv4-mapped: NAT64's well-known prefix (RFC 6052) and
+# IPv4-compatible addresses (RFC 4291 2.5.5.1, deprecated). 6to4 and Teredo
+# are read with ipaddress's own properties. ``::`` and ``::1`` sit inside
+# ::/96 but are their own class, not 0.0.0.0 and 0.0.0.1.
+_NAT64_NETWORK = ipaddress.ip_network("64:ff9b::/96")
+_IPV4_COMPATIBLE_NETWORK = ipaddress.ip_network("::/96")
+_IPV6_SPECIAL_NETWORK = ipaddress.ip_network("::/127")
+
+# Strictness order, for "the stricter of two classes".
+_STRICTNESS = {"public": 0, "private": 1, "never": 2}
+
+
+def _embedded_ipv4(ip: ipaddress.IPv6Address) -> list[ipaddress.IPv4Address]:
+    """The IPv4 addresses an IPv6 address carries for a translator or tunnel
+    to connect to: NAT64 (64:ff9b::/96), 6to4 (2002::/16), Teredo (2001::/32,
+    the server and the client, which ipaddress un-inverts) and
+    IPv4-compatible (::/96 minus :: and ::1). The same four forms the
+    gateway's netguard reads (agentcc-gateway internal/netguard
+    embeddedIPv4)."""
+    if ip in _NAT64_NETWORK:
+        return [ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)]
+    if ip.sixtofour is not None:
+        return [ip.sixtofour]
+    if ip.teredo is not None:
+        return list(ip.teredo)
+    if ip in _IPV4_COMPATIBLE_NETWORK and ip not in _IPV6_SPECIAL_NETWORK:
+        return [ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)]
+    return []
+
+
 def classify_ip(ip: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> IPClass:
     """Classify an address. IPv4-mapped IPv6 addresses count as their IPv4
-    address."""
+    address. The IPv6 forms that carry an IPv4 address a translator or tunnel
+    connects to (NAT64, 6to4, Teredo, IPv4-compatible) are in the stricter of
+    their own class and the embedded address's, as the gateway's netguard
+    judges them: a NAT64 form of a link-local address is NEVER, not PRIVATE."""
     ip = ipaddress.ip_address(ip)
     if ip.version == 6 and ip.ipv4_mapped:
         ip = ip.ipv4_mapped
+    ip_class = _classify_address(ip)
+    if ip.version == 6:
+        for embedded in _embedded_ipv4(ip):
+            embedded_class = _classify_address(embedded)
+            if _STRICTNESS[embedded_class.value] > _STRICTNESS[ip_class.value]:
+                ip_class = embedded_class
+    return ip_class
+
+
+def _classify_address(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> IPClass:
+    """The class of one address by its own ranges."""
     if (
         ip.is_loopback
         or ip.is_link_local  # covers 169.254.169.254 metadata endpoint
@@ -254,9 +305,7 @@ def safe_fetch(
                 for chunk in response.stream(64 * 1024):
                     body.extend(chunk)
                     if len(body) > max_bytes:
-                        raise ValueError(
-                            f"URL body exceeds {max_bytes} byte limit."
-                        )
+                        raise ValueError(f"URL body exceeds {max_bytes} byte limit.")
                 content = bytes(body)
 
             return SsrfResponse(

@@ -14,7 +14,15 @@ type Session struct {
 	ClientInfo   Implementation
 	Capabilities ClientCapabilities
 	CreatedAt    time.Time
+	owner        SessionOwner // set at creation, never changed
 	lastUsed     atomic.Int64 // unix nano for lock-free update
+}
+
+// SessionOwner is the API key that opened a session. Only that key may use
+// the session. With per-key auth off every session has the zero owner.
+type SessionOwner struct {
+	KeyID string
+	OrgID string
 }
 
 // Touch updates the session's last-used timestamp.
@@ -51,26 +59,33 @@ func NewSessionManager(ttl time.Duration) *SessionManager {
 	return sm
 }
 
-// Create creates a new session and returns it.
-func (sm *SessionManager) Create(clientInfo Implementation, caps ClientCapabilities) *Session {
+// Create creates a new session owned by owner and returns it.
+func (sm *SessionManager) Create(owner SessionOwner, clientInfo Implementation, caps ClientCapabilities) *Session {
 	s := &Session{
 		ID:           generateSessionID(),
 		ClientInfo:   clientInfo,
 		Capabilities: caps,
 		CreatedAt:    time.Now(),
+		owner:        owner,
 	}
 	s.Touch()
 	sm.sessions.Store(s.ID, s)
 	return s
 }
 
-// Get retrieves a session by ID, returns nil if not found or expired.
-func (sm *SessionManager) Get(id string) *Session {
+// Get returns the session with this id when owner opened it and it has not
+// expired, and marks it used; otherwise nil. A session opened by another owner
+// is reported missing, exactly like an unknown id, and is left untouched: it
+// is neither marked used nor removed.
+func (sm *SessionManager) Get(id string, owner SessionOwner) *Session {
 	v, ok := sm.sessions.Load(id)
 	if !ok {
 		return nil
 	}
 	s := v.(*Session)
+	if s.owner != owner {
+		return nil
+	}
 	if s.IdleSince() > sm.ttl {
 		sm.sessions.Delete(id)
 		return nil

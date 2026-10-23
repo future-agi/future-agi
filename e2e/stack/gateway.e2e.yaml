@@ -400,10 +400,11 @@ logging:
 #   max_age: 86400
 #   allow_credentials: false
 
-# Restrict inbound traffic by IP / CIDR.
+# Restrict inbound traffic by IP / CIDR. The client IP comes from the TCP peer
+# unless server.trusted_proxies (or server.trusted_hops) is set; see server.
+# ip_acl.trusted_proxies is not read.
 # ip_acl:
 #   enabled: true
-#   trusted_proxies: 1                    # hops of X-Forwarded-For to trust
 #   allow: ["10.0.0.0/8", "192.168.1.0/24"]
 #   deny:  ["203.0.113.7"]                # deny takes precedence over allow
 

@@ -16,6 +16,38 @@ server:
   # only to a response this ceiling does not govern. Unset, it becomes
   # write_timeout. Read at startup, like the rest of this block.
   max_request_timeout: 300s
+  # Proxies in front of the gateway (load balancer, ingress), as addresses or
+  # CIDRs. Every IP rule (ip_acl, an org's ip_acl, a key's allowed_ips) checks
+  # the client IP. With none set, that is the TCP peer, and X-Forwarded-For and
+  # X-Real-IP are not read. With
+  # trusted_proxies, X-Forwarded-For is read only from a trusted peer, right to
+  # left past every trusted address; the first other entry is the client.
+  # Behind a load balancer, list every address that connects to the gateway
+  # and every address a proxy appends after the client, or every request comes
+  # from the balancer and an allow list refuses everyone. A Google Cloud
+  # external Application Load Balancer connects from 130.211.0.0/22 and
+  # 35.191.0.0/16 and appends its own forwarding-rule IP after the client, so
+  # list that IP too; an AWS ALB connects from its subnets. Keep the ranges
+  # narrow: the gateway takes the client IP from every host inside them. Read at start-up.
+  # trusted_proxies: ["130.211.0.0/22", "35.191.0.0/16", "203.0.113.10"]
+  # Or, when the proxies' addresses are not known: the client is the
+  # trusted_hops-th X-Forwarded-For entry from the right, so set it to the
+  # number of entries your proxies append, the client's included: 1 behind one
+  # nginx or AWS ALB, 2 behind a Google Cloud external Application Load
+  # Balancer (it appends the client and its forwarding-rule IP), plus 1 for
+  # each proxy after that. trusted_hops reads the entry by its position alone,
+  # so set it only where every request reaches the gateway through those
+  # proxies; in Kubernetes, use trusted_proxies.
+  # Set one of the two, not both.
+  # trusted_hops: 1
+
+# Async inference (x-agentcc-async: true). All orgs' jobs share one pool of
+# workers; these bound how much of it one org can hold. Each defaults when unset.
+# async:
+#   max_workers: 10
+#   max_workers_per_org: 5   # default: half of max_workers
+#   max_job_timeout: 60s     # default: the longest of server.default_request_timeout,
+#                            # routing.model_timeouts and providers.*.default_timeout
 
 providers:
   openai:
@@ -407,6 +439,13 @@ logging:
 #       timeout: 3s                     # Per-rule timeout override
 #       config:                         # Rule-specific config passed to the guardrail
 #         entities: ["email", "phone", "ssn"]
+#     # A futureagi or external rule in this file may write api_key: "${VAR}";
+#     # it is read from the gateway's environment (futureagi: api_key,
+#     # secret_key, base_url; external: any top-level string setting). An org's
+#     # futureagi or external check pushed from the console never is: one
+#     # holding "${" in those settings makes no call and fails (with action
+#     # block, 403 content_blocked naming the check and the field). A "${"
+#     # elsewhere, such as a blocklist word, is plain text.
 #     - name: "content-moderation"
 #       stage: "post"
 #       mode: "sync"
@@ -431,10 +470,11 @@ logging:
 #   max_age: 86400
 #   allow_credentials: false
 
-# Restrict inbound traffic by IP / CIDR.
+# Restrict inbound traffic by IP / CIDR. The client IP comes from the TCP peer
+# unless server.trusted_proxies (or server.trusted_hops) is set; see server.
+# ip_acl.trusted_proxies is not read.
 # ip_acl:
 #   enabled: true
-#   trusted_proxies: 1                    # hops of X-Forwarded-For to trust
 #   allow: ["10.0.0.0/8", "192.168.1.0/24"]
 #   deny:  ["203.0.113.7"]                # deny takes precedence over allow
 
@@ -744,43 +784,79 @@ logging:
 #   enabled: true
 
 # Model Context Protocol — expose tools from registered MCP servers to models.
-# mcp:
-#   enabled: true
-#   endpoint: "/mcp"
-#   max_agent_depth: 5
-#   tool_call_timeout: 30s
-#   session_ttl: 30m
-#   separator: "__"                    # server-name__tool-name
-#   servers:
-#     filesystem:
-#       transport: "stdio"
-#       command: "npx"
-#       args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-#       tools_cache_ttl: 5m
-#     search:
-#       transport: "http"
-#       url: "https://mcp.example.com"
-#       auth:
-#         type: "bearer"
-#         token: "${MCP_SEARCH_TOKEN}"
-#   guardrails:
-#     enabled: true
-#     blocked_tools: ["shell_exec"]
-#     allowed_servers: ["filesystem", "search"]
-#     validate_inputs: true
-#     validate_outputs: false
-#     tool_rate_limits:
-#       filesystem__read_file: 100     # per minute
-#   tool_versions:
-#     filesystem__read_file:
-#       version: "v2"
-#       deprecated: false
-#     filesystem__legacy_read:
-#       version: "v1"
-#       deprecated: true
-#       deprecation_message: "Use read_file instead"
-#       replaced_by: "filesystem__read_file"
+# With auth.enabled, every request under the endpoint (any method, any subpath)
+# needs a valid API key ("Authorization: Bearer <key>" or "x-api-key: <key>"),
+# and the key's allowed_tools / denied_tools filter what it can list and call.
+# The same holds for POST /a2a when a2a.enabled.
+#
+# This is the one mcp block: the egress guard's list at its end is live,
+# so MCP's own settings sit commented beneath the same key. To turn MCP
+# on, uncomment the lines from "# enabled: true" to "# replaced_by: ..."
+# (delete each "# "), never a second mcp: key.
+mcp:
+  # enabled: true
+  # endpoint: "/mcp"
+  # max_agent_depth: 5
+  # tool_call_timeout: 30s
+  # session_ttl: 30m
+  # separator: "__"                    # server-name__tool-name
+  # servers:
+  #   filesystem:
+  #     transport: "stdio"
+  #     command: "npx"
+  #     args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+  #     tools_cache_ttl: 5m
+  #   search:
+  #     transport: "http"
+  #     url: "https://mcp.example.com"
+  #     auth:
+  #       type: "bearer"
+  #       token: "${MCP_SEARCH_TOKEN}"
+  # guardrails:
+  #   enabled: true
+  #   blocked_tools: ["shell_exec"]
+  #   allowed_servers: ["filesystem", "search"]
+  #   validate_inputs: true
+  #   validate_outputs: false
+  #   tool_rate_limits:
+  #     filesystem__read_file: 100     # per minute
+  # tool_versions:
+  #   filesystem__read_file:
+  #     version: "v2"
+  #     deprecated: false
+  #   filesystem__legacy_read:
+  #     version: "v1"
+  #     deprecated: true
+  #     deprecation_message: "Use read_file instead"
+  #     replaced_by: "filesystem__read_file"
 
+  # The egress guard's operator exception list. The gateway refuses to connect
+  # to a loopback, private/LAN, link-local or cloud-metadata address for any
+  # destination an organization chose: a guardrail webhook, an external
+  # guardrail service, a FutureAGI eval base_url and an alert channel an org
+  # configures in the console. List a CIDR, or a host[:port] (matched against
+  # the name the gateway dials, never the address it resolves to), to allow a
+  # self-hosted service on such an address (a local Ollama, a presidio sidecar,
+  # an in-cluster webhook). Cloud-metadata addresses are refused even if
+  # listed. A public address never needs listing, nor does the gateway's own
+  # FI_BASE_URL (a FutureAGI eval check that names no base_url, the default, or
+  # exactly FI_BASE_URL). Guardrail rules and alert channels in this file are
+  # yours, not an org's, and are never guarded.
+  #
+  # This file is the default gateway config of both compose installs. In the
+  # Standalone install (docker-compose.yml) the gateway runs next to the API,
+  # and the API fills an org FutureAGI eval check's base_url with its own
+  # BASE_URL, http://localhost:8000 by default: listing that host and port
+  # keeps the check working when you turn guardrails on. In the distributed
+  # install (docker-compose.distributed.yml) the gateway has its own container,
+  # where nothing listens on localhost:8000, so the entry opens nothing there.
+  # If you set BASE_URL to an address the gateway reaches on a private network,
+  # list that host:port (or set the gateway's FI_BASE_URL to exactly BASE_URL).
+  # The list does not turn MCP on.
+  # Other entries look like "10.0.0.0/8" or "presidio.internal:5001".
+  egress:
+    private_allow:
+      - "localhost:8000"
 # Agent-to-Agent protocol: expose Agentcc as an agent and register remote agents.
 # a2a:
 #   enabled: true

@@ -19,6 +19,7 @@ type SemanticStore struct {
 
 type semanticEntry struct {
 	vector    []float32
+	scope     string // tenant partition (OrgScope); search never crosses it
 	model     string
 	key       string // exact-match key for dedup
 	response  *models.ChatCompletionResponse
@@ -51,9 +52,10 @@ type SearchResult struct {
 	Similarity float64
 }
 
-// Search finds the most similar cached response for the given vector and model.
-// Returns nil if no match exceeds the threshold.
-func (s *SemanticStore) Search(vector []float32, model string) *SearchResult {
+// Search finds the most similar cached response for the given vector and model
+// among the entries stored under scope. Returns nil if no match exceeds the
+// threshold.
+func (s *SemanticStore) Search(scope string, vector []float32, model string) *SearchResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -66,8 +68,8 @@ func (s *SemanticStore) Search(vector []float32, model string) *SearchResult {
 		if now.After(e.expiresAt) {
 			continue
 		}
-		// Model must match.
-		if e.model != model {
+		// Scope (the tenant) and model must match.
+		if e.scope != scope || e.model != model {
 			continue
 		}
 
@@ -89,8 +91,8 @@ func (s *SemanticStore) Search(vector []float32, model string) *SearchResult {
 	}
 }
 
-// Set stores a vector entry in the semantic cache.
-func (s *SemanticStore) Set(key string, vector []float32, model string, resp *models.ChatCompletionResponse, ttl time.Duration) {
+// Set stores a vector entry in the semantic cache under scope.
+func (s *SemanticStore) Set(scope, key string, vector []float32, model string, resp *models.ChatCompletionResponse, ttl time.Duration) {
 	if ttl <= 0 || resp == nil {
 		return
 	}
@@ -103,7 +105,7 @@ func (s *SemanticStore) Set(key string, vector []float32, model string, resp *mo
 
 	// Check for dedup by key.
 	for _, e := range s.entries {
-		if e.key == key && e.model == model {
+		if e.key == key && e.model == model && e.scope == scope {
 			e.vector = vector
 			e.response = resp
 			e.expiresAt = expiresAt
@@ -122,6 +124,7 @@ func (s *SemanticStore) Set(key string, vector []float32, model string, resp *mo
 
 	s.entries = append(s.entries, &semanticEntry{
 		vector:    vector,
+		scope:     scope,
 		model:     model,
 		key:       key,
 		response:  resp,

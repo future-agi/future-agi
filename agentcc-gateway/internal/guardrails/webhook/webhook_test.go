@@ -10,8 +10,20 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
+	"github.com/futureagi/agentcc-gateway/internal/mcp/egress"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
+
+// These tests reach httptest servers on loopback; the org constructor
+// dials through the guarded egress dialer, so newGuard is New
+// with a dialer that lists loopback (webhook_egress_test.go covers the guard).
+func newGuard(name string, cfg map[string]interface{}) *WebhookGuardrail {
+	d, err := egress.New(egress.Options{PrivateAllow: []string{"127.0.0.0/8", "::1"}})
+	if err != nil {
+		panic(err)
+	}
+	return New(name, cfg, d)
+}
 
 func makeInput(content string) *guardrails.CheckInput {
 	raw, _ := json.Marshal(content)
@@ -36,7 +48,7 @@ func TestWebhook_Pass(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{"url": srv.URL})
+	g := newGuard("test-hook", map[string]interface{}{"url": srv.URL})
 	r := g.Check(context.Background(), makeInput("Hello"))
 	if !r.Pass {
 		t.Fatal("expected pass")
@@ -53,7 +65,7 @@ func TestWebhook_Block(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{"url": srv.URL})
+	g := newGuard("test-hook", map[string]interface{}{"url": srv.URL})
 	r := g.Check(context.Background(), makeInput("Bad content"))
 	if r.Pass {
 		t.Fatal("expected block")
@@ -71,7 +83,7 @@ func TestWebhook_CustomHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{
+	g := newGuard("test-hook", map[string]interface{}{
 		"url": srv.URL,
 		"headers": map[string]interface{}{
 			"Authorization": "Bearer my-token",
@@ -92,7 +104,7 @@ func TestWebhook_ReceivesPayload(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{"url": srv.URL})
+	g := newGuard("test-hook", map[string]interface{}{"url": srv.URL})
 	g.Check(context.Background(), makeInput("Test message"))
 
 	if received.Metadata["key"] != "value" {
@@ -115,7 +127,7 @@ func TestWebhook_ServerError_Retry(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{
+	g := newGuard("test-hook", map[string]interface{}{
 		"url":   srv.URL,
 		"retry": 2,
 	})
@@ -134,7 +146,7 @@ func TestWebhook_AllRetriesFail(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{
+	g := newGuard("test-hook", map[string]interface{}{
 		"url":   srv.URL,
 		"retry": 1,
 	})
@@ -157,7 +169,7 @@ func TestWebhook_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	g := New("test-hook", map[string]interface{}{"url": srv.URL})
+	g := newGuard("test-hook", map[string]interface{}{"url": srv.URL})
 	r := g.Check(ctx, makeInput("Test"))
 	if r.Pass {
 		t.Fatal("expected fail on timeout")
@@ -165,7 +177,7 @@ func TestWebhook_Timeout(t *testing.T) {
 }
 
 func TestWebhook_EmptyURL(t *testing.T) {
-	g := New("test-hook", nil)
+	g := newGuard("test-hook", nil)
 	r := g.Check(context.Background(), makeInput("Test"))
 	if !r.Pass {
 		t.Fatal("empty URL should pass")
@@ -178,7 +190,7 @@ func TestWebhook_InvalidJSON_Response(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{"url": srv.URL})
+	g := newGuard("test-hook", map[string]interface{}{"url": srv.URL})
 	r := g.Check(context.Background(), makeInput("Test"))
 	if r.Pass {
 		t.Fatal("expected fail on invalid JSON response")
@@ -186,7 +198,7 @@ func TestWebhook_InvalidJSON_Response(t *testing.T) {
 }
 
 func TestWebhook_Name(t *testing.T) {
-	g := New("my-custom-guard", nil)
+	g := newGuard("my-custom-guard", nil)
 	if g.Name() != "my-custom-guard" {
 		t.Errorf("expected custom name, got %s", g.Name())
 	}
@@ -205,7 +217,7 @@ func TestWebhook_Details(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := New("test-hook", map[string]interface{}{"url": srv.URL})
+	g := newGuard("test-hook", map[string]interface{}{"url": srv.URL})
 	r := g.Check(context.Background(), makeInput("Test"))
 	if r.Details["reason"] != "custom_policy" {
 		t.Error("expected custom details passed through")
@@ -221,5 +233,26 @@ func TestIsWebhookConfig(t *testing.T) {
 	}
 	if IsWebhookConfig(nil) {
 		t.Error("nil config should return false")
+	}
+}
+
+// A failed call's message reaches the caller (block response, warning,
+// request log). A config.yaml webhook's url is operator config, so the message
+// must not name its host, address or path.
+func TestWebhook_FailedCallNamesNoAddress(t *testing.T) {
+	g := newGuard("operator-hook", map[string]interface{}{"url": "http://127.0.0.1:9/t-operator-webhook"})
+
+	result := g.Check(context.Background(), makeInput("hello"))
+
+	if result.Pass {
+		t.Fatalf("a failed call must not pass; got %q", result.Message)
+	}
+	for _, operatorDetail := range []string{"127.0.0.1", ":9", "t-operator-webhook"} {
+		if strings.Contains(result.Message, operatorDetail) {
+			t.Fatalf("the message names the webhook (%q): %q", operatorDetail, result.Message)
+		}
+	}
+	if !strings.Contains(result.Message, "webhook failed") {
+		t.Fatalf("the message must still say the webhook failed; got %q", result.Message)
 	}
 }

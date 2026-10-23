@@ -18,6 +18,8 @@ import Iconify from "src/components/iconify";
 import { useUpdateConfig } from "./hooks/useGatewayConfig";
 import { useOrgConfig, useCreateOrgConfig } from "./hooks/useOrgConfig";
 import OrgConfigEditor from "../../gateway/settings/OrgConfigEditor";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 import {
   DEFAULT_ROUTING_STRATEGY,
   ROUTING_STRATEGY_OPTIONS,
@@ -36,6 +38,7 @@ const RoutingConfigView = ({ config, gatewayId }) => {
   const [editorOpen, setEditorOpen] = useState(false);
 
   const updateConfig = useUpdateConfig();
+  const { canEdit } = useGatewayAdmin();
   const { data: activeConfig } = useOrgConfig();
   const createMutation = useCreateOrgConfig();
 
@@ -186,13 +189,15 @@ const RoutingConfigView = ({ config, gatewayId }) => {
       {/* Save */}
       {dirty && (
         <Box display="flex" justifyContent="flex-end">
-          <Button
-            variant="contained"
-            onClick={handleSave}
-            disabled={updateConfig.isPending}
-          >
-            {updateConfig.isPending ? "Saving..." : "Save Routing Config"}
-          </Button>
+          <GatewayAdminOnly allowed={canEdit}>
+            <Button
+              variant="contained"
+              onClick={handleSave}
+              disabled={updateConfig.isPending || !canEdit}
+            >
+              {updateConfig.isPending ? "Saving..." : "Save Routing Config"}
+            </Button>
+          </GatewayAdminOnly>
         </Box>
       )}
 

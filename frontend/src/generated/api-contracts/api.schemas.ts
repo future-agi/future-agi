@@ -2693,6 +2693,8 @@ export interface GatewayConfigResultApi {
   change_description?: string;
   created_at?: string;
   updated_at?: string;
+  /** JSON pointers of the infrastructure secrets stored in the active org config. Each one reads as a mask, never its value. */
+  secrets_set?: string[];
   providers: GatewayConfigResultApiProviders;
   gateway: GatewayStatusApi;
 }
@@ -3258,6 +3260,8 @@ export interface AgentccOrgConfigApi {
   change_description?: string;
   readonly created_at?: string;
   readonly updated_at?: string;
+  /** JSON pointers of the infrastructure secrets stored in this config (cache, a2a, audit, alerting and mcp). Each one reads as a mask, never its value. */
+  readonly secrets_set?: readonly string[];
 }
 
 export type OrgConfigBulkItemApiProviders = {

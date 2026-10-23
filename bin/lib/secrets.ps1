@@ -28,7 +28,13 @@ function New-FernetKey {
 function Test-Placeholder { param([string]$Var) ((Get-EnvValue $Var) -match '^CHANGEME-') }
 function Test-SecretUnset { param([string]$Var) $v = Get-EnvValue $Var; (-not $v) -or ($v -match '^CHANGEME-') }
 
-$installSecrets = @('SECRET_KEY', 'PG_PASSWORD', 'MINIO_ROOT_PASSWORD', 'AGENTCC_INTERNAL_API_KEY', 'AGENTCC_ADMIN_TOKEN', 'CH_PASSWORD')
+# The gateway refuses to start on the admin token the compose files publish,
+# so that one counts as unset too.
+function Test-AdminTokenUnset {
+  (Test-SecretUnset 'AGENTCC_ADMIN_TOKEN') -or ((Get-EnvValue 'AGENTCC_ADMIN_TOKEN') -ceq 'local-dev-only-admin-token-replace-me')
+}
+
+$installSecrets = @('SECRET_KEY', 'PG_PASSWORD', 'MINIO_ROOT_PASSWORD', 'AGENTCC_INTERNAL_API_KEY', 'CH_PASSWORD')
 
 # The password this project's clickhouse container runs with: empty when its
 # environment has none, as on installs whose release ignored CH_PASSWORD.
@@ -48,11 +54,13 @@ function Get-ClickHouseRunningPassword {
 # A fresh install (no volumes of this project) gets its own secrets instead
 # of the defaults published in the compose files. An existing install keeps
 # every value it has: Postgres stores its password in its volume, and a new
-# SECRET_KEY or gateway key would sign everyone out. Three keys hold no state
+# SECRET_KEY or gateway key would sign everyone out. Four keys hold no state
 # and are filled on any install: without INTEGRATION_ENCRYPTION_KEY every
 # process starts with a random key of its own, the standalone install's Redis
 # keeps nothing across restarts (the distributed stack's Redis takes none),
-# and the gateway and the app read AGENTCC_WEBHOOK_SECRET afresh on every start.
+# and the gateway and the app read AGENTCC_WEBHOOK_SECRET and
+# AGENTCC_ADMIN_TOKEN afresh on every start. The gateway refuses to start on
+# the admin token the compose files publish, so that default is replaced too.
 function Write-Secrets {
   param([bool]$Fresh, [bool]$Distributed, [string]$ProjectName)
   if ($Fresh) {
@@ -92,6 +100,10 @@ function Write-Secrets {
   if (Test-SecretUnset 'AGENTCC_WEBHOOK_SECRET') {
     Set-EnvValue 'AGENTCC_WEBHOOK_SECRET' (New-HexSecret 32)
     Ok "Generated AGENTCC_WEBHOOK_SECRET"
+  }
+  if (Test-AdminTokenUnset) {
+    Set-EnvValue 'AGENTCC_ADMIN_TOKEN' (New-HexSecret 32)
+    Ok "Generated AGENTCC_ADMIN_TOKEN"
   }
   if (-not $Distributed -and (Test-SecretUnset 'REDIS_PASSWORD')) {
     Set-EnvValue 'REDIS_PASSWORD' (New-HexSecret 32)

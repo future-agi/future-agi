@@ -1,7 +1,9 @@
 import structlog
 from django.http import Http404
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from agentcc.models import AgentccAPIKey, AgentccProject
@@ -13,7 +15,11 @@ from agentcc.serializers.api_key import (
 from agentcc.services import auth_bridge
 from agentcc.services.gateway_client import GatewayClientError
 from model_hub.utils.workspace_scope import request_workspace_filter
-from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
+from tfc.utils.base_viewset import (
+    BaseModelViewSetMixinWithUserOrg,
+    scope_to_request_organization,
+)
+from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -32,17 +38,11 @@ class AgentccAPIKeyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         visible across all workspaces in the org.  Override the default
         workspace filter to include workspace-NULL keys when browsing
         from a non-default workspace.
+
+        A request with no organization gets no keys.
         """
         qs = AgentccAPIKey.no_workspace_objects.filter(deleted=False)
-
-        organization = getattr(self.request, "organization", None)
-        if not organization and hasattr(self.request, "user"):
-            from accounts.utils import get_user_organization
-
-            organization = get_user_organization(self.request.user)
-        if organization:
-            qs = qs.filter(organization=organization)
-
+        qs = scope_to_request_organization(qs, self.request)
         return qs.select_related("project", "user")
 
     def list(self, request, *args, **kwargs):
@@ -72,12 +72,15 @@ class AgentccAPIKeyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         try:
-            serializer = AgentccAPIKeyCreateSerializer(data=request.data)
+            org = getattr(request, "organization", None)
+            serializer = AgentccAPIKeyCreateSerializer(
+                data=request.data,
+                context={"key_organization_id": org.id if org else None},
+            )
             if not serializer.is_valid():
                 return self._gm.bad_request(self._format_errors(serializer.errors))
 
             data = serializer.validated_data
-            org = getattr(request, "organization", None)
             if org is None:
                 return self._gm.bad_request("Organization context is required")
 
@@ -124,7 +127,10 @@ class AgentccAPIKeyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             if api_key.status == AgentccAPIKey.REVOKED:
                 return self._gm.bad_request("Cannot update a revoked key")
 
-            serializer = AgentccAPIKeyUpdateSerializer(data=request.data)
+            serializer = AgentccAPIKeyUpdateSerializer(
+                data=request.data,
+                context={"key_organization_id": api_key.organization_id},
+            )
             if not serializer.is_valid():
                 return self._gm.bad_request(self._format_errors(serializer.errors))
 
@@ -140,6 +146,27 @@ class AgentccAPIKeyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             logger.exception("api_key_update_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    def destroy(self, request, *args, **kwargs):
+        """Delete a key: it is revoked on the gateway before the row is
+        deleted, so it stops working at once. When the gateway cannot revoke
+        it, the delete answers 503, the row is kept and the delete can be
+        retried."""
+        try:
+            api_key = self.get_object()
+            auth_bridge.delete_key(api_key)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Http404:
+            return self._gm.not_found("API key not found")
+        except GatewayClientError as e:
+            logger.exception("api_key_delete_gateway_error", error=str(e))
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                get_error_message("AGENTCC_KEY_DELETE_GATEWAY_UNREACHABLE"),
+            )
+        except Exception as e:
+            logger.exception("api_key_delete_error", error=str(e))
+            return self._gm.bad_request(str(e))
+
     @action(detail=True, methods=["post"])
     def revoke(self, request, pk=None):
         try:
@@ -152,6 +179,8 @@ class AgentccAPIKeyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     "The gateway will be updated on next sync."
                 )
             return self._gm.success_response(data)
+        except Http404:
+            return self._gm.not_found("API key not found")
         except Exception as e:
             logger.exception("api_key_revoke_error", error=str(e))
             return self._gm.bad_request(str(e))

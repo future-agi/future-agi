@@ -36,6 +36,8 @@ import { useGatewayContext } from "../context/useGatewayContext";
 
 import CreateAlertRuleDialog from "./CreateAlertRuleDialog";
 import CreateChannelDialog from "./CreateChannelDialog";
+import { isMaskedSecret } from "../components/SecretField";
+import { GATEWAY_ADMIN_ONLY, useGatewayAdmin } from "../hooks/useGatewayAdmin";
 import { val } from "../utils/analyticsHelpers";
 import { formatCost } from "../utils/formatters";
 
@@ -86,7 +88,7 @@ function getSeverityColor(severity) {
 // Alert Rules Tab
 // ---------------------------------------------------------------------------
 
-const AlertRulesTab = ({ rules, onDelete, isDeleting }) => (
+const AlertRulesTab = ({ rules, onDelete, isDeleting, canEdit }) => (
   <Card>
     <TableContainer>
       <Table size="small">
@@ -146,12 +148,12 @@ const AlertRulesTab = ({ rules, onDelete, isDeleting }) => (
                 />
               </TableCell>
               <TableCell align="right">
-                <Tooltip title="Delete rule">
+                <Tooltip title={canEdit ? "Delete rule" : GATEWAY_ADMIN_ONLY}>
                   <span>
                     <IconButton
                       size="small"
                       color="error"
-                      disabled={isDeleting}
+                      disabled={isDeleting || !canEdit}
                       onClick={() => onDelete(idx)}
                       aria-label={`Delete rule ${rule.name || idx + 1}`}
                     >
@@ -191,6 +193,9 @@ const CHANNEL_ICONS = {
 
 function maskUrl(url) {
   if (!url) return "\u2014";
+  // A URL that carries a credential reads back as a mask: say it is stored,
+  // never show the mask.
+  if (isMaskedSecret(url)) return "Stored, hidden";
   try {
     const u = new URL(url);
     return `${u.protocol}//${u.host}/\u2026`;
@@ -199,7 +204,7 @@ function maskUrl(url) {
   }
 }
 
-const ChannelsTab = ({ channels, onDelete, isDeleting }) => (
+const ChannelsTab = ({ channels, onDelete, isDeleting, canEdit }) => (
   <Stack spacing={2}>
     {channels.length === 0 ? (
       <Card sx={{ p: 4 }}>
@@ -239,12 +244,14 @@ const ChannelsTab = ({ channels, onDelete, isDeleting }) => (
                   color={ch.enabled !== false ? "success" : "default"}
                   size="small"
                 />
-                <Tooltip title="Delete channel">
+                <Tooltip
+                  title={canEdit ? "Delete channel" : GATEWAY_ADMIN_ONLY}
+                >
                   <span>
                     <IconButton
                       size="small"
                       color="error"
-                      disabled={isDeleting}
+                      disabled={isDeleting || !canEdit}
                       onClick={() => onDelete(idx)}
                       aria-label={`Delete channel ${ch.name || idx + 1}`}
                     >
@@ -493,6 +500,8 @@ const AlertingMonitoringSection = () => {
 
   const [createRuleOpen, setCreateRuleOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  // Rules and channels are the org's gateway config: Owner or Admin only.
+  const { canEdit, disabledReason } = useGatewayAdmin();
   const { gatewayId, isLoading: gwLoading } = useGatewayContext();
 
   const { data: config, isLoading: configLoading } =
@@ -601,6 +610,8 @@ const AlertingMonitoringSection = () => {
             size: "small",
             icon: "mdi:plus",
             onClick: () => setCreateRuleOpen(true),
+            disabled: !canEdit,
+            tooltip: disabledReason || undefined,
           },
           {
             label: "Add Channel",
@@ -608,6 +619,8 @@ const AlertingMonitoringSection = () => {
             size: "small",
             icon: "mdi:plus",
             onClick: () => setCreateChannelOpen(true),
+            disabled: !canEdit,
+            tooltip: disabledReason || undefined,
           },
         ]}
       />
@@ -634,6 +647,7 @@ const AlertingMonitoringSection = () => {
           rules={rules}
           onDelete={handleDeleteRule}
           isDeleting={updateConfig.isPending}
+          canEdit={canEdit}
         />
       )}
       {tab === 2 && (
@@ -641,6 +655,7 @@ const AlertingMonitoringSection = () => {
           channels={channels}
           onDelete={handleDeleteChannel}
           isDeleting={updateConfig.isPending}
+          canEdit={canEdit}
         />
       )}
 

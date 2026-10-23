@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import time
 from datetime import timedelta
 
 import requests as http_requests
@@ -17,8 +18,18 @@ from agentcc.services.url_safety import (
 
 logger = structlog.get_logger(__name__)
 
+DELIVERY_TIMEOUT_S = 10
+MIN_DELIVERY_WINDOW_S = 1.0  # don't start a delivery with less time than this left
 
-def deliver_webhook_events(event_ids=None, org_id=None, limit=100):
+
+def deliver_webhook_events(event_ids=None, org_id=None, limit=100, deadline=None):
+    """Deliver pending webhook events.
+
+    ``deadline`` is a ``time.monotonic()`` value. Each request's timeout is
+    capped at the time left, and once less than MIN_DELIVERY_WINDOW_S is left
+    the remaining events are left pending and untouched (no attempt counted),
+    so the next delivery picks them up.
+    """
     now = timezone.now()
     queryset = AgentccWebhookEvent.no_workspace_objects.filter(
         status=AgentccWebhookEvent.PENDING,
@@ -33,8 +44,17 @@ def deliver_webhook_events(event_ids=None, org_id=None, limit=100):
     all_events = list(queryset.select_related("webhook")[:limit])
     delivered = 0
     failed = 0
+    deferred = 0
 
-    for event in all_events:
+    for index, event in enumerate(all_events):
+        timeout = DELIVERY_TIMEOUT_S
+        if deadline is not None:
+            left = deadline - time.monotonic()
+            if left < MIN_DELIVERY_WINDOW_S:
+                deferred = len(all_events) - index
+                break
+            timeout = min(timeout, left)
+
         webhook = event.webhook
         if not webhook or not webhook.is_active or webhook.deleted:
             event.status = AgentccWebhookEvent.DEAD_LETTER
@@ -62,7 +82,7 @@ def deliver_webhook_events(event_ids=None, org_id=None, limit=100):
                     webhook.url,
                     data=body,
                     headers=headers,
-                    timeout=10,
+                    timeout=timeout,
                 )
             finally:
                 http.close()
@@ -143,7 +163,8 @@ def deliver_webhook_events(event_ids=None, org_id=None, limit=100):
         "webhook_events_processed",
         delivered=delivered,
         failed=failed,
+        deferred=deferred,
         total=len(all_events),
         immediate=bool(event_ids),
     )
-    return {"delivered": delivered, "failed": failed}
+    return {"delivered": delivered, "failed": failed, "deferred": deferred}

@@ -2,6 +2,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "../../../utils/test-utils";
 import userEvent from "@testing-library/user-event";
 import FallbacksSection from "./FallbacksSection";
+import {
+  ADMIN_LEVELS,
+  NOT_ADMIN_LEVELS,
+  expectAdminOnly,
+  expectEditable,
+} from "../testing/adminOnly";
+
+// The role check: saving is Owner or Admin only.
+// The cases below run as an Admin unless one says otherwise.
+let mockOrgLevel = 8;
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ orgLevel: mockOrgLevel }),
+}));
 
 // ---------------------------------------------------------------------------
 // Mock the useFallbackConfig hook
@@ -80,6 +93,7 @@ vi.mock("../providers/hooks/useGatewayConfig", () => ({
 }));
 
 beforeEach(() => {
+  mockOrgLevel = 8;
   mockSaveRouting.mockReset();
   mockRefetch.mockReset();
   hookReturn = {
@@ -97,6 +111,36 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("FallbacksSection", () => {
+  describe("Owner or Admin only", () => {
+    it.each(NOT_ADMIN_LEVELS)(
+      "%s sees Save & Apply disabled and cannot save",
+      async (_who, level) => {
+        mockOrgLevel = level;
+        render(<FallbacksSection />);
+        // Reads and local edits work for every role.
+        expect(screen.getAllByText("Primary")).toHaveLength(2);
+        await userEvent.click(
+          screen.getByRole("button", { name: /Add Fallback Chain/i }),
+        );
+        const saves = screen.getAllByRole("button", { name: /Save & Apply/i });
+        expect(saves).toHaveLength(2);
+        saves.forEach(expectAdminOnly);
+        expect(mockSaveRouting).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(ADMIN_LEVELS)("%s can save", async (_who, level) => {
+      mockOrgLevel = level;
+      render(<FallbacksSection />);
+      await userEvent.click(
+        screen.getByRole("button", { name: /Add Fallback Chain/i }),
+      );
+      screen
+        .getAllByRole("button", { name: /Save & Apply/i })
+        .forEach(expectEditable);
+    });
+  });
+
   // ---- Loading state ----
   describe("loading state", () => {
     it("shows skeleton loaders while loading", () => {

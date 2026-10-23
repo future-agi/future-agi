@@ -1,3 +1,4 @@
+import copy
 import datetime
 import json
 import os
@@ -17,6 +18,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ViewSet
 
+from agentcc.guardrail_names import RULE_TO_REGISTRY
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.models.request_log import AgentccRequestLog
@@ -24,6 +26,7 @@ from agentcc.org_config_defaults import (
     default_cost_tracking_config,
     normalize_cost_tracking_config,
 )
+from agentcc.permissions import GatewayAdminActionsMixin
 from agentcc.serializers.contracts import (
     AgentccEmptyRequestSerializer,
     AgentccErrorResponseSerializer,
@@ -55,6 +58,7 @@ from agentcc.serializers.contracts import (
     GatewayProviderUpdateRequestSerializer,
     GatewayToggleGuardrailRequestSerializer,
 )
+from agentcc.services import guardrail_urls
 from agentcc.services.config_push import (
     push_all_org_configs,
     push_org_config,
@@ -65,7 +69,18 @@ from agentcc.services.gateway_client import (
     GatewayClientError,
     get_gateway_client,
 )
+from agentcc.services.guardrail_policy_scope import (
+    GuardrailPolicyNotInOrg,
+    log_policy_refused,
+    reject_unowned_guardrail_policies,
+)
+from agentcc.services.org_config_secrets import (
+    OrgConfigSecretRejected,
+    encrypt_config_secrets,
+    index_stored_secrets,
+)
 from agentcc.services.url_safety import ensure_provider_base_url_allowed
+from agentcc.validators import env_reference_error, find_check_env_reference
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
@@ -74,6 +89,16 @@ logger = structlog.get_logger(__name__)
 _GATEWAY_SYNC_WARNING = (
     "Config saved but gateway sync failed. Changes will apply on next gateway restart."
 )
+
+
+def _log_secret_rejected(event, org, exc):
+    """Log a refused secret placeholder by its field and code, never a value."""
+    logger.warning(
+        event,
+        org_id=str(org.id) if org is not None else None,
+        code=exc.code,
+        path=exc.pointer,
+    )
 
 
 def _prepare_vertex_provider_config(provider_config):
@@ -96,7 +121,9 @@ def _prepare_vertex_provider_config(provider_config):
             )
             or key.get("token_uri") != "https://oauth2.googleapis.com/token"
         ):
-            raise ValueError("The JSON must be a Google service-account key with a project ID.")
+            raise ValueError(
+                "The JSON must be a Google service-account key with a project ID."
+            )
         try:
             private_key = serialization.load_pem_private_key(
                 key["private_key"].encode(), password=None
@@ -124,6 +151,7 @@ def _prepare_vertex_provider_config(provider_config):
     config["api_format"] = "gemini"
     config.pop("api_key", None)
     return config
+
 
 # Public-facing URL shown to users in the dashboard (e.g. https://gateway.futureagi.com).
 # Falls back to AGENTCC_GATEWAY_URL if not set.
@@ -181,6 +209,54 @@ def _remove_budget_level_config(budgets, level):
     return updated
 
 
+# The keys the gateway contract takes on a check of a checks map
+# (agentcc/contracts/gateway_admin.py GuardrailCheck, extra="forbid").
+_CHECK_KEYS = ("enabled", "action", "confidence_threshold", "config")
+
+
+def _stored_checks_map(guardrails):
+    """The section's checks map when the section is stored as a non-empty
+    one, else None. The config push forwards such a map to the gateway as
+    stored, so the gateway contract refuses any `rules` beside it: an edit of
+    such a section writes the map."""
+    checks = guardrails.get("checks") if isinstance(guardrails, dict) else None
+    return checks if isinstance(checks, dict) and checks else None
+
+
+def _checks_map_key(checks, name):
+    """The key of the map's check that `name` names: the key itself, the
+    catalog name a rule name maps to, a rule name that maps to the key, or a
+    key whose check keeps `name` as its `_originalName`. None when the map
+    has no such check."""
+    if name in checks:
+        return name
+    registry = RULE_TO_REGISTRY.get(name)
+    if registry in checks:
+        return registry
+    for key, check in checks.items():
+        if RULE_TO_REGISTRY.get(key) == name or (
+            isinstance(check, dict) and check.get("_originalName") == name
+        ):
+            return key
+    return None
+
+
+def _as_checks_map_entry(stored, sent):
+    """A check of a checks map after an edit: the stored check, with every key
+    it is stored with kept, and the contract's keys the edit sent. A rule's
+    `threshold` is the map's `confidence_threshold`; a rule's other keys (its
+    name, stage or execution mode) are not the contract's and are dropped."""
+    entry = dict(stored) if isinstance(stored, dict) else {}
+    sent = dict(sent)
+    for alias in ("confidenceThreshold", "threshold"):
+        if alias in sent and "confidence_threshold" not in sent:
+            sent["confidence_threshold"] = sent[alias]
+    for key in _CHECK_KEYS:
+        if key in sent:
+            entry[key] = sent[key]
+    return entry
+
+
 def _build_virtual_gateway(status="healthy", health=None):
     """Build the virtual gateway dict returned by list/retrieve."""
     data = {
@@ -196,16 +272,35 @@ def _build_virtual_gateway(status="healthy", health=None):
     return data
 
 
-class AgentccGatewayViewSet(ViewSet):
+class AgentccGatewayViewSet(GatewayAdminActionsMixin, ViewSet):
     """
     Stateless proxy to the Go gateway (configured via env vars).
     No DB model — returns a virtual singleton gateway with live health.
+
+    The view's config writes (``gateway_admin_actions``, the role check) are
+    an org Owner's or Admin's.
     """
 
     # Keep action contracts explicit: each endpoint owns its success serializer,
     # while shared error serializers live at module level. If this file grows
     # further, split by gateway surface instead of hiding contracts in factories.
     permission_classes = [IsAuthenticated]
+    gateway_admin_actions = frozenset(
+        {
+            "update_config",
+            "update_provider",
+            "remove_provider",
+            "toggle_guardrail",
+            "update_guardrail",
+            # Pushes the org config, then sends a request on a key it creates.
+            "test_playground",
+            "set_budget",
+            "remove_budget",
+            "update_mcp_server",
+            "remove_mcp_server",
+            "update_mcp_guardrails",
+        }
+    )
     _gm = GeneralMethods()
 
     def _current_org(self, request):
@@ -513,6 +608,12 @@ class AgentccGatewayViewSet(ViewSet):
                 return result
 
             def updater(cfg):
+                if "guardrails" in config_patch:
+                    # A check may name only a policy the org may name; cfg
+                    # still holds the active version's section here.
+                    reject_unowned_guardrail_policies(
+                        org, config_patch["guardrails"], cfg.guardrails
+                    )
                 for field, value in config_patch.items():
                     existing = getattr(cfg, field, None)
                     if isinstance(existing, dict) and isinstance(value, dict):
@@ -530,6 +631,12 @@ class AgentccGatewayViewSet(ViewSet):
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except GuardrailPolicyNotInOrg as e:
+            log_policy_refused("update_config_rejected", org, e)
+            return self._gm.bad_request(e)
+        except OrgConfigSecretRejected as e:
+            _log_secret_rejected("update_config_rejected", org, e)
+            return self._gm.bad_request(e)
         except Exception as e:
             logger.exception("update_config_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -855,18 +962,43 @@ class AgentccGatewayViewSet(ViewSet):
             guardrail_config = request.validated_data.get("config")
             if not guardrail_name or not guardrail_config:
                 return self._gm.bad_request("name and config are required")
+            # The request's own settings, checked as sent, so the error names
+            # the field the client wrote.
+            env_reference = find_check_env_reference(
+                guardrail_name, guardrail_config, "config"
+            )
+            if env_reference:
+                return self._gm.bad_request(env_reference_error(env_reference))
 
             def updater(cfg):
                 guardrails = cfg.guardrails or {}
+                # The rule as sent may name only a policy the org may name;
+                # cfg still holds the active version's section here.
+                updated = {**guardrail_config, "name": guardrail_name}
+                reject_unowned_guardrail_policies(org, {"rules": [updated]}, guardrails)
+                checks = _stored_checks_map(guardrails)
+                if checks is not None:
+                    # A section stored as a checks map is edited in the map:
+                    # the check's entry takes the contract's keys the edit
+                    # sent, and keeps the rest of what it is stored with
+                    # (its `_policy` too, which the active version holds).
+                    key = _checks_map_key(checks, guardrail_name) or guardrail_name
+                    entry = _as_checks_map_entry(checks.get(key), guardrail_config)
+                    reject_unowned_guardrail_policies(
+                        org, {"checks": {key: entry}}, guardrails
+                    )
+                    checks[key] = entry
+                    cfg.guardrails = guardrails
+                    return
                 rules = guardrails.get("rules", [])
                 found = False
                 for i, rule in enumerate(rules):
                     if rule.get("name") == guardrail_name:
-                        rules[i] = {**guardrail_config, "name": guardrail_name}
+                        rules[i] = updated
                         found = True
                         break
                 if not found:
-                    rules.append({**guardrail_config, "name": guardrail_name})
+                    rules.append(updated)
                 guardrails["rules"] = rules
                 cfg.guardrails = guardrails
 
@@ -885,6 +1017,9 @@ class AgentccGatewayViewSet(ViewSet):
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except GuardrailPolicyNotInOrg as e:
+            log_policy_refused("update_guardrail_rejected", org, e)
+            return self._gm.bad_request(e)
         except Exception as e:
             logger.exception("update_guardrail_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -1437,6 +1572,9 @@ class AgentccGatewayViewSet(ViewSet):
             if not synced:
                 data["gateway_warning"] = _GATEWAY_SYNC_WARNING
             return self._gm.success_response(data)
+        except OrgConfigSecretRejected as e:
+            _log_secret_rejected("update_mcp_server_rejected", org, e)
+            return self._gm.bad_request(e)
         except Exception as e:
             logger.exception("update_mcp_server_error", error=str(e))
             return self._gm.bad_request(str(e))
@@ -1716,10 +1854,44 @@ class AgentccGatewayViewSet(ViewSet):
                     created_by=user,
                     change_description=desc or f"Config update v{next_version}",
                 )
+            # The updater edits the fields in place, so compare against a copy.
+            guardrails_before = copy.deepcopy(new_config.guardrails)
+            alerting_before = copy.deepcopy(new_config.alerting)
+            # The new version shares the active one's section dicts and some
+            # updaters (update-mcp-server) edit them in place, so the stored
+            # secrets are read before the updater runs.
+            stored_secrets = index_stored_secrets(active_config)
             updater_fn(new_config)
+            # Every infrastructure secret is stored encrypted: a blank or a
+            # read-back mask keeps the stored one (never across an origin
+            # change), a new value is encrypted, a mask with nothing behind it
+            # is refused. Before validation, so the version the contract checks
+            # is the one that is saved.
+            encrypt_config_secrets(new_config, stored_secrets)
             # Fail closed: a version the gateway contract rejects must not
-            # become active. Raising here rolls the whole save back.
-            validate_org_config(new_config)
+            # become active. Raising here rolls the whole save back. The
+            # guardrail "${" check runs only when this save changes guardrails:
+            # on the checks it adds or changes, on or off, and on the stored
+            # ones it switches on.
+            validate_org_config(
+                new_config,
+                check_guardrails=new_config.guardrails != guardrails_before,
+                guardrails_before=guardrails_before or {},
+            )
+            # A guardrail check's callback URL (url, endpoint, base_url) and an
+            # alert channel's URL must be well-formed before the gateway dials
+            # them. This helper is
+            # the one every gateway-view save passes (update-config, toggle-
+            # and update-guardrail, budgets, MCP): only a URL this save
+            # introduces or changes is checked, so a save that leaves a stored
+            # URL alone, switching that very check off included, is never
+            # refused. The gateway's egress guard decides the address.
+            guardrail_urls.reject_changed_bad_guardrail_urls(
+                new_config.guardrails, guardrails_before or {}
+            )
+            guardrail_urls.reject_changed_bad_alerting_urls(
+                new_config.alerting, alerting_before or {}
+            )
             new_config.save()
 
         synced = self._push_current_config(org, new_config)

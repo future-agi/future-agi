@@ -1119,6 +1119,14 @@ err_dict = {
     "ANALYTICS_METRICS_ERROR": ["Unable to fetch simulation metrics."],
     "ANALYTICS_RUNS_ERROR": ["Unable to fetch simulation runs."],
     "ANALYTICS_ERROR": ["Unable to fetch simulation analytics."],
+    "AGENTCC_KEY_METADATA_RESERVED": [
+        "These metadata keys are reserved for the platform and cannot be set "
+        "on an API key: {}."
+    ],
+    "AGENTCC_KEY_DELETE_GATEWAY_UNREACHABLE": [
+        "The API key is revoked, but the gateway could not be reached. "
+        "Delete it again once the gateway is reachable."
+    ],
 }
 
 

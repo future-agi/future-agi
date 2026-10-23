@@ -101,7 +101,14 @@ func ErrGuardrailBlocked(code, message string) *APIError {
 	return newAPIError(http.StatusForbidden, ErrTypeGuardrail, code, message)
 }
 
-// WriteError writes an OpenAI-compatible error JSON response.
+// BearerChallenge is the WWW-Authenticate challenge that WriteError puts on a
+// 401 and that the MCP and A2A endpoints send with theirs. RFC 7235 requires
+// a challenge on a 401, and MCP clients read it to learn that the endpoint
+// wants a bearer token.
+const BearerChallenge = `Bearer realm="agentcc-gateway"`
+
+// WriteError writes an OpenAI-compatible error JSON response. A 401 carries
+// BearerChallenge unless the caller set a challenge of its own.
 //
 // The message is redacted here as well as at construction. Most of this
 // package's errors are built by the constructors above, but 78 sites build an
@@ -118,6 +125,9 @@ func WriteError(w http.ResponseWriter, err *APIError) {
 		},
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if err.Status == http.StatusUnauthorized && w.Header().Get("WWW-Authenticate") == "" {
+		w.Header().Set("WWW-Authenticate", BearerChallenge)
+	}
 	w.WriteHeader(err.Status)
 	json.NewEncoder(w).Encode(resp)
 }

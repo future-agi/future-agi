@@ -21,10 +21,13 @@ import {
   useOrgConfigHistory,
   useActivateOrgConfig,
 } from "../providers/hooks/useOrgConfig";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 
 const ConfigHistoryDrawer = ({ open, onClose }) => {
   const { data: history, isLoading } = useOrgConfigHistory();
   const activateMutation = useActivateOrgConfig();
+  const { canEdit } = useGatewayAdmin();
   const [viewConfig, setViewConfig] = useState(null);
 
   const versions = useMemo(() => {
@@ -128,14 +131,16 @@ const ConfigHistoryDrawer = ({ open, onClose }) => {
                     View
                   </Button>
                   {!cfg.is_active && (
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      onClick={() => handleActivate(cfg.id)}
-                      disabled={activateMutation.isPending}
-                    >
-                      Activate
-                    </Button>
+                    <GatewayAdminOnly allowed={canEdit}>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => handleActivate(cfg.id)}
+                        disabled={activateMutation.isPending || !canEdit}
+                      >
+                        Activate
+                      </Button>
+                    </GatewayAdminOnly>
                   )}
                 </Stack>
               </ListItem>

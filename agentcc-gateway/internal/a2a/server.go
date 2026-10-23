@@ -27,8 +27,25 @@ type Server struct {
 	chatExecutor     ChatCompletionExecutor
 	engine           *pipeline.Engine
 	providerRegistry *providers.Registry
+	caller           CallerFunc
 	done             chan struct{}
 }
+
+// Caller is the API key a request was authenticated with. A task records the
+// Caller that created it: the task belongs to that key's org.
+type Caller struct {
+	KeyID string
+	OrgID string // "" for a key with no org, a license-authorized request, or auth off
+}
+
+// CallerFunc returns the Caller of an A2A request. ok is false when the
+// request carries no authenticated caller although auth is on: such a request
+// is refused, never served as a caller with no org.
+type CallerFunc func(r *http.Request) (caller Caller, ok bool)
+
+// singleTenant is the CallerFunc of a server built without WithCaller (auth
+// off): every request is the same caller with no org.
+func singleTenant(*http.Request) (Caller, bool) { return Caller{}, true }
 
 type ChatCompletionExecutor func(ctx context.Context, authHeader string, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error)
 
@@ -48,10 +65,20 @@ func (s *syncTaskStore) Store(task *Task) {
 	s.mu.Unlock()
 }
 
-func (s *syncTaskStore) Get(id string) (*Task, bool) {
+// GetForOrg returns the task only to the org that created it. Another org's
+// task is reported missing, exactly like an unknown id; a caller with no org
+// reaches only tasks created with no org.
+func (s *syncTaskStore) GetForOrg(id, orgID string) (*Task, bool) {
+	if id == "" {
+		return nil, false
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.store.Get(id)
+	task, ok := s.store.Get(id)
+	if !ok || task.owner.OrgID != orgID {
+		return nil, false
+	}
+	return task, true
 }
 
 func (s *syncTaskStore) Cleanup(maxAge time.Duration) {
@@ -69,6 +96,7 @@ func NewServer(cardCfg CardConfig, registry *Registry, opts ...ServerOption) *Se
 		cardGen:  NewCardGenerator(cardCfg),
 		registry: registry,
 		tasks:    newSyncTaskStore(),
+		caller:   singleTenant,
 		done:     make(chan struct{}),
 	}
 	for _, opt := range opts {
@@ -99,6 +127,12 @@ func (s *Server) HandleAgentCard(w http.ResponseWriter, r *http.Request) {
 
 // HandleMessage handles POST /a2a — the main A2A JSON-RPC endpoint.
 func (s *Server) HandleMessage(w http.ResponseWriter, r *http.Request) {
+	caller, ok := s.caller(r)
+	if !ok {
+		writeA2AUnauthorized(w)
+		return
+	}
+
 	var msg mcp.Message
 	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
 		writeA2AError(w, nil, mcp.ErrCodeParse, "invalid JSON: "+err.Error())
@@ -112,11 +146,11 @@ func (s *Server) HandleMessage(w http.ResponseWriter, r *http.Request) {
 
 	switch msg.Method {
 	case MethodMessageSend, MethodTasksSend:
-		s.handleMessageSend(w, r, &msg)
+		s.handleMessageSend(w, r, &msg, caller)
 	case MethodTasksGet:
-		s.handleTasksGet(w, &msg)
+		s.handleTasksGet(w, &msg, caller)
 	case MethodTasksCancel:
-		s.handleTasksCancel(w, &msg)
+		s.handleTasksCancel(w, &msg, caller)
 	default:
 		writeA2AError(w, msg.ID, mcp.ErrCodeMethodNotFound, "unknown method: "+msg.Method)
 	}
@@ -162,6 +196,17 @@ func WithPipeline(engine *pipeline.Engine, providerRegistry *providers.Registry)
 	}
 }
 
+// WithCaller sets how the server learns who sent a request: the gateway passes
+// the identity its KeyAuth recorded. Tasks are scoped to the org it returns.
+// Without it every request is the same caller with no org (auth off).
+func WithCaller(fn CallerFunc) ServerOption {
+	return func(s *Server) {
+		if fn != nil {
+			s.caller = fn
+		}
+	}
+}
+
 // WithChatCompletionExecutor routes A2A execution through an existing chat-completion path.
 func WithChatCompletionExecutor(executor ChatCompletionExecutor) ServerOption {
 	return func(s *Server) {
@@ -169,14 +214,14 @@ func WithChatCompletionExecutor(executor ChatCompletionExecutor) ServerOption {
 	}
 }
 
-func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, msg *mcp.Message) {
+func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, msg *mcp.Message, caller Caller) {
 	var params MessageSendParams
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		writeA2AError(w, msg.ID, mcp.ErrCodeInvalidParams, "invalid message/send params")
 		return
 	}
 
-	// Create task.
+	// Create task. It belongs to the caller's org from here on.
 	taskID := generateTaskID()
 	task := &Task{
 		ID: taskID,
@@ -184,6 +229,7 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, msg *
 			State: TaskStatusWorking,
 		},
 		History: []Message{params.Message},
+		owner:   caller,
 	}
 
 	// Extract text from the A2A message.
@@ -370,16 +416,17 @@ func (s *Server) finishTaskFromResponse(task *Task, resp *models.ChatCompletionR
 	task.Status.Message = []MessagePart{{Type: "text", Text: "No response from provider"}}
 }
 
-func (s *Server) handleTasksGet(w http.ResponseWriter, msg *mcp.Message) {
+func (s *Server) handleTasksGet(w http.ResponseWriter, msg *mcp.Message, caller Caller) {
 	var params TaskGetParams
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		writeA2AError(w, msg.ID, mcp.ErrCodeInvalidParams, "invalid tasks/get params")
 		return
 	}
 
-	task, ok := s.tasks.Get(params.TaskID)
+	// Another org's task answers "task not found", the same as an unknown id.
+	task, ok := s.tasks.GetForOrg(params.TaskID, caller.OrgID)
 	if !ok && params.TaskIDSnake != "" {
-		task, ok = s.tasks.Get(params.TaskIDSnake)
+		task, ok = s.tasks.GetForOrg(params.TaskIDSnake, caller.OrgID)
 	}
 	if !ok {
 		taskID := params.TaskID
@@ -393,16 +440,18 @@ func (s *Server) handleTasksGet(w http.ResponseWriter, msg *mcp.Message) {
 	writeA2AResult(w, msg.ID, task)
 }
 
-func (s *Server) handleTasksCancel(w http.ResponseWriter, msg *mcp.Message) {
+func (s *Server) handleTasksCancel(w http.ResponseWriter, msg *mcp.Message, caller Caller) {
 	var params TaskCancelParams
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		writeA2AError(w, msg.ID, mcp.ErrCodeInvalidParams, "invalid tasks/cancel params")
 		return
 	}
 
-	task, ok := s.tasks.Get(params.TaskID)
+	// Another org's task answers "task not found", the same as an unknown id,
+	// and is neither cancelled nor changed.
+	task, ok := s.tasks.GetForOrg(params.TaskID, caller.OrgID)
 	if !ok && params.TaskIDSnake != "" {
-		task, ok = s.tasks.Get(params.TaskIDSnake)
+		task, ok = s.tasks.GetForOrg(params.TaskIDSnake, caller.OrgID)
 	}
 	if !ok {
 		taskID := params.TaskID
@@ -458,6 +507,17 @@ func writeA2AResult(w http.ResponseWriter, id json.RawMessage, result interface{
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// writeA2AUnauthorized answers a request that carries no authenticated caller
+// although auth is on. The gateway's KeyAuth refuses such a request before it
+// gets here; this is the last line. The request has not been parsed, so the
+// JSON-RPC error carries a null id.
+func writeA2AUnauthorized(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate", models.BearerChallenge)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	json.NewEncoder(w).Encode(mcp.NewErrorResponse(json.RawMessage("null"), mcp.ErrCodeInvalidRequest, "Invalid or missing API key"))
 }
 
 func writeA2AError(w http.ResponseWriter, id json.RawMessage, code int, message string) {

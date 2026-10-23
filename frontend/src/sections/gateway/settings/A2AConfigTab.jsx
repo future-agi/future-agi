@@ -16,6 +16,7 @@ import {
   Divider,
 } from "@mui/material";
 import { Icon } from "@iconify/react";
+import SecretField from "../components/SecretField";
 
 const AUTH_TYPES = [
   { value: "none", label: "None" },
@@ -251,13 +252,12 @@ const A2AConfigTab = ({ a2a, onChange }) => {
                     </TextField>
 
                     {agent.auth?.type === "bearer" && (
-                      <TextField
+                      <SecretField
                         size="small"
                         label="Token"
-                        type="password"
-                        value={agent.auth?.token || ""}
-                        onChange={(e) =>
-                          handleAgentAuthChange(name, "token", e.target.value)
+                        value={agent.auth?.token}
+                        onChange={(v) =>
+                          handleAgentAuthChange(name, "token", v)
                         }
                         sx={{ flex: 1 }}
                         placeholder="Bearer token"
@@ -280,13 +280,12 @@ const A2AConfigTab = ({ a2a, onChange }) => {
                           sx={{ width: 180 }}
                           placeholder="e.g. X-API-Key"
                         />
-                        <TextField
+                        <SecretField
                           size="small"
                           label="Token"
-                          type="password"
-                          value={agent.auth?.token || ""}
-                          onChange={(e) =>
-                            handleAgentAuthChange(name, "token", e.target.value)
+                          value={agent.auth?.token}
+                          onChange={(v) =>
+                            handleAgentAuthChange(name, "token", v)
                           }
                           sx={{ flex: 1 }}
                           placeholder="API key value"

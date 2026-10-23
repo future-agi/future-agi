@@ -14,6 +14,7 @@ import {
   Chip,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import SecretField from "../components/SecretField";
 
 // ---------- Collapsible section ----------
 const Section = ({ title, subtitle, icon, children, defaultOpen = false }) => {
@@ -163,12 +164,11 @@ const RedisConfig = ({ config, onChange }) => (
       </TextField>
     </Stack>
     <Stack direction="row" spacing={2}>
-      <TextField
+      <SecretField
         size="small"
         label="Password"
-        type="password"
-        value={config.password || ""}
-        onChange={(e) => onChange({ ...config, password: e.target.value })}
+        value={config.password}
+        onChange={(v) => onChange({ ...config, password: v })}
         sx={{ width: 200 }}
       />
       <TextField
@@ -291,14 +291,11 @@ const S3Config = ({ config, onChange }) => (
         onChange={(e) => onChange({ ...config, access_key_id: e.target.value })}
         sx={{ flex: 1 }}
       />
-      <TextField
+      <SecretField
         size="small"
         label="Secret Access Key"
-        type="password"
-        value={config.secret_access_key || ""}
-        onChange={(e) =>
-          onChange({ ...config, secret_access_key: e.target.value })
-        }
+        value={config.secret_access_key}
+        onChange={(v) => onChange({ ...config, secret_access_key: v })}
         sx={{ flex: 1 }}
       />
     </Stack>
@@ -333,22 +330,18 @@ const AzureBlobConfig = ({ config, onChange }) => (
         sx={{ width: 160 }}
       />
     </Stack>
-    <TextField
+    <SecretField
       size="small"
       label="Connection String"
-      type="password"
-      value={config.connection_string || ""}
-      onChange={(e) =>
-        onChange({ ...config, connection_string: e.target.value })
-      }
+      value={config.connection_string}
+      onChange={(v) => onChange({ ...config, connection_string: v })}
       fullWidth
     />
-    <TextField
+    <SecretField
       size="small"
       label="SAS Token (alternative)"
-      type="password"
-      value={config.sas_token || ""}
-      onChange={(e) => onChange({ ...config, sas_token: e.target.value })}
+      value={config.sas_token}
+      onChange={(v) => onChange({ ...config, sas_token: v })}
       fullWidth
       helperText="Use either Connection String or SAS Token"
     />
@@ -434,12 +427,11 @@ const QdrantConfig = ({ config, onChange }) => (
         placeholder="agentcc_semantic_cache"
       />
     </Stack>
-    <TextField
+    <SecretField
       size="small"
       label="API Key"
-      type="password"
-      value={config.api_key || ""}
-      onChange={(e) => onChange({ ...config, api_key: e.target.value })}
+      value={config.api_key}
+      onChange={(v) => onChange({ ...config, api_key: v })}
       sx={{ width: 300 }}
     />
   </Stack>
@@ -465,12 +457,11 @@ const WeaviateConfig = ({ config, onChange }) => (
         placeholder="AgentccSemanticCache"
       />
     </Stack>
-    <TextField
+    <SecretField
       size="small"
       label="API Key"
-      type="password"
-      value={config.api_key || ""}
-      onChange={(e) => onChange({ ...config, api_key: e.target.value })}
+      value={config.api_key}
+      onChange={(v) => onChange({ ...config, api_key: v })}
       sx={{ width: 300 }}
     />
   </Stack>
@@ -486,12 +477,11 @@ const PineconeConfig = ({ config, onChange }) => (
       fullWidth
       placeholder="https://your-index-xxxxxx.svc.pinecone.io"
     />
-    <TextField
+    <SecretField
       size="small"
       label="API Key"
-      type="password"
-      value={config.api_key || ""}
-      onChange={(e) => onChange({ ...config, api_key: e.target.value })}
+      value={config.api_key}
+      onChange={(v) => onChange({ ...config, api_key: v })}
       sx={{ width: 300 }}
     />
   </Stack>

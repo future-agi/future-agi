@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"strings"
 	"sync"
@@ -309,9 +310,9 @@ func TestUpdate(t *testing.T) {
 	newOwner := "bob"
 	newModels := []string{"gpt-4", "claude-3"}
 
-	updated, ok := ks.Update(key.ID, &newName, &newOwner, newModels, nil, map[string]string{"team": "infra"})
-	if !ok {
-		t.Fatal("expected Update to return true")
+	updated, err := ks.Update(key.ID, &newName, &newOwner, newModels, nil, map[string]string{"service": "infra"})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
 	}
 	if updated.Name != "updated" {
 		t.Errorf("expected name updated, got %s", updated.Name)
@@ -322,8 +323,8 @@ func TestUpdate(t *testing.T) {
 	if len(updated.AllowedModels) != 2 {
 		t.Errorf("expected 2 allowed models, got %d", len(updated.AllowedModels))
 	}
-	if updated.Metadata["team"] != "infra" {
-		t.Errorf("expected metadata team=infra, got %s", updated.Metadata["team"])
+	if updated.Metadata["service"] != "infra" {
+		t.Errorf("expected metadata service=infra, got %s", updated.Metadata["service"])
 	}
 	if !updated.UpdatedAt.After(key.CreatedAt) || updated.UpdatedAt.Equal(key.CreatedAt) {
 		// UpdatedAt should be at or after CreatedAt (they may be equal at nanosecond level)
@@ -333,9 +334,113 @@ func TestUpdate(t *testing.T) {
 func TestUpdate_NotFound(t *testing.T) {
 	ks := NewKeyStore(authCfg())
 	name := "x"
-	_, ok := ks.Update("nonexistent", &name, nil, nil, nil, nil)
-	if ok {
-		t.Error("expected Update to return false for unknown ID")
+	_, err := ks.Update("nonexistent", &name, nil, nil, nil, nil)
+	if !errors.Is(err, ErrKeyNotFound) {
+		t.Errorf("expected ErrKeyNotFound for unknown ID, got %v", err)
+	}
+}
+
+func TestUpdate_RefusesToRebindOrgID(t *testing.T) {
+	ks := NewKeyStore(authCfg())
+	key, _ := ks.Create("org-a-key", "alice", nil, nil, map[string]string{"org_id": "org-a"})
+	name := "renamed"
+
+	_, err := ks.Update(key.ID, &name, nil, nil, nil, map[string]string{"org_id": "org-b", "env": "prod"})
+
+	var reserved *ReservedMetadataError
+	if !errors.As(err, &reserved) || len(reserved.Keys) != 1 || reserved.Keys[0] != "org_id" {
+		t.Fatalf("expected a ReservedMetadataError naming org_id, got %v", err)
+	}
+	got := ks.Get(key.ID)
+	if got.Metadata["org_id"] != "org-a" {
+		t.Errorf("org_id = %q, want org-a", got.Metadata["org_id"])
+	}
+	if got.Name != "org-a-key" || got.Metadata["env"] != "" {
+		t.Errorf("a refused update must change nothing: name=%q metadata=%v", got.Name, got.Metadata)
+	}
+}
+
+func TestUpdate_RefusesToAddReservedMetadata(t *testing.T) {
+	ks := NewKeyStore(authCfg())
+	key, _ := ks.Create("plain", "alice", nil, nil, map[string]string{"org_id": "org-a"})
+
+	_, err := ks.Update(key.ID, nil, nil, nil, nil, map[string]string{
+		"type": "internal", "access_groups": "internal", "role": "admin",
+		"key_type": "managed", "allow_policy_override": "true",
+	})
+
+	var reserved *ReservedMetadataError
+	if !errors.As(err, &reserved) {
+		t.Fatalf("expected a ReservedMetadataError, got %v", err)
+	}
+	want := "access_groups,allow_policy_override,key_type,role,type"
+	if got := strings.Join(reserved.Keys, ","); got != want {
+		t.Errorf("reserved keys = %s, want %s", got, want)
+	}
+	if !strings.Contains(err.Error(), "access_groups, allow_policy_override") {
+		t.Errorf("error should name the keys: %v", err)
+	}
+	if len(ks.Get(key.ID).Metadata) != 1 {
+		t.Errorf("metadata changed: %v", ks.Get(key.ID).Metadata)
+	}
+}
+
+// In-flight requests hold key.Metadata and range over it without the store's
+// lock. Update gives the key a new map and never writes into the one they hold: a write into a map being ranged over is a fatal runtime error, not a panic.
+func TestUpdate_NeverWritesIntoTheMetadataMapReadersHold(t *testing.T) {
+	ks := NewKeyStore(authCfg())
+	key, _ := ks.Create("org-a-key", "alice", nil, nil, map[string]string{"org_id": "org-a", "env": "dev"})
+	held := ks.Get(key.ID).Metadata
+
+	updated, err := ks.Update(key.ID, nil, nil, nil, nil, map[string]string{"org_id": "org-a", "env": "prod", "service": "infra"})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	if len(held) != 2 || held["env"] != "dev" || held["service"] != "" {
+		t.Errorf("Update wrote into the map a reader holds: %v", held)
+	}
+	if updated.Metadata["env"] != "prod" || updated.Metadata["service"] != "infra" || updated.Metadata["org_id"] != "org-a" {
+		t.Errorf("updated metadata = %v", updated.Metadata)
+	}
+}
+
+func TestUpdate_AcceptsTheKeysOwnOrgID(t *testing.T) {
+	ks := NewKeyStore(authCfg())
+	key, _ := ks.Create("org-a-key", "alice", nil, nil, map[string]string{"org_id": "org-a"})
+
+	updated, err := ks.Update(key.ID, nil, nil, nil, nil, map[string]string{"org_id": "org-a", "service": "infra"})
+
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Metadata["org_id"] != "org-a" || updated.Metadata["service"] != "infra" {
+		t.Errorf("metadata = %v", updated.Metadata)
+	}
+}
+
+// Revoke and Authenticate run concurrently in a running gateway (Redis pub/sub
+// revocations); run under -race.
+func TestAuthenticate_DoesNotRaceRevoke(t *testing.T) {
+	ks := NewKeyStore(authCfg(config.AuthKeyConfig{Name: "k", Key: "raw-key-race"}))
+	key := ks.Lookup("raw-key-race")
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			ks.Authenticate("raw-key-race")
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			ks.Revoke(key.ID)
+		}
+	}()
+	wg.Wait()
+	if ks.Authenticate("raw-key-race") != nil {
+		t.Error("a revoked key still authenticates")
 	}
 }
 

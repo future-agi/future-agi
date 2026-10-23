@@ -40,6 +40,8 @@ import {
 import { useGatewayContext } from "../context/useGatewayContext";
 
 import EditGuardrailDialog from "./EditGuardrailDialog";
+import GatewayAdminOnly from "../components/GatewayAdminOnly";
+import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 import GuardrailAnalyticsTab from "./GuardrailAnalyticsTab";
 import FeedbackSummaryCard from "./FeedbackSummaryCard";
 import GuardrailConfigTab from "../settings/GuardrailConfigTab";
@@ -150,6 +152,7 @@ function getGuardrailType(name) {
 const OverviewTab = ({ guardrails, gatewayId }) => {
   const activeCount = guardrails.filter((g) => g.enabled !== false).length;
   const toggleGuardrail = useToggleGuardrail();
+  const { canEdit } = useGatewayAdmin();
   const [editTarget, setEditTarget] = useState(null);
 
   const handleToggle = (g) => {
@@ -249,12 +252,17 @@ const OverviewTab = ({ guardrails, gatewayId }) => {
                     </Typography>
                   </TableCell>
                   <TableCell>
-                    <Switch
-                      size="small"
-                      checked={g.enabled !== false}
-                      onChange={() => handleToggle(g)}
-                      disabled={toggleGuardrail.isPending}
-                    />
+                    <GatewayAdminOnly allowed={canEdit}>
+                      <Switch
+                        size="small"
+                        checked={g.enabled !== false}
+                        onChange={() => handleToggle(g)}
+                        disabled={toggleGuardrail.isPending || !canEdit}
+                        inputProps={{
+                          "aria-label": `Turn ${g.name || `guardrail ${idx + 1}`} on or off`,
+                        }}
+                      />
+                    </GatewayAdminOnly>
                   </TableCell>
                   <TableCell>
                     <Chip
@@ -281,13 +289,17 @@ const OverviewTab = ({ guardrails, gatewayId }) => {
                     />
                   </TableCell>
                   <TableCell align="right">
-                    <IconButton
-                      size="small"
-                      onClick={() => setEditTarget(g)}
-                      title="Edit"
-                    >
-                      <Iconify icon="mdi:pencil-outline" width={18} />
-                    </IconButton>
+                    <GatewayAdminOnly allowed={canEdit}>
+                      <IconButton
+                        size="small"
+                        onClick={() => setEditTarget(g)}
+                        title="Edit"
+                        aria-label={`Edit ${g.name || `guardrail ${idx + 1}`}`}
+                        disabled={!canEdit}
+                      >
+                        <Iconify icon="mdi:pencil-outline" width={18} />
+                      </IconButton>
+                    </GatewayAdminOnly>
                   </TableCell>
                 </TableRow>
               ))}
@@ -354,6 +366,7 @@ function checksToRules(guardrailObj) {
 const ConfigTab = () => {
   const { data: orgConfig, isLoading } = useOrgConfig();
   const createOrgConfig = useCreateOrgConfig();
+  const { canEdit } = useGatewayAdmin();
   const [localGuardrails, setLocalGuardrails] = useState(null);
   const [dirty, setDirty] = useState(false);
 
@@ -408,14 +421,16 @@ const ConfigTab = () => {
               <Button size="small" color="inherit" onClick={handleReset}>
                 Reset
               </Button>
-              <Button
-                size="small"
-                variant="contained"
-                onClick={handleSave}
-                disabled={createOrgConfig.isPending}
-              >
-                {createOrgConfig.isPending ? "Saving..." : "Save & Activate"}
-              </Button>
+              <GatewayAdminOnly allowed={canEdit}>
+                <Button
+                  size="small"
+                  variant="contained"
+                  onClick={handleSave}
+                  disabled={createOrgConfig.isPending || !canEdit}
+                >
+                  {createOrgConfig.isPending ? "Saving..." : "Save & Activate"}
+                </Button>
+              </GatewayAdminOnly>
             </Stack>
           }
         >
@@ -449,6 +464,9 @@ const EXAMPLE_PROMPTS = [
 ];
 
 const PlaygroundTab = ({ gatewayId }) => {
+  // The test pushes the org config and sends a request on a key it creates,
+  // so the backend gates it with the config writes: Owner or Admin only.
+  const { canEdit } = useGatewayAdmin();
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("");
   const [result, setResult] = useState(null);
@@ -544,20 +562,22 @@ const PlaygroundTab = ({ gatewayId }) => {
               onChange={(e) => setModel(e.target.value)}
               sx={{ width: 240 }}
             />
-            <Button
-              variant="contained"
-              onClick={handleTest}
-              disabled={!prompt.trim() || loading}
-              startIcon={
-                loading ? (
-                  <CircularProgress size={16} color="inherit" />
-                ) : (
-                  <Iconify icon="mdi:play" width={18} />
-                )
-              }
-            >
-              {loading ? "Running..." : "Run Test"}
-            </Button>
+            <GatewayAdminOnly allowed={canEdit}>
+              <Button
+                variant="contained"
+                onClick={handleTest}
+                disabled={!prompt.trim() || loading || !canEdit}
+                startIcon={
+                  loading ? (
+                    <CircularProgress size={16} color="inherit" />
+                  ) : (
+                    <Iconify icon="mdi:play" width={18} />
+                  )
+                }
+              >
+                {loading ? "Running..." : "Run Test"}
+              </Button>
+            </GatewayAdminOnly>
           </Stack>
         </CardContent>
       </Card>
@@ -766,9 +786,7 @@ const LogsTab = ({ gatewayId }) => {
   const logList = Array.isArray(logs) ? logs : logs?.results || [];
 
   if (isLoading) {
-    return (
-      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
-    );
+    return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
   }
 
   return (

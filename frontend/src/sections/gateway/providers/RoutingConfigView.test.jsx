@@ -3,6 +3,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 import RoutingConfigView from "./RoutingConfigView";
+import {
+  ADMIN_LEVELS,
+  NOT_ADMIN_LEVELS,
+  expectAdminOnly,
+  expectEditable,
+} from "../testing/adminOnly";
+
+// The role check: saving is Owner or Admin only.
+// The cases below run as an Admin unless one says otherwise.
+let mockOrgLevel = 8;
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ orgLevel: mockOrgLevel }),
+}));
 
 const mockUpdateMutate = vi.fn();
 
@@ -27,7 +40,40 @@ async function save(user) {
 
 describe("RoutingConfigView", () => {
   beforeEach(() => {
+    mockOrgLevel = 8;
     mockUpdateMutate.mockClear();
+  });
+
+  it.each(NOT_ADMIN_LEVELS)(
+    "%s sees Save Routing Config disabled",
+    async (_who, level) => {
+      mockOrgLevel = level;
+      const user = userEvent.setup();
+      render(
+        <RoutingConfigView
+          config={{ routing: { strategy: "weighted" } }}
+          gatewayId="default"
+        />,
+      );
+      await user.click(screen.getByRole("checkbox"));
+      expectAdminOnly(
+        screen.getByRole("button", { name: "Save Routing Config" }),
+      );
+      expect(mockUpdateMutate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(ADMIN_LEVELS)("%s can save routing", async (_who, level) => {
+    mockOrgLevel = level;
+    const user = userEvent.setup();
+    render(
+      <RoutingConfigView
+        config={{ routing: { strategy: "weighted" } }}
+        gatewayId="default"
+      />,
+    );
+    await user.click(screen.getByRole("checkbox"));
+    expectEditable(screen.getByRole("button", { name: "Save Routing Config" }));
   });
 
   it("saves a picked strategy under the key the gateway contract has", async () => {

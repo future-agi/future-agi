@@ -8,17 +8,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/scheduled"
 )
 
 // scheduledSubmitRequest is the API request body for submitting a scheduled job.
 type scheduledSubmitRequest struct {
-	ScheduledAt string                          `json:"scheduled_at"` // RFC3339
-	Delay       string                          `json:"delay"`        // Go duration string
-	Request     json.RawMessage                 `json:"request"`
-	WebhookURL  string                          `json:"webhook_url"`
-	Metadata    map[string]string               `json:"metadata"`
+	ScheduledAt string            `json:"scheduled_at"` // RFC3339
+	Delay       string            `json:"delay"`        // Go duration string
+	Request     json.RawMessage   `json:"request"`
+	WebhookURL  string            `json:"webhook_url"`
+	Metadata    map[string]string `json:"metadata"`
 }
 
 // SubmitScheduled handles POST /v1/scheduled.
@@ -30,6 +31,22 @@ func (h *Handlers) SubmitScheduled(w http.ResponseWriter, r *http.Request) {
 			Code:    "not_enabled",
 			Message: "Scheduled completions are not enabled",
 		})
+		return
+	}
+
+	// The scheduled route refuses a key limited to its org's providers;
+	// with auth on, a request with no valid key counts as one. The
+	// decision is made on the key KeyAuth authenticated (middleware.RequestAPIKey:
+	// a Bearer Authorization header, otherwise x-api-key), as callerOrgID's is.
+	keyRC := models.AcquireRequestContext()
+	if rawKey := middleware.RequestAPIKey(r); rawKey != "" {
+		keyRC.Metadata["authorization"] = "Bearer " + rawKey
+	}
+	h.peekKeyOrgID(keyRC)
+	restricted := h.orgProvidersOnly(r.Context(), keyRC)
+	keyRC.Release()
+	if restricted {
+		models.WriteError(w, errDeferredRunUnavailable("scheduled completions"))
 		return
 	}
 
@@ -90,9 +107,12 @@ func (h *Handlers) SubmitScheduled(w http.ResponseWriter, r *http.Request) {
 	}
 	json.Unmarshal(req.Request, &partial)
 
-	requestID := models.GetRequestID(r.Context())
-	orgID := "" // extracted from auth middleware if available
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
 
+	requestID := models.GetRequestID(r.Context())
 	job := &scheduled.ScheduledJob{
 		ID:          "sched-" + requestID,
 		OrgID:       orgID,
@@ -139,7 +159,12 @@ func (h *Handlers) GetScheduledJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.scheduledStore.Get(jobID)
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
+	// Another org's job answers 404, the same as a missing one.
+	job, err := h.scheduledStore.GetForOrg(jobID, orgID)
 	if err != nil {
 		models.WriteError(w, models.ErrNotFound("job_not_found", "Scheduled job not found"))
 		return
@@ -167,7 +192,10 @@ func (h *Handlers) ListScheduledJobs(w http.ResponseWriter, r *http.Request) {
 		limit = 100
 	}
 
-	orgID := "" // from auth
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
 	jobs, err := h.scheduledStore.ListByOrg(orgID, status, limit)
 	if err != nil {
 		models.WriteError(w, models.ErrInternal("Failed to list jobs: "+err.Error()))
@@ -194,7 +222,12 @@ func (h *Handlers) CancelScheduledJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.scheduledStore.Get(jobID)
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
+	// Another org's job answers 404, the same as a missing one.
+	job, err := h.scheduledStore.GetForOrg(jobID, orgID)
 	if err != nil {
 		models.WriteError(w, models.ErrNotFound("job_not_found", "Scheduled job not found"))
 		return

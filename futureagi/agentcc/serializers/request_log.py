@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from agentcc.models import AgentccRequestLog
+from agentcc.services.credential_headers import mask_credential_headers
 
 
 class AgentccRequestLogSerializer(serializers.ModelSerializer):
@@ -78,6 +79,16 @@ class AgentccRequestLogDetailSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = fields
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # The detail masks credential headers on read as well, so a stored row
+        # shows none of their values; agentcc_scrub_request_log_credentials
+        # --apply masks such a row in place.
+        for field in ("request_headers", "response_headers"):
+            if field in data:
+                data[field] = mask_credential_headers(data[field])
+        return data
 
 
 class AgentccSessionSerializer(serializers.Serializer):

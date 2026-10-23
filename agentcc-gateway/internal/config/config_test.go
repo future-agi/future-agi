@@ -341,7 +341,7 @@ otel:
 func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("AGENTCC_PORT", "3000")
 	t.Setenv("AGENTCC_LOG_LEVEL", "warn")
-	t.Setenv("AGENTCC_ADMIN_TOKEN", "secret123")
+	t.Setenv("AGENTCC_ADMIN_TOKEN", strongToken)
 
 	cfg, err := Load("")
 	if err != nil {
@@ -354,8 +354,8 @@ func TestLoadFromEnv(t *testing.T) {
 	if cfg.Logging.Level != "warn" {
 		t.Errorf("log level = %q, want %q", cfg.Logging.Level, "warn")
 	}
-	if cfg.Admin.Token != "secret123" {
-		t.Errorf("admin token = %q, want %q", cfg.Admin.Token, "secret123")
+	if cfg.Admin.Token != strongToken {
+		t.Errorf("admin token = %q, want %q", cfg.Admin.Token, strongToken)
 	}
 }
 
@@ -396,7 +396,7 @@ func TestLoadFromEnv_ControlPlaneSync(t *testing.T) {
 	t.Setenv("AGENTCC_CONTROL_PLANE_URL", "http://backend:8000")
 	t.Setenv("AGENTCC_SYNC_ON_STARTUP", "true")
 	t.Setenv("AGENTCC_SYNC_INTERVAL", "30s")
-	t.Setenv("AGENTCC_ADMIN_TOKEN", "shared-admin-token")
+	t.Setenv("AGENTCC_ADMIN_TOKEN", strongToken)
 
 	cfg, err := Load("")
 	if err != nil {
@@ -405,16 +405,17 @@ func TestLoadFromEnv_ControlPlaneSync(t *testing.T) {
 	if !cfg.ControlPlane.SyncOnStartup || cfg.ControlPlane.SyncInterval != 30*time.Second {
 		t.Errorf("sync_on_startup = %v, sync_interval = %v, want true, 30s", cfg.ControlPlane.SyncOnStartup, cfg.ControlPlane.SyncInterval)
 	}
-	if cfg.ControlPlane.AdminToken != "shared-admin-token" {
+	if cfg.ControlPlane.AdminToken != strongToken {
 		t.Errorf("control plane token = %q, want the admin token", cfg.ControlPlane.AdminToken)
 	}
 
-	t.Setenv("AGENTCC_CONTROL_PLANE_TOKEN", "separate-token")
+	const separateToken = "3b7e1d9f5a2c8e4b6d0f2a4c6e8b1d3f5a7c9e2b4d6f8a1c3e5b7d9f2a4c6e8b"
+	t.Setenv("AGENTCC_CONTROL_PLANE_TOKEN", separateToken)
 	cfg, err = Load("")
 	if err != nil {
 		t.Fatalf("Load error: %v", err)
 	}
-	if cfg.ControlPlane.AdminToken != "separate-token" {
+	if cfg.ControlPlane.AdminToken != separateToken {
 		t.Errorf("control plane token = %q, want the explicit one", cfg.ControlPlane.AdminToken)
 	}
 }

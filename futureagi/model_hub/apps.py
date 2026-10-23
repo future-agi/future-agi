@@ -37,6 +37,15 @@ HOSTED_ENV_TYPES = frozenset({"prod", "production", "staging"})
 # mutation hooks during AppConfig initialization.
 OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
     {
+        # agentcc_check_key_org verifies that every API key's metadata is bound
+        # to the key's own org (--fix binds it); run it before
+        # agentcc_check_log_org, a read-only check that each request-log row is
+        # stored under its key's org.
+        "agentcc_check_key_org",
+        "agentcc_check_log_org",
+        # agentcc_scrub_request_log_credentials verifies that request-log headers
+        # keep credential values masked (a dry run); --apply masks them.
+        "agentcc_scrub_request_log_credentials",
         "ch25_apply_schema",
         "ch25_remove_pg",
         "backfill_harness_agent_prompts",

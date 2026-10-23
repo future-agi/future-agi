@@ -3,6 +3,7 @@ Tests for the spend-summary endpoint used by the gateway to seed
 budget counters on startup.
 """
 
+import secrets
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -13,7 +14,8 @@ from rest_framework.test import APIClient
 
 from agentcc.models import AgentccRequestLog
 
-ADMIN_TOKEN = "agentcc-admin-secret"
+# Generated per run: a published literal is refused (agentcc/admin_token.py).
+ADMIN_TOKEN = secrets.token_hex(32)
 
 
 @pytest.fixture(autouse=True)

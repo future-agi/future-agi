@@ -115,7 +115,7 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 		orgCfg.DialContext = orgDialContext(c.allowPrivateBaseURLs)
 	}
 
-	p, err := createProvider(providerID+"_org_"+orgID, orgCfg)
+	p, err := createProvider(orgInstanceID(providerID, orgID), orgCfg)
 	if err != nil {
 		return nil, fmt.Errorf("creating org provider %s/%s: %w", orgID, providerID, err)
 	}
@@ -129,6 +129,20 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 	)
 
 	return p, nil
+}
+
+// orgInstanceID is the ID of the instance GetOrCreateWithTenantConfig builds
+// from an org's own config for providerID. The gateway's own instances (the
+// registry's) carry the provider ID alone.
+func orgInstanceID(providerID, orgID string) string {
+	return providerID + "_org_" + orgID
+}
+
+// IsOrgInstance reports whether p is an instance built from orgID's own
+// provider config, and so calls its upstream with the org's credentials
+// rather than the gateway's.
+func IsOrgInstance(p Provider, orgID string) bool {
+	return p != nil && orgID != "" && strings.HasSuffix(p.ID(), orgInstanceID("", orgID))
 }
 
 // resolveOrgConfig clones a base provider config for one org. The upstream it

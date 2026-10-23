@@ -12213,6 +12213,12 @@ export const getAgentccApiKeysDeleteUrl = (id: string) => {
   return `/agentcc/api-keys/${id}/`;
 };
 
+/**
+ * Delete a key: it is revoked on the gateway before the row is
+deleted, so it stops working at once. When the gateway cannot revoke
+it, the delete answers 503, the row is kept and the delete can be
+retried.
+ */
 export const agentccApiKeysDelete = async (
   id: string,
   options?: RequestInit,
@@ -13341,6 +13347,9 @@ export const getAgentccGatewaysListUrl = () => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysList = async (
   options?: RequestInit,
@@ -13493,6 +13502,9 @@ export const getAgentccGatewaysCancelBatchUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysCancelBatch = async (
   id: string,
@@ -13547,6 +13559,9 @@ export const getAgentccGatewaysConfigUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysConfig = async (
   id: string,
@@ -13604,6 +13619,9 @@ export const getAgentccGatewaysGetBatchUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysGetBatch = async (
   id: string,
@@ -13655,6 +13673,9 @@ export const getAgentccGatewaysHealthCheckUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysHealthCheck = async (
   id: string,
@@ -13702,6 +13723,9 @@ export const getAgentccGatewaysMcpPromptsUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysMcpPrompts = async (
   id: string,
@@ -13746,6 +13770,9 @@ export const getAgentccGatewaysMcpResourcesUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysMcpResources = async (
   id: string,
@@ -13797,6 +13824,9 @@ export const getAgentccGatewaysMcpStatusUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysMcpStatus = async (
   id: string,
@@ -13841,6 +13871,9 @@ export const getAgentccGatewaysMcpToolsUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysMcpTools = async (
   id: string,
@@ -13892,6 +13925,9 @@ export const getAgentccGatewaysProvidersUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysProviders = async (
   id: string,
@@ -13996,6 +14032,9 @@ export const getAgentccGatewaysRemoveBudgetUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysRemoveBudget = async (
   id: string,
@@ -14056,6 +14095,9 @@ export const getAgentccGatewaysRemoveMcpServerUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysRemoveMcpServer = async (
   id: string,
@@ -14169,6 +14211,9 @@ export const getAgentccGatewaysSetBudgetUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysSetBudget = async (
   id: string,
@@ -14223,6 +14268,9 @@ export const getAgentccGatewaysSubmitBatchUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysSubmitBatch = async (
   id: string,
@@ -14277,6 +14325,9 @@ export const getAgentccGatewaysTestMcpToolUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysTestMcpTool = async (
   id: string,
@@ -14384,6 +14435,9 @@ export const getAgentccGatewaysToggleGuardrailUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysToggleGuardrail = async (
   id: string,
@@ -14491,6 +14545,9 @@ export const getAgentccGatewaysUpdateGuardrailUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysUpdateGuardrail = async (
   id: string,
@@ -14545,6 +14602,9 @@ export const getAgentccGatewaysUpdateMcpGuardrailsUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysUpdateMcpGuardrails = async (
   id: string,
@@ -14599,6 +14659,9 @@ export const getAgentccGatewaysUpdateMcpServerUrl = (id: string) => {
 /**
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
+
+The view's config writes (``gateway_admin_actions``, the role check) are
+an org Owner's or Admin's.
  */
 export const agentccGatewaysUpdateMcpServer = async (
   id: string,
@@ -15234,7 +15297,10 @@ export const getAgentccGuardrailPoliciesListUrl = (
 };
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``); every write is an org Owner's or
+Admin's, and every member can read.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const agentccGuardrailPoliciesList = async (
   params?: AgentccGuardrailPoliciesListParams,
@@ -15277,7 +15343,10 @@ export const getAgentccGuardrailPoliciesCreateUrl = () => {
 };
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``); every write is an org Owner's or
+Admin's, and every member can read.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const agentccGuardrailPoliciesCreate = async (
   agentccGuardrailPolicyApi: NonReadonly<AgentccGuardrailPolicyApi>,
@@ -15367,7 +15436,10 @@ export const getAgentccGuardrailPoliciesReadUrl = (id: string) => {
 };
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``); every write is an org Owner's or
+Admin's, and every member can read.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const agentccGuardrailPoliciesRead = async (
   id: string,
@@ -15410,7 +15482,10 @@ export const getAgentccGuardrailPoliciesUpdateUrl = (id: string) => {
 };
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``); every write is an org Owner's or
+Admin's, and every member can read.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const agentccGuardrailPoliciesUpdate = async (
   id: string,
@@ -15456,7 +15531,10 @@ export const getAgentccGuardrailPoliciesPartialUpdateUrl = (id: string) => {
 };
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``); every write is an org Owner's or
+Admin's, and every member can read.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const agentccGuardrailPoliciesPartialUpdate = async (
   id: string,
@@ -15502,7 +15580,10 @@ export const getAgentccGuardrailPoliciesDeleteUrl = (id: string) => {
 };
 
 /**
- * CRUD for reusable guardrail policies. Org-scoped.
+ * A policy's checks are merged into the org config and pushed to the
+gateway (``sync_guardrail_policies``); every write is an org Owner's or
+Admin's, and every member can read.
+ * @summary CRUD for reusable guardrail policies. Org-scoped.
  */
 export const agentccGuardrailPoliciesDelete = async (
   id: string,
@@ -16848,7 +16929,9 @@ export const getAgentccRoutingPoliciesListUrl = (
 };
 
 /**
- * Routing policy management with version history. Org-scoped.
+ * Each write merges the active policies into a new org config version and
+pushes it, so writes are an org Owner's or Admin's.
+ * @summary Routing policy management with version history. Org-scoped.
  */
 export const agentccRoutingPoliciesList = async (
   params?: AgentccRoutingPoliciesListParams,
@@ -16981,7 +17064,9 @@ export const getAgentccRoutingPoliciesReadUrl = (id: string) => {
 };
 
 /**
- * Routing policy management with version history. Org-scoped.
+ * Each write merges the active policies into a new org config version and
+pushes it, so writes are an org Owner's or Admin's.
+ * @summary Routing policy management with version history. Org-scoped.
  */
 export const agentccRoutingPoliciesRead = async (
   id: string,
@@ -17070,7 +17155,9 @@ export const getAgentccRoutingPoliciesPartialUpdateUrl = (id: string) => {
 };
 
 /**
- * Routing policy management with version history. Org-scoped.
+ * Each write merges the active policies into a new org config version and
+pushes it, so writes are an org Owner's or Admin's.
+ * @summary Routing policy management with version history. Org-scoped.
  */
 export const agentccRoutingPoliciesPartialUpdate = async (
   id: string,
@@ -17116,7 +17203,9 @@ export const getAgentccRoutingPoliciesDeleteUrl = (id: string) => {
 };
 
 /**
- * Routing policy management with version history. Org-scoped.
+ * Each write merges the active policies into a new org config version and
+pushes it, so writes are an org Owner's or Admin's.
+ * @summary Routing policy management with version history. Org-scoped.
  */
 export const agentccRoutingPoliciesDelete = async (
   id: string,
@@ -17596,7 +17685,10 @@ export const getAgentccShadowExperimentsListUrl = (
 };
 
 /**
- * CRUD for shadow experiments with pause/resume/complete lifecycle actions.
+ * Writes (create, update, partial update, destroy, pause, resume, complete)
+are an org Owner's or Admin's; list, retrieve and stats are open to every
+member of the org.
+ * @summary CRUD for shadow experiments with pause/resume/complete lifecycle actions.
  */
 export const agentccShadowExperimentsList = async (
   params?: AgentccShadowExperimentsListParams,
@@ -17639,7 +17731,10 @@ export const getAgentccShadowExperimentsCreateUrl = () => {
 };
 
 /**
- * CRUD for shadow experiments with pause/resume/complete lifecycle actions.
+ * Writes (create, update, partial update, destroy, pause, resume, complete)
+are an org Owner's or Admin's; list, retrieve and stats are open to every
+member of the org.
+ * @summary CRUD for shadow experiments with pause/resume/complete lifecycle actions.
  */
 export const agentccShadowExperimentsCreate = async (
   agentccShadowExperimentApi: NonReadonly<AgentccShadowExperimentApi>,
@@ -17684,7 +17779,10 @@ export const getAgentccShadowExperimentsReadUrl = (id: string) => {
 };
 
 /**
- * CRUD for shadow experiments with pause/resume/complete lifecycle actions.
+ * Writes (create, update, partial update, destroy, pause, resume, complete)
+are an org Owner's or Admin's; list, retrieve and stats are open to every
+member of the org.
+ * @summary CRUD for shadow experiments with pause/resume/complete lifecycle actions.
  */
 export const agentccShadowExperimentsRead = async (
   id: string,
@@ -17727,7 +17825,10 @@ export const getAgentccShadowExperimentsUpdateUrl = (id: string) => {
 };
 
 /**
- * CRUD for shadow experiments with pause/resume/complete lifecycle actions.
+ * Writes (create, update, partial update, destroy, pause, resume, complete)
+are an org Owner's or Admin's; list, retrieve and stats are open to every
+member of the org.
+ * @summary CRUD for shadow experiments with pause/resume/complete lifecycle actions.
  */
 export const agentccShadowExperimentsUpdate = async (
   id: string,
@@ -17773,7 +17874,10 @@ export const getAgentccShadowExperimentsPartialUpdateUrl = (id: string) => {
 };
 
 /**
- * CRUD for shadow experiments with pause/resume/complete lifecycle actions.
+ * Writes (create, update, partial update, destroy, pause, resume, complete)
+are an org Owner's or Admin's; list, retrieve and stats are open to every
+member of the org.
+ * @summary CRUD for shadow experiments with pause/resume/complete lifecycle actions.
  */
 export const agentccShadowExperimentsPartialUpdate = async (
   id: string,
@@ -17819,7 +17923,10 @@ export const getAgentccShadowExperimentsDeleteUrl = (id: string) => {
 };
 
 /**
- * CRUD for shadow experiments with pause/resume/complete lifecycle actions.
+ * Writes (create, update, partial update, destroy, pause, resume, complete)
+are an org Owner's or Admin's; list, retrieve and stats are open to every
+member of the org.
+ * @summary CRUD for shadow experiments with pause/resume/complete lifecycle actions.
  */
 export const agentccShadowExperimentsDelete = async (
   id: string,

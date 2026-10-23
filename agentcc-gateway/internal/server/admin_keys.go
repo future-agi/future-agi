@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -241,8 +242,18 @@ func (h *KeyHandlers) UpdateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	key, ok := h.keyStore.Update(keyID, req.Name, req.Owner, req.Models, req.Providers, req.Metadata)
-	if !ok {
+	key, err := h.keyStore.Update(keyID, req.Name, req.Owner, req.Models, req.Providers, req.Metadata)
+	var reserved *auth.ReservedMetadataError
+	switch {
+	case errors.As(err, &reserved):
+		models.WriteError(w, &models.APIError{
+			Status:  http.StatusConflict,
+			Type:    models.ErrTypeInvalidRequest,
+			Code:    "reserved_metadata",
+			Message: reserved.Error(),
+		})
+		return
+	case err != nil:
 		models.WriteError(w, models.ErrNotFound("key_not_found", "Key not found: "+keyID))
 		return
 	}

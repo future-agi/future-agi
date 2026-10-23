@@ -55,8 +55,10 @@ func (h *Handlers) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orgID := extractOrgID(r, h)
-
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
 	meta := h.fileStore.Upload(orgID, header.Filename, purpose, fileData)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -76,9 +78,12 @@ func (h *Handlers) ListFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orgID := extractOrgID(r, h)
 	purpose := r.URL.Query().Get("purpose")
 
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
 	files := h.fileStore.List(orgID, purpose)
 	if files == nil {
 		files = []models.FileObject{}
@@ -110,8 +115,11 @@ func (h *Handlers) GetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orgID := extractOrgID(r, h)
-
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
+	// Another org's file answers 404, the same as a missing one.
 	stored := h.fileStore.Get(fileID, orgID)
 	if stored == nil {
 		models.WriteError(w, models.ErrNotFound("file_not_found", "File not found"))
@@ -141,8 +149,11 @@ func (h *Handlers) GetFileContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orgID := extractOrgID(r, h)
-
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
+	// Another org's file answers 404, the same as a missing one.
 	stored := h.fileStore.Get(fileID, orgID)
 	if stored == nil {
 		models.WriteError(w, models.ErrNotFound("file_not_found", "File not found"))
@@ -173,8 +184,11 @@ func (h *Handlers) DeleteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orgID := extractOrgID(r, h)
-
+	orgID, ok := h.callerOrgID(w, r)
+	if !ok {
+		return
+	}
+	// Another org's file answers 404, the same as a missing one.
 	if !h.fileStore.Delete(fileID, orgID) {
 		models.WriteError(w, models.ErrNotFound("file_not_found", "File not found"))
 		return

@@ -3,6 +3,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 import MCPGuardrailsTab from "./MCPGuardrailsTab";
+import {
+  ADMIN_LEVELS,
+  NOT_ADMIN_LEVELS,
+  expectAdminOnly,
+  expectEditable,
+} from "../testing/adminOnly";
+
+// The role check: saving is Owner or Admin only.
+// The cases below run as an Admin unless one says otherwise.
+let mockOrgLevel = 8;
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ orgLevel: mockOrgLevel }),
+}));
 
 const mockMutate = vi.fn();
 let mockMutationState = {};
@@ -28,8 +41,39 @@ const storedConfig = {
 
 describe("MCPGuardrailsTab", () => {
   beforeEach(() => {
+    mockOrgLevel = 8;
     mockMutate.mockClear();
     mockMutationState = {};
+  });
+
+  it.each(NOT_ADMIN_LEVELS)(
+    "%s sees Save Guardrails disabled and the settings unchanged",
+    async (_who, level) => {
+      mockOrgLevel = level;
+      render(
+        <MCPGuardrailsTab
+          config={storedConfig}
+          mcpStatus={{ servers: [] }}
+          gatewayId="default"
+        />,
+      );
+      expect(screen.getByText("shell")).toBeInTheDocument();
+      const save = screen.getByRole("button", { name: /save guardrails/i });
+      expectAdminOnly(save);
+      expect(mockMutate).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(ADMIN_LEVELS)("%s can save the guardrails", (_who, level) => {
+    mockOrgLevel = level;
+    render(
+      <MCPGuardrailsTab
+        config={storedConfig}
+        mcpStatus={{ servers: [] }}
+        gatewayId="default"
+      />,
+    );
+    expectEditable(screen.getByRole("button", { name: /save guardrails/i }));
   });
 
   it("shows the reason when the save is rejected", () => {
