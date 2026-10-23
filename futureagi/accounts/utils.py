@@ -10,7 +10,6 @@ import requests
 import structlog
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
-from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import close_old_connections, transaction
@@ -450,7 +449,7 @@ def persist_pending_org_invite(
     """
     org_level = Level.from_string(org_role) if org_role else Level.VIEWER
     ws_level = Level.from_string(Level.normalize_ws_role(workspace_role))
-    OrganizationInvite.objects.update_or_create(
+    invite, _ = OrganizationInvite.objects.update_or_create(
         organization=organization,
         target_email=target_email,
         status=InviteStatus.PENDING,
@@ -462,37 +461,48 @@ def persist_pending_org_invite(
             "invited_by": invited_by,
         },
     )
+    return invite
 
 
-def build_invite_accept_link(user):
-    """Build the accept-invite link for an inactive invited user.
+def build_invite_accept_link(user, invite):
+    """Build the accept-invite link for one pending invite.
 
-    Same URL that goes out in invite_user.html — OSS deployments surface it in
-    the API so an admin can share it manually when SMTP isn't configured.
+    The token names the invite, so each organization's email accepts its own
+    invite. Same URL that goes out in invite_user.html — OSS deployments
+    surface it in the API so an admin can share it manually when SMTP isn't
+    configured.
     """
+    from accounts.invite_tokens import make_invite_token
+
     uid = urlsafe_base64_encode(force_bytes(user.pk))
-    token = default_token_generator.make_token(user)
+    token = make_invite_token(invite)
     return f"{settings.APP_BASE_URL}/auth/jwt/invitation/accept/{uid}/{token}"
 
 
-def build_invite_links(emails):
-    """Map lowercased email -> accept-invite link, OSS only.
+def build_invite_links(invites):
+    """Map lowercased email -> accept-invite link for pending invites, OSS only.
 
     Shared by invite creation and both member lists so they cannot disagree
     about who gets a link.
     """
     from tfc.ee_gating import is_oss
 
-    if not emails or not is_oss():
+    pending = [inv for inv in invites if inv.status == InviteStatus.PENDING]
+    if not pending or not is_oss():
         return {}
 
-    lowered = {email.lower() for email in emails}
-    return {
-        user.email.lower(): build_invite_accept_link(user)
+    users = {
+        user.email.lower(): user
         for user in User.objects.annotate(email_lower=Lower("email")).filter(
-            email_lower__in=lowered,
-            is_active=False,
+            email_lower__in={inv.target_email.lower() for inv in pending}
         )
+    }
+    return {
+        inv.target_email.lower(): build_invite_accept_link(
+            users[inv.target_email.lower()], inv
+        )
+        for inv in pending
+        if inv.target_email.lower() in users
     }
 
 
@@ -506,19 +516,26 @@ def build_password_reset_link(uidb64, token):
     return f"{settings.APP_BASE_URL}/auth/jwt/verify/{uidb64}/{token}"
 
 
-def send_invite_email(email, organization, inviter):
-    """Send invite email to the target user."""
+def send_invite_email(email, organization, inviter, invite=None):
+    """Send invite email to the target user.
+
+    A pending *invite* gets the accept link, even for a user who already has
+    an account (they were invited by another org first). Without one, the
+    user is told about access they already have.
+    """
     try:
         org_name = organization.display_name or organization.name
 
         existing = User.objects.filter(email__iexact=email).first()
-        if existing and existing.is_active:
+        if existing and invite is not None and invite.status == InviteStatus.PENDING:
+            template = "invite_user.html"
+            extra_context = {
+                "invite_link": build_invite_accept_link(existing, invite),
+                "existing_user": existing.is_active,
+            }
+        elif existing:
             template = "existing_user_invite.html"
             extra_context = {}
-        elif existing:
-            # Inactive user — send invite with activation token
-            template = "invite_user.html"
-            extra_context = {"invite_link": build_invite_accept_link(existing)}
         else:
             # No user record yet; email will be sent once the user signs up.
             logger.info("invite_email_skipped_no_user", email=email)

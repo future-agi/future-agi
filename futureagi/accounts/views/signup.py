@@ -36,11 +36,11 @@ from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
     AcceptInvitationPreviewResponseSerializer,
     AcceptInvitationRequestSerializer,
+    AcceptInvitationResponseSerializer,
     AccountsBulkUserMutationItemSerializer,
     AccountsDirectMessageResponseSerializer,
     AccountsMessageResponseSerializer,
     AccountsStringResultResponseSerializer,
-    AccountsTokenPairResponseSerializer,
     AccountsUserProfileResponseSerializer,
     LogoutRequestSerializer,
     PasswordResetConfirmRequestSerializer,
@@ -648,23 +648,91 @@ def reset_password_confirm(request, uidb64, token):
         return _gm.internal_server_error_response("An unexpected error occurred.")
 
 
-def _activate_memberships(user):
-    """Activate org & workspace memberships for *user* (fallback when invite is
-    missing or expired)."""
-    from accounts.models.organization_membership import OrganizationMembership
-    from accounts.models.workspace import WorkspaceMembership
+INVITE_LINK_INVALID = "Invitation link is invalid or has expired."
+INVITE_NOT_PENDING = "This invitation has been cancelled or expired."
+INVITE_EXPIRED = "This invitation has expired. Ask your admin to resend it."
+INVITE_ALREADY_ACCEPTED = "This invitation has already been accepted. Please log in."
+INVITE_EXISTING_USER_PASSWORD = (
+    "You already have an account. Use the Join button to accept this invitation."
+)
 
-    OrganizationMembership.all_objects.filter(
-        user=user,
-        organization=user.organization,
-        is_active=False,
-    ).update(is_active=True)
 
-    WorkspaceMembership.no_workspace_objects.filter(
-        user=user,
-        workspace__organization=user.organization,
-        is_active=False,
-    ).update(is_active=True)
+def resolve_invite_for_link(user, token):
+    """Return ``(invite, None)`` for the invite an accept link names, or
+    ``(None, error_message)``.
+
+    New links carry a signed invite id, so each organization's email accepts
+    its own invite. Older links carry a password-reset token and resolve to
+    the pending invite of ``user.organization``.
+    """
+    from accounts.invite_tokens import read_invite_token
+    from accounts.models.organization_invite import InviteStatus, OrganizationInvite
+
+    invite_id = read_invite_token(token)
+    if invite_id:
+        invite = (
+            OrganizationInvite.objects.select_related("organization")
+            .filter(id=invite_id)
+            .first()
+        )
+        if not invite or invite.target_email.lower() != user.email.lower():
+            return None, INVITE_LINK_INVALID
+    else:
+        # Legacy links sent before per-invite tokens; they die within
+        # PASSWORD_RESET_TIMEOUT, so remove this branch a week after release.
+        if not default_token_generator.check_token(user, token):
+            return None, INVITE_LINK_INVALID
+        if not user.organization:
+            return None, INVITE_LINK_INVALID
+        invite = (
+            OrganizationInvite.objects.select_related("organization")
+            .filter(
+                target_email__iexact=user.email,
+                organization=user.organization,
+                status=InviteStatus.PENDING,
+            )
+            .first()
+        )
+        if not invite:
+            return None, INVITE_NOT_PENDING
+
+    if invite.status == InviteStatus.ACCEPTED:
+        return None, INVITE_ALREADY_ACCEPTED
+    if invite.status != InviteStatus.PENDING:
+        return None, INVITE_NOT_PENDING
+    if invite.is_expired:
+        return None, INVITE_EXPIRED
+    return invite, None
+
+
+def _join_invited_org(user, invite, sent_password):
+    """Accept *invite* for a user who already has an account.
+
+    No password is set and no tokens are issued: the link proves the email,
+    and the user signs in as usual. Their next password login lands in this
+    organization.
+    """
+    if sent_password:
+        return _gm.bad_request(INVITE_EXISTING_USER_PASSWORD)
+    try:
+        invite.accept(user)
+    except ValueError as e:
+        return _gm.bad_request(str(e))
+
+    org = invite.organization
+    user.config["selected_organization_id"] = str(org.id)
+    user.config["currentOrganizationId"] = str(org.id)
+    user.config["post_login_organization_id"] = str(org.id)
+    user.save(update_fields=["config"])
+    return Response(
+        {
+            "joined": True,
+            "existing_user": True,
+            "org_name": org.display_name or org.name,
+            "organization_id": str(org.id),
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 @swagger_auto_schema(
@@ -677,12 +745,12 @@ def _activate_memberships(user):
 @swagger_auto_schema(
     method="post",
     request_body=AcceptInvitationRequestSerializer,
-    responses={200: AccountsTokenPairResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: AcceptInvitationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["GET", "POST"])
 @validated_api_request(
     request_serializer=AcceptInvitationRequestSerializer,
-    responses={200: AccountsTokenPairResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: AcceptInvitationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     request_methods=["POST"],
     document=False,
     reject_unknown_fields=True,
@@ -699,26 +767,9 @@ def accept_invitation_mail(request, uidb64, token):
         uid = force_str(urlsafe_base64_decode(uidb64))
         user = User.objects.select_related("organization").get(pk=uid)
 
-        if not default_token_generator.check_token(user, token):
-            return _gm.bad_request("Invitation link is invalid or has expired.")
-
-        # ------------------------------------------------------------------
-        # Check if invite was cancelled - OrganizationInvite must be pending
-        # ------------------------------------------------------------------
-        from accounts.models.organization_invite import InviteStatus, OrganizationInvite
-
-        org = user.organization
-        if not org:
-            return _gm.bad_request("Invitation link is invalid or has expired.")
-
-        invite_exists = OrganizationInvite.objects.filter(
-            target_email__iexact=user.email,
-            organization=org,
-            status=InviteStatus.PENDING,
-        ).exists()
-
-        if not invite_exists:
-            return _gm.bad_request("This invitation has been cancelled or expired.")
+        invite, invite_error = resolve_invite_for_link(user, token)
+        if invite_error:
+            return _gm.bad_request(invite_error)
 
         # ------------------------------------------------------------------
         # Security check: If another user is logged in, reject the request.
@@ -740,7 +791,7 @@ def accept_invitation_mail(request, uidb64, token):
                 # Token decryption failed - ignore and continue (treat as unauthenticated)
                 pass
 
-        org = user.organization
+        org = invite.organization
         org_name = org.display_name if org.display_name else org.name
 
         # ------------------------------------------------------------------
@@ -753,6 +804,7 @@ def accept_invitation_mail(request, uidb64, token):
                     "valid": True,
                     "email": user.email,
                     "org_name": org_name,
+                    "existing_user": user.is_active,
                 },
                 status=status.HTTP_200_OK,
             )
@@ -762,6 +814,9 @@ def accept_invitation_mail(request, uidb64, token):
         # ------------------------------------------------------------------
         new_password = request.validated_data.get("new_password")
         repeat_password = request.validated_data.get("repeat_password")
+
+        if user.is_active:
+            return _join_invited_org(user, invite, new_password or repeat_password)
 
         if not new_password or not repeat_password:
             return _gm.bad_request("Both password fields are required.")
@@ -774,28 +829,16 @@ def accept_invitation_mail(request, uidb64, token):
         except ValidationError as e:
             return _gm.bad_request("\n".join(e.messages))
 
+        # Accept only the invite this link names — activates its
+        # OrganizationMembership and WorkspaceMembership records.
+        try:
+            invite.accept(user)
+        except ValueError as e:
+            return _gm.bad_request(str(e))
+
         user.password = make_password(new_password)
         user.is_active = True
-        user.save()  # this consumes the token
-
-        # Accept the invite — activates OrganizationMembership and
-        # WorkspaceMembership records created during dual-write.
-        from accounts.models.organization_invite import InviteStatus, OrganizationInvite
-
-        invite = OrganizationInvite.objects.filter(
-            target_email__iexact=user.email,
-            organization=org,
-            status=InviteStatus.PENDING,
-        ).first()
-        if invite:
-            try:
-                invite.accept(user)
-            except ValueError:
-                invite.status = InviteStatus.EXPIRED
-                invite.save(update_fields=["status"])
-                _activate_memberships(user)
-        else:
-            _activate_memberships(user)
+        user.save()
 
         # Set selected org so the auth layer picks it up on first request.
         user.config["selected_organization_id"] = str(org.id)

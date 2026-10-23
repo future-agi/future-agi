@@ -19,6 +19,7 @@ import { useSnackbar } from "src/components/snackbar";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useParams } from "src/routes/hooks";
 import { useAuthContext } from "src/auth/hooks";
+import { useOrganization } from "src/contexts/OrganizationContext";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import RightSectionAuth from "./RightSectionAuth";
 
@@ -33,9 +34,14 @@ export default function InviteAcceptedPage() {
   const { uuid, token } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, logout } = useAuthContext();
+  const { login, logout, authenticated } = useAuthContext();
+  const { switchOrganization } = useOrganization();
+  // Set from the validate response: an account that already exists joins
+  // the org without setting a password.
+  const [existingUser, setExistingUser] = useState(false);
+  const [inviteOrgName, setInviteOrgName] = useState("");
 
-  const orgName = location.state?.orgName || "";
+  const orgName = location.state?.orgName || inviteOrgName;
 
   // Validate invite token on mount
   useEffect(() => {
@@ -43,10 +49,12 @@ export default function InviteAcceptedPage() {
 
     const validateToken = async () => {
       try {
-        await axiosInstance.get(
+        const response = await axiosInstance.get(
           endpoints.invite.accept_invitation(uuid, token),
         );
         if (!cancelled) {
+          setExistingUser(Boolean(response?.data?.existing_user));
+          setInviteOrgName(response?.data?.org_name || "");
           setTokenStatus("valid");
         }
       } catch (error) {
@@ -124,6 +132,37 @@ export default function InviteAcceptedPage() {
   const onSubmit = handleSubmit(async (data) => {
     setErrorMsg("");
     setNewPassword(data);
+  });
+
+  const { mutate: joinOrganization, isPending: isJoining } = useMutation({
+    mutationFn: () =>
+      axiosInstance.post(endpoints.invite.accept_invitation(uuid, token), {}),
+    onSuccess: async (response) => {
+      const joinedOrgName = response?.data?.org_name || orgName;
+      enqueueSnackbar(`You've joined ${joinedOrgName}.`, {
+        variant: "success",
+      });
+      if (authenticated) {
+        try {
+          await switchOrganization(response?.data?.organization_id);
+        } catch {
+          // The join already succeeded and the org is in the switcher;
+          // switchOrganization has shown its own toast.
+        }
+        navigate(paths.dashboard.root);
+      } else {
+        // The backend lands them in this org at their next login.
+        navigate(paths.auth.jwt.login);
+      }
+    },
+    meta: { errorHandled: true },
+    onError: (error) => {
+      setErrorMsg(
+        typeof error?.result === "string"
+          ? error.result
+          : error?.error || "An unexpected error occurred.",
+      );
+    },
   });
 
   const renderHead = (
@@ -252,6 +291,63 @@ export default function InviteAcceptedPage() {
         }}
       >
         Set Password & Continue
+      </LoadingButton>
+    </Stack>
+  );
+
+  const renderJoin = (
+    <Stack spacing={3} maxWidth="440px">
+      <Typography
+        fontWeight="fontWeightSemiBold"
+        sx={{
+          fontSize: "28px",
+          color: "text.primary",
+          fontFamily: "Inter",
+          lineHeight: "36px",
+        }}
+      >
+        Join {orgName}
+      </Typography>
+      <Typography
+        variant="m3"
+        fontWeight="fontWeightMedium"
+        fontFamily="Inter"
+        lineHeight="24px"
+      >
+        You already have an account. Join to add {orgName} to your
+        organizations.
+      </Typography>
+      {!!errorMsg && (
+        <Alert
+          icon={<Iconify icon="fluent:warning-24-regular" color="red.500" />}
+          severity="error"
+          sx={{
+            color: "red.500",
+            border: "1px solid",
+            borderColor: "red.200",
+            backgroundColor: "red.o5",
+            width: "100%",
+          }}
+        >
+          {errorMsg}
+        </Alert>
+      )}
+      <LoadingButton
+        fullWidth
+        size="large"
+        variant="contained"
+        loading={isJoining}
+        color="primary"
+        onClick={() => {
+          setErrorMsg("");
+          joinOrganization();
+        }}
+        sx={{
+          borderRadius: 0.5,
+          height: "42px",
+        }}
+      >
+        Join {orgName}
       </LoadingButton>
     </Stack>
   );
@@ -386,6 +482,7 @@ export default function InviteAcceptedPage() {
     if (tokenStatus === "loading") return renderLoading;
     if (tokenStatus === "invalid") return renderTokenInvalid;
     if (tokenStatus === "wrong_user") return renderWrongUser;
+    if (existingUser) return renderJoin;
     return (
       <form onSubmit={onSubmit}>
         {renderHead}

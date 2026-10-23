@@ -2305,7 +2305,11 @@ class TestAuthLinkBuilders:
     def test_invite_and_reset_links_target_different_routes(self, user):
         from accounts.utils import build_invite_accept_link, build_password_reset_link
 
-        assert "/auth/jwt/invitation/accept/" in build_invite_accept_link(user)
+        from accounts.models.organization_invite import OrganizationInvite
+
+        assert "/auth/jwt/invitation/accept/" in build_invite_accept_link(
+            user, OrganizationInvite()
+        )
         assert "/auth/jwt/verify/" in build_password_reset_link("u", "t")
 
     @override_settings(APP_URL="localhost:3000", APP_BASE_URL="http://localhost:3000")
@@ -2313,11 +2317,12 @@ class TestAuthLinkBuilders:
         """APP_URL is a bare host; a link built from it alone
         (``localhost:3000/auth/...``) does not open from a copied invite."""
         from accounts.models import User
+        from accounts.models.organization_invite import OrganizationInvite
         from accounts.utils import build_invite_accept_link, build_password_reset_link
 
         invitee = User(email="invitee-oss@futureagi.com")
 
-        assert build_invite_accept_link(invitee).startswith(
+        assert build_invite_accept_link(invitee, OrganizationInvite()).startswith(
             "http://localhost:3000/auth/jwt/invitation/accept/"
         )
         assert build_password_reset_link("UID123", "TOKEN456") == (

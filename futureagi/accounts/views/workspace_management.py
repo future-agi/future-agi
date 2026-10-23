@@ -27,6 +27,7 @@ from django.utils.http import urlsafe_base64_encode
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from accounts.invite_tokens import make_invite_token
 from accounts.models.auth_token import AuthToken, AuthTokenType
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
@@ -610,7 +611,7 @@ class WorkspaceInviteAPIView(APIView):
                                         invited_by=user,
                                     )
 
-                            persist_pending_org_invite(
+                            invite = persist_pending_org_invite(
                                 organization=organization,
                                 target_email=email,
                                 org_role=org_role,
@@ -622,7 +623,7 @@ class WorkspaceInviteAPIView(APIView):
                             # Send invitation email with credentials
                             # ssl_context = ssl.create_default_context()
                             uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
-                            token = default_token_generator.make_token(new_member)
+                            token = make_invite_token(invite)
                             email_helper(
                                 f"You are invited to join {organization.display_name if organization.display_name else organization.name} - Future AGI",
                                 "member_invite.html",
@@ -2255,7 +2256,7 @@ class ManageTeamView(APIView):
                             request.user,
                         )
 
-                        persist_pending_org_invite(
+                        invite = persist_pending_org_invite(
                             organization=organization,
                             target_email=member_data["email"],
                             org_role=org_role,
@@ -2264,7 +2265,7 @@ class ManageTeamView(APIView):
                             invited_by=request.user,
                         )
 
-                        token = default_token_generator.make_token(new_member)
+                        token = make_invite_token(invite)
                         uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
                         email_helper(
                             f"You are invited by {organization.display_name if organization.display_name else organization.name} - Future AGI",

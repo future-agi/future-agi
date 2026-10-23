@@ -155,6 +155,7 @@ class InviteCreateAPIView(APIView):
                 return gm.bad_request(get_error_message("CANNOT_INVITE_SELF"))
 
         created_invites = []
+        created_invite_rows = []
         already_members = []
 
         for email in emails:
@@ -214,7 +215,7 @@ class InviteCreateAPIView(APIView):
                         invite.status = InviteStatus.ACCEPTED
                         invite.save(update_fields=["status"])
 
-                    send_invite_email(email, organization, user)
+                    send_invite_email(email, organization, user, invite=invite)
 
                     log_audit(
                         organization=organization,
@@ -229,6 +230,7 @@ class InviteCreateAPIView(APIView):
                     )
 
                     created_invites.append(email)
+                    created_invite_rows.append(invite)
 
             except IntegrityError:
                 logger.error("invite_integrity_error", email=email)
@@ -240,7 +242,7 @@ class InviteCreateAPIView(APIView):
             result["already_members"] = already_members
         # Saves the admin a round trip to the members list, which is the only
         # other place the link is exposed.
-        links = build_invite_links(created_invites)
+        links = build_invite_links(created_invite_rows)
         if links:
             result["invites"] = [
                 {"email": email, "invite_link": links[email.lower()]}
@@ -421,7 +423,9 @@ class InviteResendAPIView(APIView):
 
         invite.refresh_expiration()
 
-        send_invite_email(invite.target_email, organization, request.user)
+        send_invite_email(
+            invite.target_email, organization, request.user, invite=invite
+        )
 
         log_audit(
             organization=organization,
@@ -769,7 +773,7 @@ class MemberListAPIView(APIView):
             )
         }
 
-        invite_links = build_invite_links([inv.target_email for inv in invites])
+        invite_links = build_invite_links(invites)
 
         results = []
         for inv in invites:

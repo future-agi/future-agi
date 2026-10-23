@@ -273,6 +273,7 @@ export const AccountsAcceptInvitationReadResponse = zod.object({
   valid: zod.boolean(),
   email: zod.string().email().min(1),
   org_name: zod.string().min(1),
+  existing_user: zod.boolean(),
 });
 
 /**
@@ -288,8 +289,8 @@ export const AccountsAcceptInvitationCreateParams = zod.object({
 });
 
 export const AccountsAcceptInvitationCreateBody = zod.object({
-  new_password: zod.string().min(1),
-  repeat_password: zod.string().min(1),
+  new_password: zod.string().min(1).optional(),
+  repeat_password: zod.string().min(1).optional(),
 });
 
 export const AccountsAcceptInvitationCreateResponse = zod.object({
@@ -304,6 +305,9 @@ export const AccountsAcceptInvitationCreateResponse = zod.object({
   org_name: zod.string().min(1).optional(),
   is_first_login: zod.boolean().optional(),
   recovery_codes_warning: zod.string().min(1).optional(),
+  joined: zod.boolean().optional(),
+  existing_user: zod.boolean().optional(),
+  organization_id: zod.string().min(1).optional(),
 });
 
 export const AccountsActivateReadParams = zod.object({

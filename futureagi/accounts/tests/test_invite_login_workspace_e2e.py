@@ -358,7 +358,7 @@ class TestExistingActiveMemberReinvite:
         )
         sent_emails = []
 
-        def fake_send_invite_email(email, organization, invited_by):
+        def fake_send_invite_email(email, organization, invited_by, invite=None):
             sent_emails.append((email, organization.id, invited_by.id))
 
         monkeypatch.setattr(

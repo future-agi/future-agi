@@ -29,6 +29,7 @@ import type {
   AWSMarketplaceSignupResponseApi,
   AcceptInvitationPreviewResponseApi,
   AcceptInvitationRequestApi,
+  AcceptInvitationResponseApi,
   AccountsAccessTokenResponseApi,
   AccountsAwsMarketplaceLaunchSoftwareCreateBody,
   AccountsAwsMarketplaceVerifyTokenCreateBody,
@@ -2430,7 +2431,7 @@ export const accountsAcceptInvitationRead = async (
 };
 
 export type accountsAcceptInvitationCreateResponse200 = {
-  data: AccountsTokenPairResponseApi;
+  data: AcceptInvitationResponseApi;
   status: 200;
 };
 

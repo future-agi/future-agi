@@ -384,7 +384,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         queryParameters: {},
         responses: {
           200: {
-            $ref: "#/definitions/AccountsTokenPairResponse",
+            $ref: "#/definitions/AcceptInvitationResponse",
           },
           400: {
             $ref: "#/definitions/AccountsErrorResponse",
@@ -46172,7 +46172,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     AcceptInvitationPreviewResponse: {
-      required: ["valid", "email", "org_name"],
+      required: ["valid", "email", "org_name", "existing_user"],
       type: "object",
       properties: {
         valid: {
@@ -46190,10 +46190,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        existing_user: {
+          title: "Existing user",
+          type: "boolean",
+        },
       },
     },
     AcceptInvitationRequest: {
-      required: ["new_password", "repeat_password"],
       type: "object",
       properties: {
         new_password: {
@@ -46203,6 +46206,77 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         repeat_password: {
           title: "Repeat password",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AcceptInvitationResponse: {
+      type: "object",
+      properties: {
+        access: {
+          title: "Access",
+          type: "string",
+          minLength: 1,
+        },
+        refresh: {
+          title: "Refresh",
+          type: "string",
+          minLength: 1,
+        },
+        requires_two_factor: {
+          title: "Requires two factor",
+          type: "boolean",
+        },
+        challenge_token: {
+          title: "Challenge token",
+          type: "string",
+          format: "uuid",
+        },
+        methods: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        requires_org_setup: {
+          title: "Requires org setup",
+          type: "boolean",
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        new_org: {
+          title: "New org",
+          type: "boolean",
+        },
+        org_name: {
+          title: "Org name",
+          type: "string",
+          minLength: 1,
+        },
+        is_first_login: {
+          title: "Is first login",
+          type: "boolean",
+        },
+        recovery_codes_warning: {
+          title: "Recovery codes warning",
+          type: "string",
+          minLength: 1,
+        },
+        joined: {
+          title: "Joined",
+          type: "boolean",
+        },
+        existing_user: {
+          title: "Existing user",
+          type: "boolean",
+        },
+        organization_id: {
+          title: "Organization id",
           type: "string",
           minLength: 1,
         },
