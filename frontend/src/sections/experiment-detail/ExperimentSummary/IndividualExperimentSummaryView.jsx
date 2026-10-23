@@ -45,7 +45,7 @@ const IndividualExperimentSummaryView = () => {
 
   const columns = useMemo(() => {
     let colData = [];
-    if (data?.metadata?.isWinnerChosen) {
+    if (data?.metadata?.is_winner_chosen) {
       colData.push({
         field: "rank",
         headerCellRenderer: null,
