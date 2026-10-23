@@ -69,9 +69,11 @@ From ``fi-collector``::
 The mock integration tests run the real receiver/converter/writer against a small
 in-memory **MOCK ClickHouse HTTP fixture** that emulates only the verification and
 probe queries. They verify protocol and accounting over every wire path, the
-backpressure and oversize cases, resumable verification and the rejection of
-invalid or changing responses, not ClickHouse SQL, storage, throughput or
-production behaviour. To save the explicitly labelled artifact to a NEW path::
+backpressure and oversize cases, HTTP 429 with ``Retry-After`` from a throttling
+proxy in front of the collector, the per-request decomposition of missing and
+refused-but-stored spans, resumable verification and the rejection of invalid or
+changing responses, not ClickHouse SQL, storage, throughput or production
+behaviour. To save the explicitly labelled artifact to a NEW path::
 
     OTLPBENCH_MOCK_RESULT=/path/to/new/mock-result.json \
       go test ./pkg/ingestbench -run TestMockCollectorPipelineAndIndependentLossDetection -count=1
