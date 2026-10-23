@@ -170,9 +170,10 @@ sample is the ``k`` smallest ``(hash - start) mod 2**256`` per stratum and the
 live sample is every unit whose key is below the rate threshold. Therefore,
 for a fixed seed and start:
 
-* raising a rate or a quota keeps every unit already selected (nested), within
-  the same stratum for closed quotas;
-* two tasks (or evaluators) with the same unit and rate select the same units;
+* raising a rate or a quota keeps every unit already selected (nested), for
+  the same eligible units, stratum assignments and freeze snapshot in closed mode;
+* two tasks (or evaluators) with the same eligible units, unit definition,
+  per-cell rates/quotas, stratum assignments and snapshot select the same units;
 * live intervals ``[start, start + rate)`` that do not overlap give disjoint
   samples, and adjacent ones union to the wider interval (rotation);
 * decisions are per unit, so input order and pagination never change them.
@@ -212,11 +213,17 @@ audit" tab, present only for policy tasks.
   equals the persisted ``population_size`` and member count is marked
   ``changed`` (deleted rows or identity merges since the freeze); the persisted
   ``N`` is kept because the stored weights used it. An uncertified cohort
-  (still freezing) is refused with 409.
+  (still freezing) is refused with 409. This is a count consistency check,
+  not proof of identical membership: same-size substitutions can go undetected.
+  Closed rejected decisions and per-cell hash cutoffs are not persisted.
 * Live cohorts: every first decision is persisted (selected and rejected), so
   the audit reads PostgreSQL aggregates only. Each stratum gets an exact
   two-sided binomial sample-ratio-mismatch (SRM) test of selected against
-  decided units at its rate, flagged at p < 0.0005.
+  decided units at its rate, flagged at p < 0.0005 (a continuity-corrected
+  normal approximation is used above binomial variance 1,000,000).
+  All audits share per-actor admission, including archived closed cohorts of
+  tasks whose current policy is live. This is an advisory audit, not a gate
+  that suppresses downstream metric results.
 
 Per stratum it reports population ``N``, target (the rule's quota before the
 population cap), expected size (``k = min(N, target)``, or ``N x rate``),
@@ -231,7 +238,11 @@ shares per category, standardized differences and a Pearson chi-square
 goodness-of-fit of the sampled counts to the population shares. Unweighted
 differences are expected under disproportionate quotas; a weighted imbalance
 (|standardized difference| > 0.1) means part of the population is
-unrepresented.
+unrepresented in a closed exact design; it can also reflect sampling variation
+in live mode. Pearson p-values describe departure from population shares under
+simple multinomial sampling, not a design-adjusted hypothesis test for the
+stratified design. Kish design effect describes unequal weights only, not the
+full outcome-specific design effect or clustering within units.
 
 Evidence: ``test_eval_sampling_audit.py`` checks the report against
 hand-computed values (for example ``n_eff = 1536/277`` and ``deff = 831/512``
@@ -246,6 +257,50 @@ sees that stratum flagged ``changed``. ``test_srm_false_alarm_and_power``
 measured, with seeded simulation, 7 false alarms in 10,000 correct runs
 (2,000 units at 10%) and 1,000 of 1,000 detections of a 5% relative
 under-selection in a 200,000-unit stratum at 10%.
+
+Precision planner
+-----------------
+
+The preview includes per-cell approximate 95% normal margins for a proportion
+at p = 0.5, with finite-population correction, and the stratified margin,
+Kish effective size and unequal-weight design effect. The expandable advisory
+planner shows the minimum n for a requested margin, plus integer quota
+suggestions under a unit budget using proportional, balanced or Neyman
+allocation with a per-cell minimum. Neyman uses N times the anticipated
+standard deviation sqrt(p(1-p)); the user supplies per-cell anticipated
+proportions, default 0.5. A zero-variance cell receives only its minimum.
+Budgets above reachable populations are capped, and budgets below the sum of
+minimums are rejected. Largest-remainder rounding has a stable cell-order tie
+break. No suggested value is applied automatically.
+
+The statistical formulas live in the pure ``sampling/stats.py`` module; the
+frontend mirrors only the planning functions in ``samplingStats.js``. Both
+suites consume ``tests/fixtures/sampling_stats_vectors.json``. Expected values
+are checked independently with exact fractions, closed forms, brute-force
+minimum n and SciPy. For example, n=100 of N=1000 gives margin 0.09301577436565599
+at 95%, and a 0.05 margin for N=10000 needs n=370. A 16-unit proportional budget
+for populations [100,50,10], with minimum 2, yields [9,5,2].
+
+``Apply suggested quotas`` writes optional ``cell_quotas`` to the policy, keyed
+by opaque stratum identities from the preview. These explicit targets replace
+the rate, floor, cap and census for those cells only; unlisted cells retain
+their original rule. Classification still happens first, so a contact with
+rows in multiple attribute groups is not moved to another group merely by
+applying a plan. The real-ClickHouse regression
+``test_planned_cell_quotas_preserve_contact_groups_and_match_audit`` proves
+that property, the achieved targets, row expansion, inclusion probabilities
+and agreement with the audit. Cell quotas are closed-only, with at most 1,000
+entries, targets 0-1,000,000, and the existing 64 KiB policy/2 MiB statement
+bounds. Omitted/empty quotas preserve the historical policy digest.
+
+Applying a plan invalidates the preview. Any ordinary policy-control edit
+clears the planned overrides so they cannot invisibly supersede edited rules.
+Saving a changed population still follows the explicit fresh-run contract.
+Neither quotas nor precision estimates reserve a future population. Live
+previews show descriptive precision for their current snapshot but offer no
+quota application. Empty samples have no estimable margin; a census has zero
+sampling error. These are planning approximations, not observed-outcome
+confidence intervals, and small samples need a different inferential method.
 
 Persistence and downstream metrics
 ----------------------------------
