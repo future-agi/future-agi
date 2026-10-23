@@ -377,3 +377,25 @@ def test_batched_reads_match_one_read(world, monkeypatch):
         assert reader.roots_by_end_user_ids(users, project_id=project) == whole_users
     moved = [s for s in whole_sessions if s.trace_id == world["t"]["moved"]]
     assert [s.trace_session_id for s in moved] == [world["moved_to"]]
+
+
+def test_session_aliases_expand_only_the_survivors_group():
+    """The whole-table window map can pass the read memory ceiling; the alias
+    read expands only the group the survivor belongs to."""
+    from types import SimpleNamespace
+
+    from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+    seen = {}
+
+    class Client:
+        def query(self, sql, parameters=None, settings=None):
+            seen.update(sql=sql, parameters=parameters)
+            return SimpleNamespace(result_rows=[("b",), ("a",)])
+
+    reader = CHSpanReader.__new__(CHSpanReader)
+    reader._client = Client()
+    assert reader._session_alias_ids("a") == ["a", "b"]
+    assert "OVER (PARTITION BY" not in seen["sql"]
+    assert "old_id IN %(alias_candidates)s" in seen["sql"]
+    assert seen["parameters"]["alias_candidates"] == ("a",)

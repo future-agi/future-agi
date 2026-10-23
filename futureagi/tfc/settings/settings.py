@@ -1061,7 +1061,9 @@ ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
 # message before a post-run chat sandbox is reclaimed, and only trades cost against latency.
 ALK_HOSTED_CHAT_TTL_SECONDS = int(os.getenv("ALK_HOSTED_CHAT_TTL_SECONDS", "1800"))
 # Off sends a fresh build through the staged authoring pipeline instead of the builder session.
-ALK_HOSTED_BUILDER_SESSION = os.getenv("ALK_HOSTED_BUILDER_SESSION", "true").strip().lower() not in (
+ALK_HOSTED_BUILDER_SESSION = os.getenv(
+    "ALK_HOSTED_BUILDER_SESSION", "true"
+).strip().lower() not in (
     "0",
     "false",
     "no",
@@ -1577,7 +1579,7 @@ EVAL_SPAN_READ_SOURCE = os.getenv("EVAL_SPAN_READ_SOURCE", "postgres").lower()
 
 # Concurrent Jev calls per worker process (ee/jev/client.py). Instant eval
 # drains up to 32 rows at once, so a worker that serves it wants at least that.
-JEV_MAX_CONCURRENT = int(os.getenv("JEV_MAX_CONCURRENT") or 8)
+JEV_MAX_CONCURRENT = max(1, int(os.getenv("JEV_MAX_CONCURRENT") or 8))
 # Seconds one Jev answer may take, its retries and waits included, and the
 # retries after a failed call that may succeed (a timeout, a rate limit). Both
 # can only be lowered: at most 90 seconds and 2 retries. Like the other Jev and
@@ -1591,12 +1593,24 @@ TYPESAFE_BASE_URL = os.getenv("TYPESAFE_BASE_URL", "").strip()
 # Instant eval at scale (tracer/views/instant_eval_scale.py). The server refuses
 # a run above MAX_ROWS, holds one above CONFIRM_ROWS for the person to confirm
 # (with what it costs, where it is billed), and lets an organization run at
-# most MAX_ACTIVE_PER_ORG at a time.
-INSTANT_EVAL_MAX_ROWS = int(os.getenv("INSTANT_EVAL_MAX_ROWS") or 100000)
-INSTANT_EVAL_CONFIRM_ROWS = int(os.getenv("INSTANT_EVAL_CONFIRM_ROWS") or 5000)
-INSTANT_EVAL_MAX_ACTIVE_PER_ORG = int(os.getenv("INSTANT_EVAL_MAX_ACTIVE_PER_ORG") or 2)
+# most MAX_ACTIVE_PER_ORG at a time. Each is at least 1: a 0 or a negative
+# would refuse (or hold) every run.
+INSTANT_EVAL_MAX_ROWS = max(1, int(os.getenv("INSTANT_EVAL_MAX_ROWS") or 100000))
+INSTANT_EVAL_CONFIRM_ROWS = max(1, int(os.getenv("INSTANT_EVAL_CONFIRM_ROWS") or 5000))
+INSTANT_EVAL_MAX_ACTIVE_PER_ORG = max(
+    1, int(os.getenv("INSTANT_EVAL_MAX_ACTIVE_PER_ORG") or 2)
+)
 # Rows a run is assumed to read a minute, for the time estimate before it
 # starts (a run's page shows the measured rate once answers land).
-INSTANT_EVAL_ASSUMED_ROWS_PER_MIN = float(
-    os.getenv("INSTANT_EVAL_ASSUMED_ROWS_PER_MIN") or 300
+INSTANT_EVAL_ASSUMED_ROWS_PER_MIN = max(
+    1.0, float(os.getenv("INSTANT_EVAL_ASSUMED_ROWS_PER_MIN") or 300)
+)
+# Seconds a Users estimate (asked again on every filter edit) may spend
+# counting users the list decides one by one before it reports a lower bound,
+# and seconds a start may spend finishing that count. 0.5-30 and 1-600.
+INSTANT_EVAL_USERS_ESTIMATE_BUDGET_S = max(
+    0.5, min(float(os.getenv("INSTANT_EVAL_USERS_ESTIMATE_BUDGET_S") or 3), 30.0)
+)
+INSTANT_EVAL_USERS_RUN_BUDGET_S = max(
+    1.0, min(float(os.getenv("INSTANT_EVAL_USERS_RUN_BUDGET_S") or 60), 600.0)
 )

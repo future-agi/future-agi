@@ -1,5 +1,4 @@
 import json
-import time
 import traceback
 import uuid
 from contextvars import ContextVar
@@ -1060,258 +1059,6 @@ def _emit_eval_billing(
         )
     except Exception:
         pass  # Metering failure must not break eval
-
-
-def _run_evaluation(
-    run_params,
-    eval_model,
-    eval_instance,
-    observation_span,
-    custom_eval_config,
-    eval_task_id,
-    eval_type_id,
-    futureagi_eval,
-    runner,
-    raw_mapping,
-    feedback_id=None,
-):
-    try:
-        source_config = {
-            "reference_id": observation_span.id,
-            "is_futureagi_eval": futureagi_eval,
-            "custom_eval_config_id": str(custom_eval_config.id),
-        }
-        source_config.update(
-            {
-                "mappings": run_params,
-                "required_keys": list(run_params.keys()),
-                "span_id": str(observation_span.id),
-                "trace_id": str(observation_span.trace.id),
-                "source": "tracer",
-            }
-        )
-        if feedback_id:
-            source_config.update({"feedback_id": str(feedback_id)})
-        _stamp_eval_version(source_config, eval_model)
-
-        api_call_type = _get_api_call_type(
-            custom_eval_config.model,
-            template=eval_model,
-            runtime_config=custom_eval_config.config,
-        )
-
-        workspace = observation_span.project.workspace
-        if workspace is None:
-            workspace = Workspace.objects.get(
-                organization=observation_span.project.organization,
-                is_default=True,
-                is_active=True,
-            )
-
-        # Pre-check: enforce free tier limits
-        try:
-            from ee.usage.services.metering import check_usage
-        except ImportError:
-            check_usage = None
-
-        org = observation_span.project.organization
-        if check_usage is not None:
-            usage_check = check_usage(str(org.id), api_call_type)
-            if not usage_check.allowed:
-                raise ValueError(usage_check.reason or "Usage limit exceeded")
-
-        api_call_log_row = None
-        if log_and_deduct_cost_for_api_request is not None:
-            api_call_log_row = log_and_deduct_cost_for_api_request(
-                organization=org,
-                api_call_type=api_call_type,
-                source="tracer" if not feedback_id else "feedback",
-                source_id=eval_model.id,
-                config=source_config,
-                workspace=workspace,
-            )
-            if not api_call_log_row:
-                raise ValueError(
-                    "API call not allowed : Error validating the api call."
-                )
-
-            if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                raise ValueError("API call not allowed : ", api_call_log_row.status)
-
-        # Apply the same empty-input rules the dataset and playground
-        # paths use, so eval tasks behave consistently with everywhere
-        # else evals can run. The validator also normalizes kwargs to
-        # fill any missing required_keys with "" so the underlying eval
-        # engine doesn't raise "Missing required key" for unmapped vars.
-        from model_hub.utils.eval_input_validation import validate_eval_inputs
-
-        partial_input_warning, run_params = validate_eval_inputs(
-            eval_model, run_params, mapped_keys=(run_params or {}).keys()
-        )
-
-        start_time = time.time()
-        result = eval_instance.run(**run_params)
-        end_time = time.time()
-        output_type = eval_model.config.get("output", "score")
-        response = {
-            "data": result.eval_results[0].get("data"),
-            "failure": result.eval_results[0].get("failure"),
-            "reason": result.eval_results[0].get("reason"),
-            "runtime": result.eval_results[0].get("runtime"),
-            "model": result.eval_results[0].get("model"),
-            "metrics": result.eval_results[0].get("metrics"),
-            "metadata": result.eval_results[0].get("metadata"),
-            "output": output_type,
-            "start_time": start_time,
-            "end_time": end_time,
-            "duration": end_time - start_time,
-        }
-        if partial_input_warning:
-            response["warnings"] = [partial_input_warning]
-        value = runner.format_output(result_data=response, eval_template=eval_model)
-
-        if api_call_log_row is not None:
-            config_dict = json.loads(api_call_log_row.config)
-            output_payload = {"output": value, "reason": response["reason"]}
-            if response.get("warnings"):
-                output_payload["warnings"] = response["warnings"]
-            config_dict.update(
-                {
-                    "input": response["data"],
-                    "output": output_payload,
-                }
-            )
-            api_call_log_row.config = json.dumps(config_dict)
-            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-            api_call_log_row.save()
-
-        # Dual-write: emit usage event for new billing system (cost-based)
-        try:
-            try:
-                from ee.usage.schemas.events import UsageEvent
-            except ImportError:
-                UsageEvent = None
-            try:
-                from ee.usage.services.config import BillingConfig
-            except ImportError:
-                BillingConfig = None
-            try:
-                from ee.usage.services.emitter import emit
-            except ImportError:
-                emit = None
-            try:
-                from ee.usage.utils.event_properties import token_usage_properties
-            except ImportError:
-
-                def token_usage_properties(token_usage):
-                    return {}
-
-            _token_usage = getattr(eval_instance, "token_usage", {})
-            actual_cost = getattr(eval_instance, "cost", {}).get("total_cost", 0)
-            credits = 0
-            if BillingConfig is not None:
-                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
-
-            if emit is not None and UsageEvent is not None:
-                emit(
-                    UsageEvent(
-                        org_id=str(observation_span.project.organization_id),
-                        event_type=_get_billing_event_type(
-                            api_call_type,
-                            custom_eval_config.model,
-                            evaluator=eval_instance,
-                        ),
-                        amount=credits,
-                        properties={
-                            "source": "tracer" if not feedback_id else "feedback",
-                            "source_id": str(eval_model.id),
-                            "model": (
-                                custom_eval_config.model if custom_eval_config else ""
-                            ),
-                            "workspace_id": str(workspace.id) if workspace else "",
-                            "log_id": (
-                                str(api_call_log_row.log_id)
-                                if api_call_log_row
-                                else None
-                            ),
-                            "raw_cost_usd": str(actual_cost),
-                            **token_usage_properties(_token_usage),
-                        },
-                    )
-                )
-        except Exception:
-            pass  # Metering failure must not break eval
-
-        # Ensure metadata is a dictionary before unpacking
-        metadata = result.eval_results[0].get("metadata")
-        if isinstance(metadata, str):
-            try:
-                metadata = json.loads(metadata)
-            except json.JSONDecodeError:
-                metadata = {}
-        if not isinstance(metadata, dict):
-            metadata = {}
-
-        # Create kwargs dict for EvalLogger based on value type.
-        # Persist partial-input warnings into output_metadata.warnings so
-        # the eval task logs view (which reads EvalLogger) can render
-        # them alongside the eval result.
-        _output_metadata = {**metadata}
-        if response.get("warnings"):
-            _output_metadata["warnings"] = response["warnings"]
-        logger_kwargs = {
-            "trace": observation_span.trace,
-            "observation_span": observation_span,
-            "output_metadata": _output_metadata,
-            "eval_explanation": result.eval_results[0].get("reason"),
-            "results_explanation": response,
-            "eval_task_id": eval_task_id,
-            "custom_eval_config": custom_eval_config,
-            "eval_type_id": eval_type_id,
-            "log_id": api_call_log_row.log_id if api_call_log_row else None,
-        }
-
-    except Exception as e:
-        traceback.print_exc()
-        error_message = jev_error_message(e) or str(e)
-        try:
-            if api_call_log_row is not None:
-                api_call_log_row.status = APICallStatusChoices.ERROR.value
-                current_config = json.loads(api_call_log_row.config)
-                current_config.update(
-                    {"output": {"output": None, "reason": error_message}}
-                )
-                api_call_log_row.config = json.dumps(current_config)
-                api_call_log_row.save()
-        except Exception:
-            pass
-        logger_kwargs = {
-            "trace": observation_span.trace,
-            "observation_span": observation_span,
-            "output_metadata": {
-                "error": error_message,
-                "custom_eval_config_name": custom_eval_config.name,
-                "eval_template_name": custom_eval_config.eval_template.name,
-            },
-            "eval_explanation": f"Error during evaluation: {error_message}",
-            "results_explanation": {"reason": error_message},
-            "output_str": "ERROR",
-            "error": True,
-            "error_message": f"Error during evaluation: {error_message}",
-            "custom_eval_config": custom_eval_config,
-            "eval_type_id": eval_type_id,
-            "eval_task_id": eval_task_id,
-        }
-        value = "ERROR"
-
-    # Determine the appropriate field based on value type
-    if value != "ERROR":  # Only try to process value type if no error occurred
-        logger_kwargs["value"] = value
-        _dual_write_eval_value(
-            value, _eval_config_output(custom_eval_config), logger_kwargs
-        )
-
-    return logger_kwargs
 
 
 def _execute_composite_on_span(
@@ -2969,7 +2716,8 @@ def render_trace_tree(spans, *, max_chars: int = _TREE_MAX_CHARS) -> str:
         range(max(0, len(blocks) - _TREE_KEEP_ENDS), len(blocks))
     )
     keep |= {
-        i for i, (span, _) in enumerate(blocks)
+        i
+        for i, (span, _) in enumerate(blocks)
         if str(getattr(span, "status", "") or "").upper() == "ERROR"
     }
     field_chars = 600
@@ -3004,7 +2752,11 @@ def render_session_transcript(traces) -> str:
 
     def clip(text):
         text = " ".join(str(text or "").split())
-        return text if len(text) <= _TRANSCRIPT_TURN_CHARS else text[: _TRANSCRIPT_TURN_CHARS - 1] + "…"
+        return (
+            text
+            if len(text) <= _TRANSCRIPT_TURN_CHARS
+            else text[: _TRANSCRIPT_TURN_CHARS - 1] + "…"
+        )
 
     turns = [
         f"[Turn {i}] User: {clip(_transcript_text(getattr(t, 'input', None)))}\n"
@@ -3022,6 +2774,7 @@ def render_session_transcript(traces) -> str:
         used += len(turn)
     skipped = len(turns) - len(head) - len(tail)
     return "\n\n".join(head + [f"[… {skipped} turns omitted …]"] + tail)
+
 
 # Span model fields that are stored as dedicated DB columns (not inside
 # ``span_attributes``).  The eval mapping picker can expose these via

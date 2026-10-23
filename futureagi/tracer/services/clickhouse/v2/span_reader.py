@@ -755,13 +755,21 @@ class CHSpanReader:
     def _session_alias_ids(self, survivor_id: str) -> list[str]:
         """Every raw ``trace_session_id`` that resolves to ``survivor_id``: the
         survivor itself and each id the remap consolidates onto it."""
-        from tracer.services.clickhouse.v2.id_remap_sql import survivor_map_subquery
+        from tracer.services.clickhouse.v2.id_remap_sql import (
+            bounded_survivor_map_subquery,
+        )
 
+        # Only the group the survivor belongs to is expanded: the whole-table
+        # window map (survivor_map_subquery) can pass the read memory ceiling
+        # on production, which is why remap_groups avoids it too.
+        remap = bounded_survivor_map_subquery(
+            "trace_session_id_remap", candidate_param="alias_candidates"
+        )
         rows = self._client.query(
             "SELECT DISTINCT toString(any_id) "
-            f"FROM ({survivor_map_subquery('trace_session_id_remap')}) "
+            f"FROM ({remap}) "
             "WHERE survivor_id = toUUID(%(s)s)",
-            parameters={"s": str(survivor_id)},
+            parameters={"s": str(survivor_id), "alias_candidates": (str(survivor_id),)},
         ).result_rows
         return sorted({str(survivor_id), *(str(r[0]) for r in rows)})
 

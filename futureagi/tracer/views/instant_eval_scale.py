@@ -1116,6 +1116,14 @@ class InstantEvalStartView(InstantEvalLicenseRequired, APIView):
         if ids:
             filters["instant_ids"] = ids
         with transaction.atomic():
+            # Two starts at once both passed the check above. The organization's
+            # row lock serializes them, and the count is taken again under it.
+            from accounts.models.organization import Organization
+
+            Organization.objects.select_for_update().filter(id=org.id).first()
+            active = _active_runs(org)
+            if len(active) >= max_active():
+                return _busy_response(self._gm, active)
             task = EvalTask.objects.create(
                 project=project,
                 name=f"{INSTANT_TASK_PREFIX} · {first}"[:255],

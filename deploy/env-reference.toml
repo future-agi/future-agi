@@ -1774,7 +1774,7 @@ read these keys.
     keys = ["INSTANT_EVAL_MAX_ROWS"]
     default = "`100000`"
     setups = ["S", "D", "H"]
-    text = "Most rows one Instant eval run reads (a user counts as five sessions). Larger runs are refused."
+    text = "Most rows one Instant eval run reads (a user counts as five sessions). Larger runs are refused. At least `1`."
 
     [[part.section.row]]
     keys = ["INSTANT_EVAL_CONFIRM_ROWS"]
@@ -1793,6 +1793,18 @@ read these keys.
     default = "`300`"
     setups = ["S", "D", "H"]
     text = "Rows a minute assumed for a run's time estimate before it starts. A running run shows its measured rate."
+
+    [[part.section.row]]
+    keys = ["INSTANT_EVAL_USERS_ESTIMATE_BUDGET_S"]
+    default = "`3`"
+    setups = ["S", "D", "H"]
+    text = "Seconds an estimate of a Users question may spend counting users that filters decide one by one; past it the count shows as a lower bound (\"1,500+\") and keeps going. Between `0.5` and `30`."
+
+    [[part.section.row]]
+    keys = ["INSTANT_EVAL_USERS_RUN_BUDGET_S"]
+    default = "`60`"
+    setups = ["S", "D", "H"]
+    text = "Seconds starting a Users run (or picking an Insights sample of users) may spend finishing that count before it says so; starting again carries on from what was counted. Between `1` and `600`."
 
     [[part.section.row]]
     keys = ["INSIGHTS_FAST_MODEL", "INSIGHTS_THINKING_MODEL"]

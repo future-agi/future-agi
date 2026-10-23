@@ -552,8 +552,10 @@ def iter_desired_rows(
 
 
 # Filter keys that may accompany an explicit id list; anything else means the
-# task is a real filter query and takes the bounded proof below.
-_EXPLICIT_ID_COMPANIONS = frozenset({"project_id", "date_range"})
+# task is a real filter query and takes the bounded proof below. A
+# date_range is not one: this read doesn't apply it, so a task with ids and a
+# range keeps the bounded proof, which does.
+_EXPLICIT_ID_COMPANIONS = frozenset({"project_id"})
 
 
 def _explicit_id_rows(
@@ -581,8 +583,6 @@ def _explicit_id_rows(
     if others - _EXPLICIT_ID_COMPANIONS:
         return None
     wanted = list(dict.fromkeys(str(v) for v in raw if v not in (None, "")))
-    if limit:
-        wanted = wanted[: int(limit)]
     project_id = str(task.project_id)
     with get_reader() as reader:
         if task.row_type == RowType.SESSIONS:
@@ -592,7 +592,9 @@ def _explicit_id_rows(
                 )
             )
         elif task.row_type == RowType.TRACES:
-            present = set(reader.root_ids_by_trace_ids(wanted, project_ids=[project_id]))
+            present = set(
+                reader.root_ids_by_trace_ids(wanted, project_ids=[project_id])
+            )
         else:
             present = {
                 str(row["id"])
@@ -601,6 +603,10 @@ def _explicit_id_rows(
                 )
             }
     ids = tuple(i for i in wanted if i in present)
+    # The limit counts rows that exist: cutting before the presence check
+    # returned fewer than `limit` when some ids were gone.
+    if limit:
+        ids = ids[: int(limit)]
     return ResolvedRowSet(ids, ids, True)
 
 

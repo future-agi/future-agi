@@ -363,6 +363,36 @@ def test_an_organization_runs_at_most_two_at_once(
 
 
 @pytest.mark.django_db
+@override_settings(INSTANT_EVAL_MAX_ACTIVE_PER_ORG=1)
+def test_a_start_counts_the_runs_again_under_the_organizations_lock(
+    auth_client, observe_project, yes_no, fake_view, started, monkeypatch
+):
+    """Two starts at once both passed the first count; the second count,
+    taken under the organization's row lock, refuses the later one."""
+    real = instant_eval_scale._active_runs
+    calls = []
+
+    def active_runs(org):
+        calls.append(org)
+        # The first count is from before the other start committed.
+        return [] if len(calls) == 1 else [object()]
+
+    monkeypatch.setattr(instant_eval_scale, "_active_runs", active_runs)
+    monkeypatch.setattr(
+        instant_eval_scale,
+        "_busy_response",
+        lambda gm, active: gm.custom_error_response(
+            409, {"error_code": "INSTANT_EVAL_BUSY"}, code="instant_eval_busy"
+        ),
+    )
+    response = _start(auth_client, observe_project, [yes_no], sample_size=5)
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert len(calls) == 2
+    assert not EvalTask.objects.filter(project=observe_project).exists()
+    assert real is not None
+
+
+@pytest.mark.django_db
 def test_handed_over_ids_are_read_whole_and_capped(
     auth_client, observe_project, yes_no, fake_view, started
 ):
@@ -2008,3 +2038,29 @@ def test_whether_a_task_is_an_instant_eval_run_is_asked_once(
         assert not instant_eval_answers.is_instant_task(other)
     with django_assert_num_queries(0):
         assert not instant_eval_answers.is_instant_task(other)
+
+
+@pytest.mark.django_db
+def test_history_counts_a_row_settled_only_once_every_question_answered(
+    auth_client, observe_project, yes_no, category, fake_view, started
+):
+    from tracer.views.instant_eval import _answer_tally
+
+    result = _start(
+        auth_client, observe_project, [yes_no, category], sample_size=6
+    ).json()["result"]
+    task = EvalTask.objects.get(id=result["task_id"])
+    ids = list(resolve_desired_rows(task).matched_ids)
+    logs = EvalLogger.objects.bulk_create(
+        [
+            _answer(task, yes_no, ids[0], "Yes"),
+            _answer(task, category, ids[0], "Order status"),
+            # One of two questions answered: still pending.
+            _answer(task, yes_no, ids[1], "No"),
+        ]
+    )
+    for entry in logs:
+        record_answer(entry.id)
+    out = {}
+    _answer_tally([str(task.id)], out)
+    assert out[str(task.id)][1] == 1

@@ -80,7 +80,9 @@ class InstantEvalRunsQuerySerializer(serializers.Serializer):
     # One run, for a page that opens it by id.
     task_id = serializers.UUIDField(required=False)
     page_number = serializers.IntegerField(min_value=0, required=False, default=0)
-    page_size = serializers.IntegerField(min_value=1, max_value=50, required=False, default=20)
+    page_size = serializers.IntegerField(
+        min_value=1, max_value=50, required=False, default=20
+    )
 
 
 class InstantEvalRunSerializer(serializers.Serializer):
@@ -94,7 +96,9 @@ class InstantEvalRunSerializer(serializers.Serializer):
     rows = serializers.IntegerField()
     config_ids = serializers.ListField(child=serializers.CharField())
     questions = serializers.ListField(child=serializers.CharField())
-    counts = serializers.DictField(child=serializers.DictField(child=serializers.IntegerField()))
+    counts = serializers.DictField(
+        child=serializers.DictField(child=serializers.IntegerField())
+    )
     answered = serializers.IntegerField()
     pending = serializers.IntegerField()
     # When the last answer landed, once every row has one.
@@ -165,10 +169,17 @@ def _answer_tally(task_ids: list[str], out: dict[str, list]) -> None:
     from django.db import connection
 
     with connection.cursor() as cur:
+        # A row is settled once every question of its run has an answer: a
+        # row with 1 of k answers is still pending on a multi-question run.
         cur.execute(
-            "SELECT task_id::text, count(DISTINCT row_id), max(answered_at) "
+            "SELECT a.task_id::text, "
+            "count(*) FILTER (WHERE a.n >= GREATEST(COALESCE(r.questions, 1), 1)), "
+            "max(a.last) FROM ("
+            "SELECT task_id, row_id, count(*) AS n, max(answered_at) AS last "
             "FROM tracer_instant_eval_answer WHERE task_id = ANY(%(tasks)s::uuid[]) "
-            "GROUP BY task_id",
+            "GROUP BY task_id, row_id) a "
+            "LEFT JOIN tracer_instant_eval_run r ON r.eval_task_id = a.task_id "
+            "GROUP BY a.task_id",
             {"tasks": task_ids},
         )
         for tid, settled, last in cur.fetchall():
@@ -302,11 +313,14 @@ class InstantEvalRunsView(InstantEvalLicenseRequired, APIView):
             tasks = tasks.filter(id=params["task_id"])
         if params.get("search"):
             tasks = tasks.filter(name__icontains=params["search"])
-        tasks = list(tasks.order_by("-created_at").prefetch_related("evals")[:HISTORY_SCAN])
+        tasks = list(
+            tasks.order_by("-created_at").prefetch_related("evals")[:HISTORY_SCAN]
+        )
         # A run knows its own unit; a question may have been asked of another.
         run_units = dict(
-            InstantEvalRun.objects.filter(eval_task_id__in=[t.id for t in tasks])
-            .values_list("eval_task_id", "unit")
+            InstantEvalRun.objects.filter(
+                eval_task_id__in=[t.id for t in tasks]
+            ).values_list("eval_task_id", "unit")
         )
         runs = []
         for task in tasks:
@@ -331,12 +345,15 @@ class InstantEvalRunsView(InstantEvalLicenseRequired, APIView):
         tids = [str(t.id) for t, _, _ in page]
         instant_runs = {
             str(r.eval_task_id): r
-            for r in InstantEvalRun.objects.filter(eval_task_id__in=tids).select_related(
-                "created_by"
-            )
+            for r in InstantEvalRun.objects.filter(
+                eval_task_id__in=tids
+            ).select_related("created_by")
         }
         tally = _history_tally(
-            [(t, instant_runs.get(str(t.id)), [cid for cid, _ in m]) for t, _, m in page]
+            [
+                (t, instant_runs.get(str(t.id)), [cid for cid, _ in m])
+                for t, _, m in page
+            ]
         )
         from tracer.views.instant_eval_scale import credits_per_answer
 
@@ -357,36 +374,40 @@ class InstantEvalRunsView(InstantEvalLicenseRequired, APIView):
             pending = max(0, max(named, seen) - settled)
             if run is not None and run.cancelled_at:
                 pending = 0
-            out.append({
-                "task_id": tid,
-                "name": task.name or "",
-                "created_at": _iso(task.created_at),
-                "status": _history_status(task, run, pending),
-                "run_type": str(task.run_type),
-                "unit": unit,
-                "reads": metas[0][1].get("reads"),
-                "rows": stored or _task_rows(task),
-                "config_ids": [cid for cid, _ in metas],
-                "questions": [m["question"] for _, m in metas],
-                "counts": counts,
-                "answered": settled,
-                "pending": pending,
-                "finished_at": _iso(last_update) if not pending else None,
-                "created_by": (run.created_by.name or run.created_by.email)
-                if run is not None and run.created_by
-                else None,
-                "credits_estimate": run.credits_estimate
-                if run is not None and billed
-                else None,
-                "population": run.population if run is not None else None,
-                "is_sample": bool(run is not None and run.rows_requested < run.population),
-                "date_preset": run.date_preset if run is not None else None,
-                "label": run.label if run is not None else None,
-                "window": {"from": _iso(run.date_from), "to": _iso(run.date_to)}
-                if run is not None and run.date_from
-                else None,
-                "sessions": sessions,
-            })
+            out.append(
+                {
+                    "task_id": tid,
+                    "name": task.name or "",
+                    "created_at": _iso(task.created_at),
+                    "status": _history_status(task, run, pending),
+                    "run_type": str(task.run_type),
+                    "unit": unit,
+                    "reads": metas[0][1].get("reads"),
+                    "rows": stored or _task_rows(task),
+                    "config_ids": [cid for cid, _ in metas],
+                    "questions": [m["question"] for _, m in metas],
+                    "counts": counts,
+                    "answered": settled,
+                    "pending": pending,
+                    "finished_at": _iso(last_update) if not pending else None,
+                    "created_by": (run.created_by.name or run.created_by.email)
+                    if run is not None and run.created_by
+                    else None,
+                    "credits_estimate": run.credits_estimate
+                    if run is not None and billed
+                    else None,
+                    "population": run.population if run is not None else None,
+                    "is_sample": bool(
+                        run is not None and run.rows_requested < run.population
+                    ),
+                    "date_preset": run.date_preset if run is not None else None,
+                    "label": run.label if run is not None else None,
+                    "window": {"from": _iso(run.date_from), "to": _iso(run.date_to)}
+                    if run is not None and run.date_from
+                    else None,
+                    "sessions": sessions,
+                }
+            )
         return self._gm.success_response(
             {"runs": out, "has_more": start + params["page_size"] < len(runs)}
         )
