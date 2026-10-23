@@ -237,10 +237,21 @@ def snapshot_select(
     if eval_inputs:
         params["configs"] = tuple(str(item["config_id"]) for item in eval_inputs)
         canonical_eval_session = resolved_id_expr("e.trace_session_id", "em")
+        # Prefilter keys for the evaluation scan. They only bound which evaluation
+        # rows are read; the final join to selection units is exact. A superset is
+        # therefore safe, so these keys skip the unit/remap joins of ``members``.
+        ctes.append(f"""member_keys AS (
+            SELECT {span_identity} AS span_id, s.trace_session_id AS raw_session_id
+            FROM span_versions s WHERE s.is_deleted = 0 AND ({filter_sql})
+        )""")
+        # Every alias of a member session: the raw IDs plus every ID that shares a
+        # remap survivor with one of them.
+        survivors = survivor_map_subquery("trace_session_id_remap")
         ctes.append(f"""session_aliases AS (
-            SELECT raw_session_id AS alias_id FROM members WHERE isNotNull(raw_session_id)
-            UNION DISTINCT SELECT any_id AS alias_id FROM ({survivor_map_subquery("trace_session_id_remap")})
-                WHERE toString(survivor_id) IN (SELECT session_id FROM members)
+            SELECT raw_session_id AS alias_id FROM member_keys WHERE isNotNull(raw_session_id)
+            UNION DISTINCT SELECT any_id AS alias_id FROM ({survivors})
+                WHERE survivor_id IN (SELECT survivor_id FROM ({survivors})
+                    WHERE any_id IN (SELECT raw_session_id FROM member_keys WHERE isNotNull(raw_session_id)))
         )""")
         ctes.extend(
             [
@@ -249,7 +260,7 @@ def snapshot_select(
             PREWHERE custom_eval_config_id IN %(configs)s
             WHERE created_at <= %(as_of)s AND updated_at <= %(as_of)s
               AND (%(source_run_id)s = '' OR eval_task_id = %(source_run_id)s)
-              AND ((toJSONString(tuple(toString(trace_id), observation_span_id)) IN (SELECT span_id FROM members))
+              AND ((toJSONString(tuple(toString(trace_id), observation_span_id)) IN (SELECT span_id FROM member_keys))
                    OR trace_session_id IN (SELECT alias_id FROM session_aliases))
             ORDER BY {version} DESC LIMIT 1 BY id
         )""",
@@ -267,34 +278,38 @@ def snapshot_select(
         ctes.append(
             f"eval_rows AS (SELECT * FROM eval_current WHERE {EVAL_COMPLETED_PREDICATE})"
         )
-        if definition.selection_unit != "span":
-            # A session assigned to multiple user units is not guessed. Its input
-            # is absent in those units and remains visible as missing data.
-            ctes.append("""session_members AS (
-                SELECT m.session_id, any(m.unit_id) AS unit_id,
-                    any(m.unit_sampling_id) AS unit_sampling_id, max(m.unit_sampling_ambiguous) AS unit_sampling_ambiguous
-                FROM members m
-                WHERE notEmpty(m.session_id) GROUP BY m.session_id
-                HAVING uniqExact(m.unit_id) = 1
-            )""")
+        # Every evaluation target maps to at most one selection unit through ONE
+        # keyed relation, so eval_rows (and the source scan behind it) is
+        # referenced once. A span target is the (trace_id, span_id) identity; a
+        # session target is the canonical session, joined only when it belongs to
+        # exactly one unit. A session assigned to multiple user units is not
+        # guessed: its input is absent in those units and stays visible as missing.
+        # "Exactly one unit" is min = max of the unit key: exact, and only two
+        # string states per group (a uniqExact set would be allocated for every
+        # span key too, since span and session keys share this aggregation).
+        # Output aliases differ from the member columns they aggregate, so HAVING
+        # compares member units rather than resolving to an aggregate.
+        kinds = (
+            "[(0, m.span_id)]"
+            if definition.selection_unit == "span"
+            else "[(0, m.span_id), (1, m.session_id)]"
+        )
+        ctes.append(f"""eval_targets AS (
+            SELECT tupleElement(target, 1) AS session_target, tupleElement(target, 2) AS target_key,
+                min(m.unit_id) AS target_unit_id, any(m.unit_sampling_id) AS target_sampling_id,
+                max(m.unit_sampling_ambiguous) AS target_sampling_ambiguous
+            FROM members m ARRAY JOIN {kinds} AS target
+            GROUP BY session_target, target_key
+            HAVING session_target = 0 OR (notEmpty(target_key) AND min(m.unit_id) = max(m.unit_id))
+        )""")
         ctes.append(
             """eval_units AS (
-            SELECT e.*, m.unit_id, m.unit_sampling_id, m.unit_sampling_ambiguous FROM eval_rows e
-            INNER JOIN (SELECT span_id, any(unit_id) AS unit_id,
-                any(unit_sampling_id) AS unit_sampling_id, max(unit_sampling_ambiguous) AS unit_sampling_ambiguous
-                FROM members GROUP BY span_id) m
-                ON e.target_id = m.span_id
-            WHERE e.target_type != 'session'
-            """
-            + (
-                """UNION ALL
-            SELECT e.*, m.unit_id, m.unit_sampling_id, m.unit_sampling_ambiguous FROM eval_rows e
-            INNER JOIN session_members m ON e.target_id = m.session_id
-            WHERE e.target_type = 'session'"""
-                if definition.selection_unit != "span"
-                else ""
-            )
-            + ")"
+            SELECT e.*, t.target_unit_id AS unit_id, t.target_sampling_id AS unit_sampling_id,
+                t.target_sampling_ambiguous AS unit_sampling_ambiguous
+            FROM eval_rows e
+            INNER JOIN eval_targets t
+                ON e.target_id = t.target_key AND toUInt8(e.target_type = 'session') = t.session_target
+        )"""
         )
     values, probabilities, invalids, scopes, strata, evaluation_values = (
         [],

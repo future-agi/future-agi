@@ -133,6 +133,11 @@ recipe hash, request idempotency keys, execution leases and run manifests.
 ClickHouse stores immutable per-attempt unit-input snapshots, calculated rollups,
 and a committed-attempt pointer. No Python loop scans raw spans or eval results.
 All population reduction, weighting and rollup computation is database pushdown.
+ClickHouse inlines a ``WITH`` clause at every reference, and every read of one
+query shares that query's read, memory and time budget. The snapshot therefore
+reads the evaluation log once, through one keyed span/session target map, and
+bounds its evaluation prefilter with span-only keys rather than re-reading the
+remapped membership relation. A regression test pins these read counts.
 
 A first execution captures persisted source values under a server-owned capture
 watermark. ``as_of`` is the capture observation cutoff, NOT a claim of historical
@@ -210,7 +215,9 @@ created while paging, and an unknown or out-of-scope cursor is rejected.
 The single-slot exact-aggregation worker executes each bounded plan with native
 ClickHouse abort budgets: 60 seconds/statement, 512 MiB query memory, 20 million
 source rows / 8 GiB read, one million groups and two threads. Abort modes are “throw”,
-never partial-success truncation.
+never partial-success truncation. For a session or user metric with evaluation
+inputs, the evaluation-target map holds one group per span plus one per session,
+so the group budget covers both in the window.
 
 Interactive previews run synchronously on a web worker, so they are bounded more
 tightly: 15 seconds, 256 MiB memory, 5 million source rows / 2 GiB read, 250,000
