@@ -255,6 +255,7 @@ export function buildRerunPayload({
   scope,
   population,
   sampleSize,
+  resetTaxonomy = false,
 }) {
   const body = {
     project_id: projectId,
@@ -262,6 +263,9 @@ export function buildRerunPayload({
     scope,
   };
   if (sampleSize) body.sample_size = clampSample(sampleSize);
+  // "Rediscover categories" goes with the run: the server forgets the saved
+  // categories only once the run is allowed to start.
+  if (resetTaxonomy) body.reset_taxonomy = true;
   return withPopulation(body, population);
 }
 

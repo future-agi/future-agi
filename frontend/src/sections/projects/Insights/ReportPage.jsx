@@ -644,7 +644,12 @@ export default function ReportPage({
             reportName={config.name}
             run={run}
             lens={lens}
-            onBack={() => onView({ category: null, example: null })}
+            // A history entry of its own, as opening the category was: a
+            // replace left [report, report] and the browser's Back went
+            // nowhere.
+            onBack={() =>
+              onView({ category: null, example: null }, { push: true })
+            }
           />
         ) : (
           <>

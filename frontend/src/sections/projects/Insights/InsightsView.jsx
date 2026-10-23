@@ -8,7 +8,8 @@ import {
   readHandoff,
 } from "src/sections/projects/observeHandoff";
 import { OBSERVE_TABS } from "../common";
-import { useInsightsConfigs } from "./insightsApi";
+import { insightsErrorMessage, useInsightsConfigs } from "./insightsApi";
+import { ErrorState } from "./parts";
 import InsightsEmpty from "./InsightsEmpty";
 import NewReport from "./NewReport";
 import ReportPage from "./ReportPage";
@@ -172,6 +173,20 @@ export default function InsightsView() {
         <Skeleton variant="text" width="55%" height={36} />
         <Skeleton variant="rounded" height={160} />
       </Stack>
+    );
+  } else if (configs.isError) {
+    // The rail starts collapsed below 1440px, so the error and its Retry
+    // are shown here too, not only in the rail.
+    content = (
+      <Box sx={{ px: 3, pt: 2.5, maxWidth: 1180, mx: "auto" }}>
+        <ErrorState
+          message={insightsErrorMessage(
+            configs.error,
+            "Reports could not be loaded.",
+          )}
+          onRetry={() => configs.refetch()}
+        />
+      </Box>
     );
   } else {
     content = null;

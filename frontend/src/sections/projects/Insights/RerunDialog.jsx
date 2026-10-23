@@ -24,7 +24,6 @@ import ScopeFilterBar from "src/sections/projects/ScopeFilterBar";
 import { defaultScope } from "src/sections/projects/observeScope";
 import {
   insightsKeys,
-  patchConfig,
   recallPopulation,
   rememberPopulation,
   startRun,
@@ -113,7 +112,6 @@ function RerunForm({
   );
   const run = () =>
     starting.run(async () => {
-      if (rediscover) await patchConfig(config.id, { reset_taxonomy: true });
       // The server reads the rows a scope of filters matches, its preset
       // window moved to the moment the run starts.
       const runScope = sameRows ? base : storedScope(reanchorScope(scope));
@@ -125,6 +123,7 @@ function RerunForm({
           scope: runScope,
           population,
           sampleSize,
+          resetTaxonomy: rediscover,
         }),
       );
       if (sameRows) rememberPopulation(config.id, population);

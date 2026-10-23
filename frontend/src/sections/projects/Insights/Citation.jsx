@@ -324,6 +324,9 @@ export function MoreRefs({ refs }) {
 
 MoreRefs.propTypes = { refs: PropTypes.arrayOf(PropTypes.number) };
 
+// Text that only separates two citations: ", ", " and ", "; ".
+const SEPARATOR = /^[\s,;&]*(?:and)?[\s,;&]*$/i;
+
 /**
  * Prose with "#n" citations rendered as chips. `extraRefs` are cited without
  * being written in the text; they follow it. Refs in `hiddenRefs` are left
@@ -348,9 +351,21 @@ export function CitedText({
     morePlaced = true;
     return <MoreRefs refs={moreRefs} />;
   };
+  const allHidden = (segment) =>
+    segment?.type !== "text" &&
+    segment?.refs?.length > 0 &&
+    segment.refs.every((n) => hide(n));
   const parts = segments.map((segment, i) => {
-    if (segment.type === "text")
+    if (segment.type === "text") {
+      // ", " or " and " between two folded refs has nothing left to separate.
+      if (
+        SEPARATOR.test(segment.text) &&
+        allHidden(segments[i - 1]) &&
+        allHidden(segments[i + 1])
+      )
+        return null;
       return <React.Fragment key={i}>{segment.text}</React.Fragment>;
+    }
     const visible = segment.refs.filter((n) => !hide(n));
     const folded = visible.length < segment.refs.length;
     return (

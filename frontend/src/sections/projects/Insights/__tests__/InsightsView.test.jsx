@@ -9,7 +9,13 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import { palette } from "src/theme/palette";
 import { typography } from "src/theme/typography";
 import configsFixture from "./fixtures/configs.json";
@@ -106,7 +112,15 @@ const ok = (result) => Promise.resolve({ data: { status: true, result } });
 
 function LocationProbe() {
   const location = useLocation();
-  return <div data-testid="location">{location.search}</div>;
+  const navigate = useNavigate();
+  return (
+    <>
+      <div data-testid="location">{location.search}</div>
+      <button type="button" onClick={() => navigate(-1)}>
+        Browser back
+      </button>
+    </>
+  );
 }
 
 function renderAt(search) {
@@ -271,6 +285,61 @@ describe("InsightsView", () => {
       expect(screen.getByTestId("location").textContent).toBe(
         // Insights keeps the Observe page's tab, so the tab bar stays on it.
         `?report=${configsFixture.result.configs[0].id}&tab=insights`,
+      ),
+    );
+  });
+
+  it("opens the next report, not the deleted one, while the list refetches", async () => {
+    const [newest, next] = configsFixture.result.configs;
+    let deleted = false;
+    const axios = (await import("src/utils/axios")).default;
+    axios.delete.mockImplementation(async () => {
+      deleted = true;
+      return { data: { status: true, result: newest } };
+    });
+    const base = mocks.readQuery.getMockImplementation();
+    mocks.readQuery.mockImplementation((url, options) => {
+      // The refetch after the delete is still in flight.
+      if (deleted && url === "/tracer/insights/configs/")
+        return new Promise(() => {});
+      if (deleted && url === `/tracer/insights/configs/${newest.id}/`)
+        return Promise.reject({ statusCode: 404, message: "Not found" });
+      return base(url, options);
+    });
+    renderAt("");
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toContain(newest.id),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: `Actions for ${newest.name}` }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toContain(next.id),
+    );
+    expect(
+      screen.queryByText(/This report could not be loaded/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows why the reports didn't load in the page, with the rail closed", async () => {
+    setViewport(1280);
+    const base = mocks.readQuery.getMockImplementation();
+    let failing = true;
+    mocks.readQuery.mockImplementation((url, options) =>
+      failing && url === "/tracer/insights/configs/"
+        ? Promise.reject({ statusCode: 500, message: "boom" })
+        : base(url, options),
+    );
+    renderAt("");
+    const main = await screen.findByRole("main");
+    expect(await within(main).findByRole("alert")).toBeInTheDocument();
+    failing = false;
+    fireEvent.click(within(main).getByRole("button", { name: "Retry" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toContain(
+        configsFixture.result.configs[0].id,
       ),
     );
   });
@@ -566,6 +635,13 @@ describe("InsightsView", () => {
         "category=",
       ),
     );
+    // The browser's Back goes to the category again, not the same report.
+    fireEvent.click(screen.getByRole("button", { name: "Browser back" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("location").textContent).toContain(
+        "category=3ffe0720fc9b",
+      ),
+    );
   });
 
   it("asks about the report and cites the answer", async () => {
@@ -814,6 +890,18 @@ describe("InsightsView", () => {
       expect.objectContaining({ column_id: "total_cost" }),
       windowItem(presetWindow("30D")),
     ]);
+  });
+
+  it("asks for a name instead of saving a blank one", async () => {
+    renderAt(`?report=${CONFIG_ID}`);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const drawer = await screen.findByRole("presentation");
+    fireEvent.change(within(drawer).getByLabelText("Name"), {
+      target: { value: "   " },
+    });
+    expect(within(drawer).getByText("Add a name")).toBeInTheDocument();
+    expect(within(drawer).getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(mocks.patch).not.toHaveBeenCalled();
   });
 
   it("runs a saved preset report again over a window ending now", async () => {

@@ -244,6 +244,26 @@ describe("payloads", () => {
       sample_size: 10,
     });
   });
+
+  it("asks to rediscover categories with the run, not before it", () => {
+    // A refused run (credits, rate limit) then keeps the saved categories.
+    expect(
+      buildRerunPayload({
+        projectId: "p1",
+        configId: "c1",
+        scope: { label: "All" },
+        resetTaxonomy: true,
+      }),
+    ).toEqual({
+      project_id: "p1",
+      config_id: "c1",
+      scope: { label: "All" },
+      reset_taxonomy: true,
+    });
+    expect(
+      buildRerunPayload({ projectId: "p1", configId: "c1", scope: {} }),
+    ).not.toHaveProperty("reset_taxonomy");
+  });
 });
 
 describe("sampleSentence", () => {

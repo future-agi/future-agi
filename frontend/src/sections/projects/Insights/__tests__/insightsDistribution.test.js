@@ -141,6 +141,28 @@ describe("category tree", () => {
     expect(tree[0].expandable).toBe(false);
   });
 
+  it("keeps a lone sub that names a real theme under a generic top", () => {
+    const tree = buildCategoryTree([
+      {
+        id: "t",
+        name: "Emerging",
+        level: 1,
+        has_children: true,
+        children: ["s"],
+        stats: { count: 4 },
+      },
+      {
+        id: "s",
+        name: "Refund loops",
+        level: 2,
+        parent_id: "t",
+        stats: { count: 4 },
+      },
+    ]);
+    expect(tree[0].expandable).toBe(true);
+    expect(tree[0].childRows.map((c) => c.name)).toEqual(["Refund loops"]);
+  });
+
   it("sorts by any column and keeps the unmatched bucket last", () => {
     const tree = buildCategoryTree([
       ...categories,

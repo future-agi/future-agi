@@ -77,12 +77,28 @@ const newIds = (changes) =>
       .map((c) => c.category_id),
   ]);
 
+// A sub that moved exactly as a top did (a lone sub has its top's counts) is
+// the same move: one card, the top's.
+const echoesOfTops = (items) => {
+  const moves = new Set(
+    items
+      .filter((c) => c?.level === 1)
+      .map((c) => `${c.count}:${c.previous_count}`),
+  );
+  return (c) =>
+    c?.level === 2 &&
+    c.count != null &&
+    moves.has(`${c.count}:${c.previous_count}`);
+};
+
 export function buildChangeCards(changes) {
   if (!changes || typeof changes !== "object") return [];
   const fresh = newIds(changes);
   const cards = [];
-  (changes.categories || []).forEach((c) => {
-    if (!c?.category_id) return;
+  const items = changes.categories || [];
+  const echo = echoesOfTops(items);
+  items.forEach((c) => {
+    if (!c?.category_id || echo(c)) return;
     const share = Number(c.share);
     const previous = Number(c.previous_share);
     const delta = Number.isFinite(c.delta)

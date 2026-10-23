@@ -69,6 +69,41 @@ describe("buildChangeCards", () => {
     });
   });
 
+  it("gives a top and the sub that moved with it one card", () => {
+    const move = { share: 0.3, previous_share: 0.1, delta: 0.2 };
+    const out = buildChangeCards({
+      categories: [
+        {
+          category_id: "t",
+          name: "Refunds",
+          level: 1,
+          count: 9,
+          previous_count: 3,
+          ...move,
+        },
+        {
+          category_id: "s",
+          name: "Refund loops",
+          level: 2,
+          count: 9,
+          previous_count: 3,
+          ...move,
+        },
+        {
+          category_id: "o",
+          name: "Other sub",
+          level: 2,
+          count: 2,
+          previous_count: 5,
+          share: 0.05,
+          previous_share: 0.1,
+          delta: -0.05,
+        },
+      ],
+    });
+    expect(out.map((c) => c.categoryId)).toEqual(["t", "o"]);
+  });
+
   it("is empty without changes and survives partial objects", () => {
     expect(buildChangeCards(undefined)).toEqual([]);
     expect(buildChangeCards({ new_category_ids: ["x"] })).toEqual([

@@ -94,11 +94,15 @@ export default function EditDrawer({
     setResult(null);
     setDraft((current) => ({ ...current, ...patch }));
   };
-  const problem = !draft.question.trim()
-    ? "Add a question"
-    : draft.attributes.some((a) => attributeError(a, draft.attributes))
-      ? "Fix the attributes"
-      : "";
+  // The server needs a name (1-255 characters); a blank one used to surface
+  // as a retry message that could never succeed.
+  const problem = !draft.name.trim()
+    ? "Add a name"
+    : !draft.question.trim()
+      ? "Add a question"
+      : draft.attributes.some((a) => attributeError(a, draft.attributes))
+        ? "Fix the attributes"
+        : "";
 
   const save = () =>
     saving.run(async () => {

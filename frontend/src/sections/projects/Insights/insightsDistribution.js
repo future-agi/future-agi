@@ -219,9 +219,13 @@ export function buildCategoryTree(categories = []) {
       top.children ||
       categories.filter((c) => c.parent_id === top.id).map((c) => c.id);
     const children = childIds.map((id) => byId.get(id)).filter(Boolean);
-    // A top whose only child is itself under another name reads as one level.
+    // A top whose only child is itself (same name, or a child with no name
+    // of its own) reads as one level. A lone sub always has its top's count
+    // (subs split their top's items), so the count can't tell: an "Emerging"
+    // top holding one real theme keeps it.
     const single =
-      children.length === 1 && children[0].stats?.count === top.stats?.count;
+      children.length === 1 &&
+      (sameName(top, children[0]) || !String(children[0].name || "").trim());
     return {
       ...top,
       childRows: single ? [] : children,
