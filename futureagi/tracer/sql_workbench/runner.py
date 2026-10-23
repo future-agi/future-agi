@@ -64,6 +64,15 @@ class QueryCancelled(Exception):
     pass
 
 
+# The shared service principal runs at most max_concurrent_queries_for_user
+# statements at once. ClickHouse turns a statement away with this code before
+# it reads anything, so a run retries its opening statements for a short,
+# bounded time instead of failing when a brief statement (an advisory
+# estimate, another run's profile check) holds a slot for a moment.
+TOO_MANY_SIMULTANEOUS_QUERIES = 202
+START_RETRY_SECONDS = 3.0
+
+
 def connection_config():
     username = os.environ.get("SQL_WORKBENCH_CH_USER", "")
     password = os.environ.get("SQL_WORKBENCH_CH_PASSWORD", "")
@@ -186,21 +195,39 @@ def run(compiled_sql, query_id, cancelled, *, table_filters):
 
     thread = threading.Thread(target=monitor, daemon=True)
     try:
-        if cancelled():
-            raise QueryCancelled()
-        verify_profile(client)
-        # Native cancellation targets THIS connection, not KILL QUERY/admin SQL.
-        # Server/socket limits bound the read independently of Temporal timeouts.
-        stream = client.execute_iter(
-            compiled_sql,
-            query_id=str(query_id),
-            with_column_types=True,
-            settings={"additional_table_filters": table_filters},
-        )
-        # execute_iter has sent the query; only the main thread reads packets.
-        # Client.cancel() is intentionally forbidden: it drains receive_result().
-        thread.start()
-        header = next(stream)
+        retry_until = time.monotonic() + START_RETRY_SECONDS
+        delay = 0.05
+        while True:
+            if aborted.is_set() or cancelled():
+                raise QueryCancelled()
+            try:
+                verify_profile(client)
+                # Native cancellation targets THIS connection, not KILL
+                # QUERY/admin SQL. Server/socket limits bound the read
+                # independently of Temporal timeouts.
+                stream = client.execute_iter(
+                    compiled_sql,
+                    query_id=str(query_id),
+                    with_column_types=True,
+                    settings={"additional_table_filters": table_filters},
+                )
+                # execute_iter has sent the query; only the main thread reads
+                # packets. Client.cancel() is intentionally forbidden: it
+                # drains receive_result().
+                if thread.ident is None:
+                    thread.start()
+                header = next(stream)
+                break
+            except Exception as exc:
+                if (
+                    getattr(exc, "code", None) != TOO_MANY_SIMULTANEOUS_QUERIES
+                    or time.monotonic() + delay > retry_until
+                ):
+                    raise
+                # The rejected statement read nothing; reconnect and retry.
+                client.disconnect()
+                time.sleep(delay)
+                delay = min(delay * 2, 0.5)
         columns = [{"name": name, "type": kind} for name, kind in header]
         if len(columns) > 100 or len({c["name"] for c in columns}) != len(columns):
             raise QueryUnavailable("Use at most 100 uniquely named output columns.")
@@ -244,6 +271,65 @@ def run(compiled_sql, query_id, cancelled, *, table_filters):
         stop.set()
         if thread.is_alive():
             thread.join(timeout=2)
+        client.disconnect()
+
+
+# An estimate is advisory: it must answer quickly or not at all.
+ESTIMATE_SECONDS = 5
+
+
+def estimate(compiled_sql, *, table_filters, database):
+    """Index analysis of one compiled query; reads no table data rows.
+
+    ``EXPLAIN ESTIMATE`` runs on the dedicated locked connection with the same
+    server-side ``additional_table_filters`` as a real run. It returns, per
+    physical table, the parts, index granules (marks) and rows in those
+    granules that the query's index analysis selects. The sort key and index
+    granularity of each table come from ``system.tables`` so the caller can
+    withhold numbers for tables whose index is shared across projects.
+    """
+    from clickhouse_driver import Client
+
+    if (
+        not isinstance(table_filters, str)
+        or not table_filters.startswith("{'")
+        or not table_filters.endswith("'}")
+    ):
+        raise QueryUnavailable("SQL scope filters are missing.")
+    config = connection_config()
+    config.update(connect_timeout=2, send_receive_timeout=ESTIMATE_SECONDS)
+    client = Client(**config)
+    try:
+        verify_profile(client)
+        rows = client.execute(
+            f"EXPLAIN ESTIMATE {compiled_sql}",
+            settings={"additional_table_filters": table_filters},
+        )
+        tables = []
+        for row in rows:
+            if len(row) != 5:
+                raise QueryUnavailable("Unexpected estimate shape.")
+            source_database, table, parts, read_rows, marks = row
+            tables.append(
+                {
+                    "database": str(source_database),
+                    "table": str(table),
+                    "parts": int(parts),
+                    "rows": int(read_rows),
+                    "marks": int(marks),
+                }
+            )
+        names = sorted({item["table"] for item in tables})
+        layout = {}
+        if names:
+            for name, sorting_key, engine_full in client.execute(
+                "SELECT name, sorting_key, engine_full FROM system.tables "
+                "WHERE database = %(database)s AND name IN %(names)s",
+                {"database": database, "names": tuple(names)},
+            ):
+                layout[str(name)] = (str(sorting_key), str(engine_full))
+        return {"tables": tables, "layout": layout}
+    finally:
         client.disconnect()
 
 

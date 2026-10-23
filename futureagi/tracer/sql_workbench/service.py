@@ -235,6 +235,162 @@ def submit(actor, *, project_id, sql, start, end):
     return job
 
 
+ESTIMATES_PER_MINUTE = 30
+ESTIMATE_UNAVAILABLE = "Estimate unavailable. Run is not affected."
+ESTIMATE_WITHHELD = (
+    "Not estimated: this source's index is shared across projects, so an "
+    "index estimate would include other projects' rows."
+)
+DEFAULT_INDEX_GRANULARITY = 8192
+
+
+def _estimate_window():
+    return int(time.time() // 60)
+
+
+def _estimate_allowed(actor):
+    """Fixed one-minute window per user; no limiter means no estimate."""
+    from django.core.cache import cache
+
+    limit = _resource_limit("SQL_WORKBENCH_ESTIMATES_PER_MINUTE", ESTIMATES_PER_MINUTE)
+    key = f"sql-workbench:estimate:{actor.user_id}:{_estimate_window()}"
+    try:
+        cache.add(key, 0, timeout=120)
+        return cache.incr(key) <= limit
+    except Exception:
+        return False
+
+
+def _sort_key_columns(sorting_key):
+    """Top-level comma-separated sort-key expressions, in order."""
+    columns, depth, current = [], 0, []
+    for char in sorting_key:
+        if char == "," and depth == 0:
+            columns.append("".join(current).strip())
+            current = []
+            continue
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        current.append(char)
+    if "".join(current).strip():
+        columns.append("".join(current).strip())
+    return columns
+
+
+def _tenant_local(sorting_key, ownership, project_column):
+    """True when the sort key starts with ownership columns through the project.
+
+    Only then does every index granule the estimate counts lie in this
+    project's key range (apart from the granules at its edges).
+    """
+    for column in _sort_key_columns(sorting_key):
+        if column == project_column:
+            return True
+        if column not in ownership:
+            return False
+    return False
+
+
+def _granularity(engine_full):
+    import re
+
+    match = re.search(r"\bindex_granularity\s*=\s*(\d+)", engine_full)
+    value = int(match.group(1)) if match else DEFAULT_INDEX_GRANULARITY
+    return value if value > 0 else DEFAULT_INDEX_GRANULARITY
+
+
+def estimate(actor, *, project_id, sql, start, end):
+    """Advisory pre-run estimate: same authorization and SQL as a run.
+
+    It creates no execution record, holds no admission slot and never blocks
+    a run: any estimate failure is reported as ``unavailable``.
+    """
+    from .catalog import additional_table_filters
+    from .runner import QUERY_SETTINGS
+    from .runner import estimate as index_estimate
+
+    project = authorize(actor, project_id)
+    if not _estimate_allowed(actor):
+        raise AdmissionFull("Too many estimates. The estimate resumes shortly.")
+    scope = query_scope(actor, project, start, end, sql)
+    compiled = compile_query(sql, scope)
+    started = time.monotonic()
+    try:
+        raw = index_estimate(
+            compiled,
+            table_filters=additional_table_filters(scope),
+            database=scope.database,
+        )
+        result = summarize_estimate(raw, scope.database)
+    except Exception:
+        result = {
+            "status": "unavailable",
+            "reason": ESTIMATE_UNAVAILABLE,
+            "sources": [],
+            "max_rows_to_read": QUERY_SETTINGS["max_rows_to_read"],
+            "exceeds_scan_bound": None,
+        }
+    result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+    return result
+
+
+def summarize_estimate(raw, database):
+    """The tenant-safe view of one ``EXPLAIN ESTIMATE`` result.
+
+    Per source it reports parts, index granules and the most rows those
+    granules can hold (granules x index granularity), never the raw row total
+    of the granules, which can include an adjacent project's rows. Sources
+    whose sort key does not start with the project are withheld.
+    ``exceeds_scan_bound`` compares every table's granule rows with the read
+    limit: the same fact a run reveals when the server stops it there.
+    """
+    from .catalog import ESTIMATE_SOURCES
+    from .runner import QUERY_SETTINGS
+
+    bound = QUERY_SETTINGS["max_rows_to_read"]
+    sources, granule_rows = {}, 0
+    for item in raw["tables"]:
+        granule_rows += item["rows"]
+        known = ESTIMATE_SOURCES.get(item["table"])
+        layout = raw["layout"].get(item["table"])
+        dataset = known[0] if known else "other"
+        entry = sources.setdefault(
+            dataset,
+            {
+                "dataset": dataset,
+                "estimated": True,
+                "parts": 0,
+                "marks": 0,
+                "max_rows": 0,
+                "reason": "",
+            },
+        )
+        local = (
+            item["database"] == database
+            and known is not None
+            and layout is not None
+            and _tenant_local(layout[0], known[1], known[2])
+        )
+        if not local or not entry["estimated"]:
+            entry.update(
+                estimated=False,
+                parts=None,
+                marks=None,
+                max_rows=None,
+                reason=ESTIMATE_WITHHELD,
+            )
+            continue
+        entry["parts"] += item["parts"]
+        entry["marks"] += item["marks"]
+        entry["max_rows"] += item["marks"] * _granularity(layout[1])
+    return {
+        "status": "ok",
+        "reason": "",
+        "sources": sorted(sources.values(), key=lambda value: value["dataset"]),
+        "max_rows_to_read": bound,
+        "exceeds_scan_bound": granule_rows > bound,
+    }
+
+
 def execution(actor, project_id, job_id):
     authorize(actor, project_id)
     job_id = object_id(job_id)

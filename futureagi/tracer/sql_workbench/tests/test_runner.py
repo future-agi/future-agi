@@ -303,6 +303,111 @@ def test_profile_without_changeable_filter_fails_closed_with_guidance():
     assert client.closed
 
 
+def _no_sleep(monkeypatch):
+    """Skip the runner's retry pauses without touching time.sleep elsewhere."""
+    import time
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        runner, "time", SimpleNamespace(monotonic=time.monotonic, sleep=lambda _: None)
+    )
+
+
+class SimultaneousQueries(Exception):
+    code = runner.TOO_MANY_SIMULTANEOUS_QUERIES
+
+
+class Contended(Client):
+    """Turned away by the principal's concurrency cap ``busy`` times first."""
+
+    def __init__(self, records, *, busy, code=runner.TOO_MANY_SIMULTANEOUS_QUERIES):
+        super().__init__(records)
+        self.busy, self.code, self.sent, self.disconnects = busy, code, 0, 0
+
+    def execute_iter(self, query, **kwargs):
+        stream = super().execute_iter(query, **kwargs)
+        self.sent += 1
+        if self.sent <= self.busy:
+            error = SimultaneousQueries("too many simultaneous queries")
+            error.code = self.code
+
+            def rejected():
+                raise error
+                yield  # pragma: no cover
+
+            return rejected()
+        return stream
+
+    def disconnect(self):
+        self.disconnects += 1
+        super().disconnect()
+
+
+def test_a_run_turned_away_by_the_principal_cap_retries_briefly(monkeypatch):
+    """An advisory estimate may hold one of the principal's slots for a moment;
+    the run's first statement read nothing, so it is retried, not failed."""
+    _no_sleep(monkeypatch)
+    client = Contended([[("n", "Int64")], (7,)], busy=2)
+    with (
+        patch("clickhouse_driver.Client", return_value=client),
+        patch.object(runner, "connection_config", return_value={}),
+    ):
+        result = runner.run(
+            "SELECT n FROM scoped", uuid4(), lambda: False, table_filters=FILTERS
+        )
+    assert result["rows"] == [[7]]
+    assert client.sent == 3
+    # Reconnected before each retry, then closed once at the end.
+    assert client.disconnects == 3
+
+
+def test_a_run_still_contended_after_the_retry_window_fails(monkeypatch):
+    monkeypatch.setattr(runner, "START_RETRY_SECONDS", 0.3)
+    client = Contended([[("n", "Int64")], (1,)], busy=10_000)
+    with (
+        patch("clickhouse_driver.Client", return_value=client),
+        patch.object(runner, "connection_config", return_value={}),
+    ):
+        with pytest.raises(SimultaneousQueries):
+            runner.run(
+                "SELECT n FROM scoped", uuid4(), lambda: False, table_filters=FILTERS
+            )
+    assert 1 < client.sent < 10
+    assert client.closed
+
+
+def test_other_server_errors_are_never_retried(monkeypatch):
+    _no_sleep(monkeypatch)
+    client = Contended([[("n", "Int64")], (1,)], busy=1, code=241)
+    with (
+        patch("clickhouse_driver.Client", return_value=client),
+        patch.object(runner, "connection_config", return_value={}),
+    ):
+        with pytest.raises(SimultaneousQueries):
+            runner.run(
+                "SELECT n FROM scoped", uuid4(), lambda: False, table_filters=FILTERS
+            )
+    assert client.sent == 1
+
+
+def test_a_cancel_during_the_retry_window_stops_the_run(monkeypatch):
+    _no_sleep(monkeypatch)
+    client = Contended([[("n", "Int64")], (1,)], busy=10_000)
+    checks = iter([False, True])
+    with (
+        patch("clickhouse_driver.Client", return_value=client),
+        patch.object(runner, "connection_config", return_value={}),
+    ):
+        with pytest.raises(runner.QueryCancelled):
+            runner.run(
+                "SELECT n FROM scoped",
+                uuid4(),
+                lambda: next(checks, True),
+                table_filters=FILTERS,
+            )
+    assert client.sent == 1
+
+
 def test_service_profile_allows_only_the_scope_filter_to_change():
     from tracer.sql_workbench.provision import service_access_ddl
 

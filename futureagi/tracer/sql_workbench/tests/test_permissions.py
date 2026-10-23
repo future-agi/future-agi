@@ -779,6 +779,7 @@ def test_list_level_actions_are_never_routed_as_an_id():
         ("/tracer/sql-query/catalog/", "catalog"),
         ("/tracer/sql-query/run/", "run"),
         ("/tracer/sql-query/run-saved/", "run_saved"),
+        ("/tracer/sql-query/estimate/", "estimate"),
     ]:
         match = resolve(url)
         assert "pk" not in match.kwargs, url
@@ -1201,3 +1202,295 @@ def test_a_hidden_simulation_project_is_never_queryable_or_savable(
         )
     )
     assert response.status_code == 403
+
+
+# Advisory pre-run estimate: same authorization and compiled SQL as a run, no
+# execution record or admission slot, rate-limited per user, never blocking.
+SPANS_LAYOUT = ("project_id, id", "ReplacingMergeTree ORDER BY (project_id, id)")
+SHARED_LAYOUT = (
+    "trace_id, custom_eval_config_id, id",
+    "ReplacingMergeTree ORDER BY (trace_id, custom_eval_config_id, id) "
+    "SETTINGS index_granularity = 8192",
+)
+
+
+def _raw_estimate(database, *, eval_rows=500):
+    return {
+        "tables": [
+            {
+                "database": database,
+                "table": "spans",
+                "parts": 2,
+                "rows": 9000,
+                "marks": 3,
+            },
+            {
+                "database": database,
+                "table": "tracer_eval_logger",
+                "parts": 1,
+                "rows": eval_rows,
+                "marks": 1,
+            },
+        ],
+        "layout": {"spans": SPANS_LAYOUT, "tracer_eval_logger": SHARED_LAYOUT},
+    }
+
+
+def _estimate_request(actor, user, project, sql):
+    from tracer.views.sql_query import SQLQueryViewSet
+
+    now = timezone.now()
+    return SQLQueryViewSet.as_view({"post": "estimate"})(
+        api_request(
+            actor,
+            user,
+            "post",
+            "/tracer/sql-query/estimate/",
+            {
+                "project_id": str(project.id),
+                "sql": sql,
+                "start": (now - timedelta(hours=1)).isoformat(),
+                "end": now.isoformat(),
+            },
+        )
+    )
+
+
+@pytest.fixture
+def estimate_cache():
+    from django.core.cache import cache
+
+    cache.clear()
+    yield
+    cache.clear()
+
+
+def test_estimate_reports_tenant_local_sources_and_withholds_shared_indexes(
+    tenants, estimate_cache, settings
+):
+    (actor, project, user), _ = tenants
+    database = settings.CLICKHOUSE_V2["CH25_DATABASE"]
+    sql = "SELECT e.score FROM eval_results AS e JOIN spans AS s ON e.span_id = s.id"
+    with patch(
+        "tracer.sql_workbench.runner.estimate",
+        return_value=_raw_estimate(database),
+    ) as index:
+        response = _estimate_request(actor, user, project, sql)
+    assert response.status_code == 200, response.data
+    assert response["Cache-Control"] == "no-store"
+    # The compiled, scoped SQL is what is estimated, with the server filter.
+    compiled = index.call_args.args[0]
+    assert f"project_id = toUUID('{project.id}')" in compiled
+    assert index.call_args.kwargs["table_filters"].startswith("{'")
+    data = response.data
+    assert data["status"] == "ok"
+    assert data["max_rows_to_read"] == 10_000_000
+    assert data["exceeds_scan_bound"] is False
+    by_dataset = {entry["dataset"]: entry for entry in data["sources"]}
+    # Granules x granularity, never the raw granule row total (9000).
+    assert by_dataset["spans"] == {
+        "dataset": "spans",
+        "estimated": True,
+        "parts": 2,
+        "marks": 3,
+        "max_rows": 3 * 8192,
+        "reason": "",
+    }
+    shared = by_dataset["eval_results"]
+    assert shared["estimated"] is False
+    assert shared["parts"] is shared["marks"] is shared["max_rows"] is None
+    assert "shared across projects" in shared["reason"]
+    assert "9000" not in str(data) and "500" not in str(data)
+    # Advisory: no execution record, so no admission slot or audit row.
+    assert not SQLExecution.objects.filter(project=project).exists()
+
+
+def test_estimate_scan_bound_counts_withheld_sources_without_revealing_them(
+    tenants, estimate_cache, settings
+):
+    (actor, project, user), _ = tenants
+    database = settings.CLICKHOUSE_V2["CH25_DATABASE"]
+    with patch(
+        "tracer.sql_workbench.runner.estimate",
+        return_value=_raw_estimate(database, eval_rows=12_345_678),
+    ):
+        response = _estimate_request(
+            actor, user, project, "SELECT count() FROM eval_results"
+        )
+    assert response.status_code == 200
+    assert response.data["exceeds_scan_bound"] is True
+    assert "12345678" not in str(response.data)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        TimeoutError("estimate timed out"),
+        service.QueryUnavailable(
+            "Configure the dedicated read-only SQL connection first."
+        ),
+        RuntimeError("server error 202: too many simultaneous queries"),
+    ],
+)
+def test_estimate_failures_are_advisory_and_never_block_a_run(
+    tenants, estimate_cache, failure, django_capture_on_commit_callbacks
+):
+    (actor, project, user), _ = tenants
+    with patch("tracer.sql_workbench.runner.estimate", side_effect=failure):
+        response = _estimate_request(actor, user, project, "SELECT count() FROM spans")
+    assert response.status_code == 200
+    assert response.data["status"] == "unavailable"
+    assert response.data["exceeds_scan_bound"] is None
+    assert response.data["sources"] == []
+    assert str(failure) not in str(response.data)
+    with (
+        patch("tracer.sql_workbench.service.connection_config"),
+        patch("tracer.sql_workbench.tasks.execute_sql.apply_async"),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        job = _submit(actor, project)
+    assert job.state == "queued"
+
+
+def test_estimate_holds_no_admission_slot(tenants, estimate_cache, settings):
+    """An actor whose one slot is taken can still estimate, and estimating
+    never takes the slot a run needs."""
+    (actor, project, user), _ = tenants
+    create_job(actor, project, state="running")
+    database = settings.CLICKHOUSE_V2["CH25_DATABASE"]
+    with patch(
+        "tracer.sql_workbench.runner.estimate", return_value=_raw_estimate(database)
+    ):
+        for _ in range(3):
+            response = _estimate_request(
+                actor, user, project, "SELECT count() FROM spans"
+            )
+            assert response.status_code == 200
+    assert SQLExecution.objects.filter(project=project).count() == 1
+
+
+def test_estimate_uses_run_authorization_and_validation(
+    tenants, estimate_cache, settings
+):
+    (actor, project, user), (_, foreign, _) = tenants
+    database = settings.CLICKHOUSE_V2["CH25_DATABASE"]
+    with patch(
+        "tracer.sql_workbench.runner.estimate", return_value=_raw_estimate(database)
+    ) as index:
+        assert (
+            _estimate_request(actor, user, foreign, "SELECT 1 FROM spans").status_code
+            == 403
+        )
+        rejected = _estimate_request(actor, user, project, "SELECT * FROM system.users")
+        assert rejected.status_code == 400
+        assert "detail" in rejected.data
+        # A read-only member may run queries, so they may estimate them.
+        OrganizationMembership.no_workspace_objects.filter(
+            user_id=actor.user_id
+        ).update(level=1)
+        assert (
+            _estimate_request(actor, user, project, "SELECT 1 FROM spans").status_code
+            == 200
+        )
+        WorkspaceMembership.no_workspace_objects.filter(user_id=actor.user_id).update(
+            is_active=False
+        )
+        assert (
+            _estimate_request(actor, user, project, "SELECT 1 FROM spans").status_code
+            == 403
+        )
+    # Only the one authorized, valid request reached ClickHouse.
+    assert index.call_count == 1
+
+
+def test_estimates_are_rate_limited_per_user(tenants, estimate_cache, settings):
+    (actor, project, user), (other, other_project, other_user) = tenants
+    settings.SQL_WORKBENCH_ESTIMATES_PER_MINUTE = 2
+    database = settings.CLICKHOUSE_V2["CH25_DATABASE"]
+    with (
+        patch("tracer.sql_workbench.service._estimate_window", return_value=1),
+        patch(
+            "tracer.sql_workbench.runner.estimate",
+            return_value=_raw_estimate(database),
+        ) as index,
+    ):
+        codes = [
+            _estimate_request(actor, user, project, "SELECT 1 FROM spans").status_code
+            for _ in range(3)
+        ]
+        assert codes == [200, 200, 429]
+        # Another user has an independent budget.
+        assert (
+            _estimate_request(
+                other, other_user, other_project, "SELECT 1 FROM spans"
+            ).status_code
+            == 200
+        )
+    assert index.call_count == 3
+    with (
+        patch("tracer.sql_workbench.service._estimate_window", return_value=2),
+        patch(
+            "tracer.sql_workbench.runner.estimate",
+            return_value=_raw_estimate(database),
+        ),
+    ):
+        assert (
+            _estimate_request(actor, user, project, "SELECT 1 FROM spans").status_code
+            == 200
+        )
+
+
+def test_estimate_without_a_working_limiter_is_refused(tenants, estimate_cache):
+    (actor, project, user), _ = tenants
+    with (
+        patch("django.core.cache.cache.incr", side_effect=ConnectionError("down")),
+        patch("tracer.sql_workbench.runner.estimate") as index,
+    ):
+        response = _estimate_request(actor, user, project, "SELECT 1 FROM spans")
+    assert response.status_code == 429
+    index.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "sorting_key,ownership,project_column,local",
+    [
+        ("project_id, id", ("project_id", "org_id"), "project_id", True),
+        (
+            "org_id, project_id, start_time",
+            ("project_id", "org_id"),
+            "project_id",
+            True,
+        ),
+        (
+            "project_id, toDate(created_at), trace_id, id",
+            ("project_id",),
+            "project_id",
+            True,
+        ),
+        (
+            "trace_id, custom_eval_config_id, id",
+            ("custom_eval_config_id",),
+            "custom_eval_config_id",
+            False,
+        ),
+        (
+            "label_id, created_at, id",
+            ("organization_id", "workspace_id", "tracer_project_id"),
+            "tracer_project_id",
+            False,
+        ),
+        (
+            "organization_id, created_at, id",
+            ("organization_id", "workspace_id", "tracer_project_id"),
+            "tracer_project_id",
+            False,
+        ),
+        ("id", ("project_id",), "project_id", False),
+        ("", ("project_id",), "project_id", False),
+        ("tuple(project_id, id)", ("project_id",), "project_id", False),
+    ],
+)
+def test_estimates_are_reported_only_for_project_leading_sort_keys(
+    sorting_key, ownership, project_column, local
+):
+    assert service._tenant_local(sorting_key, ownership, project_column) is local

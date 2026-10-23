@@ -1564,6 +1564,8 @@ SQL_WORKBENCH_MAX_ACTOR_QUERIES_24H = int(os.getenv("SQL_WORKBENCH_MAX_ACTOR_QUE
 SQL_WORKBENCH_MAX_ORG_QUERIES_24H = int(os.getenv("SQL_WORKBENCH_MAX_ORG_QUERIES_24H", "30000"))
 SQL_WORKBENCH_MAX_ACTOR_RESULT_BYTES_24H = int(os.getenv("SQL_WORKBENCH_MAX_ACTOR_RESULT_BYTES_24H", str(128 * 1024 * 1024)))
 SQL_WORKBENCH_MAX_ORG_RESULT_BYTES_24H = int(os.getenv("SQL_WORKBENCH_MAX_ORG_RESULT_BYTES_24H", str(512 * 1024 * 1024)))
+# Advisory pre-run estimates per user per minute (index analysis only).
+SQL_WORKBENCH_ESTIMATES_PER_MINUTE = int(os.getenv("SQL_WORKBENCH_ESTIMATES_PER_MINUTE", "30"))
 _sql_audit_retention = os.getenv("SQL_WORKBENCH_AUDIT_RETENTION_DAYS", "").strip()
 SQL_WORKBENCH_AUDIT_RETENTION_DAYS = int(_sql_audit_retention) if _sql_audit_retention else None
 

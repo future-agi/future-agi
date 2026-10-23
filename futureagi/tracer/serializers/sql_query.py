@@ -112,6 +112,24 @@ class SQLExecutionSerializer(serializers.Serializer):
     expired = serializers.BooleanField()
 
 
+class SQLEstimateSourceSerializer(serializers.Serializer):
+    dataset = serializers.CharField()
+    estimated = serializers.BooleanField()
+    parts = serializers.IntegerField(allow_null=True)
+    marks = serializers.IntegerField(allow_null=True)
+    max_rows = serializers.IntegerField(allow_null=True)
+    reason = serializers.CharField(allow_blank=True)
+
+
+class SQLEstimateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=("ok", "unavailable"))
+    reason = serializers.CharField(allow_blank=True)
+    sources = SQLEstimateSourceSerializer(many=True)
+    max_rows_to_read = serializers.IntegerField()
+    exceeds_scan_bound = serializers.BooleanField(allow_null=True)
+    elapsed_ms = serializers.IntegerField()
+
+
 class SQLHistorySerializer(serializers.Serializer):
     items = SQLExecutionSerializer(many=True)
     has_more = serializers.BooleanField()

@@ -290,6 +290,38 @@ def intrinsic_ownership(scope: Scope) -> dict[str, str]:
     return result
 
 
+# Per physical relation: (catalog dataset it is reported as, the ownership
+# columns a scope pins, the column that identifies one project). An index
+# estimate counts whole granules, so it is tenant-local only when the sort key
+# starts with ownership columns down to the project column; otherwise the
+# granules it counts hold other projects' rows and the numbers are withheld.
+ESTIMATE_SOURCES = {
+    "spans": ("spans", ("project_id", "org_id"), "project_id"),
+    "traces": ("traces", ("project_id",), "project_id"),
+    "trace_sessions": ("sessions", ("project_id",), "project_id"),
+    "end_users": ("users", ("project_id", "organization_id"), "project_id"),
+    "tracer_eval_logger": (
+        "eval_results",
+        ("custom_eval_config_id",),
+        "custom_eval_config_id",
+    ),
+    "tracer_eval_logger_v2": (
+        "eval_results",
+        ("custom_eval_config_id",),
+        "custom_eval_config_id",
+    ),
+    "model_hub_score": (
+        "annotations",
+        ("organization_id", "workspace_id", "tracer_project_id"),
+        "tracer_project_id",
+    ),
+    **dict.fromkeys(
+        DERIVED_METRIC_RELATIONS,
+        ("derived_metrics", ("org_id", "workspace_id", "project_id"), "project_id"),
+    ),
+}
+
+
 def additional_table_filters(scope: Scope) -> str:
     """The per-query ``additional_table_filters`` map with database-qualified keys."""
 

@@ -27,6 +27,7 @@ import { enqueueSnackbar } from "notistack";
 import { errorMessage, sqlApi } from "./api";
 import useSQLExecution from "./useSQLExecution";
 import QueryResults from "./QueryResults";
+import QueryEstimate from "./QueryEstimate";
 
 const INITIAL_SQL =
   "SELECT model, count() AS spans, sum(total_tokens) AS tokens\nFROM spans\nGROUP BY model\nORDER BY spans DESC";
@@ -436,6 +437,12 @@ export default function SQLQueryView() {
                 automaticLayout: true,
                 tabSize: 2,
               }}
+            />
+            <QueryEstimate
+              projectId={observeId}
+              sql={sql}
+              hours={hours}
+              enabled={Boolean(catalog)}
             />
             <Stack
               direction="row"

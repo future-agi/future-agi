@@ -14,6 +14,7 @@ from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tracer.serializers.sql_query import (
     SQLCatalogSerializer,
+    SQLEstimateSerializer,
     SQLExecutionSerializer,
     SQLExportSerializer,
     SQLHistorySerializer,
@@ -123,6 +124,14 @@ class SQLQueryViewSet(SQLViewMixin, ViewSet):
     def run(self, request):
         job = service.submit(self.actor(), **request.validated_data)
         return Response(service.snapshot(job), status=202)
+
+    @action(detail=False, methods=["post"])
+    @validated_request(
+        request_serializer=SQLRunSerializer, responses={200: SQLEstimateSerializer}
+    )
+    def estimate(self, request):
+        """Advisory index estimate of a query; never admits or blocks a run."""
+        return Response(service.estimate(self.actor(), **request.validated_data))
 
     @action(detail=False, methods=["post"], url_path="run-saved")
     @validated_request(

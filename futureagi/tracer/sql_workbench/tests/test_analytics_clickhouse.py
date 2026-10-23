@@ -13,6 +13,7 @@ import ipaddress
 import os
 import secrets
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -388,16 +389,40 @@ class Live:
         return {row[0]: tuple(row[1:]) for row in self.rows(sql)}
 
 
-@pytest.fixture(scope="module")
-def live():
+# Sort keys of the small security fixture, and the leading key columns of the
+# production CH25 schema (tracer/services/clickhouse/v2/schema/*.sql: spans
+# lead with project_id, then columns this fixture does not have; annotations
+# keep the legacy label-first key), which the estimate's tenant-key rule reads.
+FIXTURE_KEYS = {
+    "spans": "(project_id, id)",
+    "trace_sessions": "trace_session_id",
+    "end_users": "end_user_id",
+}
+PRODUCTION_KEYS = {
+    "spans": "(project_id, id) PARTITION BY toDate(start_time)",
+    "traces": "(project_id, id) PARTITION BY toYYYYMM(created_at)",
+    "trace_sessions": "(project_id, trace_session_id)",
+    "end_users": "(project_id, end_user_id)",
+    "tracer_eval_logger_v2": (
+        "(custom_eval_config_id, created_at, id) PARTITION BY toYYYYMM(created_at)"
+    ),
+    "model_hub_score": "(label_id, created_at, id)",
+}
+
+
+@contextmanager
+def provisioned(keys=None, *, label="an"):
+    """Two seeded tenants in a fresh database, read by an ephemeral locked
+    service principal exactly as ``provision_sql_service`` creates it."""
     from django.test import override_settings
 
     from conftest import _ch_test_native_client
     from tracer.sql_workbench.provision import service_access_ddl
 
+    keys = FIXTURE_KEYS if keys is None else keys
     tables = _sibling("test_clickhouse").TABLES
     assigned = os.environ.get("SQL_WORKBENCH_TEST_DATABASE") or "test_sql"
-    database = f"{assigned}_an_{uuid4().hex[:10]}"
+    database = f"{assigned}_{label}_{uuid4().hex[:10]}"
     eval_table = "tracer_eval_logger_v2"
     base = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
     base -= timedelta(hours=3)
@@ -406,13 +431,8 @@ def live():
         principal = None
         try:
             for table, columns in tables.items():
-                key = {
-                    "spans": "(project_id, id)",
-                    "trace_sessions": "trace_session_id",
-                    "end_users": "end_user_id",
-                }.get(table, "id")
                 admin.execute(
-                    f"CREATE TABLE {database}.{table} ({columns}) ENGINE=ReplacingMergeTree(_version) ORDER BY {key}"
+                    f"CREATE TABLE {database}.{table} ({columns}) ENGINE=ReplacingMergeTree(_version) ORDER BY {keys.get(table, 'id')}"
                 )
             admin.execute(
                 f"CREATE TABLE {database}.derived_metrics ({DERIVED_METRICS_TABLE}) ENGINE=MergeTree ORDER BY (project_id, metric_id, window_start)"
@@ -469,11 +489,27 @@ def live():
                 patch.setenv("SQL_WORKBENCH_CH_USER", principal)
                 patch.setenv("SQL_WORKBENCH_CH_PASSWORD", password)
                 patch.setenv("SQL_WORKBENCH_CH_SECURE", "false")
-                yield Live(owned, foreign, scope)
+                yield Live(owned, foreign, scope), admin
         finally:
             if principal:
                 admin.execute(f"DROP USER {principal}")
             admin.execute(f"DROP DATABASE {database} SYNC")
+
+
+@pytest.fixture(scope="module")
+def _live_and_admin():
+    with provisioned() as pair:
+        yield pair
+
+
+@pytest.fixture(scope="module")
+def live(_live_and_admin):
+    return _live_and_admin[0]
+
+
+@pytest.fixture(scope="module")
+def live_admin(_live_and_admin):
+    return _live_and_admin[1]
 
 
 # ---------------------------------------------------------------------------
@@ -672,3 +708,166 @@ def test_windowed_subqueries_joins_and_ctes_stay_scoped(live):
     assert live.rows("SELECT max(latency_ms) OVER () AS m FROM spans LIMIT 1") == [
         [max(s.latency for s in spans)]
     ]
+
+
+# ---------------------------------------------------------------------------
+# Pre-run estimate: EXPLAIN ESTIMATE of the compiled scoped SQL on the locked
+# principal, summarized so another project's volume cannot be read from it.
+
+ESTIMATED_QUERIES = [
+    "SELECT count() FROM spans",
+    "SELECT * FROM traces",
+    "SELECT * FROM sessions",
+    "SELECT * FROM users",
+    "SELECT * FROM eval_results",
+    "SELECT * FROM annotations",
+    "WITH spend AS (SELECT user_id, sum(cost) AS c FROM spans GROUP BY user_id) "
+    "SELECT u.external_id, dense_rank() OVER (ORDER BY s.c DESC) AS r "
+    "FROM spend AS s JOIN users AS u ON s.user_id = u.id",
+]
+
+
+def _estimates(value):
+    from tracer.sql_workbench import runner
+    from tracer.sql_workbench.service import summarize_estimate
+
+    scope = value.scope
+    raw, safe = {}, {}
+    for sql in ESTIMATED_QUERIES:
+        result = runner.estimate(
+            compile_query(sql, scope),
+            table_filters=additional_table_filters(scope),
+            database=scope.database,
+        )
+        raw[sql] = {item["table"]: item["rows"] for item in result["tables"]}
+        safe[sql] = summarize_estimate(result, scope.database)
+    return raw, safe
+
+
+def test_estimate_runs_on_the_locked_principal_and_hides_other_projects_volume():
+    """Measured on production sort keys: the reported estimate is identical
+    after another project's volume grows 10x and after merges mix both
+    projects into the same parts and granules, while the raw granule row
+    count that EXPLAIN ESTIMATE returns does change (so it is never shown)."""
+    with provisioned(PRODUCTION_KEYS, label="est") as (value, admin):
+        scope, foreign = value.scope, value.foreign
+        database = scope.database
+        raw_before, before = _estimates(value)
+        by_dataset = {
+            sql: {entry["dataset"]: entry for entry in summary["sources"]}
+            for sql, summary in before.items()
+        }
+        for sql, summary in before.items():
+            assert summary["status"] == "ok", sql
+            assert summary["exceeds_scan_bound"] is False, sql
+        spans = by_dataset["SELECT count() FROM spans"]["spans"]
+        assert spans["estimated"] and spans["marks"] >= 1
+        # An upper bound in whole granules, never below the owned rows.
+        assert spans["max_rows"] % 8192 == 0
+        assert spans["max_rows"] >= len(value.owned.spans)
+        for sql, dataset in [
+            ("SELECT * FROM traces", "traces"),
+            ("SELECT * FROM sessions", "sessions"),
+            ("SELECT * FROM users", "users"),
+            ("SELECT * FROM eval_results", "eval_results"),
+        ]:
+            assert by_dataset[sql][dataset]["estimated"], (sql, by_dataset[sql])
+        # The label-first annotations index is shared across projects.
+        annotations = by_dataset["SELECT * FROM annotations"]["annotations"]
+        assert annotations["estimated"] is False
+        assert annotations["max_rows"] is None
+        base = scope.start + timedelta(days=3)
+        for copy in range(9):
+            extra = replace(
+                build_tenant(base, scale=1000, prefix=f"foreign-x{copy}"),
+                org=foreign.org,
+                workspace=foreign.workspace,
+                project=foreign.project,
+                configs=foreign.configs,
+                label=foreign.label,
+                metric=foreign.metric,
+            )
+            insert_tenant(admin, database, extra, scope.eval_table)
+        assert admin.execute(
+            f"SELECT count() FROM {database}.spans WHERE project_id = %(p)s",
+            {"p": foreign.project},
+        ) == [(10 * len(foreign.spans),)]
+        _, grown = _estimates(value)
+        assert grown == before
+        for table in PRODUCTION_KEYS:
+            admin.execute(f"OPTIMIZE TABLE {database}.{table} FINAL")
+        raw_merged, merged = _estimates(value)
+        assert merged == before
+        spans_sql = "SELECT count() FROM spans"
+        print(
+            "estimate side channel: raw spans granule rows "
+            f"{raw_before[spans_sql]['spans']} -> {raw_merged[spans_sql]['spans']} "
+            f"after 10x foreign volume and merges; reported {spans}"
+        )
+        assert raw_merged[spans_sql]["spans"] > raw_before[spans_sql]["spans"]
+
+
+def test_a_run_waits_out_brief_contention_for_the_principal(
+    live, live_admin, monkeypatch
+):
+    """Both of the principal's concurrent-query slots are held (as an advisory
+    estimate or another run can do for a moment); a run started meanwhile is
+    turned away by ClickHouse with code 202, retried, and then succeeds."""
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from clickhouse_driver import Client
+
+    from tracer.sql_workbench import runner
+
+    principal = os.environ["SQL_WORKBENCH_CH_USER"]
+    errors = []
+
+    def hold():
+        client = Client(**runner.connection_config())
+        try:
+            client.execute("SELECT sleep(3)")
+        except Exception as exc:  # reported below, never swallowed
+            errors.append(exc)
+        finally:
+            client.disconnect()
+
+    holders = [threading.Thread(target=hold) for _ in range(2)]
+    for holder in holders:
+        holder.start()
+    try:
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            held = live_admin.execute(
+                "SELECT count() FROM system.processes WHERE user = %(user)s",
+                {"user": principal},
+            )[0][0]
+            if held == 2:
+                break
+            time.sleep(0.05)
+        assert held == 2, "both principal slots were not observed as held"
+        retries = []
+        # Only the runner's own clock is observed; other threads keep time.sleep.
+        monkeypatch.setattr(
+            runner,
+            "time",
+            SimpleNamespace(
+                monotonic=time.monotonic,
+                sleep=lambda s: (retries.append(s), time.sleep(s)),
+            ),
+        )
+        # The test exercises the mechanism; it must outlast the 3 s holders.
+        monkeypatch.setattr(runner, "START_RETRY_SECONDS", 10.0)
+        started = time.monotonic()
+        result = live.run("SELECT count() AS n FROM spans")
+        waited = time.monotonic() - started
+    finally:
+        for holder in holders:
+            holder.join(timeout=10)
+    assert errors == []
+    assert result["rows"] == [[len(live.owned.spans)]]
+    assert retries, "the run was never turned away, so nothing was proven"
+    print(
+        f"principal contention: {len(retries)} retries, run finished in {waited:.2f} s"
+    )
