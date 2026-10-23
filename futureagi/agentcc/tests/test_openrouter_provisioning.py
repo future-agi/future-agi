@@ -13,6 +13,7 @@ import io
 import itertools
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -41,6 +42,52 @@ COMMAND = "agentcc_managed_upstream_keys"
 # A test value, not a real provisioning key.
 PROVISIONING_KEY = "sk-or-v1-test-provisioning-key-not-a-real-secret"
 Status = AgentccManagedUpstreamKey.Status
+GO_MOD_GO_LINE = re.compile(r"^go (\d+\.\d+(?:\.\d+)?)\s*$", re.MULTILINE)
+
+
+def _build_mockup(go, binary):
+    """Build cmd/agentcc-mockup offline with the first Go the host already has.
+
+    GOPROXY=off keeps the build off the network, so the go command cannot
+    download a toolchain, and which one it may use depends on the host. The
+    mock is a test helper: any Go that meets go.mod's `go` line builds it.
+    Tried in order, the first that builds wins:
+      1. GOTOOLCHAIN as the caller has it (by default auto: go.mod's
+         `toolchain` line, if that toolchain is in the module cache);
+      2. GOTOOLCHAIN=local: the Go on PATH, if it meets the `go` line;
+      3. GOTOOLCHAIN=go<the go line>, if it is in the module cache.
+    A host with Go 1.25.0 or newer on PATH and no go1.26.10 cached builds
+    with (2); a host with go1.24.3 on PATH and go1.25.0 in the module cache
+    builds with (3).
+    """
+    attempts = [(None, "GOTOOLCHAIN as set")]
+    match = GO_MOD_GO_LINE.search((GATEWAY_DIR / "go.mod").read_text("utf-8"))
+    go_line = match.group(1) if match else None
+    if go_line and go_line.count(".") == 1:
+        go_line += ".0"
+    for toolchain in ("local", f"go{go_line}" if go_line else None):
+        if toolchain and toolchain != os.environ.get("GOTOOLCHAIN"):
+            attempts.append((toolchain, f"GOTOOLCHAIN={toolchain}"))
+    failures = []
+    for toolchain, label in attempts:
+        env = {**os.environ, "GOPROXY": "off", "GOFLAGS": "-buildvcs=false"}
+        if toolchain:
+            env["GOTOOLCHAIN"] = toolchain
+        build = subprocess.run(
+            [go, "build", "-o", str(binary), "./cmd/agentcc-mockup"],
+            cwd=GATEWAY_DIR,
+            env=env,
+            capture_output=True,
+            timeout=600,
+        )
+        if build.returncode == 0:
+            return
+        stderr = build.stderr.decode(errors="replace").strip()
+        failures.append(f"{label} (exit {build.returncode}): {stderr}")
+    pytest.fail(
+        "go build ./cmd/agentcc-mockup failed offline with each Go tried:\n"
+        + "\n".join(failures)
+    )
 
 
 @pytest.fixture(scope="session")
@@ -51,14 +98,7 @@ def mockup(tmp_path_factory):
         pytest.skip("needs Go and agentcc-gateway/cmd/agentcc-mockup to build the mock")
     work = tmp_path_factory.mktemp("agentcc-mockup")
     binary = work / "agentcc-mockup"
-    subprocess.run(
-        [go, "build", "-o", str(binary), "./cmd/agentcc-mockup"],
-        cwd=GATEWAY_DIR,
-        env={**os.environ, "GOPROXY": "off", "GOFLAGS": "-buildvcs=false"},
-        check=True,
-        capture_output=True,
-        timeout=600,
-    )
+    _build_mockup(go, binary)
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
