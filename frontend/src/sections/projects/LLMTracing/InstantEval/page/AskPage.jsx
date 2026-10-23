@@ -299,7 +299,10 @@ export default function AskPage() {
   const switchUnit = (nextUnit) => {
     if (nextUnit === unit) return;
     const moved = scopeForUnit(scope, nextUnit);
-    editScope(moved.scope, moved.notice);
+    // newQuestion drops the hand-over's seed from the URL, so the moved scope
+    // is kept under the key the page reads next ("own"), not the seed's: under
+    // the seed it was ignored and the composer fell back to the past week.
+    setEdited({ key: "own", scope: moved.scope, notice: moved.notice });
     newQuestion(nextUnit);
   };
 

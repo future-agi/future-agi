@@ -1626,6 +1626,22 @@ describe("a new question's date and filters", () => {
     );
   });
 
+  it("keeps an edited scope when the unit changes on a seeded page", async () => {
+    // The seed is in the URL (its hand-over gone), and switching the unit
+    // drops it: the moved scope must still be the one shown.
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?new=1&unit=sessions&tab=sessions&seed=gone`,
+    );
+    await screen.findByText(/104,233 sessions in the Sessions view/);
+    fireEvent.click(screen.getByRole("button", { name: "Past 7D" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Past 30D" }));
+    fireEvent.click(screen.getByRole("button", { name: "Traces" }));
+    expect(where().params).toMatchObject({ unit: "traces" });
+    expect(
+      await screen.findByRole("button", { name: "Past 30D" }),
+    ).toBeInTheDocument();
+  });
+
   it("remembers the sample size picked after a turn to every row", async () => {
     fakes.estimate.mockResolvedValue({
       ...ESTIMATE,
