@@ -33,7 +33,6 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
 	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
-	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc"
@@ -471,8 +470,7 @@ func (h *otlpHandler) export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	}
 	h.s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs)
 
-	payloadBytes := (&ptrace.ProtoMarshaler{}).TracesSize(req.Traces()) // what MarshalProto would write
-	h.s.emitUsage(ctx, req.Traces(), int64(payloadBytes))
+	h.s.emitUsage(ctx, req.Traces())
 
 	resp = ptraceotlp.NewExportResponse()
 	setProjectPartialSuccess(resp, rejectedSpans)
@@ -619,7 +617,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs)
 	enqueued = len(rows) > 0
 
-	s.emitUsage(r.Context(), req.Traces(), int64(len(body)))
+	s.emitUsage(r.Context(), req.Traces())
 
 	// Empty ExportTraceServiceResponse — same wire shape, encoded to match
 	// the request's content-type. The spec requires the response media type

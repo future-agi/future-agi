@@ -138,15 +138,32 @@ func projectNameFromHeader(header string, lines []string) (string, error) {
 	case strings.ContainsRune(v, ','):
 		return "", fmt.Errorf("%s holds a comma-separated list; send one project name without commas", header)
 	}
-	if err := validateProjectName(v, header); err != nil {
+	if err := validateProjectHeaderName(v, header); err != nil {
 		return "", err
 	}
 	return v, nil
 }
 
-// validateProjectName shares the value rules between headers and resources.
-// Header trimming and comma/list rejection stay in the header parser: a
-// resource attribute names one project verbatim, and may contain a comma.
+// validateProjectHeaderName keeps the stricter header transport policy out of
+// resource-name resolution. App-created names containing variation selectors or
+// format characters (e.g. deploy ✈️ or team 👩‍💻) must use resource attributes.
+func validateProjectHeaderName(v, label string) error {
+	for _, r := range v {
+		switch {
+		case unicode.Is(unicode.Cf, r):
+			return fmt.Errorf("%s contains an invisible format character (%U)", label, r)
+		case unicode.In(r, unicode.Zl, unicode.Zp):
+			return fmt.Errorf("%s contains a line or paragraph separator (%U)", label, r)
+		case unicode.In(r, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector):
+			return fmt.Errorf("%s contains an invisible character (%U)", label, r)
+		}
+	}
+	return validateProjectName(v, label)
+}
+
+// validateProjectName preserves resource names verbatim, including format and
+// variation characters within visible names, commas and significant spaces.
+// These are collector ingestion safeguards, not new app create/rename rules.
 func validateProjectName(v, label string) error {
 	if !utf8.ValidString(v) {
 		return fmt.Errorf("%s is not valid UTF-8", label)
@@ -155,15 +172,8 @@ func validateProjectName(v, label string) error {
 		return fmt.Errorf("%s is longer than %d characters", label, maxProjectNameChars)
 	}
 	for _, r := range v {
-		switch {
-		case unicode.IsControl(r):
+		if unicode.IsControl(r) {
 			return fmt.Errorf("%s contains a control character (%U)", label, r)
-		case unicode.Is(unicode.Cf, r):
-			return fmt.Errorf("%s contains an invisible format character (%U)", label, r)
-		case unicode.In(r, unicode.Zl, unicode.Zp):
-			return fmt.Errorf("%s contains a line or paragraph separator (%U)", label, r)
-		case unicode.In(r, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector):
-			return fmt.Errorf("%s contains an invisible character (%U)", label, r)
 		}
 	}
 	if !hasVisibleRune(v) {
@@ -178,7 +188,8 @@ func validateProjectName(v, label string) error {
 // like an inner space.
 func hasVisibleRune(v string) bool {
 	for _, r := range v {
-		blank := unicode.IsSpace(r) || unicode.Is(unicode.M, r) ||
+		blank := unicode.IsSpace(r) || unicode.In(r, unicode.M, unicode.Cf,
+			unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector) ||
 			r == '\u2800' || r == '\U0001D159' // BRAILLE PATTERN BLANK, MUSICAL SYMBOL NULL NOTEHEAD
 		if !blank {
 			return true

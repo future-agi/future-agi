@@ -220,9 +220,45 @@ until the no-progress timeout refuses them.
 Quota refusals are HTTP 429 without Retry-After and gRPC RESOURCE_EXHAUSTED
 without RetryInfo. The Go SDK and Collector otlp exporter do not retry that
 gRPC status; some other SDKs do. Temporary project resolution failures are
-503/UNAVAILABLE and are not negatively cached. Deterministic value/check
-failures may drop resources; their rejected span count is reported in OTLP
-partial success. Fully dropped batches emit no ingestion usage.
+503 + Retry-After: 1 / UNAVAILABLE and are not negatively cached. This includes
+an authentication-cache entry expired, evicted or replaced before or during
+project lookup/create, even a same-workspace replacement. The old lookup cannot merge
+into the replacement; the failed export enqueues no spans and emits no usage.
+Retry authenticates again; a revoked key remains rejected. Project creation
+may already have succeeded, so retry resolves the persisted project.
+Deterministic value/check failures may drop resources; their rejected span
+count is reported in OTLP partial success.
+
+Resource `project_name` values are kept verbatim, including significant spaces,
+commas, and format/variation characters in visible names such as `deploy ✈️`
+and `team 👩‍💻`. This applies both to existing and newly created projects.
+Ingest still rejects invalid UTF-8, names over 255 Unicode characters, Unicode
+Cc controls, and entirely invisible/blank names. These are collector safeguards:
+the app serializers accept some invisible/control names, trim edge whitespace,
+and are not changed here. The stricter header-only rules (including rejection
+of format/variation characters and line separators) do not apply to resource
+names. Use resource attributes for names that cannot be sent in a header.
+
+**Draft metering compatibility change — product/reviewer decision pending.**
+The byte-unit change below is proposed in this draft, not billing/product
+sign-off or release readiness. Its technical precedent is the existing gRPC
+accepted/stamped protobuf calculation; that precedent is not approval to change
+successful HTTP usage totals.
+
+Storage-mode ingestion usage (`observe_add.amount`) uses the canonical OTLP
+protobuf size of accepted traces **after** project-header filling, org/project
+stamping and permanent resource drops. HTTP protobuf, HTTP JSON, either with
+gzip, and gRPC use the same calculation. It includes accepted resource/scope
+metadata and stamped attributes; it is decoded semantic bytes, not wire bytes,
+JSON text length, or compressed/stored ClickHouse table bytes. This preserves
+gRPC's existing byte basis and intentionally replaces HTTP's decompressed-body
+length, including on full success for protobuf/JSON/plain/gzip. It is not raw
+JSON or compressed-body length: gzip already used the decompressed body before
+this change. JSON formatting no longer changes usage, gzip ratio still does not,
+and rejected resources never contribute. Event-mode usage still
+counts accepted distinct traces plus accepted spans. Fully dropped or empty
+batches emit no ingestion usage. Usage follows enqueue, not confirmation of a
+durable database insert; existing retry/dedup semantics are unchanged.
 
 Standalone uses GOMEMLIMIT=512MiB: a 232 MiB ingest budget and about 154.7 MiB
 work pool. 8,192 spans with 50 short string attributes each can exceed it;

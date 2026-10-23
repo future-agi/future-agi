@@ -44,7 +44,7 @@ func namedTraces(names ...string) ptrace.Traces {
 	return td
 }
 func TestResourceProjectValidationBeforeLookup(t *testing.T) {
-	for _, name := range []string{strings.Repeat("x", 60<<10), strings.Repeat("x", 256), strings.Repeat("界", 256), "bad\x00name", "bad​name", "⠀", "bad name", string([]byte{0xff})} {
+	for _, name := range []string{strings.Repeat("x", 60<<10), strings.Repeat("x", 256), strings.Repeat("界", 256), "bad\x00name", "bad\tname", "bad\u0085name", "​", "⠀", " ", string([]byte{0xff})} {
 		r := &recoveringProjectResolver{}
 		a, result := projectTestAuth(r)
 		if _, err := StampResourceAttrs(context.Background(), a, "key", namedTraces("valid", name), result); err == nil {

@@ -30,6 +30,16 @@ var (
 	ErrProjectResolutionUnavailable = errors.New("project resolution temporarily unavailable")
 )
 
+// ProjectAuthChangedError means the authenticated cache entry disappeared or
+// was replaced while project persistence was in flight. The attempt must fail
+// closed, but retry with fresh authentication rather than permanently drop data.
+type ProjectAuthChangedError struct{}
+
+func (*ProjectAuthChangedError) Error() string {
+	return "project resolution authentication cache missing or replaced; retry"
+}
+func (*ProjectAuthChangedError) Unwrap() error { return ErrProjectResolutionUnavailable }
+
 // Authenticator is the top-level auth facade. Safe for concurrent use.
 type Authenticator struct {
 	cfg  Config
@@ -106,6 +116,15 @@ func (a *Authenticator) keyResolver() interface {
 	return a.pg
 }
 
+// InvalidateKey removes a hashed CacheKey after revocation or explicit
+// invalidation. In-flight project lookups cannot repopulate this entry; the next
+// request must authenticate again. It is also used by WatchRevocations.
+func (a *Authenticator) InvalidateKey(cacheKey string) {
+	if a != nil {
+		a.cache.m.Delete(cacheKey)
+	}
+}
+
 // WatchRevocations evicts cache entries on two Redis channels: fi:auth:revoke
 // (payload = cache key) drops the whole entry; fi:project:invalidate
 // (payload = project_id) drops that mapping from every entry. Blocks until ctx
@@ -125,7 +144,7 @@ func (a *Authenticator) WatchRevocations(ctx context.Context) {
 			}
 			switch msg.Channel {
 			case revocationChannel:
-				a.cache.m.Delete(msg.Payload)
+				a.InvalidateKey(msg.Payload)
 				a.log.Debug("revoked key evicted from cache", "cache_key", msg.Payload[:min(len(msg.Payload), 8)]+"…")
 			case projectInvalidateChannel:
 				if n := a.cache.evictProjectID(msg.Payload); n > 0 {
@@ -215,6 +234,9 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 	if result.OrgID == "" || result.WorkspaceID == "" {
 		return errors.New("resolve projects requires authenticated organization and workspace scope")
 	}
+	if a.cache.projectEntry(cacheKey, result) == nil {
+		return &ProjectAuthChangedError{}
+	}
 	missing, scoped := result.MissingProjectsInWorkspace(result.WorkspaceID, names)
 	if !scoped {
 		return errors.New("resolve projects workspace scope does not match authentication result")
@@ -236,9 +258,8 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 		return fmt.Errorf("%w: %w", ErrProjectResolutionUnavailable, err)
 	}
 
-	if !result.SetProjectsInWorkspace(result.WorkspaceID, resolved) ||
-		!a.cache.addProjectsScoped(cacheKey, result.OrgID, result.WorkspaceID, resolved) {
-		return errors.New("resolve projects authentication cache scope changed during lookup")
+	if !a.cache.addProjectsScoped(cacheKey, result, resolved) {
+		return &ProjectAuthChangedError{}
 	}
 
 	// Auto-create any still-missing projects via write pool
@@ -246,12 +267,19 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 		if _, ok := result.GetProjectInWorkspace(result.WorkspaceID, name); ok {
 			continue
 		}
+		// Deduplicate only within this authenticated result. A fresh request
+		// must not inherit an old in-flight create after same-scope replacement.
 		sfKey := strings.Join(
-			[]string{cacheKey, result.OrgID, result.WorkspaceID, name, "observe"}, "\x00",
+			[]string{cacheKey, fmt.Sprintf("%p", result), result.OrgID, result.WorkspaceID, name, "observe"}, "\x00",
 		)
 		val, err, _ := a.sfProj.Do(sfKey, func() (any, error) {
 			return resolver.GetOrCreateProject(ctx, result.OrgID, result.WorkspaceID, name, "observe")
 		})
+		// A stale authentication result must not acknowledge a permanent drop
+		// either. Retry under the current key scope before classifying the name.
+		if a.cache.projectEntry(cacheKey, result) == nil {
+			return &ProjectAuthChangedError{}
+		}
 		if err != nil {
 			a.log.Warn("project auto-create failed", "name", name, "org", result.OrgID, "err", err)
 			// Only deterministic value/check failures are negatively cached.
@@ -266,9 +294,8 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 		}
 		id := val.(string)
 		created := map[string]string{name: id}
-		if !result.SetProjectsInWorkspace(result.WorkspaceID, created) ||
-			!a.cache.addProjectsScoped(cacheKey, result.OrgID, result.WorkspaceID, created) {
-			return errors.New("created project cache scope changed during lookup")
+		if !a.cache.addProjectsScoped(cacheKey, result, created) {
+			return &ProjectAuthChangedError{}
 		}
 	}
 
