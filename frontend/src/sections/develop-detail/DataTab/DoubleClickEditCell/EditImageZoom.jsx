@@ -285,6 +285,9 @@ const EditImageZoom = ({
                       <Typography variant="body2" color="text.secondary">
                         Click to upload an image
                       </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Supported formats: JPEG, PNG, WebP, BMP, TIFF
+                      </Typography>
                     </Box>
                   </Box>
                   <Box
