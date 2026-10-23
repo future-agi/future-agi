@@ -50817,48 +50817,6 @@
             },
             "parameters": []
         },
-        "/simulate/api/harness-compositions/": {
-            "post": {
-                "operationId": "simulate_api_harness-compositions_create",
-                "description": "Compose a release suite with an agent through a canonical binding, no adaptation.",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/HarnessReleaseAgentRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/HarnessCompositionCreateResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ApiTextErrorResponse"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "simulate"
-                ],
-                "x-runtime-request-validation": true,
-                "x-runtime-response-validation": true
-            },
-            "parameters": []
-        },
         "/simulate/api/harness-environments/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_list",
@@ -51374,6 +51332,54 @@
                     "type": "string"
                 }
             ]
+        },
+        "/simulate/api/harness-hosted-agents/": {
+            "post": {
+                "operationId": "simulate_api_harness-hosted-agents_create",
+                "description": "Compose our own agent with a release suite; it answers the composed environment.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessHostedAgentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessHostedAgentResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
         },
         "/simulate/api/harness-jobs/": {
             "get": {
@@ -120656,7 +120662,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 5,
+                    "maximum": 25,
                     "minimum": 1,
                     "x-nullable": true
                 }
@@ -121386,7 +121392,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 5,
+                    "maximum": 25,
                     "minimum": 1,
                     "x-nullable": true
                 }
@@ -121739,7 +121745,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 5,
+                    "maximum": 25,
                     "minimum": 1
                 },
                 "commit_message": {
@@ -124886,7 +124892,8 @@
                         "retell",
                         "retell_chat",
                         "phone",
-                        "auto"
+                        "auto",
+                        "hosted_agent"
                     ]
                 },
                 "mode": {
@@ -124958,6 +124965,13 @@
                     "type": "string",
                     "maxLength": 255,
                     "minLength": 1
+                },
+                "parallelism": {
+                    "title": "Parallelism",
+                    "description": "Worlds the composition's runs use side by side; admission may lower it. Omitted: as many as this deployment admits.",
+                    "type": "integer",
+                    "maximum": 8,
+                    "minimum": 1
                 }
             }
         },
@@ -124994,8 +125008,10 @@
                     "title": "Metadata",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "runtime": {
@@ -125659,20 +125675,6 @@
                     "title": "Usage limit",
                     "type": "object",
                     "x-nullable": true
-                }
-            }
-        },
-        "HarnessCompositionCreateResponse": {
-            "required": [
-                "id"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "description": "The composition, an environment id.",
-                    "type": "string",
-                    "format": "uuid"
                 }
             }
         },
@@ -126896,6 +126898,25 @@
                 }
             }
         },
+        "HarnessCompositionRule": {
+            "description": "The environment's agent_policy rules no scenario in this suite grades.",
+            "required": [
+                "id",
+                "text"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "text": {
+                    "title": "Text",
+                    "type": "string"
+                }
+            }
+        },
         "HarnessCompositionScenario": {
             "required": [
                 "key",
@@ -126932,6 +126953,7 @@
                 "name",
                 "parent_digest",
                 "policy_profile",
+                "unscored_agent_rules",
                 "scenarios"
             ],
             "type": "object",
@@ -126955,6 +126977,13 @@
                 "policy_profile": {
                     "title": "Policy profile",
                     "type": "object"
+                },
+                "unscored_agent_rules": {
+                    "description": "The environment's agent_policy rules no scenario in this suite grades.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessCompositionRule"
+                    }
                 },
                 "scenarios": {
                     "type": "array",
@@ -127775,10 +127804,8 @@
                     "title": "Scorer",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "object",
-                        "x-nullable": true,
-                        "x-json-value": true,
-                        "description": "Any valid JSON value."
+                        "type": "string",
+                        "x-nullable": true
                     }
                 },
                 "runtime": {
@@ -127994,6 +128021,76 @@
                 "environment_faults": {
                     "title": "Environment faults",
                     "type": "integer"
+                }
+            }
+        },
+        "HarnessHostedAgentRequest": {
+            "required": [
+                "suite_id",
+                "name",
+                "instructions",
+                "model",
+                "idempotency_key"
+            ],
+            "type": "object",
+            "properties": {
+                "suite_id": {
+                    "title": "Suite id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "instructions": {
+                    "title": "Instructions",
+                    "type": "string",
+                    "maxLength": 65536,
+                    "minLength": 1
+                },
+                "model": {
+                    "title": "Model",
+                    "type": "string",
+                    "enum": [
+                        "vertex_ai/gemini-3.7-flash",
+                        "vertex_ai/gemini-3.8-flash"
+                    ]
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "parallelism": {
+                    "title": "Parallelism",
+                    "description": "Worlds the composition's runs use side by side; admission may lower it. Omitted: as many as this deployment admits.",
+                    "type": "integer",
+                    "maximum": 8,
+                    "minimum": 1
+                }
+            }
+        },
+        "HarnessHostedAgentResponse": {
+            "required": [
+                "id",
+                "agent_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "description": "The composition, an environment id.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },
