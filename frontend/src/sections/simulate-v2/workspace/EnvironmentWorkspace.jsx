@@ -294,9 +294,14 @@ export default function EnvironmentWorkspace() {
     }
   }, [env, state.myEnvironments, dispatch]);
 
+  /* The conversation belongs to one environment: opening another (the same
+     screen, a new id) starts its own, instead of greeting with the last one's name. */
+  const turnsEnvRef = useRef(null);
   useEffect(() => {
     if (!env) return;
-    setTurns((prev) => (prev.length ? prev : [{
+    const switched = turnsEnvRef.current !== null && turnsEnvRef.current !== env.id;
+    turnsEnvRef.current = env.id;
+    setTurns((prev) => (prev.length && !switched ? prev : [{
       id: "ws-greet",
       role: "assistant",
       steps: [{
