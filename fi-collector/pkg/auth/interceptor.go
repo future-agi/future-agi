@@ -38,34 +38,53 @@ func CacheKeyFromContext(ctx context.Context) string {
 // X-Api-Key and X-Secret-Key from request metadata.
 func (a *Authenticator) GRPCInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if a == nil {
-			return handler(ctx, req)
-		}
-
-		md, ok := metadata.FromIncomingContext(ctx)
-		if !ok {
-			return nil, status.Error(codes.Unauthenticated, "missing metadata")
-		}
-
-		apiKey := firstMD(md, "x-api-key")
-		secretKey := firstMD(md, "x-secret-key")
-		if apiKey == "" || secretKey == "" {
-			return nil, status.Error(codes.Unauthenticated, "missing X-Api-Key or X-Secret-Key")
-		}
-
-		result, err := a.Authenticate(ctx, apiKey, secretKey)
+		ctx, err := a.AuthenticateGRPC(ctx)
 		if err != nil {
-			if errors.Is(err, ErrUnauthenticated) {
-				a.log.Warn("grpc auth failed", "err", err)
-				return nil, status.Error(codes.Unauthenticated, "authentication failed")
-			}
-			a.log.Error("grpc auth infrastructure error", "err", err)
-			return nil, status.Error(codes.Unavailable, "service temporarily unavailable")
+			return nil, err
 		}
-
-		ctx = WithResolvedContext(ctx, result, CacheKey(apiKey, secretKey))
 		return handler(ctx, req)
 	}
+}
+
+// AuthenticateGRPC validates the X-Api-Key and X-Secret-Key metadata of a
+// call and returns ctx carrying the result (FromContext). The error is a
+// gRPC status: UNAUTHENTICATED for missing or invalid credentials, UNAVAILABLE
+// when they cannot be checked. With auth disabled (a nil Authenticator) it
+// returns ctx unchanged.
+func (a *Authenticator) AuthenticateGRPC(ctx context.Context) (context.Context, error) {
+	if a == nil {
+		return ctx, nil
+	}
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "missing metadata")
+	}
+
+	apiKey := firstMD(md, "x-api-key")
+	secretKey := firstMD(md, "x-secret-key")
+	if apiKey == "" || secretKey == "" {
+		return nil, status.Error(codes.Unauthenticated, "missing X-Api-Key or X-Secret-Key")
+	}
+
+	result, err := a.Authenticate(ctx, apiKey, secretKey)
+	if err != nil {
+		if errors.Is(err, ErrUnauthenticated) {
+			a.log.Warn("grpc auth failed", "err", err)
+			return nil, status.Error(codes.Unauthenticated, "authentication failed")
+		}
+		a.log.Error("grpc auth infrastructure error", "err", err)
+		return nil, status.Error(codes.Unavailable, "service temporarily unavailable")
+	}
+
+	return WithResolvedContext(ctx, result, CacheKey(apiKey, secretKey)), nil
+}
+
+// HasGRPCCredentials reports whether call metadata carries both credentials
+// AuthenticateGRPC needs. It does no lookup, so it can run before a call is
+// accepted (a gRPC tap handle).
+func HasGRPCCredentials(md metadata.MD) bool {
+	return firstMD(md, "x-api-key") != "" && firstMD(md, "x-secret-key") != ""
 }
 
 func firstMD(md metadata.MD, key string) string {
