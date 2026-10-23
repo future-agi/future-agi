@@ -5,7 +5,10 @@ import {
   presetToToken,
 } from "src/sections/projects/timeWindowPresets";
 import { serializeTaskFilterRowsForApi } from "src/sections/common/EvalsTasks/task_filter_serialization";
-import { samplingPolicyErrors } from "src/sections/tasks/components/samplingPolicyForm";
+import {
+  samplingPolicyErrors,
+  samplingPolicyForApi,
+} from "src/sections/tasks/components/samplingPolicyForm";
 
 const TASK_FILTER_PROPERTY_TO_API = {
   span_kind: "observation_type",
@@ -141,7 +144,8 @@ export const NewTaskValidationSchema = () =>
                 message,
               }),
           );
-        }),
+        })
+        .transform(samplingPolicyForApi),
       evalsDetails: z
         .array(z.any())
         .min(1, { message: "At least one evaluation is required" })

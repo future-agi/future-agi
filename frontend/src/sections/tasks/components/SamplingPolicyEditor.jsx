@@ -24,7 +24,10 @@ import SamplingPrecisionPlanner from "./SamplingPrecisionPlanner";
 
 import {
   defaultSamplingPolicy,
+  isNumericPredicate,
   samplingPolicyErrors,
+  samplingPolicyForApi,
+  samplingPredicateError,
   samplingStratumLabel,
   selectionMode,
   withCoordination,
@@ -190,11 +193,13 @@ function PredicateEditor({ predicate, onChange, onRemove }) {
             label="Values (comma separated)"
             size="small"
             value={predicate.values.join(",")}
+            error={Boolean(samplingPredicateError(predicate))}
+            helperText={samplingPredicateError(predicate)}
             onChange={(e) =>
               onChange({
                 ...predicate,
-                values: ["gt", "gte", "lt", "lte"].includes(predicate.op)
-                  ? [Number(e.target.value)]
+                values: isNumericPredicate(predicate)
+                  ? [e.target.value]
                   : e.target.value.split(",").map((s) => s.trim()),
               })
             }
@@ -275,7 +280,7 @@ export default function SamplingPolicyEditor({ control, getValues }) {
       const response = await axios.post(endpoints.project.samplingPreview(), {
         project,
         row_type: values.rowType,
-        sampling_policy: policy,
+        sampling_policy: samplingPolicyForApi(policy),
         evals: (values.evalsDetails || []).map((item) =>
           typeof item === "string" ? item : item.id,
         ),

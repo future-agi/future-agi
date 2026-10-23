@@ -266,6 +266,108 @@ describe("Sampling policy editor", () => {
     );
   });
 
+  it.each([
+    ["0.", "5", 0.5],
+    ["-", "5", -5],
+    ["1e-", "2", 0.01],
+  ])(
+    "preserves the numeric predicate draft %s and gates preview and save until complete",
+    async (prefix, suffix, expected) => {
+      axios.post.mockResolvedValue({
+        data: { result: { strata: [], population_note: "", cost_note: "" } },
+      });
+      const policy = defaultSamplingPolicy();
+      policy.strata = [
+        {
+          name: "costly",
+          rate: 50,
+          filters: [{ source: "span", key: "cost", op: "gt", values: [12] }],
+        },
+      ];
+      const onSubmit = vi.fn();
+      render(<SubmitHarness policy={policy} onSubmit={onSubmit} />);
+      const input = screen.getByRole("textbox", {
+        name: "Values (comma separated)",
+      });
+      const preview = screen.getByRole("button", {
+        name: "Preview sampling policy",
+      });
+      const save = screen.getByRole("button", { name: "Save task" });
+      await userEvent.clear(input);
+      expect(input).toHaveValue("");
+      expect(preview).toBeDisabled();
+      await userEvent.click(save);
+      expect(onSubmit).not.toHaveBeenCalled();
+      await userEvent.type(input, prefix);
+      expect(input).toHaveValue(prefix);
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(preview).toBeDisabled();
+      await userEvent.click(save);
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(axios.post).not.toHaveBeenCalled();
+      await userEvent.type(input, suffix);
+      expect(input).toHaveValue(prefix + suffix);
+      expect(preview).toBeEnabled();
+      await userEvent.click(preview);
+      await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(1));
+      expect(
+        axios.post.mock.calls[0][1].sampling_policy.strata[0].filters[0].values,
+      ).toEqual([expected]);
+      // Preview/save serialization must not rewrite the in-progress form text.
+      expect(input).toHaveValue(prefix + suffix);
+      await userEvent.click(save);
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      expect(
+        onSubmit.mock.calls[0][0].samplingPolicy.strata[0].filters[0].values,
+      ).toEqual([expected]);
+    },
+  );
+
+  it.each([
+    [],
+    [""],
+    [" "],
+    ["-"],
+    ["0."],
+    ["1e"],
+    ["1e-"],
+    ["Infinity"],
+    ["1e999"],
+    [Number.NaN],
+    [Infinity],
+    [null],
+    [true],
+    [1, 2],
+  ])(
+    "rejects incomplete or nonfinite numeric predicate values %j at save",
+    (...values) => {
+      const policy = defaultSamplingPolicy();
+      policy.strata = [
+        {
+          name: "costly",
+          rate: 50,
+          filters: [{ source: "span", key: "cost", op: "gt", values }],
+        },
+      ];
+      const result = NewTaskValidationSchema().safeParse({
+        name: "cohort",
+        project: "project",
+        spansLimit: "",
+        samplingRate: 50,
+        samplingPolicy: policy,
+        evalsDetails: [{ id: "eval" }],
+        runType: "continuous",
+        rowType: "spans",
+        filters: [],
+        ...WINDOW,
+      });
+      expect(result.success).toBe(false);
+      expect(
+        result.error.issues.map((issue) => issue.path.join(".")),
+      ).toContain("samplingPolicy.strata.0.filters.0.values");
+    },
+  );
+
   it("previews a historical policy without a second hidden task date range", async () => {
     axios.post.mockResolvedValue({
       data: { result: { strata: [], population_note: "", cost_note: "" } },

@@ -72,6 +72,50 @@ export const samplingRuleErrors = (rule) => {
   return errors;
 };
 
+export const isNumericPredicate = (predicate) =>
+  ["gt", "gte", "lt", "lte"].includes(predicate.op);
+
+// Drafts remain text until preview/save: Number("") is 0 and converting "0."
+// or "1e-" on every keystroke destroys the value the user is still entering.
+const COMPLETE_NUMBER = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+const isCompleteNumber = (value) =>
+  (typeof value === "number" ||
+    (typeof value === "string" && COMPLETE_NUMBER.test(value.trim()))) &&
+  Number.isFinite(Number(value));
+
+export const samplingPredicateError = (predicate) =>
+  isNumericPredicate(predicate) &&
+  (!Array.isArray(predicate.values) ||
+    predicate.values.length !== 1 ||
+    !isCompleteNumber(predicate.values[0]))
+    ? "Enter one complete, finite number."
+    : undefined;
+
+// Only the wire copy is normalized; preview/save never rewrite the form draft.
+export const samplingPolicyForApi = (policy) => {
+  if (!policy) return policy;
+  if (Object.keys(samplingPolicyErrors(policy)).length) {
+    throw new Error(
+      "Complete the sampling policy before previewing or saving.",
+    );
+  }
+  return {
+    ...policy,
+    ...(policy.strata && {
+      strata: policy.strata.map((rule) => ({
+        ...rule,
+        ...(rule.filters && {
+          filters: rule.filters.map((predicate) =>
+            isNumericPredicate(predicate)
+              ? { ...predicate, values: [Number(predicate.values[0])] }
+              : predicate,
+          ),
+        }),
+      })),
+    }),
+  };
+};
+
 // Every invalid numeric control in the policy, keyed by its wire path
 // (`default.rate`, `strata.0.target_n`, ...). Empty when the policy may be
 // previewed and saved.
@@ -82,9 +126,14 @@ export const samplingPolicyErrors = (policy) => {
     Object.entries(samplingRuleErrors(rule)).forEach(([key, message]) => {
       errors[`${prefix}.${key}`] = message;
     });
-  (policy.strata || []).forEach((rule, index) =>
-    collect(rule, `strata.${index}`),
-  );
+  (policy.strata || []).forEach((rule, index) => {
+    collect(rule, `strata.${index}`);
+    (rule.filters || []).forEach((predicate, predicateIndex) => {
+      const error = samplingPredicateError(predicate);
+      if (error)
+        errors[`strata.${index}.filters.${predicateIndex}.values`] = error;
+    });
+  });
   collect(policy.default, "default");
   Object.assign(errors, samplingCoordinationErrors(policy));
   return errors;
