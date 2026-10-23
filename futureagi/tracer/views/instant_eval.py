@@ -8,8 +8,6 @@ The runs themselves (estimate, start, summary, rows, export, control) are in
 ``tracer.views.instant_eval_scale``.
 """
 
-from datetime import UTC, datetime
-
 from django.core.cache import cache
 from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
@@ -21,6 +19,7 @@ from tfc.utils.general_methods import GeneralMethods
 from tracer.models.eval_task import EvalTask, RunType
 from tracer.models.instant_eval import InstantEvalRun
 from tracer.models.project import Project
+from tracer.services.instant_eval_run import _iso, _task_ids, asked_order
 from tracer.views._license import InstantEvalLicenseRequired
 
 ERROR_RESPONSES = {
@@ -44,22 +43,6 @@ def _project(request, project_id):
     return Project.objects.filter(
         id=project_id, organization=_org(request), deleted=False
     ).first()
-
-
-def _iso(value) -> str | None:
-    if isinstance(value, datetime):
-        # ClickHouse returns naive UTC datetimes.
-        return (value if value.tzinfo else value.replace(tzinfo=UTC)).isoformat()
-    return str(value) if value else None
-
-
-def _task_ids(task, unit: str) -> list[str]:
-    """The rows a task named outright, in the order it named them."""
-    key = {"traces": "trace_id", "spans": "span_id"}.get(unit, "session_id")
-    raw = (task.filters or {}).get(key)
-    if not isinstance(raw, list | tuple):
-        return []
-    return list(dict.fromkeys(str(v) for v in raw if v not in (None, "")))
 
 
 # ─── History ────────────────────────────────────────────────────────────────
@@ -144,11 +127,14 @@ def _legacy_tally(task_ids: list[str], out: dict[str, list]) -> None:
 
     rid = "COALESCE(l.trace_session_id::text, l.trace_id::text, l.observation_span_id)"
     with connection.cursor() as cur:
+        # A row is settled once none of its questions' entries is pending: a
+        # row with 1 of k answers is still pending on a multi-question run.
         cur.execute(
-            f"SELECT l.eval_task_id, count(DISTINCT {rid}), "
-            f"count(DISTINCT {rid}) FILTER (WHERE ({LABEL}) <> '{PENDING}'), max(l.updated_at) "
+            "SELECT t, count(rid), count(rid) FILTER (WHERE settled), max(last) FROM ("
+            f"SELECT l.eval_task_id AS t, {rid} AS rid, "
+            f"bool_and(({LABEL}) <> '{PENDING}') AS settled, max(l.updated_at) AS last "
             "FROM tracer_eval_logger l WHERE l.eval_task_id = ANY(%(tasks)s) AND l.deleted = false "
-            "GROUP BY l.eval_task_id",
+            "GROUP BY 1, 2) x GROUP BY t",
             {"tasks": task_ids},
         )
         for tid, seen, settled, last in cur.fetchall():
@@ -197,16 +183,6 @@ def _answer_tally(task_ids: list[str], out: dict[str, list]) -> None:
 
 
 FINISHED = frozenset({"completed", "failed", "paused"})
-
-
-def asked_order(task, configs: list) -> list:
-    """A run's questions in the order it asked them: as stored when it
-    started, else as they were created."""
-    asked = [str(c) for c in (task.filters or {}).get("instant_config_ids") or []]
-    by_id = {str(c.id): c for c in configs}
-    ordered = [by_id[c] for c in asked if c in by_id]
-    rest = sorted((c for c in configs if c not in ordered), key=lambda c: c.created_at)
-    return ordered + rest
 
 
 def _history_status(task, run, pending: int) -> str:
@@ -355,10 +331,10 @@ class InstantEvalRunsView(InstantEvalLicenseRequired, APIView):
                 for t, _, m in page
             ]
         )
-        from tracer.views.instant_eval_scale import credits_per_answer
+        from tracer.views.instant_eval_scale import shown_credits_per_answer
 
         # Credits are shown only where the run is billed.
-        billed = credits_per_answer() is not None
+        billed = shown_credits_per_answer() is not None
         out = []
         for task, unit, metas in page:
             tid = str(task.id)
@@ -390,21 +366,25 @@ class InstantEvalRunsView(InstantEvalLicenseRequired, APIView):
                     "answered": settled,
                     "pending": pending,
                     "finished_at": _iso(last_update) if not pending else None,
-                    "created_by": (run.created_by.name or run.created_by.email)
-                    if run is not None and run.created_by
-                    else None,
-                    "credits_estimate": run.credits_estimate
-                    if run is not None and billed
-                    else None,
+                    "created_by": (
+                        (run.created_by.name or run.created_by.email)
+                        if run is not None and run.created_by
+                        else None
+                    ),
+                    "credits_estimate": (
+                        run.credits_estimate if run is not None and billed else None
+                    ),
                     "population": run.population if run is not None else None,
                     "is_sample": bool(
                         run is not None and run.rows_requested < run.population
                     ),
                     "date_preset": run.date_preset if run is not None else None,
                     "label": run.label if run is not None else None,
-                    "window": {"from": _iso(run.date_from), "to": _iso(run.date_to)}
-                    if run is not None and run.date_from
-                    else None,
+                    "window": (
+                        {"from": _iso(run.date_from), "to": _iso(run.date_to)}
+                        if run is not None and run.date_from
+                        else None
+                    ),
                     "sessions": sessions,
                 }
             )

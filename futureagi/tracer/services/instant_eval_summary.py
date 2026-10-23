@@ -103,8 +103,10 @@ class BadFilter(ValueError):
 # does not know. Python's ZoneInfo accepts them, so they are mapped to their
 # canonical names before any reaches SQL.
 LEGACY_ZONES = {
+    "Africa/Asmera": "Africa/Nairobi",
     "America/Buenos_Aires": "America/Argentina/Buenos_Aires",
     "America/Catamarca": "America/Argentina/Catamarca",
+    "America/Coral_Harbour": "America/Panama",
     "America/Cordoba": "America/Argentina/Cordoba",
     "America/Fort_Wayne": "America/Indiana/Indianapolis",
     "America/Godthab": "America/Nuuk",
@@ -597,7 +599,7 @@ USERS_BY_ANSWER = 50
 USERS_BY_ANSWER_MIN_ROWS = 3
 # A finished run's users by answer (about 50 KB at 100,000 rows) are kept as
 # long as the summaries they are part of (``FINISHED_SUMMARY_TTL`` in
-# ``tracer.views.instant_eval_scale``): only a summary being counted again
+# ``tracer.services.instant_eval_run``): only a summary being counted again
 # reads them.
 USERS_BY_ANSWER_TTL = 24 * 60 * 60
 
@@ -926,9 +928,11 @@ def summary(view: RunView) -> dict:
         b, ukey, model, tk, err = values
         ident = (
             dim,
-            {"user": ukey, "model": model, "turns": tk, "error": err}.get(dim)
-            if dim != "model_day"
-            else (model, b.date() if b else None),
+            (
+                {"user": ukey, "model": model, "turns": tk, "error": err}.get(dim)
+                if dim != "model_day"
+                else (model, b.date() if b else None)
+            ),
         )
         if ident in entries:
             return entries[ident]
@@ -1245,9 +1249,7 @@ def _rolled(view: RunView, cfg: str | None, cond) -> str:
     indexes = (
         [view.config_ids.index(cfg)]
         if cfg in view.config_ids
-        else []
-        if cfg
-        else range(len(view.config_ids))
+        else [] if cfg else range(len(view.config_ids))
     )
     tests = [cond(i) for i in indexes]
     return "(" + " OR ".join(tests) + ")" if tests else "false"
@@ -1564,15 +1566,23 @@ def rows_page(
     conds = _conditions(view, f, params)
     where = " AND ".join(["r.task_id = %(task)s", *conds])
     joins = ""
+    sort_key = ""
     if sort == "confidence":
         params["s_cfg"] = sort_config or (view.config_ids[0] if view.config_ids else "")
         joins = (
             "LEFT JOIN tracer_instant_eval_answer c ON c.task_id = %(task)s "
             "AND c.config_id = %(s_cfg)s::uuid AND c.row_id = r.id"
         )
+        # Unanswered rows sort last, as a confidence of 2. The cursor carries
+        # the last row's (confidence, id): a page deep in a run is read from
+        # there, not by counting past an offset.
+        sort_key = ", COALESCE(c.confidence, 2)"
         order = "COALESCE(c.confidence, 2) ASC, r.id ASC"
-        offset = int(state.get("o", 0))
         keyset = ""
+        if state.get("c") is not None:
+            params["c_c"] = float(state["c"])
+            params["c_id"] = int(state["i"])
+            keyset = " AND (COALESCE(c.confidence, 2), r.id) > (%(c_c)s, %(c_id)s)"
     else:
         # The (task, time, id) index serves both directions. A row normally
         # has a time (its first span's), but the column is nullable: NULLs
@@ -1581,7 +1591,6 @@ def rows_page(
         # among them, so no row is skipped.
         desc = sort != "time"
         order = "r.time DESC, r.id DESC" if desc else "r.time ASC, r.id ASC"
-        offset = 0
         keyset = ""
         if state.get("n"):
             params["c_id"] = int(state["i"])
@@ -1599,10 +1608,9 @@ def rows_page(
                 else " AND ((r.time, r.id) > (%(c_t)s, %(c_id)s) OR r.time IS NULL)"
             )
     params["lim"] = page_size + 1
-    params["off"] = offset
     recs = _rows(
-        f"SELECT {_ROW_COLUMNS} FROM tracer_instant_eval_row r {joins} "
-        f"WHERE {where}{keyset} ORDER BY {order} LIMIT %(lim)s OFFSET %(off)s",
+        f"SELECT {_ROW_COLUMNS}{sort_key} FROM tracer_instant_eval_row r {joins} "
+        f"WHERE {where}{keyset} ORDER BY {order} LIMIT %(lim)s",
         params,
     )
     more = len(recs) > page_size
@@ -1620,11 +1628,13 @@ def rows_page(
     if more and recs:
         last = recs[-1]
         next_cursor = _cursor_encode(
-            {"o": offset + page_size}
+            {"c": last[11], "i": last[0]}
             if sort == "confidence"
-            else {"n": 1, "i": last[0]}
-            if last[2] is None
-            else {"t": last[2].isoformat(), "i": last[0]}
+            else (
+                {"n": 1, "i": last[0]}
+                if last[2] is None
+                else {"t": last[2].isoformat(), "i": last[0]}
+            )
         )
     total = _rows(
         f"SELECT count(*) FROM tracer_instant_eval_row r WHERE {where}", params
@@ -1666,9 +1676,9 @@ def _user_answers(view: RunView, rec, tally: dict) -> dict:
             "confidence": confidence,
             # Sessions per answer: the rolled-up answer's own, of them all.
             "counts": tally.get(cfg, {}),
-            "status": ("pending" if view.cancelled else "running")
-            if waiting
-            else "completed",
+            "status": (
+                ("pending" if view.cancelled else "running") if waiting else "completed"
+            ),
         }
     return out
 
@@ -1890,9 +1900,11 @@ def iter_export(
                 answer = ans.get("answer")
                 values += [
                     "" if answer is None else answer,
-                    ""
-                    if ans.get("confidence") is None
-                    else round(ans["confidence"], 3),
+                    (
+                        ""
+                        if ans.get("confidence") is None
+                        else round(ans["confidence"], 3)
+                    ),
                     ans.get("explanation", ""),
                 ]
             yield _csv_line(values)

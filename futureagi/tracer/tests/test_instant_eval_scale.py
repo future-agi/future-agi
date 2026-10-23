@@ -19,6 +19,7 @@ from tracer.models.instant_eval import InstantEvalRow, InstantEvalRun
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, EvalTargetType
 from tracer.selectors.eval_tasks.row_resolver import resolve_desired_rows
 from tracer.services import instant_eval_rows as rows_service
+from tracer.services import instant_eval_run as run_service
 from tracer.services import instant_eval_summary as summary_service
 from tracer.services.instant_eval_answers import record_answer
 from tracer.views import instant_eval_scale
@@ -210,13 +211,36 @@ def _answer(
         status=(
             EvalEntryStatus.PENDING
             if pending
-            else EvalEntryStatus.ERRORED
-            if error
-            else EvalEntryStatus.COMPLETED
+            else EvalEntryStatus.ERRORED if error else EvalEntryStatus.COMPLETED
         ),
         output_metadata={"jev": {"confidence": confidence}},
         eval_explanation=f"because {label}",
     )
+
+
+def _read_everything(task):
+    """Answer "Yes" to every question for each stored row of a run that has
+    no entry yet, and finish the run: it has read the rows it asked for, so
+    it may read more."""
+    asked = {
+        (str(sid), cid)
+        for sid, cid in EvalLogger.objects.filter(
+            eval_task_id=str(task.id), deleted=False
+        ).values_list("trace_session_id", "custom_eval_config_id")
+    }
+    logs = EvalLogger.objects.bulk_create(
+        [
+            _answer(task, config, row_id, "Yes")
+            for row_id in InstantEvalRow.objects.filter(task_id=task.id).values_list(
+                "row_id", flat=True
+            )
+            for config in task.evals.all()
+            if (row_id, config.id) not in asked
+        ]
+    )
+    for entry in logs:
+        record_answer(entry.id)
+    EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.COMPLETED)
 
 
 # ─── Sample, limits, concurrency ─────────────────────────────────────────────
@@ -249,7 +273,7 @@ def test_estimate_offers_a_sample_and_the_whole_view(
 
 @pytest.mark.django_db
 def test_a_sample_reads_the_same_rows_every_time_and_extends_with_the_next(
-    auth_client, observe_project, yes_no, fake_view, started
+    auth_client, observe_project, yes_no, fake_view, started, monkeypatch
 ):
     first = _start(auth_client, observe_project, [yes_no], sample_size=10).json()[
         "result"
@@ -265,7 +289,13 @@ def test_a_sample_reads_the_same_rows_every_time_and_extends_with_the_next(
     # Resolving again (a resume) picks nothing new.
     assert resolve_desired_rows(tasks[0]).matched_ids == rows[0]
 
-    EvalTask.objects.filter(id=tasks[0].id).update(status=EvalTaskStatus.COMPLETED)
+    _read_everything(tasks[0])
+    # The restart sizes its batches from the task it is handed.
+    sized = []
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync",
+        lambda task, **kw: sized.append(task.spans_limit) or "wf",
+    )
     more = auth_client.post(
         CONTROL,
         {
@@ -277,6 +307,7 @@ def test_a_sample_reads_the_same_rows_every_time_and_extends_with_the_next(
         format="json",
     )
     assert more.status_code == status.HTTP_200_OK, more.json()
+    assert sized == [15]
     extended = resolve_desired_rows(EvalTask.objects.get(id=tasks[0].id)).matched_ids
     assert list(extended) == by_hash[:15]
     assert fake_view.picks[-1] == (5, _hash(by_hash[9]))
@@ -369,7 +400,6 @@ def test_a_start_counts_the_runs_again_under_the_organizations_lock(
 ):
     """Two starts at once both passed the first count; the second count,
     taken under the organization's row lock, refuses the later one."""
-    real = instant_eval_scale._active_runs
     calls = []
 
     def active_runs(org):
@@ -389,7 +419,6 @@ def test_a_start_counts_the_runs_again_under_the_organizations_lock(
     assert response.status_code == status.HTTP_409_CONFLICT
     assert len(calls) == 2
     assert not EvalTask.objects.filter(project=observe_project).exists()
-    assert real is not None
 
 
 @pytest.mark.django_db
@@ -793,38 +822,118 @@ def _control(auth_client, observe_project, task, action, **extra):
 
 
 @pytest.mark.django_db
-def test_a_paused_run_with_rows_left_is_resumed_not_retried_or_extended(
-    auth_client, observe_project, yes_no, fake_view, started
+@pytest.mark.parametrize(
+    ("status_", "more_refused_as"),
+    [
+        (EvalTaskStatus.PAUSED, "instant_eval_paused"),
+        (EvalTaskStatus.FAILED, "instant_eval_paused"),
+        (EvalTaskStatus.COMPLETED, "instant_eval_paused"),
+        # It says running, but its workflow is gone.
+        (EvalTaskStatus.RUNNING, "instant_eval_still_answering"),
+    ],
+    ids=["paused", "failed", "completed", "workflow-gone"],
+)
+def test_a_stopped_run_with_rows_left_is_resumed_not_retried_or_extended(
+    auth_client,
+    observe_project,
+    yes_no,
+    fake_view,
+    started,
+    monkeypatch,
+    status_,
+    more_refused_as,
 ):
     """Retry and "read more" restart the run, which reads every unanswered
-    row: past the 1 retried answer or the rows "read more" confirmed."""
-    task = _half_answered_run(
-        auth_client, observe_project, yes_no, EvalTaskStatus.PAUSED
-    )
+    row: past the 1 retried answer or the rows "read more" confirmed and
+    checked credits for. A paused or stalled run is resumed first, which
+    checks credits for every row it reads."""
+    task = _half_answered_run(auth_client, observe_project, yes_no, status_)
+    monkeypatch.setattr(instant_eval_scale, "_workflow_gone", lambda task: True)
+    calls = _credit_cap(monkeypatch)
     before = len(started)
-    for action, extra in (("retry_failed", {}), ("read_more", {"more": 5})):
+    for action, extra, code in (
+        ("retry_failed", {}, "instant_eval_paused"),
+        ("read_more", {"more": 5}, more_refused_as),
+    ):
         refused = _control(auth_client, observe_project, task, action, **extra)
         assert refused.status_code == status.HTTP_409_CONFLICT, refused.json()
-        assert refused.json()["code"] == "instant_eval_paused"
-    assert len(started) == before
-    assert EvalTask.objects.get(id=task.id).status == EvalTaskStatus.PAUSED
+        assert refused.json()["code"] == code
+    assert len(started) == before and calls == []
+    assert EvalTask.objects.get(id=task.id).status == status_
+    assert InstantEvalRun.objects.get(eval_task_id=task.id).rows_requested == 6
+    assert EvalLogger.objects.filter(
+        eval_task_id=str(task.id), status=EvalEntryStatus.ERRORED
+    ).exists()
+
+    resumed = _control(auth_client, observe_project, task, "resume")
+    assert resumed.status_code == status.HTTP_200_OK, resumed.json()
+    # The four rows never read, at 0.06 credits an answer.
+    assert calls == [("jev_evaluator", 0.24)]
+    assert len(started) == before + 1
 
 
 @pytest.mark.django_db
 def test_retrying_on_a_stalled_run_restarts_it(
-    auth_client, observe_project, yes_no, fake_view, started, monkeypatch
+    auth_client, observe_project, answered_run, started, monkeypatch
 ):
-    """It says running but no workflow drains it: without a restart nothing
-    would answer the requeued rows."""
-    task = _half_answered_run(
-        auth_client, observe_project, yes_no, EvalTaskStatus.RUNNING
-    )
+    """It says running but no workflow drains it, and every row was read:
+    without a restart nothing would answer the requeued rows."""
+    task, _ = answered_run
+    EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.RUNNING)
     monkeypatch.setattr(instant_eval_scale, "_workflow_gone", lambda task: True)
     before = len(started)
     retried = _control(auth_client, observe_project, task, "retry_failed")
     assert retried.status_code == 200, retried.json()
+    assert retried.json()["result"]["retried"] == 1
     assert len(started) == before + 1
     assert EvalTask.objects.get(id=task.id).status == EvalTaskStatus.PENDING
+
+
+@pytest.mark.django_db
+@override_settings(INSTANT_EVAL_MAX_ACTIVE_PER_ORG=1)
+@pytest.mark.parametrize("action", ["resume", "retry_failed", "read_more"])
+def test_a_restart_counts_the_runs_again_under_the_organizations_lock(
+    auth_client, observe_project, answered_run, started, monkeypatch, action
+):
+    """Resuming, retrying and reading more restart a run, so they count the
+    runs in flight as a start does: again under the organization's row lock,
+    which refuses the later of two restarts (or of a restart and a start)
+    that both passed the first count."""
+    task, _ = answered_run
+    if action == "resume":
+        EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PAUSED)
+    status_ = EvalTask.objects.get(id=task.id).status
+    _credit_cap(monkeypatch)
+    calls = []
+
+    def active_runs(org):
+        calls.append(org)
+        # The first count is from before the other restart committed.
+        return [] if len(calls) == 1 else [SimpleNamespace(eval_task_id="other")]
+
+    monkeypatch.setattr(instant_eval_scale, "_active_runs", active_runs)
+    monkeypatch.setattr(
+        instant_eval_scale,
+        "_busy_response",
+        lambda gm, active: gm.custom_error_response(
+            429, {"error_code": "INSTANT_EVAL_BUSY"}, code="instant_eval_busy"
+        ),
+    )
+    before = len(started)
+    body = {"more": 5} if action == "read_more" else {}
+    response = _control(auth_client, observe_project, task, action, **body)
+    assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS, response.json()
+    assert len(calls) == 2
+    # Nothing restarted, requeued or extended.
+    assert len(started) == before
+    assert EvalTask.objects.get(id=task.id).status == status_
+    assert InstantEvalRun.objects.get(eval_task_id=task.id).rows_requested == 12
+    assert (
+        EvalLogger.objects.filter(
+            eval_task_id=str(task.id), status=EvalEntryStatus.ERRORED
+        ).count()
+        == 1
+    )
 
 
 @pytest.mark.django_db
@@ -1045,6 +1154,11 @@ def test_a_finished_task_with_unanswered_rows_is_stalled(
     EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.COMPLETED)
     summary = _summary(auth_client, observe_project, task)
     assert (summary["status"], summary["pending"]) == ("stalled", 3)
+    # It is resumed before it reads more (the control view answers 409).
+    assert (summary["sample"]["next_size"], summary["sample"]["can_extend"]) == (
+        4,
+        False,
+    )
 
 
 @pytest.mark.django_db
@@ -1466,22 +1580,11 @@ def test_the_credits_are_what_jev_is_charged(
 @pytest.mark.requires_ee
 @pytest.mark.django_db
 @override_settings(INSTANT_EVAL_CONFIRM_ROWS=20)
-@pytest.mark.parametrize(
-    ("cloud", "config"),
-    [(False, True), (True, False)],
-    ids=["self-hosted", "cloud-without-billing-config"],
-)
 def test_no_credits_are_shown_or_checked_where_nothing_is_billed(
-    auth_client,
-    observe_project,
-    yes_no,
-    fake_view,
-    started,
-    monkeypatch,
-    cloud,
-    config,
+    auth_client, observe_project, yes_no, fake_view, started, monkeypatch
 ):
-    _billing(monkeypatch, cloud=cloud, config=config)
+    # Self-hosted: billed nowhere, even with a billing config.
+    _billing(monkeypatch, cloud=False)
     # A cap that would refuse any run: it is never asked.
     calls = _credit_cap(monkeypatch, left=0.0)
     estimate = _estimate(auth_client, observe_project, sample_size=25)
@@ -1524,13 +1627,74 @@ def test_no_credits_are_shown_or_checked_where_nothing_is_billed(
 
 @pytest.mark.requires_ee
 @pytest.mark.django_db
+def test_a_cloud_without_its_billing_config_refuses_every_run(
+    auth_client, observe_project, yes_no, answered_run, started, monkeypatch
+):
+    """A Cloud whose billing config fails to load can neither price nor
+    check a run: estimating, starting, resuming, retrying and reading more
+    answer the 503 of a credit check billing can't answer, never a run that
+    answers, and bills, unchecked. Pages that only show credits still open,
+    without them."""
+    task, _ = answered_run
+    _billing(monkeypatch, cloud=True, config=False)
+    # A cap that would refuse any run: it is never asked.
+    calls = _credit_cap(monkeypatch, left=0.0)
+    estimate = auth_client.post(
+        ESTIMATE,
+        {
+            "project_id": str(observe_project.id),
+            "unit": "sessions",
+            "filters": WINDOW,
+            "sample_size": 5,
+            "questions": 1,
+        },
+        format="json",
+    )
+    assert estimate.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert estimate.json()["code"] == "credit_check_unavailable"
+    refused = _start(auth_client, observe_project, [yes_no], sample_size=5)
+    assert refused.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert "Credits can't be checked" in str(refused.json())
+    assert InstantEvalRun.objects.filter(project=observe_project).count() == 1
+
+    before = len(started)
+    for action, body, status_ in (
+        ("read_more", {"more": 5}, EvalTaskStatus.COMPLETED),
+        ("retry_failed", {}, EvalTaskStatus.COMPLETED),
+        ("resume", {}, EvalTaskStatus.PAUSED),
+    ):
+        EvalTask.objects.filter(id=task.id).update(status=status_)
+        response = _control(auth_client, observe_project, task, action, **body)
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE, action
+        assert response.json()["code"] == "credit_check_unavailable", action
+    assert calls == [] and len(started) == before
+    assert InstantEvalRun.objects.get(eval_task_id=task.id).rows_requested == 12
+    assert (
+        EvalLogger.objects.filter(
+            eval_task_id=str(task.id), status=EvalEntryStatus.ERRORED
+        ).count()
+        == 1
+    )
+
+    summary = _summary(auth_client, observe_project, task)
+    assert (summary["credits_estimate"], summary["credits_used"]) == (None, None)
+    [history] = auth_client.get(
+        "/tracer/instant-eval/runs/",
+        {"project_id": str(observe_project.id), "task_id": str(task.id)},
+    ).json()["result"]["runs"]
+    assert history["credits_estimate"] is None
+
+
+@pytest.mark.requires_ee
+@pytest.mark.django_db
 @pytest.mark.parametrize("config", [True, False], ids=["billed", "no-billing-config"])
 def test_an_estimate_reads_the_billing_config_once(
     auth_client, observe_project, monkeypatch, config
 ):
     """Every figure an estimate prices (each choice, the cap's check, the
     largest sample that fits) comes from one read of the rate: a billing
-    config that fails to load is tried, and logged, once per estimate."""
+    config that fails to load is tried, and logged, once per estimate,
+    which it refuses."""
     from ee.usage.services.config import BillingConfig
 
     view = FakeView(6000)
@@ -1546,17 +1710,80 @@ def test_an_estimate_reads_the_billing_config_once(
         return get(cls)
 
     monkeypatch.setattr(BillingConfig, "get", classmethod(counted))
-    estimate = _estimate(auth_client, observe_project, sample_size=1000, questions=2)
-    assert len(estimate["choices"]) == 5
+    response = auth_client.post(
+        ESTIMATE,
+        {
+            "project_id": str(observe_project.id),
+            "unit": "sessions",
+            "filters": WINDOW,
+            "sample_size": 1000,
+            "questions": 2,
+        },
+        format="json",
+    )
     assert len(reads) == 1
-    if config:
-        # 30 credits at 2 answers of 0.06 each per session.
-        assert estimate["credits_per_answer"] == pytest.approx(0.06)
-        assert estimate["credit_max_sample"] == 250
-        assert estimate["credit_check"]["error_code"] == "FREE_TIER_LIMIT"
-    else:
-        assert estimate["credits_per_answer"] is None
-        assert estimate["credit_max_sample"] is None
+    if not config:
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        return
+    estimate = response.json()["result"]
+    assert len(estimate["choices"]) == 5
+    # 30 credits at 2 answers of 0.06 each per session.
+    assert estimate["credits_per_answer"] == pytest.approx(0.06)
+    assert estimate["credit_max_sample"] == 250
+    assert estimate["credit_check"]["error_code"] == "FREE_TIER_LIMIT"
+
+
+@pytest.mark.requires_ee
+def test_a_billing_config_that_fails_to_load_is_an_outage_only_on_cloud(
+    monkeypatch,
+):
+    """On Cloud it is a credit check that can't be made; off Cloud nothing
+    is billed, so it is never read."""
+    _billing(monkeypatch, cloud=True, config=False)
+    with pytest.raises(run_service.CreditCheckUnavailable):
+        run_service.credits_per_answer()
+    # What only shows credits shows none.
+    assert instant_eval_scale.shown_credits_per_answer() is None
+    _billing(monkeypatch, cloud=False, config=False)
+    assert run_service.credits_per_answer() is None
+
+
+@pytest.mark.requires_ee
+@pytest.mark.parametrize("missing", ["ee.jev.metering", "ee.usage.deployment"])
+def test_without_ee_billing_nothing_is_priced(monkeypatch, missing):
+    _billing(monkeypatch, cloud=True)
+    assert run_service.credits_per_answer() == pytest.approx(0.06)
+    # The module gone, even a Cloud with its billing config prices nothing.
+    monkeypatch.setitem(sys.modules, missing, None)
+    assert run_service.credits_per_answer() is None
+
+
+def test_without_ee_billing_no_cap_is_asked(monkeypatch):
+    from tracer import ee_boundary
+
+    monkeypatch.setitem(sys.modules, "ee.usage.services.metering", None)
+    assert ee_boundary.check_usage("org", "jev_evaluator", 12.0).allowed is True
+    assert run_service.check_credits(SimpleNamespace(id=uuid.uuid4()), 12.0) is None
+
+
+def test_instant_eval_reaches_billing_only_through_the_ee_boundary():
+    """Every call into ee goes through tracer.ee_boundary, which stands in
+    for billing when ee is absent."""
+    import inspect
+
+    from tracer.services import instant_eval_answers, instant_eval_users
+    from tracer.views import instant_eval as history_views
+
+    for module in (
+        run_service,
+        rows_service,
+        summary_service,
+        instant_eval_answers,
+        instant_eval_users,
+        instant_eval_scale,
+        history_views,
+    ):
+        assert "from ee." not in inspect.getsource(module), module.__name__
 
 
 @pytest.mark.requires_ee
@@ -1874,18 +2101,18 @@ def counted(monkeypatch):
     """``compute_summary`` around a fake count: its cache, and the ``check``
     each count was synced with."""
     kept, checks = _KeptCache(), []
-    monkeypatch.setattr(instant_eval_scale, "cache", kept)
+    monkeypatch.setattr(run_service, "cache", kept)
     monkeypatch.setattr(
         "tracer.services.instant_eval_answers.ensure_synced",
         lambda run, *, check: checks.append(check),
     )
     monkeypatch.setattr(
-        instant_eval_scale,
+        run_service,
         "_summary_payload",
-        lambda task, run, *_: {"status": instant_eval_scale._status(task, run)},
+        lambda task, run, *_: {"status": run_service._status(task, run)},
     )
     monkeypatch.setattr(
-        instant_eval_scale,
+        run_service,
         "_summary_key",
         lambda task, run, status, view: f"summary:{status}:{run.answers_version}",
     )
@@ -1895,29 +2122,23 @@ def counted(monkeypatch):
 def test_a_finished_runs_summary_and_answer_check_expire(counted, monkeypatch):
     kept, checks = counted
     monkeypatch.setattr(
-        instant_eval_scale, "_status", lambda task, run: EvalTaskStatus.COMPLETED
+        run_service, "_status", lambda task, run: EvalTaskStatus.COMPLETED
     )
     run = SimpleNamespace(eval_task_id="t1", answers_version=3)
-    instant_eval_scale.compute_summary(
-        SimpleNamespace(), run, SimpleNamespace(), [], None
-    )
+    run_service.compute_summary(SimpleNamespace(), run, SimpleNamespace(), [], None)
     assert kept.timeouts == {
-        "ie-answers-checked:t1:3": instant_eval_scale.ANSWERS_CHECKED_TTL,
-        "summary:completed:3": instant_eval_scale.FINISHED_SUMMARY_TTL,
+        "ie-answers-checked:t1:3": run_service.ANSWERS_CHECKED_TTL,
+        "summary:completed:3": run_service.FINISHED_SUMMARY_TTL,
     }
-    assert instant_eval_scale.FINISHED_SUMMARY_TTL == 24 * 60 * 60
+    assert run_service.FINISHED_SUMMARY_TTL == 24 * 60 * 60
     # The check outlives the summaries, so counting one again (another time
     # zone, or after it expired) doesn't compare the answers again.
-    assert instant_eval_scale.ANSWERS_CHECKED_TTL == 7 * 24 * 60 * 60
-    instant_eval_scale.compute_summary(
-        SimpleNamespace(), run, SimpleNamespace(), [], None
-    )
+    assert run_service.ANSWERS_CHECKED_TTL == 7 * 24 * 60 * 60
+    run_service.compute_summary(SimpleNamespace(), run, SimpleNamespace(), [], None)
     assert checks == [True, False]
     # Once the check expires the answers are compared again, and kept again.
     del kept.values["ie-answers-checked:t1:3"]
-    instant_eval_scale.compute_summary(
-        SimpleNamespace(), run, SimpleNamespace(), [], None
-    )
+    run_service.compute_summary(SimpleNamespace(), run, SimpleNamespace(), [], None)
     assert checks == [True, False, True]
     assert kept.values["ie-answers-checked:t1:3"] == 1
 
@@ -1925,12 +2146,10 @@ def test_a_finished_runs_summary_and_answer_check_expire(counted, monkeypatch):
 def test_a_live_runs_summary_is_kept_a_minute_and_checks_nothing(counted, monkeypatch):
     kept, checks = counted
     monkeypatch.setattr(
-        instant_eval_scale, "_status", lambda task, run: EvalTaskStatus.RUNNING
+        run_service, "_status", lambda task, run: EvalTaskStatus.RUNNING
     )
     run = SimpleNamespace(eval_task_id="t1", answers_version=0)
-    instant_eval_scale.compute_summary(
-        SimpleNamespace(), run, SimpleNamespace(), [], None
-    )
+    run_service.compute_summary(SimpleNamespace(), run, SimpleNamespace(), [], None)
     assert kept.timeouts == {"summary:running:0": 60}
     assert checks == [False]
 
@@ -1946,21 +2165,24 @@ def test_users_by_answer_are_kept_as_long_as_the_summary(monkeypatch, live, time
     assert summary_service.kept_users_by_answer(view) == {"c1": {}}
     assert list(kept.timeouts.values()) == [timeout]
     # Kept as long as the summaries it is part of.
-    finished = instant_eval_scale.FINISHED_SUMMARY_TTL
+    finished = run_service.FINISHED_SUMMARY_TTL
     assert summary_service.USERS_BY_ANSWER_TTL == finished
 
 
 @pytest.mark.django_db
-def test_reading_another_eval_task_creates_no_run(auth_client, observe_project):
-    """Summary, rows and export read Instant eval runs only: a read of an
-    ordinary (here continuous) eval task is a 404 and writes no run, so it
-    can never count against the org's runs in flight."""
+@pytest.mark.parametrize("run_type", [RunType.CONTINUOUS, RunType.HISTORICAL])
+def test_reading_another_eval_task_creates_no_run(
+    auth_client, observe_project, run_type
+):
+    """Summary, rows, export and control act on Instant eval runs only: a
+    read of an ordinary eval task is a 404 and writes no run, so it can never
+    count against the org's runs in flight."""
     task = EvalTask.objects.create(
         project=observe_project,
-        name="Continuous monitor",
+        name="Monitor",
         filters={"project_id": str(observe_project.id)},
         sampling_rate=100,
-        run_type=RunType.CONTINUOUS,
+        run_type=run_type,
         status=EvalTaskStatus.RUNNING,
     )
     params = {
@@ -1968,9 +2190,39 @@ def test_reading_another_eval_task_creates_no_run(auth_client, observe_project):
         "eval_task_id": str(task.id),
         "tz": "UTC",
     }
-    for url in (SUMMARY, ROWS):
+    for url in (SUMMARY, ROWS, EXPORT):
         assert auth_client.get(url, params).status_code == status.HTTP_404_NOT_FOUND
+    paused = auth_client.post(CONTROL, {**params, "action": "pause"}, format="json")
+    assert paused.status_code == status.HTTP_404_NOT_FOUND
     assert not InstantEvalRun.objects.filter(eval_task=task).exists()
+    assert EvalTask.objects.get(id=task.id).status == EvalTaskStatus.RUNNING
+
+
+@pytest.mark.django_db
+def test_a_continuous_task_with_a_run_record_is_not_a_run_in_flight(
+    auth_client, observe_project
+):
+    """A run record a continuous task got before reads were refused (it never
+    finishes) doesn't count against the organization's runs."""
+    task = EvalTask.objects.create(
+        project=observe_project,
+        name="Monitor",
+        filters={"project_id": str(observe_project.id)},
+        sampling_rate=100,
+        run_type=RunType.CONTINUOUS,
+        status=EvalTaskStatus.RUNNING,
+    )
+    InstantEvalRun.objects.create(
+        eval_task=task,
+        project=observe_project,
+        organization=observe_project.organization,
+        unit="traces",
+        row_type="traces",
+        population=0,
+        rows_requested=0,
+        questions=1,
+    )
+    assert instant_eval_scale._active_runs(observe_project.organization) == []
 
 
 def test_legacy_time_zone_names_reach_sql_by_their_canonical_name(monkeypatch):
@@ -1980,6 +2232,10 @@ def test_legacy_time_zone_names_reach_sql_by_their_canonical_name(monkeypatch):
 
     assert summary_service.zone("Asia/Calcutta").key == "Asia/Kolkata"
     assert summary_service.zone("US/Pacific").key == "America/Los_Angeles"
+    # Eritrea's and Coral Harbour's zones, as ICU (what Chrome reports) names
+    # them.
+    assert summary_service.zone("Africa/Asmera").key == "Africa/Nairobi"
+    assert summary_service.zone("America/Coral_Harbour").key == "America/Panama"
     assert summary_service.zone(None).key == "UTC"
     # A name Postgres can't convert to is a 400, not a summary that never loads.
     monkeypatch.setattr(summary_service, "_postgres_knows", lambda name: False)
@@ -2099,3 +2355,176 @@ def test_rows_without_a_time_are_paged_too(
             break
     assert sorted(seen) == sorted(ids)
     assert len(seen) == len(set(seen))
+
+
+@pytest.mark.django_db
+def test_rows_sorted_by_confidence_page_from_a_cursor_not_an_offset(
+    auth_client, observe_project, yes_no, answered_run
+):
+    """Least sure first; ties (most answers are 0.9) keep their id order, and
+    each page starts after the last row's (confidence, id)."""
+    task, ids = answered_run
+    base = {
+        "project_id": str(observe_project.id),
+        "eval_task_id": str(task.id),
+        "tz": "UTC",
+        "sort": "confidence",
+        "config_id": str(yes_no.id),
+    }
+    seen, cursor = [], None
+    for _ in range(20):
+        page = auth_client.get(
+            ROWS, {**base, "page_size": 3, **({"cursor": cursor} if cursor else {})}
+        ).json()["result"]
+        assert page["total"] == 12
+        seen += page["rows"]
+        cursor = page["next_cursor"]
+        if not cursor:
+            break
+        assert "o" not in summary_service._cursor_decode(cursor)
+    assert sorted(r["id"] for r in seen) == sorted(ids)
+    assert len(seen) == len(ids)
+    confidence = [r["answers"][str(yes_no.id)]["confidence"] for r in seen]
+    assert confidence[0] == 0.4
+    assert confidence == sorted(confidence)
+
+
+def test_rows_read_messages_and_labels_without_the_ee_tree():
+    """The open tracer module parses span text and labels users itself
+    (Insights imports its parser): a chat's last user message, a text
+    field, or the value as it came."""
+    import inspect
+
+    assert "from ee." not in inspect.getsource(rows_service)
+    for value, text in (
+        (None, ""),
+        ("plain text", "plain text"),
+        ('{"content": "hi"}', "hi"),
+        ('{"messages": [{"role": "user", "content": "where is it?"}]}', "where is it?"),
+        (
+            '[{"role": "assistant", "content": "a"}, {"role": "human", "content": "b"}]',
+            "b",
+        ),
+        (
+            '[{"role": "user", "content": [{"type": "text", "text": "x"}]}]',
+            '[{"type": "text", "text": "x"}]',
+        ),
+        ('{"input": {"messages": []}}', '{"input": {"messages": []}}'),
+        ({"query": "a dict"}, "a dict"),
+    ):
+        assert rows_service.message_text(value) == text, value
+    # Cut-off JSON comes back as the very string it was, which is how the
+    # excerpt knows to look for a user message the parser couldn't reach.
+    cut = '[{"role": "user", "content": "cut'
+    assert rows_service.message_text(cut) is cut
+
+
+@pytest.mark.django_db
+def test_history_counts_a_legacy_row_settled_only_once_every_question_answered(
+    observe_project, yes_no, category
+):
+    """A run whose answers are only in the eval logger is counted there the
+    same way: one answer of two leaves its row pending."""
+    from tracer.views.instant_eval import _legacy_tally
+
+    task = EvalTask.objects.create(
+        project=observe_project,
+        name="Instant eval · legacy",
+        filters={"project_id": str(observe_project.id)},
+        sampling_rate=100,
+        run_type=RunType.HISTORICAL,
+        status=EvalTaskStatus.RUNNING,
+    )
+    done, half = str(uuid.uuid4()), str(uuid.uuid4())
+    EvalLogger.objects.bulk_create(
+        [
+            _answer(task, yes_no, done, "Yes"),
+            _answer(task, category, done, "Order status"),
+            _answer(task, yes_no, half, "No"),
+            _answer(task, category, half, pending=True),
+        ]
+    )
+    out = {}
+    _legacy_tally([str(task.id)], out)
+    seen, settled = out[str(task.id)][:2]
+    assert (seen, settled) == (2, 1)
+
+
+@pytest.mark.parametrize("continuous", [False, True], ids=["historical", "continuous"])
+def test_a_lost_entry_is_given_back_once_across_continue_as_new(
+    monkeypatch, continuous
+):
+    """The entries already given back once go into the next hop's input, so
+    an eval that keeps killing its worker isn't given back once per hop."""
+    import asyncio
+
+    from tfc.temporal.eval_tasks import workflows
+    from tfc.temporal.eval_tasks.types import (
+        ContinuousDrainState,
+        EvalTaskWorkflowInput,
+    )
+
+    class Hop(Exception):
+        pass
+
+    async def nothing(*args, **kwargs):
+        return None
+
+    async def active(task_id):
+        return {"active": True, "status": "running", "has_undrained_work": True}
+
+    async def claim(task_id, n):
+        return {"entry_ids": ["e2"]}
+
+    given = []
+
+    async def drain(entry_ids, max_concurrent, is_paused=None, **kwargs):
+        lost = kwargs["lost"]
+        given.append(set(lost))
+        lost.add("e2")
+        return ["e2"]
+
+    def continue_as_new(arg):
+        raise Hop(arg)
+
+    async def reconciled(task_id):
+        return True
+
+    for name, fn in {
+        "_apply_labels": nothing,
+        "_mark_running": nothing,
+        "_reap": nothing,
+        "_reconcile_continuous": reconciled,
+        "_task_state": active,
+        "_claim": claim,
+        "_drain_batch": drain,
+        "_requeue": nothing,
+    }.items():
+        monkeypatch.setattr(workflows, name, fn)
+    monkeypatch.setattr(workflows, "_set_status", lambda status: None)
+    monkeypatch.setattr(workflows, "_should_continue_as_new", lambda *a: True)
+    monkeypatch.setattr(workflows.workflow, "continue_as_new", continue_as_new)
+    if continuous:
+        run = workflows.ContinuousEvalTaskWorkflow()._run(
+            ContinuousDrainState(task_id="t", lost_entry_ids=["e1"])
+        )
+    else:
+        run = workflows.HistoricalEvalTaskWorkflow()._run(
+            EvalTaskWorkflowInput(
+                task_id="t", already_reconciled=True, lost_entry_ids=["e1"]
+            )
+        )
+    with pytest.raises(Hop) as hop:
+        asyncio.run(run)
+    assert given == [{"e1"}]
+    assert hop.value.args[0].lost_entry_ids == ["e1", "e2"]
+
+
+def test_the_worker_counts_a_finished_run_without_the_views():
+    """The eval-task worker reaches the summary through the service module,
+    never a DRF view module."""
+    import inspect
+
+    from tfc.temporal.eval_tasks import activities
+
+    assert "tracer.views" not in inspect.getsource(activities)

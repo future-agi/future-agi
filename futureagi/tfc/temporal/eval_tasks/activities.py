@@ -65,7 +65,13 @@ def _require_instant_eval_license(task) -> None:
     filters = getattr(task, "filters", None)
     if not isinstance(filters, dict) or not filters.get(RUN_MARKER):
         return
-    from tfc.ee_gating import EEFeature, FeatureUnavailable, check_ee_feature
+    from tfc.ee_gating import (
+        ENTITLEMENT_CHECK_UNAVAILABLE_MESSAGE,
+        EEFeature,
+        FeatureUnavailable,
+        check_ee_feature,
+        entitlements_unavailable,
+    )
     from tracer.models.instant_eval import InstantEvalRun
 
     org_id = (
@@ -82,23 +88,16 @@ def _require_instant_eval_license(task) -> None:
     try:
         check_ee_feature(EEFeature.INSTANT_EVAL, org_id=str(org_id))
     except FeatureUnavailable as exc:
-        if _entitlements_unavailable(exc):
+        if entitlements_unavailable(exc):
             # The entitlement service could not answer: retry the stage,
             # don't end the run on a denial it never made.
             raise ApplicationError(
-                "The entitlement check is unavailable right now.",
+                ENTITLEMENT_CHECK_UNAVAILABLE_MESSAGE,
                 type="CapabilityUnavailable",
             ) from None
         raise ApplicationError(
             INSTANT_EVAL_DENIED_MESSAGE, type="CapabilityDenied", non_retryable=True
         ) from None
-
-
-def _entitlements_unavailable(exc) -> bool:
-    """Whether a denial only means the entitlement service couldn't answer."""
-    if getattr(exc, "reason_code", None) == "RESOLVER_UNAVAILABLE":
-        return True
-    return "entitlement service is unavailable" in str(getattr(exc, "detail", ""))
 
 
 def _reconcile_sync(task_id: str) -> dict:
@@ -468,7 +467,7 @@ def _prewarm_instant_summary(task_id: str) -> None:
 
         if not InstantEvalRun.objects.filter(eval_task_id=task_id).exists():
             return
-        from tracer.views.instant_eval_scale import prewarm_summary
+        from tracer.services.instant_eval_run import prewarm_summary
 
         prewarm_summary(task_id)
     except Exception:

@@ -123,6 +123,7 @@ def world():
         "gone",
         "late",
         "shift",
+        "clean_gone",
     ]
     t = dict(zip(names, _ids(len(names)), strict=True))
     session_remaps = [(s_old, s_new), (g_a, g_new), (g_b, g_new)]
@@ -176,6 +177,24 @@ def world():
             session=plain,
             user=u_plain,
             id=gone,
+            _version=2,
+            is_deleted=1,
+        )
+        # The same in a session and user no remap touches, where the reads
+        # are compared with the statements they replaced: FINAL on the
+        # ReplacingMergeTree(_version, is_deleted) table dropped a deleted
+        # root too, so the dedup's is_deleted = 0 changes nothing.
+        clean_gone = str(uuid.uuid4())
+        _root(
+            client, project, t["clean_gone"], session=clean, user=u_clean, id=clean_gone
+        )
+        _root(
+            client,
+            project,
+            t["clean_gone"],
+            session=clean,
+            user=u_clean,
+            id=clean_gone,
             _version=2,
             is_deleted=1,
         )
@@ -274,11 +293,15 @@ def test_session_roots_read_through_the_remap(world):
             s.trace_id: s.end_user_id for s in spans if s.trace_session_id == s_new
         }
         assert users == {t["old"]: u_old, t["new"]: u_old}
-        # Ids no remap touches read as the replaced statement did.
+        # Ids no remap touches read as the replaced statement did, which
+        # left out the deleted root as well.
         clean = [world["clean"]]
         assert _got(
             reader.roots_by_session_ids(clean, project_id=project), "trace_session_id"
         ) == _shipped(reader, "trace_session_id", project, clean)
+        assert _shipped(reader, "trace_session_id", project, clean) == {
+            (world["clean"], t["clean"])
+        }
         # An id in another case reads the same roots, under the id as given.
         upper = s_new.upper()
         spans = reader.roots_by_session_ids([upper], project_id=project)
@@ -323,6 +346,9 @@ def test_user_roots_read_through_the_remap(world):
         assert _got(
             reader.roots_by_end_user_ids([u_clean], project_id=project), "end_user_id"
         ) == _shipped(reader, "end_user_id", project, [u_clean])
+        assert _shipped(reader, "end_user_id", project, [u_clean]) == {
+            (u_clean, t["clean"])
+        }
         # The window bounds both reads, on either side.
         early = reader.roots_by_end_user_ids(
             [u_plain], project_id=project, until=START + timedelta(days=1)

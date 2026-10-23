@@ -265,7 +265,7 @@ def test_every_users_label_is_found_however_many_users_a_read_has(monkeypatch):
         ids = list(ids)
         return {} if len(ids) > 2000 else {i: f"user {i}" for i in ids}
 
-    monkeypatch.setattr("ee.agenthub.insights.units._user_labels", labels)
+    monkeypatch.setattr(rows, "_user_labels", labels)
     got = rows.read_facets("p", "sessions", [str(uuid.uuid4()) for _ in uids])
     assert len(got) == 3000
     assert all(f["user_label"] == f"user {f['end_user_id']}" for f in got.values())

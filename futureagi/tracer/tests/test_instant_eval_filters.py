@@ -30,6 +30,7 @@ from tracer.tests.test_instant_eval_scale import (
     WINDOW,
     _answer,
     _hash,
+    _read_everything,
     _start,
     _summary,
 )
@@ -442,7 +443,9 @@ def test_a_sample_of_none_is_refused(auth_client, observe_project, fake_view):
 
 
 def _read_more(auth_client, project, task_id, more):
-    EvalTask.objects.filter(id=task_id).update(status=EvalTaskStatus.COMPLETED)
+    """Read ``more`` once the run has answered every row it holds, and
+    answer the rows it adds."""
+    _read_everything(EvalTask.objects.get(id=task_id))
     response = auth_client.post(
         CONTROL,
         {
@@ -456,7 +459,7 @@ def _read_more(auth_client, project, task_id, more):
     assert response.status_code == status.HTTP_200_OK, response.json()
     task = EvalTask.objects.get(id=task_id)
     resolve_desired_rows(task)
-    EvalTask.objects.filter(id=task_id).update(status=EvalTaskStatus.COMPLETED)
+    _read_everything(task)
     return task
 
 
@@ -559,11 +562,22 @@ def test_reading_more_of_a_run_still_answering_is_refused_before_any_work(
     # Done answering but paused with rows never read: restarting would read
     # all of them, past the 7 rows "read more" checks, so it resumes first.
     EvalLogger.objects.filter(id=entry.id).update(status=EvalEntryStatus.COMPLETED)
+    record_answer(entry.id)
     response = _control(auth_client, observe_project, task.id, "read_more", more=7)
     assert response.status_code == status.HTTP_409_CONFLICT
     assert response.json()["code"] == "instant_eval_paused"
-    # Once it is done, it reads more.
+    # Finished with rows never read, it stalled: resumed first too.
     EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.COMPLETED)
+    response = _control(auth_client, observe_project, task.id, "read_more", more=7)
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.json()["result"]["message"] == (
+        "This run stopped before reading every row. Resume it to read the rest "
+        "first."
+    )
+    run = InstantEvalRun.objects.get(eval_task=task)
+    assert run.rows_requested == 7 and len(started) == starts
+    # Once every row is answered, it reads more.
+    _read_everything(task)
     response = _control(auth_client, observe_project, task.id, "read_more", more=7)
     assert response.status_code == status.HTTP_200_OK, response.json()
     assert response.json()["result"]["status"] == "pending"

@@ -137,9 +137,10 @@ def _builder(project_id: str, row_type: str, ui_filters: list[dict]):
     from tracer.services.clickhouse.v2.dispatch import get_v2_class
 
     query_type, id_col = _BUILDER[row_type]
-    return get_v2_class(query_type)(
-        project_id=str(project_id), filters=ui_filters
-    ), id_col
+    return (
+        get_v2_class(query_type)(project_id=str(project_id), filters=ui_filters),
+        id_col,
+    )
 
 
 def _ch(sql: str, params: dict) -> list[dict]:
@@ -279,13 +280,53 @@ _USER_CONTENT = re.compile(
 )
 
 
+def message_text(value) -> str:
+    """Readable text from a span input/output, which may be a chat array: its
+    last user message, a text field, or the value itself (the same object,
+    when nothing in it is more readable). Insights reads spans the same way."""
+    if value is None:
+        return ""
+    text = value if isinstance(value, str) else json.dumps(value)
+    stripped = text.strip()
+    if stripped[:1] in "[{":
+        try:
+            parsed = json.loads(stripped)
+        except ValueError:
+            return text
+        if isinstance(parsed, dict):
+            for key in ("content", "text", "message", "output", "input", "query"):
+                if isinstance(parsed.get(key), str):
+                    return parsed[key]
+            messages = parsed.get("messages")
+            parsed = messages if isinstance(messages, list) else parsed
+        if isinstance(parsed, list):
+            for message in reversed(parsed):
+                if isinstance(message, dict) and message.get("role") in (
+                    "user",
+                    "human",
+                ):
+                    content = message.get("content")
+                    return content if isinstance(content, str) else json.dumps(content)
+    return text
+
+
+def _user_labels(end_user_ids) -> dict[str, str]:
+    """Each user's label from the end-user dictionary, for the users that
+    have one; none when the dictionary can't be read."""
+    from tracer.services.clickhouse.v2.end_user_dict_reader import resolve_user_ids
+
+    try:
+        return {k: v for k, v in resolve_user_ids(end_user_ids).items() if v}
+    except Exception:
+        logger.warning("instant_eval_user_labels_unreadable", exc_info=True)
+        return {}
+
+
 def excerpt_of(raw: str | None) -> str:
     """The first readable line of a span's input: a chat input's user message,
     or the text itself."""
-    from ee.agenthub.insights.units import _message_text
-
     raw = raw or ""
-    text = _message_text(raw)
+    text = message_text(raw)
     if text is raw and raw.lstrip()[:1] in "[{":
         # Cut off mid-JSON: find a user message the parser couldn't reach.
         match = _USER_CONTENT.search(raw)
@@ -461,12 +502,16 @@ def _merged(parts: list[dict]) -> dict:
         "turns": len({trace for r in parts for trace in r["traces"]}),
         "dur": _ms(t_end) - _ms(parts[0]["t"]),
         "err": max(r["err"] for r in parts),
-        "m": min(modelled, key=lambda r: (_naive_utc(r["m_at"]), r["m"]))["m"]
-        if modelled
-        else "",
-        "raw": min(rooted, key=lambda r: (_naive_utc(r["raw_at"]), r["raw"]))["raw"]
-        if rooted
-        else "",
+        "m": (
+            min(modelled, key=lambda r: (_naive_utc(r["m_at"]), r["m"]))["m"]
+            if modelled
+            else ""
+        ),
+        "raw": (
+            min(rooted, key=lambda r: (_naive_utc(r["raw_at"]), r["raw"]))["raw"]
+            if rooted
+            else ""
+        ),
     }
 
 
@@ -492,8 +537,6 @@ def read_facets(
     over a month reads each day about once. Every span a row reads starts
     inside its batch's bounds, so its facets are what a read of the whole
     window gives."""
-    from ee.agenthub.insights.units import _user_labels
-
     askers, aliases = _resolve(row_type, list(dict.fromkeys(str(i) for i in ids)))
     raw_ids = list(aliases)
     window, params_window = _facet_window(start, end)
@@ -555,12 +598,14 @@ def read_facets(
             "time": _aware(row.get("t")),
             "end_user_id": str(row["uid"]) if row.get("uid") else None,
             "model": str(row.get("m") or "")[:255],
-            "turns": int(row["turns"])
-            if row_type == "sessions" and row.get("turns")
-            else None,
-            "duration_ms": int(duration)
-            if duration is not None and int(duration) >= 0
-            else None,
+            "turns": (
+                int(row["turns"])
+                if row_type == "sessions" and row.get("turns")
+                else None
+            ),
+            "duration_ms": (
+                int(duration) if duration is not None and int(duration) >= 0 else None
+            ),
             "error": bool(row.get("err")),
             "excerpt": text,
             "trace_id": str(row.get("tid") or "") or None,

@@ -4,7 +4,7 @@ Kept free of Django imports so ``workflows.py`` can import them inside the
 Temporal sandbox.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # How a workflow run ended (distinct from the EvalTask DB status enum).
 WF_STATUS_COMPLETED = "completed"
@@ -37,6 +37,10 @@ class EvalTaskWorkflowInput:
     # (its worker died) and retried; None keeps the default five minutes.
     # Instant eval sets a minute, since a person is watching the run.
     heartbeat_s: int | None = None
+    # Entries already given back once because their worker was lost. Carried
+    # across continue-as-new, so an eval that keeps killing its worker is
+    # failed on its second loss rather than given back once per hop.
+    lost_entry_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -63,6 +67,8 @@ class ContinuousDrainState:
     # again after an idle poll that still finds undrained work; leaving this
     # out of the CAN state is what keeps the floor on those hops.
     workflow_confirmed_stopped: bool = False
+    # See ``EvalTaskWorkflowInput.lost_entry_ids``.
+    lost_entry_ids: list[str] = field(default_factory=list)
 
 
 @dataclass

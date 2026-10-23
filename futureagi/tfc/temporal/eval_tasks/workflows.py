@@ -100,8 +100,9 @@ _HEARTBEAT = timedelta(minutes=5)
 # running would claim (or finalize) a second time.
 _CONTROL_HEARTBEAT = timedelta(minutes=1)
 # An eval whose attempts all ended because their worker stopped heartbeating
-# (it died: an OOM kill, a deploy) goes back to pending once per execution
-# instead of being stamped errored: a lost worker is not a failed answer.
+# (it died: an OOM kill, a deploy) goes back to pending once per execution,
+# its continue-as-new hops included, instead of being stamped errored: a lost
+# worker is not a failed answer.
 _LOST_WORKER_REQUEUE_PATCH = "eval-entry-lost-worker-requeue-v1"
 _CONTINUOUS_RECONCILE_BUDGET_DEFERRAL_PATCH = (
     "continuous-eval-reconcile-budget-deferral-v1"
@@ -392,6 +393,15 @@ async def _requeue(task_id: str, entry_ids: list[str]) -> None:
     )
 
 
+# The most lost entries a continue-as-new carries (about 40 bytes each).
+_LOST_CARRIED = 5000
+
+
+def _carried_lost(lost: set[str]) -> list[str]:
+    """The lost entries for the next hop's input, in a replayable order."""
+    return sorted(lost)[:_LOST_CARRIED]
+
+
 def _should_continue_as_new(batches: int, threshold) -> bool:
     if workflow.info().is_continue_as_new_suggested():
         return True
@@ -407,7 +417,8 @@ class _ObservableEvalWorkflow:
         self._phase = PHASE_STARTING
         self._recheck = False
         self._paused = False
-        # Entries given back once in this execution because their worker died.
+        # Entries given back once because their worker died, in this
+        # execution or a hop before it (see ``lost_entry_ids``).
         self._lost: set[str] = set()
 
     @workflow.query
@@ -454,6 +465,7 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
             raise
 
     async def _run(self, input: EvalTaskWorkflowInput) -> EvalTaskWorkflowOutput:
+        self._lost.update(input.lost_entry_ids or ())
         self._phase = PHASE_MATERIALIZING
         await _apply_labels(input.task_id)
         _set_status(STATUS_RUNNING)
@@ -533,9 +545,9 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                 entry_ids,
                 input.max_concurrent,
                 lambda: self._paused,
-                heartbeat=timedelta(seconds=input.heartbeat_s)
-                if input.heartbeat_s
-                else None,
+                heartbeat=(
+                    timedelta(seconds=input.heartbeat_s) if input.heartbeat_s else None
+                ),
                 lost=self._lost,
             )
             if skipped:
@@ -559,6 +571,7 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                         already_reconciled=True,
                         processed=processed,
                         continue_as_new_after_batches=input.continue_as_new_after_batches,
+                        lost_entry_ids=_carried_lost(self._lost),
                     )
                 )
 
@@ -583,6 +596,7 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
             raise
 
     async def _run(self, state: ContinuousDrainState) -> None:
+        self._lost.update(state.lost_entry_ids or ())
         self._phase = PHASE_MATERIALIZING
         await _apply_labels(state.task_id)
         _set_status(STATUS_RUNNING)
@@ -682,6 +696,7 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                         processed=state.processed,
                         batches=0,
                         continue_as_new_after_batches=state.continue_as_new_after_batches,
+                        lost_entry_ids=_carried_lost(self._lost),
                     )
                 )
 

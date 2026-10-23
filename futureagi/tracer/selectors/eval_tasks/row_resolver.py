@@ -586,11 +586,12 @@ def _explicit_id_rows(
     project_id = str(task.project_id)
     with get_reader() as reader:
         if task.row_type == RowType.SESSIONS:
-            present = set(
-                reader.distinct_session_ids_with_filters(
-                    project_id=project_id, session_id=wanted
-                )
-            )
+            # Only these sessions (and their remap groups) are read, never the
+            # project's spans; each comes back under the id it was asked by.
+            present = {
+                str(root.trace_session_id)
+                for root in reader.roots_by_session_ids(wanted, project_id=project_id)
+            }
         elif task.row_type == RowType.TRACES:
             present = set(
                 reader.root_ids_by_trace_ids(wanted, project_ids=[project_id])

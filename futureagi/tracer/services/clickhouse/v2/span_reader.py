@@ -670,6 +670,11 @@ class CHSpanReader:
     ) -> list[CHSpan]:
         """Lean root spans whose ``column`` resolves through ``remap_table`` to
         the survivor of an id in ``ids``, ordered by that id, then oldest first.
+        The ids sort as text: the FINAL statements this replaced sorted them
+        in ClickHouse's UUID order, which differs across ids (callers group
+        by id, so only the order between ids changed). A root deleted in its
+        latest version is left out, as FINAL on this ReplacingMergeTree(
+        _version, is_deleted) table left it out.
         Each root comes back under every id asked for that resolves to its
         survivor: a straddler's or a consolidated group's roots read under the
         id asked for, and two ids of one group each get them. ``since`` and
