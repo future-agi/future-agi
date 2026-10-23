@@ -52765,6 +52765,14 @@ export const tracerEvalTaskListResponseResultsItemSamplingPolicyDefaultMaxNMax =
 export const tracerEvalTaskListResponseResultsItemSamplingPolicyDefaultRareBelowMin = 0;
 export const tracerEvalTaskListResponseResultsItemSamplingPolicyDefaultRareBelowMax = 1000000;
 
+export const tracerEvalTaskListResponseResultsItemSamplingPolicyCellQuotasMinOne = 0;
+export const tracerEvalTaskListResponseResultsItemSamplingPolicyCellQuotasMaxOne = 1000000;
+
+export const tracerEvalTaskListResponseResultsItemSamplingPolicyPanelMax = 64;
+
+export const tracerEvalTaskListResponseResultsItemSamplingPolicyPrnStartMin = 0;
+export const tracerEvalTaskListResponseResultsItemSamplingPolicyPrnStartMax = 100;
+
 export const tracerEvalTaskListResponseResultsItemSpansLimitMax = 1000000;
 
 export const tracerEvalTaskListResponseResultsItemRowTypeDefault = `spans`;
@@ -53238,6 +53246,43 @@ export const TracerEvalTaskListResponse = zod.object({
                 .optional(),
             })
             .optional(),
+          cell_quotas: zod
+            .record(
+              zod.string(),
+              zod
+                .number()
+                .min(
+                  tracerEvalTaskListResponseResultsItemSamplingPolicyCellQuotasMinOne,
+                )
+                .max(
+                  tracerEvalTaskListResponseResultsItemSamplingPolicyCellQuotasMaxOne,
+                ),
+            )
+            .optional()
+            .describe(
+              "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+            ),
+          coordination: zod
+            .enum(["independent", "project"])
+            .optional()
+            .describe(
+              "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+            ),
+          panel: zod
+            .string()
+            .max(tracerEvalTaskListResponseResultsItemSamplingPolicyPanelMax)
+            .optional()
+            .describe(
+              "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+            ),
+          prn_start: zod
+            .number()
+            .min(tracerEvalTaskListResponseResultsItemSamplingPolicyPrnStartMin)
+            .max(tracerEvalTaskListResponseResultsItemSamplingPolicyPrnStartMax)
+            .optional()
+            .describe(
+              "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+            ),
         })
         .optional(),
       last_run: zod.string().datetime({ offset: true }).optional(),
@@ -53336,6 +53381,14 @@ export const tracerEvalTaskCreateBodySamplingPolicyDefaultMaxNMax = 1000000;
 
 export const tracerEvalTaskCreateBodySamplingPolicyDefaultRareBelowMin = 0;
 export const tracerEvalTaskCreateBodySamplingPolicyDefaultRareBelowMax = 1000000;
+
+export const tracerEvalTaskCreateBodySamplingPolicyCellQuotasMinOne = 0;
+export const tracerEvalTaskCreateBodySamplingPolicyCellQuotasMaxOne = 1000000;
+
+export const tracerEvalTaskCreateBodySamplingPolicyPanelMax = 64;
+
+export const tracerEvalTaskCreateBodySamplingPolicyPrnStartMin = 0;
+export const tracerEvalTaskCreateBodySamplingPolicyPrnStartMax = 100;
 
 export const tracerEvalTaskCreateBodySpansLimitMax = 1000000;
 
@@ -53743,6 +53796,39 @@ export const TracerEvalTaskCreateBody = zod.object({
             .optional(),
         })
         .optional(),
+      cell_quotas: zod
+        .record(
+          zod.string(),
+          zod
+            .number()
+            .min(tracerEvalTaskCreateBodySamplingPolicyCellQuotasMinOne)
+            .max(tracerEvalTaskCreateBodySamplingPolicyCellQuotasMaxOne),
+        )
+        .optional()
+        .describe(
+          "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+        ),
+      coordination: zod
+        .enum(["independent", "project"])
+        .optional()
+        .describe(
+          "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+        ),
+      panel: zod
+        .string()
+        .max(tracerEvalTaskCreateBodySamplingPolicyPanelMax)
+        .optional()
+        .describe(
+          "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+        ),
+      prn_start: zod
+        .number()
+        .min(tracerEvalTaskCreateBodySamplingPolicyPrnStartMin)
+        .max(tracerEvalTaskCreateBodySamplingPolicyPrnStartMax)
+        .optional()
+        .describe(
+          "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+        ),
     })
     .optional(),
   last_run: zod.string().datetime({ offset: true }).optional(),
@@ -53857,6 +53943,14 @@ export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaul
 
 export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultRareBelowMin = 0;
 export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyDefaultRareBelowMax = 1000000;
+
+export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyCellQuotasMinOne = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyCellQuotasMaxOne = 1000000;
+
+export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyPanelMax = 64;
+
+export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyPrnStartMin = 0;
+export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyPrnStartMax = 100;
 
 export const tracerEvalTaskGetEvalDetailsResponseResultsItemSpansLimitMax = 1000000;
 
@@ -54337,6 +54431,49 @@ export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
                 .optional(),
             })
             .optional(),
+          cell_quotas: zod
+            .record(
+              zod.string(),
+              zod
+                .number()
+                .min(
+                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyCellQuotasMinOne,
+                )
+                .max(
+                  tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyCellQuotasMaxOne,
+                ),
+            )
+            .optional()
+            .describe(
+              "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+            ),
+          coordination: zod
+            .enum(["independent", "project"])
+            .optional()
+            .describe(
+              "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+            ),
+          panel: zod
+            .string()
+            .max(
+              tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyPanelMax,
+            )
+            .optional()
+            .describe(
+              "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+            ),
+          prn_start: zod
+            .number()
+            .min(
+              tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyPrnStartMin,
+            )
+            .max(
+              tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingPolicyPrnStartMax,
+            )
+            .optional()
+            .describe(
+              "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+            ),
         })
         .optional(),
       last_run: zod.string().datetime({ offset: true }).optional(),
@@ -54455,6 +54592,14 @@ export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingPolicyDefau
 
 export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingPolicyDefaultRareBelowMin = 0;
 export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingPolicyDefaultRareBelowMax = 1000000;
+
+export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingPolicyCellQuotasMinOne = 0;
+export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingPolicyCellQuotasMaxOne = 1000000;
+
+export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingPolicyPanelMax = 64;
+
+export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingPolicyPrnStartMin = 0;
+export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingPolicyPrnStartMax = 100;
 
 export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemSpansLimitMax = 1000000;
 
@@ -54937,6 +55082,49 @@ export const TracerEvalTaskGetEvalTaskLogsResponse = zod.object({
                 .optional(),
             })
             .optional(),
+          cell_quotas: zod
+            .record(
+              zod.string(),
+              zod
+                .number()
+                .min(
+                  tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingPolicyCellQuotasMinOne,
+                )
+                .max(
+                  tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingPolicyCellQuotasMaxOne,
+                ),
+            )
+            .optional()
+            .describe(
+              "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+            ),
+          coordination: zod
+            .enum(["independent", "project"])
+            .optional()
+            .describe(
+              "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+            ),
+          panel: zod
+            .string()
+            .max(
+              tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingPolicyPanelMax,
+            )
+            .optional()
+            .describe(
+              "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+            ),
+          prn_start: zod
+            .number()
+            .min(
+              tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingPolicyPrnStartMin,
+            )
+            .max(
+              tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingPolicyPrnStartMax,
+            )
+            .optional()
+            .describe(
+              "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+            ),
         })
         .optional(),
       last_run: zod.string().datetime({ offset: true }).optional(),
@@ -55387,6 +55575,109 @@ export const TracerEvalTaskPauseEvalTaskResponse = zod.object({
   }),
 });
 
+/**
+ * Per-stratum design, realized sample, weights, Kish and balance.
+ */
+export const TracerEvalTaskSamplingAuditQueryParams = zod.object({
+  eval_task_id: zod.string().uuid(),
+  cohort_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "Audit this cohort of the task (for example an archived one) instead of the current policy's cohort.",
+    ),
+});
+
+export const TracerEvalTaskSamplingAuditResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    cohort_id: zod.string().uuid(),
+    policy_version: zod.string().min(1),
+    mode: zod.enum(["closed", "live"]),
+    sampling_unit: zod.string().min(1),
+    coordination: zod.enum(["independent", "project"]),
+    frozen_at: zod.string().datetime({ offset: true }),
+    complete: zod.boolean(),
+    population_source: zod.enum(["frozen_snapshot", "persisted_decisions"]),
+    strata: zod.array(
+      zod.object({
+        stratum: zod.string().min(1),
+        rule: zod.string().min(1),
+        population_size: zod
+          .number()
+          .describe(
+            "Closed: units in the stratum at the freeze. Live: units decided since the policy start.",
+          ),
+        target: zod
+          .number()
+          .describe(
+            "Closed: the quota the rule asks for before the population cap.",
+          ),
+        expected_size: zod
+          .number()
+          .describe(
+            "Closed: the exact quota k = min(N, target). Live: N times the rate.",
+          ),
+        achieved: zod.number(),
+        shortage: zod.number(),
+        exact: zod.boolean(),
+        inclusion_probability: zod.number(),
+        design_weight: zod.number(),
+        srm_z: zod.number(),
+        srm_p_value: zod.number(),
+        srm_flagged: zod.boolean(),
+        population_check: zod.enum(["match", "changed", "persisted"]),
+      }),
+    ),
+    summary: zod.object({
+      strata: zod.number(),
+      population_size: zod.number(),
+      achieved: zod.number(),
+      kish_effective_n: zod.number(),
+      design_effect: zod.number(),
+      weight_cv: zod.number(),
+      weighted_population: zod
+        .number()
+        .describe("Sum of design weights of the sampled units."),
+      represented_population: zod
+        .number()
+        .describe("Population of the strata with at least one sampled unit."),
+      unrepresented_strata: zod.number(),
+      unrepresented_population: zod.number(),
+      flagged_strata: zod.number(),
+      integrity: zod.enum(["ok", "attention"]),
+      srm_alpha: zod.number(),
+    }),
+    balance: zod.array(
+      zod.object({
+        attribute: zod.string().min(1),
+        source: zod.string().min(1),
+        categories: zod.array(
+          zod.object({
+            value: zod.string().min(1),
+            present: zod.boolean(),
+            population_size: zod.number(),
+            achieved: zod.number(),
+            population_share: zod.number(),
+            sample_share: zod.number(),
+            weighted_share: zod.number(),
+            standardized_difference: zod.number(),
+            weighted_standardized_difference: zod.number(),
+          }),
+        ),
+        chi_square: zod.number(),
+        degrees_of_freedom: zod.number(),
+        p_value: zod.number(),
+        max_abs_standardized_difference: zod.number(),
+        max_abs_weighted_standardized_difference: zod.number(),
+        weighted_imbalance: zod.boolean(),
+      }),
+    ),
+    notes: zod.array(zod.string().min(1)),
+  }),
+});
+
 export const tracerEvalTaskSamplingPreviewBodyRowTypeDefault = `spans`;
 export const tracerEvalTaskSamplingPreviewBodyFiltersDateRangeMin = 2;
 export const tracerEvalTaskSamplingPreviewBodyFiltersDateRangeMax = 2;
@@ -55447,6 +55738,14 @@ export const tracerEvalTaskSamplingPreviewBodySamplingPolicyDefaultMaxNMax = 100
 
 export const tracerEvalTaskSamplingPreviewBodySamplingPolicyDefaultRareBelowMin = 0;
 export const tracerEvalTaskSamplingPreviewBodySamplingPolicyDefaultRareBelowMax = 1000000;
+
+export const tracerEvalTaskSamplingPreviewBodySamplingPolicyCellQuotasMinOne = 0;
+export const tracerEvalTaskSamplingPreviewBodySamplingPolicyCellQuotasMaxOne = 1000000;
+
+export const tracerEvalTaskSamplingPreviewBodySamplingPolicyPanelMax = 64;
+
+export const tracerEvalTaskSamplingPreviewBodySamplingPolicyPrnStartMin = 0;
+export const tracerEvalTaskSamplingPreviewBodySamplingPolicyPrnStartMax = 100;
 
 export const tracerEvalTaskSamplingPreviewBodyEvalsDefault = [];
 export const tracerEvalTaskSamplingPreviewBodyEvalsMax = 50;
@@ -55871,6 +56170,39 @@ export const TracerEvalTaskSamplingPreviewBody = zod.object({
           .optional(),
       })
       .optional(),
+    cell_quotas: zod
+      .record(
+        zod.string(),
+        zod
+          .number()
+          .min(tracerEvalTaskSamplingPreviewBodySamplingPolicyCellQuotasMinOne)
+          .max(tracerEvalTaskSamplingPreviewBodySamplingPolicyCellQuotasMaxOne),
+      )
+      .optional()
+      .describe(
+        "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+      ),
+    coordination: zod
+      .enum(["independent", "project"])
+      .optional()
+      .describe(
+        "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+      ),
+    panel: zod
+      .string()
+      .max(tracerEvalTaskSamplingPreviewBodySamplingPolicyPanelMax)
+      .optional()
+      .describe(
+        "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+      ),
+    prn_start: zod
+      .number()
+      .min(tracerEvalTaskSamplingPreviewBodySamplingPolicyPrnStartMin)
+      .max(tracerEvalTaskSamplingPreviewBodySamplingPolicyPrnStartMax)
+      .optional()
+      .describe(
+        "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+      ),
   }),
   evals: zod
     .array(zod.string().uuid())
@@ -55916,6 +56248,11 @@ export const TracerEvalTaskSamplingPreviewResponse = zod.object({
         expected_rows: zod.number(),
         selected_units: zod.number(),
         selected_rows: zod.number(),
+        margin_of_error: zod
+          .number()
+          .describe(
+            "95% margin of error of a proportion over this cell's selected units (finite-population corrected, p = 0.5); null when nothing is selected, 0 for a census.",
+          ),
       }),
     ),
     evaluator_count: zod
@@ -55923,6 +56260,18 @@ export const TracerEvalTaskSamplingPreviewResponse = zod.object({
       .min(tracerEvalTaskSamplingPreviewResponseResultEvaluatorCountMin),
     expected_evaluations: zod.number(),
     selected_evaluations: zod.number(),
+    precision: zod.object({
+      confidence: zod.number(),
+      assumed_proportion: zod.number(),
+      stratified_margin_of_error: zod
+        .number()
+        .describe(
+          "Margin of the population-weighted proportion; null when a non-empty cell selects nothing.",
+        ),
+      kish_effective_n: zod.number(),
+      design_effect: zod.number(),
+      unsampled_strata: zod.number(),
+    }),
     estimated_cost: zod.number(),
     cost_note: zod.string().min(1),
     population_note: zod.string().min(1),
@@ -56007,6 +56356,14 @@ export const tracerEvalTaskUpdateEvalTaskBodySamplingPolicyDefaultMaxNMax = 1000
 
 export const tracerEvalTaskUpdateEvalTaskBodySamplingPolicyDefaultRareBelowMin = 0;
 export const tracerEvalTaskUpdateEvalTaskBodySamplingPolicyDefaultRareBelowMax = 1000000;
+
+export const tracerEvalTaskUpdateEvalTaskBodySamplingPolicyCellQuotasMinOne = 0;
+export const tracerEvalTaskUpdateEvalTaskBodySamplingPolicyCellQuotasMaxOne = 1000000;
+
+export const tracerEvalTaskUpdateEvalTaskBodySamplingPolicyPanelMax = 64;
+
+export const tracerEvalTaskUpdateEvalTaskBodySamplingPolicyPrnStartMin = 0;
+export const tracerEvalTaskUpdateEvalTaskBodySamplingPolicyPrnStartMax = 100;
 
 export const tracerEvalTaskUpdateEvalTaskBodyNameMax = 255;
 
@@ -56274,6 +56631,41 @@ export const TracerEvalTaskUpdateEvalTaskBody = zod.object({
             .optional(),
         })
         .optional(),
+      cell_quotas: zod
+        .record(
+          zod.string(),
+          zod
+            .number()
+            .min(tracerEvalTaskUpdateEvalTaskBodySamplingPolicyCellQuotasMinOne)
+            .max(
+              tracerEvalTaskUpdateEvalTaskBodySamplingPolicyCellQuotasMaxOne,
+            ),
+        )
+        .optional()
+        .describe(
+          "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+        ),
+      coordination: zod
+        .enum(["independent", "project"])
+        .optional()
+        .describe(
+          "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+        ),
+      panel: zod
+        .string()
+        .max(tracerEvalTaskUpdateEvalTaskBodySamplingPolicyPanelMax)
+        .optional()
+        .describe(
+          "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+        ),
+      prn_start: zod
+        .number()
+        .min(tracerEvalTaskUpdateEvalTaskBodySamplingPolicyPrnStartMin)
+        .max(tracerEvalTaskUpdateEvalTaskBodySamplingPolicyPrnStartMax)
+        .optional()
+        .describe(
+          "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+        ),
     })
     .optional(),
   name: zod
@@ -56560,6 +56952,14 @@ export const tracerEvalTaskReadResponseSamplingPolicyDefaultMaxNMax = 1000000;
 
 export const tracerEvalTaskReadResponseSamplingPolicyDefaultRareBelowMin = 0;
 export const tracerEvalTaskReadResponseSamplingPolicyDefaultRareBelowMax = 1000000;
+
+export const tracerEvalTaskReadResponseSamplingPolicyCellQuotasMinOne = 0;
+export const tracerEvalTaskReadResponseSamplingPolicyCellQuotasMaxOne = 1000000;
+
+export const tracerEvalTaskReadResponseSamplingPolicyPanelMax = 64;
+
+export const tracerEvalTaskReadResponseSamplingPolicyPrnStartMin = 0;
+export const tracerEvalTaskReadResponseSamplingPolicyPrnStartMax = 100;
 
 export const tracerEvalTaskReadResponseSpansLimitMax = 1000000;
 
@@ -56972,6 +57372,39 @@ export const TracerEvalTaskReadResponse = zod.object({
             .optional(),
         })
         .optional(),
+      cell_quotas: zod
+        .record(
+          zod.string(),
+          zod
+            .number()
+            .min(tracerEvalTaskReadResponseSamplingPolicyCellQuotasMinOne)
+            .max(tracerEvalTaskReadResponseSamplingPolicyCellQuotasMaxOne),
+        )
+        .optional()
+        .describe(
+          "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+        ),
+      coordination: zod
+        .enum(["independent", "project"])
+        .optional()
+        .describe(
+          "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+        ),
+      panel: zod
+        .string()
+        .max(tracerEvalTaskReadResponseSamplingPolicyPanelMax)
+        .optional()
+        .describe(
+          "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+        ),
+      prn_start: zod
+        .number()
+        .min(tracerEvalTaskReadResponseSamplingPolicyPrnStartMin)
+        .max(tracerEvalTaskReadResponseSamplingPolicyPrnStartMax)
+        .optional()
+        .describe(
+          "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+        ),
     })
     .optional(),
   last_run: zod.string().datetime({ offset: true }).optional(),
@@ -57065,6 +57498,14 @@ export const tracerEvalTaskUpdateBodySamplingPolicyDefaultMaxNMax = 1000000;
 
 export const tracerEvalTaskUpdateBodySamplingPolicyDefaultRareBelowMin = 0;
 export const tracerEvalTaskUpdateBodySamplingPolicyDefaultRareBelowMax = 1000000;
+
+export const tracerEvalTaskUpdateBodySamplingPolicyCellQuotasMinOne = 0;
+export const tracerEvalTaskUpdateBodySamplingPolicyCellQuotasMaxOne = 1000000;
+
+export const tracerEvalTaskUpdateBodySamplingPolicyPanelMax = 64;
+
+export const tracerEvalTaskUpdateBodySamplingPolicyPrnStartMin = 0;
+export const tracerEvalTaskUpdateBodySamplingPolicyPrnStartMax = 100;
 
 export const tracerEvalTaskUpdateBodySpansLimitMax = 1000000;
 
@@ -57472,6 +57913,39 @@ export const TracerEvalTaskUpdateBody = zod.object({
             .optional(),
         })
         .optional(),
+      cell_quotas: zod
+        .record(
+          zod.string(),
+          zod
+            .number()
+            .min(tracerEvalTaskUpdateBodySamplingPolicyCellQuotasMinOne)
+            .max(tracerEvalTaskUpdateBodySamplingPolicyCellQuotasMaxOne),
+        )
+        .optional()
+        .describe(
+          "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+        ),
+      coordination: zod
+        .enum(["independent", "project"])
+        .optional()
+        .describe(
+          "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+        ),
+      panel: zod
+        .string()
+        .max(tracerEvalTaskUpdateBodySamplingPolicyPanelMax)
+        .optional()
+        .describe(
+          "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+        ),
+      prn_start: zod
+        .number()
+        .min(tracerEvalTaskUpdateBodySamplingPolicyPrnStartMin)
+        .max(tracerEvalTaskUpdateBodySamplingPolicyPrnStartMax)
+        .optional()
+        .describe(
+          "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+        ),
     })
     .optional(),
   last_run: zod.string().datetime({ offset: true }).optional(),
@@ -57558,6 +58032,14 @@ export const tracerEvalTaskUpdateResponseSamplingPolicyDefaultMaxNMax = 1000000;
 
 export const tracerEvalTaskUpdateResponseSamplingPolicyDefaultRareBelowMin = 0;
 export const tracerEvalTaskUpdateResponseSamplingPolicyDefaultRareBelowMax = 1000000;
+
+export const tracerEvalTaskUpdateResponseSamplingPolicyCellQuotasMinOne = 0;
+export const tracerEvalTaskUpdateResponseSamplingPolicyCellQuotasMaxOne = 1000000;
+
+export const tracerEvalTaskUpdateResponseSamplingPolicyPanelMax = 64;
+
+export const tracerEvalTaskUpdateResponseSamplingPolicyPrnStartMin = 0;
+export const tracerEvalTaskUpdateResponseSamplingPolicyPrnStartMax = 100;
 
 export const tracerEvalTaskUpdateResponseSpansLimitMax = 1000000;
 
@@ -57974,6 +58456,39 @@ export const TracerEvalTaskUpdateResponse = zod.object({
             .optional(),
         })
         .optional(),
+      cell_quotas: zod
+        .record(
+          zod.string(),
+          zod
+            .number()
+            .min(tracerEvalTaskUpdateResponseSamplingPolicyCellQuotasMinOne)
+            .max(tracerEvalTaskUpdateResponseSamplingPolicyCellQuotasMaxOne),
+        )
+        .optional()
+        .describe(
+          "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+        ),
+      coordination: zod
+        .enum(["independent", "project"])
+        .optional()
+        .describe(
+          "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+        ),
+      panel: zod
+        .string()
+        .max(tracerEvalTaskUpdateResponseSamplingPolicyPanelMax)
+        .optional()
+        .describe(
+          "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+        ),
+      prn_start: zod
+        .number()
+        .min(tracerEvalTaskUpdateResponseSamplingPolicyPrnStartMin)
+        .max(tracerEvalTaskUpdateResponseSamplingPolicyPrnStartMax)
+        .optional()
+        .describe(
+          "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+        ),
     })
     .optional(),
   last_run: zod.string().datetime({ offset: true }).optional(),
@@ -58067,6 +58582,14 @@ export const tracerEvalTaskPartialUpdateBodySamplingPolicyDefaultMaxNMax = 10000
 
 export const tracerEvalTaskPartialUpdateBodySamplingPolicyDefaultRareBelowMin = 0;
 export const tracerEvalTaskPartialUpdateBodySamplingPolicyDefaultRareBelowMax = 1000000;
+
+export const tracerEvalTaskPartialUpdateBodySamplingPolicyCellQuotasMinOne = 0;
+export const tracerEvalTaskPartialUpdateBodySamplingPolicyCellQuotasMaxOne = 1000000;
+
+export const tracerEvalTaskPartialUpdateBodySamplingPolicyPanelMax = 64;
+
+export const tracerEvalTaskPartialUpdateBodySamplingPolicyPrnStartMin = 0;
+export const tracerEvalTaskPartialUpdateBodySamplingPolicyPrnStartMax = 100;
 
 export const tracerEvalTaskPartialUpdateBodySpansLimitMax = 1000000;
 
@@ -58504,6 +59027,39 @@ export const TracerEvalTaskPartialUpdateBody = zod.object({
             .optional(),
         })
         .optional(),
+      cell_quotas: zod
+        .record(
+          zod.string(),
+          zod
+            .number()
+            .min(tracerEvalTaskPartialUpdateBodySamplingPolicyCellQuotasMinOne)
+            .max(tracerEvalTaskPartialUpdateBodySamplingPolicyCellQuotasMaxOne),
+        )
+        .optional()
+        .describe(
+          "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+        ),
+      coordination: zod
+        .enum(["independent", "project"])
+        .optional()
+        .describe(
+          "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+        ),
+      panel: zod
+        .string()
+        .max(tracerEvalTaskPartialUpdateBodySamplingPolicyPanelMax)
+        .optional()
+        .describe(
+          "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+        ),
+      prn_start: zod
+        .number()
+        .min(tracerEvalTaskPartialUpdateBodySamplingPolicyPrnStartMin)
+        .max(tracerEvalTaskPartialUpdateBodySamplingPolicyPrnStartMax)
+        .optional()
+        .describe(
+          "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+        ),
     })
     .optional(),
   last_run: zod.string().datetime({ offset: true }).optional(),
@@ -58590,6 +59146,14 @@ export const tracerEvalTaskPartialUpdateResponseSamplingPolicyDefaultMaxNMax = 1
 
 export const tracerEvalTaskPartialUpdateResponseSamplingPolicyDefaultRareBelowMin = 0;
 export const tracerEvalTaskPartialUpdateResponseSamplingPolicyDefaultRareBelowMax = 1000000;
+
+export const tracerEvalTaskPartialUpdateResponseSamplingPolicyCellQuotasMinOne = 0;
+export const tracerEvalTaskPartialUpdateResponseSamplingPolicyCellQuotasMaxOne = 1000000;
+
+export const tracerEvalTaskPartialUpdateResponseSamplingPolicyPanelMax = 64;
+
+export const tracerEvalTaskPartialUpdateResponseSamplingPolicyPrnStartMin = 0;
+export const tracerEvalTaskPartialUpdateResponseSamplingPolicyPrnStartMax = 100;
 
 export const tracerEvalTaskPartialUpdateResponseSpansLimitMax = 1000000;
 
@@ -59048,6 +59612,43 @@ export const TracerEvalTaskPartialUpdateResponse = zod.object({
             .optional(),
         })
         .optional(),
+      cell_quotas: zod
+        .record(
+          zod.string(),
+          zod
+            .number()
+            .min(
+              tracerEvalTaskPartialUpdateResponseSamplingPolicyCellQuotasMinOne,
+            )
+            .max(
+              tracerEvalTaskPartialUpdateResponseSamplingPolicyCellQuotasMaxOne,
+            ),
+        )
+        .optional()
+        .describe(
+          "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+        ),
+      coordination: zod
+        .enum(["independent", "project"])
+        .optional()
+        .describe(
+          "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+        ),
+      panel: zod
+        .string()
+        .max(tracerEvalTaskPartialUpdateResponseSamplingPolicyPanelMax)
+        .optional()
+        .describe(
+          "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+        ),
+      prn_start: zod
+        .number()
+        .min(tracerEvalTaskPartialUpdateResponseSamplingPolicyPrnStartMin)
+        .max(tracerEvalTaskPartialUpdateResponseSamplingPolicyPrnStartMax)
+        .optional()
+        .describe(
+          "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+        ),
     })
     .optional(),
   last_run: zod.string().datetime({ offset: true }).optional(),

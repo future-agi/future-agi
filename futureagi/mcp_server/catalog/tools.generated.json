@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "45a4db1c76d7217f927b70629298b059cc37d580c042b9bc817435602cf78da6",
+  "source_contract_sha256": "679d571c5761c1d0335a9f65ad7c248989bf276b94df04de238178f18f7aa17c",
   "tool_count": 109,
   "tools": [
     {
@@ -4746,6 +4746,38 @@
                   },
                   "default": {
                     "$ref": "#/definitions/SamplingRule"
+                  },
+                  "cell_quotas": {
+                    "title": "Cell quotas",
+                    "description": "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer",
+                      "maximum": 1000000,
+                      "minimum": 0
+                    }
+                  },
+                  "coordination": {
+                    "title": "Coordination",
+                    "description": "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+                    "type": "string",
+                    "enum": [
+                      "independent",
+                      "project"
+                    ]
+                  },
+                  "panel": {
+                    "title": "Panel",
+                    "description": "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "prn_start": {
+                    "title": "Prn start",
+                    "description": "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0
                   }
                 }
               },
@@ -5335,6 +5367,38 @@
                   },
                   "default": {
                     "$ref": "#/definitions/SamplingRule"
+                  },
+                  "cell_quotas": {
+                    "title": "Cell quotas",
+                    "description": "Closed only: explicit target units keyed by the opaque stratum identity from preview. Replaces that cell's rate, floor, cap and census, without changing unit classification. Unlisted cells keep their rule.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "integer",
+                      "maximum": 1000000,
+                      "minimum": 0
+                    }
+                  },
+                  "coordination": {
+                    "title": "Coordination",
+                    "description": "independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+                    "type": "string",
+                    "enum": [
+                      "independent",
+                      "project"
+                    ]
+                  },
+                  "panel": {
+                    "title": "Panel",
+                    "description": "Project coordination only: a named PRN panel; different panels draw independent numbers.",
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "prn_start": {
+                    "title": "Prn start",
+                    "description": "Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0
                   }
                 }
               },
