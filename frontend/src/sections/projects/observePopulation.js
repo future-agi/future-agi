@@ -105,12 +105,14 @@ const SOURCES = {
   },
   users: {
     endpoint: () => endpoints.project.getUsersList(),
-    params: ({ projectId, filters, page, pageSize }) => ({
+    // The Users list's own search narrows its users, as the grid sends it.
+    params: ({ projectId, filters, page, pageSize, search }) => ({
       project_id: projectId,
       current_page_index: page,
       page_size: pageSize,
       filters: JSON.stringify(filters || []),
       sort_params: "[]",
+      ...(search?.trim() ? { search: search.trim() } : {}),
     }),
     item: (row) => ({
       id: row.end_user_id,
@@ -130,6 +132,7 @@ export async function collectPopulation({
   unit,
   projectId,
   filters = [],
+  search,
   limit = MAX_POPULATION,
   signal,
 }) {
@@ -143,7 +146,7 @@ export async function collectPopulation({
     const pageSize = Math.min(PAGE_SIZE, limit - items.length);
     // eslint-disable-next-line no-await-in-loop
     const response = await readQuery(source.endpoint(), {
-      params: source.params({ projectId, filters, page, pageSize }),
+      params: source.params({ projectId, filters, page, pageSize, search }),
       signal,
     });
     const result = response?.data?.result || {};

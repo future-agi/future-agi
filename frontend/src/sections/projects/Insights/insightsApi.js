@@ -364,14 +364,24 @@ export function usePopulationCount({
 // page of the scope's list.
 export const EXAMPLES_LIMIT = 100;
 
-export function useExampleRows({ unit, projectId, filters, enabled = true }) {
+export function useExampleRows({
+  unit,
+  projectId,
+  filters,
+  search,
+  enabled = true,
+}) {
   return useQuery({
-    queryKey: insightsKeys.examples(unit, projectId, filters),
+    queryKey: [
+      ...insightsKeys.examples(unit, projectId, filters),
+      search || "",
+    ],
     queryFn: ({ signal }) =>
       collectPopulation({
         unit,
         projectId,
         filters,
+        search,
         limit: EXAMPLES_LIMIT,
         signal,
       }),

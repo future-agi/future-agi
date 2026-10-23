@@ -134,8 +134,11 @@ const ObserveToolbar = ({
   isSpansView = false,
 }) => {
   // Asking needs a project (the views only pass handlers when they have one)
-  // and isn't offered in compare mode.
-  const canAsk = ASK_MODES.has(mode) && !isCompareActive;
+  // and isn't offered in compare mode, nor on a simulator (voice) project:
+  // Ask and Find patterns read the trace list, not the calls on screen (and
+  // not its "Show simulated calls" toggle). The tab bar hides Insights there
+  // the same way.
+  const canAsk = ASK_MODES.has(mode) && !isCompareActive && !isSimulator;
   const askUnit = mode === "traces" && isSpansView ? "spans" : mode;
   const [displayAnchor, setDisplayAnchor] = useState(null);
   const filterButtonRef = useRef(null);

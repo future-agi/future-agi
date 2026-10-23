@@ -134,6 +134,13 @@ describe("ObserveToolbar Evaluate menu", () => {
     expect(menuTitles()).toEqual(["Add evaluators"]);
   });
 
+  it("keeps only Add evaluators on a simulator (voice) project", () => {
+    // Ask and Find patterns read the trace list, not the calls on screen.
+    renderToolbar({ mode: "traces", isSimulator: true, ...handlers() });
+    openMenu();
+    expect(menuTitles()).toEqual(["Add evaluators"]);
+  });
+
   it("renders nothing without a project's handlers", () => {
     renderToolbar({ mode: "users" });
     expect(screen.queryByRole("button", { name: "Evaluate" })).toBeNull();

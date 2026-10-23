@@ -15,10 +15,42 @@ export const ASK_SEED_PARAM = "seed";
 const makeKey = () =>
   `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
+// Hand-offs kept per tab. Entries are read again on a reload of the target
+// page, so they aren't removed when read; the oldest go instead, and all but
+// the new one when the storage is full (some hold thousands of ids).
+export const KEEP_HANDOFFS = 10;
+
+function handoffKeys(storage) {
+  const keys = [];
+  for (let i = 0; i < storage.length; i += 1) {
+    const name = storage.key(i);
+    if (name?.startsWith(PREFIX)) keys.push(name);
+  }
+  // Keys start with their time in base 36, so they sort oldest first.
+  return keys.sort();
+}
+
+function pruneHandoffs(storage, keep) {
+  const keys = handoffKeys(storage);
+  keys.slice(0, Math.max(0, keys.length - keep)).forEach((name) => {
+    storage.removeItem(name);
+  });
+}
+
 export function stashHandoff(value) {
   const key = makeKey();
+  const storage = globalThis.sessionStorage;
   try {
-    globalThis.sessionStorage?.setItem(PREFIX + key, JSON.stringify(value));
+    if (!storage) return key;
+    const raw = JSON.stringify(value);
+    pruneHandoffs(storage, KEEP_HANDOFFS - 1);
+    try {
+      storage.setItem(PREFIX + key, raw);
+    } catch {
+      // Full: drop every older hand-off and try once more.
+      pruneHandoffs(storage, 0);
+      storage.setItem(PREFIX + key, raw);
+    }
   } catch {
     // Storage unavailable: the target opens with the scope from the URL only.
   }

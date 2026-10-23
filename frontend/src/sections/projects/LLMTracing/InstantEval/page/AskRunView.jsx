@@ -719,6 +719,14 @@ export default function AskRunView({
     }
     setOpened(record);
   };
+  // Next / Previous in the drawer walk the table's rows in their order.
+  const openedAt = opened
+    ? tableRows.findIndex((item) => item.id === opened.id)
+    : -1;
+  const stepTo = (offset) => {
+    const record = tableRows[openedAt + offset];
+    if (record) setOpened(record);
+  };
 
   const control = async (action, options = {}) => {
     setActing(true);
@@ -1247,6 +1255,10 @@ export default function AskRunView({
           projectId={projectId}
           traceId={unit === "spans" ? opened.trace_id : opened.id}
           initialSpanId={unit === "spans" ? opened.id : undefined}
+          onPrev={() => stepTo(-1)}
+          onNext={() => stepTo(1)}
+          hasPrev={openedAt > 0}
+          hasNext={openedAt >= 0 && openedAt < tableRows.length - 1}
         />
       )}
     </Box>

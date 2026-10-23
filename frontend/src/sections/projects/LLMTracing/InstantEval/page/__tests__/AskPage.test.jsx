@@ -68,7 +68,18 @@ vi.mock("src/sections/projects/LLMTracing/TraceFilterPanel", () => ({
   ),
 }));
 vi.mock("src/components/traceDetail/TraceDetailDrawerV2", () => ({
-  default: () => null,
+  // eslint-disable-next-line react/prop-types
+  default: ({ traceId, onNext, onPrev, hasNext, hasPrev }) => (
+    <div role="dialog" aria-label="Trace drawer">
+      <span>Trace {traceId}</span>
+      <button type="button" disabled={!hasPrev} onClick={onPrev}>
+        Previous trace
+      </button>
+      <button type="button" disabled={!hasNext} onClick={onNext}>
+        Next trace
+      </button>
+    </div>
+  ),
 }));
 vi.mock("../../results/KeepAnswering", () => ({
   default: (props) => {
@@ -827,6 +838,33 @@ describe("the Ask page", () => {
       unit: "sessions",
       tab: "sessions",
     });
+  });
+
+  it("walks the table's traces with the drawer's Next and Previous", () => {
+    fakes.askRuns["task-traces"] = {
+      ...doneRun,
+      unit: "traces",
+      knownUnit: "traces",
+    };
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?run=task-traces&unit=traces&tab=traces`,
+    );
+    const table = screen.getByRole("region", { name: "Traces asked about" });
+    const [first, second] = within(table).getAllByRole("row").slice(1);
+    fireEvent.click(first);
+    const drawer = screen.getByRole("dialog", { name: "Trace drawer" });
+    const shown = () => within(drawer).getByText(/^Trace /).textContent;
+    const start = shown();
+    expect(
+      within(drawer).getByRole("button", { name: "Previous trace" }),
+    ).toBeDisabled();
+    fireEvent.click(within(drawer).getByRole("button", { name: "Next trace" }));
+    expect(shown()).not.toBe(start);
+    fireEvent.click(
+      within(drawer).getByRole("button", { name: "Previous trace" }),
+    );
+    expect(shown()).toBe(start);
+    expect(second).toBeTruthy();
   });
 
   it("narrows the rows to a focused answer or a selection, and clears", () => {

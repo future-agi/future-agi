@@ -236,6 +236,7 @@ export function useAskScope({ projectId, unit, scope, sampleSize = null }) {
           unit,
           projectId,
           filters,
+          search,
           limit: MAX_POPULATION,
           signal,
         });

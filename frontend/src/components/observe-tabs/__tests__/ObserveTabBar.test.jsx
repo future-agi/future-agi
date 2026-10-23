@@ -7,7 +7,7 @@ import {
   within,
 } from "src/utils/test-utils";
 import React from "react";
-import ObserveTabBar from "../ObserveTabBar";
+import ObserveTabBar, { typingInto } from "../ObserveTabBar";
 import { ObserveHeaderContext } from "src/sections/project/context/ObserveHeaderContext";
 
 const mockCreateSavedView = vi.fn();
@@ -204,5 +204,29 @@ describe("ObserveTabBar — Insights tab", () => {
     expect(
       within(insightsTab()).queryByRole("img", { name: "Enterprise feature" }),
     ).toBeNull();
+  });
+});
+
+describe("typingInto, the guard of the tab shortcuts", () => {
+  const el = (html) => {
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    document.body.appendChild(host);
+    return host.firstElementChild;
+  };
+
+  it("skips fields, editable elements and open menus", () => {
+    expect(typingInto(el("<input />"))).toBe(true);
+    expect(typingInto(el('<div contenteditable="true">x</div>'))).toBe(true);
+    expect(typingInto(el('<ul role="menu"><li>x</li></ul>'))).toBe(true);
+    // A menu item, inside an MUI menu's list, while type-ahead is on.
+    const menu = el('<ul role="listbox"><li tabindex="0">Insights</li></ul>');
+    expect(typingInto(menu.querySelector("li"))).toBe(true);
+  });
+
+  it("lets a key on the page itself through", () => {
+    expect(typingInto(el("<button>Tab</button>"))).toBe(false);
+    expect(typingInto(document.body)).toBe(false);
+    expect(typingInto(null)).toBe(false);
   });
 });

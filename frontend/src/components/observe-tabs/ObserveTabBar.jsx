@@ -99,6 +99,30 @@ SortableViewTab.propTypes = {
 // ---------------------------------------------------------------------------
 // ObserveTabBar
 // ---------------------------------------------------------------------------
+// Keys typed into a field, an editable element or an open menu's type-ahead
+// (MUI menus and listboxes) are not shortcuts.
+const TYPE_AHEAD_ROLES = new Set([
+  "menu",
+  "menuitem",
+  "listbox",
+  "option",
+  "combobox",
+  "textbox",
+]);
+export function typingInto(element) {
+  if (!element || typeof element !== "object") return false;
+  const tag = element.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (element.isContentEditable) return true;
+  const role = element.getAttribute?.("role");
+  if (role && TYPE_AHEAD_ROLES.has(role)) return true;
+  return Boolean(
+    element.closest?.(
+      '[role="menu"], [role="listbox"], [contenteditable="true"], [contenteditable=""]',
+    ),
+  );
+}
+
 const ObserveTabBar = ({
   projectId,
   activeTab,
@@ -248,8 +272,7 @@ const ObserveTabBar = ({
   // -----------------------------------------------------------------------
   useEffect(() => {
     const handleKeyDown = (e) => {
-      const tag = document.activeElement?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (typingInto(e.target) || typingInto(document.activeElement)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
       if (e.key === "a" || e.key === "A") {

@@ -359,6 +359,7 @@ export default function NewReport({
     unit: draft.unit,
     projectId,
     filters: settledScope.filters,
+    search: settledScope.search,
     enabled: !fixed && Boolean(count.data) && !serverExamples,
   });
   // A new scope is being counted; a Users count still climbing ("N+") is

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { paramsSerializer } from "src/utils/utils";
@@ -5,8 +6,9 @@ import { filterParams } from "./askFilter";
 import { askRunKeys, toRecord } from "./useAskRun";
 
 // The rows behind the charts, read from the server a page at a time and
-// narrowed by whatever the charts select. A live run's pages are read again
-// as its answers land (`version`).
+// narrowed by whatever the charts select. A live run's first page is read
+// again as its answers land (`version`); once more pages are loaded they are
+// kept as they are until the run ends, then all are read again in place.
 
 export const ROWS_PAGE = 50;
 
@@ -34,7 +36,10 @@ export function useAskRows({
 }) {
   const params = rowsParams({ projectId, taskId, tz, filter, sort });
   const query = useInfiniteQuery({
-    queryKey: [...askRunKeys.rows(projectId, taskId), params, version],
+    // `version` is not in the key: a new key started a new infinite query on
+    // every 2 s poll, so pages loaded with "load more" collapsed back to the
+    // first one and the scroll jumped.
+    queryKey: [...askRunKeys.rows(projectId, taskId), params],
     enabled: Boolean(projectId && taskId) && enabled,
     initialPageParam: null,
     queryFn: async ({ pageParam, signal }) => {
@@ -60,6 +65,13 @@ export function useAskRows({
     meta: { errorHandled: true },
   });
   const pages = query.data?.pages || [];
+  const seenVersion = useRef(version);
+  const { refetch } = query;
+  useEffect(() => {
+    if (seenVersion.current === version) return;
+    seenVersion.current = version;
+    if (version === "done" || pages.length <= 1) refetch();
+  }, [version, pages.length, refetch]);
   return {
     rows: pages.flatMap((page) => page.rows),
     total: pages[0]?.total ?? null,
