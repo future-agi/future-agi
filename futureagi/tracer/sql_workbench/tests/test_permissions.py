@@ -1508,7 +1508,7 @@ def test_estimates_are_reported_only_for_project_leading_sort_keys(
 
 
 # Result reuse: the same person, under the same access and catalog, repeating
-# the same (normalized) query over the same minute-rounded window within the
+# the same (normalized) query over the same exact UTC window within the
 # reuse window gets their completed result back without a new scan.
 REUSE_SQL = "SELECT count() FROM spans"
 
@@ -1579,15 +1579,14 @@ def test_an_identical_request_reuses_the_completed_result_without_a_scan(
     )
     assert dispatch.call_count == 1 and len(first.cache_key) == 64
     _complete(first)
-    # Whitespace, a comment and keyword case differ; the window moves by
-    # seconds inside the same minutes.
+    # Whitespace, a comment and keyword case differ; the exact window is equal.
     again, dispatch = _submit_counting(
         django_capture_on_commit_callbacks,
         actor,
         project,
         sql="select   count()\n-- same question\nfrom spans",
-        start=start + timedelta(seconds=40),
-        end=end + timedelta(seconds=45),
+        start=start,
+        end=end,
     )
     assert again.id == first.id
     dispatch.assert_not_called()
@@ -1615,6 +1614,31 @@ def test_an_identical_request_reuses_the_completed_result_without_a_scan(
     assert response.data["state"] == "succeeded"
     assert response.data["result"]["rows"] == [[7]]
     assert SQLExecution.objects.filter(project=project).count() == 1
+
+
+@pytest.mark.parametrize("shift", [timedelta(seconds=39), timedelta(microseconds=1)])
+def test_reuse_never_substitutes_a_different_exact_window(
+    tenants, django_capture_on_commit_callbacks, shift
+):
+    (actor, project, _), _ = tenants
+    start = timezone.now().replace(second=1, microsecond=0) - timedelta(hours=1)
+    end = start + timedelta(seconds=1)
+    first, dispatch = _submit_counting(
+        django_capture_on_commit_callbacks, actor, project, start=start, end=end
+    )
+    assert dispatch.call_count == 1
+    _complete(first)
+    second, dispatch = _submit_counting(
+        django_capture_on_commit_callbacks,
+        actor,
+        project,
+        start=start + shift,
+        end=end + shift,
+    )
+    assert second.id != first.id
+    assert second.cache_key != first.cache_key
+    assert (second.start, second.end) == (start + shift, end + shift)
+    assert dispatch.call_count == 1
 
 
 def test_reuse_never_crosses_people_projects_or_tenants(

@@ -159,13 +159,11 @@ def result_cache_key(actor, project, scope, sql):
 
     The person (and organization, workspace and project), their current
     membership rows, the catalog version, the query as parsed and re-rendered
-    (so whitespace, comments and keyword case do not matter), the window
-    rounded down to the minute, the evaluation configurations in scope, the
-    source database and store, and the server limits. Any change is a miss.
+    (so whitespace, comments and keyword case do not matter), the exact UTC
+    window, the evaluation configurations in scope, the source database and
+    store, and the server limits. Any change is a miss. Never substitute a
+    different time predicate, even within the same minute.
     """
-
-    def minute(value):
-        return value.astimezone(UTC).replace(second=0, microsecond=0).isoformat()
 
     tree, _ = validate(sql)
     payload = {
@@ -178,7 +176,10 @@ def result_cache_key(actor, project, scope, sql):
         "project": str(project.id),
         "access": authorization_fingerprint(actor),
         "sql": tree.sql(dialect="clickhouse", comments=False),
-        "window": [minute(scope.start), minute(scope.end)],
+        "window_exact": [
+            value.astimezone(UTC).isoformat(timespec="microseconds")
+            for value in (scope.start, scope.end)
+        ],
         "eval_configs": sorted(str(value) for value in scope.eval_config_ids),
         "deleted_eval_configs": sorted(
             str(value) for value in scope.deleted_eval_config_ids

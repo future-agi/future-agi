@@ -1515,6 +1515,38 @@ def test_result_reuse_answers_without_a_scan_and_only_for_the_same_person(
             for worker in workers:
                 worker.join(timeout=15)
             assert cached < uncached
+            minute = (scope.end - timedelta(minutes=5)).replace(second=0, microsecond=0)
+            client.execute(
+                f"INSERT INTO {scope.database}.spans (project_id,org_id,id,trace_id,name,start_time,model) VALUES",
+                [
+                    (
+                        scope.project_id,
+                        scope.organization_id,
+                        f"exact-{second}",
+                        str(uuid4()),
+                        f"window-{second}",
+                        minute + timedelta(seconds=second, microseconds=500000),
+                        "exact-window",
+                    )
+                    for second in (1, 40)
+                ],
+            )
+            exact_jobs = []
+            for second in (1, 40):
+                job = _until_done(
+                    service.submit(
+                        owner,
+                        project_id=project.id,
+                        sql="SELECT name FROM spans WHERE model = 'exact-window'",
+                        start=minute + timedelta(seconds=second),
+                        end=minute + timedelta(seconds=second + 1),
+                    ).id
+                )
+                assert job.state == "succeeded", job.error
+                assert job.result["rows"] == [[f"window-{second}"]]
+                exact_jobs.append(job.id)
+            assert exact_jobs[0] != exact_jobs[1]
+            assert len(workers) == 4
             print(
                 f"result reuse: uncached submit-to-rows {uncached * 1000:.0f} ms "
                 f"(runner {first.result['elapsed_ms']} ms), reused {cached * 1000:.1f} ms"
