@@ -1081,6 +1081,7 @@ import type {
   SDKStandaloneEvalV2ResponseApi,
   SOSLoginApi,
   SQLCatalogApi,
+  SQLEstimateApi,
   SQLExecutionApi,
   SQLHistoryApi,
   SQLProjectApi,
@@ -79476,6 +79477,51 @@ export const tracerSqlQueryCatalog = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type tracerSqlQueryEstimateResponse200 = {
+  data: SQLEstimateApi;
+  status: 200;
+};
+
+export type tracerSqlQueryEstimateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerSqlQueryEstimateResponseSuccess =
+  tracerSqlQueryEstimateResponse200 & {
+    headers: Headers;
+  };
+export type tracerSqlQueryEstimateResponseError =
+  tracerSqlQueryEstimateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerSqlQueryEstimateResponse =
+  | tracerSqlQueryEstimateResponseSuccess
+  | tracerSqlQueryEstimateResponseError;
+
+export const getTracerSqlQueryEstimateUrl = () => {
+  return `/tracer/sql-query/estimate/`;
+};
+
+/**
+ * Advisory index estimate of a query; never admits or blocks a run.
+ */
+export const tracerSqlQueryEstimate = async (
+  sQLRunApi: SQLRunApi,
+  options?: RequestInit,
+): Promise<tracerSqlQueryEstimateResponse> => {
+  return apiMutator<tracerSqlQueryEstimateResponse>(
+    getTracerSqlQueryEstimateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(sQLRunApi),
     },
   );
 };

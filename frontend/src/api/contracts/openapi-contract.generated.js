@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1083,
+  endpointCount: 1084,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -38720,6 +38720,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/sql-query/estimate/": {
+      post: {
+        operationId: "tracer_sql-query_estimate",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SQLRun",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/SQLEstimate",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/sql-query/run-saved/": {
       post: {
         operationId: "tracer_sql-query_run_saved",
@@ -75866,6 +75885,47 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SQLEstimate: {
+      required: [
+        "status",
+        "reason",
+        "sources",
+        "max_rows_to_read",
+        "exceeds_scan_bound",
+        "elapsed_ms",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["ok", "unavailable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        sources: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLEstimateSource",
+          },
+        },
+        max_rows_to_read: {
+          title: "Max rows to read",
+          type: "integer",
+        },
+        exceeds_scan_bound: {
+          title: "Exceeds scan bound",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        elapsed_ms: {
+          title: "Elapsed ms",
+          type: "integer",
+        },
+      },
+    },
     SQLExecution: {
       required: [
         "id",
@@ -103059,6 +103119,47 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/SQLColumn",
           },
+        },
+      },
+    },
+    SQLEstimateSource: {
+      required: [
+        "dataset",
+        "estimated",
+        "parts",
+        "marks",
+        "max_rows",
+        "reason",
+      ],
+      type: "object",
+      properties: {
+        dataset: {
+          title: "Dataset",
+          type: "string",
+          minLength: 1,
+        },
+        estimated: {
+          title: "Estimated",
+          type: "boolean",
+        },
+        parts: {
+          title: "Parts",
+          type: "integer",
+          "x-nullable": true,
+        },
+        marks: {
+          title: "Marks",
+          type: "integer",
+          "x-nullable": true,
+        },
+        max_rows: {
+          title: "Max rows",
+          type: "integer",
+          "x-nullable": true,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
         },
       },
     },

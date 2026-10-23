@@ -64092,6 +64092,36 @@ export const TracerSqlQueryCatalogResponse = zod.object({
 });
 
 /**
+ * Advisory index estimate of a query; never admits or blocks a run.
+ */
+export const tracerSqlQueryEstimateBodySqlMax = 32768;
+
+export const TracerSqlQueryEstimateBody = zod.object({
+  project_id: zod.string().uuid(),
+  sql: zod.string().min(1).max(tracerSqlQueryEstimateBodySqlMax),
+  start: zod.string().datetime({ offset: true }),
+  end: zod.string().datetime({ offset: true }),
+});
+
+export const TracerSqlQueryEstimateResponse = zod.object({
+  status: zod.enum(["ok", "unavailable"]),
+  reason: zod.string(),
+  sources: zod.array(
+    zod.object({
+      dataset: zod.string().min(1),
+      estimated: zod.boolean(),
+      parts: zod.number(),
+      marks: zod.number(),
+      max_rows: zod.number(),
+      reason: zod.string(),
+    }),
+  ),
+  max_rows_to_read: zod.number(),
+  exceeds_scan_bound: zod.boolean(),
+  elapsed_ms: zod.number(),
+});
+
+/**
  * Read-only scans; creating a personal execution record grants no write access.
  */
 export const TracerSqlQueryRunSavedBody = zod.object({
