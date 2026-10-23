@@ -21,6 +21,11 @@ def probability_sql() -> str:
     return f"toFloat64OrNull(JSONExtractRaw(output_metadata, {METADATA_PATH}, 'inclusion_probability'))"
 
 
+def population_size_sql() -> str:
+    """The sampled stratum's population size; closed cohorts persist it per stratum."""
+    return f"toInt64OrNull(JSONExtractRaw(output_metadata, {METADATA_PATH}, 'population_size'))"
+
+
 def _window_time(name: str) -> str:
     return f"parseDateTime64BestEffortOrNull(JSONExtractString(output_metadata, {METADATA_PATH}, 'window', '{name}'), 6, 'UTC')"
 
@@ -29,7 +34,7 @@ def sampling_lineage_valid_sql() -> str:
     start, end = _window_time("start"), _window_time("end")
     mode = sampling_field("membership_mode")
     frozen = f"parseDateTime64BestEffortOrNull({sampling_field('cohort_frozen_at')}, 6, 'UTC')"
-    population = f"toInt64OrNull(JSONExtractRaw(output_metadata, {METADATA_PATH}, 'population_size'))"
+    population = population_size_sql()
     open_end = (
         f"JSONExtractRaw(output_metadata, {METADATA_PATH}, 'window', 'end') = 'null'"
     )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import timedelta
 from types import SimpleNamespace
 from uuid import UUID
@@ -53,12 +54,17 @@ def dashboard_result(config: dict, workspace) -> dict:
             )
         points = []
         if start <= run.window_end <= end:
-            results = read_results(run)["results"]
+            results = read_results(run, include_uncertainty=True)["results"]
             if results:
+                interval = results[0]["uncertainty"]
+                estimable = interval["status"] == "ok"
                 points = [
                     {
                         "timestamp": run.window_end.isoformat(),
                         "value": results[0]["value"],
+                        "ci_low": interval["ci_low"] if estimable else None,
+                        "ci_high": interval["ci_high"] if estimable else None,
+                        "ci_reason": "" if estimable else interval["reason"],
                     }
                 ]
         output.append(
@@ -205,6 +211,32 @@ def _superseded_for(monitor_id, run: DerivedMetricRun) -> bool:
     )
 
 
+def monitor_comparison_value(monitor, row: dict) -> float | None:
+    """Conservative bound for a fixed-window test, not peeking-safe inference."""
+    value = row.get("value")
+    if value is None or not math.isfinite(value):
+        return None
+    if getattr(monitor, "alert_when", "point") == "point":
+        return value
+    interval = row.get("uncertainty") or {}
+    low, high = interval.get("ci_low"), interval.get("ci_high")
+    if (
+        getattr(monitor, "alert_when", None) != "confident"
+        or interval.get("status") != "ok"
+        or low is None
+        or high is None
+        or not math.isfinite(low)
+        or not math.isfinite(high)
+        or low > high
+    ):
+        return None
+    if monitor.threshold_operator == "greater_than":
+        return low
+    if monitor.threshold_operator == "less_than":
+        return high
+    return None
+
+
 def notify_run_monitors(run: DerivedMetricRun, monitor_id=None) -> int:
     """Use the existing alert delivery path, once per committed run per monitor.
 
@@ -219,7 +251,7 @@ def notify_run_monitors(run: DerivedMetricRun, monitor_id=None) -> int:
     metric = run.definition.metric
     if run.definition.version != metric.current_version:
         return 0
-    values = read_results(run)["results"]
+    values = read_results(run, include_uncertainty=True)["results"]
     if not values or values[0]["value"] is None:
         return 0
     ids = UserAlertMonitor.objects.filter(
@@ -264,8 +296,14 @@ def notify_run_monitors(run: DerivedMetricRun, monitor_id=None) -> int:
             current = DerivedMonitorQueryBuilder(monitor)
             if current.metric.current_version != run.definition.version:
                 continue
+            bound = monitor_comparison_value(monitor, values[0])
+            if bound is None:
+                continue
+            kwargs = (
+                {"comparison_value": bound} if monitor.alert_when == "confident" else {}
+            )
             alert_type = _check_static_threshold(
-                monitor, values[0]["value"], run.window_start, run.window_end
+                monitor, values[0]["value"], run.window_start, run.window_end, **kwargs
             )
             # A raised delivery error rolls back both the log and this row;
             # retry can proceed. Existing transports retain their best-effort

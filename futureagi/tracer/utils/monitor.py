@@ -402,8 +402,10 @@ def _check_static_threshold(
     current_value: float,
     time_window_start: datetime,
     now: datetime,
+    *,
+    comparison_value: float | None = None,
 ) -> str | None:
-    """Checks for alerts based on static thresholds."""
+    """Check static thresholds, optionally against a conservative confidence bound."""
     op = monitor.threshold_operator
     critical_val = monitor.critical_threshold_value
     warning_val = monitor.warning_threshold_value
@@ -411,10 +413,11 @@ def _check_static_threshold(
     alert_type = None
     threshold_val = None
 
-    if critical_val is not None and _compare(current_value, op, critical_val):
+    checked_value = current_value if comparison_value is None else comparison_value
+    if critical_val is not None and _compare(checked_value, op, critical_val):
         alert_type = AlertTypeChoices.CRITICAL
         threshold_val = critical_val
-    elif warning_val is not None and _compare(current_value, op, warning_val):
+    elif warning_val is not None and _compare(checked_value, op, warning_val):
         alert_type = AlertTypeChoices.WARNING
         threshold_val = warning_val
 
@@ -424,6 +427,8 @@ def _check_static_threshold(
             f"({current_value:.2f}) breached the {alert_type} threshold "
             f"({monitor.threshold_operator} {threshold_val})."
         )
+        if comparison_value is not None:
+            message += f" The entire fixed-window 95% interval is beyond the threshold (nearest bound {comparison_value:.6g})."
         _handle_alert_trigger(monitor, message, alert_type, time_window_start, now)
     return alert_type
 

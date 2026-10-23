@@ -693,6 +693,11 @@ class DashboardRefreshQuerySerializer(StrictInputSerializer):
 class DashboardQuerySeriesPointSerializer(serializers.Serializer):
     timestamp = serializers.CharField()
     value = serializers.FloatField(allow_null=True)
+    # Derived-metric points only: the persisted 95% interval of the run's window
+    # value. Null bounds mean no interval exists; ci_reason says why.
+    ci_low = serializers.FloatField(allow_null=True, required=False)
+    ci_high = serializers.FloatField(allow_null=True, required=False)
+    ci_reason = serializers.CharField(allow_blank=True, required=False)
 
 
 class DashboardQuerySeriesSerializer(serializers.Serializer):

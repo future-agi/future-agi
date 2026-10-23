@@ -19,11 +19,13 @@ from tracer.services.clickhouse.v2.id_remap_sql import (
 )
 from tracer.services.derived_metrics.formula import Formula, compile_formula
 from tracer.services.derived_metrics.sampling import (
+    population_size_sql,
     probability_sql,
     sampling_field,
     sampling_lineage_valid_sql,
     sampling_scope_sql,
 )
+from tracer.services.derived_metrics.uncertainty import uncertainty_array_sql
 
 # Explicit abort budgets on the native job lane; interactive analytics strips
 # these settings, so this service deliberately does not use that read wrapper.
@@ -95,6 +97,20 @@ SPAN_MEASURE_SQL = {
     "prompt_tokens": "nullIf(toFloat64(s.prompt_tokens), 0)",
     "completion_tokens": "nullIf(toFloat64(s.completion_tokens), 0)",
 }
+
+
+# Persisted after the original result columns, in this order (028 ADD COLUMNs).
+UNCERTAINTY_COLUMNS = (
+    "std_error",
+    "ci_low",
+    "ci_high",
+    "effective_n",
+    "ci_df",
+    "ci_method",
+    "ci_status",
+    "ci_reason",
+    "ci_interval",
+)
 
 
 def utc_timestamp(value: datetime) -> str:
@@ -319,6 +335,7 @@ def snapshot_select(
         [],
         [],
     )
+    modes, populations = [], []
     for item in definition.inputs:
         alias = item["alias"]
         if item["source"] == "span":
@@ -333,6 +350,8 @@ def snapshot_select(
         metadata_id = sampling_field("sampling_unit_id")
         metadata_scope = sampling_scope_sql()
         metadata_stratum = sampling_field("stratum")
+        metadata_mode = sampling_field("membership_mode")
+        metadata_population = population_size_sql()
         lineage_valid = sampling_lineage_valid_sql()
         if item["reducer"] == "latest":
             value = f"if(countIf({condition}) > 0, tupleElement(argMaxIf(tuple(score), tuple(created_at, toString(id)), {condition}), 1), NULL)"
@@ -349,6 +368,12 @@ def snapshot_select(
                 f"minOrNullIf({probability}, {condition}) AS probability_{alias}",
                 f"anyIf({metadata_scope}, {condition}) AS sampling_scope_{alias}",
                 f"anyIf({metadata_stratum}, {condition}) AS sampling_stratum_{alias}",
+                # Design facts for the uncertainty estimate. The mode is part of the
+                # lineage scope, so a conflicting mode already invalidates the unit;
+                # a conflicting population size only withholds the interval.
+                f"anyIf({metadata_mode}, {condition}) AS sampling_mode_{alias}",
+                f"minIf({metadata_population}, {condition}) AS population_min_{alias}",
+                f"maxIf({metadata_population}, {condition}) AS population_max_{alias}",
                 f"""toUInt8(countIf(({condition}) AND (isNull({probability}) OR NOT isFinite({probability})
                 OR {probability} <= 0 OR {probability} > 1 OR {metadata_unit} != %(selection_unit)s
                 OR {metadata_id} != unit_sampling_id OR unit_sampling_ambiguous OR empty({metadata_scope}) OR NOT ({lineage_valid}))) > 0
@@ -361,6 +386,8 @@ def snapshot_select(
         invalids.append(f"ifNull(e.invalid_probability_{alias}, 0)")
         scopes.append(f"ifNull(e.sampling_scope_{alias}, '')")
         strata.append(f"ifNull(e.sampling_stratum_{alias}, '')")
+        modes.append(f"ifNull(e.sampling_mode_{alias}, '')")
+        populations.extend([f"e.population_min_{alias}", f"e.population_max_{alias}"])
     join = ""
     if evaluation_values:
         # One conditional reduction per evaluator in a single unit-keyed pivot.
@@ -389,13 +416,26 @@ def snapshot_select(
             + f" OR length(arrayDistinct(arrayFilter(x -> isNotNull(x), {probs}))) > 1"
             + f" OR length(arrayDistinct({scope_array})) > 1 OR length(arrayDistinct({stratum_array})) > 1"
         )
+        mode_value = (
+            f"arrayElement(arrayFilter(x -> notEmpty(x), [{', '.join(modes)}]), 1)"
+        )
+        design = f"if({mode_value} IN ('closed', 'live'), {mode_value}, '')"
+        sizes = (
+            f"arrayDistinct(arrayFilter(x -> isNotNull(x), [{', '.join(populations)}]))"
+        )
+        population = (
+            f"if(length({sizes}) = 1 AND assumeNotNull(arrayElement({sizes}, 1)) > 0, "
+            f"CAST(assumeNotNull(arrayElement({sizes}, 1)), 'Nullable(UInt64)'), CAST(NULL, 'Nullable(UInt64)'))"
+        )
     else:
         p, invalid, scope_value, stratum_value = "1.0", "0", "''", "''"
+        design, population = "'unweighted'", "CAST(NULL, 'Nullable(UInt64)')"
     ctes.append(f"""projected_inputs AS (
         SELECT u.unit_id AS unit_id, u.session_id AS session_id, u.user_id AS user_id, u.cohort AS cohort, u.day AS day,
             mapFromArrays([{names}], [{", ".join(values)}]) AS input_values,
             {p} AS probability, toUInt8({invalid}) AS local_invalid_probability, u.source_rows AS source_rows,
-            {scope_value} AS sampling_scope, {stratum_value} AS sampling_stratum
+            {scope_value} AS sampling_scope, {stratum_value} AS sampling_stratum,
+            {design} AS sampling_design, {population} AS population_size
         FROM units u {join}
     )""")
     query = (
@@ -407,7 +447,7 @@ def snapshot_select(
             day, input_values, probability,
             toUInt8(local_invalid_probability OR (notEmpty(sampling_scope)
                 AND uniqExactIf(sampling_scope, notEmpty(sampling_scope)) OVER () > 1)) AS invalid_probability,
-            source_rows, sampling_scope, sampling_stratum
+            source_rows, sampling_scope, sampling_stratum, sampling_design, population_size
         FROM projected_inputs p
         WHERE throwIf(length(if(%(cohort_key)s = '' AND notEmpty(p.sampling_stratum), p.sampling_stratum, p.cohort)) > 2048,
             'Metric cohort key exceeds 2048 bytes') = 0
@@ -416,55 +456,147 @@ def snapshot_select(
     return query, params
 
 
+ROLLUP_GROUPS = {
+    "overall": "''",
+    "session": "session_id",
+    "user": "user_id",
+    "cohort": "cohort",
+    "day": "toString(day)",
+}
+
+
+def rollup_group_sql(rollup: str) -> tuple[str, str]:
+    """The group key of a rollup and the filter that keeps units it can represent."""
+    group = ROLLUP_GROUPS[rollup]
+    return group, f"notEmpty({group})" if rollup in {"session", "user"} else "1"
+
+
 def aggregate_select(source_sql: str, formula: Formula, *, rollup: str) -> str:
-    """Ratios are ratios of weighted sums, never averages of subgroup ratios."""
-    group = {
-        "overall": "''",
-        "session": "session_id",
-        "user": "user_id",
-        "cohort": "cohort",
-        "day": "toString(day)",
-    }[rollup]
-    group_clause = "" if rollup == "overall" else "GROUP BY group_key"
-    group_filter = f"notEmpty({group})" if rollup in {"session", "user"} else "1"
+    """Ratios are ratios of weighted sums, never averages of subgroup ratios.
+
+    One pass over the units computes the point estimate and its design-based
+    uncertainty (see ``uncertainty.py``): units are summed per (group, sampling
+    stratum), then per group. The stratum sums carry the second moments of the
+    linearized variable in expanded form, so the variance needs neither a second
+    read of the source nor a window over every unit.
+    """
+    group, group_filter = rollup_group_sql(rollup)
+    # The overall rollup aggregates without GROUP BY group_key, so an empty
+    # window still yields its one 'no_data' row instead of no row at all.
+    if rollup == "overall":
+        stratum_grouping, group_output, group_clause = "stratum_key", "''", ""
+    else:
+        stratum_grouping = "group_key, stratum_key"
+        group_output, group_clause = "group_key", "GROUP BY group_key"
     unpack = ", ".join(
         f"input_values['{alias}'] AS v_{alias}" for alias in formula.required
     )
     valid = f"({formula.complete_sql}) AND isNotNull(n) AND isFinite(n) AND isNotNull(d) AND isFinite(d)"
-    value = (
-        "weighted_n"
-        if formula.kind in {"sum", "count_if"}
-        else "weighted_n / nullIf(weighted_d, 0)"
-    )
-    denominator = "NULL" if formula.kind in {"sum", "count_if"} else "weighted_d"
-    zero = "0" if formula.kind in {"sum", "count_if"} else "weighted_d = 0"
+    ratio_kind = formula.kind not in {"sum", "count_if"}
+    value = "weighted_n / nullIf(weighted_d, 0)" if ratio_kind else "weighted_n"
+    denominator = "weighted_d" if ratio_kind else "NULL"
+    zero = "weighted_d = 0" if ratio_kind else "0"
     denominator_aggregate = (
-        "0.0"
-        if formula.kind in {"sum", "count_if"}
-        else "sumIf(d / nullIf(probability, 0), complete AND invalid_probability = 0)"
+        "sumIf(d / nullIf(probability, 0), ok)" if ratio_kind else "0.0"
+    )
+    # y0/x0/w are zero outside valid units, so every moment is a non-null Float64.
+    moments = []
+    for prefix, factor in (
+        ("b", "w * w"),
+        ("c", "(1 - ifNull(probability, 1)) * w * w"),
+    ):
+        for name, product in (("yy", "y0 * y0"), ("xy", "y0 * x0"), ("xx", "x0 * x0")):
+            moments.append(f"sumKahan({factor} * {product}) AS {prefix}_{name}_h")
+    group_moments = [
+        f"sumKahan({prefix}_{name}_h) AS {prefix}_{name}"
+        for prefix in ("b", "c")
+        for name in ("yy", "xy", "xx")
+    ]
+    # Closed strata: c_h = (1 - p_h) n_h/(n_h - 1) scales the second moments (d_*),
+    # and c_h/n_h the squared stratum totals of w*u (e_*), so R factors out.
+    closed_terms = [
+        f"sumKahan(fpc_h * b_{name}_h) AS d_{name}" for name in ("yy", "xy", "xx")
+    ] + [
+        f"sumKahan(if(fpc_h = 0, 0, fpc_h / stratum_n_h * {left} * {right})) AS e_{name}"
+        for name, left, right in (
+            ("yy", "a_y_h", "a_y_h"),
+            ("xy", "a_y_h", "a_x_h"),
+            ("xx", "a_x_h", "a_x_h"),
+        )
+    ]
+    ci_columns = ", ".join(
+        f"tupleElement(ci, {i}) AS {name}"
+        for i, name in enumerate(UNCERTAINTY_COLUMNS, 1)
     )
     return f"""
         SELECT group_key,
             if(status = 'ok', computed_value, NULL) AS value,
             if(valid_count > 0 AND isFinite(weighted_n), weighted_n, NULL) AS numerator,
             if(valid_count > 0 AND isFinite({denominator}), {denominator}, NULL) AS denominator,
-            multiIf(unit_count = 0, 'no_data', invalid_probability_count > 0, 'invalid_probability',
-                valid_count = 0, 'missing_inputs', {zero}, 'zero_denominator',
-                NOT isFinite(weighted_n) OR NOT isFinite(weighted_d) OR NOT isFinite(computed_value), 'non_finite', 'ok') AS status,
-            unit_count, valid_count, missing_count, invalid_probability_count
+            status, unit_count, valid_count, missing_count, invalid_probability_count,
+            {ci_columns}
         FROM (
-            SELECT {group} AS group_key, count() AS unit_count,
-                countIf(complete AND invalid_probability = 0) AS valid_count,
-                countIf(NOT complete) AS missing_count,
-                countIf(invalid_probability != 0) AS invalid_probability_count,
-                sumIf(n / nullIf(probability, 0), complete AND invalid_probability = 0) AS weighted_n,
-                {denominator_aggregate} AS weighted_d,
-                {value} AS computed_value
+            SELECT *,
+                {value} AS computed_value,
+                multiIf(unit_count = 0, 'no_data', invalid_probability_count > 0, 'invalid_probability',
+                    valid_count = 0, 'missing_inputs', {zero}, 'zero_denominator',
+                    NOT isFinite(weighted_n) OR NOT isFinite(weighted_d) OR NOT isFinite(computed_value), 'non_finite', 'ok') AS status,
+                arrayJoin({uncertainty_array_sql(ratio_kind)}) AS ci
             FROM (
-                SELECT *, {formula.numerator} AS n, {formula.denominator} AS d,
-                    ifNull({valid}, 0) AS complete
-                FROM (SELECT *, {unpack} FROM ({source_sql}))
-            ) WHERE {group_filter} {group_clause}
+                SELECT {group_output} AS group_key, sum(unit_count_h) AS unit_count, sum(valid_count_h) AS valid_count,
+                    sum(missing_count_h) AS missing_count, sum(invalid_count_h) AS invalid_probability_count,
+                    sum(weighted_n_h) AS weighted_n, sum(weighted_d_h) AS weighted_d,
+                    {", ".join(group_moments)},
+                    {", ".join(closed_terms)},
+                    sum(sum_w_h) AS sum_w, sum(sum_w2_h) AS sum_w2,
+                    countIf(valid_count_h > 0) AS strata,
+                    minIf(design_min_h, valid_count_h > 0) AS design_low,
+                    maxIf(design_max_h, valid_count_h > 0) AS design_high,
+                    sum(population_missing_h) AS population_missing,
+                    countIf(inconsistent_h) AS inconsistent_strata,
+                    countIf(singleton_h) AS singleton_strata,
+                    sum(non_binary_h) AS non_binary, sum(sampled_h) AS sampled
+                FROM (
+                    SELECT *,
+                        ifNull(weighted_n_h, 0) AS a_y_h, ifNull(weighted_d_h, 0) AS a_x_h,
+                        ifNull(p_min_h * toFloat64(population_min_h), 0) AS stratum_n_raw_h,
+                        round(stratum_n_raw_h) AS stratum_n_h,
+                        valid_count_h > 0 AND population_missing_h = 0 AND ifNull(
+                            p_min_h != p_max_h OR population_min_h != population_max_h
+                            OR valid_count_h > stratum_n_h
+                            OR abs(stratum_n_raw_h - stratum_n_h) > 1e-6 * greatest(1, stratum_n_h), 1) AS inconsistent_h,
+                        valid_count_h > 0 AND ifNull(p_max_h < 1, 0) AND stratum_n_h < 2 AS singleton_h,
+                        if(valid_count_h = 0 OR inconsistent_h OR ifNull(p_min_h >= 1, 1) OR stratum_n_h < 2,
+                            0, (1 - assumeNotNull(p_min_h)) * stratum_n_h / (stratum_n_h - 1)) AS fpc_h
+                    FROM (
+                        SELECT {group} AS group_key, sampling_stratum AS stratum_key,
+                            count() AS unit_count_h, countIf(ok) AS valid_count_h,
+                            countIf(NOT complete) AS missing_count_h,
+                            countIf(invalid_probability != 0) AS invalid_count_h,
+                            sumIf(n / nullIf(probability, 0), ok) AS weighted_n_h,
+                            {denominator_aggregate} AS weighted_d_h,
+                            {", ".join(moments)},
+                            sumKahan(w) AS sum_w_h, sumKahan(w * w) AS sum_w2_h,
+                            minIf(probability, ok) AS p_min_h, maxIf(probability, ok) AS p_max_h,
+                            minIf(population_size, ok) AS population_min_h,
+                            maxIf(population_size, ok) AS population_max_h,
+                            countIf(ok AND isNull(population_size)) AS population_missing_h,
+                            minIf(sampling_design, ok) AS design_min_h,
+                            maxIf(sampling_design, ok) AS design_max_h,
+                            countIf(ok AND NOT (y0 IN (0, 1) AND x0 IN (0, 1) AND y0 <= x0)) AS non_binary_h,
+                            countIf(ok AND probability < 1) AS sampled_h
+                        FROM (
+                            SELECT *, {formula.numerator} AS n, {formula.denominator} AS d,
+                                ifNull({valid}, 0) AS complete,
+                                complete AND invalid_probability = 0 AS ok,
+                                if(ok, ifNull(1 / probability, 0), 0) AS w,
+                                if(ok, assumeNotNull(n), 0) AS y0, if(ok, assumeNotNull(d), 0) AS x0
+                            FROM (SELECT *, {unpack} FROM ({source_sql}))
+                        ) WHERE {group_filter}
+                        GROUP BY {stratum_grouping}
+                    )
+                ) {group_clause}
+            )
         )
     """
 
@@ -497,7 +629,8 @@ def rollup_insert(definition, run, result_id: UUID, rollup: str) -> tuple[str, d
         SELECT %(org_id)s, %(workspace_id)s, %(project_id)s, %(metric_id)s, %(metric_version)s,
             %(run_id)s, %(result_id)s, %(rollup)s, group_key, value, numerator, denominator, status,
             unit_count, valid_count, missing_count, invalid_probability_count,
-            %(start)s, %(end)s, %(as_of)s, %(source_run_id)s, %(definition_hash)s, %(sampling_scope)s
+            %(start)s, %(end)s, %(as_of)s, %(source_run_id)s, %(definition_hash)s, %(sampling_scope)s,
+            {", ".join(UNCERTAINTY_COLUMNS)}
         FROM ({aggregate_select(source, formula, rollup=rollup)})""",
         params,
     )

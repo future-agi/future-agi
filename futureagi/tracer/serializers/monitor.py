@@ -153,6 +153,16 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
         metric = data.get("metric")
         project = data.get("project")
         threshold_metric_value = data.get("threshold_metric_value")
+        if data.get("alert_when", "point") == "confident" and (
+            metric_type != MonitorMetricTypeChoices.DERIVED_METRIC.value
+            or data.get("threshold_type") != "static"
+            or data.get("threshold_operator") not in ("greater_than", "less_than")
+        ):
+            raise serializers.ValidationError(
+                {
+                    "alert_when": "Confidence gating requires a derived metric with a static above/below threshold."
+                }
+            )
 
         if metric_type == MonitorMetricTypeChoices.DERIVED_METRIC.value:
             from uuid import UUID

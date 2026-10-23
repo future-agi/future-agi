@@ -81,7 +81,7 @@ def metric_ch(tmp_path, settings):
         from conftest import _ch_test_native_client, _ch_test_owned_database
 
         with (
-            _ch_test_owned_database("test_derived_metrics_") as database,
+            _ch_test_owned_database("test_urgent_metrics_") as database,
             _ch_test_native_client(database=database) as client,
         ):
             client.server_enforced_readonly = False
@@ -111,7 +111,11 @@ def _schema_client(client):
         output_float Nullable(Float64), output_bool Nullable(UInt8), output_str Nullable(String),
         output_metadata String DEFAULT '{}', eval_task_id Nullable(String)
     ) ENGINE=ReplacingMergeTree(_version,is_deleted) ORDER BY (custom_eval_config_id,created_at,id)""")
-    for filename in ["019_id_remap.sql", "028_derived_metrics.sql"]:
+    for filename in [
+        "019_id_remap.sql",
+        "028_derived_metrics.sql",
+        "029_derived_metric_uncertainty.sql",
+    ]:
         for statement in split_statements((SCHEMA / filename).read_text()):
             client.execute(statement)
     yield client

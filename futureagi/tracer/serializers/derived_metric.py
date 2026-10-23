@@ -9,6 +9,13 @@ from tracer.models.derived_metric import (
     DerivedMetricVersion,
 )
 from tracer.serializers.filters import StrictInputSerializer
+from tracer.services.derived_metrics.uncertainty import (
+    CI_INTERVALS,
+    CI_METHODS,
+    CI_REASONS,
+    CI_STATUSES,
+    NOT_COMPUTED,
+)
 
 
 class DerivedMetricInputSerializer(StrictInputSerializer):
@@ -220,6 +227,46 @@ class DerivedMetricResultQuerySerializer(StrictInputSerializer):
         max_length=4096, required=False, allow_blank=True, default=""
     )
     limit = serializers.IntegerField(min_value=1, max_value=100, default=50)
+    include_uncertainty = serializers.BooleanField(
+        default=False,
+        help_text="Add each row's design-based standard error and 95% interval as `uncertainty`.",
+    )
+
+
+class DerivedMetricUncertaintySerializer(serializers.Serializer):
+    confidence_level = serializers.FloatField(help_text="Always 0.95 (two-sided).")
+    status = serializers.ChoiceField(
+        choices=list(CI_STATUSES),
+        help_text="`not_estimable` means no interval exists; `reason` says why. Never a guess.",
+    )
+    reason = serializers.ChoiceField(
+        choices=["", *CI_REASONS, NOT_COMPUTED], allow_blank=True
+    )
+    method = serializers.ChoiceField(
+        choices=["", *CI_METHODS],
+        allow_blank=True,
+        help_text=(
+            "stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, "
+            "finite-population corrected). poisson: live sampling policies. iid_units: "
+            "unweighted ratios and means, a model-based interval treating units as "
+            "independent draws. Covers sampling error only, not evaluator error."
+        ),
+    )
+    interval = serializers.ChoiceField(
+        choices=["", *CI_INTERVALS],
+        allow_blank=True,
+        help_text=(
+            "wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score "
+            "interval at the design-effective sample size. wald_t: value +/- t * SE."
+        ),
+    )
+    std_error = serializers.FloatField(allow_null=True)
+    ci_low = serializers.FloatField(allow_null=True)
+    ci_high = serializers.FloatField(allow_null=True)
+    effective_n = serializers.FloatField(
+        allow_null=True, help_text="Kish effective sample size of the valid units."
+    )
+    degrees_of_freedom = serializers.IntegerField(allow_null=True, min_value=1)
 
 
 class DerivedMetricResultSerializer(serializers.Serializer):
@@ -241,11 +288,118 @@ class DerivedMetricResultSerializer(serializers.Serializer):
     valid_count = serializers.IntegerField(min_value=0)
     missing_count = serializers.IntegerField(min_value=0)
     invalid_probability_count = serializers.IntegerField(min_value=0)
+    uncertainty = DerivedMetricUncertaintySerializer(
+        required=False,
+        help_text="Present on previews, and on persisted results when include_uncertainty=true.",
+    )
 
 
 class DerivedMetricResultPageSerializer(serializers.Serializer):
     results = DerivedMetricResultSerializer(many=True)
     next_cursor = serializers.CharField(allow_null=True, allow_blank=True)
+
+
+class DerivedMetricCompareQuerySerializer(StrictInputSerializer):
+    baseline_run_id = serializers.UUIDField()
+
+
+class DerivedMetricDeltaUncertaintySerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=["ok", "not_estimable"])
+    reason = serializers.CharField(allow_blank=True)
+    method = serializers.CharField(allow_blank=True)
+    std_error = serializers.FloatField(allow_null=True)
+    ci_low = serializers.FloatField(allow_null=True)
+    ci_high = serializers.FloatField(allow_null=True)
+
+
+class DerivedMetricComparisonSerializer(serializers.Serializer):
+    baseline_run_id = serializers.UUIDField()
+    candidate_run_id = serializers.UUIDField()
+    baseline_result_id = serializers.UUIDField()
+    candidate_result_id = serializers.UUIDField()
+    baseline_version = serializers.IntegerField()
+    candidate_version = serializers.IntegerField()
+    baseline = DerivedMetricResultSerializer()
+    candidate = DerivedMetricResultSerializer()
+    delta = serializers.FloatField(allow_null=True)
+    delta_uncertainty = DerivedMetricDeltaUncertaintySerializer()
+
+
+class DerivedMetricContributorQuerySerializer(StrictInputSerializer):
+    rollup = serializers.ChoiceField(
+        choices=["overall", "session", "user", "cohort", "day"], default="overall"
+    )
+    group_key = serializers.CharField(
+        max_length=2048,
+        required=False,
+        allow_blank=True,
+        default="",
+        trim_whitespace=False,
+        help_text="The persisted rollup row to explain; empty for the overall row.",
+    )
+    limit = serializers.IntegerField(min_value=1, max_value=100, default=20)
+
+
+class DerivedMetricContributorSerializer(serializers.Serializer):
+    unit_id = serializers.CharField(
+        help_text='Selection unit id; span units are ["trace_id","span_id"].'
+    )
+    trace_id = serializers.CharField(
+        allow_null=True, help_text="Span units only: the unit's trace."
+    )
+    session_id = serializers.CharField(allow_blank=True)
+    user_id = serializers.CharField(allow_blank=True)
+    cohort = serializers.CharField(allow_blank=True)
+    day = serializers.CharField()
+    probability = serializers.FloatField()
+    weight = serializers.FloatField(help_text="1 / inclusion probability.")
+    numerator = serializers.FloatField()
+    denominator = serializers.FloatField(allow_null=True)
+    weighted_numerator = serializers.FloatField()
+    weighted_denominator = serializers.FloatField(allow_null=True)
+    influence = serializers.FloatField(
+        allow_null=True,
+        help_text=(
+            "Exact leave-one-out change: the persisted value minus the group's value "
+            "without this unit (a total's weighted contribution). Null when removing "
+            "the unit leaves no denominator or the group has no value."
+        ),
+    )
+
+
+class DerivedMetricContributorDiagnosticsSerializer(serializers.Serializer):
+    unit_count = serializers.IntegerField(min_value=0)
+    valid_count = serializers.IntegerField(min_value=0)
+    missing_count = serializers.IntegerField(min_value=0)
+    invalid_probability_count = serializers.IntegerField(min_value=0)
+    outside_denominator_count = serializers.IntegerField(
+        min_value=0, help_text="Valid units whose denominator is 0 (ratios only)."
+    )
+    undefined_arithmetic_count = serializers.IntegerField(
+        min_value=0,
+        help_text="Units with every input present whose row arithmetic is undefined.",
+    )
+    missing_by_input = serializers.DictField(
+        child=serializers.IntegerField(min_value=0)
+    )
+    missing_examples = serializers.ListField(child=serializers.CharField())
+    invalid_probability_examples = serializers.ListField(child=serializers.CharField())
+
+
+class DerivedMetricContributorPageSerializer(serializers.Serializer):
+    rollup = serializers.CharField()
+    group_key = serializers.CharField(allow_blank=True)
+    kind = serializers.ChoiceField(choices=["ratio", "mean", "sum", "count_if"])
+    selection_unit = serializers.ChoiceField(choices=["span", "session", "user"])
+    status = serializers.CharField()
+    value = serializers.FloatField(allow_null=True)
+    numerator = serializers.FloatField(allow_null=True)
+    denominator = serializers.FloatField(allow_null=True)
+    results = DerivedMetricContributorSerializer(many=True)
+    truncated = serializers.BooleanField(
+        help_text="More valid units exist than were returned."
+    )
+    diagnostics = DerivedMetricContributorDiagnosticsSerializer()
 
 
 class DerivedMetricValidationSerializer(serializers.Serializer):

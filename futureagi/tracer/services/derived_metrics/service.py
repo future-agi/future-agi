@@ -32,11 +32,13 @@ from tracer.services.derived_metrics.queries import (
     PREVIEW_QUERY_SETTINGS,
     QUERY_SETTINGS,
     SCOPE_SQL,
+    UNCERTAINTY_COLUMNS,
     Scope,
     aggregate_select,
     rollup_insert,
     snapshot_select,
 )
+from tracer.services.derived_metrics.uncertainty import CONFIDENCE_LEVEL, NOT_COMPUTED
 
 logger = structlog.get_logger(__name__)
 SEMANTICS = "One contribution per selection unit; complete cases only; inverse-probability weights apply once. Missing inputs are not zero. Zero denominator and invalid probabilities produce no value. Replay uses frozen inputs, not mutable raw history."
@@ -520,8 +522,49 @@ def queue_recompute(run: DerivedMetricRun, user) -> DerivedMetricRun:
     return run
 
 
+RESULT_COLUMNS = (
+    "group_key",
+    "value",
+    "numerator",
+    "denominator",
+    "status",
+    "unit_count",
+    "valid_count",
+    "missing_count",
+    "invalid_probability_count",
+)
+
+
+def shape_result(row: dict, *, include_uncertainty: bool) -> dict:
+    """The stable result row, plus the nested 95% interval when requested.
+
+    Rows persisted before uncertainty existed have an empty ci_status; they are
+    reported as not estimable rather than as an interval of unknown provenance.
+    """
+    shaped = {name: row[name] for name in RESULT_COLUMNS}
+    if include_uncertainty:
+        computed = bool(row.get("ci_status"))
+        shaped["uncertainty"] = {
+            "confidence_level": CONFIDENCE_LEVEL,
+            "status": row["ci_status"] if computed else "not_estimable",
+            "reason": row["ci_reason"] if computed else NOT_COMPUTED,
+            "method": row.get("ci_method") or "",
+            "interval": row.get("ci_interval") or "",
+            "std_error": row.get("std_error"),
+            "ci_low": row.get("ci_low"),
+            "ci_high": row.get("ci_high"),
+            "effective_n": row.get("effective_n"),
+            "degrees_of_freedom": row.get("ci_df"),
+        }
+    return shaped
+
+
 def read_results(
-    run: DerivedMetricRun, rollup: str = "overall", after: str = "", limit: int = 50
+    run: DerivedMetricRun,
+    rollup: str = "overall",
+    after: str = "",
+    limit: int = 50,
+    include_uncertainty: bool = False,
 ) -> dict:
     if run.result_id is None:
         raise MetricInputError("This run does not have a committed result yet.")
@@ -541,7 +584,8 @@ def read_results(
         "after_key": after_key,
         "limit": limit + 1,
     }
-    query = f"""SELECT group_key, value, numerator, denominator, status, unit_count, valid_count, missing_count, invalid_probability_count
+    selected = RESULT_COLUMNS + (UNCERTAINTY_COLUMNS if include_uncertainty else ())
+    query = f"""SELECT {", ".join(selected)}
         FROM derived_metric_results WHERE {SCOPE_SQL} AND metric_id = %(metric_id)s AND run_id = %(run_id)s AND result_id = %(result_id)s AND rollup = %(rollup)s
         AND (NOT %(has_cursor)s OR group_key > %(after_key)s) ORDER BY group_key LIMIT %(limit)s"""
     rows, columns = get_clickhouse_client().execute(
@@ -549,7 +593,13 @@ def read_results(
     )
     names = [column[0] for column in columns]
     return {
-        "results": [dict(zip(names, row, strict=True)) for row in rows[:limit]],
+        "results": [
+            shape_result(
+                dict(zip(names, row, strict=True)),
+                include_uncertainty=include_uncertainty,
+            )
+            for row in rows[:limit]
+        ],
         "next_cursor": encode_result_cursor(
             str(run.result_id), rollup, rows[limit - 1][0]
         )
@@ -663,7 +713,8 @@ def preview(
     names = [column[0] for column in columns]
     return {
         "results": [
-            dict(zip(names, row, strict=True)) for row in rows[:PREVIEW_MAX_ROWS]
+            shape_result(dict(zip(names, row, strict=True)), include_uncertainty=True)
+            for row in rows[:PREVIEW_MAX_ROWS]
         ],
         "next_cursor": None,
     }

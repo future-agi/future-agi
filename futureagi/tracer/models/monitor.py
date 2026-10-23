@@ -91,6 +91,13 @@ class UserAlertMonitor(BaseModel):
         Project, on_delete=models.CASCADE, null=True, blank=True
     )
 
+    # Confidence gating is opt-in and only supported for frozen derived metrics.
+    alert_when = models.CharField(
+        max_length=16,
+        choices=[("point", "Point estimate"), ("confident", "Whole 95% interval")],
+        default="point",
+    )
+
     # Threshold configuration
     threshold_operator = models.CharField(
         max_length=100, choices=ComparisonOperatorChoices
