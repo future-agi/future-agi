@@ -124,11 +124,16 @@ export function tally(entry, configId, labels = []) {
   const skipped = counts[SKIPPED_ANSWER] || 0;
   const n = Number.isFinite(entry?.n) ? entry.n : answered + skipped;
   // Bins and groups may give failures per row (`failed`) rather than per
-  // question: exact for one question, an upper bound for several.
+  // question: exact for one question, but with several it counts rows where
+  // any question failed, so B's failures would read as A's. Only a one-
+  // question entry falls back to it.
+  const questionsInEntry = Object.keys(entry?.counts || {}).length;
   const failed =
     ERROR_ANSWER in counts
       ? counts[ERROR_ANSWER]
-      : Math.min(entry?.failed || 0, Math.max(0, n - answered - skipped));
+      : questionsInEntry > 1
+        ? 0
+        : Math.min(entry?.failed || 0, Math.max(0, n - answered - skipped));
   return {
     n,
     answered,

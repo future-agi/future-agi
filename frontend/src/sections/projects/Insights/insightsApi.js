@@ -180,7 +180,10 @@ export function useInsightsConfigs(projectId) {
     queryKey: insightsKeys.configs(projectId),
     queryFn: ({ signal }) => fetchConfigs(projectId, signal),
     enabled: Boolean(projectId),
+    // Polling reads the last good data, so a failing read stops it until
+    // the person retries.
     refetchInterval: (query) =>
+      query.state.status !== "error" &&
       (query.state.data || []).some((c) => isRunActive(c.latest_run?.status))
         ? LIST_POLL_MS
         : false,
@@ -194,7 +197,10 @@ export function useInsightsConfig(configId) {
     queryFn: ({ signal }) => fetchConfig(configId, signal),
     enabled: Boolean(configId),
     refetchInterval: (query) =>
-      isRunActive(query.state.data?.latest_run?.status) ? LIST_POLL_MS : false,
+      query.state.status !== "error" &&
+      isRunActive(query.state.data?.latest_run?.status)
+        ? LIST_POLL_MS
+        : false,
     meta: { errorHandled: true },
   });
 }
@@ -210,7 +216,9 @@ export function useInsightsRun(runId) {
     queryFn: ({ signal }) => fetchRun(runId, signal),
     enabled: Boolean(runId),
     refetchInterval: (q) =>
-      isRunActive(q.state.data?.status) ? RUN_POLL_MS : false,
+      q.state.status !== "error" && isRunActive(q.state.data?.status)
+        ? RUN_POLL_MS
+        : false,
     refetchOnWindowFocus: false,
     meta: { errorHandled: true },
   });

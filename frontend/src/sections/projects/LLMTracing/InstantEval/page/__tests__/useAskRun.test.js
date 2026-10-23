@@ -211,6 +211,52 @@ describe("useAskRun", () => {
     expect(result.current.elapsedMs).toBe(30000);
   });
 
+  it("stops polling a summary that keeps failing, until a retry", async () => {
+    http.get.mockImplementation(() =>
+      Promise.reject(
+        Object.assign(new Error("unavailable"), { statusCode: 503 }),
+      ),
+    );
+    const { result } = renderHook(
+      () =>
+        useAskRun({
+          projectId: "p1",
+          taskId: "task-1",
+          unit: "sessions",
+          tz: "UTC",
+        }),
+      { wrapper: wrapper() },
+    );
+    // The first read and its two retries (1 s, then 2 s later).
+    await tick(0);
+    for (let i = 0; i < 6; i += 1) await tick(1_000);
+    expect(result.current.status).toBe("error");
+    const reads = calls("/summary").length;
+    expect(reads).toBe(3);
+    await tick(60_000);
+    expect(calls("/summary")).toHaveLength(reads);
+  });
+
+  it("doesn't retry a summary the server refused", async () => {
+    http.get.mockImplementation(() =>
+      Promise.reject(Object.assign(new Error("gone"), { statusCode: 404 })),
+    );
+    const { result } = renderHook(
+      () =>
+        useAskRun({
+          projectId: "p1",
+          taskId: "task-1",
+          unit: "sessions",
+          tz: "UTC",
+        }),
+      { wrapper: wrapper() },
+    );
+    await tick(0);
+    await tick(30_000);
+    expect(result.current.status).toBe("error");
+    expect(calls("/summary")).toHaveLength(1);
+  });
+
   it("polls a slow server less often", () => {
     expect(livePollMs(0)).toBe(SUMMARY_POLL_MS);
     expect(livePollMs(900)).toBe(SUMMARY_POLL_MS);

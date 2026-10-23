@@ -13,7 +13,7 @@ import {
   shareLevel,
   wilsonLower,
 } from "../askPivot";
-import { matchesFilter, summarizeRecords } from "../askSummary";
+import { matchesFilter, summarizeRecords, tally } from "../askSummary";
 import {
   benjaminiHochberg,
   findPatterns,
@@ -511,5 +511,21 @@ describe("heatmap pivots", () => {
     expect(wilsonLower(400, 1000)).toBeCloseTo(0.3701, 3);
     expect(wilsonLower(0, 10)).toBe(0);
     expect(wilsonLower(0, 0)).toBe(0);
+  });
+});
+
+describe("tally of one question in a multi-question bin", () => {
+  it("never counts another question's failures as this one's", () => {
+    // `failed` is per row: with two questions it counts B's failures too.
+    const entry = {
+      n: 10,
+      failed: 4,
+      counts: { a: { Yes: 6, No: 4 }, b: { Yes: 2, __error__: 4 } },
+    };
+    expect(tally(entry, "a", ["Yes", "No"]).failed).toBe(0);
+    expect(tally(entry, "b", ["Yes", "No"]).failed).toBe(4);
+    // One question: the row count is exact.
+    const one = { n: 10, failed: 3, counts: { a: { Yes: 7 } } };
+    expect(tally(one, "a", ["Yes", "No"]).failed).toBe(3);
   });
 });

@@ -258,6 +258,27 @@ describe("startAskRun", () => {
     expect(postBody("/start").config_ids).toEqual(["c1"]);
   });
 
+  it("reuses the newest evaluator of a question asked twice", async () => {
+    const saved = (id) => ({
+      id,
+      name: QUESTION.question,
+      eval_template: `t-${id}`,
+      config: {
+        instant_eval: {
+          question: QUESTION.question,
+          answer_type: "yes_no",
+          labels: ["Yes", "No"],
+          reads: "transcript",
+          unit: "sessions",
+        },
+      },
+    });
+    // The list comes back newest first.
+    serve({ configs: [saved("c-new"), saved("c-old")] });
+    await ask({ unit: "sessions", reads: "transcript", confirm: true });
+    expect(postBody("/start").config_ids).toEqual(["c-new"]);
+  });
+
   it("asks a saved question again without saving it twice", async () => {
     serve();
     await startAskRun({

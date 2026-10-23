@@ -37,6 +37,13 @@ export const livePollMs = (lastMs) =>
 // A run that stopped before finishing is looked at again now and then, in
 // case it wasn't stopped after all.
 export const STALLED_POLL_MS = 15000;
+
+/** Retry a failed read twice, unless the server refused it (4xx). */
+export const retryServerErrors = (failureCount, error) => {
+  const code = Number(error?.statusCode ?? error?.response?.status ?? 0);
+  if (code >= 400 && code < 500) return false;
+  return failureCount < 2;
+};
 export const SQUARES_MAX = 1500;
 const TICK_MS = 1000;
 const LIVE = new Set(["pending", "running"]);
@@ -287,7 +294,8 @@ export function useAskRun({
       }
     },
     refetchInterval: () => liveRef.current,
-    retry: 2,
+    // A 4xx (a deleted run, a bad time zone) is not retried: it won't change.
+    retry: retryServerErrors,
     meta: { errorHandled: true },
   });
   const summary = summaryQuery.data || null;
@@ -298,11 +306,17 @@ export function useAskRun({
       : "loading";
   // The next poll starts this long after the last one finished (the
   // interval restarts with each result), so polls never pile up.
-  liveRef.current =
-    !summary ||
-    status === "running" ||
-    status === "preparing" ||
-    status === "pausing"
+  // A failing read stops the polling until the person retries (or, with a
+  // run already on screen, backs off hard): it used to poll every 2 s, three
+  // requests at a time, for as long as the page was open.
+  liveRef.current = summaryQuery.isError
+    ? summary
+      ? STALLED_POLL_MS
+      : false
+    : !summary ||
+        status === "running" ||
+        status === "preparing" ||
+        status === "pausing"
       ? livePollMs(pollMs.current)
       : status === "stalled"
         ? STALLED_POLL_MS

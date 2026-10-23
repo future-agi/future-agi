@@ -94,8 +94,10 @@ async function listProjectConfigs(projectId) {
 // wording, answers, inputs and unit) reuses it, so its grid column and history
 // stay one series. Only new questions create a Jev template and an eval config.
 export async function resolveEvaluators({ projectId, questions, reads, unit }) {
+  // The list comes back newest first, so the first match is the newest
+  // evaluator for a question.
   const configs = await listProjectConfigs(projectId);
-  const existing = configs.map(itemFromConfig).filter(Boolean).reverse();
+  const existing = configs.map(itemFromConfig).filter(Boolean);
   const taken = new Set(
     configs.map((config) => (config.name || "").toLowerCase()),
   );
@@ -573,8 +575,10 @@ export function useInstantEvals(projectId, { enabled = true, unit } = {}) {
         params: { project_id: projectId },
       }),
     select: (response) => {
+      // Newest first, as the list comes back (CustomEvalConfig orders by
+      // -created_at): "Recent questions" lead with the latest.
       const configs = result(response) || [];
-      return configs.map(itemFromConfig).filter(Boolean).reverse();
+      return configs.map(itemFromConfig).filter(Boolean);
     },
     staleTime: 30_000,
   });
