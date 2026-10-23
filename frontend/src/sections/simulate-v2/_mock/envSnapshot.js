@@ -40,8 +40,8 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 export const SAME_ACTION_MS = 2000;
 
 /* World kinds that are the contract (tools and rules) rather than the world. */
-const CONTRACT_KINDS = ["contract", "rules"];
-const WORLD_KINDS = ["contract", "rules", "seed", "toolbehaviour", "actors"];
+const CONTRACT_KINDS = ["contract", "rules", "tools-added", "tools-removed"];
+const WORLD_KINDS = ["contract", "rules", "seed", "toolbehaviour", "actors", "tools-added", "tools-removed"];
 
 /* Which kind names a snapshot when one action changed several parts. */
 const KIND_ORDER = ["recorded", "build", "world", "scenarios", "sub-goals", "evals", "caller", "credentials"];

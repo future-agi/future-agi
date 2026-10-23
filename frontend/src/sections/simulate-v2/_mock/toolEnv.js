@@ -1,4 +1,5 @@
 import { envChangePatch } from "./versions";
+import { gatewayToolStatusOf } from "./gatewayMcp";
 
 /*
   The tool environment (PRD v6, §4.5 and Story 5): each tool runs at a chosen
@@ -69,21 +70,36 @@ const LEGACY_TIER = { write: "stateful", writes: "stateful", read: "replay", rea
 export const legacyTierOf = (envState, name) => LEGACY_TIER[envState?.toolResolutions?.[name]] || null;
 
 /** One tool's settings, defaults filled in. */
+/**
+ * Where a tool from an MCP server goes when it's Live: its server, or the
+ * Gateway when the server is registered there. It's the target already, so
+ * Live never asks for one. Null for any other tool.
+ */
+export const mcpLiveTargetOf = (tool) => (tool?.via?.kind === "mcp"
+  ? (tool.via.gateway ? `Gateway · ${tool.via.label}` : tool.via.host || tool.via.label)
+  : null);
+
 export const toolSettingOf = (tool, envState) => {
   const saved = envState?.toolEnv?.[tool.name] || {};
   const effect = sideEffectOf(tool);
   const legacy = saved.tier ? null : legacyTierOf(envState, tool.name);
+  /* Nothing is recorded for a tool the world met on an MCP server: it starts Simulated. */
+  const defaultTier = tool?.via?.kind === "mcp" && effect !== "real" ? "stateful" : DEFAULT_TIER[effect];
   return {
     name: tool.name,
     effect,
-    tier: saved.tier || legacy || DEFAULT_TIER[effect],
-    defaultTier: DEFAULT_TIER[effect],
+    tier: saved.tier || legacy || defaultTier,
+    defaultTier,
+    liveTarget: mcpLiveTargetOf(tool),
     faults: saved.faults || null,
     confirmed: !!saved.confirmed || !!legacy,
     safeTarget: saved.safeTarget || null,
     /* Live is allowed per tool, by hand. A read-only tool already on Live
        from before the rule counts as allowed — a saved dial keeps working. */
     liveAllowed: !!saved.liveAllowed || (saved.tier === "live" && (effect === "read" || effect === "fresh")),
+    /* From a Gateway server: Live goes through the Gateway, so what it says now decides. */
+    viaGateway: !!tool.via?.gateway,
+    gatewayBlock: (() => { const g = gatewayToolStatusOf(tool); return g && g.kind !== "deprecated" ? g : null; })(),
   };
 };
 
@@ -99,11 +115,12 @@ const READ_ONLY = new Set(["read", "fresh"]);
  * world, recorded or fixed.
  */
 export const liveAllowedOf = (setting) => {
+  if (setting?.gatewayBlock) return { allowed: false, needsAllow: false, reason: setting.gatewayBlock.tip };
   if (setting?.effect === "real") return { allowed: true, needsAllow: false, reason: null };
   if (READ_ONLY.has(setting?.effect)) {
     return setting.liveAllowed
       ? { allowed: true, needsAllow: false, reason: null }
-      : { allowed: false, needsAllow: true, reason: `Allow live calls for ${setting.name} first — it only reads, so it may call the real tool once you allow it.` };
+      : { allowed: false, needsAllow: true, reason: `Allow live calls for ${setting.name} first — it only reads, so it may call the real tool once you allow it.${setting.viaGateway ? " Live calls go through your Gateway, with its rate limits and checks." : ""}` };
   }
   return { allowed: false, needsAllow: false, reason: `${setting?.name || "This tool"} writes data, so it can't run Live — it stays simulated against the world, recorded or fixed.` };
 };
@@ -113,16 +130,23 @@ export const liveAllowedOf = (setting) => {
  * Shown as advice; the dial is left as it is, so runs that pinned it replay
  * unchanged.
  */
-export const liveAdvisoryOf = (setting) => (setting?.tier === "live" && setting.effect === "write"
-  ? { label: "Live (not allowed for write tools) — switch it", note: `${setting.name} writes data. Live isn't offered for write tools any more; switch it to ${tierOf(setting.defaultTier).word} so the next run doesn't reach a real system.`, to: setting.defaultTier }
-  : null);
+export const liveAdvisoryOf = (setting) => {
+  if (setting?.tier !== "live") return null;
+  /* The Gateway blocked it, dropped it, or can't reach it since it went Live. */
+  if (setting.gatewayBlock) {
+    return { label: `Live, but ${setting.gatewayBlock.label.toLowerCase()} — switch it`, note: `${setting.gatewayBlock.tip} Switch it to ${tierOf(setting.defaultTier).word} so the next run doesn't call it.`, to: setting.defaultTier };
+  }
+  return setting.effect === "write"
+    ? { label: "Live (not allowed for write tools) — switch it", note: `${setting.name} writes data. Live isn't offered for write tools any more; switch it to ${tierOf(setting.defaultTier).word} so the next run doesn't reach a real system.`, to: setting.defaultTier }
+    : null;
+};
 
 /** Allow (or stop allowing) Live for one read-only tool — a permission, not a world edit. Taking it back moves a Live tool to its default. */
-export const allowLivePatch = (envState, name, on) => {
+export const allowLivePatch = (envState, name, on, tool = null) => {
   const all = envState?.toolEnv || {};
   const cur = all[name] || {};
   if (!on && cur.tier === "live") {
-    const setting = toolSettingOf({ name }, envState);
+    const setting = toolSettingOf(tool || { name }, envState);
     return toolEnvPatch(envState, name, { liveAllowed: false, tier: setting.defaultTier, safeTarget: null }, `${name} set to ${tierOf(setting.defaultTier).word}`);
   }
   return { toolEnv: { ...all, [name]: { ...cur, liveAllowed: !!on } } };
@@ -192,7 +216,14 @@ export const faultLine = (faults) => {
  * choosing Live points the run at a real API, so a run waits until someone
  * names a safe target for it or takes the tier back down (AC-5.10, AC-1.8).
  */
-export const needsSafeTarget = (setting) => setting?.tier === "live" && setting.defaultTier !== "live" && !setting.safeTarget;
+export const needsSafeTarget = (setting) => setting?.tier === "live" && setting.defaultTier !== "live" && !setting.safeTarget && !setting.liveTarget;
+
+/**
+ * The fields to save when a tool goes Live: permission given, and an MCP
+ * tool's target recorded with it — so readers that only have the tool's name
+ * (a run's preflight) know where it goes.
+ */
+export const liveFieldsOf = (tool) => ({ tier: "live", liveAllowed: true, ...(mcpLiveTargetOf(tool) && { safeTarget: mcpLiveTargetOf(tool) }) });
 
 /** The tools a run cannot start with — Live with no safe target. */
 export const unsafeLiveTools = (env, envState) => toolEnvOf(env, envState).filter(needsSafeTarget);

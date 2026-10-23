@@ -107,8 +107,9 @@ export function TierDial({ setting, onChange, onAllowLive }) {
             <Box component="span" sx={{ fontFamily: "ui-monospace, Menlo, monospace" }}>{setting.name}</Box>?
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>
-            It only reads, so a run may call the real tool instead of the world. Answers aren&apos;t deterministic, and
-            you&apos;ll confirm a safe target before the first run. Write tools never run live.
+            {setting.liveTarget
+              ? `It only reads, so a run may call the real tool instead of the world — at ${setting.liveTarget}${setting.viaGateway ? ", with the Gateway's rate limits and checks" : ""}. Answers aren't deterministic. Write tools never run live.`
+              : "It only reads, so a run may call the real tool instead of the world. Answers aren't deterministic, and you'll confirm a safe target before the first run. Write tools never run live."}
           </Typography>
         </Box>
         <Stack direction="row" justifyContent="flex-end" spacing={1} sx={{ px: 2, py: 1.25, borderTop: "1px solid", borderColor: "divider" }}>

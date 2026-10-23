@@ -629,8 +629,8 @@ export default function BuildFromAgent() {
        source, and env v1's world is built to answer exactly those. */
     const v1Tools = (env.tools || []).map((t) => ({ ...t }));
     /* Built from an MCP server: record it as the World tab's Add tools does. */
-    const mcp = mcpBuildStateOf(v1Tools, source?.worldSource, now);
-    const mcpPatch = mcp ? { mcpServers: mcp.mcpServers, toolEnv: { ...(envState.toolEnv || {}), ...mcp.toolEnv } } : {};
+    const mcp = mcpBuildStateOf(v1Tools);
+    const mcpPatch = mcp ? { toolEnv: { ...(envState.toolEnv || {}), ...mcp.toolEnv } } : {};
     /* The real agent from the first moment — identity, definition (GitHub
        link, entry file) and where it runs — so leaving mid-build never leaves
        a placeholder behind for "Use a connected agent" to duplicate. */

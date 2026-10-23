@@ -1516,7 +1516,9 @@ function SourceToSandboxMap({ env, envState, progress }) {
     return {
       key: t.name,
       name: t.name,
-      origin: "config",
+      /* A tool added from an MCP server says so — it wasn't read from the agent's config. */
+      origin: t.via?.kind === "mcp" ? "mcp" : "config",
+      via: t.via,
       target: connectOnly ? "answered by your systems" : targetForTier(setting.tier),
       confirmed: !connectOnly && setting.confirmed,
     };

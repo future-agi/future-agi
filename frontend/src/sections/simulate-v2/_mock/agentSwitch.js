@@ -63,7 +63,8 @@ export const readAgentTools = (picked, label, state) => {
   const viaMcp = agentMcpTools(picked);
   const withMcp = (list) => [...list, ...viaMcp.filter((t) => !list.some((x) => x.name === t.name))];
   const tested = toolsOfPicked(picked, label, state);
-  if (tested?.length) return withMcp(tested.map((t) => ({ name: t.name, desc: t.desc || "", ...(t.args && { args: t.args }) })));
+  /* Whole records: a tool that came from an MCP server keeps where it came from. */
+  if (tested?.length) return withMcp(tested.map((t) => ({ ...t, desc: t.desc || "" })));
   const kind = sourceKindOf(picked);
   if (kind === "endpoint" || kind === "prompt") return viaMcp;
   /* Only what the agent's own source or versions declare — never a demo world's
@@ -89,7 +90,10 @@ export const firstAgentReadPlan = (env, envState, { picked, label, agentName, st
   if (existing.some((t) => t.via?.kind !== "mcp")) return null;
   const fromAgent = readAgentTools(picked, label, state);
   if (!fromAgent.length) return null;
-  const tools = [...fromAgent, ...existing.filter((t) => !fromAgent.some((r) => r.name === t.name))];
+  /* A tool the world already took from an MCP server stays that record — its
+     server, read-only flag and Gateway standing — when the agent declares it too. */
+  const kept = new Set(existing.map((t) => t.name));
+  const tools = [...existing, ...fromAgent.filter((t) => !kept.has(t.name))];
   const note = `Tools read from ${agentName}${label ? ` ${label}` : ""} when it was connected.`;
   const read = { from: agentName, label: label || null, at: now, count: fromAgent.length, names: fromAgent.map((t) => t.name) };
   if (isEnvDraft(envState)) {
@@ -103,7 +107,10 @@ export const firstAgentReadPlan = (env, envState, { picked, label, agentName, st
   const minted = nextEnvVersion(env, envState, { changed: ["contract"], note, now, tools });
   return {
     tools, fromAgent,
-    envPatch: { tools },
+    /* Unsaved edits ride along into the version — said, never silent. */
+    savedEdits: (envState?.unsavedEnvChanges || []).length,
+    /* Versions before this one keep the world they had: the first build's list is frozen as it was. */
+    envPatch: { tools, firstBuildTools: env?.firstBuildTools || env?.tools || [] },
     statePatch: { toolsRead: read, envVersions: [...(envState.envVersions?.length ? envState.envVersions : [...environmentVersions(env, envState)].reverse()), minted], activeEnvVersion: minted.label, unsavedEnvChanges: [] },
   };
 };

@@ -102,7 +102,9 @@ export const detectPaste = (raw) => {
     const transport = /^(npx|uvx|docker)\s/i.test(text) ? "stdio" : /\/sse\b/i.test(text) ? "sse" : "http";
     return {
       kind: "mcp", label: "MCP server", detail: text, logo: "mcp",
-      note: "Its tools become the world of one of your agents' environments — pick the agent next.",
+      note: transport === "stdio"
+        ? "That's a command, and a pasted command never runs in our sandbox — paste the server's HTTP or SSE URL, or pick it from your Gateway."
+        : "Its tools become the world of one of your agents' environments — pick the agent next.",
       choice: "mcp", prefill: { target: text, transport },
     };
   }

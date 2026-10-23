@@ -107,12 +107,14 @@ export const templateWorldSource = (template) => ({
 });
 
 /** An MCP server as the world an agent's environment starts from. */
-export const mcpWorldSource = ({ transport, value, tokenRef }) => ({
+export const mcpWorldSource = ({ transport, value, tokenRef, gateway, label }) => ({
   kind: "mcp",
-  label: mcpHostOf(value),
+  label: label || mcpHostOf(value),
   transport,
   value,
   ...(tokenRef && { tokenRef }),
+  /* A server registered in the Gateway: its tools come from there, credentials and all. */
+  ...(gateway && { gateway }),
 });
 
 /**

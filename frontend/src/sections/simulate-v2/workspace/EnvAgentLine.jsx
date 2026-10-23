@@ -108,8 +108,9 @@ export default function EnvAgentLine({ env, envState, patch, locked = false, onF
     setChanging(false);
     setConnectingNew(false);
     const live = (envState?.scenarios || []).filter((r) => !r.retired && !r.archived).length;
+    const viaMcp = read ? read.tools.filter((t) => t.via?.kind === "mcp" && !read.fromAgent.some((a) => a.name === t.name)).length : 0;
     enqueueSnackbar(read
-      ? `This environment now tests ${n}${activeLabel ? ` ${activeLabel}` : ""} — its ${read.fromAgent.length} tool${read.fromAgent.length === 1 ? "" : "s"} were read into the world${read.tools.length > read.fromAgent.length ? `, beside the ${read.tools.length - read.fromAgent.length} added from MCP` : ""}${live ? `, and ${live} scenario${live === 1 ? "" : "s"} need re-checking` : ""}`
+      ? `This environment now tests ${n}${activeLabel ? ` ${activeLabel}` : ""} — its ${read.fromAgent.length} tool${read.fromAgent.length === 1 ? "" : "s"} were read into the world${viaMcp ? `, beside the ${viaMcp} added from MCP` : ""}${live ? `, and ${live} scenario${live === 1 ? "" : "s"} need re-checking` : ""}${read.savedEdits ? `. Your ${read.savedEdits} unsaved edit${read.savedEdits === 1 ? " was" : "s were"} saved with it` : ""}`
       : `This environment now tests ${n}${activeLabel ? ` ${activeLabel}` : ""} — the world and scenarios apply as they are`, { variant: "success" });
   };
   /* The agent, on its Environments tab, with this environment picked out. */

@@ -33,7 +33,7 @@ import {
 } from "./envModel";
 import { snapshotOfRun, snapshotLabelOf } from "./envSnapshot";
 import { toolFaultsOf } from "./toolEnv";
-import { environmentVersions, currentEnvVersion, agentVersions, versionNumber } from "./versions";
+import { environmentVersions, currentEnvVersion, agentVersions, versionNumber, savedWorldEnv } from "./versions";
 import { runEnvVersion, knownToolsFor } from "./toolFit";
 import { replicationOf } from "./replication";
 import { sourceKindOf } from "./agentRegistry";
@@ -105,7 +105,7 @@ export const pairKeyOf = (run, env, envState) => {
     simulatorLabel: sim?.label || sim?.model || null,
     /* The tool dial, per tool: a run that recorded its dial reads that,
        one that didn't reads the dial as it stands. */
-    faults: run?.toolEnv ? (run.toolFaults || {}) : (toolFaultsOf(env, envState) || {}),
+    faults: run?.toolEnv ? (run.toolFaults || {}) : (toolFaultsOf(savedWorldEnv(env, envState), envState) || {}),
     surface: run?.surface || env?.surface || "chat",
     fidelity: run?.fidelity || replicationOf(envState?.agent, env).fidelity,
     repeats: run?.repeats || 1,

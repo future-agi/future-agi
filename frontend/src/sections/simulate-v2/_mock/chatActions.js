@@ -13,7 +13,7 @@
   to an intent, or null when the message isn't one of these, in which case
   the workspace's own reply handles it as before.
 */
-import { TIERS, FAULT_PRESETS, tierOf, toolEnvOf, toolEnvSummary, toolSettingOf, faultLine, faultPresetOf } from "./toolEnv";
+import { TIERS, FAULT_PRESETS, tierOf, toolEnvOf, toolEnvSummary, toolSettingOf, faultLine, faultPresetOf, liveAllowedOf, mcpLiveTargetOf } from "./toolEnv";
 import { withPinnedWorld } from "./toolFit";
 import { rebuildRun } from "./comparison";
 import { setupGaps, sortGaps, runReadiness, missingCredentials, credentialManifest } from "./setupGaps";
@@ -404,8 +404,13 @@ export const tierPlan = (env, envState, toolName, tier) => {
     to: tierOf(tier).word,
     tier,
     same: setting.tier === tier,
-    /* Live on a tool whose default isn't Live points a run at a real API. */
-    needsTarget: tier === "live" && setting.defaultTier !== "live",
+    /* Whether Live may be chosen at all — writes never, a Gateway block never. */
+    live: tier === "live" ? liveAllowedOf(setting) : null,
+    /* Live on a tool whose default isn't Live points a run at a real API —
+       unless it's from an MCP server, whose server (or Gateway) is the target. */
+    needsTarget: tier === "live" && setting.defaultTier !== "live" && !setting.liveTarget,
+    target: mcpLiveTargetOf(tool),
+    toolRecord: tool,
   };
 };
 

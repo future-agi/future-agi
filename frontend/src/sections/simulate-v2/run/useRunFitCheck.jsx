@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { currentAgentVersion } from "../_mock/versions";
 import { toolFit } from "../_mock/toolFit";
+import { mcpRunGapOf } from "../_mock/worldTools";
 import RunFitDialog from "./RunFitDialog";
 
 /**
@@ -21,7 +22,8 @@ export default function useRunFitCheck(env, envState, patch, { locked = false } 
 
   const check = (run, { agent } = {}) => {
     const label = agent || currentAgentVersion(envState)?.label;
-    if (!env || toolFit(env, envState, { agent: label }).fits) {
+    /* The agent's own MCP tools count too: a run gets no answer for those the world doesn't have. */
+    if (!env || (toolFit(env, envState, { agent: label }).fits && !mcpRunGapOf(env, envState).missing.length)) {
       run();
       return;
     }

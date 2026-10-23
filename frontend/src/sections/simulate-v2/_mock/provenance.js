@@ -81,6 +81,14 @@ export const ORIGIN_KINDS = {
     color: "#7857FC",
     note: "The world starts with these rows every run. Change the fixture, change the seeded state.",
   },
+  /* Listed by an MCP server added on the World tab — the world answers it; it wasn't read from the agent. */
+  mcp: {
+    id: "mcp",
+    label: "from an MCP server",
+    short: "MCP",
+    color: "#0D9488",
+    note: "Listed by an MCP server added on the World tab, not read from the agent. The world answers it; the server is only called if the tool is Live.",
+  },
   inferred: {
     id: "inferred",
     label: "inferred",

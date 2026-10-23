@@ -105,6 +105,10 @@ export const ENV_CHANGES = [
   { id: "rules", label: "Rules changed", invalidates: false, blurb: "Graded differently; every scenario can still be staged." },
   { id: "scoring", label: "Evaluations changed", invalidates: false, blurb: "Evaluations or thresholds changed — runs before and after were graded differently." },
   { id: "actors", label: "Actors changed", invalidates: false, blurb: "Who else acts in the world changed — the episodes play out differently." },
+  /* Tools added from an MCP server: nothing a scenario ran on changed, so no proof goes stale. */
+  { id: "tools-added", label: "Tools added", invalidates: false, blurb: "The world answers more tools — every scenario still runs as it was proved." },
+  /* Removed: a scenario that calls one can no longer play out as proved. */
+  { id: "tools-removed", label: "Tools removed", invalidates: true, blurb: "The world stops answering some tools — scenarios that call them can't run as proved." },
 ];
 
 /** What a change id reads as — never the raw id ("contract" means tools). */
@@ -126,6 +130,26 @@ const pinnedByRun = (envState) => {
   const label = currentEnvVersion(null, envState)?.label;
   return (envState?.runs || []).some((r) => !r.envVersion || r.envVersion === label);
 };
+
+/** The environment with the tools a run started now uses: the pinned version as saved. */
+export const savedWorldEnv = (env, envState) => (env
+  ? { ...env, tools: currentEnvVersion(env, envState)?.tools || env.firstBuildTools || env.tools || [] }
+  : env);
+
+/** No run has pinned the current version yet, so an edit lands on it in place. */
+export const editsLandInPlace = (envState) => !pinnedByRun(envState);
+
+/**
+ * Tools added or removed since the pinned version, applied to `tools`: the
+ * world as it will be once the edits are saved. Each pending edit may carry
+ * `addTools` (world tools) and `removeTools` (names), in the order made.
+ */
+export const applyPendingTools = (tools, envState) => pendingEnvChanges(envState).reduce((list, c) => {
+  const gone = new Set(c.removeTools || []);
+  const kept = gone.size ? list.filter((t) => !gone.has(t.name)) : list;
+  const have = new Set(kept.map((t) => t.name));
+  return [...kept, ...(c.addTools || []).filter((t) => !have.has(t.name))];
+}, tools || []);
 
 /**
  * Still a draft: nothing has made a version yet — no run has pinned one and
@@ -160,8 +184,12 @@ export const nextEnvVersion = (env, envState, { changed = [], note, now, from, r
      whatever version is made next, whoever makes it. The caller clears them
      (`unsavedEnvChanges: []`). */
   const pending = pendingEnvChanges(envState);
+  /* Tools added or removed while unsaved join the version like any other edit. */
+  const toolEdits = pending.some((c) => c.addTools || c.removeTools);
+  const startTools = tools || base?.tools || (toolEdits ? (env?.firstBuildTools || env?.tools || []) : null);
+  const nextTools = startTools && toolEdits ? applyPendingTools(startTools, envState) : startTools;
   return {
-    ...((tools || base?.tools) && { tools: tools || base.tools }),
+    ...(nextTools && { tools: nextTools }),
     builtFor: base?.builtFor || "v1",
     id: `${env?.id}-v${n}`,
     label: `v${n}`,

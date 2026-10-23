@@ -38,6 +38,7 @@ import { CLOSED_PLATFORMS, CLOSED_PLATFORM_NOTE, PLATFORM_TESTING } from "../_mo
 import { clickable, focusRing } from "../components/clickable";
 import WorldAgentPicker from "./AgentChoice";
 import { buildableAgentsOf, mcpWorldSource, useBuildForAgent } from "./worldSource";
+import { gatewayServersOf } from "../_mock/gatewayMcp";
 
 /**
  * Variation B entry point.
@@ -1682,12 +1683,20 @@ function PanelMcpServer() {
   const [agentId, setAgentId] = useState(null);
   const agent = buildableAgentsOf(all).find((a) => a.id === agentId) || null;
   const [scenarioCount, setScenarioCount] = useState(DEFAULT_SCENARIOS);
-  const [transport, setTransport] = useState(prefill?.transport || "http");
-  const [target, setTarget] = useState(prefill?.target || "");
+  /* Servers registered in the Gateway come first — no URL or token to give again.
+     A pasted URL is the other way in. */
+  const gwServers = gatewayServersOf();
+  const [source, setSource] = useState(gwServers.length && !prefill?.target ? "gateway" : "url");
+  const [gwPick, setGwPick] = useState(null);
+  const gw = gwServers.find((g) => g.id === gwPick) || null;
+  const [transport, setTransport] = useState(prefill?.transport === "stdio" ? "http" : prefill?.transport || "http");
+  const [target, setTarget] = useState(prefill?.transport === "stdio" ? "" : prefill?.target || "");
   /* A token for an HTTP server, by reference (AC-6.12). */
   const [tokenRef, setTokenRef] = useState("");
   const tokenOk = !tokenRef.trim() || isSecretRef(tokenRef);
-  const canGo = !!target.trim() && tokenOk && !!agent;
+  const canGo = !!agent && (source === "gateway" ? !!gw : !!target.trim() && tokenOk);
+  /* A build runs in our sandbox, and a pasted command never runs there. */
+  const transports = MCP_TRANSPORTS.map((t) => (t.id === "stdio" ? { ...t, disabled: true, tag: "On your machine only" } : t));
   return (
     <Stack spacing={1.75} sx={{ p: 2.5 }}>
       <WorldAgentPicker
@@ -1695,30 +1704,52 @@ function PanelMcpServer() {
         onChange={setAgentId}
         subtitle="The server's tools become the world of this agent's environment."
       />
-      <ProviderRow
-        options={MCP_TRANSPORTS}
-        value={transport}
-        onChange={setTransport}
-      />
-      <Field
-        label={transport === "stdio" ? "Command" : "Server URL"}
-        required
-        placeholder={transport === "stdio" ? "uvx my-mcp-server --flag" : "https://mcp.yourapp.com/sse"}
-        value={target} onChange={setTarget}
-        mono
-        helper={<HintLine hint="We list the tools the server exposes and build the agent's world from them.">Its tools become the world the agent acts on.</HintLine>}
-      />
-      {transport !== "stdio" && (
-        <SecretRefField
-          label="Auth token (optional)"
-          placeholder="vault://acme/sim/mcp_server_token"
-          value={tokenRef} onChange={setTokenRef}
+      {gwServers.length > 0 && (
+        <SegmentedToggle
+          value={source} onChange={setSource}
+          options={[{ value: "gateway", label: `From your Gateway · ${gwServers.length}` }, { value: "url", label: "Another server" }]}
         />
+      )}
+      {source === "gateway" ? (
+        <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+          {gwServers.map((g) => (
+            <ChipCard
+              key={g.id}
+              icon="solar:plug-circle-linear"
+              label={g.label}
+              on={gwPick === g.id}
+              onClick={() => setGwPick(g.id)}
+              tag={g.status === "connected" ? `${g.toolCount} tools` : "Unreachable"}
+              disabled={g.status !== "connected"}
+            />
+          ))}
+        </Stack>
+      ) : (
+        <>
+          <ProviderRow
+            options={transports}
+            value={transport}
+            onChange={setTransport}
+          />
+          <Field
+            label="Server URL"
+            required
+            placeholder="https://mcp.yourapp.com/sse"
+            value={target} onChange={setTarget}
+            mono
+            helper={<HintLine hint="We list the tools the server exposes and build the agent's world from them. A stdio server is a command, so it only works for an environment that runs on your machine.">Its tools become the world the agent acts on.</HintLine>}
+          />
+          <SecretRefField
+            label="Auth token (optional)"
+            placeholder="vault://acme/sim/mcp_server_token"
+            value={tokenRef} onChange={setTokenRef}
+          />
+        </>
       )}
       <ScenarioCountRow value={scenarioCount} onChange={setScenarioCount} />
       <ContinueRow
         disabled={!canGo}
-        hint={!agent ? "Pick the agent this environment is for" : !target.trim() ? "Add the server" : "Use a reference for the auth token"}
+        hint={!agent ? "Pick the agent this environment is for" : source === "gateway" ? "Pick a server from your Gateway" : !target.trim() ? "Add the server" : "Use a reference for the auth token"}
         onClick={() => buildFor(
           agent,
           {
@@ -1726,11 +1757,13 @@ function PanelMcpServer() {
             version: agent.production || agent.latest,
             count: scenarioCountOf(scenarioCount) || Number(DEFAULT_SCENARIOS),
           },
-          mcpWorldSource({
-            transport,
-            value: target.trim(),
-            tokenRef: transport !== "stdio" && tokenRef.trim() ? tokenRef.trim() : null,
-          }),
+          source === "gateway"
+            ? mcpWorldSource({ transport: "http", value: gw.url, gateway: { serverId: gw.id }, label: gw.label })
+            : mcpWorldSource({
+              transport,
+              value: target.trim(),
+              tokenRef: tokenRef.trim() ? tokenRef.trim() : null,
+            }),
         )}
       />
     </Stack>

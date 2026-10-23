@@ -34,7 +34,7 @@ import { estimateRun, checkUsage, meterLine, limitMessage, budgetNotice } from "
 import { runSizeOf, parallelOf } from "../_mock/runStream";
 import RunUsageBanner from "./RunUsageBanner";
 import IssueReturnBanner from "../errorFeed/IssueReturnBanner";
-import { subscribeBuilderPrompt, subscribeOpenBuilderChat } from "../_mock/builderPromptBus";
+import { subscribeBuilderPrompt, subscribeBuilderSend, subscribeOpenBuilderChat } from "../_mock/builderPromptBus";
 import { subscribeComposerScaffold } from "../_mock/composerScaffoldBus";
 import { subscribeScenarioSelection, clearScenarioSelection, getScenarioSelection } from "../_mock/scenarioSelectionBus";
 import { subscribeBuilderMode } from "../_mock/builderModeBus";
@@ -317,6 +317,12 @@ export default function EnvironmentWorkspace() {
      drawer's suggestion pills emit here; we append the message directly
      to `turns` (rather than routing through `sendChat`) so this doesn't
      depend on `sendChat` being defined below in the file. */
+  /* A screen handing the builder a request ("Write scenarios for the new
+     tools") — sent as if typed, with the chat unfolded to show it. The
+     send itself is defined further down; the ref reaches it. */
+  const sendChatRef = useRef(null);
+  useEffect(() => subscribeBuilderSend((text) => { setCollapsed(false); sendChatRef.current?.(text); }), []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     return subscribeBuilderPrompt((text) => {
       setTurns((prev) => [...prev, { id: `u-${Date.now()}`, role: "user", text }]);
@@ -798,6 +804,7 @@ export default function EnvironmentWorkspace() {
       say(workspaceReply(trimmed));
     }, 900);
   };
+  sendChatRef.current = sendChat;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>

@@ -20,7 +20,7 @@
 import { getRows } from "./scenarios";
 import { actorsOf, getActor } from "./actors";
 import { inferTools, sandboxScenario } from "./toolInference";
-import { agentVersions, environmentVersions, currentEnvVersion, currentAgentVersion, nextEnvVersion, versionNumber } from "./versions";
+import { agentVersions, applyPendingTools, environmentVersions, currentEnvVersion, currentAgentVersion, nextEnvVersion, versionNumber } from "./versions";
 import { toolFaultsOf } from "./toolEnv";
 
 const pick = (t) => ({ ...t, desc: t.desc || "" });
@@ -38,14 +38,25 @@ export const withPinnedWorld = (env, envState) => (env
   ? { ...env, firstBuildTools: env.firstBuildTools || env.tools || [], tools: worldToolsFor(env, envState) }
   : env);
 
-/** Tools the world answers at an environment version (the pinned one by default). */
+/**
+ * Tools the world answers at an environment version. Named, it's that
+ * version as saved. Unnamed, it's the world being edited: the pinned version
+ * plus tools added or removed since — what the World tab shows. A run uses
+ * the saved version (runWorldEnv).
+ */
 export const worldToolsFor = (env, envState, envLabel) => {
   const list = environmentVersions(env, envState);
   const version = envLabel
     ? list.find((v) => v.label === envLabel)
     : currentEnvVersion(env, envState);
-  return version?.tools || baseTools(env);
+  const saved = version?.tools || baseTools(env);
+  return envLabel ? saved : applyPendingTools(saved, envState);
 };
+
+/** The environment as a run started now sees it: the pinned version's tools as saved, edits not yet saved left out. */
+export const runWorldEnv = (env, envState) => (env
+  ? { ...env, tools: worldToolsFor(env, envState, currentEnvVersion(env, envState)?.label) }
+  : env);
 
 /**
  * Tools an agent version calls. A version that declares none inherits the
@@ -288,7 +299,7 @@ export const runInputs = (env, envState, { agent, envVersion, actors, actorEdits
     .filter(Boolean),
   /* Injected faults: a stored run replays the ones it pinned (none, for runs
      from before the dial); a new run takes the current dial. */
-  toolFaults: toolFaults !== undefined ? toolFaults : toolFaultsOf(env, envState),
+  toolFaults: toolFaults !== undefined ? toolFaults : toolFaultsOf(runWorldEnv(env, envState), envState),
 });
 
 /**

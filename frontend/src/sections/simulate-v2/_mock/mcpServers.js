@@ -13,14 +13,15 @@
   `readOnlyHint`, which decides whether it may ever run Live.
 */
 
-/* What `tools/list` returns, per kind of server. */
-const CATALOG = {
+/* What `tools/list` returns, per kind of server. `destructive` and
+   `openWorld` are MCP's destructiveHint and openWorldHint, where a tool sets them. */
+export const CATALOG = {
   shopify: {
     label: "Shopify",
     tools: [
       { name: "search_products", desc: "Find products by title, SKU or tag.", readOnly: true, args: [{ name: "query", type: "string", required: true }] },
       { name: "get_order", desc: "An order with its line items, status and shipping address.", readOnly: true, args: [{ name: "order_id", type: "string", required: true }] },
-      { name: "create_refund", desc: "Refund some or all of an order to the original payment method.", readOnly: false, args: [{ name: "order_id", type: "string", required: true }, { name: "amount", type: "number", required: true }] },
+      { name: "create_refund", desc: "Refund some or all of an order to the original payment method.", readOnly: false, destructive: true, args: [{ name: "order_id", type: "string", required: true }, { name: "amount", type: "number", required: true }] },
       { name: "update_shipping_address", desc: "Change where an unfulfilled order ships.", readOnly: false, args: [{ name: "order_id", type: "string", required: true }, { name: "address", type: "object", required: true }] },
     ],
   },
@@ -29,8 +30,8 @@ const CATALOG = {
     tools: [
       { name: "list_charges", desc: "Charges on a customer, newest first.", readOnly: true, args: [{ name: "customer_id", type: "string", required: true }] },
       { name: "get_customer", desc: "A customer with their default payment method.", readOnly: true, args: [{ name: "customer_id", type: "string", required: true }] },
-      { name: "create_refund", desc: "Refund a charge, fully or in part.", readOnly: false, args: [{ name: "charge_id", type: "string", required: true }, { name: "amount", type: "number", required: false }] },
-      { name: "cancel_subscription", desc: "Cancel a subscription now or at period end.", readOnly: false, args: [{ name: "subscription_id", type: "string", required: true }, { name: "at_period_end", type: "boolean", required: false }] },
+      { name: "create_refund", desc: "Refund a charge, fully or in part.", readOnly: false, destructive: true, args: [{ name: "charge_id", type: "string", required: true }, { name: "amount", type: "number", required: false }] },
+      { name: "cancel_subscription", desc: "Cancel a subscription now or at period end.", readOnly: false, destructive: true, args: [{ name: "subscription_id", type: "string", required: true }, { name: "at_period_end", type: "boolean", required: false }] },
     ],
   },
   hubspot: {
@@ -48,7 +49,7 @@ const CATALOG = {
       { name: "search_tickets", desc: "Tickets matching a requester, status or text.", readOnly: true, args: [{ name: "query", type: "string", required: true }] },
       { name: "get_ticket", desc: "A ticket with its comments and status.", readOnly: true, args: [{ name: "ticket_id", type: "string", required: true }] },
       { name: "create_ticket", desc: "Open a ticket for the requester.", readOnly: false, args: [{ name: "subject", type: "string", required: true }, { name: "body", type: "string", required: true }] },
-      { name: "add_ticket_comment", desc: "Reply on a ticket, public or internal.", readOnly: false, args: [{ name: "ticket_id", type: "string", required: true }, { name: "body", type: "string", required: true }] },
+      { name: "add_ticket_comment", desc: "Reply on a ticket, public or internal.", readOnly: false, openWorld: true, args: [{ name: "ticket_id", type: "string", required: true }, { name: "body", type: "string", required: true }] },
     ],
   },
   calendar: {
@@ -56,8 +57,8 @@ const CATALOG = {
     tools: [
       { name: "list_events", desc: "Events in a date range on a calendar.", readOnly: true, args: [{ name: "calendar_id", type: "string", required: true }, { name: "from", type: "string", required: true }] },
       { name: "find_free_slots", desc: "Open slots of a given length.", readOnly: true, args: [{ name: "duration_minutes", type: "number", required: true }] },
-      { name: "create_event", desc: "Book an event and invite attendees.", readOnly: false, args: [{ name: "start", type: "string", required: true }, { name: "attendees", type: "array", required: false }] },
-      { name: "cancel_event", desc: "Cancel an event and notify attendees.", readOnly: false, args: [{ name: "event_id", type: "string", required: true }] },
+      { name: "create_event", desc: "Book an event and invite attendees.", readOnly: false, openWorld: true, args: [{ name: "start", type: "string", required: true }, { name: "attendees", type: "array", required: false }] },
+      { name: "cancel_event", desc: "Cancel an event and notify attendees.", readOnly: false, destructive: true, openWorld: true, args: [{ name: "event_id", type: "string", required: true }] },
     ],
   },
   linear: {
@@ -117,13 +118,31 @@ export const listMcpTools = ({ transport = "http", value = "", tokenRef = null }
 };
 
 /** A tool as the world keeps it: where it came from, and whether it only reads. */
-export const worldToolFromMcp = (tool, server) => ({
-  name: tool.name,
+/**
+ * A tool as the world keeps it. The server travels with the tool — where it
+ * is, how it's reached, its token by reference — so the world's tool sources
+ * are always read off the tools themselves and can't drift from them. `as`
+ * names it in the world when its own name is taken by a tool from elsewhere;
+ * `mcpName` is then what the server calls it.
+ */
+export const worldToolFromMcp = (tool, server, { as } = {}) => ({
+  name: as || tool.name,
+  ...(as && as !== tool.name && { mcpName: tool.name }),
   desc: tool.desc || "",
   ...(tool.args?.length && { args: tool.args }),
   effect: tool.readOnly ? "read" : "write",
-  via: { kind: "mcp", serverId: server.id, host: server.host, label: server.label },
+  ...(tool.destructive && { destructive: true }),
+  ...(tool.openWorld && { openWorld: true }),
+  via: {
+    kind: "mcp", serverId: server.id, host: server.host, label: server.label,
+    transport: server.transport || "http", value: server.value || server.host,
+    /* Registered in the workspace's Gateway: credentials stay there, and Live calls go through it. */
+    ...(server.gateway ? { gateway: server.gateway } : server.tokenRef && { tokenRef: server.tokenRef }),
+  },
 });
+
+/** What the server calls a world tool — its own name unless the world renamed it. */
+export const mcpNameOf = (tool) => tool?.mcpName || tool?.name;
 
 /* The MCP servers a hosted assistant has attached — what the platform's
    assistant config lists. Demo: read from the agent's name and domain. */
@@ -141,6 +160,30 @@ const PLATFORMS_WITH_MCP = new Set(["vapi", "retell", "elevenlabs"]);
  * assistants on Vapi, Retell and ElevenLabs carry them in the assistant's
  * config.
  */
+/* Claude Agent SDK names a server's tools mcp__<server>__<tool>. */
+const NAMESPACED = /^mcp__([A-Za-z0-9_-]+?)__(.+)$/;
+const toolNamesOfAgent = (agent) => [
+  ...(agent?.definition?.tools || []),
+  ...([...(agent?.versions || [])].reverse().find((v) => v.tools?.length)?.tools || []),
+].map((t) => (typeof t === "string" ? t : t?.name)).filter(Boolean);
+
+/* A code agent's servers, read off the tools it calls by their namespaced names. */
+const namespacedServersOf = (agent) => {
+  const byServer = new Map();
+  toolNamesOfAgent(agent).forEach((name) => {
+    const m = name.match(NAMESPACED);
+    if (!m) return;
+    if (!byServer.has(m[1])) byServer.set(m[1], new Set());
+    byServer.get(m[1]).add(name);
+  });
+  return [...byServer.entries()].map(([id, names]) => {
+    const server = { id: `mcp-${slug(id)}`, host: id, label: id.charAt(0).toUpperCase() + id.slice(1), transport: "stdio", value: id, fromCode: true };
+    const tools = [...names].map((name) => ({ name, desc: "Read from the code.", readOnly: READS.test(name.replace(NAMESPACED, "$2")), effect: READS.test(name.replace(NAMESPACED, "$2")) ? "read" : "write" }));
+    return { server, tools };
+  });
+};
+const READS = /^(get|read|list|search|lookup|find|check|fetch|shipment|status)/i;
+
 export const mcpServersOfAgent = (agent) => {
   if (!agent) return [];
   const declared = agent.definition?.mcpServers || agent.values?.mcpServers;
@@ -149,10 +192,11 @@ export const mcpServersOfAgent = (agent) => {
     : PLATFORMS_WITH_MCP.has(agent.values?.provider)
       ? PLATFORM_SERVERS.filter(([re]) => re.test(agent.name || "")).map(([, url]) => url).slice(0, 1)
       : [];
-  return urls.map((url) => {
+  const listed = urls.map((url) => {
     const read = listMcpTools({ transport: /\/sse$/.test(url) ? "sse" : "http", value: url });
     return read.ok ? { server: read.server, tools: read.tools } : null;
   }).filter(Boolean);
+  return [...listed, ...namespacedServersOf(agent)];
 };
 
 /** Every tool an agent gets from its MCP servers, as world tools. */

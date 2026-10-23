@@ -4,13 +4,13 @@ import { Box, ButtonBase, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SectionCard } from "../components/primitives";
 import { agentVersions, currentAgentVersion } from "../_mock/versions";
-import { toolCallers, toolFit, toolSince } from "../_mock/toolFit";
+import { toolCallers, toolFit, toolSince, worldToolsFor } from "../_mock/toolFit";
 import CapabilityGraph from "./CapabilityGraph";
 import { focusRing } from "../components/clickable";
 import { TwinSandboxSection } from "./OverviewPanel";
 import WorldInternalsSection from "./WorldInternalsSection";
-import { agentMcpTools } from "../_mock/mcpServers";
-import { agentCallsOf } from "../_mock/worldTools";
+import { agentMcpTools, mcpServersOfAgent } from "../_mock/mcpServers";
+import { agentCallsOf, agentServerIdsOf, mcpPlacementOf } from "../_mock/worldTools";
 import ToolFitBanner from "./ToolFitBanner";
 import ConnectOnlyWorld, { EnvironmentKindNote } from "./ConnectOnlyWorld";
 import { isConnectOnly } from "../_mock/envModel";
@@ -92,12 +92,16 @@ export default function WorldPanel({ env, envState, patch, onGo, locked = false,
     );
   }
 
-  /* Tools the agent gets from its MCP servers that the world doesn't answer yet. */
-  const worldNames = new Set((env?.tools || []).map((t) => t.name));
+  /* Tools the agent gets from its MCP servers that the world doesn't answer
+     yet — counted the way the World tab's notice and the drawer place them. */
+  const edited = worldToolsFor(env, envState);
+  const agentServerIds = agentServerIdsOf(envState);
   const agentMcp = agentMcpTools(envState?.agent);
-  const mcpMissing = agentMcp.filter((t) => !worldNames.has(t.name)).length;
+  const mcpMissing = mcpServersOfAgent(envState?.agent)
+    .flatMap(({ server, tools: listed }) => listed.filter((t) => mcpPlacementOf(t, server, edited, { agentServerIds }).status !== "inWorld")).length;
   /* Everything the agent calls: its own tools and the ones its MCP servers list. */
-  const callsCount = envState?.toolsRead?.names ? agentCallsOf(env, envState).size : new Set([...fit.calls.map((t) => t.name), ...agentMcp.map((t) => t.name)]).size;
+  /* Everything the agent calls at the version tested: its own tools and the ones its MCP servers list. */
+  const callsCount = agentCallsOf(env, envState).size || new Set([...fit.calls.map((t) => t.name), ...agentMcp.map((t) => t.name)]).size;
   const allRows = [
     ...fit.world.map((t) => ({ tool: t, answered: true })),
     ...fit.missing.map((t) => ({ tool: t, answered: false })),

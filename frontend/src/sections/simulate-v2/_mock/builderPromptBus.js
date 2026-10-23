@@ -39,3 +39,23 @@ export function openBuilderChat() {
     try { fn(); } catch { /* no-op */ }
   });
 }
+
+/*
+  Send a message to the builder as if typed — it's answered like any other
+  (asked to write scenarios, it writes them). Used where a screen hands off a
+  request the builder carries out, e.g. "Write scenarios for the new tools".
+*/
+const sendListeners = new Set();
+
+export function subscribeBuilderSend(fn) {
+  sendListeners.add(fn);
+  return () => { sendListeners.delete(fn); };
+}
+
+export function sendToBuilder(text) {
+  const clean = (text || "").trim();
+  if (!clean) return;
+  sendListeners.forEach((fn) => {
+    try { fn(clean); } catch { /* no-op */ }
+  });
+}

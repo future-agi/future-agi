@@ -35,7 +35,7 @@ import { subTasksFor } from "./contract";
 import { hashSeed, envTurnLimitOf } from "./runStream";
 import { toolEnvPin, toolEnvSummary, toolFaultsOf } from "./toolEnv";
 import { scenarioVersionsPin } from "./scenarioVersion";
-import { envLineage, holdsInEnv } from "./versions";
+import { envLineage, holdsInEnv, savedWorldEnv } from "./versions";
 import { replicationOf } from "./replication";
 import { proofKindOf } from "./rsiModel";
 import { secretsUsedOf } from "./envConfig";
@@ -199,7 +199,7 @@ export const callerChangePatch = (env, envState, model) => {
   connect-only environment has no dial; its pin is "—".
 */
 const toolPinLabel = (summary, pin) => (summary || pin ? [summary, pin].filter(Boolean).join(" · ") : null);
-const currentToolPin = (env, envState) => (isConnectOnly(env) ? "—" : toolPinLabel(toolEnvSummary(env, envState), toolEnvPin(env, envState)));
+const currentToolPin = (env, envState) => (isConnectOnly(env) ? "—" : toolPinLabel(toolEnvSummary(savedWorldEnv(env, envState), envState), toolEnvPin(savedWorldEnv(env, envState), envState)));
 
 /* How faithfully the run reproduced the agent (replication.js) — fidelities
    never mix in one comparison (PRD v7 §4.10.3, D2). */
@@ -267,9 +267,10 @@ export const pinsForNewRun = (env, envState, { trials, seed, rules = false } = {
   /* The dial, and the fault profiles themselves — a replay of this run draws
      the same faults however the dial is set later. */
   ...(isConnectOnly(env) ? { toolEnv: "—", toolEnvSummary: null, toolFaults: null } : {
-    toolEnv: toolEnvPin(env, envState),
-    toolEnvSummary: toolEnvSummary(env, envState),
-    toolFaults: toolFaultsOf(env, envState),
+    /* The tools of the version the run is on — tools added since aren't in it until saved. */
+    toolEnv: toolEnvPin(savedWorldEnv(env, envState), envState),
+    toolEnvSummary: toolEnvSummary(savedWorldEnv(env, envState), envState),
+    toolFaults: toolFaultsOf(savedWorldEnv(env, envState), envState),
   }),
 });
 

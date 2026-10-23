@@ -1,6 +1,8 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
-import { Box, Button, Checkbox, CircularProgress, IconButton, Stack, Typography } from "@mui/material";
+import { useNavigate } from "react-router-dom";
+import { Box, Button, ButtonBase, Checkbox, CircularProgress, IconButton, Stack, Tooltip, Typography } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import SideDrawer from "../components/SideDrawer";
 import { useSimStore } from "../store";
@@ -8,8 +10,11 @@ import { Field, SegmentedToggle } from "../environments/StartEnvironment";
 import SecretRefField from "../agents/connect/SecretRefField";
 import { isSecretRef } from "../_mock/secretRefs";
 import { listMcpTools } from "../_mock/mcpServers";
-import { addMcpToolsPlan, agentCallsOf, toolReachOf } from "../_mock/worldTools";
+import { addMcpToolsPlan, agentCallsOf, agentServerIdsOf, mcpPlacementOf, toolReachOf } from "../_mock/worldTools";
 import { worldToolsFor } from "../_mock/toolFit";
+import { GATEWAY_MCP_PATH, gatewayHiddenCount, gatewayServerForHost, gatewayServerTools, gatewayServersOf } from "../_mock/gatewayMcp";
+import { sendToBuilder } from "../_mock/builderPromptBus";
+import { focusRing } from "../components/clickable";
 
 const MONO = "ui-monospace, Menlo, monospace";
 const TRANSPORTS = [
@@ -17,18 +22,34 @@ const TRANSPORTS = [
   { value: "sse", label: "SSE" },
   { value: "stdio", label: "stdio" },
 ];
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+
+/* Built to run on the person's machine through the CLI, not in our sandbox. */
+const runsLocally = (env) => env?.runsOn === "local" || env?.builtFrom?.worldSource?.runsOn === "local";
 
 /**
  * Add tools to an environment's world from an MCP server — the way agent
- * platforms attach one (ElevenLabs, OpenAI's remote MCP): the server's
- * address and token, then the tools it lists, picked one by one. Picked
- * tools join the world Simulated; a tool that writes can never go Live.
+ * platforms attach one (ElevenLabs, OpenAI's remote MCP): the server, then
+ * the tools it lists, picked one by one. Picked tools join the world
+ * Simulated; a tool that writes can never go Live.
  *
- * `prefill` opens straight on the tools of a server the agent already has
- * attached ({ server, tools }) — its tools the world doesn't answer yet.
+ * Servers registered in the workspace's Gateway come first: picking one
+ * lists its tools from the Gateway's catalogue, with no URL or token to
+ * enter again — the credentials stay there, Live calls go through it, and a
+ * tool its guardrails block is answered by the world only. Another server,
+ * by URL or command, is the second way in; a command (stdio) only for an
+ * environment that runs on the person's machine.
+ *
+ * `prefill` opens straight on a server's tools ({ server, tools, reason }):
+ * the agent's own server, whose tools the world doesn't answer yet — through
+ * the Gateway when the Gateway has it — or a source's new tools on refresh.
  */
 export default function AddMcpToolsDrawer({ open, onClose, env, envState, patch, onGo, prefill = null }) {
   const { dispatch } = useSimStore();
+  const navigate = useNavigate();
+  const gwServers = gatewayServersOf();
+  const [source, setSource] = useState(gwServers.length ? "gateway" : "url");
+  const [gwPick, setGwPick] = useState(null);
   const [transport, setTransport] = useState("http");
   const [value, setValue] = useState("");
   const [tokenRef, setTokenRef] = useState("");
@@ -38,23 +59,41 @@ export default function AddMcpToolsDrawer({ open, onClose, env, envState, patch,
   const [picked, setPicked] = useState({});
   const [done, setDone] = useState(null);
 
+  const world = worldToolsFor(env, envState);
+  const agentServerIds = agentServerIdsOf(envState);
+  const placeOf = (t) => mcpPlacementOf(t, listed.server, world, { agentServerIds });
+  const agent = envState?.agent || null;
+  const calls = agentCallsOf(env, envState);
+  const tokenOk = !tokenRef.trim() || isSecretRef(tokenRef);
+  const local = runsLocally(env);
+  const stdioBlocked = transport === "stdio" && !local;
+  /* What starts ticked: tools new to the world that the Gateway doesn't hold
+     back. Opened on the agent's own server, its tools are ticked whatever the
+     Gateway says — the agent calls them regardless. */
+  const defaultPicks = (tools, server, own = false) => Object.fromEntries(tools
+    .filter((t) => mcpPlacementOf(t, server, world, { agentServerIds }).status !== "inWorld" && !t.deprecated && (own || !t.blocked))
+    .map((t) => [t.name, true]));
+
   useEffect(() => {
     if (!open) return;
+    setSource(gwServers.length ? "gateway" : "url");
+    setGwPick(null);
     setTransport(prefill?.server?.transport || "http");
     setValue(prefill?.server?.value || "");
     setTokenRef("");
     setError(null);
     setDone(null);
     setListing(false);
-    const first = prefill ? { server: prefill.server, tools: prefill.tools } : null;
+    /* A prefilled server, through the Gateway when it's registered there. */
+    const gw = prefill && !prefill.server?.gateway ? gatewayServerForHost(prefill.server?.host) : null;
+    const viaGw = gw ? gatewayServerTools(gw.gateway.serverId) : null;
+    const names = new Set((prefill?.tools || []).map((t) => t.name));
+    const first = viaGw?.ok
+      ? { server: viaGw.server, tools: viaGw.tools.filter((t) => names.has(t.name)) }
+      : prefill ? { server: prefill.server, tools: prefill.tools } : null;
     setListed(first);
-    setPicked(first ? Object.fromEntries(first.tools.map((t) => [t.name, true])) : {});
+    setPicked(first ? defaultPicks(first.tools, first.server, prefill?.reason !== "refresh") : {});
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const world = new Set(worldToolsFor(env, envState).map((t) => t.name));
-  const agent = envState?.agent || null;
-  const calls = agentCallsOf(env, envState);
-  const tokenOk = !tokenRef.trim() || isSecretRef(tokenRef);
 
   const list = () => {
     setError(null);
@@ -64,11 +103,22 @@ export default function AddMcpToolsDrawer({ open, onClose, env, envState, patch,
       setListing(false);
       if (!r.ok) { setError(r.error); return; }
       setListed({ server: r.server, tools: r.tools });
-      setPicked(Object.fromEntries(r.tools.filter((t) => !world.has(t.name)).map((t) => [t.name, true])));
+      setPicked(defaultPicks(r.tools, r.server));
     }, 800);
   };
+  /* The Gateway already listed this server's tools: nothing to connect to. */
+  const pickGateway = (id) => {
+    setError(null);
+    setGwPick(id);
+    const r = gatewayServerTools(id);
+    if (!r.ok) { setListed(null); setError(r.error); return; }
+    setListed({ server: r.server, tools: r.tools });
+    setPicked(defaultPicks(r.tools, r.server));
+  };
+  const switchSource = (v) => { setSource(v); setListed(null); setGwPick(null); setError(null); };
 
-  const chosen = listed ? listed.tools.filter((t) => picked[t.name] && !world.has(t.name)) : [];
+  const chosen = listed ? listed.tools.filter((t) => picked[t.name] && placeOf(t).status !== "inWorld") : [];
+  const viaGateway = !!listed?.server?.gateway;
   const add = () => {
     const plan = addMcpToolsPlan(env, envState, { server: listed.server, picked: chosen });
     if (plan.envPatch) dispatch({ type: "patchEnvironment", envId: env.id, patch: plan.envPatch });
@@ -79,10 +129,17 @@ export default function AddMcpToolsDrawer({ open, onClose, env, envState, patch,
   const draftNote = (() => {
     const p = listed && chosen.length ? addMcpToolsPlan(env, envState, { server: listed.server, picked: chosen }) : null;
     if (!p) return null;
-    return p.inPlace
-      ? `Added to environment ${p.versionLabel} — it hasn't run yet, so nothing else changes.`
-      : `Saves environment ${p.versionLabel}. Scenarios keep their proofs — adding a tool doesn't change them.`;
+    if (p.inPlace) return `Added to environment ${p.versionLabel} in place — no run has used it yet.`;
+    return `Waits as an unsaved edit${p.waiting ? `, beside your ${plural(p.waiting, "other")}` : ""}, until you save the next environment version. No scenario's proof changes.`;
   })();
+  const hidden = gatewayHiddenCount();
+  /* Asks the builder to write scenarios that call the new tools — it answers like any typed request. */
+  const writeScenarios = (plan) => {
+    onClose();
+    onGo?.("scenarios");
+    const names = plan.added.map((t) => t.name);
+    sendToBuilder(`Add ${Math.max(3, Math.min(8, names.length * 2))} scenarios for conversations that need ${names.join(", ")}`);
+  };
 
   return (
     <SideDrawer open={open} onClose={onClose} width={{ xs: "100%", sm: 600 }}>
@@ -91,7 +148,11 @@ export default function AddMcpToolsDrawer({ open, onClose, env, envState, patch,
           <Box flex={1} minWidth={0}>
             <Typography sx={{ typography: "s1", fontWeight: 700 }}>Add tools from an MCP server</Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {prefill ? `${agent?.name || "The agent"} has this server attached — add its tools so the world answers them.` : "Its tools join this world, answered by the world during runs."}
+              {prefill?.reason === "refresh"
+                ? `${prefill.server.label} lists tools this world doesn't have yet.`
+                : prefill
+                  ? `${agent?.name || "The agent"} has this server attached — add its tools so the world answers them.`
+                  : "Its tools join this world, answered by the world during runs."}
             </Typography>
           </Box>
           <IconButton size="small" onClick={onClose} aria-label="Close"><Iconify icon="eva:close-fill" width={17} /></IconButton>
@@ -103,21 +164,56 @@ export default function AddMcpToolsDrawer({ open, onClose, env, envState, patch,
         <Box sx={{ px: 2.5, py: 2.5, flex: 1, minHeight: 0, overflowY: "auto" }}>
           <Stack spacing={2}>
             {done ? (
-              <DoneState plan={done} server={listed.server} onWrite={onGo ? () => { onClose(); onGo("scenarios"); } : null} />
+              <DoneState plan={done} server={listed.server} onWrite={onGo && done.added.length ? () => writeScenarios(done) : null} />
             ) : (
               <>
-                {!prefill && (
+                {!prefill && gwServers.length > 0 && (
+                  <SegmentedToggle
+                    value={source} onChange={switchSource}
+                    options={[{ value: "gateway", label: `From your Gateway · ${gwServers.length}` }, { value: "url", label: "Another server" }]}
+                  />
+                )}
+
+                {!prefill && source === "gateway" && (
+                  <Box>
+                    <Stack direction="row" alignItems="baseline" spacing={1} sx={{ mb: 0.75 }}>
+                      <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }}>
+                        {`Registered in Gateway → MCP. Their credentials stay there, and Live calls go through it.${hidden ? ` ${hidden} more are outside its allowed servers.` : ""}`}
+                      </Typography>
+                      <ButtonBase
+                        onClick={() => { onClose(); navigate(GATEWAY_MCP_PATH); }}
+                        sx={{ ...focusRing, typography: "s3", fontWeight: 600, color: "text.secondary", borderRadius: 0.5, flexShrink: 0, "&:hover": { color: "text.primary" } }}
+                      >
+                        Manage in Gateway
+                      </ButtonBase>
+                    </Stack>
+                    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
+                      {gwServers.map((g, i) => (
+                        <GatewayServerRow key={g.id} server={g} first={i === 0} on={gwPick === g.id} onPick={() => pickGateway(g.id)} />
+                      ))}
+                    </Box>
+                    {error && <Typography sx={{ typography: "s3", color: "error.main", mt: 1 }}>{error}</Typography>}
+                  </Box>
+                )}
+
+                {!prefill && source === "url" && (
                   <>
                     <Box>
                       <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>Transport</Typography>
-                      <SegmentedToggle value={transport} onChange={(t) => { setTransport(t); setListed(null); }} options={TRANSPORTS} />
+                      <SegmentedToggle value={transport} onChange={(t) => { setTransport(t); setListed(null); setError(null); }} options={TRANSPORTS} />
                     </Box>
-                    <Field
-                      label={transport === "stdio" ? "Command" : "Server URL"} required mono fullWidth
-                      placeholder={transport === "stdio" ? "npx -y @acme/mcp-server" : "https://mcp.yourapp.com/mcp"}
-                      value={value} onChange={(v) => { setValue(v); setListed(null); }}
-                      helper="We connect and list the tools it exposes — you pick which join the world."
-                    />
+                    {stdioBlocked ? (
+                      <Typography sx={{ typography: "s3", color: "text.secondary", p: 1.25, borderRadius: 1, border: "1px solid", borderColor: "divider" }}>
+                        A stdio server is a command, and a pasted command never runs in our sandbox. It works for an environment that runs on your machine — use HTTP or SSE here.
+                      </Typography>
+                    ) : (
+                      <Field
+                        label={transport === "stdio" ? "Command" : "Server URL"} required mono fullWidth
+                        placeholder={transport === "stdio" ? "npx -y @acme/mcp-server" : "https://mcp.yourapp.com/mcp"}
+                        value={value} onChange={(v) => { setValue(v); setListed(null); }}
+                        helper={transport === "stdio" ? "Runs on your machine when the environment does, through the CLI." : "We connect and list the tools it exposes — you pick which join the world."}
+                      />
+                    )}
                     {transport !== "stdio" && (
                       <SecretRefField
                         label="Auth token (optional)" fullWidth
@@ -126,7 +222,7 @@ export default function AddMcpToolsDrawer({ open, onClose, env, envState, patch,
                         helper="Sent as the Authorization header. Stored as a reference, never the key itself."
                       />
                     )}
-                    {!listed && (
+                    {!listed && !stdioBlocked && (
                       <Stack direction="row" alignItems="center" spacing={1.25}>
                         <Button
                           variant="outlined" size="small" onClick={list} disabled={listing || !value.trim() || !tokenOk}
@@ -143,42 +239,23 @@ export default function AddMcpToolsDrawer({ open, onClose, env, envState, patch,
 
                 {listed && (
                   <Box>
-                    <Stack direction="row" alignItems="baseline" spacing={1} sx={{ mb: 0.75 }}>
-                      <Typography sx={{ typography: "s2", fontWeight: 700 }}>{`${listed.server.label} · ${listed.tools.length} tools`}</Typography>
-                      <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", fontFamily: MONO }}>{listed.server.host}</Typography>
+                    <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.75 }}>
+                      <Typography sx={{ typography: "s2", fontWeight: 700 }}>{`${listed.server.label} · ${plural(listed.tools.length, "tool")}`}</Typography>
+                      <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", fontFamily: MONO, minWidth: 0 }}>{listed.server.host}</Typography>
+                      {viaGateway && <Tag>Through your Gateway</Tag>}
                     </Stack>
                     <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
-                      {listed.tools.map((t, i) => {
-                        const inWorld = world.has(t.name);
-                        const reach = toolReachOf(t, { agent, calls });
-                        return (
-                          <Stack
-                            key={t.name} direction="row" alignItems="flex-start" spacing={1}
-                            sx={{ px: 1, py: 0.75, borderTop: i ? "1px solid" : "none", borderColor: "divider", opacity: inWorld ? 0.55 : 1 }}
-                          >
-                            <Checkbox
-                              size="small" checked={inWorld || !!picked[t.name]} disabled={inWorld}
-                              onChange={(e) => setPicked((p) => ({ ...p, [t.name]: e.target.checked }))}
-                              inputProps={{ "aria-label": t.name }}
-                              sx={{ p: 0.5, color: "text.disabled", "&.Mui-checked": { color: "text.primary" }, "&.Mui-disabled.Mui-checked": { color: "text.disabled" } }}
-                            />
-                            <Box flex={1} minWidth={0} sx={{ pt: 0.25 }}>
-                              <Stack direction="row" alignItems="center" spacing={0.75}>
-                                <Typography sx={{ typography: "s2", fontWeight: 600, fontFamily: MONO }}>{t.name}</Typography>
-                                <Tag>{t.readOnly ? "Reads" : "Writes"}</Tag>
-                                {inWorld && <Tag>In the world already</Tag>}
-                              </Stack>
-                              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                                {t.desc}
-                                {!inWorld && reach && ` · ${reach.label}`}
-                              </Typography>
-                            </Box>
-                          </Stack>
-                        );
-                      })}
+                      {listed.tools.map((t, i) => (
+                        <ToolRow
+                          key={t.name} tool={t} first={i === 0}
+                          place={placeOf(t)} checked={!!picked[t.name]}
+                          reach={toolReachOf(t, { agent, calls })}
+                          onCheck={(on) => setPicked((p) => ({ ...p, [t.name]: on }))}
+                        />
+                      ))}
                     </Box>
                     <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 1 }}>
-                      Each tool starts Simulated — the world answers it against its seeded data. Change it per tool on the World tab; only a tool that reads can go Live, once you allow it.
+                      {`Each tool starts Simulated — the world answers it against its seeded data. Change it per tool on the World tab; only a tool that reads can go Live, once you allow it${viaGateway ? ", and Live calls go through your Gateway, with its rate limits and checks." : "."}`}
                     </Typography>
                   </Box>
                 )}
@@ -195,7 +272,7 @@ export default function AddMcpToolsDrawer({ open, onClose, env, envState, patch,
               size="small" variant="contained" color="primary" disabled={!chosen.length} onClick={add}
               sx={{ typography: "s2", fontWeight: 700 }}
             >
-              {chosen.length ? `Add ${chosen.length} tool${chosen.length === 1 ? "" : "s"}` : "Add tools"}
+              {chosen.length ? `Add ${plural(chosen.length, "tool")}` : "Add tools"}
             </Button>
           </Stack>
         )}
@@ -210,8 +287,93 @@ AddMcpToolsDrawer.propTypes = {
   envState: PropTypes.object,
   patch: PropTypes.func.isRequired,
   onGo: PropTypes.func,
-  /* A server the agent already has attached: { server, tools }. */
+  /* A server to open straight on: { server, tools, reason: "agent" | "refresh" }. */
   prefill: PropTypes.object,
+};
+
+/* One server registered in the Gateway — picked to list its tools; one the Gateway can't reach can't be. */
+function GatewayServerRow({ server, first, on, onPick }) {
+  const down = server.status !== "connected";
+  return (
+    <ButtonBase
+      disabled={down} onClick={onPick} aria-pressed={on}
+      sx={{
+        ...focusRing, width: "100%", justifyContent: "flex-start", textAlign: "left", gap: 1.25, px: 1.5, py: 1,
+        borderTop: first ? "none" : "1px solid", borderColor: "divider",
+        bgcolor: on ? (t) => alpha(t.palette.text.primary, 0.06) : "transparent",
+        "&:hover": { bgcolor: (t) => alpha(t.palette.text.primary, 0.04) },
+      }}
+    >
+      <Iconify
+        icon={on ? "solar:check-circle-bold" : "solar:plug-circle-linear"} width={16}
+        sx={{ color: on ? "text.primary" : "text.disabled", flexShrink: 0 }}
+      />
+      <Box flex={1} minWidth={0}>
+        <Stack direction="row" alignItems="baseline" spacing={1}>
+          <Typography sx={{ typography: "s2", fontWeight: 600, color: down ? "text.disabled" : "text.primary" }}>{server.label}</Typography>
+          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", fontFamily: MONO, minWidth: 0 }}>{server.host}</Typography>
+        </Stack>
+        {down && <Typography sx={{ typography: "s3", color: "warning.main" }}>{`Unreachable — ${server.error}`}</Typography>}
+      </Box>
+      <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+        {down ? `Checked ${server.checkedAgo}` : plural(server.toolCount, "tool")}
+      </Typography>
+    </ButtonBase>
+  );
+}
+GatewayServerRow.propTypes = { server: PropTypes.object.isRequired, first: PropTypes.bool, on: PropTypes.bool, onPick: PropTypes.func.isRequired };
+
+/* A tool the server lists: what it does by MCP's own hints, what the Gateway says of it, and where it lands. */
+function ToolRow({ tool, first, place, checked, reach, onCheck }) {
+  const inWorld = place.status === "inWorld";
+  const line = tool.blocked
+    ? "The Gateway's guardrails block it: the world answers it, but it never goes Live."
+    : tool.deprecated ? tool.deprecated.message : tool.desc;
+  return (
+    <Stack
+      direction="row" alignItems="flex-start" spacing={1}
+      sx={{ px: 1, py: 0.75, borderTop: first ? "none" : "1px solid", borderColor: "divider", opacity: inWorld ? 0.55 : 1 }}
+    >
+      <Checkbox
+        size="small" checked={inWorld || checked} disabled={inWorld}
+        onChange={(e) => onCheck(e.target.checked)}
+        inputProps={{ "aria-label": tool.name }}
+        sx={{ p: 0.5, color: "text.disabled", "&.Mui-checked": { color: "text.primary" }, "&.Mui-disabled.Mui-checked": { color: "text.disabled" } }}
+      />
+      <Box flex={1} minWidth={0} sx={{ pt: 0.25 }}>
+        <Stack direction="row" alignItems="center" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.5 }}>
+          <Typography sx={{ typography: "s2", fontWeight: 600, fontFamily: MONO }}>{tool.name}</Typography>
+          <Tag>{tool.readOnly ? "Reads" : "Writes"}</Tag>
+          {tool.destructive && (
+            <Tooltip arrow title="The server marks it destructive: it can't be undone. It never runs Live — the world answers it.">
+              <Box component="span" sx={{ display: "inline-flex" }}><Tag>Destructive</Tag></Box>
+            </Tooltip>
+          )}
+          {tool.openWorld && (
+            <Tooltip arrow title="The server marks it open-world: it reaches people or systems beyond this server, like sending a customer a reply.">
+              <Box component="span" sx={{ display: "inline-flex" }}><Tag>Open world</Tag></Box>
+            </Tooltip>
+          )}
+          {tool.blocked && <Tag warn>Blocked in Gateway · Simulated only</Tag>}
+          {tool.deprecated && <Tag warn>{`Deprecated · use ${tool.deprecated.replacedBy}`}</Tag>}
+          {inWorld && <Tag>In the world already</Tag>}
+          {place.status === "renamed" && (
+            <Tooltip arrow title={`${tool.name} is taken by a tool from ${place.clashWith}, so this one joins as ${place.as} — the agent is offered it under that name.`}>
+              <Box component="span" sx={{ display: "inline-flex" }}><Tag>{`Added as ${place.as}`}</Tag></Box>
+            </Tooltip>
+          )}
+        </Stack>
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {line}
+          {!inWorld && !tool.deprecated && reach && ` · ${reach.label}`}
+        </Typography>
+      </Box>
+    </Stack>
+  );
+}
+ToolRow.propTypes = {
+  tool: PropTypes.object.isRequired, first: PropTypes.bool, place: PropTypes.object.isRequired, checked: PropTypes.bool,
+  reach: PropTypes.object, onCheck: PropTypes.func.isRequired,
 };
 
 function DoneState({ plan, server, onWrite }) {
@@ -221,17 +383,24 @@ function DoneState({ plan, server, onWrite }) {
       <Stack direction="row" spacing={1} alignItems="flex-start">
         <Iconify icon="solar:check-circle-bold" width={18} sx={{ color: "#16A34A", flexShrink: 0, mt: "1px" }} />
         <Box>
-          <Typography sx={{ typography: "s2", fontWeight: 700 }}>{`${n} tool${n === 1 ? "" : "s"} from ${server.label} added`}</Typography>
+          <Typography sx={{ typography: "s2", fontWeight: 700 }}>{`${plural(n, "tool")} from ${server.label} added`}</Typography>
           <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-            {plan.inPlace ? `In environment ${plan.versionLabel}.` : `Saved as environment ${plan.versionLabel}.`}
-            {" The world answers them during runs, Simulated to start."}
+            {plan.inPlace
+              ? `In environment ${plan.versionLabel}. The world answers them during runs, Simulated to start.`
+              : "Waiting as an unsaved edit — save it as the next environment version from the bar at the top. Runs use the saved version until then."}
+            {server.gateway ? " Live calls go through your Gateway." : ""}
           </Typography>
+          {plan.renamed.length > 0 && (
+            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>
+              {plan.renamed.map((r) => `${r.from} joined as ${r.as} — ${r.from} is ${r.clashWith}'s.`).join(" ")}
+            </Typography>
+          )}
         </Box>
       </Stack>
       <Typography sx={{ typography: "s3", color: "text.secondary", fontFamily: MONO }}>{plan.added.map((t) => t.name).join(" · ")}</Typography>
       {onWrite && (
         <Box>
-          <Typography sx={{ typography: "s2", color: "text.secondary", mb: 1 }}>No scenario uses them yet. Write some so runs test them.</Typography>
+          <Typography sx={{ typography: "s2", color: "text.secondary", mb: 1 }}>No scenario uses them yet. The builder can write some that do.</Typography>
           <Button
             size="small" variant="contained" color="primary" onClick={onWrite}
             startIcon={<Iconify icon="solar:magic-stick-3-linear" width={15} />}
@@ -246,11 +415,18 @@ function DoneState({ plan, server, onWrite }) {
 }
 DoneState.propTypes = { plan: PropTypes.object.isRequired, server: PropTypes.object.isRequired, onWrite: PropTypes.func };
 
-function Tag({ children }) {
+function Tag({ children, warn = false }) {
   return (
-    <Typography component="span" sx={{ typography: "s3", fontSize: 11, fontWeight: 600, color: "text.subtitle", px: 0.5, borderRadius: 0.5, border: "1px solid", borderColor: "divider", lineHeight: "16px", flexShrink: 0 }}>
+    <Typography
+      component="span"
+      sx={{
+        typography: "s3", fontSize: 11, fontWeight: 600, px: 0.5, borderRadius: 0.5, border: "1px solid", lineHeight: "16px", flexShrink: 0,
+        color: warn ? "warning.main" : "text.subtitle",
+        borderColor: warn ? (t) => alpha(t.palette.warning.main, 0.5) : "divider",
+      }}
+    >
       {children}
     </Typography>
   );
 }
-Tag.propTypes = { children: PropTypes.node };
+Tag.propTypes = { children: PropTypes.node, warn: PropTypes.bool };

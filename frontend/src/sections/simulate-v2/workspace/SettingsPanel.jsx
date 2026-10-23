@@ -16,6 +16,7 @@ import {
 } from "../_mock/envConfig";
 import { validateSecretRef, looksLikeRawKey, RAW_KEY_MESSAGE } from "../_mock/secretRefs";
 import { SecretRefText, SetRefAction, SecretRefEditor, PreflightLine, RefTag } from "./SecretRefControls";
+import { envMcpServersOf } from "../_mock/worldTools";
 import {
   currentEnvVersion,
   pendingEnvChanges, envChangePatch, saveEnvChangesPatch, envChangeLabel, scenariosInSet,
@@ -121,6 +122,7 @@ export default function SettingsPanel({ env, envState, patch, onDelete, locked =
         {/* ── env vars — secrets by reference ── */}
         <EnvVarsSection envState={envState} patch={patch} locked={locked} />
         <AgentCredentialsSection envState={envState} />
+        <ToolCredentialsSection env={env} envState={envState} />
 
         {/* ── versions — reproducibility, which HUD does not surface ── */}
         <SectionCard
@@ -304,6 +306,33 @@ function AgentCredentialsSection({ envState }) {
   );
 }
 AgentCredentialsSection.propTypes = { envState: PropTypes.object };
+
+/* The tokens the world's MCP tool sources use — references, changed from World → Tool sources. */
+function ToolCredentialsSection({ env, envState }) {
+  const sources = envMcpServersOf(env, envState).filter((s) => s.transport !== "stdio");
+  if (!sources.length) return null;
+  return (
+    <SectionCard
+      title="Tool credentials"
+      subtitle="What a Live call to an MCP tool source sends. References into your secret manager, or kept in your Gateway — change one from World → Tool sources."
+    >
+      <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+        {sources.map((src) => (
+          <Stack key={src.id} direction="row" alignItems="center" spacing={1.5} sx={{ px: 2.5, py: 1.375 }}>
+            <Typography sx={{ typography: "s2", fontWeight: 600, width: KEY_W, flexShrink: 0 }}>{src.label}</Typography>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              {src.gateway
+                ? <Typography sx={{ typography: "s3", color: "text.subtitle" }}>Kept in your Gateway</Typography>
+                : <SecretRefText value={envState?.mcpTokens?.[src.id] || src.tokenRef || null} empty="No token" />}
+            </Box>
+            <Iconify icon="solar:lock-keyhole-minimalistic-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+          </Stack>
+        ))}
+      </Stack>
+    </SectionCard>
+  );
+}
+ToolCredentialsSection.propTypes = { env: PropTypes.object, envState: PropTypes.object };
 
 function EnvVarsSection({ envState, patch, locked = false }) {
   const vars = envVarsOf(envState);

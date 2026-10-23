@@ -18,6 +18,7 @@
 */
 
 import { listMcpTools, worldToolFromMcp } from "./mcpServers";
+import { gatewayServerTools } from "./gatewayMcp";
 
 const SUPPORT = {
   id: "support",
@@ -242,8 +243,13 @@ export const worldFor = (source) => {
   /* An MCP server as the world: its tools are what the agent acts on, one
      to one; the tables they answer from are still the agent's domain. */
   if (source?.worldSource?.kind === "mcp") {
-    const listed = listMcpTools(source.worldSource);
-    if (listed.ok) return { ...read, tools: listed.tools.map((t) => worldToolFromMcp(t, listed.server)) };
+    const ws = source.worldSource;
+    /* A Gateway server: its catalogue, less what the Gateway deprecates. */
+    const listed = ws.gateway ? gatewayServerTools(ws.gateway.serverId) : listMcpTools(ws);
+    if (listed.ok) {
+      const tools = listed.tools.filter((t) => !t.deprecated).map((t) => worldToolFromMcp(t, listed.server));
+      return { ...read, tools };
+    }
   }
   return read;
 };
@@ -283,7 +289,12 @@ export const worldToolsOf = (world, source) => {
     .filter((t, i, list) => !have.has(t.name) && list.findIndex((x) => x.name === t.name) === i)
     .map((t) => ({ name: t.name, args: t.args || [], desc: t.desc || "Read from the agent." }));
   /* Where a tool came from, and whether it only reads, travel with it. */
-  return [...world.tools, ...extra].map((t) => ({ name: t.name, desc: t.desc, args: t.args, ...(t.effect && { effect: t.effect }), ...(t.via && { via: t.via }) }));
+  /* Where a tool came from and what its server says of it travel with it. */
+  return [...world.tools, ...extra].map((t) => ({
+    name: t.name, desc: t.desc, args: t.args,
+    ...(t.effect && { effect: t.effect }), ...(t.via && { via: t.via }), ...(t.mcpName && { mcpName: t.mcpName }),
+    ...(t.destructive && { destructive: true }), ...(t.openWorld && { openWorld: true }),
+  }));
 };
 
 export const seededRowsOf = (world) => world.seed.reduce((n, s) => n + s.rows, 0);

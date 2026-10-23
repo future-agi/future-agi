@@ -4,7 +4,8 @@ import { paths } from "src/routes/paths";
 import { useOptionalSimStore, emptyEnvState } from "../store";
 import { getEnvironment } from "../_mock/environments";
 import { getEval } from "../_mock/evals";
-import { FAULT_PRESETS, tierOf, toolEnvPatch, allToolsFaultPatch } from "../_mock/toolEnv";
+import { FAULT_PRESETS, tierOf, toolEnvPatch, allToolsFaultPatch, liveFieldsOf } from "../_mock/toolEnv";
+import { withPinnedWorld } from "../_mock/toolFit";
 import { credentialSetPatch, envVarRefPatch } from "../_mock/envConfig";
 import { credentialRefPatch } from "../_mock/secretRefs";
 import { openGapsInbox } from "../_mock/gapsInboxBus";
@@ -80,11 +81,16 @@ export default function useChatActions() {
 
   /* ── the changes ───────────────────────────────────────────────────── */
 
-  const applyTier = useCallback((tool, tier, { safeTarget } = {}) => {
+  const applyTier = useCallback((tool, tier, { safeTarget, toolRecord } = {}) => {
     const { envState: es } = latest.current;
     const before = es.toolEnv?.[tool];
     const detail = `${tool} set to ${tierOf(tier).short}`;
-    patch(toolEnvPatch(es, tool, { tier, safeTarget: tier === "live" ? safeTarget || null : null }, detail));
+    /* Confirming Live in the chat is the permission, given for this tool; an
+       MCP tool's server is its target. */
+    const fields = tier === "live"
+      ? { ...liveFieldsOf(toolRecord), ...(safeTarget && { safeTarget }) }
+      : { tier, safeTarget: null };
+    patch(toolEnvPatch(es, tool, fields, detail));
     return { tool, before, detail };
   }, [patch]);
 
@@ -101,7 +107,7 @@ export default function useChatActions() {
     const { env: e, envState: es } = latest.current;
     if (!tool) {
       const beforeAll = es.toolEnv;
-      const p = allToolsFaultPatch(e, es, preset);
+      const p = allToolsFaultPatch(withPinnedWorld(e, es), es, preset);
       patch(p);
       return { all: true, beforeAll, detail: `${FAULT_PRESETS[preset]?.label || "Clean"} faults on every tool` };
     }
@@ -178,7 +184,11 @@ export default function useChatActions() {
           confirmTier(plan.tool, plan.tier);
           return { type: "change", title: `${plan.tool} stays ${plan.to}`, line: "It was already set to that — marked as your choice. No world edit, so no new version.", undo: null, review: "world", applied: true };
         }
-        /* Live is the real tool: never set without a confirmation. */
+        /* Live is the real tool: never set without a confirmation, and never
+           where the rule says no — a tool that writes, or one the Gateway blocks. */
+        if (plan.tier === "live" && !plan.live?.allowed && !plan.live?.needsAllow) {
+          return { type: "note", text: plan.live?.reason || `${plan.tool} can't run Live.` };
+        }
         if (plan.tier === "live") return { type: "liveConfirm", plan, status: "asking" };
         const undo = applyTier(plan.tool, plan.tier);
         return { type: "change", title: `${plan.tool}: ${plan.from} → ${plan.to}`, line: `${tierOf(plan.tier).note} Recorded as a world edit — saved as the next environment version.`, undo, undoKind: "tool", review: "world", applied: true };
@@ -262,7 +272,7 @@ export default function useChatActions() {
     go,
     update,
     confirmLive: (turnId, plan, safeTarget) => {
-      const undo = applyTier(plan.tool, "live", { safeTarget });
+      const undo = applyTier(plan.tool, "live", { safeTarget, toolRecord: plan.toolRecord });
       update(turnId, { status: "applied", undo, safeTarget });
     },
     declineLive: (turnId) => update(turnId, { status: "declined" }),

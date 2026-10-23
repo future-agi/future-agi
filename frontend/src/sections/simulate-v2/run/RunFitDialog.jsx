@@ -6,6 +6,9 @@ import { ToolList } from "../workspace/toolFitParts";
 import { useRebuildForAgent } from "../workspace/useRebuildForAgent";
 import { nextSnapshotLabel } from "../_mock/envSnapshot";
 import { envLabelOf } from "../_mock/envVersionKinds";
+import { addAndSaveMcpToolsPatch, mcpRunGapOf } from "../_mock/worldTools";
+import { gatewayServerForHost, gatewayServerTools } from "../_mock/gatewayMcp";
+import { pendingEnvChanges, saveEnvChangesPatch } from "../_mock/versions";
 
 /**
  * Asked before a run whose agent calls a tool the world can't answer.
@@ -21,6 +24,13 @@ export default function RunFitDialog({ open, onClose, env, envState, patch, agen
   if (!open || !agent) return null;
 
   const fit = toolFit(env, envState, { agent });
+  /* The agent's own MCP tools the version a run uses doesn't answer. */
+  const gap = mcpRunGapOf(env, envState);
+  const gapOnly = fit.fits && gap.missing.length > 0;
+  const gapNames = gap.missing.map((t) => t.name);
+  const gapServers = gap.groups.map((g) => g.server.label).join(" and ");
+  const allUnsaved = gap.missing.length > 0 && gap.unsaved.length === gap.missing.length;
+  const waiting = pendingEnvChanges(envState).length;
   const latest = latestEnvVersion(env, envState);
   const latestFits = latest && latest.label !== fit.envVersion
     && toolFit(env, envState, { agent, envVersion: latest.label }).fits;
@@ -42,6 +52,78 @@ export default function RunFitDialog({ open, onClose, env, envState, patch, agen
     onClose();
     onRun();
   };
+
+  /* Add the agent's MCP tools — through the Gateway where it has the server —
+     save them into the version, then run. Edits already waiting are saved with them. */
+  const addGapAndRun = () => {
+    let es = envState;
+    if (allUnsaved) {
+      es = { ...es, ...saveEnvChangesPatch(env, es) };
+    } else {
+      gap.groups.forEach(({ server, tools }) => {
+        const gw = gatewayServerForHost(server.host);
+        const viaGw = gw ? gatewayServerTools(gw.gateway.serverId) : null;
+        const names = new Set(tools.map((t) => t.name));
+        const src = viaGw?.ok ? { server: viaGw.server, picked: viaGw.tools.filter((t) => names.has(t.name)) } : { server, picked: tools };
+        es = { ...es, ...addAndSaveMcpToolsPatch(env, es, src).statePatch };
+      });
+    }
+    patch({ toolEnv: es.toolEnv, envVersions: es.envVersions, activeEnvVersion: es.activeEnvVersion, unsavedEnvChanges: es.unsavedEnvChanges || [] });
+    onClose();
+    /* The run pins the version it finds when it opens — start it once the saved one is in. */
+    setTimeout(onRun, 0);
+  };
+
+  if (gapOnly) {
+    const n = gap.missing.length;
+    return (
+      <Dialog
+        open={open}
+        onClose={onClose}
+        maxWidth={false}
+        PaperProps={{ sx: { width: 560, maxWidth: "calc(100% - 32px)", p: 3, borderRadius: 2, backgroundImage: "none" } }}
+      >
+        <Box sx={{ width: 36, height: 36, borderRadius: 1, display: "grid", placeItems: "center", mb: 1.75, bgcolor: "action.hover", color: "text.primary" }}>
+          <Iconify icon="solar:plug-circle-linear" width={20} />
+        </Box>
+        <Typography sx={{ typography: "m3", fontWeight: 700 }}>
+          {`${envState?.agent?.name || `Agent ${agent}`} gets ${n === 1 ? "a tool" : `${n} tools`} from ${gapServers} environment ${fitShown} doesn't answer`}
+        </Typography>
+        <Typography component="div" sx={{ typography: "s2", color: "text.secondary", mt: 1 }}>
+          Its MCP server lists <ToolList tools={gap.missing} />. Scenarios where it calls {n === 1 ? "it" : "them"} get no answer back, so
+          they come back as <b>not measured</b> — the rest of the run still tests it.
+        </Typography>
+        <Box sx={{ mt: 2, p: 1.5, borderRadius: 1, bgcolor: "action.hover" }}>
+          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+            {locked
+              ? "This is a template preview, so its world can't change here — fork it to add them."
+              : allUnsaved
+                ? `${n === 1 ? "It's" : "They're"} added on the World tab but not saved yet. Saving makes environment ${nextLabel}${waiting > gap.unsaved.length ? ", with your other unsaved edits" : ""}.`
+                : `Adding ${n === 1 ? "it" : "them"} makes environment ${nextLabel}${waiting ? `, saved with your ${waiting} unsaved edit${waiting === 1 ? "" : "s"}` : ""}. Each starts Simulated; no scenario's proof changes.`}
+          </Typography>
+        </Box>
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 2.5 }}>
+          <Button size="small" onClick={onClose} sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}>Cancel</Button>
+          <Box flex={1} />
+          <Button
+            size="small" variant="outlined" onClick={runAnyway}
+            sx={{ typography: "s2", fontWeight: 600, color: "text.primary", borderColor: "divider", "&:hover": { borderColor: "text.disabled", bgcolor: "action.hover" } }}
+          >
+            Run on environment {fitShown} anyway
+          </Button>
+          {!locked && (
+            <Button
+              size="small" variant="contained" color="primary" onClick={addGapAndRun}
+              startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
+              sx={{ typography: "s2", fontWeight: 700 }}
+            >
+              {allUnsaved ? "Save and run" : `Add ${n === 1 ? "it" : "them"} and run`}
+            </Button>
+          )}
+        </Stack>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog
@@ -65,6 +147,7 @@ export default function RunFitDialog({ open, onClose, env, envState, patch, agen
         It calls <ToolList tools={fit.missing} />, which this world doesn&apos;t know how to answer. Scenarios where it
         calls {n === 1 ? "it" : "them"} get no answer back, so they can&apos;t be scored and come back as{" "}
         <b>not measured</b> — the rest of the run still tests {agent}.
+        {gap.missing.length > 0 && ` It also gets ${gapNames.join(", ")} from ${gapServers}, which this world doesn't answer — add ${gap.missing.length === 1 ? "it" : "them"} on the World tab.`}
       </Typography>
 
       <Box sx={{ mt: 2, p: 1.5, borderRadius: 1, bgcolor: "action.hover" }}>
