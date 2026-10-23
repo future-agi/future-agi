@@ -86,7 +86,45 @@ export const samplingPolicyErrors = (policy) => {
     collect(rule, `strata.${index}`),
   );
   collect(policy.default, "default");
+  Object.assign(errors, samplingCoordinationErrors(policy));
   return errors;
+};
+
+const PRN_PANEL = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
+
+// Coordinated policies share one permanent random number per unit across the
+// project (and panel). The keys exist only in project mode; mirrors the
+// backend's validation so an invalid value never reaches preview or save.
+export const samplingCoordinationErrors = (policy) => {
+  const errors = {};
+  if (!policy || policy.coordination !== "project") return errors;
+  if (
+    Object.hasOwn(policy, "panel") &&
+    policy.panel !== "" &&
+    !(typeof policy.panel === "string" && PRN_PANEL.test(policy.panel))
+  ) {
+    errors.panel =
+      "Use 1-64 letters, digits, '_', '.', ':' or '-', starting with a letter or digit.";
+  }
+  if (
+    Object.hasOwn(policy, "prn_start") &&
+    !(isRate(policy.prn_start) && policy.prn_start < 100)
+  ) {
+    errors.prn_start =
+      "Use a percentage from 0 up to (not including) 100 with at most six decimals.";
+  }
+  return errors;
+};
+
+// Independent is the historical default and is stored without any
+// coordination keys, so switching back restores the exact original policy.
+export const withCoordination = (policy, mode) => {
+  const next = { ...policy };
+  delete next.coordination;
+  delete next.panel;
+  delete next.prn_start;
+  if (mode === "project") next.coordination = "project";
+  return next;
 };
 
 export const samplingStratumLabel = (identity) => {

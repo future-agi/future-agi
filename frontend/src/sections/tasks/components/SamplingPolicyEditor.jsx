@@ -26,6 +26,7 @@ import {
   samplingPolicyErrors,
   samplingStratumLabel,
   selectionMode,
+  withCoordination,
 } from "./samplingPolicyForm";
 
 const SOURCES = ["span", "resource", "metadata"];
@@ -420,6 +421,69 @@ export default function SamplingPolicyEditor({ control, getValues }) {
             Neither mode truncates a contact to the legacy row limit. Trace rows
             use root-span attributes; session rows use the earliest eligible
             root for contact identity.
+          </Typography>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+            <TextField
+              select
+              size="small"
+              label="Coordination"
+              value={policy.coordination || "independent"}
+              onChange={(e) => update(withCoordination(policy, e.target.value))}
+              fullWidth
+            >
+              <MenuItem value="independent">
+                Independent · this policy draws its own sample
+              </MenuItem>
+              <MenuItem value="project">
+                Coordinated · nested across this project
+              </MenuItem>
+            </TextField>
+            {policy.coordination === "project" && (
+              <>
+                <TextField
+                  size="small"
+                  label="PRN panel"
+                  value={policy.panel ?? ""}
+                  error={Boolean(policyErrors.panel)}
+                  helperText={
+                    policyErrors.panel ||
+                    "Optional. Different panels draw independent numbers."
+                  }
+                  onChange={(e) => {
+                    const next = { ...policy };
+                    if (e.target.value) next.panel = e.target.value;
+                    else delete next.panel;
+                    update(next);
+                  }}
+                  fullWidth
+                />
+                <TextField
+                  size="small"
+                  type="number"
+                  label="PRN start (%)"
+                  value={policy.prn_start ?? ""}
+                  error={Boolean(policyErrors.prn_start)}
+                  helperText={
+                    policyErrors.prn_start ||
+                    "Where the selection interval begins on the hash circle."
+                  }
+                  inputProps={{ min: 0, max: 100 }}
+                  onChange={(e) => {
+                    const next = { ...policy };
+                    if (e.target.value !== "")
+                      next.prn_start = Number(e.target.value);
+                    else delete next.prn_start;
+                    update(next);
+                  }}
+                  fullWidth
+                />
+              </>
+            )}
+          </Stack>
+          <Typography variant="caption" color="text.secondary">
+            {policy.coordination === "project"
+              ? "Every coordinated policy in this project (and panel) gives each contact the same permanent random number: raising a rate or quota keeps every contact already selected, and tasks with equal rates select the same contacts. Disjoint start intervals give disjoint live samples."
+              : "This policy draws its own sample: editing a rate or quota re-draws every contact."}
           </Typography>
           <TextField
             label="Group by attributes (comma separated)"

@@ -414,4 +414,70 @@ describe("Sampling policy editor", () => {
     expect(result.filters).not.toHaveProperty("date_range");
     expect(result.filters).not.toHaveProperty("date_preset");
   });
+
+  it("keeps independent policies key-free and sends explicit project coordination", async () => {
+    axios.post.mockResolvedValue({
+      data: { result: { strata: [], population_note: "", cost_note: "" } },
+    });
+    const policy = defaultSamplingPolicy();
+    policy.default = { target_n: 2 };
+    expect(policy).not.toHaveProperty("coordination");
+    render(<Harness policy={policy} />);
+    const coordination = () =>
+      screen.getByRole("combobox", { name: /^Coordination(?: |$)/ });
+    expect(coordination()).toHaveTextContent("Independent");
+    expect(
+      screen.queryByRole("spinbutton", { name: "PRN start (%)" }),
+    ).not.toBeInTheDocument();
+    await userEvent.click(coordination());
+    await userEvent.click(
+      screen.getByRole("option", {
+        name: "Coordinated · nested across this project",
+      }),
+    );
+    // The flow locators stay unique: one Selection control, one Target units.
+    expect(screen.getAllByRole("combobox", { name: SELECTION })).toHaveLength(
+      1,
+    );
+    expect(
+      screen.getAllByRole("spinbutton", { name: "Target units" }),
+    ).toHaveLength(1);
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "PRN panel" }),
+      "q4",
+    );
+    const start = screen.getByRole("spinbutton", { name: "PRN start (%)" });
+    await userEvent.type(start, "100");
+    expect(screen.getByText(/up to \(not including\) 100/)).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Preview sampling policy" }),
+    ).toBeDisabled();
+    await userEvent.clear(start);
+    await userEvent.type(start, "12.5");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Preview sampling policy" }),
+    );
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(1));
+    expect(axios.post.mock.calls[0][1].sampling_policy).toMatchObject({
+      coordination: "project",
+      panel: "q4",
+      prn_start: 12.5,
+      default: { target_n: 2 },
+    });
+    await userEvent.click(coordination());
+    await userEvent.click(
+      screen.getByRole("option", {
+        name: "Independent · this policy draws its own sample",
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Preview sampling policy" }),
+    );
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
+    const restored = axios.post.mock.calls[1][1].sampling_policy;
+    expect(restored).not.toHaveProperty("coordination");
+    expect(restored).not.toHaveProperty("panel");
+    expect(restored).not.toHaveProperty("prn_start");
+    expect(restored).toEqual(policy);
+  });
 });
