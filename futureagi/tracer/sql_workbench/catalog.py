@@ -292,9 +292,11 @@ def intrinsic_ownership(scope: Scope) -> dict[str, str]:
 
 # Per physical relation: (catalog dataset it is reported as, the ownership
 # columns a scope pins, the column that identifies one project). An index
-# estimate counts whole granules, so it is tenant-local only when the sort key
-# starts with ownership columns down to the project column; otherwise the
-# granules it counts hold other projects' rows and the numbers are withheld.
+# estimate counts whole granules. When the sort key starts with ownership
+# columns down to the project column, the granules it selects are this
+# project's own, plus at most two boundary granules per part whose key range
+# brackets this project (whatever that part's row count); otherwise the
+# granules hold other projects' rows and the numbers are withheld.
 ESTIMATE_SOURCES = {
     "spans": ("spans", ("project_id", "org_id"), "project_id"),
     "traces": ("traces", ("project_id",), "project_id"),

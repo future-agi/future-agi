@@ -744,14 +744,52 @@ def _estimates(value):
     return raw, safe
 
 
-def test_estimate_runs_on_the_locked_principal_and_hides_other_projects_volume():
-    """Measured on production sort keys: the reported estimate is identical
-    after another project's volume grows 10x and after merges mix both
-    projects into the same parts and granules, while the raw granule row
-    count that EXPLAIN ESTIMATE returns does change (so it is never shown)."""
+PROJECT_KEYED = [sql for sql in ESTIMATED_QUERIES if "eval_results" not in sql]
+
+
+def _merges(admin, database, action):
+    for table in PRODUCTION_KEYS:
+        admin.execute(f"SYSTEM {action} MERGES {database}.{table}")
+
+
+def _active_parts(admin, database):
+    return dict(
+        admin.execute(
+            "SELECT table, count() FROM system.parts "
+            "WHERE database = %(d)s AND active GROUP BY table",
+            {"d": database},
+        )
+    )
+
+
+def _source(summary, dataset):
+    return next(e for e in summary["sources"] if e["dataset"] == dataset)
+
+
+def _marks(summary):
+    return sum(e["marks"] or 0 for e in summary["sources"])
+
+
+def test_estimate_runs_on_the_locked_principal_and_bounds_other_projects_influence():
+    """Measured on production sort keys with background merges paused, so the
+    part layout at every step is known:
+
+    * another project's 10x volume growth in its own parts, and merges that
+      mix both projects into the same parts and granules, change no reported
+      number for project-keyed sources, while the raw granule row total that
+      EXPLAIN ESTIMATE returns does change (so it is never reported);
+    * another project's data enters an estimate only through a part whose key
+      range brackets this project's key: each such part adds at most two
+      boundary granules, the same for a part of 2 rows as for one of 20.
+      eval_results is keyed by random configuration ids, so another
+      project's parts can bracket it: bounded the same way.
+    """
+    from uuid import UUID
+
     with provisioned(PRODUCTION_KEYS, label="est") as (value, admin):
         scope, foreign = value.scope, value.foreign
         database = scope.database
+        _merges(admin, database, "STOP")
         raw_before, before = _estimates(value)
         by_dataset = {
             sql: {entry["dataset"]: entry for entry in summary["sources"]}
@@ -760,10 +798,12 @@ def test_estimate_runs_on_the_locked_principal_and_hides_other_projects_volume()
         for sql, summary in before.items():
             assert summary["status"] == "ok", sql
             assert summary["exceeds_scan_bound"] is False, sql
+            for entry in summary["sources"]:
+                # Whole granules only, never a row total.
+                if entry["estimated"]:
+                    assert entry["max_rows"] == entry["marks"] * 8192, (sql, entry)
         spans = by_dataset["SELECT count() FROM spans"]["spans"]
         assert spans["estimated"] and spans["marks"] >= 1
-        # An upper bound in whole granules, never below the owned rows.
-        assert spans["max_rows"] % 8192 == 0
         assert spans["max_rows"] >= len(value.owned.spans)
         for sql, dataset in [
             ("SELECT * FROM traces", "traces"),
@@ -776,6 +816,8 @@ def test_estimate_runs_on_the_locked_principal_and_hides_other_projects_volume()
         annotations = by_dataset["SELECT * FROM annotations"]["annotations"]
         assert annotations["estimated"] is False
         assert annotations["max_rows"] is None
+
+        parts_before = _active_parts(admin, database)
         base = scope.start + timedelta(days=3)
         for copy in range(9):
             extra = replace(
@@ -793,18 +835,74 @@ def test_estimate_runs_on_the_locked_principal_and_hides_other_projects_volume()
             {"p": foreign.project},
         ) == [(10 * len(foreign.spans),)]
         _, grown = _estimates(value)
-        assert grown == before
+        new_parts = sum(_active_parts(admin, database).values()) - sum(
+            parts_before.values()
+        )
+        for sql in PROJECT_KEYED:
+            assert grown[sql] == before[sql], sql
+        evals = "SELECT * FROM eval_results"
+        assert 0 <= _marks(grown[evals]) - _marks(before[evals]) <= 2 * new_parts
+
+        _merges(admin, database, "START")
         for table in PRODUCTION_KEYS:
             admin.execute(f"OPTIMIZE TABLE {database}.{table} FINAL")
+        _merges(admin, database, "STOP")
         raw_merged, merged = _estimates(value)
-        assert merged == before
+        for sql in PROJECT_KEYED:
+            assert merged[sql] == before[sql], sql
         spans_sql = "SELECT count() FROM spans"
+        assert raw_merged[spans_sql]["spans"] > raw_before[spans_sql]["spans"]
+
+        # Parts of other projects whose key range brackets this project's key.
+        low, high = UUID(int=0), UUID(int=2**128 - 1)
+        assert admin.execute(
+            "SELECT toUUID(%(l)s) < toUUID(%(o)s) AND toUUID(%(o)s) < toUUID(%(h)s)",
+            {"l": str(low), "o": str(scope.project_id), "h": str(high)},
+        ) == [(1,)]
+        moment = scope.start + timedelta(days=1)
+
+        def bracket(rows_each):
+            admin.execute(
+                f"INSERT INTO {database}.spans (project_id, org_id, id, trace_id, "
+                "name, start_time, latency_ms, status, model, provider, "
+                "total_tokens, cost) VALUES",
+                [
+                    (
+                        project,
+                        foreign.org,
+                        f"b{rows_each}-{index}",
+                        str(uuid4()),
+                        "x",
+                        moment,
+                        1,
+                        "OK",
+                        "m",
+                        "p",
+                        1,
+                        0.0,
+                    )
+                    for project in (low, high)
+                    for index in range(rows_each)
+                ],
+            )
+            return _source(_estimates(value)[1][spans_sql], "spans")
+
+        settled = _source(merged[spans_sql], "spans")
+        small = bracket(1)
+        large = bracket(10)
+        assert small["parts"] == settled["parts"] + 1
+        assert large["parts"] == small["parts"] + 1
+        added_small = small["marks"] - settled["marks"]
+        added_large = large["marks"] - small["marks"]
+        assert 1 <= added_small <= 2 and added_large == added_small
+        assert large["max_rows"] == large["marks"] * 8192
         print(
             "estimate side channel: raw spans granule rows "
             f"{raw_before[spans_sql]['spans']} -> {raw_merged[spans_sql]['spans']} "
-            f"after 10x foreign volume and merges; reported {spans}"
+            f"after 10x foreign volume and merges, reported spans unchanged "
+            f"({spans['marks']} granules); a bracketing part of 2 rows added "
+            f"{added_small} granule(s), one of 20 rows added {added_large}"
         )
-        assert raw_merged[spans_sql]["spans"] > raw_before[spans_sql]["spans"]
 
 
 def test_a_run_waits_out_brief_contention_for_the_principal(
