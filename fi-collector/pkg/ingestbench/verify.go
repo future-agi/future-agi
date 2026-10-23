@@ -45,12 +45,18 @@ func (c Config) verifyLimits() queryLimits {
 
 // effectiveVerifyTimeout is the whole verification budget. The default grows
 // with the run (10 minutes plus one second per 50,000 attempted spans, at most
-// 48 hours): a fixed 10 minutes cannot verify a 24-hour profile.
+// 48 hours): a fixed 10 minutes cannot verify a 24-hour profile. The durable
+// lag adds one query per chunk, so with it the per-span allowance doubles and
+// the extra query cannot eat the exact-ID scan's budget.
 func (c Config) effectiveVerifyTimeout(attempted int64) time.Duration {
 	if c.VerifyTimeout > 0 {
 		return c.VerifyTimeout
 	}
-	return min(10*time.Minute+time.Duration(attempted/50000)*time.Second, 48*time.Hour)
+	perSpan := attempted / 50000
+	if c.DurableLag {
+		perSpan *= 2
+	}
+	return min(10*time.Minute+time.Duration(perSpan)*time.Second, 48*time.Hour)
 }
 
 // effectiveVerifyQueryTimeout bounds one chunk query: by default 30 seconds or

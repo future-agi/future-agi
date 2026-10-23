@@ -467,7 +467,8 @@ own client) and checks EVERY attempted span by BOTH deterministic IDs:
   ``scanned_attempted_spans`` and ``unscanned_attempted_spans`` (counted as missing)
   and decomposes the scanned part only; it concludes nothing.
 * **Budgets.** ``--verify-timeout`` (default: 10 minutes plus one second per
-  50,000 attempted spans, at most 48h; the sustained script uses 12h),
+  50,000 attempted spans, two seconds with the durable lag's extra query per chunk,
+  at most 48h; the sustained script uses 12h),
   ``--verify-query-timeout`` (default: the larger of 30s and one second per 20,000
   chunk spans, at most 30 minutes; sent to ClickHouse as ``max_execution_time`` and
   enforced by a client deadline 10s later), ``--verify-max-memory`` (default 1 GiB

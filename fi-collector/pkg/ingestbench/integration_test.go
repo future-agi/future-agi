@@ -1080,6 +1080,12 @@ func TestVerificationBudgetsScaleAndReachTheServer(t *testing.T) {
 	if got := c.effectiveVerifyTimeout(500); got != 10*time.Minute {
 		t.Fatalf("smoke verification budget %s", got)
 	}
+	// The durable lag's extra query per chunk doubles the per-span allowance.
+	withLag, withoutLag := c, c
+	withoutLag.DurableLag = false
+	if a, b := withLag.effectiveVerifyTimeout(50_000_000), withoutLag.effectiveVerifyTimeout(50_000_000); a != 10*time.Minute+2000*time.Second || b != 10*time.Minute+1000*time.Second {
+		t.Fatalf("verification budget with/without durable lag: %s / %s", a, b)
+	}
 	c.VerifyChunk = 1_000_000
 	if got := c.effectiveVerifyQueryTimeout(); got < 50*time.Second {
 		t.Fatalf("1M-span chunks get only %s per query", got)
