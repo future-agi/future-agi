@@ -3696,10 +3696,17 @@ class EvalTemplateUpdateView(APIView):
                 template.config = {}
             template.config["template_format"] = template_format
 
-            from model_hub.utils.jev_templates import validate_jev_template_save
+            from model_hub.utils.jev_templates import (
+                drop_jev_model_from_code_eval,
+                validate_jev_template_save,
+            )
 
             if "jev_mapping" in request.validated_data:
                 template.config["jev_mapping"] = req.jev_mapping
+            # A code eval runs no model: a Jev model kept from an LLM draft
+            # would route it to Jev, which can't run code, and the picker that
+            # could change it is hidden on the Code tab.
+            drop_jev_model_from_code_eval(template)
             if req.input_data_types is not None:
                 template.config["input_data_types"] = req.input_data_types
             jev_error = validate_jev_template_save(
@@ -3707,7 +3714,8 @@ class EvalTemplateUpdateView(APIView):
                 model=template.model or template.config.get("model"),
                 previous_model=_original_field_values.get("model")
                 or (_original_field_values.get("config") or {}).get("model"),
-                mapping_provided="jev_mapping" in request.validated_data,
+                mapping_provided="jev_mapping" in request.validated_data
+                and "jev_mapping" in template.config,
                 choice_scores=template.choice_scores,
                 multi_choice=template.multi_choice,
             )

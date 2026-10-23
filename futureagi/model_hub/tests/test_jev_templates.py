@@ -306,6 +306,50 @@ def test_r03_ui_draft_switched_to_llm_judge_saves_with_jev(auth_client):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("with_mapping", [False, True])
+def test_a_jev_draft_switched_to_code_saves_and_forgets_the_jev_model(
+    auth_client, with_mapping
+):
+    """Pick Jev latest, let autosave run, switch to Code: the page leaves the
+    model out for code evals, so the stored jev-latest used to make every
+    save fail with JEV_EVAL_TYPE_UNSUPPORTED (an older page also sent the
+    mapping)."""
+    with patch("tfc.ee_gates._jev_denied_off_cloud", return_value=False):
+        response = auth_client.post(
+            "/model-hub/eval-templates/create-v2/",
+            payload("pass_fail"),
+            format="json",
+        )
+        assert response.status_code == 200, response.data
+        template_id = response.data["result"]["id"]
+        body = {
+            "eval_type": "code",
+            "code": "def evaluate(**kwargs): return True",
+            "code_language": "python",
+            "output_type": "pass_fail",
+            "pass_threshold": 0.5,
+            "template_format": "mustache",
+        }
+        if with_mapping:
+            body["jev_mapping"] = {}
+        saved = auth_client.put(
+            f"/model-hub/eval-templates/{template_id}/update/", body, format="json"
+        )
+        assert saved.status_code == 200, saved.data
+        again = auth_client.put(
+            f"/model-hub/eval-templates/{template_id}/update/",
+            {"code": "def evaluate(**kwargs): return False"},
+            format="json",
+        )
+        assert again.status_code == 200, again.data
+    template = EvalTemplate.objects.get(id=template_id)
+    assert template.config["eval_type_id"] == "CustomCodeEval"
+    assert template.model is None
+    assert "model" not in template.config
+    assert "jev_mapping" not in template.config
+
+
+@pytest.mark.django_db
 def test_r08_choice_template_still_binds_after_jsonb_reorders_labels(auth_client):
     from model_hub.utils.jev_templates import validate_jev_binding
 

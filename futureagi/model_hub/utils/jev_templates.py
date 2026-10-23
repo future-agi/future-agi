@@ -61,6 +61,24 @@ def validate_jev_template_save(
     return None
 
 
+def drop_jev_model_from_code_eval(template) -> bool:
+    """Forget a Jev model (and its mapping) on a code eval. Returns whether
+    anything was dropped."""
+    config = template.config if isinstance(template.config, dict) else {}
+    if config.get("eval_type_id") != "CustomCodeEval":
+        return False
+    dropped = False
+    if is_jev_model(template.model):
+        template.model = None
+        dropped = True
+    if is_jev_model(config.get("model")):
+        config.pop("model", None)
+        dropped = True
+    if config.pop("jev_mapping", None) is not None:
+        dropped = True
+    return dropped
+
+
 def binding_model(template, *, model, runtime_config=None):
     """The model a binding runs: a per-run override, else the caller's model,
     else the template's."""

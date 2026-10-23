@@ -170,26 +170,36 @@ describe("ModelSelector — Jev models (bring your own key)", () => {
     ).toBeTruthy();
   });
 
-  it.each(["loading", "denied"])(
-    "locks Jev while %s and retains a preselected value",
+  it("locks Jev on a confirmed denial and retains a preselected value", async () => {
+    capabilityResponse = Promise.resolve({
+      data: { features: { jev_models: { allowed: false } } },
+    });
+    const onModelChange = vi.fn();
+    renderSelector({ model: "jev-1.13.0", onModelChange });
+    await userEvent.click(screen.getByText("Jev 1.13 (pinned)"));
+    const row = await screen.findByRole("menuitem", { name: /Jev 1.13/ });
+    await waitFor(() => expect(row).toHaveAttribute("aria-disabled", "true"));
+    expect(row).toHaveClass("Mui-selected");
+    await userEvent.hover(row.parentElement);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Not included in your plan",
+    );
+    expect(onModelChange).not.toHaveBeenCalled();
+  });
+
+  // Self-hosted always allows Jev, and the server checks every run: a
+  // capabilities fetch still loading, or one that failed, never locks it.
+  it.each(["loading", "failed"])(
+    "leaves Jev open while capabilities are %s",
     async (state) => {
       capabilityResponse =
         state === "loading"
           ? new Promise(() => {})
-          : Promise.resolve({
-              data: { features: { jev_models: { allowed: false } } },
-            });
-      const onModelChange = vi.fn();
-      renderSelector({ model: "jev-1.13.0", onModelChange });
+          : Promise.reject(new Error("capabilities unavailable"));
+      renderSelector({ model: "jev-1.13.0" });
       await userEvent.click(screen.getByText("Jev 1.13 (pinned)"));
       const row = screen.getByRole("menuitem", { name: /Jev 1.13/ });
-      expect(row).toHaveAttribute("aria-disabled", "true");
-      expect(row).toHaveClass("Mui-selected");
-      await userEvent.hover(row.parentElement);
-      expect(await screen.findByRole("tooltip")).toHaveTextContent(
-        "Not included in your plan",
-      );
-      expect(onModelChange).not.toHaveBeenCalled();
+      expect(row).not.toHaveAttribute("aria-disabled", "true");
     },
   );
 

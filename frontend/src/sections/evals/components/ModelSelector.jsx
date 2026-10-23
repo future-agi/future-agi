@@ -35,6 +35,7 @@ import {
   useFeatureAllowed,
   useFeatureLocked,
   CAPABILITY,
+  useFeatureDenied,
 } from "src/hooks/useCapabilities";
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
@@ -785,7 +786,8 @@ const ModelSelector = ({
   // must not wipe a legitimately-preselected Turing model mid-fetch.
   const { locked: fagiModelsLocked, isLoading: capabilitiesLoading } =
     useFeatureLocked(CAPABILITY.TURING_MODELS);
-  const { locked: jevModelsLocked } = useFeatureLocked(CAPABILITY.JEV_MODELS);
+  // A confirmed denial only, as on the eval pages.
+  const jevModelsLocked = useFeatureDenied(CAPABILITY.JEV_MODELS);
   // Jev runs on the org's own TypeSafe key (Settings -> AI Providers).
   const { data: providerStatuses } = useApiKeysStatus();
   const hasTypesafeKey = (providerStatuses || []).some(

@@ -36,6 +36,7 @@ vi.mock("src/hooks/useCapabilities", async (original) => ({
     locked: id === "jev_models" && mocks.locked,
     isLoading: false,
   }),
+  useFeatureDenied: (id) => id === "jev_models" && mocks.locked,
 }));
 vi.mock("src/hooks/useErrorLocalization", () => ({
   useErrorLocalizationAvailable: () => false,

@@ -7,6 +7,11 @@ import EvalCreatePage from "../EvalCreatePage";
 const mocks = vi.hoisted(() => ({
   draft: null,
   mutate: vi.fn(),
+  snack: vi.fn(),
+}));
+vi.mock("notistack", async (original) => ({
+  ...(await original()),
+  useSnackbar: () => ({ enqueueSnackbar: mocks.snack }),
 }));
 vi.mock("react-router", async (original) => ({
   ...(await original()),
@@ -19,6 +24,7 @@ vi.mock("src/auth/hooks", () => ({
 vi.mock("src/hooks/useCapabilities", async (original) => ({
   ...(await original()),
   useFeatureLocked: () => ({ locked: false, isLoading: false }),
+  useFeatureDenied: () => false,
 }));
 vi.mock("src/hooks/useErrorLocalization", () => ({
   useErrorLocalizationAvailable: () => false,
@@ -167,6 +173,74 @@ describe("EvalCreatePage with a Jev model", () => {
     );
     expect(lastPayload().jev_mapping.choice.labels).toEqual(authored);
     expect(Object.keys(lastPayload().choice_scores)).toEqual(authored);
+  });
+
+  it("sends no jev_mapping once a Jev draft switches to Code", async () => {
+    render(<EvalCreatePage />);
+    await screen.findByDisplayValue("Jev latest");
+    await userEvent.click(screen.getByRole("tab", { name: /Code/ }));
+    await waitFor(() => expect(lastPayload()?.eval_type).toBe("code"), {
+      timeout: 4000,
+    });
+    expect(lastPayload()).not.toHaveProperty("jev_mapping");
+  });
+
+  it("keeps Test off while Jev can't run the setup", async () => {
+    // A judge with variables, scored on levels it hasn't named yet.
+    mocks.draft = {
+      ...mocks.draft,
+      name: "Resolved?",
+      instructions: "Did the agent resolve {{conversation}}?",
+      output_type_normalized: "percentage",
+      config: {
+        model: "jev-latest",
+        messages: [
+          {
+            role: "system",
+            content: "Did the agent resolve {{conversation}}?",
+          },
+        ],
+        jev_mapping: { revision: "jev-map-v1", question_type: "score" },
+      },
+    };
+    render(<EvalCreatePage />);
+    await screen.findByDisplayValue("Jev latest");
+    expect(
+      await screen.findByRole("button", { name: /Test Evaluation/ }),
+    ).toBeDisabled();
+    await userEvent.selectOptions(
+      screen.getByLabelText("Evaluator model"),
+      "turing_large",
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /Test Evaluation/ }),
+      ).toBeEnabled(),
+    );
+  });
+
+  it("says once when autosave is refused", async () => {
+    mocks.mutate.mockImplementation((payload, options) =>
+      options?.onError?.(new Error("refused")),
+    );
+    render(<EvalCreatePage />);
+    const picker = await screen.findByLabelText("Evaluator model");
+    await userEvent.selectOptions(picker, "turing_large");
+    await waitFor(() => expect(mocks.snack).toHaveBeenCalledTimes(1), {
+      timeout: 4000,
+    });
+    expect(mocks.snack).toHaveBeenCalledWith(
+      "Your latest changes couldn't be saved.",
+      { variant: "error" },
+    );
+    await userEvent.selectOptions(picker, "jev-latest");
+    await waitFor(
+      () => expect(mocks.mutate.mock.calls.length).toBeGreaterThan(1),
+      {
+        timeout: 4000,
+      },
+    );
+    expect(mocks.snack).toHaveBeenCalledTimes(1);
   });
 
   it("sends no jev_mapping for non-Jev models", async () => {
