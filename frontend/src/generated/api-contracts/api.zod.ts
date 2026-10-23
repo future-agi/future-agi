@@ -64086,6 +64086,15 @@ export const TracerSqlQueryCatalogResponse = zod.object({
       ),
     }),
   ),
+  examples: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      title: zod.string().min(1),
+      description: zod.string().min(1),
+      sql: zod.string().min(1),
+      datasets: zod.array(zod.string().min(1)),
+    }),
+  ),
   max_rows: zod.number(),
   max_window_days: zod.number(),
   can_save: zod.boolean(),

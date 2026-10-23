@@ -75850,6 +75850,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "identity_semantics",
         "version",
         "datasets",
+        "examples",
         "max_rows",
         "max_window_days",
         "can_save",
@@ -75869,6 +75870,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             $ref: "#/definitions/SQLDataset",
+          },
+        },
+        examples: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SQLExample",
           },
         },
         max_rows: {
@@ -103118,6 +103125,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             $ref: "#/definitions/SQLColumn",
+          },
+        },
+      },
+    },
+    SQLExample: {
+      required: ["id", "title", "description", "sql", "datasets"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        title: {
+          title: "Title",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          minLength: 1,
+        },
+        sql: {
+          title: "Sql",
+          type: "string",
+          minLength: 1,
+        },
+        datasets: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
           },
         },
       },

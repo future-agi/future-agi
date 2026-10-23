@@ -29643,11 +29643,24 @@ export interface SQLDatasetApi {
   columns: SQLColumnApi[];
 }
 
+export interface SQLExampleApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  sql: string;
+  datasets: string[];
+}
+
 export interface SQLCatalogApi {
   /** @minLength 1 */
   identity_semantics: string;
   version: number;
   datasets: SQLDatasetApi[];
+  examples: SQLExampleApi[];
   max_rows: number;
   max_window_days: number;
   can_save: boolean;
