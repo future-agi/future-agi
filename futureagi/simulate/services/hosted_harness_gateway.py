@@ -2590,6 +2590,11 @@ class HostedHarnessGateway:
                 }
             }
             authoring_exports["PATH"] = _CHAT_RUNTIME_PATH
+            # The control processes (build and adaptation) otherwise wait ALK's own 55-minute
+            # default, not the authoring budget this deployment sized the sandbox for.
+            authoring_exports["ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS"] = str(
+                int(getattr(settings, "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", 3600))
+            )
             if overlay is not None:
                 authoring_exports["PYTHONPATH"] = "/work/alk-src"
             provider_profile_args = (
