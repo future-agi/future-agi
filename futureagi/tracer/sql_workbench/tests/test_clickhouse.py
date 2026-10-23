@@ -869,9 +869,13 @@ def test_adversarial_corpus_never_returns_foreign_rows(scoped_clickhouse):
         with _ch_test_native_client(
             database=database, owned_database=database
         ) as executor:
-            # Control: run unscoped, each oracle does read the foreign rows.
+            # Control: run unscoped, each oracle does read the foreign rows. The
+            # whole-row oracle compares nullable columns that are NULL in the
+            # fixture, and NULL never matches IN by default; transform_null_in
+            # makes the control show the read. The corpus never gets settings.
             for oracle in oracles:
-                assert foreign & set(_string_values(executor.execute(oracle))), oracle
+                rows = executor.execute(oracle, settings={"transform_null_in": 1})
+                assert foreign & set(_string_values(rows)), oracle
             corpus = (
                 compiler_cases.VALID_QUERIES
                 + compiler_cases.ADVERSARIAL_QUERIES
@@ -968,8 +972,12 @@ def test_server_table_filters_block_unscoped_sql_under_the_locked_profile(
             f"SELECT {row} IN (trace_sessions)",
             f"SELECT {row} IN {database}.trace_sessions",
             f"SELECT {row} GLOBAL IN trace_sessions",
+            f"SELECT {row} IN `trace_sessions`",
             f"SELECT in({row}, trace_sessions)",
-            f"SELECT NOT {row} NOT IN trace_sessions",
+            f"SELECT globalIn({row}, trace_sessions)",
+            f"SELECT count() FROM spans AS a JOIN spans AS b ON a.id = b.id WHERE b.project_id != {project}",
+            # ClickHouse reads ``NOT (a, b)`` as the function not(a, b).
+            f"SELECT NOT ({row} NOT IN trace_sessions)",
             f"SELECT {row} IN t FROM trace_sessions AS t WHERE project_id = {project}",
             f"WITH c AS (SELECT trace_session_id FROM trace_sessions) SELECT {session} IN c",
             f"SELECT count() FROM spans WHERE {session} IN (SELECT trace_session_id FROM trace_sessions) AND project_id != {project}",
@@ -980,15 +988,18 @@ def test_server_table_filters_block_unscoped_sql_under_the_locked_profile(
             database=database, owned_database=database
         ) as unrestricted:
             for sql in raw:
-                assert unrestricted.execute(sql)[0][0], f"control has no foreign row: {sql}"
+                assert unrestricted.execute(sql)[0][0], (
+                    f"control has no foreign row: {sql}"
+                )
         monkeypatch.setenv("SQL_WORKBENCH_CH_USER", principal)
         monkeypatch.setenv("SQL_WORKBENCH_CH_PASSWORD", password)
         monkeypatch.setenv("SQL_WORKBENCH_CH_SECURE", "false")
-        many = replace(
-            scope, eval_config_ids=(config, *(uuid4() for _ in range(999)))
-        )
+        many = replace(scope, eval_config_ids=(config, *(uuid4() for _ in range(999))))
         with override_settings(CLICKHOUSE_V2=_service_settings(client, database)):
-            for filters in (additional_table_filters(scope), additional_table_filters(many)):
+            for filters in (
+                additional_table_filters(scope),
+                additional_table_filters(many),
+            ):
                 for sql in raw:
                     result = run(sql, uuid4(), lambda: False, table_filters=filters)
                     assert result["rows"] in ([[0]], [[False]]), (sql, result["rows"])
