@@ -186,6 +186,17 @@ def test_total_influence_is_the_weighted_contribution(explain):
     assert page["diagnostics"]["outside_denominator_count"] == 0
 
 
+def test_overflowing_contributions_fail_with_an_explicit_reason(explain, monkeypatch):
+    import sys
+
+    monkeypatch.setattr(
+        sys.modules[__name__], "UNITS", [("clean", "tiny", 1.0, 1.0, 1e-320, 0)]
+    )
+    run = persisted_run(explain, "ratio(y, x)")
+    with pytest.raises(MetricInputError, match="finite numbers"):
+        read_contributors(run, rollup="cohort", group_key="clean")
+
+
 def test_an_unpersisted_group_is_rejected_not_guessed(explain):
     run = persisted_run(explain, "ratio(y, x)", rollups=("overall",))
     with pytest.raises(MetricInputError):

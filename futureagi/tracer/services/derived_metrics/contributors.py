@@ -19,6 +19,7 @@ ids per reason (the smallest ids, so the answer is deterministic).
 from __future__ import annotations
 
 import json
+import math
 
 from tracer.services.clickhouse.client import get_clickhouse_client
 from tracer.services.derived_metrics.errors import MetricInputError
@@ -163,6 +164,13 @@ def read_contributors(
     units = []
     for row in rows[:limit]:
         item = dict(zip(names, row, strict=True))
+        if any(
+            isinstance(value, float) and not math.isfinite(value)
+            for value in item.values()
+        ):
+            raise MetricInputError(
+                "Contributor weights or influence cannot be represented as finite numbers for this group."
+            )
         item["trace_id"] = _trace_id(item["unit_id"], definition.selection_unit)
         units.append(item)
     counts, count_columns = client.execute(
