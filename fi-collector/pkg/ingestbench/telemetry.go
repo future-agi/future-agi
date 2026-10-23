@@ -15,18 +15,21 @@ import (
 // visible sentinels; collector lines carry the backlog and the writer's insert
 // counters (the durable stage as the collector sees it).
 type telemetryEvent struct {
-	SchemaVersion  string            `json:"schema_version"`
-	RunID          string            `json:"run_id"`
-	Kind           string            `json:"kind"`
-	At             time.Time         `json:"at"`
-	ElapsedSeconds float64           `json:"elapsed_seconds"`
-	Counters       *Counters         `json:"counters,omitempty"`
-	InFlightSpans  *int64            `json:"in_flight_spans,omitempty"`
-	ScheduledSpans *int64            `json:"scheduled_spans,omitempty"`
-	SentinelsSeen  *int64            `json:"sentinels_seen,omitempty"`
-	Resource       *ResourceSnapshot `json:"resource,omitempty"`
-	Collector      *CollectorSample  `json:"collector,omitempty"`
-	Fault          *FaultEvent       `json:"fault,omitempty"`
+	SchemaVersion  string    `json:"schema_version"`
+	RunID          string    `json:"run_id"`
+	Kind           string    `json:"kind"`
+	At             time.Time `json:"at"`
+	ElapsedSeconds float64   `json:"elapsed_seconds"`
+	Counters       *Counters `json:"counters,omitempty"`
+	// InFlightSpans/InFlightRequests are counted when a request starts and
+	// when it finishes, independently of the outcome classes.
+	InFlightSpans    *int64            `json:"in_flight_spans,omitempty"`
+	InFlightRequests *int64            `json:"in_flight_requests,omitempty"`
+	ScheduledSpans   *int64            `json:"scheduled_spans,omitempty"`
+	SentinelsSeen    *int64            `json:"sentinels_seen,omitempty"`
+	Resource         *ResourceSnapshot `json:"resource,omitempty"`
+	Collector        *CollectorSample  `json:"collector,omitempty"`
+	Fault            *FaultEvent       `json:"fault,omitempty"`
 }
 
 // telemetrySink serialises telemetry lines; a nil writer discards them.
@@ -69,13 +72,24 @@ func (t *telemetrySink) err() error {
 	return nil
 }
 
-// snapshot returns the counters and the attempted spans whose request has not
-// finished yet (attempted minus every outcome class).
-func (s *runState) snapshot() (Counters, int64, int64) {
+// progressSnapshot is one progress line's counts, taken under one lock.
+type progressSnapshot struct {
+	counters                        Counters
+	inFlightSpans, inFlightRequests int64
+	seen                            int64
+}
+
+// snapshot returns the counters and the requests in flight. In-flight is the
+// independently tracked count (incremented by send, decremented by finish), NOT
+// attempted minus the outcome classes, so the per-line identity can fail.
+func (s *runState) snapshot() progressSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c := s.counters
-	return c, c.Attempted - c.Acknowledged - c.PartialRejected - c.WholeRequestRejected - c.Ambiguous, s.seen
+	return progressSnapshot{counters: s.counters, inFlightSpans: s.inFlightSpans, inFlightRequests: s.inFlightRequests, seen: s.seen}
+}
+
+func (p progressSnapshot) event(kind string, scheduled *int64) telemetryEvent {
+	return telemetryEvent{Kind: kind, Counters: &p.counters, InFlightSpans: &p.inFlightSpans, InFlightRequests: &p.inFlightRequests, ScheduledSpans: scheduled, SentinelsSeen: &p.seen}
 }
 
 func startTelemetry(ctx context.Context, c Config, ch clickHouse, s *runState, sink *telemetrySink) (func(), func() error) {
@@ -95,15 +109,13 @@ func startTelemetry(ctx context.Context, c Config, ch clickHouse, s *runState, s
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
-			counters, inFlight, seen := s.snapshot()
-			if err := sink.write(telemetryEvent{Kind: "progress", Counters: &counters, InFlightSpans: &inFlight, ScheduledSpans: scheduled(), SentinelsSeen: &seen}); err != nil {
+			if err := sink.write(s.snapshot().event("progress", scheduled())); err != nil {
 				errors <- err
 				return
 			}
 			select {
 			case <-progressCtx.Done():
-				counters, inFlight, seen = s.snapshot()
-				if err := sink.write(telemetryEvent{Kind: "progress-final", Counters: &counters, InFlightSpans: &inFlight, ScheduledSpans: scheduled(), SentinelsSeen: &seen}); err != nil {
+				if err := sink.write(s.snapshot().event("progress-final", scheduled())); err != nil {
 					errors <- err
 				}
 				return

@@ -47,6 +47,12 @@ type runState struct {
 	workload      *workloadAccumulator
 	recent        [64]recentAck
 	recentN       int
+	// inFlightSpans/inFlightRequests are the requests started (send) and not
+	// finished yet, counted on their own: telemetry checks them against
+	// attempted minus the outcome classes, so a class that misses a request
+	// breaks the identity on the next progress line.
+	inFlightSpans    int64
+	inFlightRequests int64
 	// Read-visible sentinels (sentinel.go).
 	sentinels           map[int64]*sentinel
 	pending             map[int64]*sentinel
@@ -556,6 +562,8 @@ func (s *runState) send(ctx context.Context, exp exporter, seq int64, n int, b e
 	s.counters.Attempted += int64(n)
 	s.counters.Requests++
 	s.counters.UncompressedBytes += int64(b.uncompressed)
+	s.inFlightSpans += int64(n)
+	s.inFlightRequests++
 	if sentinel {
 		s.registerSentinel(seq, due, start, built)
 	}
@@ -573,6 +581,8 @@ func (s *runState) finish(seq int64, n int, uncompressed, wire int, o exportOutc
 	defer s.mu.Unlock()
 	spans := int64(n)
 	c := &s.counters
+	s.inFlightSpans -= spans
+	s.inFlightRequests--
 	s.statuses[o.statusLabel]++
 	s.requestLatency.add(elapsed)
 	s.fromScheduled.add(fromScheduled)

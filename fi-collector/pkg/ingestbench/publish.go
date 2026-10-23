@@ -366,8 +366,22 @@ func notMeasured(r Result) []string {
 	)
 }
 
+// progressIdentityHolds checks one progress line. The in-flight counts are
+// tracked separately from the outcome classes (counted when a request starts
+// and when it finishes), so a request that finished without landing in exactly
+// one class breaks the equation. After the load (final) nothing is in flight.
+func progressIdentityHolds(k Counters, inFlightSpans, inFlightRequests int64, final bool) bool {
+	if inFlightSpans < 0 || inFlightRequests < 0 || (final && (inFlightSpans != 0 || inFlightRequests != 0)) {
+		return false
+	}
+	return k.Attempted == k.Acknowledged+k.PartialRejected+k.WholeRequestRejected+k.Ambiguous+inFlightSpans &&
+		k.Requests == k.RequestOutcomes.total()+inFlightRequests &&
+		k.WholeRequestRejected == k.RejectedRetryable+k.RejectedNonRetryable && k.Unacknowledged == k.WholeRequestRejected+k.Ambiguous
+}
+
 // checkTelemetry digests a telemetry stream and checks that every line belongs
-// to the run and every progress line keeps the accounting identity.
+// to the run and every progress line keeps the accounting identity, against
+// in-flight counts tracked independently of the outcome classes.
 func checkTelemetry(r io.Reader, runID string) (TelemetryCheck, error) {
 	h := sha256.New()
 	var c TelemetryCheck
@@ -386,13 +400,11 @@ func checkTelemetry(r io.Reader, runID string) (TelemetryCheck, error) {
 		switch e.Kind {
 		case "progress", "progress-final":
 			c.ProgressLines++
-			if e.Counters == nil || e.InFlightSpans == nil {
+			if e.Counters == nil || e.InFlightSpans == nil || e.InFlightRequests == nil {
 				c.IdentityViolations++
 				continue
 			}
-			k := *e.Counters
-			if k.Attempted == k.Acknowledged+k.PartialRejected+k.WholeRequestRejected+k.Ambiguous+*e.InFlightSpans && *e.InFlightSpans >= 0 &&
-				k.WholeRequestRejected == k.RejectedRetryable+k.RejectedNonRetryable && k.Unacknowledged == k.WholeRequestRejected+k.Ambiguous {
+			if progressIdentityHolds(*e.Counters, *e.InFlightSpans, *e.InFlightRequests, e.Kind == "progress-final") {
 				c.IdentityHeld++
 			} else {
 				c.IdentityViolations++

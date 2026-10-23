@@ -604,7 +604,8 @@ func requireTelemetry(t *testing.T, data []byte, fault string) {
 		kinds[e.Kind]++
 		switch e.Kind {
 		case "progress", "progress-final":
-			if e.Counters == nil || e.ScheduledSpans == nil || e.SentinelsSeen == nil {
+			if e.Counters == nil || e.ScheduledSpans == nil || e.SentinelsSeen == nil || e.InFlightSpans == nil || e.InFlightRequests == nil ||
+				!progressIdentityHolds(*e.Counters, *e.InFlightSpans, *e.InFlightRequests, e.Kind == "progress-final") {
 				t.Fatalf("progress line without the stages: %s", sc.Text())
 			}
 		case "collector":
