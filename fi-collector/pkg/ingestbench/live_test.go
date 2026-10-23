@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/server"
 )
 
 // liveTarget is an ALREADY provisioned, isolated v2 schema. The live tests
@@ -117,6 +118,21 @@ func TestLiveClickHouseCollectorPipeline(t *testing.T) {
 	if r.Status != "measured-profile-complete" || r.Verification.DistinctExpected != 20 || r.Lag.Latency.Count == 0 {
 		t.Fatalf("real pipeline verification failed: status=%s counters=%+v verification=%+v lag=%+v", r.Status, r.Counters, r.Verification, r.Lag)
 	}
+	// v3 on real ClickHouse: the per-span insert lag SQL, the clock probe, the
+	// time-bounded sentinel polls and the settings/storage provenance queries.
+	if d := r.Verification.DurableLag; d.Status != "measured" || d.Rows != 20 || d.Lag.Count+int64(d.NegativeRows) != 20 || !d.ClockMeasured {
+		t.Fatalf("durable lag on real ClickHouse: %+v", d)
+	}
+	if l := r.Lag; l.FromScheduled.Count != int64(l.Sampled) || l.Unseen != 0 || l.LowerFromScheduled.Count != l.FromScheduled.Count {
+		t.Fatalf("read-visible sentinels on real ClickHouse: %+v", l)
+	}
+	if p := r.Provenance.ClickHouse; len(p.CreateTableSHA256) != 64 || p.SessionInsertSettings["async_insert"] == "" || p.MergeTreeSettings["fsync_after_insert"] == "" ||
+		p.StorageBefore == nil || p.StorageBefore.Error != "" || p.StorageAfter == nil || p.StorageAfter.Error != "" || p.StorageAfter.Rows < p.StorageBefore.Rows {
+		t.Fatalf("v3 provenance on real ClickHouse: %+v settings error %q", p, p.SettingsError)
+	}
+	t.Logf("real ClickHouse lag: read-visible upper p50/p99 %.0f/%.0f ms (lower p50 %.0f ms) from the scheduled send; insert lag p50/p99 %.0f/%.0f ms over %d stored spans; clock offset %.3f +/- %.3f ms",
+		r.Lag.FromScheduled.P50, r.Lag.FromScheduled.P99, r.Lag.LowerFromScheduled.P50, r.Verification.DurableLag.Lag.P50, r.Verification.DurableLag.Lag.P99,
+		r.Verification.DurableLag.Rows, r.Clock.Start.OffsetMS, r.Clock.Start.UncertaintyMS)
 	if p := r.Provenance.ClickHouse; p.Version == "" || p.TableEngine == "" || p.Hardware.Error != "" || p.Hardware.OSMemoryBytes == 0 || p.Hardware.MaxThreads == "" {
 		t.Fatalf("ClickHouse provenance missing: %+v", r.Provenance.ClickHouse)
 	}
@@ -152,4 +168,63 @@ func TestLiveClickHouseBackpressureAccounting(t *testing.T) {
 		})
 	}
 	writeLiveArtifact(t, "OTLPBENCH_LIVE_BACKPRESSURE_RESULT", results)
+}
+
+// M2 on real ClickHouse: a CI-sized recovery case. The real collector is
+// restarted mid-run, and separately every writer request to ClickHouse is held
+// for 1.5 s (a paused server); the exact-ID verification must find every
+// acknowledged span, the backlog must drain and each fault must recover within
+// the run. On a slow shared host (OTLPBENCH_LIVE_SLOW_HOST=1) a graceful stop
+// waits for in-flight inserts, so the load is longer; assertions are the same.
+func TestLiveClickHouseRecovery(t *testing.T) {
+	lt := requireLiveTarget(t)
+	results := map[string]Result{}
+	scale := func(c Config) Config {
+		if lt.slow {
+			c.Duration, c.MaxDuration = 6*time.Minute, 10*time.Minute
+		}
+		return c
+	}
+	faultAt := func(at, d time.Duration) (time.Duration, time.Duration) {
+		if lt.slow {
+			return 30 * time.Second, 10 * time.Second
+		}
+		return at, d
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	defer cancel()
+	t.Run("collector-restart", func(t *testing.T) {
+		collector := newRestartableCollector(t, lt.writer, server.Config{})
+		c := scale(lt.apply(recoveryConfig(collector)))
+		c.RunID, c.ClickHouseURL = NewRunID(), lt.url
+		at, d := faultAt(1500*time.Millisecond, 800*time.Millisecond)
+		r, err := Run(ctx, c, Options{ClickHouseHeaders: lt.headers, Faults: []Fault{{Name: "collector-restart", At: at, Duration: d,
+			Inject: func(context.Context) error { return collector.stop() }, Restore: func(context.Context) error { return collector.start() }}}})
+		results["collector-restart"] = r
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireRecovered(t, r, "collector-restart")
+	})
+	t.Run("clickhouse-pause", func(t *testing.T) {
+		front := newPauseProxy(t, lt.url)
+		defer front.Close()
+		proxy := front.Config.Handler.(*pauseProxy)
+		writer := lt.writer
+		writer.URL = front.URL
+		collector := newRestartableCollector(t, writer, server.Config{MaxPendingRows: 24})
+		c := scale(lt.apply(recoveryConfig(collector)))
+		c.RunID, c.ClickHouseURL = NewRunID(), lt.url
+		at, d := faultAt(time.Second, 1500*time.Millisecond)
+		r, err := Run(ctx, c, Options{ClickHouseHeaders: lt.headers, Faults: []Fault{{Name: "clickhouse-pause", At: at, Duration: d, Inject: proxy.pause, Restore: proxy.resume}}})
+		results["clickhouse-pause"] = r
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireRecovered(t, r, "clickhouse-pause")
+		if proxy.held.Load() == 0 {
+			t.Fatal("no writer request was held by the pause")
+		}
+	})
+	writeLiveArtifact(t, "OTLPBENCH_LIVE_RECOVERY_RESULT", results)
 }

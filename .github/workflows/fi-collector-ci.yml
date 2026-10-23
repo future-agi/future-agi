@@ -168,7 +168,7 @@ jobs:
 
   otlp-benchmark-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 14
+    timeout-minutes: 16
     env:
       OTLPBENCH_CI_PROJECT: otlpbench-ci-${{ github.run_id }}-${{ github.run_attempt }}
       OTLPBENCH_CI_CH_PORT: "18147"
@@ -212,8 +212,8 @@ jobs:
           PY
           "${compose[@]}" exec -T clickhouse clickhouse-client --user test --password test \
             --database otlpbench_ci --multiquery < "$RUNNER_TEMP/otlpbench-curated.sql"
-      - name: Require actual collector to ClickHouse ID verification and backpressure accounting
-        timeout-minutes: 6
+      - name: Require actual collector to ClickHouse ID verification, backpressure accounting and recovery
+        timeout-minutes: 8
         working-directory: fi-collector
         run: |
           set -o pipefail
@@ -221,10 +221,14 @@ jobs:
           # (the in-process equivalent of FI_MAX_PENDING_ROWS=16) over HTTP
           # protobuf, HTTP JSON+gzip and gRPC+gzip, and sends requests larger
           # than the whole budget to prove they are refused as non-retryable.
+          # The recovery case restarts the real collector mid-run and, separately,
+          # holds every writer request to ClickHouse for 1.5 s; no acknowledged
+          # span may be missing and each fault must recover within the run.
           OTLPBENCH_LIVE_RESULT="$RUNNER_TEMP/otlpbench-real-smoke.json" \
           OTLPBENCH_LIVE_BACKPRESSURE_RESULT="$RUNNER_TEMP/otlpbench-real-backpressure.json" \
-            go test -race -count=1 -p 1 -timeout 240s -json \
-            -run '^(TestLiveClickHouseCollectorPipeline|TestLiveClickHouseBackpressureAccounting)$' ./pkg/ingestbench \
+          OTLPBENCH_LIVE_RECOVERY_RESULT="$RUNNER_TEMP/otlpbench-real-recovery.json" \
+            go test -race -count=1 -p 1 -timeout 360s -json \
+            -run '^(TestLiveClickHouseCollectorPipeline|TestLiveClickHouseBackpressureAccounting|TestLiveClickHouseRecovery)$' ./pkg/ingestbench \
             | tee "$RUNNER_TEMP/otlpbench-smoke-tests.jsonl"
           python3 - <<'PY'
           import json
@@ -238,12 +242,26 @@ jobs:
               'TestLiveClickHouseBackpressureAccounting/protobuf-gzip-false',
               'TestLiveClickHouseBackpressureAccounting/json-gzip-true',
               'TestLiveClickHouseBackpressureAccounting/grpc-gzip-true',
+              'TestLiveClickHouseRecovery',
+              'TestLiveClickHouseRecovery/collector-restart',
+              'TestLiveClickHouseRecovery/clickhouse-pause',
           }
           missing = required - passed
           if missing:
               raise SystemExit(f'Real ClickHouse benchmark proofs missing or skipped: {sorted(missing)}')
           print(f'Confirmed {len(required)} real ClickHouse benchmark proofs')
           PY
+      - name: Publish the real smoke result (headline must be withheld for a 1 s run)
+        timeout-minutes: 2
+        working-directory: fi-collector
+        run: |
+          set -o pipefail
+          go run ./cmd/otlpbench publish \
+            --markdown "$RUNNER_TEMP/otlpbench-real-smoke.md" \
+            --json "$RUNNER_TEMP/otlpbench-real-smoke.publication.json" \
+            "$RUNNER_TEMP/otlpbench-real-smoke.json" | tee "$RUNNER_TEMP/otlpbench-publish.txt"
+          grep -q '^headline withheld: .*below the configured minimum' "$RUNNER_TEMP/otlpbench-publish.txt"
+          grep -q '^## Not measured' "$RUNNER_TEMP/otlpbench-real-smoke.md"
       - name: Collect only this smoke project's logs
         if: always()
         run: |
@@ -264,6 +282,9 @@ jobs:
           path: |
             ${{ runner.temp }}/otlpbench-real-smoke.json
             ${{ runner.temp }}/otlpbench-real-backpressure.json
+            ${{ runner.temp }}/otlpbench-real-recovery.json
+            ${{ runner.temp }}/otlpbench-real-smoke.md
+            ${{ runner.temp }}/otlpbench-real-smoke.publication.json
             ${{ runner.temp }}/otlpbench-smoke-tests.jsonl
             ${{ runner.temp }}/otlpbench-services.log
           if-no-files-found: warn
