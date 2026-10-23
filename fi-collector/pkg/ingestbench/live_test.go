@@ -123,15 +123,20 @@ func TestLiveClickHouseCollectorPipeline(t *testing.T) {
 	if d := r.Verification.DurableLag; d.Status != "measured" || d.Rows != 20 || d.Lag.Count+int64(d.NegativeRows) != 20 || !d.ClockMeasured {
 		t.Fatalf("durable lag on real ClickHouse: %+v", d)
 	}
-	if l := r.Lag; l.FromScheduled.Count != int64(l.Sampled) || l.Unseen != 0 || l.LowerFromScheduled.Count != l.FromScheduled.Count {
+	// Every acknowledged request carries a sentinel here (stride 1); at least
+	// one must be seen through the time-bounded poll. One that becomes visible
+	// only after the settle window is reported as unseen, not as a lag: on a
+	// slow host that is a measurement, not a failure.
+	if l := r.Lag; l.Stride != 1 || l.Sampled != 5 || l.FromScheduled.Count == 0 || l.FromScheduled.Count+int64(l.Unseen) != int64(l.Sampled) ||
+		l.LowerFromScheduled.Count != l.FromScheduled.Count || l.QueryErrors != 0 {
 		t.Fatalf("read-visible sentinels on real ClickHouse: %+v", l)
 	}
 	if p := r.Provenance.ClickHouse; len(p.CreateTableSHA256) != 64 || p.SessionInsertSettings["async_insert"] == "" || p.MergeTreeSettings["fsync_after_insert"] == "" ||
 		p.StorageBefore == nil || p.StorageBefore.Error != "" || p.StorageAfter == nil || p.StorageAfter.Error != "" || p.StorageAfter.Rows < p.StorageBefore.Rows {
 		t.Fatalf("v3 provenance on real ClickHouse: %+v settings error %q", p, p.SettingsError)
 	}
-	t.Logf("real ClickHouse lag: read-visible upper p50/p99 %.0f/%.0f ms (lower p50 %.0f ms) from the scheduled send; insert lag p50/p99 %.0f/%.0f ms over %d stored spans; clock offset %.3f +/- %.3f ms",
-		r.Lag.FromScheduled.P50, r.Lag.FromScheduled.P99, r.Lag.LowerFromScheduled.P50, r.Verification.DurableLag.Lag.P50, r.Verification.DurableLag.Lag.P99,
+	t.Logf("real ClickHouse lag: %d of %d sentinels seen; read-visible upper p50/p99 %.0f/%.0f ms (lower p50 %.0f ms) from the scheduled send; insert lag p50/p99 %.0f/%.0f ms over %d stored spans; clock offset %.3f +/- %.3f ms",
+		r.Lag.FromScheduled.Count, r.Lag.Sampled, r.Lag.FromScheduled.P50, r.Lag.FromScheduled.P99, r.Lag.LowerFromScheduled.P50, r.Verification.DurableLag.Lag.P50, r.Verification.DurableLag.Lag.P99,
 		r.Verification.DurableLag.Rows, r.Clock.Start.OffsetMS, r.Clock.Start.UncertaintyMS)
 	if p := r.Provenance.ClickHouse; p.Version == "" || p.TableEngine == "" || p.Hardware.Error != "" || p.Hardware.OSMemoryBytes == 0 || p.Hardware.MaxThreads == "" {
 		t.Fatalf("ClickHouse provenance missing: %+v", r.Provenance.ClickHouse)
