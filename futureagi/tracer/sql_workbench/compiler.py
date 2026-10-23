@@ -104,8 +104,40 @@ count_if sum_if avg_if arg_min arg_max stddev_pop stddev_samp variance_pop
 variance_samp array_size length lower upper substring time_to_str
 str_to_time time_to_unix date_diff date_add timestamp_trunc date_trunc
 row_number dense_rank first_value last_value nullif coalesce
+ntile percent_rank cume_dist
 """.split()
 )
+
+
+# Window functions. A window is accepted only inline (``OVER (...)``) and only
+# over these functions; the OVER clause can reference columns of its own
+# SELECT, so every table it reads is still a scoped catalog source.
+RANKING_WINDOW_FUNCTIONS = (
+    exp.RowNumber,
+    exp.Rank,
+    exp.DenseRank,
+    exp.Ntile,
+    exp.PercentRank,
+    exp.CumeDist,
+)
+OFFSET_WINDOW_FUNCTIONS = (exp.Lag, exp.Lead)
+VALUE_WINDOW_FUNCTIONS = (exp.FirstValue, exp.LastValue)
+AGGREGATE_WINDOW_FUNCTIONS = (exp.Sum, exp.Avg, exp.Count, exp.Min, exp.Max)
+WINDOW_FUNCTIONS = (
+    RANKING_WINDOW_FUNCTIONS
+    + OFFSET_WINDOW_FUNCTIONS
+    + VALUE_WINDOW_FUNCTIONS
+    + AGGREGATE_WINDOW_FUNCTIONS
+)
+# These have no meaning without OVER (ClickHouse rejects them as aggregates).
+WINDOW_ONLY_FUNCTIONS = RANKING_WINDOW_FUNCTIONS + OFFSET_WINDOW_FUNCTIONS
+WINDOW_MESSAGE = (
+    "OVER (...) supports row_number, rank, dense_rank, ntile, percent_rank, "
+    "cume_dist, lag, lead, first_value, last_value, sum, avg, count, min and max."
+)
+# A frame or offset bound larger than this is never useful against the
+# 10,000-row result and the 10M-row read limit.
+MAX_WINDOW_OFFSET = 1_000_000
 
 
 DATE_UNITS = frozenset(
@@ -193,6 +225,78 @@ def _check_in(node):
         raise UnsafeQuery(IN_MESSAGE)
 
 
+def _small_integer(value):
+    """True for a non-negative integer literal no larger than MAX_WINDOW_OFFSET."""
+    return (
+        isinstance(value, exp.Literal)
+        and not value.is_string
+        and value.this.isdigit()
+        and int(value.this) <= MAX_WINDOW_OFFSET
+    )
+
+
+def _check_frame_bound(value, side):
+    if value is None:
+        return
+    if value == "UNBOUNDED" and side in {"PRECEDING", "FOLLOWING"}:
+        return
+    if value == "CURRENT ROW" and side is None:
+        return
+    if _small_integer(value) and side in {"PRECEDING", "FOLLOWING"}:
+        return
+    raise UnsafeQuery(
+        "Window frames take UNBOUNDED, CURRENT ROW or a whole-number offset "
+        f"of at most {MAX_WINDOW_OFFSET:,} rows or units."
+    )
+
+
+def _check_window(node):
+    """Inline windows over the reviewed function set, with bounded frames.
+
+    Ranking functions, lag and lead take no frame: ClickHouse runs lag/lead as
+    lagInFrame/leadInFrame, which honour the frame, so ``compile_query`` gives
+    them the whole partition to keep standard lag/lead results.
+    """
+    function = node.this
+    if node.args.get("alias") or node.args.get("first"):
+        raise UnsafeQuery(
+            "Named windows are not supported; write the window inline as OVER (...)."
+        )
+    if not isinstance(function, WINDOW_FUNCTIONS):
+        raise UnsafeQuery(WINDOW_MESSAGE)
+    if any(isinstance(child, exp.Distinct) for child in function.iter_expressions()):
+        raise UnsafeQuery("DISTINCT is not supported inside a window aggregate.")
+    if any(
+        isinstance(child, exp.Window) for child in node.walk() if child is not node
+    ):
+        raise UnsafeQuery("A window cannot contain another window function.")
+    if isinstance(function, (exp.PercentRank, exp.CumeDist)) and function.expressions:
+        raise UnsafeQuery("percent_rank() and cume_dist() take no arguments.")
+    if isinstance(function, exp.Ntile) and not (
+        _small_integer(function.this) and int(function.this.this) > 0
+    ):
+        raise UnsafeQuery("ntile takes a positive whole number of buckets.")
+    if isinstance(function, OFFSET_WINDOW_FUNCTIONS):
+        offset = function.args.get("offset")
+        if offset is not None and not _small_integer(offset):
+            raise UnsafeQuery(
+                "lag and lead take a whole-number offset of at most "
+                f"{MAX_WINDOW_OFFSET:,} rows."
+            )
+    spec = node.args.get("spec")
+    if spec is None:
+        return
+    if isinstance(function, WINDOW_ONLY_FUNCTIONS):
+        raise UnsafeQuery(
+            "Ranking functions, lag and lead use the whole partition; remove the "
+            "ROWS/RANGE frame."
+        )
+    if spec.args.get("kind") not in {"ROWS", "RANGE"} or spec.args.get("exclude"):
+        raise UnsafeQuery("Window frames support ROWS or RANGE without EXCLUDE.")
+    _check_frame_bound(spec.args.get("start"), spec.args.get("start_side"))
+    _check_frame_bound(spec.args.get("end"), spec.args.get("end_side"))
+
+
 def _check_node(node, *, approved_functions=True):
     """Closed syntax and argument rules shared by validation and verification.
 
@@ -224,6 +328,17 @@ def _check_node(node, *, approved_functions=True):
             raise UnsafeQuery(f"Function {name} is not in the approved catalog.")
     else:
         raise UnsafeQuery(f"SQL construct {type(node).__name__} is not supported.")
+    if approved_functions:
+        # Input rules only: verification re-parses SQLGlot's own rendering,
+        # which spells lag/lead as lagInFrame/leadInFrame with a frame.
+        if isinstance(node, exp.Window):
+            _check_window(node)
+        elif isinstance(node, WINDOW_ONLY_FUNCTIONS) and not (
+            isinstance(node.parent, exp.Window) and node.arg_key == "this"
+        ):
+            raise UnsafeQuery(
+                f"{_function_name(node).lower()} needs an OVER (...) clause."
+            )
     if isinstance(node, exp.Identifier):
         _identifier(node.this)
     if isinstance(node, exp.In):
@@ -385,6 +500,65 @@ def _rename_ctes(tree, cte_links):
         alias.set("this", exp.to_identifier(names[id(cte)]))
 
 
+def _whole_partition():
+    return exp.WindowSpec(
+        kind="ROWS",
+        start="UNBOUNDED",
+        start_side="PRECEDING",
+        end="UNBOUNDED",
+        end_side="FOLLOWING",
+    )
+
+
+def _rewrite_windows(tree):
+    """Standard window results on ClickHouse, which has no lag, lead or cume_dist.
+
+    * lag/lead render as lagInFrame/leadInFrame, which read only the frame; the
+      default frame ends at the current row, so lead would silently return the
+      default for every row. They get the whole partition as their frame, and
+      without an explicit default their argument is made Nullable so a row
+      outside the partition is NULL rather than the type's zero value.
+    * cume_dist (rows up to and including the current row's peers, divided by
+      the partition size) becomes a ratio of two counts over the same
+      PARTITION BY / ORDER BY; the numerator's RANGE frame includes peers.
+    """
+    for window in list(tree.find_all(exp.Window)):
+        function = window.this
+        if isinstance(function, OFFSET_WINDOW_FUNCTIONS):
+            window.set("spec", _whole_partition())
+            if function.args.get("default") is None:
+                # Out of range is NULL, as in standard SQL, not the type's zero.
+                function.set(
+                    "this",
+                    exp.Anonymous(this="toNullable", expressions=[function.this]),
+                )
+        elif isinstance(function, exp.CumeDist):
+            partition = window.args.get("partition_by") or []
+            order = window.args.get("order")
+            peers = exp.Window(
+                this=exp.Count(this=exp.Star()),
+                partition_by=[value.copy() for value in partition],
+                order=order.copy() if order else None,
+                spec=(
+                    exp.WindowSpec(
+                        kind="RANGE",
+                        start="UNBOUNDED",
+                        start_side="PRECEDING",
+                        end="CURRENT ROW",
+                    )
+                    if order
+                    else None
+                ),
+                over="OVER",
+            )
+            total = exp.Window(
+                this=exp.Count(this=exp.Star()),
+                partition_by=[value.copy() for value in partition],
+                over="OVER",
+            )
+            window.replace(exp.Paren(this=exp.Div(this=peers, expression=total)))
+
+
 NAME_NODES = (
     exp.Column,
     exp.Identifier,
@@ -499,6 +673,7 @@ def compile_query(sql: str, scope: Scope) -> str:
     ):
         raise UnsafeQuery(TOO_LARGE)
     _rename_ctes(tree, cte_links)
+    _rewrite_windows(tree)
     parsed, canonical = {}, Counter()
     for table in references:
         alias = table.args.get("alias")

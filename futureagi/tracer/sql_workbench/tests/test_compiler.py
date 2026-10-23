@@ -665,3 +665,115 @@ def test_additional_table_filters_cover_every_grantable_relation(scope):
         for table, predicate in filters.items()
         for name in (table, f"{table}_local")
     }
+
+
+# Window functions: the reviewed set, inline OVER (...) only, bounded ROWS/RANGE
+# frames. The live suite executes these on ClickHouse with expected values.
+WINDOW_QUERIES = [
+    "SELECT session_id, row_number() OVER (PARTITION BY session_id ORDER BY start_time) AS turn FROM spans",
+    "SELECT rank() OVER (ORDER BY cost DESC) AS r, dense_rank() OVER (ORDER BY cost DESC) AS d FROM spans",
+    "SELECT ntile(4) OVER (PARTITION BY model ORDER BY latency_ms) AS quartile FROM spans",
+    "SELECT percent_rank() OVER (ORDER BY latency_ms) AS pr FROM spans",
+    "SELECT cume_dist() OVER (PARTITION BY model ORDER BY latency_ms) AS cd FROM spans",
+    "SELECT lag(latency_ms) OVER (PARTITION BY trace_id ORDER BY start_time) AS prev FROM spans",
+    "SELECT lead(latency_ms, 2, -1) OVER (PARTITION BY trace_id ORDER BY start_time) AS next2 FROM spans",
+    "SELECT first_value(model) OVER (PARTITION BY session_id ORDER BY start_time) AS a, last_value(model) OVER (PARTITION BY session_id ORDER BY start_time ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS b FROM spans",
+    "SELECT sum(cost) OVER (ORDER BY start_time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running FROM spans",
+    "SELECT avg(latency_ms) OVER (PARTITION BY model ORDER BY start_time ROWS BETWEEN 2 PRECEDING AND 2 FOLLOWING) AS smooth FROM spans",
+    "SELECT count() OVER (PARTITION BY model) AS n, min(cost) OVER (PARTITION BY model) AS lo, max(cost) OVER (PARTITION BY model) AS hi FROM spans",
+    "SELECT count() OVER (ORDER BY total_tokens RANGE BETWEEN 100 PRECEDING AND CURRENT ROW) AS near FROM spans",
+    "SELECT e.config_id, rank() OVER (PARTITION BY e.config_id ORDER BY e.score DESC) AS r FROM eval_results AS e JOIN sessions AS s ON e.session_id = s.id",
+    "WITH spend AS (SELECT user_id, sum(cost) AS c FROM spans GROUP BY user_id) SELECT user_id, dense_rank() OVER (ORDER BY c DESC) AS r FROM spend",
+    "SELECT * FROM (SELECT trace_id, row_number() OVER (PARTITION BY trace_id ORDER BY latency_ms DESC) AS r FROM spans WHERE trace_id IN (SELECT toString(trace_id) FROM eval_results)) AS t WHERE r = 1",
+    "SELECT model, sum(sum(cost)) OVER (ORDER BY model) AS cumulative FROM spans GROUP BY model",
+]
+
+
+@pytest.mark.parametrize("query", WINDOW_QUERIES)
+def test_window_functions_compile_with_every_source_scoped(query, scope):
+    compiled = compile_query(query, scope)
+    tree = sqlglot.parse_one(compiled, read="clickhouse")
+    assert any(tree.find_all(exp.Window))
+    physical = [t for t in tree.find_all(exp.Table) if t.db]
+    assert physical and all(t.db == "analytics" for t in physical)
+    assert compiled.count(f"project_id = toUUID('{scope.project_id}')") >= 1
+
+
+def test_lag_and_lead_read_the_whole_partition(scope):
+    """ClickHouse runs lag/lead as lagInFrame/leadInFrame, which honour the
+    frame; with the default frame (ending at the current row) lead would return
+    the default value for every row, so the compiler sets the whole partition."""
+    compiled = compile_query(
+        "SELECT lag(latency_ms) OVER (PARTITION BY trace_id ORDER BY start_time) AS p, "
+        "lead(latency_ms, 2, -1) OVER (ORDER BY start_time) AS n FROM spans",
+        scope,
+    )
+    whole = "ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING"
+    assert (
+        "lagInFrame(toNullable(latency_ms)) OVER "
+        f"(PARTITION BY trace_id ORDER BY start_time {whole})"
+    ) in compiled
+    assert f"leadInFrame(latency_ms, 2, -1) OVER (ORDER BY start_time {whole})" in (
+        compiled
+    )
+
+
+def test_cume_dist_is_a_peer_inclusive_count_ratio(scope):
+    compiled = compile_query(
+        "SELECT cume_dist() OVER (PARTITION BY model ORDER BY latency_ms) AS cd FROM spans",
+        scope,
+    )
+    assert "cume_dist" not in compiled.lower()
+    assert (
+        "(COUNT(*) OVER (PARTITION BY model ORDER BY latency_ms RANGE BETWEEN "
+        "UNBOUNDED PRECEDING AND CURRENT ROW) / COUNT(*) OVER (PARTITION BY model)) AS cd"
+    ) in compiled
+
+
+WINDOW_REJECTIONS = [
+    # Outside the reviewed function set.
+    "SELECT nth_value(cost, 2) OVER (ORDER BY cost) FROM spans",
+    "SELECT uniq(model) OVER () FROM spans",
+    "SELECT quantile(0.5)(cost) OVER () FROM spans",
+    "SELECT lagInFrame(cost) OVER (ORDER BY cost) FROM spans",
+    "SELECT groupArray(cost) OVER () FROM spans",
+    "SELECT countIf(cost > 0) OVER () FROM spans",
+    "SELECT sum(cost) FILTER (WHERE cost > 0) OVER () FROM spans",
+    "SELECT lag(cost) IGNORE NULLS OVER (ORDER BY cost) FROM spans",
+    "SELECT count(DISTINCT model) OVER () FROM spans",
+    # Named windows and nesting.
+    "SELECT row_number() OVER w FROM spans WINDOW w AS (ORDER BY cost)",
+    "SELECT sum(cost) OVER (w ORDER BY cost) FROM spans WINDOW w AS (PARTITION BY model)",
+    "SELECT sum(row_number() OVER ()) OVER () FROM spans",
+    "SELECT row_number() OVER (ORDER BY rank() OVER ()) FROM spans",
+    # Ranking/offset functions need OVER and take no frame or column offsets.
+    "SELECT ntile(4) FROM spans",
+    "SELECT lag(cost) FROM spans",
+    "SELECT row_number() FROM spans",
+    "SELECT rank() OVER (ORDER BY cost ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM spans",
+    "SELECT lead(cost) OVER (ORDER BY cost ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING) FROM spans",
+    "SELECT ntile(0) OVER (ORDER BY cost) FROM spans",
+    "SELECT ntile(total_tokens) OVER (ORDER BY cost) FROM spans",
+    "SELECT lag(cost, latency_ms) OVER (ORDER BY cost) FROM spans",
+    "SELECT lag(cost, 2000000) OVER (ORDER BY cost) FROM spans",
+    "SELECT percent_rank(cost) OVER (ORDER BY cost) FROM spans",
+    # Frames: bounded whole-number offsets only, no EXCLUDE / GROUPS / intervals.
+    "SELECT sum(cost) OVER (ORDER BY cost ROWS BETWEEN latency_ms PRECEDING AND CURRENT ROW) FROM spans",
+    "SELECT sum(cost) OVER (ORDER BY cost ROWS BETWEEN 2000000 PRECEDING AND CURRENT ROW) FROM spans",
+    "SELECT sum(cost) OVER (ORDER BY cost ROWS BETWEEN 1.5 PRECEDING AND CURRENT ROW) FROM spans",
+    "SELECT sum(cost) OVER (ORDER BY start_time RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND CURRENT ROW) FROM spans",
+    "SELECT sum(cost) OVER (ORDER BY cost ROWS BETWEEN (SELECT 1) PRECEDING AND CURRENT ROW) FROM spans",
+    "SELECT sum(cost) OVER (ORDER BY cost ROWS BETWEEN CURRENT ROW AND 3 FOLLOWING EXCLUDE CURRENT ROW) FROM spans",
+    "SELECT sum(cost) OVER (ORDER BY cost GROUPS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM spans",
+    # Tables inside a window still follow every other rule.
+    "SELECT sum(cost) OVER (PARTITION BY id IN spans) FROM spans",
+    "SELECT row_number() OVER (ORDER BY (SELECT name FROM system.tables LIMIT 1)) FROM spans",
+    "SELECT sum(cost) OVER (PARTITION BY dictGet('d', 'a', id)) FROM spans",
+    "SELECT * FROM (SELECT row_number() OVER (ORDER BY id) AS r FROM system.tables) AS t",
+]
+
+
+@pytest.mark.parametrize("query", WINDOW_REJECTIONS)
+def test_windows_outside_the_reviewed_set_are_rejected(query, scope):
+    with pytest.raises(UnsafeQuery):
+        compile_query(query, scope)

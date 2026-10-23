@@ -884,6 +884,8 @@ def test_adversarial_corpus_never_returns_foreign_rows(scoped_clickhouse):
                 + compiler_cases.CLAUSE_SWEEP
                 + compiler_cases.REVIEWED_GRAMMAR
                 + compiler_cases.GRAMMAR_ESCAPES
+                + compiler_cases.WINDOW_QUERIES
+                + compiler_cases.WINDOW_REJECTIONS
                 + [sql for sql, _ in fuzz.variants()]
                 + oracles
             )
