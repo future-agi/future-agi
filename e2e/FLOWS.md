@@ -913,14 +913,14 @@
 ### EVAL-E2E-006 — Jev models are listed and saved on a Community stack without a licence
 
 **Goal:** See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install  
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:170`  
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:171`  
 **Tags:** —
 
 **User steps:**
 
 1. open the evaluator create page on the LLM-As-A-Judge tab
 2. open the model picker and read the Jev group
-3. hover a Jev row
+3. read each Jev row's plan tooltip label
 4. save a Turing-model evaluator through the create API, then switch it to jev-latest through the update API
 5. create a Jev evaluator through the create API
 
@@ -934,12 +934,12 @@
 **Browser observations:**
 
 - the picker lists exactly Jev 1.13 (pinned) then Jev latest, below FutureAGI Models
-- both Jev rows are enabled, prompt for a TypeSafe API key and show no "Not included in your plan" tooltip
+- both Jev rows are enabled, prompt for a TypeSafe API key and carry an empty plan tooltip (a locked row carries "Not included in your plan")
 
 ### EVAL-E2E-007 — choosing a Jev model without a TypeSafe key opens the keys drawer on TypeSafe
 
 **Goal:** Choose a Jev evaluator model before saving a TypeSafe key and land in the keys drawer on TypeSafe  
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:273`  
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:269`  
 **Tags:** —
 
 **User steps:**
@@ -961,7 +961,7 @@
 ### EVAL-E2E-008 — a Jev pass/fail evaluator keeps its model, output type and criteria after reload
 
 **Goal:** Author a Jev pass/fail evaluator in the UI and find its model, output type and criteria intact after reload (TypeSafe key faked in the browser)  
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:344`  
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:340`  
 **Tags:** —
 
 **User steps:**
@@ -984,7 +984,7 @@
 ### EVAL-E2E-009 — a Jev choices evaluator keeps its authored label order and scores after reload
 
 **Goal:** Author a Jev choices evaluator whose labels are not shortest-first and find their order and scores intact after reload (TypeSafe key faked in the browser)  
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:399`  
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:395`  
 **Tags:** —
 
 **User steps:**
@@ -1007,7 +1007,7 @@
 ### EVAL-E2E-010 — a Jev scoring evaluator keeps its four ordered levels after reload
 
 **Goal:** Author a Jev scoring evaluator with four ordered rubric levels and find them intact after reload (TypeSafe key faked in the browser)  
-**Spec:** `flows/evals/jev-evaluator-models.spec.ts:478`  
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:474`  
 **Tags:** —
 
 **User steps:**

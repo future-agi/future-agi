@@ -23,7 +23,9 @@ import { flowAnnotation } from '../../lib/flow-meta';
 const JEV_LABELS = ['Jev 1.13 (pinned)', 'Jev latest'];
 const JEV_MODEL = 'jev-latest';
 const NO_KEY = 'Add your TypeSafe API key';
-// The tooltip a plan-locked row shows (EvaluatorModelRow); Jev rows show none here.
+// The tooltip a plan-locked row shows (EvaluatorModelRow). MUI puts a tooltip's
+// title on the element it wraps as aria-label, so an enabled row's wrapper
+// carries an empty one and a locked row's carries this text.
 const LOCKED = 'Not included in your plan';
 // src/hooks/useCapabilities.js; src/api/model/api-keys.js reads the raw rows of
 // model_hub GetProviderStatusView; KeyCard posts new keys to API_KEYS.
@@ -172,7 +174,7 @@ test('EVAL-E2E-006: Jev models are listed and saved on a Community stack without
     id: 'EVAL-E2E-006', area: 'evals',
     userGoal: 'See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install',
     steps: ['open the evaluator create page on the LLM-As-A-Judge tab',
-      'open the model picker and read the Jev group', 'hover a Jev row',
+      'open the model picker and read the Jev group', "read each Jev row's plan tooltip label",
       'save a Turing-model evaluator through the create API, then switch it to jev-latest through the update API',
       'create a Jev evaluator through the create API'],
     backendChecks: [
@@ -183,11 +185,11 @@ test('EVAL-E2E-006: Jev models are listed and saved on a Community stack without
     ],
     browserChecks: [
       'the picker lists exactly Jev 1.13 (pinned) then Jev latest, below FutureAGI Models',
-      'both Jev rows are enabled, prompt for a TypeSafe API key and show no "Not included in your plan" tooltip',
+      'both Jev rows are enabled, prompt for a TypeSafe API key and carry an empty plan tooltip (a locked row carries "Not included in your plan")',
     ],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
-  test.setTimeout(240_000); // Three UI_READY browser stages (draft, picker, hover) 180 + API/PG reads and headroom 60.
+  test.setTimeout(240_000); // Three UI_READY browser stages (draft, picker, labels) 180 + API/PG reads and headroom 60.
   page.setDefaultTimeout(UI_READY);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
 
@@ -215,14 +217,14 @@ test('EVAL-E2E-006: Jev models are listed and saved on a Community stack without
       await ui(row.getByText(label, { exact: true })).toBeVisible();
       await ui(row.getByText(NO_KEY, { exact: true })).toBeVisible();
       await ui(row).toBeEnabled();
+      // An enabled row's tooltip has no title, so hovering it opens nothing.
+      await ui(row.locator('xpath=..')).toHaveAttribute('aria-label', '');
     }
     const turingTop = (await picker.getByText('FutureAGI Models', { exact: true }).boundingBox())!.y;
     const jevTop = (await picker.getByText('Jev models', { exact: true }).boundingBox())!.y;
     expect(jevTop).toBeGreaterThan(turingTop);
     await testInfo.attach('community-picker', { body: await page.screenshot(), contentType: 'image/png' });
-    // An enabled row has an empty title, so hovering it opens no plan tooltip.
-    await rows.nth(1).hover();
-    await ui(page.getByRole('tooltip', { name: LOCKED, exact: true })).toHaveCount(0);
+    await ui(picker.getByLabel(LOCKED, { exact: true })).toHaveCount(0);
   });
 
   const mapping = { revision: 'jev-map-v1', question_type: 'noul',
@@ -516,7 +518,7 @@ test('EVAL-E2E-010: a Jev scoring evaluator keeps its four ordered levels after 
     await testInfo.attach('stored', { contentType: 'application/json', body: JSON.stringify({ row, versions }) });
     expectPublishedJev(row, versions, actor);
     expect(row.output_type_normalized).toBe('percentage');
-    expect(row.choice_scores ?? {}).toEqual({});
+    expect(row.choice_scores).toBeNull();
     expect(row.config.jev_mapping).toMatchObject({ question_type: 'score', score: { levels }, pass: null, choice: null });
   });
 
