@@ -1,10 +1,12 @@
 """Application operations shared by REST, MCP and saved dashboard queries."""
 
 import csv
+import hashlib
 import io
+import json
 import os
 import time
-from datetime import timedelta
+from datetime import UTC, timedelta
 from uuid import UUID
 
 from django.conf import settings
@@ -17,15 +19,16 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.dashboard import Dashboard, DashboardWidget
 from tracer.models.sql_query import SavedSQLQuery, SQLExecution
 
-from .access import AccessDenied, authorize
+from .access import AccessDenied, authorization_fingerprint, authorize
 from .catalog import (
+    CATALOG_VERSION,
     EVAL_CONFIG_LIMIT_MESSAGE,
     MAX_CONFIGS,
     EvalConfigLimitExceeded,
     Scope,
 )
-from .compiler import MAX_RESULT_BYTES, compile_query, validate
-from .runner import QueryUnavailable, connection_config
+from .compiler import MAX_RESULT_BYTES, MAX_RESULT_ROWS, compile_query, validate
+from .runner import QUERY_SETTINGS, QueryUnavailable, connection_config
 
 
 class AdmissionFull(Exception):
@@ -47,6 +50,10 @@ EXECUTION_SECONDS = 45
 # slot stays held either way until that confirmation or the execution deadline.
 CANCEL_CONFIRM_SECONDS = 3.0
 CANCEL_POLL_SECONDS = 0.2
+# Result reuse: an identical request by the same person within this many
+# seconds returns their completed result without a new scan (0 turns it off).
+RESULT_CACHE_SECONDS = 60
+MAX_RESULT_CACHE_SECONDS = 3600
 
 
 def active_filter(now):
@@ -138,11 +145,100 @@ def query_scope(actor, project, start, end, sql):
     )
 
 
-def submit(actor, *, project_id, sql, start, end):
+def result_cache_seconds():
+    value = getattr(
+        settings, "SQL_WORKBENCH_RESULT_CACHE_SECONDS", RESULT_CACHE_SECONDS
+    )
+    if type(value) is not int or not 0 <= value <= MAX_RESULT_CACHE_SECONDS:
+        raise QueryUnavailable("SQL workbench result reuse must be 0 to 3,600 seconds.")
+    return value
+
+
+def result_cache_key(actor, project, scope, sql):
+    """Everything a result depends on, and everything its reader's access rests on.
+
+    The person (and organization, workspace and project), their current
+    membership rows, the catalog version, the query as parsed and re-rendered
+    (so whitespace, comments and keyword case do not matter), the window
+    rounded down to the minute, the evaluation configurations in scope, the
+    source database and store, and the server limits. Any change is a miss.
+    """
+
+    def minute(value):
+        return value.astimezone(UTC).replace(second=0, microsecond=0).isoformat()
+
+    tree, _ = validate(sql)
+    payload = {
+        "catalog_version": CATALOG_VERSION,
+        "actor": [
+            str(actor.user_id),
+            str(actor.organization_id),
+            str(actor.workspace_id),
+        ],
+        "project": str(project.id),
+        "access": authorization_fingerprint(actor),
+        "sql": tree.sql(dialect="clickhouse", comments=False),
+        "window": [minute(scope.start), minute(scope.end)],
+        "eval_configs": sorted(str(value) for value in scope.eval_config_ids),
+        "deleted_eval_configs": sorted(
+            str(value) for value in scope.deleted_eval_config_ids
+        ),
+        "eval_table": scope.eval_table,
+        "database": scope.database,
+        # A deployment can switch stores or service principals while snapshots
+        # remain in PostgreSQL. Never reuse the previous connection's data.
+        "connection": [
+            settings.CLICKHOUSE_V2.get("CH25_HOST"),
+            int(settings.CLICKHOUSE_V2.get("CH25_TCP_PORT") or 9000),
+            os.environ.get("SQL_WORKBENCH_CH_USER", ""),
+            os.environ.get("SQL_WORKBENCH_CH_SECURE", "false").lower() == "true",
+        ],
+        "derived_metrics": scope.derived_metrics_enabled,
+        "limits": sorted((key, str(value)) for key, value in QUERY_SETTINGS.items()),
+        "result_limits": [MAX_RESULT_ROWS, MAX_RESULT_BYTES],
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def reusable_result(actor, project, key, now):
+    """The person's own completed, unexpired result for this key, if fresh."""
+    seconds = result_cache_seconds()
+    if not seconds or not key:
+        return None
+    return (
+        SQLExecution.objects.filter(
+            cache_key=key,
+            project_id=project.id,
+            organization_id=actor.organization_id,
+            workspace_id=actor.workspace_id,
+            created_by_id=actor.user_id,
+            state="succeeded",
+            finished_at__gte=now - timedelta(seconds=seconds),
+            expires_at__gt=now,
+        )
+        .order_by("-finished_at")
+        .first()
+    )
+
+
+def submit(actor, *, project_id, sql, start, end, reuse=True):
     project = authorize(actor, project_id)
-    compile_query(sql, query_scope(actor, project, start, end, sql))
+    scope = query_scope(actor, project, start, end, sql)
+    compile_query(sql, scope)
     connection_config()  # Fail before admitting jobs on unconfigured installations.
     now = timezone.now()
+    key = (
+        result_cache_key(actor, project, scope, sql)
+        if reuse and result_cache_seconds()
+        else ""
+    )
+    # Reuse takes no admission slot, quota or scan: the result already exists
+    # and belongs to this person under the same access and catalog.
+    reused = reusable_result(actor, project, key, now)
+    if reused is not None:
+        return reused
     with transaction.atomic():
         if connection.vendor == "postgresql":
             with connection.cursor() as cursor:
@@ -204,6 +300,7 @@ def submit(actor, *, project_id, sql, start, end):
             end=end,
             deadline=now + timedelta(seconds=QUEUE_SECONDS),
             expires_at=now + timedelta(hours=24),
+            cache_key=key,
         )
 
     def dispatch():

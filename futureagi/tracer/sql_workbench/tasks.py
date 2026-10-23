@@ -16,7 +16,13 @@ from .catalog import (
     additional_table_filters,
 )
 from .runner import QueryCancelled, QueryUnavailable, run
-from .service import EXECUTION_SECONDS, confirm_stopped, query_scope
+from .service import (
+    EXECUTION_SECONDS,
+    confirm_stopped,
+    query_scope,
+    result_cache_key,
+    result_cache_seconds,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +50,15 @@ def execute_sql(job_id):
         project = authorize(actor, job.project_id)
         scope = query_scope(actor, project, job.start, job.end, job.sql)
         sql = compile_query(job.sql, scope)
+        # Admission may have preceded a membership/catalog/store change. Such
+        # a job can still run under current access, but cannot populate the
+        # original admission key with a result produced under different scope.
+        cache_key = job.cache_key
+        if cache_key and (
+            not result_cache_seconds()
+            or result_cache_key(actor, project, scope, job.sql) != cache_key
+        ):
+            cache_key = ""
 
         def cancelled():
             return not SQLExecution.objects.filter(
@@ -54,9 +69,17 @@ def execute_sql(job_id):
             sql, job.id, cancelled, table_filters=additional_table_filters(scope)
         )
         # Revocation during execution must not publish a previously admitted result.
-        authorize(actor, job.project_id)
+        project = authorize(actor, job.project_id)
+        if cache_key:
+            completed_scope = query_scope(actor, project, job.start, job.end, job.sql)
+            if (
+                not result_cache_seconds()
+                or result_cache_key(actor, project, completed_scope, job.sql) != cache_key
+            ):
+                cache_key = ""
         SQLExecution.objects.filter(id=job_id, state="running").update(
             state="succeeded",
+            cache_key=cache_key,
             result=result,
             output_bytes=result["result_bytes"],
             finished_at=timezone.now(),

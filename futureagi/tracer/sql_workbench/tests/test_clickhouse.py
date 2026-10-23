@@ -1348,3 +1348,437 @@ def test_service_cancel_holds_the_slot_until_the_native_scan_has_stopped(
     finally:
         if created:
             client.execute(f"DROP USER {principal}")
+
+
+def _live_people(scope, count):
+    """PostgreSQL organization, workspace, project and ``count`` members whose
+    ids match the seeded ClickHouse scope, for end-to-end service tests."""
+    from accounts.models.organization import Organization
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from accounts.models.workspace import Workspace, WorkspaceMembership
+    from model_hub.models.ai_model import AIModel
+    from tracer.models.project import Project
+    from tracer.sql_workbench.access import Actor
+
+    org = Organization.objects.create(id=scope.organization_id, name=f"sql-{uuid4()}")
+    workspace = None
+    actors = []
+    for _ in range(count):
+        user = User(
+            id=uuid4(),
+            email=f"sql-{uuid4()}@example.test",
+            name="SQL",
+            organization=org,
+        )
+        User.objects.bulk_create([user])
+        if workspace is None:
+            workspace = Workspace(
+                id=scope.workspace_id,
+                name="sql-live",
+                organization=org,
+                created_by=user,
+            )
+            Workspace.no_workspace_objects.bulk_create([workspace])
+        membership = OrganizationMembership(
+            id=uuid4(), user=user, organization=org, level=3
+        )
+        OrganizationMembership.no_workspace_objects.bulk_create([membership])
+        WorkspaceMembership.no_workspace_objects.bulk_create(
+            [
+                WorkspaceMembership(
+                    id=uuid4(),
+                    user=user,
+                    workspace=workspace,
+                    level=3,
+                    organization_membership=membership,
+                )
+            ]
+        )
+        actors.append(Actor(user.id, org.id, workspace.id))
+    project = Project(
+        id=scope.project_id,
+        name="sql-live",
+        organization=org,
+        workspace=workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+    )
+    Project.no_workspace_objects.bulk_create([project])
+    # Service scope comes from PostgreSQL, not the ClickHouse fixture's Scope.
+    # Without these owners, every eval join would pass over an empty source.
+    from tracer.models.custom_eval_config import CustomEvalConfig
+    from tracer.tests.eval_task_factories import make_template
+
+    template = make_template(organization=org, workspace=workspace)
+    CustomEvalConfig.no_workspace_objects.bulk_create(
+        [
+            CustomEvalConfig(
+                id=config_id,
+                project=project,
+                eval_template=template,
+                name=f"sql-{config_id}",
+            )
+            for config_id in scope.eval_config_ids
+        ]
+    )
+    return actors, project
+
+
+def _until_done(job_id, seconds=30):
+    import time
+
+    from tracer.models.sql_query import SQLExecution
+
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        job = SQLExecution.objects.get(id=job_id)
+        if job.state not in ("queued", "running"):
+            return job
+        time.sleep(0.01)
+    raise AssertionError("query did not finish")
+
+
+@pytest.mark.django_db(transaction=True)
+def test_result_reuse_answers_without_a_scan_and_only_for_the_same_person(
+    scoped_clickhouse, monkeypatch
+):
+    """End to end on real PostgreSQL and ClickHouse: the first submit runs the
+    real worker and runner on the locked principal; an identical submit by
+    the same person returns that completed result without dispatching a scan,
+    while a colleague in the same project runs their own. Prints the measured
+    submit-to-rows latency of both paths."""
+    import threading
+    import time
+
+    from django.test import override_settings
+
+    from tracer.sql_workbench import service, tasks
+
+    client, scope, _ = scoped_clickhouse
+    actors, project = _live_people(scope, 2)
+    principal, password, statements = _service_principal(client, scope)
+    created = False
+    workers = []
+
+    def dispatch(args, **_):
+        worker = threading.Thread(target=tasks.execute_sql, args=args, daemon=True)
+        workers.append(worker)
+        worker.start()
+
+    sql = "SELECT model, count() AS n FROM spans GROUP BY model ORDER BY model"
+    try:
+        for statement in statements:
+            client.execute(statement)
+            created = True
+        monkeypatch.setenv("SQL_WORKBENCH_CH_USER", principal)
+        monkeypatch.setenv("SQL_WORKBENCH_CH_PASSWORD", password)
+        monkeypatch.setenv("SQL_WORKBENCH_CH_SECURE", "false")
+        monkeypatch.setattr(tasks.execute_sql, "apply_async", dispatch)
+        with override_settings(
+            CLICKHOUSE_V2=_service_settings(client, scope.database),
+            CH25_EVAL_LOGGER_TABLE=scope.eval_table,
+            SQL_WORKBENCH_RESULT_CACHE_SECONDS=60,
+        ):
+            owner, colleague = actors
+            started = time.monotonic()
+            first = service.submit(
+                owner, project_id=project.id, sql=sql, start=scope.start, end=scope.end
+            )
+            first = _until_done(first.id)
+            uncached = time.monotonic() - started
+            assert first.state == "succeeded", first.error
+            assert len(workers) == 1
+            started = time.monotonic()
+            again = service.submit(
+                owner,
+                project_id=project.id,
+                sql=sql.lower(),
+                start=scope.start,
+                end=scope.end,
+            )
+            cached = time.monotonic() - started
+            assert again.id == first.id and again.state == "succeeded"
+            assert service.snapshot(again)["result"]["rows"] == first.result["rows"]
+            assert len(workers) == 1  # no new scan was dispatched
+            peer = _until_done(
+                service.submit(
+                    colleague,
+                    project_id=project.id,
+                    sql=sql,
+                    start=scope.start,
+                    end=scope.end,
+                ).id
+            )
+            assert peer.id != first.id and len(workers) == 2
+            assert peer.result["rows"] == first.result["rows"]
+            for worker in workers:
+                worker.join(timeout=15)
+            assert cached < uncached
+            print(
+                f"result reuse: uncached submit-to-rows {uncached * 1000:.0f} ms "
+                f"(runner {first.result['elapsed_ms']} ms), reused {cached * 1000:.1f} ms"
+            )
+    finally:
+        if created:
+            client.execute(f"DROP USER {principal}")
+
+
+@pytest.mark.django_db(transaction=True)
+def test_capability_matrix_is_regenerated_live(scoped_clickhouse, monkeypatch):
+    """Every case of scripts/sql_workbench/capability_check.py through the
+    production path on real PostgreSQL and ClickHouse, each status asserted
+    against its expectation. Writes the matrix to SQL_CAPABILITY_MATRIX_OUT
+    when set (the script's output)."""
+    import csv
+    import importlib.util
+    import io
+    import json
+    import os
+    import threading
+    from pathlib import Path
+
+    import pyarrow.parquet as pq
+    import sqlglot
+    from django.test import override_settings
+    from django.utils import timezone as django_timezone
+
+    from tracer.models.sql_query import SQLExecution
+    from tracer.sql_workbench import service, tasks
+    from tracer.sql_workbench.catalog import CATALOG_VERSION, CatalogUnavailable
+    from tracer.sql_workbench.compiler import UnsafeQuery
+
+    script = Path(__file__).resolve().parents[3] / (
+        "scripts/sql_workbench/capability_check.py"
+    )
+    spec = importlib.util.spec_from_file_location("sql_capability_check", script)
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+
+    client, scope, ids = scoped_clickhouse
+    (actor,), project = _live_people(scope, 1)
+    # Match the span-targeted joins as well as the session-targeted base row.
+    # Both target kinds are owned; the fixture also has foreign/null sentinels.
+    created_at = scope.end - timedelta(minutes=1)
+    client.execute(
+        f"INSERT INTO {scope.database}.{scope.eval_table} "
+        "(id,trace_id,observation_span_id,custom_eval_config_id,target_type,"
+        "output_float,created_at) VALUES",
+        [
+            (
+                uuid4(),
+                ids["trace"],
+                ids["span"],
+                scope.eval_config_ids[0],
+                "span",
+                0.75,
+                created_at,
+            )
+        ],
+    )
+    client.execute(
+        f"INSERT INTO {scope.database}.model_hub_score "
+        "(id,organization_id,workspace_id,tracer_project_id,trace_id,"
+        "observation_span_id,label_id,value,created_at) VALUES",
+        [
+            (
+                uuid4(),
+                scope.organization_id,
+                scope.workspace_id,
+                scope.project_id,
+                ids["trace"],
+                ids["span"],
+                uuid4(),
+                "approved",
+                created_at,
+            )
+        ],
+    )
+    principal, password, statements = _service_principal(client, scope)
+    created = False
+    workers, held = [], []
+
+    def dispatch(args, **_):
+        if held:
+            return  # Leave this one queued: the cancel case needs it.
+        worker = threading.Thread(target=tasks.execute_sql, args=args, daemon=True)
+        workers.append(worker)
+        worker.start()
+
+    def submit(sql):
+        return service.submit(
+            actor, project_id=project.id, sql=sql, start=scope.start, end=scope.end
+        )
+
+    def execute(sql):
+        try:
+            job = submit(sql)
+        except (UnsafeQuery, CatalogUnavailable) as exc:
+            return {"status": checker.REJECTED, "reason": str(exc)}
+        job = _until_done(job.id)
+        if job.state == "succeeded":
+            if not job.result["row_count"]:
+                return {
+                    "status": checker.FAILED,
+                    "reason": "Seeded query returned no rows",
+                }
+            return {"status": checker.SUPPORTED, "rows": job.result["row_count"]}
+        return {"status": checker.FAILED, "reason": job.error}
+
+    results = {}
+    try:
+        for statement in statements:
+            client.execute(statement)
+            created = True
+        monkeypatch.setenv("SQL_WORKBENCH_CH_USER", principal)
+        monkeypatch.setenv("SQL_WORKBENCH_CH_PASSWORD", password)
+        monkeypatch.setenv("SQL_WORKBENCH_CH_SECURE", "false")
+        monkeypatch.setattr(tasks.execute_sql, "apply_async", dispatch)
+        with override_settings(
+            CLICKHOUSE_V2=_service_settings(client, scope.database),
+            CH25_EVAL_LOGGER_TABLE=scope.eval_table,
+            SQL_WORKBENCH_RESULT_CACHE_SECONDS=60,
+        ):
+            for case_id, _, sql, _ in checker.QUERIES:
+                results[case_id] = execute(sql)
+
+            def lifecycle(case_id, check):
+                try:
+                    results[case_id] = check()
+                except Exception as exc:  # recorded, then asserted below
+                    results[case_id] = {
+                        "status": checker.FAILED,
+                        "reason": f"{type(exc).__name__}: {exc}",
+                    }
+
+            lifecycle_sql = "SELECT name, count() AS n FROM spans GROUP BY name"
+
+            def async_lifecycle():
+                # The scan runs on a worker thread, not inside submit; the
+                # owner then reads the result by polling the execution id.
+                before = len(workers)
+                job = submit(lifecycle_sql)
+                _until_done(job.id)
+                polled = service.snapshot(service.execution(actor, project.id, job.id))
+                ok = len(workers) == before + 1 and polled["state"] == "succeeded"
+                return {
+                    "status": checker.SUPPORTED if ok else checker.FAILED,
+                    "rows": polled["result"].get("row_count"),
+                    "reason": "" if ok else polled["state"],
+                }
+
+            def cancel_queued():
+                held.append(True)
+                try:
+                    job = submit("SELECT count() AS n FROM traces")
+                finally:
+                    held.clear()
+                snapshot = service.cancel(actor, project.id, job.id)
+                still_active = SQLExecution.objects.filter(
+                    service.active_filter(django_timezone.now()), id=job.id
+                ).exists()
+                ok = snapshot["state"] == "cancelled" and not still_active
+                return {"status": checker.SUPPORTED if ok else checker.FAILED}
+
+            def saved_query():
+                saved = service.save_query(
+                    actor,
+                    project_id=project.id,
+                    name="capability check",
+                    sql="SELECT model, count() AS n FROM spans GROUP BY model",
+                    visibility="project",
+                    chart={"type": "table"},
+                    window_hours=1,
+                )
+                again = service.saved_query(actor, project.id, saved.id)
+                job = _until_done(submit(again.sql).id)
+                ok = job.state == "succeeded"
+                return {
+                    "status": checker.SUPPORTED if ok else checker.FAILED,
+                    "rows": job.result.get("row_count"),
+                }
+
+            exported = _until_done(
+                submit("SELECT id, name, latency_ms FROM spans ORDER BY id").id
+            )
+
+            def export_csv():
+                payload, kind = service.export_result(
+                    actor, project.id, exported.id, "csv"
+                )
+                rows = list(csv.reader(io.StringIO(payload.decode("utf-8-sig"))))
+                ok = (
+                    kind == "text/csv" and len(rows) - 1 == exported.result["row_count"]
+                )
+                return {
+                    "status": checker.SUPPORTED if ok else checker.FAILED,
+                    "rows": len(rows) - 1,
+                }
+
+            def export_parquet():
+                payload, _ = service.export_result(
+                    actor, project.id, exported.id, "parquet"
+                )
+                table = pq.read_table(io.BytesIO(payload))
+                ok = table.num_rows == exported.result["row_count"]
+                return {
+                    "status": checker.SUPPORTED if ok else checker.FAILED,
+                    "rows": table.num_rows,
+                }
+
+            def estimate():
+                value = service.estimate(
+                    actor,
+                    project_id=project.id,
+                    sql="SELECT count() FROM spans",
+                    start=scope.start,
+                    end=scope.end,
+                )
+                ok = value["status"] == "ok" and value["exceeds_scan_bound"] is False
+                return {
+                    "status": checker.SUPPORTED if ok else checker.FAILED,
+                    "reason": "" if ok else str(value),
+                }
+
+            def result_reuse():
+                before = len(workers)
+                first = _until_done(submit(lifecycle_sql + " ORDER BY name").id)
+                again = submit(lifecycle_sql.lower() + " ORDER BY name")
+                ok = again.id == first.id and len(workers) == before + 1
+                return {"status": checker.SUPPORTED if ok else checker.FAILED}
+
+            for case_id, check in [
+                ("async-lifecycle", async_lifecycle),
+                ("cancel-queued", cancel_queued),
+                ("saved-query", saved_query),
+                ("export-csv", export_csv),
+                ("export-parquet", export_parquet),
+                ("pre-run-estimate", estimate),
+                ("result-reuse", result_reuse),
+            ]:
+                lifecycle(case_id, check)
+            for worker in workers:
+                worker.join(timeout=15)
+        version = client.execute("SELECT version()")[0][0]
+        report = checker.matrix(
+            results,
+            {
+                "clickhouse": version,
+                "sqlglot": sqlglot.__version__,
+                "catalog_version": CATALOG_VERSION,
+            },
+        )
+        target = os.environ.get("SQL_CAPABILITY_MATRIX_OUT")
+        if target:
+            Path(target).write_text(json.dumps(report, indent=1))
+        mismatched = {
+            case["id"]: (case["status"], case["reason"])
+            for case in report["cases"]
+            if case["status"] != case["expected"]
+        }
+        assert mismatched == {}
+        assert report["matches_expectations"]
+        print("capability matrix:", json.dumps(report["summary"], sort_keys=True))
+    finally:
+        if created:
+            client.execute(f"DROP USER {principal}")

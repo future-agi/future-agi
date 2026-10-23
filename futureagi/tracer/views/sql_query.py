@@ -154,6 +154,9 @@ class SQLQueryViewSet(SQLViewMixin, ViewSet):
             sql=saved.sql,
             start=start,
             end=end,
+            # Saved/dashboard runs have always created a fresh personal
+            # execution, even if the editor just ran this same definition.
+            reuse=False,
         )
         return Response(service.snapshot(job), status=202)
 

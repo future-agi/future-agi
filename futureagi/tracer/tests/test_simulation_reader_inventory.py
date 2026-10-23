@@ -1805,6 +1805,28 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
         ),
     },
+    "tracer.sql_workbench.examples": {
+        "EXAMPLES": filed(
+            PROJECT_SET,
+            why=(
+                "editor examples are virtual-catalog SQL, not directly executed "
+                "physical reads; Run goes through service.submit and "
+                "access.authorize's simulation-excluding Project.no_workspace_objects "
+                "before the compiler builds scoped sources"
+            ),
+        ),
+    },
+    "scripts.sql_workbench.capability_check": {
+        "QUERIES": filed(
+            PROJECT_SET,
+            why=(
+                "fixed test corpus executed by the isolated ClickHouse capability "
+                "test through service.submit and the real worker; project ids "
+                "are authorized using the same simulation-excluding project "
+                "manager as a normal workbench run"
+            ),
+        ),
+    },
     "tracer.sql_workbench.runner": {
         "derived_metrics_availability": filed(
             NO_SPAN_TABLE,
