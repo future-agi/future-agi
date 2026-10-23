@@ -73,6 +73,7 @@ from .views import (
     AgentDefinitionDetailView,
     AgentDefinitionOperationsViewSet,
     AgentDefinitionView,
+    AgentRunsView,
     CreateAgentDefinitionView,
     CreateRunTestView,
     CreateScenarioView,
@@ -90,6 +91,7 @@ from .views import (
     SimulatorAgentDetailView,
     SimulatorAgentListView,
 )
+from .views.agent_setup import StoredAgentView
 from .views.agent_version import (
     ActivateAgentVersionView,
     AgentVersionCallExecutionView,
@@ -124,6 +126,7 @@ from .views.run_results_v3 import (
     RunAnalyticsV3View,
     RunCallsV3View,
     RunExportV3View,
+    RunTracesV3View,
 )
 from .views.scenarios import EditScenarioPromptsView
 
@@ -169,6 +172,11 @@ urlpatterns = [
         "v3/test-executions/<uuid:test_execution_id>/calls/",
         RunCallsV3View.as_view(),
         name="v3-test-execution-calls",
+    ),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/traces/",
+        RunTracesV3View.as_view(),
+        name="v3-test-execution-traces",
     ),
     path(
         "v3/call-executions/<uuid:call_execution_id>/",
@@ -257,6 +265,11 @@ urlpatterns = [
         name="agent-definitions-detail",
     ),
     path(
+        "agent-definitions/<uuid:agent_id>/runs/",
+        AgentRunsView.as_view(),
+        name="agent-definitions-runs",
+    ),
+    path(
         "agent-definitions/<uuid:agent_id>/edit/",
         EditAgentDefinitionView.as_view(),
         name="agent-definitions-edit",
@@ -306,6 +319,11 @@ urlpatterns = [
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/call-executions/",
         AgentVersionCallExecutionView.as_view(),
         name="agent-versions-call-executions",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/agent/",
+        StoredAgentView.as_view(),
+        name="agent-versions-stored-agent",
     ),
     # Simulator Agent API endpoints
     path(

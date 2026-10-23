@@ -8,7 +8,12 @@ from pydantic import BaseModel as PydanticBaseModel
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
-from tfc.utils.base_model import BaseModel
+from tfc.utils.base_model import (
+    AllObjectsManager,
+    BaseModel,
+    BaseModelManager,
+    NoWorkspaceFilterManager,
+)
 
 PROJECT_TYPES = (
     ("experiment", "Experiment"),
@@ -24,6 +29,24 @@ class ProjectSourceChoices(Enum):
     @classmethod
     def get_choices(cls):
         return [(tag.value, tag.name.replace("_", " ").title()) for tag in cls]
+
+
+class _WithoutSimulationProjects:
+    # The project managers leave out simulation projects; with_simulation does not.
+    def get_queryset(self):
+        return super().get_queryset().filter(simulation_agent__isnull=True)
+
+
+class ProjectManager(_WithoutSimulationProjects, BaseModelManager):
+    pass
+
+
+class ProjectAllObjectsManager(_WithoutSimulationProjects, AllObjectsManager):
+    pass
+
+
+class ProjectNoWorkspaceManager(_WithoutSimulationProjects, NoWorkspaceFilterManager):
+    pass
 
 
 class Project(BaseModel):
@@ -68,6 +91,18 @@ class Project(BaseModel):
         default=ProjectSourceChoices.PROTOTYPE.value,
     )
     tags = models.JSONField(default=list, blank=True)
+    simulation_agent = models.OneToOneField(
+        "simulate.AgentDefinition",
+        on_delete=models.CASCADE,
+        related_name="simulation_project",
+        null=True,
+        blank=True,
+    )
+
+    objects = ProjectManager()
+    all_objects = ProjectAllObjectsManager()
+    no_workspace_objects = ProjectNoWorkspaceManager()
+    with_simulation = models.Manager()
 
     def clean(self):
         super().clean()
@@ -83,6 +118,7 @@ class Project(BaseModel):
 
     class Meta:
         db_table = "tracer_project"
+        default_manager_name = "objects"
         ordering = ["-updated_at"]
         constraints = [
             models.UniqueConstraint(

@@ -7,6 +7,7 @@ from django.core.cache import cache
 from django.db import DatabaseError, InterfaceError
 from django.db.models import Q
 from django.utils import timezone
+from django.utils.crypto import constant_time_compare
 from django_redis.exceptions import ConnectionInterrupted
 from drf_yasg.utils import swagger_auto_schema
 from redis.exceptions import RedisError
@@ -106,7 +107,7 @@ def manage_redis_key(request):
         # Verify access token
         data = request.validated_data
         access_token_id = data.get("access_token_id")
-        if access_token_id != settings.SECRET_KEY:
+        if not constant_time_compare(access_token_id or "", settings.SECRET_KEY):
             return gm.bad_request("Invalid or expired token")
 
         key = data.get("key")

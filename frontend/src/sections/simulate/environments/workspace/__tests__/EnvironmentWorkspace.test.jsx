@@ -93,6 +93,14 @@ const BUILDING_JOB = {
   stage_outputs: [],
 };
 
+// The completed job's environment detail before the build authored a contract:
+// it loads, but every section is still empty, so the job poll fills the page.
+const DETAIL_NOT_AUTHORED = {
+  id: "job-done",
+  overview: { id: "job-done", name: "Done Environment" },
+  contract: null,
+};
+
 const EXECUTIONS = {
   results: [
     {
@@ -184,10 +192,17 @@ describe("EnvironmentWorkspace route shell", () => {
     // The Runs-tab summary reads the executions list; the run DETAIL reads the
     // v3 run-results contract. Route each to its own shape so the full-page
     // RunDetail can resolve its identity header. The environment detail
-    // (GET /harness-environments/{id}/) 404s, so these tests exercise the
-    // job-poll path; answering it with the executions list would make every
-    // unknown id resolve to a garbage environment.
+    // (GET /harness-environments/{id}/) answers for the two known jobs with no
+    // contract authored, so these tests exercise the job-poll path; any other
+    // id 404s, since answering it would make every unknown id resolve to a
+    // garbage environment.
     axios.get.mockImplementation((url) => {
+      const known = url.match(/\/harness-environments\/(job-done|job-build)\/$/);
+      if (known) {
+        return Promise.resolve({
+          data: { ...DETAIL_NOT_AUTHORED, id: known[1], overview: { id: known[1] } },
+        });
+      }
       if (/\/harness-environments\/[^/]+\/$/.test(url)) {
         return Promise.reject(Object.assign(new Error("Not found"), { statusCode: 404 }));
       }
@@ -237,6 +252,19 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(screen.queryByText("Pre-flight")).toBeNull();
   });
 
+  it("shows the app loader, not a blank page, while the environment is being resolved", async () => {
+    getHarnessJob.mockReturnValue(new Promise(() => {}));
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url) =>
+      /\/harness-environments\/job-pending\/$/.test(url) ? new Promise(() => {}) : base(url),
+    );
+
+    renderWorkspace("/dashboard/simulate/environments/job-pending");
+
+    expect(await screen.findByText("Preparing for liftoff")).toBeInTheDocument();
+    expect(screen.queryByText("Environment not found")).toBeNull();
+  });
+
   it("shows the not-found state for an unknown id", async () => {
     // The axios interceptor rejects with statusCode (not response.status).
     const err = Object.assign(new Error("job not found"), { statusCode: 404 });
@@ -258,6 +286,69 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(await screen.findByText(/Couldn.t load this environment/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.queryByText("Environment not found")).toBeNull();
+  });
+
+  it("offers a retry instead of half-filled tabs when the environment detail fails", async () => {
+    getHarnessJob.mockResolvedValue(COMPLETED_JOB);
+    let detailCalls = 0;
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url) => {
+      if (/\/harness-environments\/job-done\/$/.test(url)) {
+        detailCalls += 1;
+        // Fails until the user retries; the query's own retries count too.
+        return detailCalls <= 4
+          ? Promise.reject(Object.assign(new Error("Server error"), { statusCode: 500 }))
+          : Promise.resolve({ data: DETAIL_NOT_AUTHORED });
+      }
+      return base(url);
+    });
+    const user = userEvent.setup();
+
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+
+    expect(
+      await screen.findByText(/Couldn.t load this environment.s details/, {}, { timeout: 8000 }),
+    ).toBeInTheDocument();
+    // None of the tabs render on the job poll alone: no guessed channel, no
+    // "No agent attached", no sample cards.
+    expect(screen.queryByRole("tab", { name: /Overview/ })).toBeNull();
+    expect(screen.queryByText("No agent attached")).toBeNull();
+    // Nor can a run start without them.
+    expect(screen.getByRole("button", { name: /Run simulation/ })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("tab", { name: /Overview/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn.t load this environment.s details/)).toBeNull();
+  }, 15000);
+
+  it("holds the tabs back, and Run with them, while the environment detail is on its way", async () => {
+    getHarnessJob.mockResolvedValue(COMPLETED_JOB);
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url) =>
+      /\/harness-environments\/job-done\/$/.test(url) ? new Promise(() => {}) : base(url),
+    );
+
+    // A revisit: this environment's agent and scenarios are already in the
+    // client store, so Run would be ready on its own; only the missing detail
+    // holds it back.
+    useEnvironmentsStore.setState({
+      byEnv: {
+        "job-done": {
+          ...emptyEnvState(),
+          agent: { typeId: "livekit", via: "endpoint", values: {} },
+          scenarios: [{ id: "scenario-a", name: "scenario-a" }],
+        },
+      },
+    });
+
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+
+    const runButton = await screen.findByRole("button", { name: /Run simulation/ });
+    expect(runButton).toBeDisabled();
+    expect(screen.queryByRole("tab", { name: /Overview/ })).toBeNull();
+    expect(screen.queryByText(/scenarios, shared across agent versions/)).toBeNull();
+    // The tab area shows the loader rather than an empty pane.
+    expect(screen.getAllByRole("status").length).toBeGreaterThan(0);
   });
 
   it("resolves a harness job: Run enabled, runs listed, row opens the detail", async () => {

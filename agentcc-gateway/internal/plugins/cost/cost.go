@@ -3,9 +3,12 @@ package cost
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -13,12 +16,43 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
+const (
+	// CostSourceUnpriced is written to Metadata["cost_source"] when the request
+	// used something billable (tokens, seconds of audio, characters of text) but
+	// the model database has no price for the model. The request is recorded
+	// without a cost. Budgets price requests from their own table, so this flag
+	// says nothing about whether a budget counted the request.
+	CostSourceUnpriced = "unpriced"
+
+	// maxUnpricedWarnings bounds the warn-once set so a caller cycling through
+	// model names cannot grow it without limit.
+	maxUnpricedWarnings = 1024
+)
+
+// Where an operator sets a missing price, by the unit the endpoint is billed
+// in. The budget plugin does not read the model database: it prices chat
+// tokens from cost_tracking.custom_pricing, so every hint names that key too,
+// or an operator who sets one of the two would think the gap is closed.
+const (
+	tokenPriceHint     = "set model_database.overrides.<model>.pricing (input_per_token / output_per_token, USD per token)"
+	audioPriceHint     = "set model_database.overrides.<model>.pricing.input_per_second (USD per second of audio)"
+	characterPriceHint = "set model_database.overrides.<model>.pricing.input_per_character (USD per character of text)"
+	budgetPriceHint    = "; budgets price chat tokens separately, from cost_tracking.custom_pricing.<model> (input_per_mtok / output_per_mtok, USD per million tokens)"
+)
+
+// Decision prices are read only from "decision:" keys (see
+// modeldb.DecisionPricing), never from the chat override of the same name.
+const decisionPriceHint = "set model_database.overrides.\"decision:<model>\".pricing (input_per_token / output_per_token, USD per token)"
+
 // Plugin is a post-response pipeline plugin that calculates per-request cost.
 type Plugin struct {
 	modelDB          func() *modeldb.ModelDB // getter for hot-reloadable model database
 	enabled          bool
 	tenantStore      *tenant.Store
 	aliasCostFactors map[string]float64 // alias prefix → cost multiplier
+
+	unpricedWarned      sync.Map     // model → struct{}: models already warned about
+	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
 }
 
 // New creates a new cost tracking plugin.
@@ -80,20 +114,30 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 
 	var cost float64
 	var ok bool
+	// billed is how much the request used, in the unit its endpoint is priced
+	// by: tokens, seconds of audio, or characters of text. A positive amount
+	// with no price is what goes unpriced.
+	var billed float64
+	priceHint := tokenPriceHint
 
 	switch rc.EndpointType {
 	case "embedding":
 		if rc.EmbeddingResponse != nil && rc.EmbeddingResponse.Usage != nil {
+			billed = float64(rc.EmbeddingResponse.Usage.PromptTokens)
 			cost, ok = db.CalculateCost(model, rc.EmbeddingResponse.Usage.PromptTokens, 0, opts)
 		}
 	case "image":
 		// Image cost varies by provider; skip for now.
 	case "transcription", "translation", "transcription_relay":
+		priceHint = audioPriceHint
 		if seconds, err := strconv.ParseFloat(rc.Metadata["audio_seconds"], 64); err == nil {
+			billed = seconds
 			cost, ok = db.AudioCost(model, seconds)
 		}
 	case "speech", "speech_stream", "speech_relay":
+		priceHint = characterPriceHint
 		if characters, err := strconv.Atoi(rc.Metadata["input_characters"]); err == nil {
+			billed = float64(characters)
 			cost, ok = db.CharacterCost(model, characters)
 		}
 	case "rerank":
@@ -104,7 +148,11 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		if rc.Response == nil || rc.Response.Usage == nil {
 			return pipeline.ResultContinue()
 		}
+		priceHint = decisionPriceHint
 		usage := rc.Response.Usage
+		// An unpriced decision model is marked unpriced like any other, never
+		// recorded as free.
+		billed = float64(usage.PromptTokens + usage.CompletionTokens)
 		for _, m := range decisionModelNames(rc) {
 			if cost, ok = db.CalculateDecisionCost(m, usage.PromptTokens, usage.CompletionTokens); ok {
 				break
@@ -115,6 +163,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 			return pipeline.ResultContinue()
 		}
 		usage := rc.Response.Usage
+		billed = float64(usage.PromptTokens + usage.CompletionTokens)
 		cost, ok = db.CalculateCost(model, usage.PromptTokens, usage.CompletionTokens, opts)
 		if !ok && model == rc.ResolvedModel && rc.Model != "" {
 			cost, ok = db.CalculateCost(rc.Model, usage.PromptTokens, usage.CompletionTokens, opts)
@@ -132,9 +181,34 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 			}
 		}
 		rc.Metadata["cost"] = fmt.Sprintf("%.6f", cost)
+	} else if billed > 0 {
+		// The request used something billable but there is no price for this
+		// model. Leaving this silent made the request look free in the request
+		// log and analytics. Mark the request so they can surface it, and tell
+		// the operator once per model.
+		rc.Metadata["cost_source"] = CostSourceUnpriced
+		p.warnUnpriced(rc, model, priceHint)
 	}
 
 	return pipeline.ResultContinue()
+}
+
+// warnUnpriced logs, once per model, that traffic is being recorded without a
+// cost. priceHint names the model-database price to set for the endpoint.
+func (p *Plugin) warnUnpriced(rc *models.RequestContext, model, priceHint string) {
+	if p.unpricedWarnedCount.Load() >= maxUnpricedWarnings {
+		return
+	}
+	if _, seen := p.unpricedWarned.LoadOrStore(model, struct{}{}); seen {
+		return
+	}
+	p.unpricedWarnedCount.Add(1)
+	slog.Warn("cost: no pricing for model; its requests are recorded without a cost",
+		"model", model,
+		"provider", rc.Provider,
+		"request_id", rc.RequestID,
+		"hint", priceHint+budgetPriceHint,
+	)
 }
 
 // tryOrgPricing checks per-org custom pricing for the model.
@@ -175,19 +249,30 @@ func (p *Plugin) tryOrgPricing(rc *models.RequestContext, model string, ct *tena
 }
 
 // decisionModelNames lists the names a decision call's model goes by: the
-// model the vendor reports, the one it was sent, and the one the caller named
-// with its provider prefix.
+// model the vendor reports, the one it was sent, the one the caller named,
+// and the provider-qualified id GET /v1/decisions/models lists and prices
+// ("typesafe/jev-latest"), so a bare "jev-latest" is charged the price the
+// listing shows.
 func decisionModelNames(rc *models.RequestContext) []string {
-	names := make([]string, 0, 3)
+	names := make([]string, 0, 5)
 	add := func(name string) {
 		if name != "" && !slices.Contains(names, name) {
 			names = append(names, name)
 		}
 	}
 	add(rc.ResolvedModel)
+	upstream := ""
 	if rc.DecisionRequest != nil {
-		add(rc.DecisionRequest.UpstreamModel)
+		upstream = rc.DecisionRequest.UpstreamModel
+		add(upstream)
 	}
 	add(rc.Model)
+	if rc.Provider != "" {
+		for _, m := range []string{upstream, rc.Model} {
+			if m != "" && !strings.HasPrefix(m, rc.Provider+"/") {
+				add(rc.Provider + "/" + m)
+			}
+		}
+	}
 	return names
 }

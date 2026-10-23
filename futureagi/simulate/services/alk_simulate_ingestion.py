@@ -25,6 +25,7 @@ from django.utils import timezone
 from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import (
     AgentDefinition,
+    AgentVersion,
     CallExecution,
     RunTest,
     Scenarios,
@@ -666,6 +667,13 @@ def _create_persona_scenarios_legacy(
     return created
 
 
+def resolved_agent_version(run_test: RunTest) -> AgentVersion | None:
+    # Same ladder the runner uses, so a run is filed under the version it ran.
+    from simulate.services.hosted_runner import resolve_run_agent_version
+
+    return resolve_run_agent_version(run_test)
+
+
 def create_alk_sim_test_execution(
     run_test: RunTest,
     *,
@@ -737,7 +745,7 @@ def create_alk_sim_test_execution(
         picked_up_by_executor=True,
         simulator_agent=simulator_agent or run_test.simulator_agent,
         agent_definition=run_test.agent_definition,
-        agent_version=run_test.agent_version,
+        agent_version=resolved_agent_version(run_test),
         execution_metadata=(
             {"harness_job_id": str(harness_job_id)} if harness_job_id else {}
         ),

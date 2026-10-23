@@ -14,6 +14,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 // Provider implements the Provider interface for the Cohere v2 Chat API.
@@ -110,7 +111,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("cohere: request timed out")
 		}
 		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("cohere: request failed: %v", err))
@@ -119,7 +120,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("cohere: reading response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "cohere: reading response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -170,7 +171,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		resp, err := p.httpClient.Do(httpReq)
 		if err != nil {
-			if ctx.Err() != nil {
+			if common.TimedOut(ctx, err) {
 				errs <- models.ErrGatewayTimeout("cohere: request timed out")
 				return
 			}
@@ -232,7 +233,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		if err := scanner.Err(); err != nil {
 			if ctx.Err() == nil {
-				errs <- models.ErrUpstreamProvider(0, fmt.Sprintf("cohere: stream read error: %v", err))
+				errs <- common.ReadError(err, 0, "cohere: stream read")
 			}
 		}
 	}()
@@ -270,7 +271,7 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("cohere: embed request timed out")
 		}
 		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("cohere: embed request failed: %v", err))
@@ -279,7 +280,7 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("cohere: reading embed response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "cohere: reading embed response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -317,7 +318,7 @@ func (p *Provider) Rerank(ctx context.Context, req *models.RerankRequest) (*mode
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("cohere: rerank request timed out")
 		}
 		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("cohere: rerank request failed: %v", err))
@@ -326,7 +327,7 @@ func (p *Provider) Rerank(ctx context.Context, req *models.RerankRequest) (*mode
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("cohere: reading rerank response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "cohere: reading rerank response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
