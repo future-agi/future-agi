@@ -381,6 +381,25 @@ def target_size(rule: dict, population: int) -> int:
     )
 
 
+def quota_target(rule: dict, population: int) -> int:
+    """The closed quota a rule asks for in a cell of this size.
+
+    Rate or target_n, raised to the floor (min_n), census below rare_below and
+    capped by max_n, but *not* by the population: ``target_size`` is
+    ``min(population, quota_target)`` and any excess is a shortage.
+    """
+
+    target = rule.get("target_n")
+    if target is None:
+        target = (
+            population * rate_units(rule.get("rate", 100)) + RATE_DENOMINATOR - 1
+        ) // RATE_DENOMINATOR
+    if population <= rule.get("rare_below", -1):
+        target = population
+    target = max(rule.get("min_n", 0), target)
+    return min(rule["max_n"], target) if "max_n" in rule else target
+
+
 def population_changed(task: EvalTask, changes: dict) -> bool:
     """Changing sampling populations requires an explicit fresh execution."""
     if task.sampling_policy is None and changes.get("sampling_policy") is None:

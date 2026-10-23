@@ -1419,3 +1419,119 @@ def test_coordinated_prn_sql_matches_reference_nests_and_persists(
         entry.output_metadata["_task_selection"]["sampling"]["coordination"]
         for entry in entries
     } == {"project"}
+
+
+def test_closed_audit_endpoint_reports_frozen_design_weights_and_balance(
+    auth_client, project, custom_eval_config, ch_seed
+):
+    """Y2: the audit re-reads the frozen population once and reports design math.
+
+    vip (5 units, target 2), rare (3 units, target 5: shortage 2), excluded
+    (4 units, rate 0: read from ClickHouse, nothing persisted) and the default
+    rule (rate 10%, floor 3) split by locale into two cells of 20.
+    """
+    from tracer.services.eval_tasks.sampling.audit import parse_stratum
+
+    contacts, spans = {}, []
+    layout = [("gold", "en", 5), ("rare", "en", 3), ("test", "en", 4)]
+    layout += [("std", "en", 20), ("std", "fr", 20)]
+    for tier, locale, count in layout:
+        for index in range(count):
+            session = TraceSession.objects.create(
+                project=project, name=f"{tier}-{locale}-{index}"
+            )
+            rows = seed_contact(
+                project, session, {"tier": tier, "locale": locale}, traces=1, seed=False
+            )
+            contacts.setdefault((tier, locale), []).append((session, rows))
+            spans += rows
+    seed_ch_spans(spans)
+    slices = [
+        ("vip", "gold", {"target_n": 2}),
+        ("rare", "rare", {"target_n": 5}),
+        ("excluded", "test", {"rate": 0}),
+    ]
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy=make_policy(
+            group_by=[{"key": "locale"}],
+            strata=[
+                {
+                    "name": name,
+                    "filters": [{"key": "tier", "op": "in", "values": [tier]}],
+                    **quota,
+                }
+                for name, tier, quota in slices
+            ],
+            default={"rate": 10, "min_n": 3},
+        ),
+    )
+    task.evals.add(custom_eval_config)
+    reconcile(task)
+
+    def audit():
+        response = auth_client.get(
+            "/tracer/eval-task/sampling_audit/", {"eval_task_id": str(task.id)}
+        )
+        assert response.status_code == 200, response.content
+        result = response.json()["result"]
+        return result, {
+            (row["rule"], parse_stratum(row["stratum"])[1][0][1]): row
+            for row in result["strata"]
+        }
+
+    result, rows = audit()
+    assert result["population_source"] == "frozen_snapshot"
+    expected = {  # (N, k, target, shortage, p)
+        ("vip", "en"): (5, 2, 2, 0, 0.4),
+        ("rare", "en"): (3, 3, 5, 2, 1.0),
+        ("excluded", "en"): (4, 0, 0, 0, 0.0),
+        ("default", "en"): (20, 3, 3, 0, 0.15),
+        ("default", "fr"): (20, 3, 3, 0, 0.15),
+    }
+    assert set(rows) == set(expected)
+    for key, (population, achieved, target, shortage, probability) in expected.items():
+        row = rows[key]
+        assert (
+            row["population_size"],
+            row["achieved"],
+            row["target"],
+            row["shortage"],
+            row["exact"],
+            row["population_check"],
+        ) == (population, achieved, target, shortage, True, "match"), key
+        assert row["inclusion_probability"] == pytest.approx(probability, rel=1e-12)
+    summary = result["summary"]
+    # Weights 2.5 x 2, 1 x 3, (20/3) x 3 x 2: sum w = 48, sum w^2 = 1693/6.
+    assert summary["weighted_population"] == pytest.approx(48, rel=1e-12)
+    assert summary["represented_population"] == 48
+    assert summary["kish_effective_n"] == pytest.approx(13824 / 1693, rel=1e-12)
+    assert summary["design_effect"] == pytest.approx(18623 / 13824, rel=1e-12)
+    assert (summary["unrepresented_strata"], summary["unrepresented_population"]) == (
+        1,
+        4,
+    )
+    assert summary["integrity"] == "ok"
+    balance = {item["attribute"]: item for item in result["balance"]}
+    locale = {row["value"]: row for row in balance["locale"]["categories"]}
+    assert locale["fr"]["population_share"] == pytest.approx(20 / 52, rel=1e-12)
+    assert locale["fr"]["sample_share"] == pytest.approx(3 / 11, rel=1e-12)
+    assert locale["fr"]["weighted_share"] == pytest.approx(20 / 48, rel=1e-12)
+    assert balance["locale"]["weighted_imbalance"] is False
+    assert balance["slice"]["weighted_imbalance"] is True  # "excluded" is not sampled
+
+    # A selected cell loses a contact after the freeze: the re-read population
+    # no longer reproduces the persisted membership and the stratum is flagged.
+    _session, deleted = contacts[("std", "en")][0]
+    for span in deleted:
+        span.deleted = True
+        span.updated_at = timezone.now()
+    seed_ch_spans(deleted)
+    result, rows = audit()
+    assert rows[("default", "en")]["population_check"] == "changed"
+    assert rows[("default", "en")]["population_size"] == 20  # persisted N kept
+    assert rows[("default", "fr")]["population_check"] == "match"
+    assert result["summary"]["integrity"] == "attention"

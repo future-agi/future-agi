@@ -123,3 +123,104 @@ class SamplingPreviewResultSerializer(serializers.Serializer):
 class SamplingPreviewResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = SamplingPreviewResultSerializer()
+
+
+class SamplingAuditQuerySerializer(StrictInputSerializer):
+    eval_task_id = serializers.UUIDField()
+    cohort_id = serializers.UUIDField(
+        required=False,
+        help_text="Audit this cohort of the task (for example an archived one) instead of the current policy's cohort.",
+    )
+
+
+class SamplingAuditStratumSerializer(serializers.Serializer):
+    stratum = serializers.CharField()
+    rule = serializers.CharField()
+    population_size = serializers.IntegerField(
+        help_text="Closed: units in the stratum at the freeze. Live: units decided since the policy start."
+    )
+    target = serializers.IntegerField(
+        allow_null=True,
+        help_text="Closed: the quota the rule asks for before the population cap.",
+    )
+    expected_size = serializers.FloatField(
+        allow_null=True,
+        help_text="Closed: the exact quota k = min(N, target). Live: N times the rate.",
+    )
+    achieved = serializers.IntegerField()
+    shortage = serializers.IntegerField(allow_null=True)
+    exact = serializers.BooleanField(allow_null=True)
+    inclusion_probability = serializers.FloatField()
+    design_weight = serializers.FloatField(allow_null=True)
+    srm_z = serializers.FloatField(allow_null=True)
+    srm_p_value = serializers.FloatField(allow_null=True)
+    srm_flagged = serializers.BooleanField(allow_null=True)
+    population_check = serializers.ChoiceField(
+        choices=("match", "changed", "persisted")
+    )
+
+
+class SamplingAuditSummarySerializer(serializers.Serializer):
+    strata = serializers.IntegerField()
+    population_size = serializers.IntegerField()
+    achieved = serializers.IntegerField()
+    kish_effective_n = serializers.FloatField(allow_null=True)
+    design_effect = serializers.FloatField(allow_null=True)
+    weight_cv = serializers.FloatField(allow_null=True)
+    weighted_population = serializers.FloatField(
+        help_text="Sum of design weights of the sampled units."
+    )
+    represented_population = serializers.IntegerField(
+        help_text="Population of the strata with at least one sampled unit."
+    )
+    unrepresented_strata = serializers.IntegerField()
+    unrepresented_population = serializers.IntegerField()
+    flagged_strata = serializers.IntegerField()
+    integrity = serializers.ChoiceField(choices=("ok", "attention"))
+    srm_alpha = serializers.FloatField()
+
+
+class SamplingBalanceCategorySerializer(serializers.Serializer):
+    value = serializers.CharField(allow_null=True)
+    present = serializers.BooleanField()
+    population_size = serializers.IntegerField()
+    achieved = serializers.IntegerField()
+    population_share = serializers.FloatField()
+    sample_share = serializers.FloatField(allow_null=True)
+    weighted_share = serializers.FloatField(allow_null=True)
+    standardized_difference = serializers.FloatField(allow_null=True)
+    weighted_standardized_difference = serializers.FloatField(allow_null=True)
+
+
+class SamplingBalanceSerializer(serializers.Serializer):
+    attribute = serializers.CharField()
+    source = serializers.CharField(allow_null=True)
+    categories = SamplingBalanceCategorySerializer(many=True)
+    chi_square = serializers.FloatField(allow_null=True)
+    degrees_of_freedom = serializers.IntegerField(allow_null=True)
+    p_value = serializers.FloatField(allow_null=True)
+    max_abs_standardized_difference = serializers.FloatField(allow_null=True)
+    max_abs_weighted_standardized_difference = serializers.FloatField(allow_null=True)
+    weighted_imbalance = serializers.BooleanField()
+
+
+class SamplingAuditResultSerializer(serializers.Serializer):
+    cohort_id = serializers.UUIDField()
+    policy_version = serializers.CharField()
+    mode = serializers.ChoiceField(choices=("closed", "live"))
+    sampling_unit = serializers.CharField()
+    coordination = serializers.ChoiceField(choices=("independent", "project"))
+    frozen_at = serializers.DateTimeField(allow_null=True)
+    complete = serializers.BooleanField()
+    population_source = serializers.ChoiceField(
+        choices=("frozen_snapshot", "persisted_decisions")
+    )
+    strata = SamplingAuditStratumSerializer(many=True)
+    summary = SamplingAuditSummarySerializer()
+    balance = SamplingBalanceSerializer(many=True)
+    notes = serializers.ListField(child=serializers.CharField())
+
+
+class SamplingAuditResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = SamplingAuditResultSerializer()

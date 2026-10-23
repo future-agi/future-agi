@@ -6,8 +6,16 @@ from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tracer.models.eval_task import EvalTask
 from tracer.models.project import Project
 from tracer.serializers.eval_sampling import (
+    SamplingAuditQuerySerializer,
+    SamplingAuditResponseSerializer,
     SamplingPreviewRequestSerializer,
     SamplingPreviewResponseSerializer,
+)
+from tracer.services.eval_tasks.sampling.audit import (
+    SamplingAuditIncomplete,
+    SamplingAuditNotFound,
+    SamplingAuditTooLarge,
+    sampling_audit,
 )
 from tracer.services.eval_tasks.sampling.policy import (
     InvalidSamplingPolicy,
@@ -170,4 +178,74 @@ class SamplingPreviewMixin:
             if _dependency_unavailable(exc):
                 return _error(_UNAVAILABLE, 503)
             return _error("Sampling preview failed unexpectedly.", 500)
+        return self._gm.success_response(result)
+
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="sampling_audit",
+        pagination_class=None,
+    )
+    @validated_request(
+        query_serializer=SamplingAuditQuerySerializer,
+        responses={
+            200: SamplingAuditResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            404: ApiErrorResponseSerializer,
+            409: ApiErrorResponseSerializer,
+            429: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+            503: ApiErrorResponseSerializer,
+        },
+    )
+    def sampling_audit(self, request, *args, **kwargs):
+        """Per-stratum design, realized sample, weights, Kish and balance."""
+
+        from tracer.models.eval_task import EvalTask
+        from tracer.selectors.eval_tasks.row_resolver import (
+            EvalTaskSelectionRejected,
+        )
+
+        query = request.validated_query_data
+        task = (
+            self._scope_eval_task_queryset(EvalTask.objects)
+            .select_related("project")
+            .filter(id=query["eval_task_id"])
+            .first()
+        )
+        if task is None:
+            return _error("Evaluation task not found.", 404)
+        closed = (task.sampling_policy or {}).get("mode", "closed") == "closed"
+        actor = f"{task.project.organization_id}:{getattr(request.user, 'pk', '')}"
+        try:
+            # Closed audits re-read the frozen population from ClickHouse:
+            # they share the per-actor preview admission. Live audits read
+            # bounded PostgreSQL aggregates only.
+            if closed:
+                with preview_slot(actor):
+                    result = sampling_audit(task, cohort_id=query.get("cohort_id"))
+            else:
+                result = sampling_audit(task, cohort_id=query.get("cohort_id"))
+        except PreviewThrottled as exc:
+            return _error(str(exc), 429, **{"Retry-After": str(exc.retry_after)})
+        except PreviewGuardUnavailable:
+            return _error(_UNAVAILABLE, 503)
+        except SamplingAuditNotFound as exc:
+            return _error(str(exc), 404)
+        except SamplingAuditIncomplete as exc:
+            return _error(str(exc), 409)
+        except (
+            InvalidSamplingPolicy,
+            SamplingAuditTooLarge,
+            SamplingPreviewTooLarge,
+            EvalTaskSelectionRejected,
+        ) as exc:
+            return self._gm.bad_request(str(exc))
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).exception("sampling.audit_failed")
+            if _dependency_unavailable(exc):
+                return _error(_UNAVAILABLE, 503)
+            return _error("Sampling audit failed unexpectedly.", 500)
         return self._gm.success_response(result)
