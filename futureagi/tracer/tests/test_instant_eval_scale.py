@@ -2064,3 +2064,38 @@ def test_history_counts_a_row_settled_only_once_every_question_answered(
     out = {}
     _answer_tally([str(task.id)], out)
     assert out[str(task.id)][1] == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("sort", ["-time", "time"])
+def test_rows_without_a_time_are_paged_too(
+    auth_client, observe_project, answered_run, sort
+):
+    """The time column is nullable: rows without one used to drop out of the
+    keyset (a NULL compares as unknown) and paging ended early."""
+    from tracer.models.instant_eval import InstantEvalRow
+
+    task, ids = answered_run
+    base = {
+        "project_id": str(observe_project.id),
+        "eval_task_id": str(task.id),
+        "tz": "UTC",
+        "sort": sort,
+    }
+    # The first read lands the rows; then four of them lose their time.
+    auth_client.get(ROWS, base)
+    some = list(
+        InstantEvalRow.objects.filter(task_id=task.id).values_list("id", flat=True)
+    )[:4]
+    InstantEvalRow.objects.filter(id__in=some).update(time=None)
+    seen, cursor = [], None
+    for _ in range(20):
+        page = auth_client.get(
+            ROWS, {**base, "page_size": 3, **({"cursor": cursor} if cursor else {})}
+        ).json()["result"]
+        seen += [r["id"] for r in page["rows"]]
+        cursor = page["next_cursor"]
+        if not cursor:
+            break
+    assert sorted(seen) == sorted(ids)
+    assert len(seen) == len(set(seen))

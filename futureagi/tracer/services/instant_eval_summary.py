@@ -1574,16 +1574,30 @@ def rows_page(
         offset = int(state.get("o", 0))
         keyset = ""
     else:
-        # The (task, time, id) index serves both directions; rows always have
-        # a time (their first span's).
+        # The (task, time, id) index serves both directions. A row normally
+        # has a time (its first span's), but the column is nullable: NULLs
+        # come first newest-first and last oldest-first (Postgres' defaults,
+        # so the index still orders), and the cursor marks a page that ended
+        # among them, so no row is skipped.
         desc = sort != "time"
         order = "r.time DESC, r.id DESC" if desc else "r.time ASC, r.id ASC"
         offset = 0
         keyset = ""
-        if state.get("t") is not None:
+        if state.get("n"):
+            params["c_id"] = int(state["i"])
+            keyset = (
+                " AND ((r.time IS NULL AND r.id < %(c_id)s) OR r.time IS NOT NULL)"
+                if desc
+                else " AND r.time IS NULL AND r.id > %(c_id)s"
+            )
+        elif state.get("t") is not None:
             params["c_t"] = parse_time(state["t"])
             params["c_id"] = int(state["i"])
-            keyset = f" AND (r.time, r.id) {'<' if desc else '>'} (%(c_t)s, %(c_id)s)"
+            keyset = (
+                " AND (r.time, r.id) < (%(c_t)s, %(c_id)s)"
+                if desc
+                else " AND ((r.time, r.id) > (%(c_t)s, %(c_id)s) OR r.time IS NULL)"
+            )
     params["lim"] = page_size + 1
     params["off"] = offset
     recs = _rows(
@@ -1608,10 +1622,9 @@ def rows_page(
         next_cursor = _cursor_encode(
             {"o": offset + page_size}
             if sort == "confidence"
-            else {
-                "t": (last[2] or datetime(1970, 1, 1, tzinfo=UTC)).isoformat(),
-                "i": last[0],
-            }
+            else {"n": 1, "i": last[0]}
+            if last[2] is None
+            else {"t": last[2].isoformat(), "i": last[0]}
         )
     total = _rows(
         f"SELECT count(*) FROM tracer_instant_eval_row r WHERE {where}", params
