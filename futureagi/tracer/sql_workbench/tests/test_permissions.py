@@ -763,7 +763,26 @@ MALFORMED_IDS = [
     "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa-",
     "a" * 36,
     "00000000-0000-0000-0000-00000000000-",
+    # Not 36 characters: these reach the view too and are equally not found.
+    "abc",
+    "not-a-uuid",
+    "00000000-0000-0000-0000-00000000000g",
+    "a" * 37,
+    "1%27%20OR%201%3D1",
 ]
+
+
+def test_list_level_actions_are_never_routed_as_an_id():
+    from django.urls import resolve
+
+    for url, action in [
+        ("/tracer/sql-query/catalog/", "catalog"),
+        ("/tracer/sql-query/run/", "run"),
+        ("/tracer/sql-query/run-saved/", "run_saved"),
+    ]:
+        match = resolve(url)
+        assert "pk" not in match.kwargs, url
+        assert action in match.func.actions.values(), (url, match.func.actions)
 
 
 @pytest.mark.parametrize("bad_id", MALFORMED_IDS)

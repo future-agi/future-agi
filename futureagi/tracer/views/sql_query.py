@@ -41,13 +41,17 @@ from tracer.sql_workbench.runner import QueryUnavailable, derived_metrics_availa
 
 class SQLViewMixin:
     permission_classes = [IsAuthenticated]
-    lookup_value_regex = r"[0-9a-f-]{36}"
+    # Any single path segment reaches the view, which answers 404 for a value
+    # that is not a UUID. A narrower route pattern would turn a malformed id
+    # from an MCP tool into an unresolvable generated route (a server error)
+    # instead of "not found". List-level actions (catalog, run, run-saved) are
+    # routed before the detail pattern, so they are never read as an id.
+    lookup_value_regex = r"[^/]+"
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
-        # The route pattern admits any 36 hex/dash characters. A value that is
-        # not a UUID is "not found" (after authentication), never an unhandled
-        # database validation error.
+        # A value that is not a UUID is "not found" (after authentication),
+        # never an unhandled database validation error.
         if "pk" in kwargs and service.object_id(kwargs["pk"]) is None:
             raise NotFound("Not found.")
 
