@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -68,8 +69,7 @@ func withKeys(ctx context.Context) context.Context {
 // The call is authenticated before its message is read: while auth is still
 // deciding, nothing of the call is leased, and a refused call never leases or
 // reads its message. (Without this, the auth interceptor ran only after
-// grpc-go had read and decoded the whole message: an unauthenticated 16 MiB
-// message of empty spans cost about 1.9 GiB.)
+// grpc-go had read and decoded the whole message.)
 func TestGRPCAuthRunsBeforeTheMessageIsRead(t *testing.T) {
 	deciding := make(chan struct{})
 	decide := make(chan struct{})
@@ -289,5 +289,104 @@ func TestGRPCServesOnlyTheExportMethod(t *testing.T) {
 	td.ResourceSpans().AppendEmpty().ScopeSpans().AppendEmpty().Spans().AppendEmpty().SetName("x")
 	if _, err := ptraceotlp.NewGRPCClient(conn).Export(context.Background(), ptraceotlp.NewExportRequestFromTraces(td)); err != nil {
 		t.Errorf("stock client Export at %s: %v", exportMethod, err)
+	}
+}
+
+// A call leases what its message needs, from the message's length prefix,
+// and not a message at the receive cap; when grpc-go's transport stream does
+// not offer the two-step read, it leases for the cap. This test fails if a
+// grpc-go upgrade loses the two-step read. (Before, every call leased twice
+// the receive cap while its message arrived, whatever its size.)
+func TestGRPCLeasesTheMessageItReads(t *testing.T) {
+	body := tracesOfSize(t, "lease", 1<<20)
+	for name, atCap := range map[string]bool{"from the length prefix": false, "with RecvMsg": true} {
+		t.Run(name, func(t *testing.T) {
+			s, conn, _ := startGRPCServer(t, Config{}, func(s *Server) { s.recvWithRecvMsg = atCap })
+			if err := exportRaw(conn, context.Background(), body); err != nil {
+				t.Fatalf("Export: %v", err)
+			}
+			want := grpcWireLease(int64(len(body)))
+			if atCap {
+				want = grpcWireLease(s.limits.maxRecv)
+			}
+			if p := s.wire.peak.Load(); p != want {
+				t.Errorf("wire peak %d for a %d-byte message, want %d", p, len(body), want)
+			}
+			if w := s.wire.inUse.Load(); w != 0 {
+				t.Errorf("%d wire bytes leased after the call", w)
+			}
+		})
+	}
+}
+
+// A message flagged as compressed, on a call with no grpc-encoding, is
+// refused permanently before it is read or leased.
+func TestGRPCCompressedFlagWithoutEncodingIsInvalid(t *testing.T) {
+	s, _, _ := startGRPCServer(t, Config{}, nil)
+	h := dialH2Call(t, s.cfg.GRPCAddr, nil)
+	_ = h.send(emptySpans(t, 10), true, 16<<10)
+	_ = h.ended(2 * time.Second)
+	if got := s.IngestStats().Rejected["grpc/malformed/InvalidArgument"]; got != 1 {
+		t.Errorf("malformed refusals %d, want 1 (%v)", got, s.IngestStats().Rejected)
+	}
+	if p := s.wire.peak.Load(); p != 0 {
+		t.Errorf("leased %d wire bytes for a refused message", p)
+	}
+}
+
+// Calls whose key the auth cache knows as valid take their in-flight slot
+// from the authenticated calls' limit; calls still being authenticated share
+// a smaller one. Callers with keys that take long to refuse then cannot hold
+// the slots of callers with known keys. (Before, every call with credentials
+// took a slot from one limit before its key was checked.)
+func TestGRPCCallsBeingAuthenticatedCannotHoldEverySlot(t *testing.T) {
+	key := func(ctx context.Context) string {
+		md, _ := metadata.FromIncomingContext(ctx)
+		if v := md.Get("x-api-key"); len(v) > 0 {
+			return v[0]
+		}
+		return ""
+	}
+	s, conn, _ := startGRPCServer(t, Config{}, func(s *Server) {
+		s.requireCreds = true
+		s.grpcKnown = func(md metadata.MD) bool { v := md.Get("x-api-key"); return len(v) > 0 && v[0] == "good" }
+		s.grpcAuth = func(ctx context.Context) (context.Context, error) {
+			if key(ctx) == "good" {
+				return ctx, nil
+			}
+			time.Sleep(200 * time.Millisecond) // a key that takes long to refuse
+			return nil, status.Error(codes.Unauthenticated, "authentication failed")
+		}
+	})
+	junk := func(ctx context.Context) context.Context {
+		return metadata.AppendToOutgoingContext(ctx, "x-api-key", "junk", "x-secret-key", "junk")
+	}
+	good := func(ctx context.Context) context.Context {
+		return metadata.AppendToOutgoingContext(ctx, "x-api-key", "good", "x-secret-key", "good")
+	}
+	body := emptySpans(t, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	t.Cleanup(func() { cancel(); wg.Wait() })
+	for c := 0; c < 4; c++ {
+		jc := readyConn(t, s.cfg.GRPCAddr)
+		for i := 0; i < grpcMaxStreamsPerConn; i++ { // more callers than there are slots
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for ctx.Err() == nil {
+					_ = exportRaw(jc, junk(ctx), body)
+				}
+			}()
+		}
+	}
+	time.Sleep(300 * time.Millisecond)
+	for i := 0; i < 20; i++ {
+		if err := exportRaw(conn, good(context.Background()), body); err != nil {
+			t.Fatalf("call %d with a known key: %v", i, err)
+		}
+	}
+	if got := s.IngestStats().Rejected["grpc/grpc_unverified/Unavailable"]; got == 0 {
+		t.Error("no call being authenticated was refused past its limit")
 	}
 }

@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -43,20 +44,29 @@ var errInflatedBodyTooLarge = errors.New("decompressed body over size cap")
 // it never needs a buffer that grows by copying.
 const readChunk = 64 << 10
 
+// gzipLeaseRatio: before a gzip body with a Content-Length is read, its wire
+// lease leaves room for it to decompress to this many times its size (up to
+// the cap). OTLP bodies decompress to a few times their size; one that
+// decompresses to more waits for the rest of its lease once the first inflate
+// pass has measured it.
+const gzipLeaseRatio = 16
+
 // readOTLPHTTPBody reads the request body with the cap applied twice, as the
 // upstream Collector's confighttp applies max_request_body_size: to the body
 // as sent (http.MaxBytesReader, a 413), and for gzip to the decompressed body
 // too (errInflatedBodyTooLarge, a 413).
 //
-// Before it reads a byte it leases what reading can hold from the wire pool:
-//   - a plain body with a Content-Length: that length (read into a buffer of
-//     exactly that size);
-//   - a plain body without one: twice the cap (read in chunks, then joined);
-//   - gzip: the compressed body as above, plus the cap for the decompressed
-//     body. The first inflate pass only counts the output; the lease then
-//     shrinks to the compressed body plus the decompressed size, the second
-//     pass inflates into a buffer of exactly that size, and the compressed
-//     part is given back.
+// Before it reads a byte it leases from the wire pool what reading can hold:
+//   - with a Content-Length: that length (read into a buffer of exactly that
+//     size), plus, for gzip, room to decompress to gzipLeaseRatio times it;
+//   - without one: the cap, read in chunks of readChunk.
+//
+// Once the body is in, the lease is fitted to what comes next: joining a
+// plain body's chunks into one buffer, or for gzip the decompressed size,
+// which the first inflate pass counts without allocating it; the second pass
+// inflates into a buffer of exactly that size, and then only the body is
+// leased. When what comes next needs more than the lease holds, it waits for
+// the rest (lease.grow), holding what it has.
 //
 // The returned lease covers the returned body; the caller releases it when
 // the handler returns. The body must arrive within otlpReadTimeout of the
@@ -67,15 +77,12 @@ func (s *Server) readOTLPHTTPBody(w http.ResponseWriter, r *http.Request, gzippe
 	if cl > limit {
 		return nil, nil, &http.MaxBytesError{Limit: limit}
 	}
-	wireNeed := 2 * limit
-	if cl >= 0 {
+	wireNeed := limit + readChunk
+	switch {
+	case cl >= 0 && gzipped:
+		wireNeed = gzipWireLease(cl, limit)
+	case cl >= 0:
 		wireNeed = cl
-	}
-	if gzipped {
-		wireNeed = limit + limit
-		if cl >= 0 {
-			wireNeed = cl + limit
-		}
 	}
 	wire, err = s.wire.acquire(r.Context(), wireNeed)
 	if err != nil {
@@ -85,40 +92,64 @@ func (s *Server) readOTLPHTTPBody(w http.ResponseWriter, r *http.Request, gzippe
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(s.readTimeout))
 
 	in := http.MaxBytesReader(w, r.Body, limit)
-	var sent [][]byte // the body as sent, in one or more pieces
-	var sentLen int64
+	var sent [][]byte       // the body as sent, in one or more pieces
+	var sentLen, held int64 // its length, and the bytes allocated for it
 	if cl >= 0 {
 		buf := make([]byte, cl)
 		if _, err = io.ReadFull(in, buf); err != nil {
 			wire.release()
 			return nil, nil, err
 		}
-		sent, sentLen = [][]byte{buf}, cl
+		sent, sentLen, held = [][]byte{buf}, cl, cl
 	} else {
 		if sent, sentLen, err = readChunks(in); err != nil {
 			wire.release()
 			return nil, nil, err
 		}
+		held = int64(len(sent)) * readChunk
 	}
 	if !gzipped {
 		if len(sent) == 1 {
-			body = sent[0]
-		} else {
-			body = make([]byte, 0, sentLen)
-			for _, c := range sent {
-				body = append(body, c...)
-			}
+			wire.shrink(held)
+			return sent[0], wire, nil
+		}
+		// Joining the chunks needs room for the copy while they are held.
+		if err = fitLease(r.Context(), wire, held+sentLen); err != nil {
+			wire.release()
+			return nil, nil, err
+		}
+		body = make([]byte, 0, sentLen)
+		for _, c := range sent {
+			body = append(body, c...)
 		}
 		wire.shrink(sentLen)
 		return body, wire, nil
 	}
-	body, err = inflateGzip(sent, limit, func(n int64) { wire.shrink(sentLen + readChunk + n) })
+	body, err = inflateGzip(sent, limit, func(n int64) error {
+		return fitLease(r.Context(), wire, held+readChunk+n) // readChunk: the inflater's state
+	})
 	if err != nil {
 		wire.release()
 		return nil, nil, err
 	}
 	wire.shrink(int64(len(body))) // the compressed body is no longer referenced
 	return body, wire, nil
+}
+
+// gzipWireLease is what a gzip body with a Content-Length of cl leases before
+// it is read: cl, room to decompress to gzipLeaseRatio times cl (up to the
+// cap), and the inflater's state.
+func gzipWireLease(cl, limit int64) int64 {
+	return cl + min(limit, gzipLeaseRatio*cl) + readChunk
+}
+
+// fitLease makes l hold n bytes: it shrinks, or waits for the rest.
+func fitLease(ctx context.Context, l *lease, n int64) error {
+	if held := l.size(); n > held {
+		return l.grow(ctx, n-held)
+	}
+	l.shrink(n)
+	return nil
 }
 
 // readChunks reads r to the end in readChunk-sized pieces.
@@ -155,9 +186,9 @@ func multiReader(pieces [][]byte) io.Reader {
 // The first pass only counts the output, stopping at limit+1 bytes; it
 // allocates no decompressed buffer. A corrupt stream is a 400 and an over-cap
 // one a 413. For a valid body, sized is told the decompressed size before the
-// second pass inflates into a buffer of exactly that size. The price is
-// decompressing an accepted body twice.
-func inflateGzip(wire [][]byte, limit int64, sized func(n int64)) ([]byte, error) {
+// second pass inflates into a buffer of exactly that size; an error from it
+// is returned as it is. The price is decompressing an accepted body twice.
+func inflateGzip(wire [][]byte, limit int64, sized func(n int64) error) ([]byte, error) {
 	zr, err := gzip.NewReader(multiReader(wire))
 	if err != nil {
 		return nil, gzipBodyError(err)
@@ -171,12 +202,13 @@ func inflateGzip(wire [][]byte, limit int64, sized func(n int64)) ([]byte, error
 		return nil, gzipBodyError(err)
 	case n > limit:
 		return nil, errInflatedBodyTooLarge
-	case n == 0:
-		sized(0)
+	}
+	if err := sized(n); err != nil {
+		return nil, err
+	}
+	if n == 0 {
 		return []byte{}, nil
 	}
-
-	sized(n)
 	body := make([]byte, n)
 	if err := gunzipExactly(zr, wire, body); err != nil {
 		return nil, gzipBodyError(err)

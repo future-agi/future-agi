@@ -202,7 +202,8 @@ One budget bounds the memory that all OTLP requests (plain, gzip and gRPC)
 hold at once, from reading a body until ClickHouse has stored its rows. A
 request leases its body before reading it and the price of decoding and
 storing it (measured from the body before it is decoded) before decoding it.
-When the budget is full, requests wait their turn for up to 2 s, then get
+When the budget is full, requests wait their turn while it frees up (up to
+10 s, and less once nothing has been freed for 2 s), then get
 **503 + Retry-After** (HTTP) or **UNAVAILABLE** (gRPC), which OTLP exporters
 retry. A request that can never succeed (over a cap, too large for the whole
 budget, malformed) gets **413/400** or **INVALID_ARGUMENT**, which exporters
@@ -213,8 +214,7 @@ do not retry. gRPC calls are authenticated before their message is read.
 | `FI_INGEST_BUDGET_MIB` (`server.ingest_budget_mib`) | about half of the Go memory limit, less a fixed allowance | the budget. Without GOMEMLIMIT the collector sets the Go memory limit to 90% of its container's memory limit; with neither, the budget is 256 MiB. |
 | `FI_OTLP_MAX_BODY_MIB` (`server.otlp_max_body_mib`) | 16 | largest OTLP/HTTP body, as sent and after gzip decompression; lowered to fit a sixth of the budget |
 | `FI_GRPC_MAX_RECV_MIB` (`server.grpc_max_recv_mib`) | the body cap | largest OTLP/gRPC message |
-| `FI_OTLP_MAX_CONNECTIONS` (`server.otlp_max_connections`) | 1024 | open connections per listener |
-| `FI_GZIP_INFLIGHT_MIB` | | deprecated name of `FI_INGEST_BUDGET_MIB` |
+| `FI_OTLP_MAX_CONNECTIONS` (`server.otlp_max_connections`) | 0 (no cap) | open connections per listener |
 
 Per request, a body may also hold at most 65,536 spans, 10,000 ResourceSpans,
 1,048,576 attributes (array entries included), 64 KiB of resource attributes

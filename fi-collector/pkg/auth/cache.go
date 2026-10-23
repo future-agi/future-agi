@@ -60,6 +60,23 @@ func (c *cache) get(key string) (*cacheEntry, string) {
 	return nil, "miss"
 }
 
+// peek is get without side effects: an expired entry is reported as a miss
+// but left for get to remove.
+func (c *cache) peek(key string) (*cacheEntry, string) {
+	val, ok := c.m.Load(key)
+	if !ok {
+		return nil, "miss"
+	}
+	e := val.(*cacheEntry)
+	switch {
+	case e.isFresh(c.ttl):
+		return e, "fresh"
+	case e.isWarm(c.warmTTL):
+		return e, "warm"
+	}
+	return nil, "miss"
+}
+
 func (c *cache) putPositive(key string, result *ResolveResult) {
 	c.m.Store(key, &cacheEntry{
 		result:    result,

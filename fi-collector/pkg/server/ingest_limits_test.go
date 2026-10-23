@@ -24,11 +24,9 @@ func TestResolveIngestLimits(t *testing.T) {
 		{"standalone GOMEMLIMIT=256MiB", Config{}, 256 * mib, 108 * mib, 16 * mib, 16 * mib, "GOMEMLIMIT", ""},
 		{"Helm GOMEMLIMIT=900MiB", Config{}, 900 * mib, (900*mib - 32*mib - 2*(900*mib/64)) / 2, 16 * mib, 16 * mib, "GOMEMLIMIT", ""},
 		{"a 1 GiB container (90%)", Config{}, 1024 * mib * 9 / 10, (1024*mib*9/10 - 32*mib - 2*(1024*mib*9/10/64)) / 2, 16 * mib, 16 * mib, "GOMEMLIMIT", ""},
-		{"GOMEMLIMIT=64MiB lowers the caps", Config{}, 64 * mib, 14 * mib, 14 * mib / 3 / 2, 14 * mib / 3 / 2, "GOMEMLIMIT", "body cap lowered"},
+		{"GOMEMLIMIT=64MiB lowers the caps", Config{}, 64 * mib, 14 * mib, 14*mib/3/2 - readChunk, 14 * mib / 3 * 4 / grpcLeasePer4, "GOMEMLIMIT", "body cap lowered"},
 		{"configured budget", Config{IngestBudgetMiB: 200}, 256 * mib, 200 * mib, 16 * mib, 16 * mib, "FI_INGEST_BUDGET_MIB", ""},
-		{"deprecated gzip_inflight_mib", Config{GzipInflightMiB: 150}, 256 * mib, 150 * mib, 16 * mib, 16 * mib, "FI_INGEST_BUDGET_MIB", "deprecated"},
-		{"budget beats the alias", Config{IngestBudgetMiB: 120, GzipInflightMiB: 150}, 0, 120 * mib, 16 * mib, 16 * mib, "FI_INGEST_BUDGET_MIB", ""},
-		{"receive cap over the budget", Config{GRPCMaxRecvMiB: 64}, 256 * mib, 108 * mib, 16 * mib, 18 * mib, "GOMEMLIMIT", "gRPC receive cap lowered"},
+		{"receive cap over the budget", Config{GRPCMaxRecvMiB: 64}, 256 * mib, 108 * mib, 16 * mib, 108 * mib / 3 * 4 / grpcLeasePer4, "GOMEMLIMIT", "gRPC receive cap lowered"},
 		{"smaller body cap", Config{MaxBodyMiB: 4}, 256 * mib, 108 * mib, 4 * mib, 4 * mib, "GOMEMLIMIT", ""},
 	}
 	for _, tc := range cases {
@@ -41,7 +39,7 @@ func TestResolveIngestLimits(t *testing.T) {
 			if l.wire+l.work != l.budget || l.wire != l.budget/3 {
 				t.Errorf("pools wire %d + work %d, want a third and the rest of %d", l.wire, l.work, l.budget)
 			}
-			if 2*l.maxBody > l.wire || 2*l.maxRecv > l.wire {
+			if 2*l.maxBody > l.wire || grpcWireLease(l.maxRecv) > l.wire {
 				t.Errorf("a request at the cap does not fit the wire pool: body %d recv %d wire %d", l.maxBody, l.maxRecv, l.wire)
 			}
 			if l.maxEncoded != maxEncodedPerBody*l.maxBody {

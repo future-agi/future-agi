@@ -24,6 +24,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	chexp "github.com/future-agi/future-agi/fi-collector/exporter/clickhouse25exporter"
@@ -34,7 +35,6 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
-	"golang.org/x/net/netutil"
 	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -57,10 +57,9 @@ type Config struct {
 	// MaxBodyMiB caps an OTLP/HTTP body, as sent and decompressed. 0 = 16,
 	// lowered when the budget cannot hold one.
 	MaxBodyMiB int `yaml:"otlp_max_body_mib"`
-	// MaxConnections caps the open connections of each listener. 0 = 1024.
+	// MaxConnections caps the open connections of each listener; a
+	// connection past it is closed at once. 0 = no limit.
 	MaxConnections int `yaml:"otlp_max_connections"`
-	// GzipInflightMiB is the deprecated name of IngestBudgetMiB.
-	GzipInflightMiB int `yaml:"gzip_inflight_mib"`
 }
 
 // Server owns the gRPC + HTTP OTLP listeners and the batch flusher goroutine.
@@ -84,18 +83,32 @@ type Server struct {
 	httpd           *http.Server
 
 	// The ingest budget (ingest_limits.go): its two pools, the live-heap
-	// backstop, the gRPC in-flight limit, and what was refused.
+	// backstop, the gRPC in-flight limits, and what was refused.
 	limits      ingestLimits
 	wire, work  *memPool
 	heap        *heapGuard
-	grpcStreams *semaphore.Weighted
+	grpcStreams *semaphore.Weighted // authenticated calls (grpcMaxStreams)
+	grpcPending *semaphore.Weighted // calls being authenticated (grpcMaxUnverified)
 	stats       ingestStats
 	readTimeout time.Duration // for one body or gRPC message, from its wire lease
 	// grpcAuth authenticates an Export call from its metadata, before its
-	// message is read; requireCreds makes the tap handle refuse calls with
-	// no credentials. Both follow auth; tests replace them.
+	// message is read; grpcKnown reports, from the auth cache alone, whether
+	// a call's key is known to be valid; requireCreds makes the tap handle
+	// refuse calls with no credentials. All follow auth; tests replace them.
 	grpcAuth     func(context.Context) (context.Context, error)
+	grpcKnown    func(metadata.MD) bool
 	requireCreds bool
+	// recvWithRecvMsg makes Export read its message with RecvMsg, as when
+	// grpc-go's transport stream does not offer transportMsgReader. Tests.
+	recvWithRecvMsg bool
+	// grpcIdle, grpcAge, grpcHandshake: keepalive.ServerParameters'
+	// MaxConnectionIdle and MaxConnectionAge, and grpc.ConnectionTimeout
+	// (grpcMaxConnIdle, grpcMaxConnAge, grpcConnTimeout); tests shorten them.
+	grpcIdle, grpcAge, grpcHandshake time.Duration
+	// Listener counters, for /healthz: connections closed past the cap, and
+	// gRPC connections closed for small DATA frames (frameGuardConn).
+	grpcConnsRefused, httpConnsRefused atomic.Int64
+	smallFrameConns                    atomic.Int64
 
 	// Batching: the receiver handler pushes converted rows onto `pending` and
 	// signals via `pendCh`. A single flusher goroutine drains it on either
@@ -213,17 +226,22 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		// single POST, no retry, no dead-letter) so it can't stall the span flush
 		// loop or pollute the span dead-letter. Targets end_users /
 		// trace_sessions, never the pinned span table.
-		curated:     curatedwriter.New(writer),
-		pendCh:      make(chan struct{}, 1),
-		stopCh:      make(chan struct{}),
-		limits:      limits,
-		wire:        newMemPool("wire", limits.wire),
-		work:        newMemPool("work", limits.work),
-		heap:        newHeapGuard(limits.memLimit),
-		grpcStreams: newStreamLimit(),
-		readTimeout: otlpReadTimeout,
+		curated:       curatedwriter.New(writer),
+		pendCh:        make(chan struct{}, 1),
+		stopCh:        make(chan struct{}),
+		limits:        limits,
+		wire:          newMemPool("wire", limits.wire),
+		work:          newMemPool("work", limits.work),
+		heap:          newHeapGuard(limits.memLimit),
+		grpcStreams:   semaphore.NewWeighted(grpcMaxStreams),
+		grpcPending:   semaphore.NewWeighted(grpcMaxUnverified),
+		readTimeout:   otlpReadTimeout,
+		grpcIdle:      grpcMaxConnIdle,
+		grpcAge:       grpcMaxConnAge,
+		grpcHandshake: grpcConnTimeout,
 	}
 	s.grpcAuth, s.requireCreds = authenticator.AuthenticateGRPC, authenticator != nil
+	s.grpcKnown = authenticator.KnownGRPCCredentials
 	s.work.onBlock = s.kickFlush
 	if writer != nil {
 		writer.SetMaxInsertBytes(int(limits.insertMax))
@@ -250,16 +268,15 @@ func (s *Server) Run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("listen grpc %s: %w", s.cfg.GRPCAddr, err)
 		}
-		// At most maxConns open connections; past it, new ones wait to be
-		// accepted. netutil's Accept gives up when the listener closes,
-		// which GracefulStop needs: it waits for Serve to return before it
-		// drains the open connections.
-		lis = netutil.LimitListener(lis, s.limits.maxConns)
+		// Past FI_OTLP_MAX_CONNECTIONS open connections (when set), new ones
+		// are closed at once. Every connection's frames are watched for
+		// small DATA frames (frameGuardConn).
+		lis = frameGuardListener{Listener: newConnLimitListener(lis, s.limits.maxConns, &s.grpcConnsRefused), closed: &s.smallFrameConns}
 		s.log.Info("grpc listener", "addr", s.cfg.GRPCAddr, "max_recv_mib", float64(s.limits.maxRecv)/(1<<20))
 		// No gzip decompressor is registered, on purpose: gRPC stays
 		// uncompressed-only. A grpc-go decompressor is handed only the
 		// compressed bytes, not the call, so it cannot wait on the call for a
-		// share of the inflate budget or hold that share until the handler
+		// share of the wire pool or hold that share until the handler
 		// returns, as OTLP/HTTP gzip requests do. A gzip call gets
 		// UNIMPLEMENTED before its message is read.
 		// TestGRPCGzipDecompressorIsNotRegistered (cmd/fi-collector) fails if
@@ -285,7 +302,7 @@ func (s *Server) Run(ctx context.Context) error {
 		mux.HandleFunc("/tracer/v1/traces", s.handleHTTPTraces)
 		var handler http.Handler = mux
 		if s.auth != nil {
-			handler = s.auth.HTTPMiddleware(mux)
+			handler = s.countAuthRefusals(s.auth.HTTPMiddleware(mux))
 		}
 		s.log.Info("http listener", "addr", s.cfg.HTTPAddr, "max_body_mib", float64(s.limits.maxBody)/(1<<20))
 		// Each body also has otlpReadTimeout to arrive once its wire lease
@@ -304,7 +321,7 @@ func (s *Server) Run(ctx context.Context) error {
 			}
 			return fmt.Errorf("listen http %s: %w", s.cfg.HTTPAddr, err)
 		}
-		lis = netutil.LimitListener(lis, s.limits.maxConns)
+		lis = newConnLimitListener(lis, s.limits.maxConns, &s.httpConnsRefused)
 		go func() { serveErr <- s.httpd.Serve(lis) }()
 	}
 
@@ -412,7 +429,7 @@ func (h *otlpHandler) export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	// project (auth.ProjectNameHeader).
 	md, _ := metadata.FromIncomingContext(ctx)
 	if _, err := auth.ApplyProjectNameHeader(req.Traces(), auth.ProjectNameMetadataValues(md)); err != nil {
-		return ptraceotlp.NewExportResponse(), false, status.Error(codes.InvalidArgument, err.Error())
+		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(&rejection{reason: "project", msg: err.Error()})
 	}
 
 	// Keep the authenticated workspace out-of-band. StampResourceAttrs retains
@@ -428,7 +445,7 @@ func (h *otlpHandler) export(ctx context.Context, req ptraceotlp.ExportRequest) 
 			return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rejectNewProjects)
 		}
 		if err != nil {
-			return ptraceotlp.NewExportResponse(), false, status.Errorf(codes.InvalidArgument, "auth stamp: %v", err)
+			return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(&rejection{reason: "project", msg: "auth stamp: " + err.Error()})
 		}
 		if dropped > 0 {
 			h.s.log.Warn("dropped ResourceSpans with unresolvable project", "dropped", dropped)
@@ -436,7 +453,7 @@ func (h *otlpHandler) export(ctx context.Context, req ptraceotlp.ExportRequest) 
 		var scoped bool
 		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
 		if !scoped {
-			return ptraceotlp.NewExportResponse(), false, status.Error(codes.InvalidArgument, "auth project/workspace scope mismatch")
+			return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(&rejection{reason: "project", msg: "auth project/workspace scope mismatch"})
 		}
 	}
 
@@ -472,7 +489,7 @@ func (h *otlpHandler) export(ctx context.Context, req ptraceotlp.ExportRequest) 
 func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		s.rejectHTTP(w, &rejection{reason: "method", status: http.StatusMethodNotAllowed, msg: "method not allowed"})
 		return
 	}
 
@@ -486,7 +503,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	if ct != "application/x-protobuf" && ct != "application/json" {
 		// The spec is explicit: unsupported media types return 415.
 		w.Header().Set("Accept", "application/x-protobuf, application/json")
-		http.Error(w, "unsupported content type: "+ct, http.StatusUnsupportedMediaType)
+		s.rejectHTTP(w, &rejection{reason: "content_type", status: http.StatusUnsupportedMediaType, msg: "unsupported content type: " + ct})
 		return
 	}
 
@@ -495,14 +512,14 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		// RFC 7694: a 415 caused by the content coding lists the codings
 		// the server does accept.
 		w.Header().Set("Accept-Encoding", "gzip, identity")
-		http.Error(w, "unsupported content encoding: "+strings.Join(r.Header.Values("Content-Encoding"), ", "),
-			http.StatusUnsupportedMediaType)
+		s.rejectHTTP(w, &rejection{reason: "content_encoding", status: http.StatusUnsupportedMediaType,
+			msg: "unsupported content encoding: " + strings.Join(r.Header.Values("Content-Encoding"), ", ")})
 		return
 	}
 
 	// Refusals that need none of the body come before any of it is read.
 	if check, ok := s.checkUsage(r.Context()); !ok {
-		http.Error(w, check.Reason, http.StatusTooManyRequests)
+		s.rejectHTTP(w, quotaRejection(check.Reason))
 		return
 	}
 	if s.heap.overLimit(time.Now()) {
@@ -534,19 +551,19 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	switch ct {
 	case "application/x-protobuf":
 		if err := req.UnmarshalProto(body); err != nil {
-			http.Error(w, "decode protobuf: "+err.Error(), http.StatusBadRequest)
+			s.rejectHTTP(w, &rejection{reason: "malformed", msg: "decode protobuf: " + err.Error()})
 			return
 		}
 	case "application/json":
 		if err := req.UnmarshalJSON(body); err != nil {
-			http.Error(w, "decode json: "+err.Error(), http.StatusBadRequest)
+			s.rejectHTTP(w, &rejection{reason: "malformed", msg: "decode json: " + err.Error()})
 			return
 		}
 	}
 
 	// X-Project-Name only fills ResourceSpans that do not name a project.
 	if _, err := auth.ApplyProjectNameHeader(req.Traces(), auth.ProjectNameHTTPValues(r.Header)); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.rejectHTTP(w, &rejection{reason: "project", msg: err.Error()})
 		return
 	}
 
@@ -562,7 +579,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err != nil {
-			http.Error(w, "auth stamp: "+err.Error(), http.StatusBadRequest)
+			s.rejectHTTP(w, &rejection{reason: "project", msg: "auth stamp: " + err.Error()})
 			return
 		}
 		if dropped > 0 {
@@ -571,7 +588,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		var scoped bool
 		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
 		if !scoped {
-			http.Error(w, "auth project/workspace scope mismatch", http.StatusBadRequest)
+			s.rejectHTTP(w, &rejection{reason: "project", msg: "auth project/workspace scope mismatch"})
 			return
 		}
 	}
@@ -579,7 +596,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	rows, ids, err := chexp.ConvertWithIdentities(r.Context(), req.Traces(), s.pricer)
 	if err != nil {
 		// 4xx — the SDK shouldn't retry a malformed conversion.
-		http.Error(w, "convert: "+err.Error(), http.StatusBadRequest)
+		s.rejectHTTP(w, &rejection{reason: "convert", msg: "convert: " + err.Error()})
 		return
 	}
 	s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs)
@@ -745,6 +762,17 @@ func (s *Server) drainNow(ctx context.Context) {
 	defer func() {
 		for _, l := range leases {
 			l.release()
+		}
+		// While a request waits for the work pool, drain again at once if
+		// rows (and their leases) arrived during this drain: they would
+		// otherwise wait for the next tick.
+		if s.work.waiting.Load() > 0 {
+			s.pendMu.Lock()
+			more := len(s.pendLeases) > 0
+			s.pendMu.Unlock()
+			if more {
+				s.kickFlush()
+			}
 		}
 	}()
 	if len(batch) == 0 {

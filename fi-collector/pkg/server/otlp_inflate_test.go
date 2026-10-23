@@ -12,18 +12,20 @@ import (
 )
 
 // Tests for gzip inflation (otlp_gzip.go). A gzip body leases its compressed
-// size plus the decompressed cap before it is read, then shrinks to exactly
-// its decompressed size and inflates into a buffer of that size.
+// size plus room to decompress (gzipWireLease) before it is read, grows the
+// lease if the count pass finds a larger body, then shrinks to exactly its
+// decompressed size and inflates into a buffer of that size.
 
 // acceptingServer enqueues accepted rows and never flushes them.
 func acceptingServer() *Server {
 	return New(Config{BatchMaxRows: 1 << 30, BatchMaxAge: time.Hour}, nil, nil, nil, nil)
 }
 
-// A gzip request with a Content-Length leases its compressed size plus the
-// decompressed cap before the count pass, then shrinks to exactly its
-// decompressed size, which is also the buffer's size (capacity included). The
-// lease stays until the handler returns.
+// A gzip request with a Content-Length leases gzipWireLease before the count
+// pass; a body that decompresses to more grows the lease to what the second
+// pass holds (the compressed body, the inflater, the decompressed body). It
+// then shrinks to exactly its decompressed size, which is also the buffer's
+// size (capacity included). The lease stays until the handler returns.
 func TestReadGzipBodyLeasesExactlyTheDecompressedSize(t *testing.T) {
 	cases := map[string][]byte{
 		"random body":         bytes.Repeat([]byte("0123456789abcdef"), 1<<14),
@@ -44,8 +46,9 @@ func TestReadGzipBodyLeasesExactlyTheDecompressedSize(t *testing.T) {
 			if c := cap(out); c != len(raw) {
 				t.Errorf("buffer capacity %d for a %d byte body; want exactly the body size", c, len(raw))
 			}
-			if p, want := s.wire.peak.Load(), int64(len(wire))+s.limits.maxBody; p != want {
-				t.Errorf("leased %d bytes at most, want the compressed size plus the cap, %d", p, want)
+			cl := int64(len(wire))
+			if p, want := s.wire.peak.Load(), max(gzipWireLease(cl, s.limits.maxBody), cl+readChunk+int64(len(raw))); p != want {
+				t.Errorf("leased %d bytes at most, want %d", p, want)
 			}
 			if held := s.wire.inUse.Load(); held != int64(len(raw)) {
 				t.Errorf("leased %d bytes after inflate, want exact decompressed size %d", held, len(raw))
@@ -65,7 +68,7 @@ func TestInflateGzipReadsAllMembers(t *testing.T) {
 	raw := bytes.Repeat([]byte("span "), 1<<20/5)
 	wire := append(gzipBytes(t, raw), gzipBytes(t, []byte("x"))...)
 	var sized int64 = -1
-	out, err := inflateGzip([][]byte{wire[:100], wire[100:]}, defaultMaxBodyBytes, func(n int64) { sized = n })
+	out, err := inflateGzip([][]byte{wire[:100], wire[100:]}, defaultMaxBodyBytes, func(n int64) error { sized = n; return nil })
 	if err != nil || !bytes.Equal(out, append(raw, 'x')) {
 		t.Fatalf("inflate: err=%v, %d bytes out, want %d", err, len(out), len(raw)+1)
 	}
@@ -74,8 +77,8 @@ func TestInflateGzipReadsAllMembers(t *testing.T) {
 	}
 }
 
-// A gzip bomb is stopped as soon as it expands past the cap. It holds its
-// compressed size plus the cap during that count pass, then releases it;
+// A gzip bomb is stopped as soon as it expands past the cap. It holds only
+// its lease from before the count pass (gzipWireLease), then releases it;
 // this checks the decompressed stream limit, not the gzip trailer or wire
 // size.
 func TestOTLPHTTPGzipBombIs413WithinDecompressedCap(t *testing.T) {
@@ -93,7 +96,7 @@ func TestOTLPHTTPGzipBombIs413WithinDecompressedCap(t *testing.T) {
 			if rec.Code != http.StatusRequestEntityTooLarge {
 				t.Fatalf("status %d, want 413 (%s)", rec.Code, rec.Body.String())
 			}
-			if p, want := s.wire.peak.Load(), int64(len(body))+s.limits.maxBody; p != want {
+			if p, want := s.wire.peak.Load(), gzipWireLease(int64(len(body)), s.limits.maxBody); p != want {
 				t.Errorf("over-cap body leased %d bytes during the count pass, want %d", p, want)
 			}
 			if u := s.wire.inUse.Load(); u != 0 {
@@ -144,5 +147,27 @@ func TestOTLPHTTPRejectionLogsAreSampled(t *testing.T) {
 	st := s.IngestStats()
 	if st.Rejected["http/wire_busy/503"] != 100 || st.Rejected["http/body_size/413"] != 20 {
 		t.Errorf("rejection counts %v, want 100 wire_busy and 20 body_size", st.Rejected)
+	}
+}
+
+// A gzip body that decompresses to more than its lease allowed for waits for
+// the rest while it holds its compressed body, and is served once the pool
+// has room.
+func TestGzipBodyWaitsToGrowItsLease(t *testing.T) {
+	s := budgetServer(96)
+	raw := tracesOfSize(t, "grow", 4<<20) // compresses far more than gzipLeaseRatio times
+	body := gzipBytes(t, raw)
+	before := gzipWireLease(int64(len(body)), s.limits.maxBody)
+	release := holdPool(t, s.wire, s.wire.size-before) // room for the first lease only
+	time.AfterFunc(200*time.Millisecond, release)
+	start := time.Now()
+	if rec := postGzipTo(s, body); rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200 once the pool has room (%s)", rec.Code, rec.Body.String())
+	}
+	if waited := time.Since(start); waited < 150*time.Millisecond {
+		t.Errorf("served after %v, before the pool had room to grow the lease", waited)
+	}
+	if p, want := s.wire.peak.Load(), s.wire.size; p > want {
+		t.Errorf("wire peak %d over the pool's %d", p, want)
 	}
 }

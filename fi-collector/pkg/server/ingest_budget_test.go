@@ -155,12 +155,12 @@ func TestOTLPHTTPWaitsForTheWirePool(t *testing.T) {
 func TestOTLPHTTPLargeBodyNotStarvedBySmallOnes(t *testing.T) {
 	s, _ := flushingServer(t, 96, time.Hour) // wire pool 32 MiB
 	s.wire.wait = 3 * time.Second
-	large := gzipBytes(t, tracesOfSize(t, "large-span", 12<<20)) // leases its size + the 16 MiB cap
+	large := tracesOfSize(t, "large-span", 12<<20) // plain: leases its 12 MiB
 	small := gzipBytes(t, tracesOfSize(t, "small-span", 1<<20))
 
-	hold := holdPool(t, s.wire, 16<<20) // other requests hold half the pool
+	hold := holdPool(t, s.wire, 24<<20) // other requests hold three quarters of the pool
 	largeCode := make(chan int, 1)
-	go func() { largeCode <- postGzipTo(s, large).Code }()
+	go func() { largeCode <- postBody(s, "application/x-protobuf", false, nil, large).Code }()
 	// Wait until the large request is queued: a queued waiter makes
 	// TryAcquire fail even though the pool has room.
 	for deadline := time.Now().Add(5 * time.Second); s.wire.sem.TryAcquire(1); time.Sleep(time.Millisecond) {
@@ -341,11 +341,11 @@ func TestOTLPHTTPConcurrentGzipBombsStayWithinTheWirePool(t *testing.T) {
 	}
 }
 
-// A body is leased before it is read, so an upload that stalls holds its
-// lease, but only for the read timeout: then it is a 408 and the lease is
-// back. Uploads that stall forever cannot starve other requests for longer.
+// A body is leased before it is read; an upload that stalls gives its lease
+// back when the read timeout answers it with a busy refusal (503 and
+// Retry-After), which exporters retry.
 func TestOTLPHTTPStalledUploadsTimeOut(t *testing.T) {
-	s := budgetServer(96) // wire pool 32 MiB: one gzip upload of unknown length fills it
+	s := budgetServer(96)
 	s.readTimeout = 500 * time.Millisecond
 	s.wire.wait = 3 * time.Second
 	srv := httptest.NewServer(http.HandlerFunc(s.handleHTTPTraces))
@@ -355,6 +355,11 @@ func TestOTLPHTTPStalledUploadsTimeOut(t *testing.T) {
 		code int
 		err  error
 	}
+	// The rest of the pool is held, so the stalled upload's lease is all
+	// that is left.
+	want := s.limits.maxBody + readChunk // a body of unknown length: the cap, read in chunks
+	hold := holdPool(t, s.wire, s.wire.size-want)
+	defer hold()
 	stalled := make(chan result, 1)
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { _ = pw.Close() })
@@ -371,12 +376,11 @@ func TestOTLPHTTPStalledUploadsTimeOut(t *testing.T) {
 		resp.Body.Close()
 		stalled <- result{code: resp.StatusCode}
 	}()
-	want := 2 * s.limits.maxBody // the compressed body and the decompressed cap
-	for deadline := time.Now().Add(2 * time.Second); s.wire.inUse.Load() < want && time.Now().Before(deadline); {
+	for deadline := time.Now().Add(2 * time.Second); s.wire.inUse.Load() < s.wire.size && time.Now().Before(deadline); {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if held := s.wire.inUse.Load(); held != want {
-		t.Fatalf("a stalled upload holds %d wire bytes, want its lease of %d", held, want)
+	if held := s.wire.inUse.Load(); held != s.wire.size {
+		t.Fatalf("pool holds %d bytes with the stalled upload, want all %d", held, s.wire.size)
 	}
 
 	// A request now waits for the stalled one to time out, then succeeds.
@@ -390,12 +394,13 @@ func TestOTLPHTTPStalledUploadsTimeOut(t *testing.T) {
 	}
 	select {
 	case r := <-stalled:
-		if r.err == nil && r.code != http.StatusRequestTimeout {
-			t.Errorf("stalled upload: status %d, want 408", r.code)
+		if r.err == nil && r.code != http.StatusServiceUnavailable {
+			t.Errorf("stalled upload: status %d, want 503", r.code)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the stalled upload was never answered")
 	}
+	hold()
 	if u := s.wire.inUse.Load(); u != 0 {
 		t.Errorf("%d wire bytes still leased after the stalled upload ended", u)
 	}

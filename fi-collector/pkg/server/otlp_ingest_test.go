@@ -227,9 +227,9 @@ func TestOTLPHTTPGzipBombIs413AndStopsAtTheCap(t *testing.T) {
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status %d, want 413 (%s)", rec.Code, rec.Body.String())
 	}
-	// The body and the decompressed cap are leased during the count pass;
-	// an over-cap bomb releases the lease before returning.
-	if p, want := s.wire.peak.Load(), int64(len(compressed))+s.limits.maxBody; p != want {
+	// The lease from before the count pass is all it holds; an over-cap
+	// bomb releases it before returning.
+	if p, want := s.wire.peak.Load(), gzipWireLease(int64(len(compressed)), s.limits.maxBody); p != want {
 		t.Errorf("over-cap body leased %d bytes, want %d", p, want)
 	}
 	if u := s.wire.inUse.Load(); u != 0 {

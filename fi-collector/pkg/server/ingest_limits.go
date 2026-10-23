@@ -46,14 +46,49 @@ const maxEncodedPerBody = 8
 
 // Defaults for the listeners.
 const (
-	defaultMaxConnections = 1024             // per listener (FI_OTLP_MAX_CONNECTIONS)
-	maxHeaderBytes        = 16 << 10         // HTTP headers and gRPC metadata
-	otlpReadTimeout       = 30 * time.Second // to read one request body or gRPC message
-	httpIdleTimeout       = 2 * time.Minute
-	grpcStreamWindow      = 256 << 10 // per-stream flow-control window (turns BDP sizing off)
-	grpcConnWindow        = 1 << 20
+	maxHeaderBytes  = 16 << 10         // HTTP headers and gRPC metadata
+	otlpReadTimeout = 30 * time.Second // to read one request body or gRPC message
+	httpIdleTimeout = 2 * time.Minute
+
+	grpcStreamWindow = 256 << 10 // per-stream flow-control window (turns BDP sizing off)
+	// grpcConnWindow is the connection's window. Only streams whose handler
+	// is reading a message under its wire lease are given more than
+	// grpcStreamWindow, so this bounds nothing the leases do not; it is large
+	// enough that a message at the receive cap arrives in one round trip.
+	grpcConnWindow        = 16 << 20
 	grpcMaxStreamsPerConn = 32
-	grpcMaxStreams        = 64 // in flight across all connections
+	grpcMaxStreams        = 64 // authenticated Export calls in flight, across all connections
+	// grpcMaxUnverified is how many calls whose key is not yet known to be
+	// valid may be in flight at once, across all connections, while they
+	// are authenticated. Calls whose key is in the auth cache never wait on
+	// it.
+	grpcMaxUnverified = 16
+	// A gRPC connection with no call in flight is closed (GOAWAY) after
+	// grpcMaxConnIdle, and any connection after grpcMaxConnAge plus
+	// grpcConnAgeGrace for the calls in flight to finish; clients reconnect.
+	// A connection that has not finished its HTTP/2 handshake within
+	// grpcConnTimeout is closed.
+	grpcMaxConnIdle  = 2 * time.Minute
+	grpcMaxConnAge   = 30 * time.Minute
+	grpcConnAgeGrace = 2 * time.Minute
+	grpcConnTimeout  = 10 * time.Second
+	// Clients may ping as often as every grpcMinPingInterval, with or
+	// without calls in flight (grpc-go's default refuses pings more often
+	// than every 5 minutes). Pings do not keep a connection from being idle.
+	grpcMinPingInterval = 10 * time.Second
+)
+
+// grpcWireLease is what an Export call leases from the wire pool for a
+// message of n bytes, from its length prefix, before the message is read:
+// grpc-go reads the message's DATA frames into buffers of their own size
+// (exactBufferPool), with per-frame overhead (at most about 15% for frames of
+// 1 KiB or more; frameGuardConn limits smaller ones), and they are joined into
+// one copy, so both are live together.
+func grpcWireLease(n int64) int64 { return max(n*grpcLeasePer4/4, n+grpcLeaseFixed) }
+
+const (
+	grpcLeasePer4  = 9        // grpcWireLease's ratio, in quarters
+	grpcLeaseFixed = 16 << 10 // the frame list and a few small frames
 )
 
 // heapGuardShare: a request is refused as busy while the live heap is above
@@ -66,11 +101,11 @@ type ingestLimits struct {
 	source     string // where the budget came from
 	budget     int64
 	wire, work int64
-	maxBody    int64 // HTTP body cap, as sent and decompressed
-	maxRecv    int64 // gRPC receive cap
-	maxEncoded int64 // JSON bytes one request may write to ClickHouse
-	insertMax  int64 // the flusher's insert buffer: rows are sent in inserts of about this size
-	maxConns   int
+	maxBody    int64    // HTTP body cap, as sent and decompressed
+	maxRecv    int64    // gRPC receive cap
+	maxEncoded int64    // JSON bytes one request may write to ClickHouse
+	insertMax  int64    // the flusher's insert buffer: rows are sent in inserts of about this size
+	maxConns   int      // per listener; 0: no limit
 	notes      []string // what was lowered and why, for the startup log
 }
 
@@ -94,10 +129,6 @@ func insertBufferBytes(memLimit int64) int64 {
 func resolveIngestLimits(cfg Config, memLimit int64) ingestLimits {
 	l := ingestLimits{memLimit: memLimit, insertMax: insertBufferBytes(memLimit)}
 	budgetMiB := cfg.IngestBudgetMiB
-	if budgetMiB <= 0 && cfg.GzipInflightMiB > 0 {
-		budgetMiB = cfg.GzipInflightMiB
-		l.notes = append(l.notes, "gzip_inflight_mib (FI_GZIP_INFLIGHT_MIB) is deprecated; it sets ingest_budget_mib (FI_INGEST_BUDGET_MIB)")
-	}
 	switch {
 	case budgetMiB > 0:
 		l.budget, l.source = int64(min(budgetMiB, 1<<20))<<20, "FI_INGEST_BUDGET_MIB"
@@ -115,26 +146,26 @@ func resolveIngestLimits(cfg Config, memLimit int64) ingestLimits {
 	if cfg.MaxBodyMiB > 0 {
 		l.maxBody = int64(min(cfg.MaxBodyMiB, 1024)) << 20
 	}
-	if l.maxBody > l.wire/2 {
+	// A body at the cap and its decompressed or joined copy (and a chunk of
+	// slack for each) fit the wire pool.
+	if fit := l.wire/2 - readChunk; l.maxBody > fit {
 		l.notes = append(l.notes, fmt.Sprintf("OTLP body cap lowered from %d to %d MiB to fit the ingest budget (%d MiB); raise FI_INGEST_BUDGET_MIB or GOMEMLIMIT for a higher cap",
-			l.maxBody>>20, (l.wire/2)>>20, l.budget>>20))
-		l.maxBody = l.wire / 2
+			l.maxBody>>20, fit>>20, l.budget>>20))
+		l.maxBody = fit
 	}
 	l.maxRecv = l.maxBody
 	if cfg.GRPCMaxRecvMiB > 0 {
 		l.maxRecv = int64(min(cfg.GRPCMaxRecvMiB, 1024)) << 20
 	}
-	// A gRPC call leases twice its receive cap before its message is read.
-	if l.maxRecv > l.wire/2 {
+	// A gRPC message at the cap leases grpcWireLease(maxRecv).
+	if grpcWireLease(l.maxRecv) > l.wire {
+		fit := l.wire * 4 / grpcLeasePer4
 		l.notes = append(l.notes, fmt.Sprintf("gRPC receive cap lowered from %d to %d MiB to fit the ingest budget (%d MiB); raise FI_INGEST_BUDGET_MIB or GOMEMLIMIT for a higher cap",
-			l.maxRecv>>20, (l.wire/2)>>20, l.budget>>20))
-		l.maxRecv = l.wire / 2
+			l.maxRecv>>20, fit>>20, l.budget>>20))
+		l.maxRecv = fit
 	}
 	l.maxEncoded = maxEncodedPerBody * l.maxBody
-	l.maxConns = defaultMaxConnections
-	if cfg.MaxConnections > 0 {
-		l.maxConns = cfg.MaxConnections
-	}
+	l.maxConns = max(cfg.MaxConnections, 0)
 	return l
 }
 

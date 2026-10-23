@@ -27,10 +27,23 @@ import (
 //     part of the work lease goes to the pending batch with the rows
 //     (adoptRows) and is released when the drain that stores them ends.
 //
-// A refusal is either permanent (sending the same request again cannot
-// succeed: HTTP 413 or 400, gRPC INVALID_ARGUMENT) or busy (retry later: HTTP
-// 503 with Retry-After, gRPC UNAVAILABLE); OTLP exporters retry only the
-// latter.
+// Every refusal is one of three kinds:
+//
+//   - permanent: sending the same request again cannot succeed. HTTP 413 (a
+//     size or count limit) or 400 (malformed, too deep), gRPC
+//     INVALID_ARGUMENT. OTLP exporters drop the batch.
+//   - busy: retry later. HTTP 503 with Retry-After, gRPC UNAVAILABLE; a quota
+//     refusal is HTTP 429 with Retry-After, gRPC RESOURCE_EXHAUSTED.
+//   - read timeout: the body or message did not arrive within
+//     otlpReadTimeout. HTTP 503 with Retry-After, gRPC DEADLINE_EXCEEDED.
+//
+// OTLP exporters retry busy refusals and read timeouts. Auth refusals (HTTP
+// 401, gRPC UNAUTHENTICATED), when credentials cannot be checked (HTTP 503,
+// gRPC UNAVAILABLE), and unsupported methods, media types or codings (HTTP
+// 405, 415) are answered as before. Refusals are counted in /healthz
+// (ingest.rejected, by transport, reason and code; HTTP auth refusals as
+// http/auth/401) and logged at most once a second per reason; auth logs its
+// own refusals.
 
 type rejectKind uint8
 
@@ -46,14 +59,18 @@ type rejection struct {
 	kind     rejectKind
 	tooLarge bool // a permanent refusal for size (413), not a bad request (400)
 	msg      string
+	// status and code, when set, replace the status the kind maps to.
+	status int
+	code   codes.Code
 }
 
 func (r *rejection) httpStatus() int {
+	if r.status != 0 {
+		return r.status
+	}
 	switch r.kind {
-	case rejectBusy:
+	case rejectBusy, rejectTimeout:
 		return http.StatusServiceUnavailable
-	case rejectTimeout:
-		return http.StatusRequestTimeout
 	}
 	if r.tooLarge {
 		return http.StatusRequestEntityTooLarge
@@ -62,6 +79,9 @@ func (r *rejection) httpStatus() int {
 }
 
 func (r *rejection) grpcCode() codes.Code {
+	if r.code != codes.OK {
+		return r.code
+	}
 	switch r.kind {
 	case rejectBusy:
 		return codes.Unavailable
@@ -80,14 +100,29 @@ var (
 		msg: "server busy processing other requests, retry later"}
 	rejectStreams = &rejection{reason: "grpc_streams", kind: rejectBusy,
 		msg: "server busy: too many concurrent requests, retry later"}
+	rejectUnverified = &rejection{reason: "grpc_unverified", kind: rejectBusy,
+		msg: "server busy: too many requests being authenticated, retry later"}
 	rejectReadTimeout = &rejection{reason: "read_timeout", kind: rejectTimeout,
-		msg: "request body not received in time"}
+		msg: "request body not received in time, retry"}
 	// rejectNewProjects: the request names more projects new to its key than
-	// one request may add (auth.MaxNewProjectsPerRequest). The first of them
-	// were added, so a retry makes progress.
+	// one request may add (auth.MaxNewProjectsPerRequest). Some of them were
+	// added, so a retry makes progress.
 	rejectNewProjects = &rejection{reason: "new_projects", kind: rejectBusy,
-		msg: fmt.Sprintf("more than %d new project names in one request; the first were added, retry", auth.MaxNewProjectsPerRequest)}
+		msg: fmt.Sprintf("more than %d new project names in one request; some were added, retry", auth.MaxNewProjectsPerRequest)}
 )
+
+// quotaRejection is a request over its key's usage quota: retryable, once
+// the quota allows (HTTP 429, gRPC RESOURCE_EXHAUSTED).
+func quotaRejection(reason string) *rejection {
+	return &rejection{reason: "quota", kind: rejectBusy, status: http.StatusTooManyRequests,
+		code: codes.ResourceExhausted, msg: "quota exceeded: " + reason}
+}
+
+// rejectRecvTooLarge is a gRPC message over the receive cap.
+func (s *Server) rejectRecvTooLarge() *rejection {
+	return &rejection{reason: "body_size", tooLarge: true,
+		msg: fmt.Sprintf("message too large: over the %d MiB OTLP/gRPC receive cap (FI_GRPC_MAX_RECV_MIB); send smaller batches", s.limits.maxRecv>>20)}
+}
 
 func (s *Server) rejectBodyTooLarge() *rejection {
 	return &rejection{reason: "body_size", tooLarge: true,
@@ -135,7 +170,7 @@ func (s *Server) rejectHTTP(w http.ResponseWriter, r *rejection) {
 	if ok, held := s.countRejection("http", strconv.Itoa(st), r); ok {
 		s.logRejection("http", strconv.Itoa(st), r, held)
 	}
-	if r.kind == rejectBusy {
+	if r.kind != rejectPermanent {
 		w.Header().Set("Retry-After", "1")
 	}
 	http.Error(w, r.msg, st)
@@ -149,6 +184,30 @@ func (s *Server) rejectGRPC(r *rejection) error {
 	}
 	return status.Error(code, r.msg)
 }
+
+// countAuthRefusals counts the OTLP/HTTP auth middleware's 401s in
+// ingest.rejected (as http/auth/401). The middleware logs them itself.
+func (s *Server) countAuthRefusals(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&authStatusWriter{ResponseWriter: w, s: s}, r)
+	})
+}
+
+type authStatusWriter struct {
+	http.ResponseWriter
+	s *Server
+}
+
+func (w *authStatusWriter) WriteHeader(code int) {
+	if code == http.StatusUnauthorized {
+		w.s.countRejection("http", "401", &rejection{reason: "auth"})
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap lets http.ResponseController reach the connection (the body read
+// deadline).
+func (w *authStatusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // leaseWork scans a body, applies the scan's limits, and leases the
 // request's price from the work pool. rows is the part to hand to the
@@ -235,6 +294,10 @@ type IngestStats struct {
 	PendingLeased    int64            `json:"pending_leased_bytes"`
 	LiveHeapBytes    int64            `json:"live_heap_bytes"`
 	Rejected         map[string]int64 `json:"rejected"` // by transport/reason/code
+	// ConnectionsClosed counts connections the listeners closed: past the
+	// connection cap (grpc_over_cap, http_over_cap), and gRPC connections
+	// that sent too many small DATA frames (grpc_small_frames).
+	ConnectionsClosed map[string]int64 `json:"connections_closed"`
 }
 
 // PoolStats describes one memPool.
@@ -259,6 +322,10 @@ func (s *Server) IngestStats() IngestStats {
 		MaxBodyBytes: s.limits.maxBody, MaxGRPCRecvBytes: s.limits.maxRecv,
 		Wire: poolStats(s.wire), Work: poolStats(s.work), LiveHeapBytes: s.heap.live.Load(),
 		Rejected: map[string]int64{},
+		ConnectionsClosed: map[string]int64{
+			"grpc_over_cap": s.grpcConnsRefused.Load(), "http_over_cap": s.httpConnsRefused.Load(),
+			"grpc_small_frames": s.smallFrameConns.Load(),
+		},
 	}
 	s.pendMu.Lock()
 	st.PendingLeased = s.pendLeased

@@ -293,7 +293,6 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 		{"FI_INGEST_BUDGET_MIB", &c.Server.IngestBudgetMiB},
 		{"FI_OTLP_MAX_BODY_MIB", &c.Server.MaxBodyMiB},
 		{"FI_OTLP_MAX_CONNECTIONS", &c.Server.MaxConnections},
-		{"FI_GZIP_INFLIGHT_MIB", &c.Server.GzipInflightMiB}, // deprecated name of FI_INGEST_BUDGET_MIB
 	} {
 		if v := os.Getenv(o.env); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -302,6 +301,12 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 				log.Warn("ignoring invalid "+o.env, "value", v)
 			}
 		}
+	}
+	// FI_GZIP_INFLIGHT_MIB bounded gzip requests only. One budget now bounds
+	// every OTLP request, so it is not read: setting it to a gzip-sized value
+	// would otherwise shrink the whole budget.
+	if v := os.Getenv("FI_GZIP_INFLIGHT_MIB"); v != "" {
+		log.Warn("FI_GZIP_INFLIGHT_MIB is no longer read; the ingest budget for every OTLP request is FI_INGEST_BUDGET_MIB", "value", v)
 	}
 	if v := os.Getenv("FI_GRPC_ADDR"); v != "" {
 		c.Server.GRPCAddr = v
