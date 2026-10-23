@@ -9,8 +9,6 @@ These functions take explicit parameters instead of reading from `self`.
 
 import structlog
 
-from evaluations.constants import FUTUREAGI_EVAL_TYPES
-
 logger = structlog.get_logger(__name__)
 _DEFAULT_MODEL = object()
 
@@ -158,7 +156,10 @@ def resolve_pass_threshold(
     """Priority: runtime_config[run_config][pass_threshold] > runtime_config[pass_threshold] > resolved_version.pass_threshold > eval_template.pass_threshold > 0.5."""
     if isinstance(runtime_config, dict):
         run_config = runtime_config.get("run_config") or {}
-        if isinstance(run_config, dict) and run_config.get("pass_threshold") is not None:
+        if (
+            isinstance(run_config, dict)
+            and run_config.get("pass_threshold") is not None
+        ):
             return float(run_config["pass_threshold"])
         if runtime_config.get("pass_threshold") is not None:
             return float(runtime_config["pass_threshold"])
@@ -308,8 +309,10 @@ def prepare_eval_config(
 
     # AgentEvaluator — multi-turn reasoning via Falcon AI AgentLoop
     if eval_type_id == "AgentEvaluator":
-        config["rule_prompt"] = config["rule_prompt"] if "rule_prompt" in config else eval_template.config.get(
-            "rule_prompt"
+        config["rule_prompt"] = (
+            config["rule_prompt"]
+            if "rule_prompt" in config
+            else eval_template.config.get("rule_prompt")
         )
         config["model"] = model or eval_template.config.get("model")
         raw_output = eval_template.config.get("output")
@@ -352,11 +355,15 @@ def prepare_eval_config(
     # CustomPromptEvaluator — LLM-as-judge
     elif eval_type_id == "CustomPromptEvaluator":
         config["provider"] = eval_template.config.get("provider")
-        config["rule_prompt"] = config["rule_prompt"] if "rule_prompt" in config else eval_template.config.get(
-            "rule_prompt"
+        config["rule_prompt"] = (
+            config["rule_prompt"]
+            if "rule_prompt" in config
+            else eval_template.config.get("rule_prompt")
         )
-        config["system_prompt"] = config["system_prompt"] if "system_prompt" in config else eval_template.config.get(
-            "system_prompt"
+        config["system_prompt"] = (
+            config["system_prompt"]
+            if "system_prompt" in config
+            else eval_template.config.get("system_prompt")
         )
         raw_output = eval_template.config.get("output")
         if eval_template.choice_scores and raw_output != "Pass/Fail":
@@ -444,7 +451,9 @@ def prepare_jev_config(
     runtime_config,
     api_key=None,
 ):
-    """Build an effective typed config with the org's TypeSafe key."""
+    """Build an effective typed config. The org's TypeSafe key is added only
+    after the mapping validates, so no frame that can raise JevMappingError
+    holds it; callers that can, hand it to JevEvaluator directly."""
     from copy import deepcopy
 
     from ee.jev.mapping import validate_jev_mapping
@@ -454,8 +463,8 @@ def prepare_jev_config(
         effective.update(deepcopy(resolved_version.config_snapshot or {}))
     effective.update(config)
     effective, _ = apply_version_overrides(effective, resolved_version)
+    effective.pop("api_key", None)
     effective["model"] = effective_model
-    effective["api_key"] = api_key
     effective["provider"] = "typesafe"
     effective["output_type"] = effective.get(
         "output_type", effective.get("output", "Pass/Fail")
@@ -489,6 +498,8 @@ def prepare_jev_config(
     effective["jev_mapping"] = mapping.to_dict()
     for key in ("organization_id", "workspace_id", "user_id"):
         effective.pop(key, None)
+    if api_key is not None:
+        effective["api_key"] = api_key
     return effective
 
 
@@ -524,8 +535,8 @@ def reject_unknown_jev_model(model):
         raise JevMappingError(
             "JEV_MODEL_UNKNOWN",
             "model",
-            "Model %r is not a supported Jev evaluator model. Supported: "
-            "jev-1.13.0, jev-latest." % model,
+            f"Model {model!r} is not a supported Jev evaluator model. Supported: "
+            "jev-1.13.0, jev-latest.",
         )
 
 
@@ -607,15 +618,18 @@ def create_eval_instance(
             if getattr(eval_template, "workspace", None)
             else None
         )
+        # Validated first; the key is looked up only then and goes straight
+        # to the evaluator.
         jev_config = prepare_jev_config(
             eval_template,
             config,
             effective_model,
             resolved_version,
             runtime_config,
-            api_key=_get_typesafe_api_key(org_id, ws_id),
         )
-        return JevEvaluator(**jev_config), None
+        return JevEvaluator(
+            **jev_config, api_key=_get_typesafe_api_key(org_id, ws_id)
+        ), None
 
     jev_selection = any(
         isinstance(value, str) and value.lower().startswith("jev-")

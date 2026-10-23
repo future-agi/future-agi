@@ -6,10 +6,12 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from ee.evals.llm.jev_evaluator.evaluator import JevEvaluator
-from ee.jev.mapping import JevMappingError
-from evaluations.engine.instance import create_eval_instance
-from evaluations.engine.registry import get_eval_class
+pytest.importorskip("ee.evals.llm.jev_evaluator.evaluator")
+
+from ee.evals.llm.jev_evaluator.evaluator import JevEvaluator  # noqa: E402
+from ee.jev.mapping import JevMappingError  # noqa: E402
+from evaluations.engine.instance import create_eval_instance  # noqa: E402
+from evaluations.engine.registry import get_eval_class  # noqa: E402
 
 pytestmark = pytest.mark.requires_ee
 ORG_KEY = "org-typesafe-key"
@@ -119,13 +121,13 @@ def test_r04_version_mapping_snapshot_and_runtime_precedence():
     assert instance.mapping.score["levels"] == ["bad", "ok", "good"]
 
 
-def test_r04_c20_binding_numeric_requires_levels():
+def test_r04_c20_binding_numeric_requires_levels(typesafe_key):
     with (
         patch("evaluations.engine.instance.resolve_version", return_value=None),
         patch("tfc.capabilities.service.check_or_raise"),
         patch("ee.jev.client.JevSystemOneClient.evaluate") as client,
     ):
-        with pytest.raises(JevMappingError, match="JEV_SCORE_LEVELS_REQUIRED"):
+        with pytest.raises(JevMappingError, match="JEV_SCORE_LEVELS_REQUIRED") as err:
             create_eval_instance(
                 Mock(),
                 template(output="score"),
@@ -133,6 +135,15 @@ def test_r04_c20_binding_numeric_requires_levels():
                 runtime_config={"run_config": {"model": "jev-latest"}},
             )
     client.assert_not_called()
+    # Validated before the key is looked up: no frame of the raised error
+    # holds the org's key, so nothing relies on Sentry's denylist.
+    typesafe_key.assert_not_called()
+    frame_values = []
+    tb = err.value.__traceback__
+    while tb is not None:
+        frame_values.append(repr(tb.tb_frame.f_locals))
+        tb = tb.tb_next
+    assert all(ORG_KEY not in values for values in frame_values)
 
 
 def test_r14_capability_denial_before_constructor_or_transport():
@@ -157,7 +168,11 @@ def test_r06_unknown_jev_rejected_before_key_lookup():
 
     cases = [
         {"template_model": "jev-2.0.0", "version_model": None, "model": None},
-        {"template_model": "turing_large", "version_model": "jev-preview", "model": None},
+        {
+            "template_model": "turing_large",
+            "version_model": "jev-preview",
+            "model": None,
+        },
         {
             "template_model": "turing_large",
             "version_model": None,
