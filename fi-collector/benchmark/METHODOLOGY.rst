@@ -84,9 +84,14 @@ and as a 1-second series in the telemetry stream (``run.json.telemetry.jsonl``).
     fully acknowledged requests are samples. A refused, ambiguous or partially
     rejected request is not expected to be visible, and its sentinel is counted in
     ``dropped_not_acknowledged_sentinels``. While the load runs, and through the
-    settle window, every unseen sentinel is polled every ``--poll-interval``
-    (100 ms by default). The poll uses a ``start_time`` window so ClickHouse
-    prunes by its primary key. Each sentinel's visibility instant is bracketed:
+    settle window, polling ticks at ``--poll-interval`` (100 ms by default).
+    Each tick attempts at most 4,096 pending IDs in queries of at most 256 IDs,
+    rotating through sequence order even when older sentinels never appear or
+    queries fail. With a stable population of 40,960 unseen IDs, a complete pass
+    needs ten ticks, plus query time; an individual sentinel is not polled every
+    100 ms. Failed queries retain unseen status and the previous last-miss time.
+    The poll uses a ``start_time`` window so ClickHouse prunes by its primary key.
+    Each sentinel's visibility instant is bracketed:
 
     ::
 

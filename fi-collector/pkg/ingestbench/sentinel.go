@@ -24,7 +24,8 @@ import (
 // part of the lag instead of being hidden (coordinated omission). The upper bound
 // is also reported from the actual send.
 
-// maxPollIDsPerTick bounds one poll tick: the oldest unseen sentinels first.
+// maxPollIDsPerTick bounds one poll tick. Pending IDs rotate in sequence order,
+// including after query errors, so permanent losses cannot starve newer IDs.
 const maxPollIDsPerTick = 4096
 
 // pollChunk is the number of sentinel IDs per poll query.
@@ -141,11 +142,24 @@ func (s *runState) pollOnce(ctx context.Context, ch clickHouse) {
 	for seq, st := range s.pending {
 		targets = append(targets, pollTarget{seq: seq, built: st.built})
 	}
+	next := s.nextPollSeq
 	s.mu.Unlock()
+	if len(targets) == 0 {
+		return
+	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].seq < targets[j].seq })
-	targets = targets[:min(len(targets), maxPollIDsPerTick)]
-	for lo := 0; lo < len(targets) && ctx.Err() == nil; lo += pollChunk {
-		chunk := targets[lo:min(lo+pollChunk, len(targets))]
+	first := sort.Search(len(targets), func(i int) bool { return targets[i].seq >= next })
+	selected := make([]pollTarget, min(len(targets), maxPollIDsPerTick))
+	for i := range selected {
+		selected[i] = targets[(first+i)%len(targets)]
+	}
+	for lo := 0; lo < len(selected) && ctx.Err() == nil; lo += pollChunk {
+		chunk := selected[lo:min(lo+pollChunk, len(selected))]
+		// Advance only over attempted chunks, even if their query fails. Failed
+		// queries do not update lastMiss or discard unseen identities.
+		s.mu.Lock()
+		s.nextPollSeq = chunk[len(chunk)-1].seq + 1
+		s.mu.Unlock()
 		began := time.Now()
 		seen, err := ch.observe(ctx, chunk)
 		ended := time.Now()

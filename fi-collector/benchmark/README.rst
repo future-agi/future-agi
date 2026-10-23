@@ -528,8 +528,11 @@ mean full-scale targets were tested or all four app probes configured. A dry run
 mock fixture or small real smoke must stay labelled as such.
 
 Read-visible lag uses sentinels: the first span of every k-th fully acknowledged
-request (at most ``--max-sentinels``, default 40,960), polled every
-``--poll-interval`` (default 100 ms) with a ``start_time`` window. Each lag is
+request (at most ``--max-sentinels``, default 40,960). Polling ticks at
+``--poll-interval`` (default 100 ms) with a ``start_time`` window; at most 4,096
+pending IDs per tick rotate fairly, so lost older IDs cannot starve later ones.
+A full pass over 40,960 pending IDs takes ten ticks plus query time, not 100 ms.
+Each lag is
 bracketed between the start of the last poll that missed the sentinel and the end
 of the first that saw it, timed from the scheduled send; the upper bound includes
 poll/query delay and neither is a commit timestamp. The insert lag

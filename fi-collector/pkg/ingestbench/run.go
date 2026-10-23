@@ -56,6 +56,7 @@ type runState struct {
 	// Read-visible sentinels (sentinel.go).
 	sentinels           map[int64]*sentinel
 	pending             map[int64]*sentinel
+	nextPollSeq         int64 // round-robin cursor; missing old sentinels must not starve later ones
 	seen                int64
 	sentinelsRegistered int64
 	sentinelsDropped    int64
