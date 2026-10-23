@@ -51,6 +51,34 @@ def _uuid(value) -> str | None:
         return None
 
 
+# task id -> (is an Instant eval run, monotonic expiry). A run is created with
+# its task, before any entry lands, so a positive answer never goes stale; a
+# negative one is re-checked after a minute. Entries that land unrecorded are
+# caught up when the run finishes (``ensure_synced``).
+_INSTANT_TASKS: dict[str, tuple[bool, float]] = {}
+_INSTANT_TASKS_MAX = 4096
+_NEGATIVE_TTL_S = 60.0
+
+
+def is_instant_task(task_id) -> bool:
+    """Whether ``task_id`` is an Instant eval run, cached per process so a
+    landed entry of any other eval task costs no SQL."""
+    import time
+
+    from tracer.models.instant_eval import InstantEvalRun
+
+    key = str(task_id)
+    now = time.monotonic()
+    cached = _INSTANT_TASKS.get(key)
+    if cached is not None and (cached[0] or cached[1] > now):
+        return cached[0]
+    found = InstantEvalRun.objects.filter(eval_task_id=task_id).exists()
+    if len(_INSTANT_TASKS) >= _INSTANT_TASKS_MAX:
+        _INSTANT_TASKS.clear()
+    _INSTANT_TASKS[key] = (found, now + _NEGATIVE_TTL_S)
+    return found
+
+
 def record_answer(entry_id) -> int:
     """Copy one entry's settled answer onto its run's row, if the entry
     belongs to an Instant eval run. A no-op for every other task."""

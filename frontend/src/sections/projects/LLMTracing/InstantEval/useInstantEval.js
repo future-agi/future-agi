@@ -250,11 +250,12 @@ export class AskSampleTooLarge extends Error {
 
 // Controls the server refuses with a reason worded for the person: a
 // cancelled run is asked again, not resumed; a run still answering can't
-// read more yet.
+// read more yet; a paused run with rows left is resumed before a retry.
 const CONTROL_REFUSALS = new Set([
   "INSTANT_EVAL_CANCELLED",
   "INSTANT_EVAL_STILL_ANSWERING",
   "INSTANT_EVAL_RUNNING",
+  "INSTANT_EVAL_PAUSED",
 ]);
 
 export class AskRefused extends Error {

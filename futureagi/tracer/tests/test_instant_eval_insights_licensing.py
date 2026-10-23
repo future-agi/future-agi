@@ -483,6 +483,48 @@ def test_an_instant_eval_task_fails_closed_without_the_license(
 
 
 @pytest.mark.django_db
+def test_an_instant_eval_task_without_its_run_row_is_refused(eval_task):
+    from tfc.temporal.eval_tasks import activities
+
+    eval_task.filters = {**(eval_task.filters or {}), RUN_MARKER: True}
+    eval_task.save(update_fields=["filters"])
+    enterprise("instant_eval")
+    with pytest.raises(ApplicationError) as refused:
+        activities._require_instant_eval_license(eval_task)
+    assert refused.value.non_retryable
+    assert refused.value.type == "CapabilityDenied"
+
+
+@pytest.mark.django_db
+def test_an_unanswerable_entitlement_check_is_retried_not_a_denial(
+    eval_task, organization
+):
+    from tfc.capabilities.errors import CapabilityDenied
+    from tfc.temporal.eval_tasks import activities
+
+    task = _instant_task(eval_task, organization)
+    with patch(
+        "tfc.ee_gating.check_ee_feature",
+        side_effect=CapabilityDenied(
+            feature_id="instant_eval", reason_code="RESOLVER_UNAVAILABLE"
+        ),
+    ):
+        with pytest.raises(ApplicationError) as unavailable:
+            activities._require_instant_eval_license(task)
+    assert not unavailable.value.non_retryable
+    assert unavailable.value.type == "CapabilityUnavailable"
+    with patch(
+        "tfc.ee_gating.check_ee_feature",
+        side_effect=CapabilityDenied(
+            feature_id="instant_eval", reason_code="PLAN_FEATURE_MISSING"
+        ),
+    ):
+        with pytest.raises(ApplicationError) as refused:
+            activities._require_instant_eval_license(task)
+    assert refused.value.non_retryable
+
+
+@pytest.mark.django_db
 def test_other_eval_tasks_dont_need_the_instant_eval_license(eval_task):
     from tfc.temporal.eval_tasks import activities
 
@@ -571,3 +613,71 @@ def test_a_build_without_jev_refuses_it_before_building_the_evaluator():
             create_eval_instance(Mock(), template)
     assert str(refused.value.detail) == ee_gates.JEV_UNAVAILABLE_MESSAGE
     capability.assert_not_called()
+
+
+def test_an_insights_stage_without_ee_fails_for_good_not_on_import(monkeypatch):
+    """The open tree has no Insights pipeline: a stage that somehow runs fails
+    once with a clear, non-retryable error instead of an ImportError retry."""
+    import builtins
+
+    from tfc.temporal.insights import activities
+
+    real_import = builtins.__import__
+
+    def no_ee(name, *args, **kwargs):
+        if name.startswith("ee.agenthub.insights"):
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_ee)
+    with pytest.raises(ApplicationError) as refused:
+        activities._pipeline("prepare")
+    assert refused.value.non_retryable
+    assert refused.value.message == activities.NOT_IN_BUILD
+    assert activities._model_error_class() is None
+
+
+def test_a_failed_report_shows_only_text_written_for_people():
+    """A timeout's "activity StartToClose timeout" never reaches run.error."""
+    from temporalio.exceptions import ActivityError, TimeoutError, TimeoutType
+
+    from tfc.temporal.insights import workflows
+
+    recorded = []
+    current = {}
+
+    async def execute_activity(name, arg, **_):
+        if name == "insight_fail":
+            recorded.append(arg.message)
+            return None
+        raise ActivityError(
+            "activity failed",
+            scheduled_event_id=1,
+            started_event_id=2,
+            identity="w",
+            activity_type=name,
+            activity_id="1",
+            retry_state=None,
+        ) from current["cause"]
+
+    for cause, expected in (
+        (
+            TimeoutError(
+                "activity StartToClose timeout",
+                type=TimeoutType.START_TO_CLOSE,
+                last_heartbeat_details=[],
+            ),
+            workflows.FAILED_MESSAGE,
+        ),
+        (ApplicationError("Your credits ran out."), "Your credits ran out."),
+    ):
+        recorded.clear()
+        current["cause"] = cause
+        with patch.object(workflows.workflow, "execute_activity", execute_activity):
+            with pytest.raises(ActivityError):
+                asyncio.run(
+                    workflows.InsightReportWorkflow().run(
+                        workflows.InsightRunInput(run_id="run-1")
+                    )
+                )
+        assert recorded == [expected]

@@ -710,6 +710,74 @@ def test_retry_failed_requeues_only_the_failures(
     assert started[-1][1] == {"replace_existing": True}
 
 
+def _half_answered_run(auth_client, observe_project, yes_no, status_):
+    """A 6-row run: one row failed, one answered, four never read."""
+    result = _start(auth_client, observe_project, [yes_no], sample_size=6).json()[
+        "result"
+    ]
+    task = EvalTask.objects.get(id=result["task_id"])
+    ids = list(resolve_desired_rows(task).matched_ids)
+    logs = EvalLogger.objects.bulk_create(
+        [
+            _answer(task, yes_no, ids[0], error=True),
+            _answer(task, yes_no, ids[1], "Yes"),
+        ]
+        + [_answer(task, yes_no, i, pending=True) for i in ids[2:]]
+    )
+    for entry in logs:
+        record_answer(entry.id)
+    EvalTask.objects.filter(id=task.id).update(status=status_)
+    return task
+
+
+def _control(auth_client, observe_project, task, action, **extra):
+    return auth_client.post(
+        CONTROL,
+        {
+            "project_id": str(observe_project.id),
+            "eval_task_id": str(task.id),
+            "action": action,
+            **extra,
+        },
+        format="json",
+    )
+
+
+@pytest.mark.django_db
+def test_a_paused_run_with_rows_left_is_resumed_not_retried_or_extended(
+    auth_client, observe_project, yes_no, fake_view, started
+):
+    """Retry and "read more" restart the run, which reads every unanswered
+    row: past the 1 retried answer or the rows "read more" confirmed."""
+    task = _half_answered_run(
+        auth_client, observe_project, yes_no, EvalTaskStatus.PAUSED
+    )
+    before = len(started)
+    for action, extra in (("retry_failed", {}), ("read_more", {"more": 5})):
+        refused = _control(auth_client, observe_project, task, action, **extra)
+        assert refused.status_code == status.HTTP_409_CONFLICT, refused.json()
+        assert refused.json()["code"] == "instant_eval_paused"
+    assert len(started) == before
+    assert EvalTask.objects.get(id=task.id).status == EvalTaskStatus.PAUSED
+
+
+@pytest.mark.django_db
+def test_retrying_on_a_stalled_run_restarts_it(
+    auth_client, observe_project, yes_no, fake_view, started, monkeypatch
+):
+    """It says running but no workflow drains it: without a restart nothing
+    would answer the requeued rows."""
+    task = _half_answered_run(
+        auth_client, observe_project, yes_no, EvalTaskStatus.RUNNING
+    )
+    monkeypatch.setattr(instant_eval_scale, "_workflow_gone", lambda task: True)
+    before = len(started)
+    retried = _control(auth_client, observe_project, task, "retry_failed")
+    assert retried.status_code == 200, retried.json()
+    assert len(started) == before + 1
+    assert EvalTask.objects.get(id=task.id).status == EvalTaskStatus.PENDING
+
+
 @pytest.mark.django_db
 def test_cancel_stops_a_run_and_its_unread_rows_are_not_read(
     auth_client, observe_project, yes_no, fake_view, started
@@ -1885,3 +1953,38 @@ def test_the_summary_reads_with_a_legacy_browser_time_zone(
     )
     assert response.status_code == status.HTTP_200_OK, response.content
     assert InstantEvalRun.objects.get(eval_task=task).last_tz == "Asia/Kolkata"
+
+
+def test_a_landed_entry_of_another_eval_task_costs_no_instant_eval_sql(monkeypatch):
+    from tracer.services import instant_eval_answers
+    from tracer.services.eval_tasks import entries
+
+    copied = []
+    monkeypatch.setattr(instant_eval_answers, "record_answer", copied.append)
+    monkeypatch.setattr(instant_eval_answers, "is_instant_task", lambda t: t == "run")
+    entries._record_instant_answer("entry-1", "continuous-task")
+    entries._record_instant_answer("entry-2", None)
+    assert copied == []
+    entries._record_instant_answer("entry-3", "run")
+    assert copied == ["entry-3"]
+
+
+@pytest.mark.django_db
+def test_whether_a_task_is_an_instant_eval_run_is_asked_once(
+    answered_run, django_assert_num_queries
+):
+    import uuid
+
+    from tracer.services import instant_eval_answers
+
+    task, _ = answered_run
+    instant_eval_answers._INSTANT_TASKS.clear()
+    with django_assert_num_queries(1):
+        assert instant_eval_answers.is_instant_task(task.id)
+    with django_assert_num_queries(0):
+        assert instant_eval_answers.is_instant_task(task.id)
+    other = uuid.uuid4()
+    with django_assert_num_queries(1):
+        assert not instant_eval_answers.is_instant_task(other)
+    with django_assert_num_queries(0):
+        assert not instant_eval_answers.is_instant_task(other)

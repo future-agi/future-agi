@@ -1932,7 +1932,11 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         )
         if not failed.exists():
             return self._gm.bad_request("No rows failed.")
-        running = task.status in ACTIVE
+        if paused := self._paused_with_rows_left(task, run):
+            return paused
+        # A stalled run (it says running, but no workflow drains it) is
+        # restarted, or nothing would answer the requeued rows.
+        running = task.status in ACTIVE and not _workflow_gone(task)
         if not running and (busy := self._busy(request, task)):
             return busy
         # Checked again: the key may have gone since the run started.
@@ -1968,6 +1972,25 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
                 self._restart(task)
         return self._restarted(task, f"Retrying {retried:,} answers.", retried=retried)
 
+    def _paused_with_rows_left(self, task, run):
+        """A 409 for a paused run that still has rows to read: restarting it
+        for a retry or "read more" would read all of them, past what that
+        action checked and confirmed. Resuming is the way on."""
+        if (
+            run is None
+            or task.status != EvalTaskStatus.PAUSED
+            or not _unanswered_rows(run)
+        ):
+            return None
+        return self._gm.custom_error_response(
+            409,
+            {
+                "message": "This run is paused. Resume it to read the rest first.",
+                "error_code": "INSTANT_EVAL_PAUSED",
+            },
+            code="instant_eval_paused",
+        )
+
     def _read_more(self, request, task, run, data):
         # Refused before any work: a run still answering (or one paused with
         # answers still landing) reads more once it is done.
@@ -1984,6 +2007,8 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             )
         if run is None or run.rows_requested >= run.population:
             return self._gm.bad_request("This run already reads every row of its view.")
+        if paused := self._paused_with_rows_left(task, run):
+            return paused
         if busy := self._busy(request, task):
             return busy
         if missing := _jev_key_missing(self._gm, task.project, _questions(task)):
@@ -2024,5 +2049,7 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
                 answers_version=F("answers_version") + 1,
             )
             EvalTask.objects.filter(id=task.id).update(spans_limit=rows)
+            # The restart sizes its batches from the new limit.
+            task.spans_limit = rows
             self._restart(task)
         return self._restarted(task, f"Reading {added:,} more.", rows_requested=target)

@@ -13,7 +13,6 @@ import json
 import math
 import re
 from datetime import timedelta
-from typing import List, Optional, Tuple
 
 import structlog
 from django.db import DatabaseError, IntegrityError, ProgrammingError, transaction
@@ -105,7 +104,9 @@ def _eval_result_score(entry: EvalLogger) -> float | None:
     if score is not None:
         return score
 
-    template = getattr(getattr(entry, "custom_eval_config", None), "eval_template", None)
+    template = getattr(
+        getattr(entry, "custom_eval_config", None), "eval_template", None
+    )
     if template is None:
         return None
     choice_scores = getattr(template, "choice_scores", None) or {}
@@ -187,7 +188,13 @@ def _instant_eval_task_ids():
         # A savepoint, so a failed read can't break a surrounding transaction.
         with transaction.atomic(using=runs.db):
             runs.exists()
-    except ProgrammingError:
+    except ProgrammingError as exc:
+        # Only "no such table" (42P01) is the before-0117 case; an undefined
+        # column or bad SQL must fail the fetch, not cluster Instant eval rows.
+        cause = exc.__cause__
+        code = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
+        if code != "42P01":
+            raise
         logger.warning("instant_eval_runs_unreadable", exc_info=True)
         return None
     return runs.annotate(tid=Cast("eval_task_id", output_field=CharField())).values(
@@ -227,8 +234,8 @@ def is_instant_eval_task(eval_task_id) -> bool:
 
 
 def get_unclustered_eval_results(
-    project_id: str, limit: Optional[int] = None
-) -> List[ClusterableEvalResult]:
+    project_id: str, limit: int | None = None
+) -> list[ClusterableEvalResult]:
     """
     Fetch EvalLogger rows that failed, have an explanation, and haven't
     been assigned to a cluster yet.
@@ -299,7 +306,7 @@ def get_unclustered_eval_results(
         .order_by("created_at")
     )
 
-    results: List[ClusterableEvalResult] = []
+    results: list[ClusterableEvalResult] = []
     # Page through the backlog by (created_at, id) with a LIMIT in SQL, so
     # stopping at ``limit`` reads only the pages it needs. ``.iterator()``
     # can't promise that: with DISABLE_SERVER_SIDE_CURSORS (pgbouncer) it
@@ -352,7 +359,7 @@ def get_unclustered_eval_results(
 _EMBED_BATCH_SIZE = 64
 
 
-def embed_texts(texts: List[str]) -> List[List[float]]:
+def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed texts via the serving client in bounded batches.
 
     Chunked rather than per-row or all-at-once: one request carries up to
@@ -375,7 +382,7 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
         text_embed = model_manager.text_model
         return [text_embed(t) for t in texts]
 
-    embeddings: List[List[float]] = []
+    embeddings: list[list[float]] = []
     for start in range(0, len(texts), _EMBED_BATCH_SIZE):
         chunk = texts[start : start + _EMBED_BATCH_SIZE]
         try:
@@ -414,20 +421,22 @@ def _eval_family(eval_name: str, target_type: str = "span") -> str:
 
 
 def _update_centroid(
-    current: List[float], new_vector: List[float], count: int
-) -> List[float]:
+    current: list[float], new_vector: list[float], count: int
+) -> list[float]:
     """Incremental centroid update: (centroid * count + new) / (count + 1)."""
     if not current:
         return new_vector
-    return [(c * count + n) / (count + 1) for c, n in zip(current, new_vector)]
+    return [
+        (c * count + n) / (count + 1) for c, n in zip(current, new_vector, strict=False)
+    ]
 
 
 def find_nearest_centroid(
-    embedding: List[float],
+    embedding: list[float],
     project_id: str,
     eval_name: str,
     target_type: str = "span",
-) -> Optional[Tuple[str, float]]:
+) -> tuple[str, float] | None:
     """
     Find nearest cluster centroid for the given eval within threshold.
 
@@ -466,7 +475,7 @@ def find_nearest_centroid(
 # ---------------------------------------------------------------------------
 
 
-def _score_to_impact(avg_score: Optional[float]) -> str:
+def _score_to_impact(avg_score: float | None) -> str:
     """Map average eval score to impact level for the cluster."""
     if avg_score is None:
         return "MEDIUM"
@@ -538,7 +547,7 @@ def _eval_cluster_meta(eval_name: str, reasoning: str) -> EvalClusterMeta:
 def create_cluster(
     project_id: str,
     result: ClusterableEvalResult,
-    embedding: List[float],
+    embedding: list[float],
 ) -> str:
     """
     Create a new TraceErrorGroup cluster for an eval result + ClickHouse centroid.
@@ -686,7 +695,7 @@ def assign_to_cluster(
     cluster_id: str,
     project_id: str,
     result: ClusterableEvalResult,
-    embedding: List[float],
+    embedding: list[float],
 ) -> None:
     """Assign an eval result to an existing cluster and update centroid."""
     cluster = TraceErrorGroup.objects.get(cluster_id=cluster_id, project_id=project_id)

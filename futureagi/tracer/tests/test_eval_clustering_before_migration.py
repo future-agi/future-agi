@@ -46,6 +46,20 @@ class _Unreadable:
         raise self.error
 
 
+def _programming_error(message, sqlstate):
+    """A ProgrammingError as Django raises it: wrapping the driver's error,
+    which carries the SQLSTATE."""
+
+    class DriverError(Exception):
+        pass
+
+    cause = DriverError(message)
+    cause.sqlstate = cause.pgcode = sqlstate
+    error = ProgrammingError(message)
+    error.__cause__ = cause
+    return error
+
+
 def _failing_eval(cfg):
     """A regular eval task's failing session eval (sessions live in
     ClickHouse; the eval logger keeps only their ids)."""
@@ -108,11 +122,28 @@ def test_the_fetch_excludes_nothing_when_the_runs_read_as_missing(
         InstantEvalRun.objects,
         "all",
         lambda: _Unreadable(
-            ProgrammingError('relation "tracer_instant_eval_run" does not exist')
+            _programming_error(
+                'relation "tracer_instant_eval_run" does not exist', "42P01"
+            )
         ),
     )
     fetched = {r.eval_logger_id for r in get_unclustered_eval_results(str(project.id))}
     assert fetched == {str(failed.id)}
+
+
+@pytest.mark.django_db
+def test_the_fetch_fails_on_any_other_programming_error(project, monkeypatch):
+    # An undefined column after a later migration is not "no Instant eval
+    # table": clustering Instant eval answers by mistake can't be undone.
+    monkeypatch.setattr(
+        InstantEvalRun.objects,
+        "all",
+        lambda: _Unreadable(
+            _programming_error('column "unit" does not exist', "42703")
+        ),
+    )
+    with pytest.raises(ProgrammingError):
+        get_unclustered_eval_results(str(project.id))
 
 
 @pytest.mark.django_db

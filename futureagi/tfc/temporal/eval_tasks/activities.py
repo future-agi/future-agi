@@ -74,13 +74,31 @@ def _require_instant_eval_license(task) -> None:
         .first()
     )
     if org_id is None:
-        return
+        # An Instant eval task with no run row has no organization to check:
+        # refused, never run unchecked.
+        raise ApplicationError(
+            INSTANT_EVAL_DENIED_MESSAGE, type="CapabilityDenied", non_retryable=True
+        )
     try:
         check_ee_feature(EEFeature.INSTANT_EVAL, org_id=str(org_id))
-    except FeatureUnavailable:
+    except FeatureUnavailable as exc:
+        if _entitlements_unavailable(exc):
+            # The entitlement service could not answer: retry the stage,
+            # don't end the run on a denial it never made.
+            raise ApplicationError(
+                "The entitlement check is unavailable right now.",
+                type="CapabilityUnavailable",
+            ) from None
         raise ApplicationError(
             INSTANT_EVAL_DENIED_MESSAGE, type="CapabilityDenied", non_retryable=True
         ) from None
+
+
+def _entitlements_unavailable(exc) -> bool:
+    """Whether a denial only means the entitlement service couldn't answer."""
+    if getattr(exc, "reason_code", None) == "RESOLVER_UNAVAILABLE":
+        return True
+    return "entitlement service is unavailable" in str(getattr(exc, "detail", ""))
 
 
 def _reconcile_sync(task_id: str) -> dict:
@@ -454,7 +472,9 @@ def _prewarm_instant_summary(task_id: str) -> None:
 
         prewarm_summary(task_id)
     except Exception:
-        logger.warning("instant_eval_prewarm_failed", task_id=str(task_id), exc_info=True)
+        logger.warning(
+            "instant_eval_prewarm_failed", task_id=str(task_id), exc_info=True
+        )
 
 
 # =============================================================================

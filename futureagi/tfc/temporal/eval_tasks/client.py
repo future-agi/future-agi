@@ -65,6 +65,10 @@ def _instant_sizing(task) -> dict:
     try:
         configs = list(task.evals.values_list("config", flat=True))
     except Exception:
+        # Falls back to the regular sizing; say so, a run sized wrong is slow.
+        logger.warning(
+            "instant_eval_sizing_unreadable", task_id=str(task.id), exc_info=True
+        )
         return {}
     if not configs or not all(
         isinstance(c, dict) and c.get("instant_eval") for c in configs

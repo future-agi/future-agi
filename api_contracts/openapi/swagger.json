@@ -63842,6 +63842,7 @@
                         "required": false,
                         "type": "integer",
                         "default": 0,
+                        "maximum": 20000,
                         "minimum": 0
                     },
                     {
@@ -149259,6 +149260,11 @@
                     "type": "integer",
                     "maximum": 1000,
                     "minimum": 10
+                },
+                "reset_taxonomy": {
+                    "title": "Reset taxonomy",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },

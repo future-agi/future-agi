@@ -116,4 +116,6 @@ def _record_instant_answers(task: EvalTask, at) -> None:
         with transaction.atomic():
             record_answers(task.id, ids)
     except Exception:
-        logger.warning("instant_eval_reaped_answers_failed", task_id=str(task.id))
+        logger.warning(
+            "instant_eval_reaped_answers_failed", task_id=str(task.id), exc_info=True
+        )

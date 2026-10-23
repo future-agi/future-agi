@@ -403,17 +403,20 @@ def mark_terminal(
         fence["updated_at"] = epoch
     landed = EvalLogger.objects.filter(**fence).update(**fields) > 0
     if landed:
-        _record_instant_answer(entry.id)
+        _record_instant_answer(entry.id, entry.eval_task_id)
     return landed
 
 
-def _record_instant_answer(entry_id) -> None:
+def _record_instant_answer(entry_id, task_id) -> None:
     """Instant eval keeps each row's answer in a narrow table of its own (see
-    ``instant_eval_answers``); copy this one over. Never fails the entry: a
-    missed copy is caught up when the run finishes."""
-    from tracer.services.instant_eval_answers import record_answer
+    ``instant_eval_answers``); copy this one over. Every other eval task's
+    entry costs no SQL here. Never fails the entry: a missed copy is caught
+    up when the run finishes."""
+    from tracer.services.instant_eval_answers import is_instant_task, record_answer
 
     try:
+        if not task_id or not is_instant_task(task_id):
+            return
         # A savepoint, so a failed copy can't break a surrounding transaction.
         with transaction.atomic():
             record_answer(entry_id)
