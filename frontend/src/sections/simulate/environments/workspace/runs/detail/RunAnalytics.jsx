@@ -138,6 +138,8 @@ const OUTCOMES = [
   { key: "failed", label: "Failed", color: COLORS[2] },
   { key: "error", label: "Error", color: COLORS[3] },
   { key: "inconclusive", label: "Inconclusive", color: COLORS[5] },
+  { key: "no_score", label: "No score", color: COLORS[5] },
+  { key: "skipped", label: "Skipped", color: COLORS[5] },
 ];
 const DISTRIBUTIONS = {
   latency_ms: ["Agent response time", "ms"],

@@ -45,6 +45,8 @@ GOAL_OUTCOMES = (
     "error",
     "escalated",
     "inconclusive",
+    "no_score",
+    "skipped",
 )
 # Provider-agnostic end reasons (metric list v1 §5.1), first match wins. The hosted ALK
 # reasons are listed explicitly: none of them appear in any provider's vocabulary.
@@ -661,18 +663,19 @@ def build_run_dashboard(
     )
     component_total = sum(value or 0 for value in costs.values())
     eval_errored = sum(row["errored"] for row in evaluations)
-    ran_cleanly = total - outcomes["error"]
+    attempted = total - outcomes["skipped"]
+    ran_cleanly = attempted - outcomes["error"]
     run_health = {
         "show_banner": bool(
-            total
+            attempted
             and (
-                ran_cleanly * 100 < total * 99
-                or values["connected"] * 100 < total * 99
+                ran_cleanly * 100 < attempted * 99
+                or values["connected"] * 100 < attempted * 99
                 or outcomes["inconclusive"]
                 or eval_errored
             )
         ),
-        "attempted": total,
+        "attempted": attempted,
         "ran_cleanly": ran_cleanly,
         "connected": values["connected"],
         "errored": outcomes["error"],

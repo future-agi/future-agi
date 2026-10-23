@@ -28,12 +28,15 @@ from simulate.services.harness_scenarios import (
     authored_scenarios_for_calls,
     call_row_metadata,
 )
+from simulate.services.hosted_harness_ingestion import sub_goal_result
 from simulate.services.run_results_v3_expressions import NUMERIC_JSON_PATTERN
 from simulate.services.run_results_v3_scoring import (
     ERRORED_EVAL_STATUSES,
     HARNESS_ERROR,
     HARNESS_FAILED,
     HARNESS_INCONCLUSIVE,
+    HARNESS_NO_SCORE,
+    HARNESS_SKIPPED,
     HARNESS_PASSED,
     NATIVE_FAILED,
     NATIVE_PASSED,
@@ -57,6 +60,8 @@ OUTCOME_LABELS = {
     "passed": "Passed",
     "failed": "Failed",
     "inconclusive": "Inconclusive",
+    "no_score": "No score",
+    "skipped": "Skipped",
     "error": "Error",
 }
 
@@ -188,6 +193,8 @@ def call_outcome(
         CallExecution.CallStatus.ANALYZING,
     }:
         return "in_progress"
+    if harness_outcome in HARNESS_SKIPPED:
+        return "skipped"
     if harness_outcome in HARNESS_ERROR:
         return "error"
     if call.status in {
@@ -206,6 +213,8 @@ def call_outcome(
         if (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)), specs))
         is not None
     ]
+    if harness_outcome in HARNESS_NO_SCORE:
+        return "no_score"
     if harness_outcome in HARNESS_FAILED or "failed" in verdicts:
         return "failed"
     if "error" in verdicts:
@@ -662,13 +671,14 @@ def build_call_rows(
             name = item.get("name") if isinstance(item, dict) else item
             if not name:
                 continue
-            held = item.get("held") if isinstance(item, dict) else None
-            sub_goal_results.append(
-                {
-                    "name": str(name),
-                    "passed": held if isinstance(held, bool) else None,
-                }
-            )
+            result = sub_goal_result(item) if isinstance(item, dict) else None
+            entry = {
+                "name": str(name),
+                "passed": {"pass": True, "fail": False}.get(result),
+            }
+            if result in ("not_applicable", "inconclusive"):
+                entry.update(result=result, reason=str(item.get("reason") or ""))
+            sub_goal_results.append(entry)
         ideal_outcome = (
             row_data.get("outcome")
             or scenario_dimensions.get("outcome")
@@ -735,6 +745,7 @@ def build_call_rows(
                 "outcome": call_outcome(call, live_eval_configs, specs),
                 "execution_status": call.status,
                 "harness_outcome_status": metadata.get("harness_outcome_status"),
+                "skip_reason": receipt.get("reason"),
                 "source_scenario_key": metadata.get("harness_scenario_key"),
                 "trial_index": metadata.get("harness_trial_index"),
                 "modality": call.simulation_call_type,

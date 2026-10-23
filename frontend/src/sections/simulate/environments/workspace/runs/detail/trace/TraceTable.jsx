@@ -334,13 +334,16 @@ export default function TraceTable({
               {t.subGoalResults?.length > 0 && (
                 <Stack spacing={0.5} sx={{ mt: 1 }}>
                   {t.subGoalResults.map((goal, goalIndex) => {
-                    const verdict = runOutcome(
-                      goal.passed === true
-                        ? "passed"
-                        : goal.passed === false
-                          ? "failed"
-                          : "inconclusive",
-                    );
+                    const verdict =
+                      goal.result === "not_applicable"
+                        ? { label: "Not applicable", color: "text.disabled" }
+                        : runOutcome(
+                            goal.passed === true
+                              ? "passed"
+                              : goal.passed === false
+                                ? "failed"
+                                : "inconclusive",
+                          );
                     return (
                       <Stack
                         key={`${goal.name}-${goalIndex}`}
@@ -355,6 +358,7 @@ export default function TraceTable({
                         </Typography>
                         {goal.passed == null ? (
                           <Typography
+                            title={goal.reason || undefined}
                             sx={{ typography: "s3", color: verdict.color }}
                           >
                             {verdict.label}

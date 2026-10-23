@@ -969,8 +969,27 @@ def test_every_stored_entry_shape_scores_like_the_sql_read_model(
         calls.append(("completed", None, outputs))
     # The lifecycle and harness outcome around a sample of the entries.
     lifecycle = itertools.product(
-        ["completed", "failed", "pending", "queued", "ongoing", "analyzing", "x"],
-        [None, "failed", " Passed", "passed", "error", "unknown", 1],
+        [
+            "completed",
+            "failed",
+            "cancelled",
+            "pending",
+            "queued",
+            "ongoing",
+            "analyzing",
+            "x",
+        ],
+        [
+            None,
+            "failed",
+            " Passed",
+            "passed",
+            "error",
+            "unknown",
+            1,
+            "no_score",
+            "skipped",
+        ],
     )
     for index, (status, harness_status) in enumerate(lifecycle):
         outputs = {key: entries[index * 13 % len(entries)] for key in eval_ids[:3]}

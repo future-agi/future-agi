@@ -20,8 +20,12 @@ NATIVE_PASSED = ("pass", "passed", "true", "success", "successful")
 NATIVE_FAILED = ("fail", "failed", "false", "failure", "unsuccessful")
 HARNESS_ERROR = ("error", "errored", "cancelled", "canceled")
 HARNESS_FAILED = ("failed", "fail", "failure")
-HARNESS_INCONCLUSIVE = ("inconclusive", "unknown", "skipped")
+HARNESS_INCONCLUSIVE = ("inconclusive", "unknown")
+# Not run at all, with the harness's reason when it gave one: never an error.
+HARNESS_SKIPPED = ("skipped",)
 HARNESS_PASSED = ("passed", "pass", "success", "successful")
+# Every sub-goal was not applicable: nothing the call was meant to test happened in it.
+HARNESS_NO_SCORE = ("no_score",)
 QUEUED_CALL_STATUSES = ("pending", "queued")
 IN_PROGRESS_CALL_STATUSES = ("ongoing", "analyzing")
 ERRORED_CALL_STATUSES = ("failed", "cancelled")

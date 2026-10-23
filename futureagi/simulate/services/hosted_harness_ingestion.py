@@ -904,7 +904,7 @@ def _apply_receipt_to_call(
         recovered_artifact_ids = metadata.get("hosted_harness_recovered_artifact_ids")
     metadata["hosted_harness_receipt"] = _json_ready(body)
     metadata["harness_evaluations"] = _receipt_evaluations(body)
-    metadata["harness_outcome_status"] = body["status"]
+    metadata["harness_outcome_status"] = receipt_outcome_status(body)
     coverage = _receipt_evaluation_coverage(body)
     metadata["harness_eval_coverage"] = coverage
     if coverage["complete"]:
@@ -1183,21 +1183,40 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
     return CallExecution.CallStatus.FAILED
 
 
+def receipt_outcome_status(body: dict[str, Any]) -> str:
+    """The receipt's status, or no_score when every sub-goal was not applicable."""
+    goals = [one for one in body.get("sub_goals") or [] if isinstance(one, dict)]
+    if goals and all(sub_goal_result(one) == "not_applicable" for one in goals):
+        return "no_score"
+    return body["status"]
+
+
+def sub_goal_result(goal: dict[str, Any]) -> str | None:
+    """pass, fail, not_applicable or inconclusive; a receipt from before verdicts reads from `held`."""
+    if goal.get("verdict"):
+        return str(goal["verdict"])
+    if not isinstance(goal.get("held"), bool):
+        return None
+    return "pass" if goal["held"] else "fail"
+
+
 def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
     """Convert hosted receipt checks to the platform's existing eval-output shape."""
     results: list[dict[str, Any]] = []
     for goal in body.get("sub_goals") or []:
         if not isinstance(goal, dict) or not goal.get("name"):
             continue
+        result = sub_goal_result(goal)
         # Nothing decided this sub-goal, which is not the same as deciding against it.
         # Coercing it would publish a failed, reasonless eval. Coverage carries the count.
-        if goal.get("held") is None:
+        if result is None:
             continue
         results.append(
             {
                 "name": str(goal["name"]),
                 "kind": "judge" if goal.get("judged") else "checkpoint",
-                "passed": bool(goal["held"]),
+                "passed": {"pass": True, "fail": False}.get(result),
+                "result": result,
                 "reason": str(goal.get("reason") or ""),
             }
         )
@@ -1214,7 +1233,7 @@ def _receipt_evaluation_coverage(body: dict[str, Any]) -> dict[str, int | bool]:
         item for item in body.get("evaluations") or [] if isinstance(item, dict)
     ]
     expected = len(sub_goals) + len(evaluations)
-    executed = sum(item.get("held") is not None for item in sub_goals) + sum(
+    executed = sum(sub_goal_result(item) is not None for item in sub_goals) + sum(
         not bool(item.get("grading_error")) for item in evaluations
     )
     return {
