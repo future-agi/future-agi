@@ -15,6 +15,8 @@
 package server
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -35,10 +37,16 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	// Registers the gzip compressor: without it a gRPC exporter configured with
+	// compression=gzip is refused as Unimplemented. The decompressed size is
+	// still bounded by MaxRecvMsgSize.
+	_ "google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 // Config is what main() passes us. Public fields = YAML wire format.
@@ -47,6 +55,7 @@ type Config struct {
 	HTTPAddr       string        `yaml:"http_addr"`         // :4318 default; empty disables
 	BatchMaxRows   int           `yaml:"batch_max_rows"`    // flush after N rows
 	BatchMaxAge    time.Duration `yaml:"batch_max_age"`     // flush after X time
+	MaxPendingRows int           `yaml:"max_pending_rows"`  // pending + in-flight; whole requests rejected when full
 	GRPCMaxRecvMiB int           `yaml:"grpc_max_recv_mib"` // max gRPC message size in MiB; default + rationale in New()
 }
 
@@ -84,11 +93,17 @@ type Server struct {
 	// avoiding many tiny RMT parts. It rides the same lock + flush cycle as
 	// `pend` so the curated dual-write flushes with the span batch.
 	pendMu       sync.Mutex
-	pend         []map[string]any
-	pendCurated  *curatedwriter.Batch
-	pendProperty []observedcatalog.ScopedSpan
-	pendRoots    []traceavailable.Root
-	pendCh       chan struct{}
+	bufferedRows int // includes the batch currently being flushed
+	// admissionClosed is set by shutdown before the final drain: a handler
+	// that is still running then is refused (retryable) instead of parking rows
+	// that no later drain would flush.
+	admissionClosed bool
+	refusals        Refusals
+	pend            []map[string]any
+	pendCurated     *curatedwriter.Batch
+	pendProperty    []observedcatalog.ScopedSpan
+	pendRoots       []traceavailable.Root
+	pendCh          chan struct{}
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -151,6 +166,19 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	if cfg.BatchMaxAge <= 0 {
 		cfg.BatchMaxAge = 5 * time.Second
 	}
+	// Admission is opt-in: zero preserves the pre-budget unbounded buffer.
+	// Production configuration rejects negative values before constructing us.
+	if cfg.MaxPendingRows < 0 {
+		cfg.MaxPendingRows = 0
+	}
+	// The size trigger counts parked rows, which can never exceed the budget
+	// (except for one larger-than-budget request). A trigger above the budget
+	// would never fire, so the flusher would run only on the age timer while
+	// every other request is refused: clamp it below.
+	clampedBatchRows := 0
+	if cfg.MaxPendingRows > 0 && cfg.BatchMaxRows > cfg.MaxPendingRows {
+		clampedBatchRows, cfg.BatchMaxRows = cfg.BatchMaxRows, cfg.MaxPendingRows
+	}
 	if cfg.GRPCMaxRecvMiB <= 0 {
 		// Go gRPC's default 4 MiB rejects large single-span exports (e.g. an
 		// ended voice call with full transcript) with RESOURCE_EXHAUSTED.
@@ -186,6 +214,10 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 			propertyCatalogWriter = o.propertyCatalog
 		}
 	}
+	if clampedBatchRows > 0 {
+		log.Warn("batch_max_rows is above max_pending_rows and could never trigger a flush; using max_pending_rows as the flush size",
+			"batch_max_rows", clampedBatchRows, "max_pending_rows", cfg.MaxPendingRows)
+	}
 
 	s := &Server{
 		traceNotifier:   traceNotifier,
@@ -210,10 +242,70 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	return s
 }
 
+// Limits are the admission limits in force after defaults, reported by the
+// admin endpoint so a benchmark can check the target's budget instead of assuming
+// it.
+type Limits struct {
+	MaxPendingRows   int   `json:"max_pending_rows"`
+	BatchMaxRows     int   `json:"batch_max_rows"`
+	BatchMaxAgeMS    int64 `json:"batch_max_age_ms"`
+	GRPCMaxRecvMiB   int   `json:"grpc_max_recv_mib"`
+	MaxHTTPBodyBytes int   `json:"max_http_body_bytes"`
+}
+
+// Limits returns the effective limits of this server.
+func (s *Server) Limits() Limits {
+	return Limits{
+		MaxPendingRows:   s.cfg.MaxPendingRows,
+		BatchMaxRows:     s.cfg.BatchMaxRows,
+		BatchMaxAgeMS:    s.cfg.BatchMaxAge.Milliseconds(),
+		GRPCMaxRecvMiB:   s.cfg.GRPCMaxRecvMiB,
+		MaxHTTPBodyBytes: maxOTLPHTTPBodyBytes,
+	}
+}
+
+// Admission is the admission state at one instant, reported by the admin
+// endpoint so a benchmark can follow the backlog over time. BufferedRows is what
+// the budget bounds: rows parked for the next flush plus rows of the flush in
+// progress (including its retries). PendingRows is the parked part only.
+// Acknowledged rows in BufferedRows are not in ClickHouse yet. BufferedRows can
+// exceed a positive MaxPendingRows by at most one request: see enqueueParcels.
+// MaxPendingRows == 0 disables the row cap (the compatibility default).
+type Admission struct {
+	BufferedRows   int      `json:"buffered_rows"`
+	PendingRows    int      `json:"pending_rows"`
+	MaxPendingRows int      `json:"max_pending_rows"`
+	Refusals       Refusals `json:"refusals"`
+}
+
+// Refusals count, since the process started, the requests the admission budget
+// turned away and the requests larger than the whole budget it let in. Rows are
+// converted span rows.
+type Refusals struct {
+	// FullRequests/FullRows: refused with a retryable status (HTTP 503 with
+	// Retry-After, gRPC RESOURCE_EXHAUSTED with RetryInfo) because the budget
+	// could not hold them at that moment.
+	FullRequests int64 `json:"budget_full_requests"`
+	FullRows     int64 `json:"budget_full_rows"`
+	// OverBudgetAdmittedRequests/Rows: requests with more rows than the whole
+	// budget, admitted because the buffer was below the budget.
+	OverBudgetAdmittedRequests int64 `json:"over_budget_admitted_requests"`
+	OverBudgetAdmittedRows     int64 `json:"over_budget_admitted_rows"`
+	// ShuttingDownRequests: refused (retryable) because the server had closed
+	// admission for its final drain.
+	ShuttingDownRequests int64 `json:"shutting_down_requests"`
+}
+
+// Admission returns the current admission state.
+func (s *Server) Admission() Admission {
+	s.pendMu.Lock()
+	defer s.pendMu.Unlock()
+	return Admission{BufferedRows: s.bufferedRows, PendingRows: len(s.pend), MaxPendingRows: s.cfg.MaxPendingRows, Refusals: s.refusals}
+}
+
 // Run blocks until ctx is cancelled or a serve error occurs. On shutdown
-// we drain pending rows once before returning so an SIGTERM doesn't lose
-// the in-flight batch (DECISIONS: in-flight loss bounded to last 5 s as
-// the deliberate at-least-once boundary).
+// we attempt to drain pending rows once before returning. A hard process crash
+// can still lose all acknowledged rows that have not reached ClickHouse.
 func (s *Server) Run(ctx context.Context) error {
 	if s.cfg.GRPCAddr == "" && s.cfg.HTTPAddr == "" {
 		return fmt.Errorf("at least one of GRPCAddr / HTTPAddr must be set")
@@ -290,6 +382,12 @@ func (s *Server) Run(ctx context.Context) error {
 // shutdown stops both listeners, waits for the flusher to exit, drains the
 // in-flight batch. Called once from Run on either ctx cancel or a serve
 // error. Safe to call when one of grpc/httpd is nil.
+//
+// gRPC's GracefulStop waits for every handler; HTTP Shutdown gives up after 5 s
+// and leaves slower handlers running. Admission is closed before the final
+// drain, so such a handler is refused with a retryable status instead of
+// acknowledging rows after the last drain (which nothing would ever flush).
+// Every request acknowledged before the close is in that drain.
 func (s *Server) shutdown() {
 	if s.grpc != nil {
 		s.grpc.GracefulStop()
@@ -301,7 +399,15 @@ func (s *Server) shutdown() {
 	}
 	close(s.stopCh)
 	s.wg.Wait()
+	s.closeAdmission()
 	s.drainNow(context.Background())
+}
+
+// closeAdmission makes every later enqueue return enqueueClosed.
+func (s *Server) closeAdmission() {
+	s.pendMu.Lock()
+	s.admissionClosed = true
+	s.pendMu.Unlock()
 }
 
 // grpcErrLogger surfaces transport-level message-size rejections. A message
@@ -371,6 +477,7 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	// Keep the authenticated workspace out-of-band. StampResourceAttrs retains
 	// the existing org/project behavior but deliberately does not add a
 	// workspace attribute to the canonical span payload.
+	receivedSpans := req.Traces().SpanCount()
 	var propertyOrganizationID, propertyWorkspaceID string
 	var propertyProjectIDs, hiddenProjectIDs map[string]struct{}
 	var routed auth.RouteOutcome
@@ -405,12 +512,14 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), err
 	}
-	h.s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs)
+	if outcome := h.s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs); outcome != enqueueAccepted {
+		return ptraceotlp.NewExportResponse(), h.s.grpcRefusal(outcome, len(rows))
+	}
 
 	payloadBytes, _ := req.MarshalProto()
 	h.s.emitUsage(ctx, req.Traces(), int64(len(payloadBytes)))
 
-	return ptraceotlp.NewExportResponse(), nil
+	return exportResponse(receivedSpans-req.Traces().SpanCount(), routed), nil
 }
 
 // Cap the body size we will read from an OTLP/HTTP request. 16 MiB matches
@@ -420,6 +529,41 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 // would let a single client consume memory unboundedly.
 const maxOTLPHTTPBodyBytes = 16 << 20
 
+// readOTLPBody returns the decoded body of an OTLP/HTTP request. The only
+// supported content codings are identity and gzip, the one OTLP exporters use.
+// The size cap applies to the bytes read from the wire AND to the decoded bytes,
+// so a few KiB of compressed zeros cannot expand into unbounded memory. On error
+// the returned status is the one to answer with.
+func readOTLPBody(r *http.Request) ([]byte, int, error) {
+	encoding := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding")))
+	if encoding != "" && encoding != "identity" && encoding != "gzip" {
+		return nil, http.StatusUnsupportedMediaType, fmt.Errorf("unsupported content encoding %q; use gzip or identity", encoding)
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxOTLPHTTPBodyBytes+1))
+	if err != nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("read body: %w", err)
+	}
+	if len(raw) > maxOTLPHTTPBodyBytes {
+		return nil, http.StatusRequestEntityTooLarge, errors.New("payload too large")
+	}
+	if encoding != "gzip" {
+		return raw, http.StatusOK, nil
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, http.StatusBadRequest, errors.New("invalid gzip body")
+	}
+	defer zr.Close()
+	body, err := io.ReadAll(io.LimitReader(zr, maxOTLPHTTPBodyBytes+1))
+	if err != nil {
+		return nil, http.StatusBadRequest, errors.New("invalid gzip body")
+	}
+	if len(body) > maxOTLPHTTPBodyBytes {
+		return nil, http.StatusRequestEntityTooLarge, errors.New("payload too large after decompression")
+	}
+	return body, http.StatusOK, nil
+}
+
 // handleHTTPTraces implements POST /v1/traces per the OTLP/HTTP wire spec
 // (https://opentelemetry.io/docs/specs/otlp/#otlphttp). Accepts both
 // `application/x-protobuf` and `application/json`. Any other method or
@@ -428,12 +572,14 @@ const maxOTLPHTTPBodyBytes = 16 << 20
 // Success is HTTP 200 + an empty (or near-empty) ExportTraceServiceResponse
 // in the response media type that matches the request — the spec requires
 // echoing the content-type so client SDKs can decode the partial-success
-// field. We always return the fully-successful response since our pipeline
-// is at-least-once + dead-letter for failed inserts.
+// field. Success acknowledges enqueue, not durable storage; project-resolution
+// drops are reported as partial success. A full row budget is retryable (503 with
+// Retry-After); a request with more rows than the whole budget can never fit and
+// gets 413, which OTLP clients do not retry.
 func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeOTLPError(w, "", http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -445,17 +591,18 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	}
 	ct = trimSpace(ct)
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxOTLPHTTPBodyBytes+1))
+	body, code, err := readOTLPBody(r)
 	if err != nil {
-		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if len(body) > maxOTLPHTTPBodyBytes {
-		// Mirror the gRPC-side over-cap log so an HTTP exporter's drop is
-		// equally visible server-side.
-		s.log.Error("http body over size cap, request rejected",
-			"path", r.URL.Path, "max_bytes", maxOTLPHTTPBodyBytes)
-		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
+		if code == http.StatusRequestEntityTooLarge {
+			// Mirror the gRPC-side over-cap log so an HTTP exporter's drop is
+			// equally visible server-side.
+			s.log.Error("http body over size cap, request rejected",
+				"path", r.URL.Path, "max_bytes", maxOTLPHTTPBodyBytes)
+		}
+		if code == http.StatusUnsupportedMediaType {
+			w.Header().Set("Accept-Encoding", "gzip, identity")
+		}
+		writeOTLPError(w, ct, code, err.Error())
 		return
 	}
 
@@ -463,27 +610,28 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	switch ct {
 	case "application/x-protobuf":
 		if err := req.UnmarshalProto(body); err != nil {
-			http.Error(w, "decode protobuf: "+err.Error(), http.StatusBadRequest)
+			writeOTLPError(w, ct, http.StatusBadRequest, "decode protobuf: "+err.Error())
 			return
 		}
 	case "application/json":
 		if err := req.UnmarshalJSON(body); err != nil {
-			http.Error(w, "decode json: "+err.Error(), http.StatusBadRequest)
+			writeOTLPError(w, ct, http.StatusBadRequest, "decode json: "+err.Error())
 			return
 		}
 	default:
 		// The spec is explicit: unsupported media types return 415.
 		w.Header().Set("Accept", "application/x-protobuf, application/json")
-		http.Error(w, "unsupported content type: "+ct, http.StatusUnsupportedMediaType)
+		writeOTLPError(w, "", http.StatusUnsupportedMediaType, "unsupported content type: "+ct)
 		return
 	}
 
 	if check, ok := s.checkUsage(r.Context()); !ok {
-		http.Error(w, check.Reason, http.StatusTooManyRequests)
+		writeOTLPError(w, ct, http.StatusTooManyRequests, check.Reason)
 		return
 	}
 
 	// Keep the authenticated workspace out-of-band; see the gRPC path above.
+	receivedSpans := req.Traces().SpanCount()
 	var propertyOrganizationID, propertyWorkspaceID string
 	var propertyProjectIDs, hiddenProjectIDs map[string]struct{}
 	var routed auth.RouteOutcome
@@ -494,7 +642,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		routed, err = s.routeSimulation(r.Context(), result, req.Traces())
 		if err != nil {
 			w.Header().Set("Retry-After", "5")
-			http.Error(w, "simulation routing temporarily unavailable", http.StatusServiceUnavailable)
+			writeOTLPError(w, ct, http.StatusServiceUnavailable, "simulation routing temporarily unavailable")
 			return
 		}
 		if routed.DroppedSpans() > 0 && req.Traces().ResourceSpans().Len() == 0 {
@@ -504,7 +652,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		}
 		dropped, err := auth.StampResourceAttrs(r.Context(), s.auth, ck, req.Traces(), result)
 		if err != nil {
-			http.Error(w, "auth stamp: "+err.Error(), http.StatusBadRequest)
+			writeOTLPError(w, ct, http.StatusBadRequest, "auth stamp: "+err.Error())
 			return
 		}
 		if dropped > 0 {
@@ -514,7 +662,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		propertyProjectIDs, scoped = result.ProjectIDsInWorkspace(propertyWorkspaceID)
 		hiddenProjectIDs, _ = result.HiddenProjectIDsInWorkspace(propertyWorkspaceID)
 		if !scoped {
-			http.Error(w, "auth project/workspace scope mismatch", http.StatusBadRequest)
+			writeOTLPError(w, ct, http.StatusBadRequest, "auth project/workspace scope mismatch")
 			return
 		}
 	}
@@ -522,17 +670,20 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	rows, ids, err := chexp.ConvertWithIdentities(r.Context(), req.Traces(), s.pricer)
 	if err != nil {
 		// 4xx — the SDK shouldn't retry a malformed conversion.
-		http.Error(w, "convert: "+err.Error(), http.StatusBadRequest)
+		writeOTLPError(w, ct, http.StatusBadRequest, "convert: "+err.Error())
 		return
 	}
-	s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs)
+	if outcome := s.enqueueRouted(rows, ids, routed, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs, hiddenProjectIDs); outcome != enqueueAccepted {
+		s.writeRefusal(w, ct, outcome, len(rows))
+		return
+	}
 
 	s.emitUsage(r.Context(), req.Traces(), int64(len(body)))
 
-	// ExportTraceServiceResponse — same wire shape, encoded to match the
-	// request's content-type. The spec requires the response media type to
-	// match the request.
-	writeExportResponse(w, ct, ptraceotlp.NewExportResponse())
+	// ExportTraceServiceResponse, including any rejected spans, encoded to
+	// match the request's content-type. The spec requires the response media
+	// type to match the request.
+	writeExportResponse(w, ct, exportResponse(receivedSpans-req.Traces().SpanCount(), routed))
 }
 
 // writeExportResponse answers 200 with resp in the request's media type.
@@ -546,7 +697,7 @@ func writeExportResponse(w http.ResponseWriter, ct string, resp ptraceotlp.Expor
 		out, err = resp.MarshalProto()
 	}
 	if err != nil {
-		http.Error(w, "encode response: "+err.Error(), http.StatusInternalServerError)
+		writeOTLPError(w, ct, http.StatusInternalServerError, "encode response: "+err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", ct)
@@ -605,11 +756,38 @@ func partialSuccessResponse(routed auth.RouteOutcome) ptraceotlp.ExportResponse 
 	return resp
 }
 
+// exportResponse is the success response of a request of which `rejected`
+// spans were discarded before storage. OTLP counts rejected spans, not
+// ResourceSpans containers: routing or project resolution can discard one
+// resource that holds many spans even when the rest of the request is queued.
+func exportResponse(rejected int, routed auth.RouteOutcome) ptraceotlp.ExportResponse {
+	if rejected <= 0 {
+		return ptraceotlp.NewExportResponse()
+	}
+	routedDrops := routed.DroppedSpans()
+	if routedDrops == rejected {
+		return partialSuccessResponse(routed)
+	}
+	resp := ptraceotlp.NewExportResponse()
+	partial := resp.PartialSuccess()
+	partial.SetRejectedSpans(int64(rejected))
+	message := "spans with unresolvable project were rejected"
+	if routedDrops > 0 {
+		message = "simulation routing dropped " + strconv.Itoa(routedDrops) + " spans: " + routed.Summary() + "; " + message
+	}
+	partial.SetErrorMessage(message)
+	return resp
+}
+
 // enqueueRouted parks the rows of a request. Rows of a hidden project, whether
 // routing put the whole request there or another key's request names one,
 // neither the observed catalog nor the stored-root notifier may see, so they
 // are parked without a tenant scope: both then skip them, and the catalog does
 // not record a scope failure for every drain that carries them.
+//
+// The request is admitted or refused as ONE unit, even when its rows are
+// parked in two parcels: a client that is told to retry a refused request
+// would otherwise store the parcel that fitted a second time.
 func (s *Server) enqueueRouted(
 	rows []map[string]any,
 	ids *curatedwriter.Batch,
@@ -618,10 +796,9 @@ func (s *Server) enqueueRouted(
 	workspaceID string,
 	workspaceProjectIDs map[string]struct{},
 	hiddenProjectIDs map[string]struct{},
-) {
+) enqueueOutcome {
 	if routed.Hidden != "" {
-		s.enqueue(rows, ids)
-		return
+		return s.enqueueParcels(parcel{rows: rows, ids: ids})
 	}
 	if len(hiddenProjectIDs) > 0 {
 		var visible, hidden []map[string]any
@@ -638,14 +815,15 @@ func (s *Server) enqueueRouted(
 			// The payload's identities go with the visible rows, or with the
 			// hidden ones when nothing else is left.
 			if len(visible) == 0 {
-				s.enqueue(hidden, ids)
-				return
+				return s.enqueueParcels(parcel{rows: hidden, ids: ids})
 			}
-			s.enqueue(hidden, nil)
-			rows = visible
+			return s.enqueueParcels(
+				parcel{rows: hidden},
+				parcel{rows: visible, ids: ids, organizationID: organizationID, workspaceID: workspaceID, projectIDs: workspaceProjectIDs},
+			)
 		}
 	}
-	s.enqueueScoped(rows, ids, organizationID, workspaceID, workspaceProjectIDs)
+	return s.enqueueScoped(rows, ids, organizationID, workspaceID, workspaceProjectIDs)
 }
 
 // indexByte and trimSpace are lifted here so the file doesn't grow a
@@ -670,6 +848,31 @@ func trimSpace(s string) string {
 	return s
 }
 
+// enqueueOutcome is the admission decision for one request.
+type enqueueOutcome int
+
+const (
+	// enqueueAccepted: every row of the request is parked.
+	enqueueAccepted enqueueOutcome = iota
+	// enqueueFull: the pending and in-flight budget cannot hold the request
+	// now. Nothing is parked; the same request fits once the writer frees
+	// budget, so a client should retry it.
+	enqueueFull
+	// enqueueClosed: the server is shutting down and has closed admission for
+	// its final drain. Nothing is parked; a client should retry (elsewhere or
+	// after the restart).
+	enqueueClosed
+)
+
+// parcel is a group of rows parked together under one tenant scope.
+type parcel struct {
+	rows           []map[string]any
+	ids            *curatedwriter.Batch
+	organizationID string
+	workspaceID    string
+	projectIDs     map[string]struct{}
+}
+
 // enqueue parks rows on the pending buffer and signals the flusher.
 // We choose non-blocking signalling: if the channel already holds a tick
 // the flusher will already wake up and see this batch.
@@ -677,8 +880,8 @@ func trimSpace(s string) string {
 // `ids` are the CURATED dimension identities collected for this same payload;
 // they ride alongside `rows` so the curated dual-write flushes with the span
 // batch. A nil / empty Batch is skipped (the common no-user/no-session case).
-func (s *Server) enqueue(rows []map[string]any, ids *curatedwriter.Batch) {
-	s.enqueueScoped(rows, ids, "", "", nil)
+func (s *Server) enqueue(rows []map[string]any, ids *curatedwriter.Batch) enqueueOutcome {
+	return s.enqueueScoped(rows, ids, "", "", nil)
 }
 
 // enqueueScoped keeps the authenticated workspace in a drain-local sidecar.
@@ -690,37 +893,63 @@ func (s *Server) enqueueScoped(
 	organizationID string,
 	workspaceID string,
 	workspaceProjectIDs map[string]struct{},
-) {
-	if len(rows) == 0 {
-		return
+) enqueueOutcome {
+	return s.enqueueParcels(parcel{
+		rows:           rows,
+		ids:            ids,
+		organizationID: organizationID,
+		workspaceID:    workspaceID,
+		projectIDs:     workspaceProjectIDs,
+	})
+}
+
+// enqueueParcels admits every parcel or none of them. The budget is checked
+// against the rows of all parcels together, under the same lock that reserves
+// them, so a concurrent request can never slip between the check and the
+// reservation.
+//
+// A request that fits in the free budget is admitted. A request with more rows
+// than the WHOLE budget can never fit that way; refusing it outright (as
+// non-retryable) would lose an export that an unbounded buffer used to accept,
+// and refusing it as retryable forever would loop the client. It is admitted
+// whenever the buffer is below the budget, so the buffer can exceed the budget
+// by at most this one request (bounded by the transport's message size cap):
+// while it is over, every request is refused as retryable until the writer
+// drains below the budget.
+func (s *Server) enqueueParcels(parcels ...parcel) enqueueOutcome {
+	total := 0
+	for _, p := range parcels {
+		total += len(p.rows)
+	}
+	if total == 0 {
+		return enqueueAccepted
 	}
 	s.pendMu.Lock()
-	s.pend = append(s.pend, rows...)
-	if s.traceNotifier != nil {
-		s.pendRoots = append(s.pendRoots, traceavailable.ExtractRoots(rows, organizationID, workspaceID, workspaceProjectIDs)...)
+	if s.admissionClosed {
+		s.refusals.ShuttingDownRequests++
+		s.pendMu.Unlock()
+		return enqueueClosed
 	}
-	if s.propertyCatalog != nil && organizationID != "" && workspaceID != "" {
-		for _, row := range rows {
-			projectID, _ := row["project_id"].(string)
-			scopeError := ""
-			if workspaceProjectIDs == nil {
-				scopeError = "missing_project_workspace_proof"
-			} else if _, allowed := workspaceProjectIDs[projectID]; !allowed {
-				scopeError = "project_workspace_mismatch"
-			}
-			s.pendProperty = append(s.pendProperty, observedcatalog.ScopedSpan{
-				OrganizationID: organizationID,
-				WorkspaceID:    workspaceID,
-				ScopeError:     scopeError,
-				Row:            row,
-			})
+	free := s.cfg.MaxPendingRows - s.bufferedRows
+	switch {
+	case s.cfg.MaxPendingRows == 0: // compatibility default: no row admission cap
+	case total <= free:
+	case total > s.cfg.MaxPendingRows && free > 0:
+		s.refusals.OverBudgetAdmittedRequests++
+		s.refusals.OverBudgetAdmittedRows += int64(total)
+		if s.refusalLog.Allow("over-budget", time.Now()) {
+			s.log.Warn("request larger than the whole pending row budget admitted while the buffer was below it; keep exporter batches at or below max_pending_rows",
+				"rows", total, "max_pending_rows", s.cfg.MaxPendingRows, "buffered_rows", s.bufferedRows)
 		}
+	default:
+		s.refusals.FullRequests++
+		s.refusals.FullRows += int64(total)
+		s.pendMu.Unlock()
+		return enqueueFull
 	}
-	if ids != nil && !ids.Empty() {
-		if s.pendCurated == nil {
-			s.pendCurated = curatedwriter.NewBatch()
-		}
-		s.pendCurated.Merge(ids)
+	s.bufferedRows += total
+	for _, p := range parcels {
+		s.appendLocked(p)
 	}
 	shouldKick := len(s.pend) >= s.cfg.BatchMaxRows
 	s.pendMu.Unlock()
@@ -730,6 +959,81 @@ func (s *Server) enqueueScoped(
 		default:
 		}
 	}
+	return enqueueAccepted
+}
+
+// appendLocked parks a parcel whose rows are already reserved. s.pendMu must
+// be held.
+func (s *Server) appendLocked(p parcel) {
+	rows := p.rows
+	if len(rows) == 0 {
+		return
+	}
+	s.pend = append(s.pend, rows...)
+	if s.traceNotifier != nil {
+		s.pendRoots = append(s.pendRoots, traceavailable.ExtractRoots(rows, p.organizationID, p.workspaceID, p.projectIDs)...)
+	}
+	if s.propertyCatalog != nil && p.organizationID != "" && p.workspaceID != "" {
+		for _, row := range rows {
+			projectID, _ := row["project_id"].(string)
+			scopeError := ""
+			if p.projectIDs == nil {
+				scopeError = "missing_project_workspace_proof"
+			} else if _, allowed := p.projectIDs[projectID]; !allowed {
+				scopeError = "project_workspace_mismatch"
+			}
+			s.pendProperty = append(s.pendProperty, observedcatalog.ScopedSpan{
+				OrganizationID: p.organizationID,
+				WorkspaceID:    p.workspaceID,
+				ScopeError:     scopeError,
+				Row:            row,
+			})
+		}
+	}
+	if p.ids != nil && !p.ids.Empty() {
+		if s.pendCurated == nil {
+			s.pendCurated = curatedwriter.NewBatch()
+		}
+		s.pendCurated.Merge(p.ids)
+	}
+}
+
+// grpcRefusal is the gRPC status of a request that was not admitted. Both
+// refusals are retryable per the OTLP specification: a full buffer is
+// RESOURCE_EXHAUSTED with RetryInfo (RESOURCE_EXHAUSTED without it is not
+// retryable), and a server closing admission for its final drain is
+// UNAVAILABLE.
+func (s *Server) grpcRefusal(outcome enqueueOutcome, rows int) error {
+	if outcome == enqueueClosed {
+		return status.Error(codes.Unavailable, "collector is shutting down; retry")
+	}
+	retry, err := status.New(codes.ResourceExhausted, budgetFullMessage(rows, s.cfg.MaxPendingRows)).WithDetails(&errdetails.RetryInfo{RetryDelay: durationpb.New(time.Second)})
+	if err != nil {
+		return status.Error(codes.Unavailable, "collector pending row budget exhausted")
+	}
+	return retry.Err()
+}
+
+// writeRefusal answers an OTLP/HTTP request that was not admitted: 503 with
+// Retry-After, which the OTLP specification makes retryable.
+func (s *Server) writeRefusal(w http.ResponseWriter, contentType string, outcome enqueueOutcome, rows int) {
+	w.Header().Set("Retry-After", "1")
+	if outcome == enqueueClosed {
+		writeOTLPError(w, contentType, http.StatusServiceUnavailable, "collector is shutting down; retry")
+		return
+	}
+	writeOTLPError(w, contentType, http.StatusServiceUnavailable, budgetFullMessage(rows, s.cfg.MaxPendingRows))
+}
+
+// budgetFullMessage names the budget, and for a request larger than all of it
+// says that it waits for an empty-enough buffer and should be split.
+func budgetFullMessage(rows, limit int) string {
+	if rows > limit {
+		return "collector pending row budget exhausted; retry with backoff. This request carries " + strconv.Itoa(rows) +
+			" spans, more than max_pending_rows (" + strconv.Itoa(limit) + "): it is admitted only while the buffer is below the budget, so split exports into batches of at most " +
+			strconv.Itoa(limit) + " spans"
+	}
+	return "collector pending row budget exhausted; retry with backoff"
 }
 
 // flushLoop runs until stopCh closes. Wakes on either an explicit kick
@@ -766,6 +1070,13 @@ func (s *Server) drainNow(ctx context.Context) {
 	if len(batch) == 0 {
 		return
 	}
+	// Hold the reservation through the in-flight insert (including retries and
+	// sidecars). Releasing it at buffer-swap would hide a stalled writer.
+	defer func() {
+		s.pendMu.Lock()
+		s.bufferedRows -= len(batch)
+		s.pendMu.Unlock()
+	}()
 	spanErr := s.writer.Insert(ctx, batch)
 	if spanErr == nil && s.traceNotifier != nil && len(roots) > 0 {
 		if err := s.traceNotifier.EnqueueRoots(roots); err != nil {
