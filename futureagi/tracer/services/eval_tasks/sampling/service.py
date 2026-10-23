@@ -1,11 +1,14 @@
 """Cohort freezing and batched late-row materialization under a lease.
 
-No PostgreSQL transaction or task/evaluator row lock spans a ClickHouse
-stream. A reconcile pass takes a short-lived cohort lease, then writes each
-bounded page in its own short transaction that re-proves the lease token and
-the task revision (``_Fence``). A closed cohort is certified (``complete``)
-only after its whole membership stream has been written; an interrupted
-freeze is discarded, never read as a partial quota.
+Membership/discovery/expansion streams run outside PostgreSQL transactions
+and task/evaluator row locks. A reconcile pass takes a short-lived cohort
+lease, then writes each bounded page in a transaction that re-proves the
+lease token and task revision (``_Fence``). Pending revalidation is the
+exception: task/evaluator and entry locks span that page's bounded current-
+state and trace-witness reads, protecting negative proofs from drain claims
+and configuration edits. A closed cohort is certified (``complete``) only
+after its whole membership stream has been written; an interrupted freeze
+is discarded, never read as a partial quota.
 """
 
 from __future__ import annotations
@@ -282,11 +285,12 @@ def preview_policy(
 class _Fence:
     """Single-writer proof for one reconcile pass.
 
-    Every write runs in its own short transaction that locks the task and its
+    Every write runs in its own transaction that locks the task and its
     evaluator rows (serializing with edits, exactly like the legacy apply),
-    proves the task revision this pass started from and renews the cohort
-    lease only while it still holds the token. A pass whose lease expired, or
-    whose task was edited, raises before it writes anything else.
+    proves the starting task revision and renews the cohort lease only while
+    it holds the token. Pending revalidation also performs its bounded reads
+    inside this scope. A pass whose token was replaced, or whose task was
+    edited, raises before it writes anything else.
     """
 
     def __init__(self, task_id, revision: str, cohort_id, token: uuid.UUID) -> None:

@@ -316,19 +316,30 @@ is unique by cohort and SHA-256 of the canonical/namespaced unit ID. Database
 checks require probabilities in [0,1] and strictly positive probabilities for
 selected members.
 
-Reconcile concurrency: no PostgreSQL transaction, and no task or evaluator row
-lock, spans a ClickHouse stream. A pass takes a cohort **lease** (token plus
-expiry, ``EVAL_SAMPLING_LEASE_SECONDS``, default 300) in a short transaction;
-a concurrent pass for the same cohort fails with a retryable "busy" error and
-writes nothing. Each bounded page (member block, live decision page, row
-block, pending-proof page, final cursor update) is then written in its own
-short transaction that locks the task and evaluator rows, proves the task
-revision the pass started from and renews the lease only while it still holds
-the token. An edited task or a lost lease stops the pass before its next write;
-an expired holder is fenced out. Pending-proof pages keep their row locks for
-one bounded point read, so the drain can never claim a row whose negative proof
-is in flight. Idempotent materialization and the forward-only cursor (updated
-last) make a retried pass safe.
+Reconcile concurrency: membership, discovery and expansion streams run outside
+PostgreSQL transactions and task/evaluator row locks. A pass takes a cohort
+**lease** (token plus expiry, ``EVAL_SAMPLING_LEASE_SECONDS``, default 300) in a
+short transaction; a concurrent pass for the same cohort fails with a retryable
+"busy" error and writes nothing. Each bounded write (member block, live decision
+page, row block, final cursor update) uses its own transaction that locks the
+task and evaluator rows, proves the starting task revision and renews the lease
+only while it still holds the token. An edited task or a lost lease stops the
+pass before its next write; an expired holder is fenced out.
+
+**Pending-proof exception:** revalidation holds the PostgreSQL transaction,
+task and shared evaluator row locks, cohort lease-update lock, and one page of
+pending-entry row locks across its bounded ClickHouse current-state read and,
+for trace filters, witness reads. This prevents the drain from claiming entries
+while a negative proof is in flight and serializes the proof with configuration
+edits. Consequently, a slow pending proof can block task/evaluator edits until
+that page commits or rolls back. The read ceilings still apply; this is not a
+zero-lock-time guarantee. PostgreSQL lock-scope tests exercise the real pending
+reader/compiler (with only its network stream controlled), prove competing
+NOWAIT locks fail during the proof, and prove they succeed after commit.
+Most other engine tests replace the pending reader with a PostgreSQL-derived
+answer; their discovery-stream probes do not qualify this exception. Separate
+ClickHouse tests exercise actual pending proofs. Idempotent materialization and
+the forward-only cursor (updated last) make a retried pass safe.
 
 Every selected ``EvalLogger`` carries ``output_metadata._task_selection.sampling``::
 

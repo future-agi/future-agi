@@ -63,8 +63,10 @@ def revalidate_pending(
     proof. Thus an unchanged old row stays pending even outside the delta, while
     filter exits, deletions and moves to unselected units cannot reach the drain.
     Completed/errored/running rows and their original provenance are untouched.
-    A page's row locks are held only for that page's single bounded point read,
+    A page's entry locks span its bounded current-state and trace-witness reads,
     so the drain cannot claim a row while its negative proof is in flight.
+    Reconcile's page_write fence also holds task/evaluator and cohort locks
+    across those reads: configuration edits can wait until page commit/rollback.
     """
     from tracer.services.eval_tasks.sampling.witnesses import TraceWitnessReader
 

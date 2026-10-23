@@ -39,6 +39,8 @@ def controlled_pending_source(monkeypatch):
     # Most engine tests model an unchanged source independently of delta pages.
     # The pending revalidation control flow/locks are real; CH integration tests
     # exercise this reader without any replacement.
+    from tracer.services.eval_tasks.sampling.pending import read_current_rows
+
     def read(task, policy, version, ids, now):
         from tracer.services.eval_tasks.sampling.pending import IDENTITY_FIELDS
 
@@ -57,6 +59,8 @@ def controlled_pending_source(monkeypatch):
     monkeypatch.setattr(
         "tracer.services.eval_tasks.sampling.pending.read_current_rows", read
     )
+    # Lock-scope tests restore the real reader and stub only its CH stream.
+    return read_current_rows
 
 
 def make_task(project, config, *, mode="closed"):
@@ -988,7 +992,7 @@ def _other_connection(work):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("mode", ["closed", "live"])
-def test_no_transaction_or_task_lock_spans_a_clickhouse_stream(
+def test_discovery_and_member_streams_hold_no_transaction_or_task_lock(
     project, custom_eval_config, monkeypatch, mode
 ):
     from django.db import connection, transaction
@@ -1046,8 +1050,8 @@ def test_no_transaction_or_task_lock_spans_a_clickhouse_stream(
     assert {kind for kind, *_ in observed} >= (
         {"members", "rows"} if mode == "closed" else {"proof", "rows"}
     )
-    # While ClickHouse is read, this pass holds no transaction and no task or
-    # evaluator row lock: an edit on another connection commits immediately.
+    # Discovery/member streams hold no transaction or task/evaluator lock: edits
+    # commit immediately. Pending proofs are a separate, locked path (tested below).
     assert all(not in_atomic and not errors for *_, in_atomic, errors in observed), (
         observed
     )
@@ -1058,6 +1062,83 @@ def test_no_transaction_or_task_lock_spans_a_clickhouse_stream(
         )
     ) == ["span-1"]
     assert EvalSamplingCohort.objects.get(task=task).lease_token is None
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("mode", ["closed", "live"])
+@pytest.mark.parametrize("still_eligible", [True, False])
+def test_pending_proof_holds_task_config_and_entry_locks_until_page_commit(
+    project,
+    custom_eval_config,
+    monkeypatch,
+    controlled_pending_source,
+    mode,
+    still_eligible,
+):
+    from django.db import OperationalError, connection, transaction
+
+    from tracer.services.eval_tasks.sampling import pending
+
+    assert connection.vendor == "postgresql", "Lock scope needs real PostgreSQL."
+    task = make_task(project, custom_eval_config, mode=mode)
+    stub_materialization(monkeypatch, task)
+    if mode == "closed":
+        stream = closed_stream()
+    else:
+        monkeypatch.setattr(
+            "tracer.services.eval_tasks.sampling.service.live_scan_windows",
+            lambda *_: iter(
+                [task.sampling_policy["window"] | {"end": timezone.now().isoformat()}]
+            ),
+        )
+
+        def stream(sql, params):
+            return live_stream([[("span-1", "session:one", "cell", 0.5, True)]], params)
+
+    monkeypatch.setattr(
+        "tracer.services.eval_tasks.sampling.service.stream_query", stream
+    )
+    # Undo the autouse PostgreSQL-derived reader: exercise read_current_rows and
+    # its real bounded compiler, replacing only the network stream for this test.
+    monkeypatch.setattr(pending, "read_current_rows", controlled_pending_source)
+    observations = []
+    entry_ids = []
+
+    def proof_stream(sql, params):
+        assert params["sp_current_ids"] == ("span-1",)
+        assert connection.in_atomic_block
+        entry = EvalLogger.objects.get(eval_task_id=str(task.id))
+        entry_ids.append(entry.pk)
+        for obj in (task, custom_eval_config, entry):
+
+            def claim_or_edit(obj=obj):
+                with transaction.atomic():
+                    type(obj).objects.select_for_update(nowait=True).get(pk=obj.pk)
+
+            errors = _other_connection(claim_or_edit)
+            assert len(errors) == 1 and isinstance(errors[0], OperationalError), errors
+            assert errors[0].__cause__.sqlstate == "55P03", errors
+            observations.append(type(obj).__name__)
+        yield [("span-1", "session:one")] if still_eligible else []
+        assert connection.in_atomic_block
+
+    monkeypatch.setattr(pending, "stream_query", proof_stream)
+    reconcile(task)
+    assert observations == ["EvalTask", "CustomEvalConfig", "EvalLogger"]
+    assert len(entry_ids) == 1
+    assert EvalLogger.objects.filter(pk=entry_ids[0]).exists() == still_eligible
+    assert not connection.in_atomic_block
+
+    def edit_after_commit():
+        with transaction.atomic():
+            EvalTask.objects.select_for_update(nowait=True).get(pk=task.pk)
+            type(custom_eval_config).objects.select_for_update(nowait=True).get(
+                pk=custom_eval_config.pk
+            )
+            if still_eligible:
+                EvalLogger.objects.select_for_update(nowait=True).get(pk=entry_ids[0])
+
+    assert _other_connection(edit_after_commit) == []
 
 
 @pytest.mark.django_db(transaction=True)
