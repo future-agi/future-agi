@@ -359,10 +359,10 @@ def _estimate_allowed(actor):
         return False
 
 
-def _sort_key_columns(sorting_key):
-    """Top-level comma-separated sort-key expressions, in order."""
+def _primary_key_columns(primary_key):
+    """Top-level comma-separated primary-index expressions, in order."""
     columns, depth, current = [], 0, []
-    for char in sorting_key:
+    for char in primary_key:
         if char == "," and depth == 0:
             columns.append("".join(current).strip())
             current = []
@@ -374,13 +374,14 @@ def _sort_key_columns(sorting_key):
     return columns
 
 
-def _tenant_local(sorting_key, ownership, project_column):
-    """True when the sort key starts with ownership columns through the project.
+def _tenant_local(primary_key, ownership, project_column):
+    """Require the actual primary index to start with ownership through project.
 
-    Only then does every index granule the estimate counts lie in this
-    project's key range (apart from the granules at its edges).
+    ORDER BY is not evidence: an explicit PRIMARY KEY can be a shorter prefix
+    or empty. Only the primary index can establish the project's key range
+    (apart from the granules at its edges).
     """
-    for column in _sort_key_columns(sorting_key):
+    for column in _primary_key_columns(primary_key):
         if column == project_column:
             return True
         if column not in ownership:
@@ -399,8 +400,9 @@ def _granularity(engine_full):
 def estimate(actor, *, project_id, sql, start, end):
     """Advisory pre-run estimate: same authorization and SQL as a run.
 
-    It creates no execution record, holds no admission slot and never blocks
-    a run: any estimate failure is reported as ``unavailable``.
+    It creates no execution record or execution-principal admission slot.
+    Any estimate failure is reported as ``unavailable``. Shared-server physical
+    resources are not isolated; execution's per-user concurrency slots are.
     """
     from .catalog import additional_table_filters
     from .runner import QUERY_SETTINGS
@@ -437,7 +439,7 @@ def summarize_estimate(raw, database):
     Per source it reports parts, index granules and the most rows those
     granules can hold (granules x index granularity), never the raw row total
     of the granules, which can include an adjacent project's rows. Sources
-    whose sort key does not start with the project are withheld.
+    whose primary index does not start with project ownership are withheld.
     ``exceeds_scan_bound`` compares every table's granule rows with the read
     limit: the same fact a run reveals when the server stops it there.
     """

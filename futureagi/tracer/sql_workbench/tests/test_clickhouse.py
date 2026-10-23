@@ -45,9 +45,9 @@ def scoped_clickhouse():
                 {"db": database, "tables": tuple(TABLES)},
             )
             for table, engine, rows in existing:
-                assert (
-                    engine == "ReplacingMergeTree" and rows == 0
-                ), "SQL tests require an empty isolated source namespace"
+                assert engine == "ReplacingMergeTree" and rows == 0, (
+                    "SQL tests require an empty isolated source namespace"
+                )
                 expected = {
                     column.name
                     for column in sqlglot.parse_one(
@@ -63,9 +63,9 @@ def scoped_clickhouse():
                         {"db": database, "table": table},
                     )
                 }
-                assert (
-                    expected <= actual
-                ), "Installed SQL source lacks required catalog columns"
+                assert expected <= actual, (
+                    "Installed SQL source lacks required catalog columns"
+                )
                 reused.add(table)
         else:
             client.execute(f"CREATE DATABASE {database}")
@@ -79,7 +79,9 @@ def scoped_clickhouse():
                     else (
                         "trace_session_id"
                         if table == "trace_sessions"
-                        else "end_user_id" if table == "end_users" else "id"
+                        else "end_user_id"
+                        if table == "end_users"
+                        else "id"
                     )
                 )
                 client.execute(
@@ -604,9 +606,9 @@ def test_direct_bi_views_and_row_policies_are_tenant_safe(
         ]:
             with pytest.raises(ServerException) as denied:
                 reader.execute(forbidden)
-            assert (
-                denied.value.code == 497
-            ), "Expected privilege denial, not syntax/network/source failure"
+            assert denied.value.code == 497, (
+                "Expected privilege denial, not syntax/network/source failure"
+            )
         for forbidden in [
             "SET max_execution_time=0",
             "SET readonly=0",
@@ -754,7 +756,7 @@ def _sibling(name):
     return module
 
 
-def _service_principal(client, scope, *, extra_grants=()):
+def _service_principal(client, scope, *, extra_grants=(), estimate=False):
     """An ephemeral locked service principal, as provision_sql_service emits it."""
     import ipaddress
     import secrets
@@ -777,6 +779,7 @@ def _service_principal(client, scope, *, extra_grants=()):
         password=password,
         cidr=f"{address}/{32 if address.version == 4 else 128}",
         eval_table=scope.eval_table,
+        estimate=estimate,
     )
     statements += [f"GRANT SELECT ON {grant} TO {principal}" for grant in extra_grants]
     return principal, password, statements
@@ -1512,9 +1515,6 @@ def test_result_reuse_answers_without_a_scan_and_only_for_the_same_person(
             )
             assert peer.id != first.id and len(workers) == 2
             assert peer.result["rows"] == first.result["rows"]
-            for worker in workers:
-                worker.join(timeout=15)
-            assert cached < uncached
             minute = (scope.end - timedelta(minutes=5)).replace(second=0, microsecond=0)
             client.execute(
                 f"INSERT INTO {scope.database}.spans (project_id,org_id,id,trace_id,name,start_time,model) VALUES",
@@ -1547,6 +1547,9 @@ def test_result_reuse_answers_without_a_scan_and_only_for_the_same_person(
                 exact_jobs.append(job.id)
             assert exact_jobs[0] != exact_jobs[1]
             assert len(workers) == 4
+            for worker in workers:
+                worker.join(timeout=15)
+            assert cached < uncached
             print(
                 f"result reuse: uncached submit-to-rows {uncached * 1000:.0f} ms "
                 f"(runner {first.result['elapsed_ms']} ms), reused {cached * 1000:.1f} ms"
@@ -1627,7 +1630,10 @@ def test_capability_matrix_is_regenerated_live(scoped_clickhouse, monkeypatch):
         ],
     )
     principal, password, statements = _service_principal(client, scope)
-    created = False
+    estimator, estimate_password, estimate_statements = _service_principal(
+        client, scope, estimate=True
+    )
+    created = estimate_created = False
     workers, held = [], []
 
     def dispatch(args, **_):
@@ -1659,6 +1665,11 @@ def test_capability_matrix_is_regenerated_live(scoped_clickhouse, monkeypatch):
 
     results = {}
     try:
+        for statement in estimate_statements:
+            client.execute(statement)
+            estimate_created = True
+        monkeypatch.setenv("SQL_WORKBENCH_ESTIMATE_CH_USER", estimator)
+        monkeypatch.setenv("SQL_WORKBENCH_ESTIMATE_CH_PASSWORD", estimate_password)
         for statement in statements:
             client.execute(statement)
             created = True
@@ -1814,3 +1825,5 @@ def test_capability_matrix_is_regenerated_live(scoped_clickhouse, monkeypatch):
     finally:
         if created:
             client.execute(f"DROP USER {principal}")
+        if estimate_created:
+            client.execute(f"DROP USER {estimator}")

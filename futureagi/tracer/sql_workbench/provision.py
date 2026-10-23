@@ -8,7 +8,7 @@ import sqlglot
 from sqlglot import exp
 
 from .catalog import SOURCE_CTES, Scope, ownership_predicates, sources
-from .runner import QUERY_SETTINGS
+from .runner import ESTIMATE_SETTINGS, QUERY_SETTINGS
 
 SAFE_NAME = re.compile(r"[a-z][a-z0-9_]{0,47}\Z")
 
@@ -105,6 +105,7 @@ def service_access_ddl(
     cidr,
     eval_table="tracer_eval_logger",
     include_derived_metrics=False,
+    estimate=False,
 ):
     """Application-only principal. Never issue this cross-project login to BI users."""
     import ipaddress
@@ -124,9 +125,9 @@ def service_access_ddl(
             if isinstance(value, str)
             else f"{key} = {value} READONLY"
         )
-        for key, value in QUERY_SETTINGS.items()
+        for key, value in (ESTIMATE_SETTINGS if estimate else QUERY_SETTINGS).items()
     )
-    profile += ", max_concurrent_queries_for_user = 2 READONLY"
+    profile += f", max_concurrent_queries_for_user = {1 if estimate else 2} READONLY"
     # The one setting the runner sends: the scope's per-query ownership filter.
     # Every other setting stays immutable under readonly = 1.
     profile += ", additional_table_filters CHANGEABLE_IN_READONLY"

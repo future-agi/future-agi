@@ -67,8 +67,8 @@ class QueryCancelled(Exception):
 # The shared service principal runs at most max_concurrent_queries_for_user
 # statements at once. ClickHouse turns a statement away with this code before
 # it reads anything, so a run retries its opening statements for a short,
-# bounded time instead of failing when a brief statement (an advisory
-# estimate, another run's profile check) holds a slot for a moment.
+# bounded time instead of failing when another run's brief profile check
+# holds a slot for a moment. Estimates use a separate principal.
 TOO_MANY_SIMULTANEOUS_QUERIES = 202
 START_RETRY_SECONDS = 3.0
 
@@ -103,13 +103,15 @@ PROFILE_MESSAGE = (
 )
 
 
-def verify_profile(client):
-    keys = tuple(QUERY_SETTINGS) + ("max_concurrent_queries_for_user",)
+def verify_profile(client, *, estimate=False):
+    limits = ESTIMATE_SETTINGS if estimate else QUERY_SETTINGS
+    concurrency = 1 if estimate else 2
+    keys = tuple(limits) + ("max_concurrent_queries_for_user",)
     values = client.execute(
         "SELECT " + ", ".join(f"getSetting('{key}')" for key in keys)
     )[0]
     for key, actual in zip(keys, values, strict=True):
-        expected = QUERY_SETTINGS.get(key, 2)
+        expected = limits.get(key, concurrency)
         if isinstance(expected, str):
             valid = str(actual) == expected
         elif key in {
@@ -276,16 +278,50 @@ def run(compiled_sql, query_id, cancelled, *, table_filters):
 
 # An estimate is advisory: it must answer quickly or not at all.
 ESTIMATE_SECONDS = 5
+ESTIMATE_SETTINGS = {
+    **QUERY_SETTINGS,
+    "max_execution_time": ESTIMATE_SECONDS,
+    "max_execution_time_leaf": ESTIMATE_SECONDS,
+    "max_threads": 1,
+}
+
+
+def estimate_connection_config():
+    """Never consume a run's per-user slots for advisory work.
+
+    Missing/invalid estimator credentials disable estimates, not execution.
+    The operator must provision this distinct account on each coordinator.
+    """
+    config = connection_config()
+    username = os.environ.get("SQL_WORKBENCH_ESTIMATE_CH_USER", "")
+    password = os.environ.get("SQL_WORKBENCH_ESTIMATE_CH_PASSWORD", "")
+    if (
+        not username
+        or not password
+        or username
+        in {"default", config.get("user"), settings.CLICKHOUSE_V2.get("CH25_USER")}
+    ):
+        raise QueryUnavailable(
+            "Configure a separate read-only SQL estimate connection."
+        )
+    config.update(
+        user=username,
+        password=password,
+        connect_timeout=2,
+        send_receive_timeout=ESTIMATE_SECONDS,
+        client_name="futureagi-sql-estimate",
+    )
+    return config
 
 
 def estimate(compiled_sql, *, table_filters, database):
     """Index analysis of one compiled query; reads no table data rows.
 
-    ``EXPLAIN ESTIMATE`` runs on the dedicated locked connection with the same
-    server-side ``additional_table_filters`` as a real run. It returns, per
-    physical table, the parts, index granules (marks) and rows in those
-    granules that the query's index analysis selects. The sort key and index
-    granularity of each table come from ``system.tables`` so the caller can
+    ``EXPLAIN ESTIMATE`` runs on a separate locked estimate principal with the
+    same server-side ``additional_table_filters`` as a real run. It cannot use
+    execution's per-user slots. It returns, per physical table, the parts,
+    index granules (marks) and rows selected by index analysis. The actual
+    primary key and granularity come from ``system.tables`` so the caller can
     withhold numbers for tables whose index is shared across projects.
     """
     from clickhouse_driver import Client
@@ -296,11 +332,9 @@ def estimate(compiled_sql, *, table_filters, database):
         or not table_filters.endswith("'}")
     ):
         raise QueryUnavailable("SQL scope filters are missing.")
-    config = connection_config()
-    config.update(connect_timeout=2, send_receive_timeout=ESTIMATE_SECONDS)
-    client = Client(**config)
+    client = Client(**estimate_connection_config())
     try:
-        verify_profile(client)
+        verify_profile(client, estimate=True)
         rows = client.execute(
             f"EXPLAIN ESTIMATE {compiled_sql}",
             settings={"additional_table_filters": table_filters},
@@ -322,12 +356,12 @@ def estimate(compiled_sql, *, table_filters, database):
         names = sorted({item["table"] for item in tables})
         layout = {}
         if names:
-            for name, sorting_key, engine_full in client.execute(
-                "SELECT name, sorting_key, engine_full FROM system.tables "
+            for name, primary_key, engine_full in client.execute(
+                "SELECT name, primary_key, engine_full FROM system.tables "
                 "WHERE database = %(database)s AND name IN %(names)s",
                 {"database": database, "names": tuple(names)},
             ):
-                layout[str(name)] = (str(sorting_key), str(engine_full))
+                layout[str(name)] = (str(primary_key), str(engine_full))
         return {"tables": tables, "layout": layout}
     finally:
         client.disconnect()

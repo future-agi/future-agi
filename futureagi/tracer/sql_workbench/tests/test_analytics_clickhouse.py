@@ -428,7 +428,7 @@ def provisioned(keys=None, *, label="an"):
     base -= timedelta(hours=3)
     with _ch_test_native_client(owned_database=database) as admin:
         admin.execute(f"CREATE DATABASE {database}")
-        principal = None
+        principals = []
         try:
             for table, columns in tables.items():
                 admin.execute(
@@ -462,19 +462,21 @@ def provisioned(keys=None, *, label="an"):
             address = getattr(address, "ipv4_mapped", None) or address
             name = f"sql_test_{uuid4().hex[:12]}"
             password = secrets.token_urlsafe(32)
-            for index, statement in enumerate(
-                service_access_ddl(
-                    database=database,
-                    principal=name,
-                    password=password,
-                    cidr=f"{address}/{32 if address.version == 4 else 128}",
-                    eval_table=eval_table,
-                    include_derived_metrics=True,
-                )
-            ):
-                admin.execute(statement)
-                if index == 0:
-                    principal = name
+            for principal, estimate in ((name, False), (f"{name}_estimate", True)):
+                for index, statement in enumerate(
+                    service_access_ddl(
+                        database=database,
+                        principal=principal,
+                        password=password,
+                        cidr=f"{address}/{32 if address.version == 4 else 128}",
+                        eval_table=eval_table,
+                        include_derived_metrics=True,
+                        estimate=estimate,
+                    )
+                ):
+                    admin.execute(statement)
+                    if index == 0:
+                        principals.append(principal)
             with (
                 pytest.MonkeyPatch.context() as patch,
                 override_settings(
@@ -486,12 +488,14 @@ def provisioned(keys=None, *, label="an"):
                     }
                 ),
             ):
-                patch.setenv("SQL_WORKBENCH_CH_USER", principal)
+                patch.setenv("SQL_WORKBENCH_CH_USER", name)
                 patch.setenv("SQL_WORKBENCH_CH_PASSWORD", password)
                 patch.setenv("SQL_WORKBENCH_CH_SECURE", "false")
+                patch.setenv("SQL_WORKBENCH_ESTIMATE_CH_USER", f"{name}_estimate")
+                patch.setenv("SQL_WORKBENCH_ESTIMATE_CH_PASSWORD", password)
                 yield Live(owned, foreign, scope), admin
         finally:
-            if principal:
+            for principal in principals:
                 admin.execute(f"DROP USER {principal}")
             admin.execute(f"DROP DATABASE {database} SYNC")
 
@@ -905,69 +909,72 @@ def test_estimate_runs_on_the_locked_principal_and_bounds_other_projects_influen
         )
 
 
-def test_a_run_waits_out_brief_contention_for_the_principal(
-    live, live_admin, monkeypatch
-):
-    """Both of the principal's concurrent-query slots are held (as an advisory
-    estimate or another run can do for a moment); a run started meanwhile is
-    turned away by ClickHouse with code 202, retried, and then succeeds."""
+def test_estimates_cannot_occupy_execution_slots(live, live_admin):
+    """A four-second advisory statement plus an execution occupy separate users.
+
+    Further advisory work is refused, while another real run succeeds with
+    the unmodified three-second opening retry budget. The held statement is
+    real server work for longer than that budget, within the estimate ceiling.
+    """
     import threading
     import time
-    from types import SimpleNamespace
 
     from clickhouse_driver import Client
+    from clickhouse_driver.errors import ServerException
 
     from tracer.sql_workbench import runner
 
-    principal = os.environ["SQL_WORKBENCH_CH_USER"]
-    errors = []
+    configs = [runner.connection_config(), runner.estimate_connection_config()]
+    assert configs[0]["user"] != configs[1]["user"]
+    assert runner.START_RETRY_SECONDS == 3.0
+    assert runner.ESTIMATE_SECONDS == 5
+    errors, durations = [], []
 
-    def hold():
-        client = Client(**runner.connection_config())
+    def hold(config):
+        client = Client(**config)
         try:
-            client.execute("SELECT sleep(3)")
-        except Exception as exc:  # reported below, never swallowed
+            # Each sleep stays below ClickHouse's three-second per-function cap.
+            started = time.monotonic()
+            client.execute("SELECT sleep(2) + sleep(2.1)")
+            durations.append(time.monotonic() - started)
+        except Exception as exc:
             errors.append(exc)
         finally:
             client.disconnect()
 
-    holders = [threading.Thread(target=hold) for _ in range(2)]
+    holders = [threading.Thread(target=hold, args=(config,)) for config in configs]
     for holder in holders:
         holder.start()
     try:
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline:
-            held = live_admin.execute(
-                "SELECT count() FROM system.processes WHERE user = %(user)s",
-                {"user": principal},
-            )[0][0]
-            if held == 2:
+            held = dict(
+                live_admin.execute(
+                    "SELECT user, count() FROM system.processes WHERE user IN %(users)s GROUP BY user",
+                    {"users": tuple(c["user"] for c in configs)},
+                )
+            )
+            if held == {c["user"]: 1 for c in configs}:
                 break
             time.sleep(0.05)
-        assert held == 2, "both principal slots were not observed as held"
-        retries = []
-        # Only the runner's own clock is observed; other threads keep time.sleep.
-        monkeypatch.setattr(
-            runner,
-            "time",
-            SimpleNamespace(
-                monotonic=time.monotonic,
-                sleep=lambda s: (retries.append(s), time.sleep(s)),
-            ),
-        )
-        # The test exercises the mechanism; it must outlast the 3 s holders.
-        monkeypatch.setattr(runner, "START_RETRY_SECONDS", 10.0)
-        started = time.monotonic()
+        assert held == {c["user"]: 1 for c in configs}, errors
+        with pytest.raises(ServerException) as refused:
+            runner.estimate(
+                compile_query("SELECT count() FROM spans", live.scope),
+                table_filters=additional_table_filters(live.scope),
+                database=live.scope.database,
+            )
+        assert refused.value.code == runner.TOO_MANY_SIMULTANEOUS_QUERIES
         result = live.run("SELECT count() AS n FROM spans")
-        waited = time.monotonic() - started
+        assert result["rows"] == [[len(live.owned.spans)]]
     finally:
         for holder in holders:
             holder.join(timeout=10)
     assert errors == []
-    assert result["rows"] == [[len(live.owned.spans)]]
-    assert retries, "the run was never turned away, so nothing was proven"
+    assert not any(holder.is_alive() for holder in holders)
+    assert len(durations) == 2 and min(durations) > runner.START_RETRY_SECONDS
     print(
-        f"principal contention: {len(retries)} retries, run finished in {waited:.2f} s"
+        f"isolated advisory contention: held statements {durations}; execution succeeded"
     )
 
 
@@ -1200,6 +1207,48 @@ def test_every_gallery_example_returns_the_expected_rows(live):
         assert actual == wanted, (example.id, actual, wanted)
         # No foreign identifier or foreign-scale value leaks into any example.
         assert "foreign" not in repr(result["rows"]), example.id
+
+
+@pytest.mark.parametrize("primary_key", ["org_id", "tuple()"])
+def test_estimate_withholds_short_primary_indexes_during_foreign_growth(primary_key):
+    from tracer.sql_workbench import runner, service
+
+    keys = {
+        **PRODUCTION_KEYS,
+        "spans": f"(org_id, project_id, id) PRIMARY KEY {primary_key} SETTINGS allow_nullable_key = 1",
+    }
+    with provisioned(keys, label="primary") as (live, admin):
+        database = live.scope.database
+        admin.execute(f"SYSTEM STOP MERGES {database}.spans")
+        observed, raw_rows = [], []
+        for count in (0, 40):
+            if count:
+                admin.execute(
+                    f"INSERT INTO {database}.spans (org_id,project_id,id,trace_id,start_time) "
+                    "SELECT toUUID(%(org)s), toUUID(%(project)s), toString(number), 'foreign-growth', %(moment)s "
+                    "FROM numbers(%(count)s)",
+                    {
+                        "org": str(live.owned.org),
+                        "project": str(live.foreign.project),
+                        "count": count,
+                        "moment": live.scope.start + timedelta(days=1),
+                    },
+                )
+            raw = runner.estimate(
+                compile_query("SELECT count() FROM spans", live.scope),
+                table_filters=additional_table_filters(live.scope),
+                database=database,
+            )
+            entry = _source(service.summarize_estimate(raw, database), "spans")
+            assert entry["estimated"] is False
+            assert entry["parts"] is entry["marks"] is entry["max_rows"] is None
+            observed.append(entry)
+            raw_rows.append(sum(t["rows"] for t in raw["tables"]))
+        assert raw_rows[1] > raw_rows[0], (
+            "foreign growth must affect the shared index control"
+        )
+        assert observed[0] == observed[1]
+        assert live.rows("SELECT count() FROM spans") == [[len(live.owned.spans)]]
 
 
 def test_sample_gallery_does_not_multiply_spans_for_repeated_evaluations():
