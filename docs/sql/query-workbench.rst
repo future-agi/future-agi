@@ -23,6 +23,108 @@ Delivered surface
 * Operator tooling emits separate application-service and project-specific BI
   principals, explicit grants, locked resource profiles, scoped views and row policies.
 
+Capability matrix
+-----------------
+
+These are bounded capabilities, verified by the repository tests below on
+ClickHouse 25.3.14.14 with SQLGlot 28.10.1. They do not imply unrestricted SQL,
+large-fixture performance, cluster qualification or superiority over another
+product. The live fixtures contain two tenants and independently computed
+expected values.
+
+.. list-table:: Tested SQL capabilities
+   :header-rows: 1
+   :widths: 22 48 30
+
+   * - Capability
+     - Tested behavior
+     - Evidence in ``tracer/sql_workbench/tests``
+   * - Scoped windows
+     - ``row_number``, ``rank``, ``dense_rank``, ``ntile``, ``percent_rank``,
+       ``cume_dist``, ``lag``, ``lead``, ``first_value``, ``last_value`` and
+       ``sum/avg/count/min/max OVER``. Inline partitions, ordering and bounded
+       ``ROWS``/``RANGE`` frames; nested sources remain scoped. Named windows,
+       ``GROUPS`` frames and unreviewed window functions are rejected.
+     - ``test_analytics_clickhouse.py``: four window semantic/isolation tests;
+       ``test_compiler.py``: accepted and rejected window forms.
+   * - Analytical functions
+     - Every name in the function allow-list has a compile probe and a live
+       value check, including quantiles, distinct counts, conditional
+       aggregates, JSON attributes, date buckets, math and strings. Collection
+       aggregates require reviewed bounds (at most 1,000 elements); quantile
+       lists contain at most 32 literal levels in [0, 1]. Table/file/network,
+       dictionary, side-effect and unreviewed functions remain rejected.
+     - ``test_every_approved_function_runs_with_the_expected_value`` and
+       ``test_compiler.py`` function probes.
+   * - Advisory pre-run estimate
+     - Authorized, rate-limited ``POST /tracer/sql-query/estimate/`` compiles
+       the same scoped SQL and executes ``EXPLAIN ESTIMATE`` with the locked
+       read-only principal. No execution record or application admission slot
+       is consumed. Timeout/failure never prevents Run.
+     - Live estimate and principal-contention tests in
+       ``test_analytics_clickhouse.py``; permission/limiter tests in
+       ``test_permissions.py``; ``QueryEstimate.test.jsx`` and the editor tests.
+   * - Example gallery
+     - Twelve one-click SQL examples, each compiled and executed with exact
+       column/value oracles: model cost/tokens, daily latency percentiles and
+       errors, slow traces, sessions per user, evaluator/locale scores,
+       annotation comparisons, derived metrics, session-score joins, user
+       spend ranks, sampled/all comparison and retention-style cohorts.
+     - ``test_every_gallery_example_returns_the_expected_rows``;
+       repeated-evaluation regression and editor insertion tests.
+   * - Personal result reuse
+     - An identical ad-hoc request can return its existing completed snapshot
+       without a new scan. Keys include actor, organization, workspace,
+       project, current memberships, normalized SQL, minute-rounded window,
+       catalog version, source connection, evaluation scope and limits.
+       Saved/dashboard runs preserve fresh-execution behavior.
+     - ``test_permissions.py`` reuse isolation/invalidation tests;
+       ``test_result_reuse_answers_without_a_scan_and_only_for_the_same_person``
+       on PostgreSQL and ClickHouse.
+   * - Regenerable capability corpus
+     - Fixed accepted and rejected SQL plus submit/worker/poll, queued cancel,
+       saved definitions, CSV/Parquet, estimate and reuse. Accepted queries
+       must produce seeded, nonempty results. Rejections include a reason.
+     - ``test_capability_matrix_is_regenerated_live`` and
+       ``test_capability_check.py``.
+
+The estimate is an index-granule upper bound, not a billing quote or a count of
+matching rows. Sources whose sort key does not lead with project ownership
+withhold parts/marks/row estimates; raw granule row counts are never returned.
+Project-keyed sources report parts, marks and marks times index granularity.
+Boundary granules can still include adjacent projects: the live regression
+measures unchanged counts for foreign-only growth outside that key range and
+bounded boundary-granule changes, **not** universal independence from other
+projects' storage. Estimate/actual accuracy within a particular ratio is not
+claimed. ``SQL_WORKBENCH_ESTIMATES_PER_MINUTE`` defaults to 30 per actor.
+
+``SQL_WORKBENCH_RESULT_CACHE_SECONDS`` defaults to 60 (0 disables reuse; maximum
+3,600). This changes only repeated ad-hoc submissions; authorization, scan,
+result and concurrency limits remain unchanged. A hit retains the original
+execution id, exact window, rows and timestamps; it is not a fresh read, and
+changes within the TTL may not appear. Windows are compared after rounding
+both endpoints down to UTC minutes, so a hit may use an earlier request's
+seconds within those minutes. Membership or catalog changes cause misses;
+changes detected between admission, worker start and completion prevent that
+execution from populating the old cache key. No cache entry is shared across
+actors, tenants or projects, and expired/failed/cancelled results are not reused.
+
+The sampled/all example de-duplicates repeated evaluations by (trace, span),
+using the latest known inclusion probability. It is illustrative weighted
+arithmetic for one sampling design, not evidence of unbiased pooling across
+runs or of confidence-interval coverage.
+
+To regenerate the machine-readable capability matrix in an isolated test
+environment with real PostgreSQL and ClickHouse::
+
+  python futureagi/scripts/sql_workbench/capability_check.py --out capability-matrix.json
+  # Add --reuse-db only for a verified test database owned by this test run.
+
+Stdout is the JSON matrix; test diagnostics go to stderr. A mismatched status,
+failed query or missing matrix exits nonzero. Dispatch uses the real activity
+body on a local worker thread: this does not qualify the Temporal service,
+HTTP transport or browser end to end.
+
 Catalog version 1
 -----------------
 
@@ -254,7 +356,8 @@ Security and lifecycle
 Deployment
 ----------
 
-Apply Django migration ``tracer/0117_sql_workbench`` using the normal bootstrap job.
+Apply Django migrations through ``tracer/0119_sql_execution_result_reuse`` using
+the normal bootstrap job (including ``0117_sql_workbench`` and its merge migration).
 Install the locked backend dependencies. The existing always-on Temporal
 ``exact_aggregation`` worker imports ``tracer.sql_workbench.tasks`` from the shared
 activity registry; no extra worker process or Celery deployment is introduced.
