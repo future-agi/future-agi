@@ -28,9 +28,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import structlog
 from django.core.cache import cache
 from django.db import connection, transaction
 from django.utils import timezone
+
+logger = structlog.get_logger(__name__)
 
 ERROR = "__error__"
 SKIPPED = "__skipped__"
@@ -1752,13 +1755,38 @@ def _user_rows_page(
 EXPORT_PAGE = 5000
 
 
+# A cell a spreadsheet would read as a formula. The excerpt is the traced
+# app's user message, so it is attacker-controlled.
+_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_cell(value):
+    if isinstance(value, str) and value.startswith(_FORMULA_LEAD):
+        return "'" + value
+    return value
+
+
 def _csv_line(values) -> str:
     import csv
     import io
 
     buf = io.StringIO()
-    csv.writer(buf).writerow(values)
+    csv.writer(buf).writerow([_csv_cell(v) for v in values])
     return buf.getvalue()
+
+
+EXPORT_INCOMPLETE = "# export incomplete: a read failed; export again\n"
+
+
+def marked_export(lines):
+    """The export's lines, ending in an EXPORT_INCOMPLETE line when a read
+    fails after the headers were sent, so a truncated file never passes for
+    a whole one."""
+    try:
+        yield from lines
+    except Exception:
+        logger.exception("instant_eval_export_failed")
+        yield EXPORT_INCOMPLETE
 
 
 def _selected_users(view: RunView, f: RowFilter) -> list[str] | None:

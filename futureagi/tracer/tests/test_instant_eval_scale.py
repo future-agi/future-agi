@@ -613,6 +613,58 @@ def test_export_streams_every_selected_row(
     )
 
 
+def test_export_cells_never_read_as_spreadsheet_formulas():
+    from tracer.services import instant_eval_summary as summary_service
+
+    line = summary_service._csv_line(
+        ['=HYPERLINK("http://x")', "+1", "-2", "@SUM(A1)", "\tx", "\rx", "ok", 0.5]
+    )
+    [cells] = list(csv.reader(io.StringIO(line)))
+    assert cells == [
+        '\'=HYPERLINK("http://x")',
+        "'+1",
+        "'-2",
+        "'@SUM(A1)",
+        "'\tx",
+        "'\rx",
+        "ok",
+        "0.5",
+    ]
+
+
+def test_an_export_that_fails_after_its_headers_says_it_is_incomplete():
+    from tracer.services import instant_eval_summary as summary_service
+
+    def lines():
+        yield "id,time\n"
+        yield "1,2026-10-01\n"
+        raise RuntimeError("connection lost")
+
+    out = list(summary_service.marked_export(lines()))
+    assert out[:2] == ["id,time\n", "1,2026-10-01\n"]
+    assert out[-1] == summary_service.EXPORT_INCOMPLETE
+    assert out[-1].startswith("# export incomplete")
+
+
+@pytest.mark.django_db
+def test_an_exported_excerpt_that_starts_like_a_formula_is_quoted(
+    auth_client, observe_project, answered_run
+):
+    from tracer.models.instant_eval import InstantEvalRow
+
+    task, ids = answered_run
+    params = {"project_id": str(observe_project.id), "eval_task_id": str(task.id)}
+    # The first read lands the run's rows; then one excerpt is a formula.
+    b"".join(auth_client.get(EXPORT, params).streaming_content)
+    assert InstantEvalRow.objects.filter(task_id=task.id).update(excerpt="=1+1")
+    response = auth_client.get(EXPORT, params)
+    body = b"".join(response.streaming_content).decode()
+    lines = list(csv.reader(io.StringIO(body)))
+    excerpt = lines[0].index("excerpt")
+    assert {line[excerpt] for line in lines[1:]} == {"'=1+1"}
+    assert not body.rstrip().endswith("export again")
+
+
 @pytest.mark.django_db
 def test_summary_of_another_organizations_run_is_not_found(auth_client, answered_run):
     from accounts.models.organization import Organization

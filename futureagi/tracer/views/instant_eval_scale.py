@@ -1760,7 +1760,11 @@ class InstantEvalExportView(InstantEvalLicenseRequired, APIView):
             return self._gm.bad_request(str(exc))
         sessions = bool(params.get("sessions")) and view.by_user
         response = StreamingHttpResponse(
-            summary_service.iter_export(view, row_filter, questions, sessions=sessions),
+            summary_service.marked_export(
+                summary_service.iter_export(
+                    view, row_filter, questions, sessions=sessions
+                )
+            ),
             content_type="text/csv",
         )
         part = "-sessions" if sessions else "-users" if view.by_user else ""
