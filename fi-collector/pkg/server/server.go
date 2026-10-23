@@ -245,6 +245,24 @@ func (s *Server) Limits() Limits {
 	}
 }
 
+// Admission is the admission state at one instant, reported by the admin
+// endpoint so a benchmark can follow the backlog over time. BufferedRows is what
+// the budget bounds: rows parked for the next flush plus rows of the flush in
+// progress (including its retries). PendingRows is the parked part only.
+// Acknowledged rows in BufferedRows are not in ClickHouse yet.
+type Admission struct {
+	BufferedRows   int `json:"buffered_rows"`
+	PendingRows    int `json:"pending_rows"`
+	MaxPendingRows int `json:"max_pending_rows"`
+}
+
+// Admission returns the current admission state.
+func (s *Server) Admission() Admission {
+	s.pendMu.Lock()
+	defer s.pendMu.Unlock()
+	return Admission{BufferedRows: s.bufferedRows, PendingRows: len(s.pend), MaxPendingRows: s.cfg.MaxPendingRows}
+}
+
 // Run blocks until ctx is cancelled or a serve error occurs. On shutdown
 // we attempt to drain pending rows once before returning. A hard process crash
 // can still lose all acknowledged rows that have not reached ClickHouse.

@@ -39,6 +39,10 @@ func TestPendingRowBudgetIncludesBlockedInflightInsert(t *testing.T) {
 	if s.enqueue([]map[string]any{{"id": "a"}, {"id": "b"}}, nil) != enqueueAccepted {
 		t.Fatal("initial batch rejected")
 	}
+	// Parked rows are both pending and buffered (what /healthz reports).
+	if a := s.Admission(); a != (Admission{BufferedRows: 2, PendingRows: 2, MaxPendingRows: 2}) {
+		t.Fatalf("admission of parked rows = %+v", a)
+	}
 	done := make(chan struct{})
 	go func() { s.drainNow(context.Background()); close(done) }()
 	select {
@@ -47,6 +51,12 @@ func TestPendingRowBudgetIncludesBlockedInflightInsert(t *testing.T) {
 		close(release)
 		t.Fatal("writer never blocked")
 	}
+	// Rows of the insert in progress are no longer pending but still buffered:
+	// a stalled writer shows as backlog, not as an empty queue.
+	if a := s.Admission(); a != (Admission{BufferedRows: 2, PendingRows: 0, MaxPendingRows: 2}) {
+		close(release)
+		t.Fatalf("admission during the insert = %+v", a)
+	}
 	// The old code swaps pend to nil before the insert. A cap on len(pend)
 	// alone would let more rows in and is not a bounded in-flight budget.
 	refused := s.enqueue([]map[string]any{{"id": "c"}}, nil)
@@ -54,6 +64,9 @@ func TestPendingRowBudgetIncludesBlockedInflightInsert(t *testing.T) {
 	<-done
 	if refused != enqueueFull {
 		t.Fatalf("another row while the in-flight budget was full got %v, want enqueueFull", refused)
+	}
+	if a := s.Admission(); a.BufferedRows != 0 || a.PendingRows != 0 {
+		t.Fatalf("admission after the insert = %+v", a)
 	}
 	if s.enqueue([]map[string]any{{"id": "d"}}, nil) != enqueueAccepted {
 		t.Fatal("capacity not released after insert")

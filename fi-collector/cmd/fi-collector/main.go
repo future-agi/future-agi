@@ -178,7 +178,7 @@ func main() {
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
 	// Admin HTTP server — internal only, health check endpoint.
-	go runAdmin(":9464", writer, authenticator, srv.Limits(), log)
+	go runAdmin(":9464", writer, authenticator, srv, log)
 
 	startAuthWatchers(ctx, authenticator)
 
@@ -447,10 +447,18 @@ func runtimeInfo() map[string]any {
 	return info
 }
 
-// adminHandler serves /healthz: writer statistics, the simulation routing
-// counters, the build the binary identifies as, its CPU and memory limits, and
-// the admission limits in force.
-func adminHandler(w *chwriter.Writer, router routingReporter, limits server.Limits) http.Handler {
+// admissionReporter is the part of the server /healthz reads: the admission
+// limits in force and the current backlog.
+type admissionReporter interface {
+	Limits() server.Limits
+	Admission() server.Admission
+}
+
+// adminHandler serves /healthz: writer statistics and insert policy, the
+// simulation routing counters, the build the binary identifies as, its CPU and
+// memory limits, the admission limits in force and the current backlog
+// (buffered rows), which a benchmark samples over time.
+func adminHandler(w *chwriter.Writer, router routingReporter, admission admissionReporter) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
 		s := w.Snapshot()
@@ -462,7 +470,9 @@ func adminHandler(w *chwriter.Writer, router routingReporter, limits server.Limi
 		body := healthBody(status, s, router)
 		body["build"] = buildInfo(os.Getenv)
 		body["runtime"] = runtimeInfo()
-		body["limits"] = limits
+		body["writer"] = w.Policy()
+		body["limits"] = admission.Limits()
+		body["admission"] = admission.Admission()
 		rw.WriteHeader(code)
 		_ = json.NewEncoder(rw).Encode(body)
 	})
@@ -470,8 +480,8 @@ func adminHandler(w *chwriter.Writer, router routingReporter, limits server.Limi
 }
 
 // runAdmin serves /healthz for container health checks.
-func runAdmin(addr string, w *chwriter.Writer, router routingReporter, limits server.Limits, log *slog.Logger) {
-	mux := adminHandler(w, router, limits)
+func runAdmin(addr string, w *chwriter.Writer, router routingReporter, admission admissionReporter, log *slog.Logger) {
+	mux := adminHandler(w, router, admission)
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Warn("admin server stopped", "err", err)
