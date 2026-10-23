@@ -72,8 +72,17 @@ These remain approximate intervals, not universal coverage guarantees.
   population total is zero. The point estimate remains valid; no boundary-aware
   total interval is implemented.
 
-A weighted window whose units were all kept with certainty (p = 1) is a census:
-its standard error is 0 and its interval is the value itself.
+The separate pre-pooling support gate (``support.py``) requires actual conditional
+outcomes or numeric component/residual variation in EACH sampled stratum. Positive
+pooled variance, a large Kish size or a census event cannot replace that evidence.
+Only the narrowly retained homogeneous boundary and formula-proven identities
+waive absent rate tails. Support failures use ``unstable_variance``; they preserve
+points, diagnostic effective sizes and default point alerts. Positive support is
+necessary, not sufficient for calibrated coverage under arbitrary distributions.
+
+A weighted window whose raw frozen rows were all kept with certainty (p = 1) is a
+census: its standard error is 0 and its interval is the value itself. Incomplete
+sampled rows must never disappear to create apparent certainty.
 
 The interval covers sampling error only: evaluator (judge) error is not modelled.
 """
@@ -230,7 +239,7 @@ def uncertainty_array_sql(ratio_kind: bool, *, rate_eligible: bool = False) -> s
                 design = 'closed', abs(d_yy)+abs(2*r*d_xy)+abs(r*r*d_xx)+abs(e_yy)+abs(2*r*e_xy)+abs(r*r*e_xx),
                 abs(c_yy)+abs(2*r*c_xy)+abs(r*r*c_xx))""",
             "df": "multiIf(design = 'closed', sampled_stratum_df, design = 'live', greatest(toInt64(sampled)-1, 0), toInt64(valid_count)-1)",
-            "census": "design IN ('closed', 'live') AND sampled = 0",
+            "census": "design IN ('closed', 'live') AND census_disqualifiers = 0",
             # A pooled Kish size is not evidence about unobserved outcomes in
             # another stratum. Even equal fractions do not prove a common rate.
             "homogeneous_boundary": "v IN (0, 1) AND (design = 'unweighted' OR (strata = 1 AND probability_low = probability_high))",
@@ -264,6 +273,7 @@ def uncertainty_array_sql(ratio_kind: bool, *, rate_eligible: bool = False) -> s
                 design = 'closed' AND singleton_strata > 0, 'single_unit_stratum',
                 NOT census AND df < 1, 'no_degrees_of_freedom',
                 ifNull(NOT isFinite(se) OR NOT isFinite(lo) OR NOT isFinite(hi), 1), 'non_finite',
+                NOT census AND ifNull(support_bad OR (support_missing_tail AND NOT homogeneous_boundary), 1), 'unstable_variance',
                 NOT census AND variance <= 1e-12*scale AND NOT (rate AND homogeneous_boundary), 'unstable_variance',
                 '')""",
         },

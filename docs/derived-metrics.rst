@@ -170,8 +170,41 @@ rates do not prove a common underlying rate. This includes both zero-event and
 all-event samples and degenerate interior rates whose strata disagree. A known
 census stratum cannot manufacture evidence about unknown outcomes in another
 stratum. A design-aware mixed-stratum boundary interval is not implemented.
-Nondegenerate variance still uses the existing design-effective Wilson interval;
-an entirely census group still has an exact interval. Valid point estimates and
+Positive pooled variance alone is not sufficient. Before pooling, **each frozen
+stratum's non-certainty portion** must contain at least two complete selection
+units and one known non-certainty probability. Multiple such probabilities inside
+a live label are conservatively unsupported; different probabilities across
+separately supported strata remain supported. Known sampled strata with no
+complete inputs cannot disappear from this check. Certainty is proved from all
+raw frozen rows, not just the complete cases.
+
+A proven rate needs both conditional outcomes in every sampled stratum: at least
+one success and one failure among actual units with denominator 1. Denominator-zero
+units, certainty units, probability weights and closed-domain padding supply no
+support. The single-design boundary exception still requires two actual
+conditional-denominator units. Formula-proven zero/one identities waive only the
+impossible second outcome, never design checks or the existing numerical policy.
+Changing a known census from zero successes to one or many must not manufacture
+support for an unseen sampled tail, even when this makes the pooled variance
+positive.
+
+Numeric components must vary in every sampled stratum unless a narrow proof from
+the immutable formula establishes a constant. For example, ``ratio(y, 1)`` has a
+structural denominator, but observing only x=1 in ``ratio(y, x)`` is not proof.
+Numeric means/ratios also need a stable nonzero local denominator and local residual
+variation, evaluated without weights or certainty at that stratum's own ratio.
+Sample-only proportionality cannot borrow residual variation from another stratum.
+The compiler does not simplify through division, overflow or ambiguous rounding;
+no new exact structural-identity interval is introduced. Unweighted means/ratios
+use one iid support cell across all labels, not weighted per-stratum restrictions.
+
+Support failures use the existing ``unstable_variance`` reason (earlier design and
+degrees-of-freedom reasons retain precedence). Supported nondegenerate cases still
+use the existing estimators; an entirely census group still has an exact interval.
+Positive support is necessary, not a new coverage guarantee: finite moments,
+adequate information, stable denominators and independent selection remain
+assumptions. Unknown/absent population frames cannot be reconstructed from observed
+rows. Valid point estimates and
 the diagnostic ``effective_n`` remain available when an interval is withheld.
 Confident alerts abstain; default point alerts remain unchanged.
 
@@ -213,7 +246,16 @@ report ``not_computed``. Previously committed intervals are not silently rewritt
 by estimator fixes: explicitly recompute affected runs before using their historic
 intervals for confidence-based decisions. In particular, earlier inferred-binary
 numeric intervals, pooled-degrees-of-freedom intervals, and mixed-stratum
-zero-variance Wilson intervals are not corrected by merely reading an old result.
+zero-variance Wilson intervals, and intervals lacking per-stratum outcome support
+(including positive-variance census-event cases) are not corrected by merely
+reading an old result. Recompute from retained frozen inputs; this change does not
+rewrite historical results or delivery ledgers automatically.
+
+The calibration numbers below were measured before the per-stratum support
+restriction. They are historical results, not requalification of the new emission
+rule; in particular, near-boundary multistratum draws may now abstain. Report
+emissions, abstentions, conditional coverage and unconditional misses separately
+when recomputing these campaigns. Abstentions are never covered draws.
 
 Calibration is measured, not assumed. ``tracer/tests/test_derived_metric_uncertainty.py``
 draws 2,000 seeded replicates per design from known synthetic populations,

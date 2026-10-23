@@ -219,13 +219,21 @@ def test_degenerate_interior_stratified_rate_is_also_withheld(metric_ch):
 
 
 @pytest.mark.parametrize("design", ["closed", "live"])
-@pytest.mark.parametrize("second", [(100, 0.25, 400), (100_000, 1.0, 100_000)])
+@pytest.mark.parametrize(
+    "second", [(100, 0.25, 400, 0), (100, 0.25, 400, 1), (100_000, 1.0, 100_000, 0)]
+)
 def test_nondegenerate_heterogeneous_rate_retains_reference_interval(
     metric_ch, design, second
 ):
-    n, p, population = second
-    strata = [(50, 1, 0.005, 10_000, "a"), (n, 0, p, population, "b")]
+    n, p, population, successes = second
+    strata = [(50, 1, 0.005, 10_000, "a"), (n, successes, p, population, "b")]
     row = estimate(metric_ch, strata, design)
+    if p < 1 and successes == 0:
+        # The old vector's positive pooled variance concealed an unsupported
+        # second sampled tail. Retain it as an abstention regression, alongside
+        # separately supported unequal-p and genuine-census endpoint controls.
+        assert_withheld(row, 200 / (10_000 + n / p))
+        return
     # Independent centered arithmetic, no production expanded moments or Kish fallback.
     total_x = sum(
         Fraction(count) / Fraction(str(prob)) for count, _, prob, _, _ in strata

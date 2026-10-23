@@ -25,6 +25,11 @@ from tracer.services.derived_metrics.sampling import (
     sampling_lineage_valid_sql,
     sampling_scope_sql,
 )
+from tracer.services.derived_metrics.support import (
+    pooled_support_sql,
+    support_aggregates_sql,
+    support_failure_sql,
+)
 from tracer.services.derived_metrics.uncertainty import uncertainty_array_sql
 
 # Explicit abort budgets on the native job lane; interactive analytics strips
@@ -524,6 +529,8 @@ def aggregate_select(source_sql: str, formula: Formula, *, rollup: str) -> str:
             ("xx", "a_x_h", "a_x_h"),
         )
     ]
+    cell_bad, cell_tail = support_failure_sql(formula, suffix="_h")
+    iid_bad, iid_tail = support_failure_sql(formula)
     # For closed designs use the smallest observed non-certainty stratum's
     # (m_h - 1), a conservative lower bound on Welch-Satterthwaite effective df.
     # Pooling m_h - 1 would let a large/census stratum manufacture precision for
@@ -562,7 +569,15 @@ def aggregate_select(source_sql: str, formula: Formula, *, rollup: str) -> str:
                     sum(population_missing_h) AS population_missing,
                     countIf(inconsistent_h) AS inconsistent_strata,
                     countIf(singleton_h) AS singleton_strata,
-                    sum(non_binary_h) AS non_binary, sum(sampled_h) AS sampled
+                    sum(non_binary_h) AS non_binary, sum(sampled_h) AS sampled,
+                    sum(census_disqualifiers_h) + toUInt64(min(raw_design_min_h) != max(raw_design_max_h)) AS census_disqualifiers,
+                    {pooled_support_sql()},
+                    sum(support_invalid_h) > 0 OR min(raw_design_min_h) != max(raw_design_max_h)
+                        OR if(design_low = 'unweighted', {iid_bad},
+                            countIf(known_sampled_h > 0 AND (support_p_min_h != support_p_max_h OR ({cell_bad}))) > 0)
+                        AS support_bad,
+                    if(design_low = 'unweighted', {iid_tail},
+                        countIf(known_sampled_h > 0 AND ({cell_tail})) > 0) AS support_missing_tail
                 FROM (
                     SELECT *,
                         ifNull(weighted_n_h, 0) AS a_y_h, ifNull(weighted_d_h, 0) AS a_x_h,
@@ -591,11 +606,24 @@ def aggregate_select(source_sql: str, formula: Formula, *, rollup: str) -> str:
                             minIf(sampling_design, ok) AS design_min_h,
                             maxIf(sampling_design, ok) AS design_max_h,
                             countIf(ok AND NOT (y0 IN (0, 1) AND x0 IN (0, 1) AND y0 <= x0)) AS non_binary_h,
-                            countIf(ok AND probability < 1) AS sampled_h
+                            countIf(ok AND probability < 1) AS sampled_h,
+                            countIf(known_sampled) AS known_sampled_h,
+                            minIf(probability, known_sampled) AS support_p_min_h,
+                            maxIf(probability, known_sampled) AS support_p_max_h,
+                            countIf(invalid_probability != 0 OR ifNull(probability != 1, 1)
+                                OR sampling_design NOT IN ('closed', 'live')) AS census_disqualifiers_h,
+                            countIf(invalid_probability != 0 OR ifNull(NOT isFinite(probability)
+                                OR probability <= 0 OR probability > 1, 1)
+                                OR sampling_design NOT IN ('closed', 'live', 'unweighted')) AS support_invalid_h,
+                            min(sampling_design) AS raw_design_min_h, max(sampling_design) AS raw_design_max_h,
+                            {support_aggregates_sql()}
                         FROM (
                             SELECT *, {formula.numerator} AS n, {formula.denominator} AS d,
                                 ifNull({valid}, 0) AS complete,
                                 complete AND invalid_probability = 0 AS ok,
+                                invalid_probability = 0 AND sampling_design IN ('closed', 'live')
+                                    AND ifNull(isFinite(probability) AND probability > 0 AND probability < 1, 0) AS known_sampled,
+                                ok AND (known_sampled OR sampling_design = 'unweighted') AS support_unit,
                                 if(ok, ifNull(1 / probability, 0), 0) AS w,
                                 if(ok, assumeNotNull(n), 0) AS y0, if(ok, assumeNotNull(d), 0) AS x0
                             FROM (SELECT *, {unpack} FROM ({source_sql}))

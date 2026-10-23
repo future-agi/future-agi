@@ -1,4 +1,3 @@
-import math
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from threading import Barrier
@@ -24,9 +23,6 @@ from tracer.services.derived_metrics.integrations import dashboard_result
 from tracer.services.derived_metrics.queries import Scope
 from tracer.services.derived_metrics.service import execute_run
 from tracer.tests import test_derived_metric_clickhouse as metric_fixtures
-from tracer.tests.test_derived_metric_uncertainty import (
-    reference as uncertainty_reference,
-)
 
 metric_ch = metric_fixtures.metric_ch
 seed_span = metric_fixtures.seed_span
@@ -569,19 +565,23 @@ def test_weighted_eval_formula_persists_and_drives_real_dashboard_and_monitor_ap
         assert {k: v for k, v in detailed.items() if k != "uncertainty"} == result
         # Live policy (Poisson design), sampled sessions kept with p = 0.5 and
         # 0.25, outcomes 1 and 0; the unsampled session is missing, not a zero.
-        expected = uncertainty_reference("ratio", "live", y=[1, 0], p=[0.5, 0.25])
         interval = detailed["uncertainty"]
-        assert interval["status"] == "ok" and interval["reason"] == ""
-        # This formula needs a numeric implication (resolved == 1 => >= 0),
-        # outside the compiler's conservative identical/conjunct subset proof.
-        # Observed binary outcomes cannot substitute for that missing proof.
-        assert (interval["method"], interval["interval"]) == ("poisson", "wald_t")
+        # Two probabilities inside one live label and a merely observed-constant
+        # numeric denominator are unsupported, despite positive pooled variance.
+        # Keep the weighted 1/3 point and provenance, but never invent confidence.
+        assert (
+            interval["status"] == "not_estimable"
+            and interval["reason"] == "unstable_variance"
+        )
+        assert interval["method"] == "poisson" and interval["interval"] == ""
         assert interval["confidence_level"] == 0.95
-        assert interval["std_error"] == pytest.approx(math.sqrt(20 / 9) / 6)
-        assert interval["std_error"] == pytest.approx(expected["std_error"])
-        assert interval["ci_low"] == pytest.approx(expected["ci_low"])
-        assert interval["ci_high"] == pytest.approx(expected["ci_high"])
-        assert interval["degrees_of_freedom"] == 1
+        assert (
+            interval["std_error"]
+            is interval["ci_low"]
+            is interval["ci_high"]
+            is interval["degrees_of_freedom"]
+            is None
+        )
         assert run.source_manifest["sampling_scope"].startswith(
             "11111111-1111-1111-1111-111111111111:" + "c" * 64 + ":"
         )
@@ -611,9 +611,8 @@ def test_weighted_eval_formula_persists_and_drives_real_dashboard_and_monitor_ap
             "value"
         ] == pytest.approx(1 / 3)
         point = dashboard.data["result"]["metrics"][0]["series"][0]["data"][0]
-        assert point["ci_low"] == pytest.approx(expected["ci_low"])
-        assert point["ci_high"] == pytest.approx(expected["ci_high"])
-        assert point["ci_reason"] == ""
+        assert point["ci_low"] is point["ci_high"] is None
+        assert point["ci_reason"] == "unstable_variance"
         first_page = auth_client.get(
             f"{RUNS}{run.id}/results/", {"rollup": "cohort", "limit": 1}
         )

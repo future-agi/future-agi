@@ -10,6 +10,7 @@ import ast
 import math
 import re
 from dataclasses import dataclass
+from fractions import Fraction
 
 ALIAS = re.compile(r"[a-z][a-z0-9_]{0,39}\Z")
 AGGREGATES = {"ratio": 2, "mean": 1, "sum": 1, "count_if": 1}
@@ -37,6 +38,9 @@ class Formula:
     parameters: dict[str, float]
     # Proven from the immutable formula, never inferred from observed input values.
     rate_eligible: bool = False
+    numerator_constant: float | None = None
+    denominator_constant: float | None = None
+    proportionality: float | None = None
 
     @property
     def complete_sql(self) -> str:
@@ -88,6 +92,56 @@ def _indicator_factors(node: ast.AST) -> set[str]:
     ):
         return _indicator_factors(node.left) | _indicator_factors(node.right)
     return {ast.dump(node)}
+
+
+def _constant(node: ast.AST) -> float | None:
+    """Tiny proof whitelist on the validated AST, never on observed values.
+
+    No division cancellation or general algebraic simplification: those can erase
+    NULLs, overflow or rounding. Constant arithmetic is accepted only when its
+    exact binary-rational result is finite and exactly representable as Float64.
+    Names are finite on complete units; predicates, when defined, are Boolean.
+    """
+    if isinstance(node, ast.Constant):
+        return float(node.value)
+    if isinstance(node, ast.UnaryOp):
+        value = _constant(node.operand)
+        if value is not None:
+            if isinstance(node.op, ast.Not):
+                return float(not value)
+            return -value if isinstance(node.op, ast.USub) else value
+    if isinstance(node, ast.BinOp):
+        left, right = _constant(node.left), _constant(node.right)
+        if (
+            isinstance(node.op, ast.Sub)
+            and isinstance(node.left, ast.Name | ast.Compare)
+            and ast.dump(node.left) == ast.dump(node.right)
+        ):
+            return 0.0
+        if isinstance(node.op, ast.Mult) and (
+            (left == 0 and isinstance(node.right, ast.Name | ast.Compare))
+            or (right == 0 and isinstance(node.left, ast.Name | ast.Compare))
+        ):
+            return 0.0
+        if left is not None and right is not None:
+            a, b = Fraction(left), Fraction(right)
+            if isinstance(node.op, ast.Add):
+                exact = a + b
+            elif isinstance(node.op, ast.Sub):
+                exact = a - b
+            elif isinstance(node.op, ast.Mult):
+                exact = a * b
+            elif isinstance(node.op, ast.Div) and b:
+                exact = a / b
+            else:
+                return None
+            try:
+                value = float(exact)
+            except OverflowError:
+                return None
+            if math.isfinite(value) and Fraction(value) == exact:
+                return value
+    return None
 
 
 def compile_formula(text: str, aliases: list[str]) -> Formula:
@@ -180,6 +234,28 @@ def compile_formula(text: str, aliases: list[str]) -> Formula:
             and _indicator(call.args[1])
             and _indicator_factors(call.args[1]) <= _indicator_factors(call.args[0])
         )
+    numerator_constant = _constant(call.args[0])
+    denominator_constant = _constant(call.args[1]) if kind == "ratio" else 1.0
+    if kind == "count_if" and numerator_constant is not None:
+        numerator_constant = float(bool(numerator_constant))
+    proportionality = None
+    if kind in {"mean", "ratio"}:
+        if kind == "ratio" and ast.dump(call.args[0]) == ast.dump(call.args[1]):
+            proportionality = 1.0
+        elif numerator_constant == 0:
+            proportionality = 0.0
+        elif numerator_constant is not None and denominator_constant not in (None, 0):
+            value = numerator_constant / denominator_constant
+            if math.isfinite(value):
+                proportionality = value
     return Formula(
-        kind, numerator, denominator, tuple(sorted(required)), parameters, rate_eligible
+        kind,
+        numerator,
+        denominator,
+        tuple(sorted(required)),
+        parameters,
+        rate_eligible,
+        numerator_constant,
+        denominator_constant,
+        proportionality,
     )

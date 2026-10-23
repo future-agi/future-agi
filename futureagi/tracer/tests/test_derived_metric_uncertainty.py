@@ -409,16 +409,33 @@ def test_closed_domain_pads_unsampled_members_with_zero(metric_ch):
     )
 
 
-def test_live_policy_uses_the_poisson_design(metric_ch):
-    # Independent Bernoulli keeps with p = 0.5, 0.25 and 1 (certainty), y = 1 each.
-    # Total = 2 + 4 + 1 = 7. V = (1-0.5)*2^2 + (1-0.25)*4^2 + 0 = 2 + 12 = 14.
-    # Only two units have p < 1: df = 2 - 1 = 1, t = 12.7062047362.
+def test_live_mixed_probability_count_keeps_point_not_confidence(metric_ch):
+    # The old Poisson arithmetic vector has no observed count variation and
+    # mixes two non-certainty probabilities in one label. Positive variance from
+    # random inclusion is not outcome support. Preserve its point, withhold CI.
     rows = [unit(1, p, "live", design="live") for p in (0.5, 0.25, 1.0)]
     row = one_group(metric_ch, rows, "count_if(y == 1)")
     assert row["value"] == pytest.approx(7) and row["ci_method"] == "poisson"
+    assert (
+        row["ci_status"] == "not_estimable" and row["ci_reason"] == "unstable_variance"
+    )
+    assert row["std_error"] is row["ci_low"] is row["ci_high"] is row["ci_df"] is None
+
+
+def test_live_policy_uses_the_poisson_design(metric_ch):
+    # Separately supported p=.5 and .25 strata plus a known event. Adding an
+    # observed non-event to each leaves total=7 and V=14; four sampled units give
+    # df=3. This retains the independent Poisson arithmetic control.
+    rows = [unit(y, p, str(p), design="live") for p in (0.5, 0.25) for y in (0, 1)]
+    rows.append(unit(1, 1.0, "known", design="live"))
+    row = one_group(metric_ch, rows, "count_if(y == 1)")
+    assert row["value"] == pytest.approx(7) and row["ci_method"] == "poisson"
+    assert row["ci_status"] == "ok"
     assert row["std_error"] == pytest.approx(math.sqrt(14), rel=1e-12)
-    assert row["ci_df"] == 1
-    assert row["ci_low"] == pytest.approx(7 - 12.7062047362 * math.sqrt(14), rel=1e-10)
+    assert row["ci_df"] == 3
+    assert row["ci_low"] == pytest.approx(
+        7 - stats.t.ppf(0.975, 3) * math.sqrt(14), rel=1e-10
+    )
 
 
 def test_unweighted_mean_is_a_labelled_model_based_interval(metric_ch):
@@ -518,10 +535,21 @@ def test_rollup_groups_are_domains_of_one_design(metric_ch):
             stratum=["h1", "h1"],
             population=[8, 8],
         )
-        assert grouped[cohort]["std_error"] == pytest.approx(
-            expected["std_error"], rel=1e-12
-        )
         assert grouped[cohort]["value"] == pytest.approx(expected["value"])
+        if cohort == "west":
+            # Domain-zero padding is not observed numeric outcome variation.
+            assert grouped[cohort]["ci_status"] == "not_estimable"
+            assert grouped[cohort]["ci_reason"] == "unstable_variance"
+            assert (
+                grouped[cohort]["std_error"]
+                is grouped[cohort]["ci_low"]
+                is grouped[cohort]["ci_high"]
+                is None
+            )
+        else:
+            assert grouped[cohort]["std_error"] == pytest.approx(
+                expected["std_error"], rel=1e-12
+            )
 
 
 # --- Design capture through a real snapshot, persisted rollups and the view ---------
@@ -617,6 +645,11 @@ def test_persisted_rollup_and_sql_view_carry_the_interval(metric_ch):
     # Closed cohort: 3 sampled sessions of N=6 (p=0.5), escalation-free outcomes
     # 1, 0, 1 -> R = 2/3. Every unit is in one stratum and in the window.
     scope, definition, run = _capture(metric_ch, mode="closed", population=6)
+    # Prove the conditional indicator subset in the immutable formula, rather
+    # than treating the observed all-one denominator as a numeric constant.
+    definition.formula = (
+        "ratio((resolved == 1 and escalated == 0) and (resolved >= 0), resolved >= 0)"
+    )
     result_id = uuid4()
     for rollup in ("overall", "cohort"):
         query, params = rollup_insert(definition, run, result_id, rollup)
@@ -649,6 +682,7 @@ def test_persisted_rollup_and_sql_view_carry_the_interval(metric_ch):
         p=[0.5] * 3,
         stratum=["s"] * 3,
         population=[6] * 3,
+        rate=True,
     )
     overall = by_rollup["overall"]
     assert overall["value"] == pytest.approx(2 / 3)
@@ -991,14 +1025,58 @@ def test_unweighted_mean_interval_coverage_of_the_process_mean(native_ch):
     assert rows[0][6] == "iid_units"
 
 
-def test_extreme_rate_interval_stays_calibrated_near_the_boundary(native_ch):
-    """A 0.98 pass rate from n = 100 + 50 sampled units (N = 2000/500, p = 0.05/0.1).
-    A symmetric interval undercovers here; the Wilson interval must not."""
+def test_extreme_rate_interval_reports_support_abstentions(native_ch):
+    """The historical .98-rate campaign now has unsupported sampled tails.
+
+    Preserve every point and compare emitted endpoints to the same independent
+    centered estimator. The old unconditional coverage target is NOT a promise
+    of nominal conditional coverage after selecting supported draws.
+    """
     started = time.monotonic()
     rng = np.random.default_rng(SEED + 4)
     batch = closed_batch(rng, "mean", (2000, 500), (100, 50), (1960, 490))
     rows = stage_and_rollup(native_ch, _scope(), "mean(y > 0)", batch)
-    report = coverage_report(rows, 0.98, batch.references)
-    report["seconds"] = round(time.monotonic() - started, 1)
-    assert_calibrated(report)
-    assert {row[9] for row in rows} == {"wilson"}
+    emitted = abstained = covered = false_alerts = 0
+    for row, expected, y, labels in zip(
+        rows, batch.references, batch.parts["y"], batch.parts["stratum"], strict=True
+    ):
+        supported = all(
+            np.any(y[labels == h] == 0) and np.any(y[labels == h] == 1)
+            for h in np.unique(labels)
+        )
+        assert row[1] == pytest.approx(expected["value"], rel=1e-9)
+        if not supported:
+            assert (
+                row[5] == "not_estimable"
+                and row[2] is row[3] is row[4] is row[8] is None
+            )
+            assert row[9] == ""
+            abstained += 1
+            continue
+        assert row[5] == "ok" and row[9] == "wilson"
+        for index, field in ((2, "std_error"), (3, "ci_low"), (4, "ci_high")):
+            assert row[index] == pytest.approx(expected[field], rel=1e-9, abs=1e-12)
+        emitted += 1
+        covered += row[3] <= 0.98 <= row[4]
+        false_alerts += row[4] < 0.975 or row[3] > 0.985
+    assert emitted + abstained == REPLICATES and 0 < emitted < REPLICATES
+    # Reference-only historical calibration remains an estimator control, not
+    # a claim that withheld current draws cover the truth.
+    old_coverage = np.mean(
+        [r["ci_low"] <= 0.98 <= r["ci_high"] for r in batch.references]
+    )
+    assert 0.92 <= old_coverage <= 0.98
+    print(
+        "near-boundary-support",
+        {
+            "draws": REPLICATES,
+            "emitted": emitted,
+            "abstained": abstained,
+            "covered_emitted": covered,
+            "conditional_coverage": covered / emitted,
+            "emitted_misses_per_draw": (emitted - covered) / REPLICATES,
+            "false_confident_alerts": false_alerts,
+            "historical_reference_coverage": old_coverage,
+            "seconds": round(time.monotonic() - started, 1),
+        },
+    )

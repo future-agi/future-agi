@@ -183,14 +183,32 @@ def test_certainty_units_cannot_supply_a_missing_sample_degree(metric_ch, design
     assert row["ci_df"] is row["ci_low"] is row["ci_high"] is None
 
 
-def test_large_noncertainty_stratum_cannot_pool_away_a_small_stratum(metric_ch):
+@pytest.mark.parametrize("supported_large", [False, True])
+def test_large_noncertainty_stratum_cannot_pool_away_a_small_stratum(
+    metric_ch, supported_large
+):
     rows = [unit(y, 0.0002, "small", population=10_000) for y in (1, 2)]
-    rows += [unit(0, 0.5, "large", population=100) for _ in range(50)]
+    large = (-1, 1) * 25 if supported_large else (0,) * 50
+    rows += [unit(y, 0.5, "large", population=100) for y in large]
     row = one_group(metric_ch, rows, "sum(y)")
-    assert row["ci_status"] == "ok" and row["ci_df"] == 1
-    assert row["ci_low"] == pytest.approx(
-        15_000 - stats.t.ppf(0.975, 1) * math.sqrt(24_995_000)
-    )
+    assert row["value"] == 15_000
+    if not supported_large:
+        # An observed-zero sampled stratum must no longer borrow support from
+        # the variable small stratum, even though pooled variance is positive.
+        assert (
+            row["ci_status"] == "not_estimable"
+            and row["ci_reason"] == "unstable_variance"
+        )
+        assert (
+            row["std_error"] is row["ci_low"] is row["ci_high"] is row["ci_df"] is None
+        )
+    else:
+        # Keep the df=1 safeguard with both strata supported. The centered large
+        # stratum adds (1-.5)*50/49 * (50*2^2) = 5000/49 to the variance.
+        assert row["ci_status"] == "ok" and row["ci_df"] == 1
+        assert row["ci_low"] == pytest.approx(
+            15_000 - stats.t.ppf(0.975, 1) * math.sqrt(24_995_000 + 5000 / 49)
+        )
 
 
 @pytest.mark.parametrize("design", ["closed", "live"])
