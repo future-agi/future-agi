@@ -135,7 +135,9 @@ function checkpointStore(claim, control, signal) {
         throw new Error('Unsupported grouping checkpoint file');
       }
       const next = {...files,[name]:structuredClone(value)};
-      const checkpoint = encodeCheckpoint(next, {compress: groupingPolicy(claim.policy_version).behavior_catalog});
+      // Every policy can outgrow the plain bound: trace batches carry up to 20
+      // reports and the registry keeps full before/after states per event.
+      const checkpoint = encodeCheckpoint(next, {compress: true});
       const reply = await control(`/grouping/attempts/${claim.attempt_id}/checkpoint/`, {
         lease_token:claim.lease_token,expected_revision:revision,checkpoint,
       }, {method:'PUT',signal});

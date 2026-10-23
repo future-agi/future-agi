@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {randomBytes} from 'node:crypto';
 import {MAX_CHECKPOINT_BYTES, processFeatureClaim, processGroupingClaim, engineInput, groupingFailureCode} from './coordinator.mjs';
 import {createControlClient} from '../control-client.mjs';
 import {makeGroupingSnapshotFixture} from './snapshot-fixture.mjs';
@@ -10,6 +11,8 @@ import {SIMULATION_F6_MINILM_POLICY} from './policy.mjs';
 
 const id='11111111-1111-4111-8111-111111111111';
 const model={name:'all-MiniLM-L6-v2',dimension:384,servingRelease:'test'};
+// Still over the bound once compressed.
+const incompressible=()=>randomBytes(MAX_CHECKPOINT_BYTES).toString('base64');
 function claim(){
   const snapshot=makeGroupingSnapshotFixture();
   return {attempt_id:id,lease_token:'lease',policy_version:'f6-minilm/v1',snapshot,snapshot_digest:'cohort-digest',
@@ -110,11 +113,31 @@ test('oversized checkpoint fails before write and cannot publish',async()=>{
     control:async(path)=>{writes.push(path);return {checkpoint_revision:1};},
     createInvestigator:async()=>({investigate:()=>{},receiptIds:()=>[]}),
     engine:async({store})=>{
-      await store.save('checkpoint.json',{large_source:'x'.repeat(MAX_CHECKPOINT_BYTES)});
+      await store.save('checkpoint.json',{large_source:incompressible()});
       return {status:'complete',commands:[],dispositions:[]};
     },
   }),/checkpoint exceeds bound/);
   assert.deepEqual(writes,[`/grouping/attempts/${id}/`]);
+});
+
+test('oversized trace checkpoint is compressed before write',async()=>{
+  const writes=[];
+  const control=async(path,payload)=>{
+    if(path.endsWith('checkpoint/')){writes.push(payload.checkpoint);return {checkpoint_revision:payload.expected_revision+1};}
+    if(path.endsWith('publish/'))return {status:'completed',registry_revision:4};
+    return {checkpoint_revision:1};
+  };
+  const work=claim();
+  assert.deepEqual(await processGroupingClaim(work,{control,
+    createInvestigator:async()=>({investigate:()=>{},receiptIds:()=>[]}),
+    engine:async({store})=>{
+      await store.save('checkpoint.json',{large_source:'x'.repeat(MAX_CHECKPOINT_BYTES)});
+      return {status:'complete',commands:[],dispositions:[{state:'deferred',
+        occurrence_id:work.pending_ids[0],reason:'No supported mechanism'}]};
+    },
+  }),{status:'completed',registry_revision:4});
+  assert.ok(writes.length>0);
+  assert.ok(writes.every(checkpoint=>checkpoint.encoding==='grouping-checkpoint-gzip/v1'));
 });
 
 test('lost publication response is reconciled as success when backend already completed', async()=>{
@@ -242,7 +265,7 @@ test('after a failed checkpoint, a settled receipt resumes without another paid 
     engine:async({investigate,store})=>{
       await investigate({same:'proposal'},{type:'object'});
       await store.save('checkpoint.json',failCheckpoint
-        ? {large_source:'x'.repeat(MAX_CHECKPOINT_BYTES)}:{phase:'complete'});
+        ? {large_source:incompressible()}:{phase:'complete'});
       return {status:'complete',commands:[],dispositions:[{state:'deferred',
         occurrence_id:work.pending_ids[0],reason:'No supported mechanism'}]};
     }};
