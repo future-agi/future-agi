@@ -62,17 +62,20 @@ def tenants(monkeypatch):
 
 def create_job(actor, project, **kwargs):
     now = timezone.now()
+    values = {
+        "sql": "SELECT * FROM spans",
+        "start": now - timedelta(hours=1),
+        "end": now,
+        "deadline": now + timedelta(seconds=90),
+        "expires_at": now + timedelta(hours=24),
+        **kwargs,  # A test may override any default, e.g. an expired deadline.
+    }
     return SQLExecution.objects.create(
         project=project,
         organization_id=actor.organization_id,
         workspace_id=actor.workspace_id,
         created_by_id=actor.user_id,
-        sql="SELECT * FROM spans",
-        start=now - timedelta(hours=1),
-        end=now,
-        deadline=now + timedelta(seconds=90),
-        expires_at=now + timedelta(hours=24),
-        **kwargs,
+        **values,
     )
 
 
