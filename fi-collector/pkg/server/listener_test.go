@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -319,14 +320,13 @@ func (h *h2Call) ended(d time.Duration) error {
 // what they carry. (Before, a 1-byte frame cost a few hundred bytes of heap,
 // before the call was authenticated or leased.)
 func TestGRPCConnectionSendingTinyDataFramesIsClosed(t *testing.T) {
-	authing := make(chan struct{}, 1)
+	var allow atomic.Bool
 	s, _, _ := startGRPCServer(t, Config{}, func(s *Server) {
 		s.requireCreds = true
 		s.grpcKnown = func(metadata.MD) bool { return false }
 		s.grpcAuth = func(ctx context.Context) (context.Context, error) {
-			select {
-			case authing <- struct{}{}:
-			default:
+			if allow.Load() {
+				return ctx, nil
 			}
 			<-ctx.Done() // never decides: the frames queue while it waits
 			return nil, ctx.Err()
@@ -345,7 +345,7 @@ func TestGRPCConnectionSendingTinyDataFramesIsClosed(t *testing.T) {
 	}
 	// Stock clients (16 KiB frames) are unaffected.
 	conn := readyConn(t, s.cfg.GRPCAddr)
-	s.grpcAuth = func(ctx context.Context) (context.Context, error) { return ctx, nil }
+	allow.Store(true)
 	if err := exportRaw(conn, withKeys(context.Background()), tracesOfSize(t, "stock", 1<<20)); err != nil {
 		t.Fatalf("stock client Export: %v", err)
 	}
@@ -431,7 +431,16 @@ func TestGRPCRefusedCallsAreReleasedWithTheirConnection(t *testing.T) {
 		}
 	})
 	t.Run("closed after many refusals", func(t *testing.T) {
-		s, conn, _ := startGRPCServer(t, Config{}, func(s *Server) { s.requireCreds = true })
+		var allow atomic.Bool
+		s, conn, _ := startGRPCServer(t, Config{}, func(s *Server) {
+			s.requireCreds = true
+			s.grpcAuth = func(ctx context.Context) (context.Context, error) {
+				if allow.Load() {
+					return ctx, nil
+				}
+				return nil, status.Error(codes.Unauthenticated, "authentication failed")
+			}
+		})
 		for i := 0; i < grpcMaxTapRefusals+8; i++ {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
 			err := exportRaw(conn, ctx, emptySpans(t, 1))
@@ -443,7 +452,7 @@ func TestGRPCRefusedCallsAreReleasedWithTheirConnection(t *testing.T) {
 		if got := s.IngestStats().ConnectionsClosed["grpc_refused_calls"]; got != 1 {
 			t.Errorf("connections closed for refused calls: %d, want 1", got)
 		}
-		s.grpcAuth = func(ctx context.Context) (context.Context, error) { return ctx, nil }
+		allow.Store(true)
 		if err := exportRaw(conn, withKeys(context.Background()), emptySpans(t, 1)); err != nil {
 			t.Errorf("the client's next call, on a new connection: %v", err)
 		}
