@@ -7,8 +7,38 @@ get an exact delta interval. Other deltas explicitly withhold an interval.
 
 import math
 
+from tracer.services.clickhouse.client import get_clickhouse_client
 from tracer.services.derived_metrics.errors import MetricInputError
+from tracer.services.derived_metrics.queries import QUERY_SETTINGS, SCOPE_SQL, Scope
 from tracer.services.derived_metrics.service import read_results
+
+
+def _has_frozen_census_proof(run, row):
+    """Check design facts, never infer certainty from estimated zero variance.
+
+    Called only after read_results has authorized both runs. A legacy or missing
+    snapshot cannot prove a census. Match the persisted overall unit count too:
+    a partially retained snapshot must not turn a sample into a census. Checking
+    every frozen unit (including incomplete inputs) is deliberately conservative.
+    """
+    if run.snapshot_id is None or row["unit_count"] <= 0:
+        return False
+    metric = run.definition.metric
+    counts = get_clickhouse_client().execute(
+        f"""SELECT count(), countIf(
+            invalid_probability != 0 OR ifNull(probability != 1, 1)
+            OR sampling_design NOT IN ('closed', 'live'))
+        FROM derived_metric_inputs
+        WHERE {SCOPE_SQL} AND snapshot_id = %(snapshot_id)s""",
+        {
+            **Scope(
+                metric.organization_id, metric.workspace_id, metric.project_id
+            ).parameters(),
+            "snapshot_id": str(run.snapshot_id),
+        },
+        settings=QUERY_SETTINGS,
+    )
+    return len(counts) == 1 and counts[0] == (row["unit_count"], 0)
 
 
 def compare_runs(baseline, candidate):
@@ -38,18 +68,28 @@ def compare_runs(baseline, candidate):
     if delta is not None and not math.isfinite(delta):
         delta = None
     identical = (
-        baseline.snapshot_id == candidate.snapshot_id
+        baseline.snapshot_id is not None
+        and baseline.snapshot_id == candidate.snapshot_id
         and baseline.definition.definition_hash == candidate.definition.definition_hash
     )
-    exact = all(
-        row["uncertainty"]["status"] == "ok"
-        and row["uncertainty"]["std_error"] == 0
-        and row["uncertainty"]["ci_low"]
-        == row["uncertainty"]["ci_high"]
-        == row["value"]
-        and row["uncertainty"]["method"] in ("stratified_wor_fpc", "poisson")
-        for row in rows
+    exact = (
+        delta is not None
+        and not identical
+        and all(
+            row["uncertainty"]["status"] == "ok"
+            and row["uncertainty"]["std_error"] == 0
+            and row["uncertainty"]["ci_low"]
+            == row["uncertainty"]["ci_high"]
+            == row["value"]
+            and row["uncertainty"]["method"] in ("stratified_wor_fpc", "poisson")
+            for row in rows
+        )
     )
+    if exact:
+        exact = all(
+            _has_frozen_census_proof(run, row)
+            for run, row in zip((baseline, candidate), rows, strict=True)
+        )
     estimable = delta is not None and (identical or exact)
     return {
         "baseline_run_id": str(baseline.id),

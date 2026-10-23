@@ -9,13 +9,174 @@ import pytest
 from django.utils import timezone
 
 from accounts.models.workspace import Workspace
-from tracer.models.derived_metric import DerivedMetricRun
+from tracer.models.derived_metric import DerivedMetricRun, DerivedMetricVersion
 from tracer.services.derived_metrics.comparison import compare_runs
 from tracer.services.derived_metrics.errors import MetricInputError
 from tracer.services.derived_metrics.queries import Scope
 from tracer.services.derived_metrics.service import execute_run
-from tracer.tests.test_derived_metric_api import ROOT, RUNS, body, run_body, saved  # noqa: F401
-from tracer.tests.test_derived_metric_clickhouse import metric_ch, seed_span  # noqa: F401
+from tracer.tests.test_derived_metric_api import (  # noqa: F401
+    ROOT,
+    RUNS,
+    body,
+    run_body,
+    saved,
+)
+from tracer.tests.test_derived_metric_clickhouse import (  # noqa: F401
+    metric_ch,
+    seed_span,
+)
+from tracer.tests.test_derived_metric_uncertainty import insert_units
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "case",
+    [
+        "sampled_baseline",
+        "sampled_candidate",
+        "missing_design",
+        "missing_snapshot",
+        "partial_snapshot",
+        "foreign_scope",
+        "invalid_probability",
+        "null_probability",
+        "nonfinite_probability",
+        "no_snapshot_id",
+        "census",
+    ],
+)
+def test_legacy_zero_width_intervals_require_frozen_census_proof(
+    auth_client, saved, workspace, observe_project, metric_ch, case
+):
+    # Reproduce rows already persisted by the old estimator. Marginal intervals
+    # are identical for every case; only the frozen sampling facts can establish
+    # a census. These are real PostgreSQL runs and real ClickHouse result/input
+    # rows, not patched results or authorization.
+    scope = Scope(workspace.organization_id, workspace.id, observe_project.id)
+    original = DerivedMetricVersion.objects.get(metric_id=saved["id"], version=1)
+    now = timezone.now()
+    runs = []
+    for index in range(2):
+        definition = DerivedMetricVersion.objects.create(
+            metric=original.metric,
+            version=index + 2,
+            formula="sum(resolved)",
+            inputs=original.inputs,
+            selection_unit="session",
+            weighting="inverse_probability",
+            filters=[],
+            definition_hash=str(index) * 64,
+        )
+        run = DerivedMetricRun.objects.create(
+            definition=definition,
+            window_start=now - timedelta(days=1),
+            window_end=now,
+            as_of=now,
+            fingerprint=uuid4().hex,
+            snapshot_id=uuid4(),
+            result_id=uuid4(),
+            status=DerivedMetricRun.Status.COMPLETE,
+        )
+        probability, design, invalid, size = 1.0, "closed", 0, 50
+        if (index == 0 and case == "sampled_baseline") or (
+            index == 1 and case == "sampled_candidate"
+        ):
+            probability = 0.005
+        if index == 1:
+            if case == "missing_design":
+                design = ""
+            if case == "missing_snapshot":
+                size = 0
+            if case == "partial_snapshot":
+                size = 49
+            if case == "invalid_probability":
+                invalid = 1
+            if case == "null_probability":
+                probability = None
+            if case == "nonfinite_probability":
+                probability = float("nan")
+            if case == "no_snapshot_id":
+                run.snapshot_id = None
+                run.save(update_fields=["snapshot_id"])
+                size = 0
+        frozen_scope = (
+            Scope(uuid4(), uuid4(), uuid4())
+            if index == 1 and case == "foreign_scope"
+            else scope
+        )
+        if size:
+            insert_units(
+                metric_ch,
+                frozen_scope,
+                run.snapshot_id,
+                [
+                    (
+                        str(unit),
+                        "",
+                        {"resolved": 0.0, "escalated": 0.0},
+                        probability,
+                        "h1",
+                        design,
+                        10_000 if probability == 0.005 else 50,
+                        invalid,
+                    )
+                    for unit in range(size)
+                ],
+            )
+        metric_ch.execute(
+            "INSERT INTO derived_metric_results (org_id, workspace_id, project_id, metric_id, "
+            "metric_version, run_id, result_id, rollup, value, numerator, status, unit_count, valid_count, "
+            "std_error, ci_low, ci_high, ci_status, ci_method) VALUES",
+            [
+                (
+                    scope.organization,
+                    scope.workspace,
+                    scope.project,
+                    original.metric_id,
+                    definition.version,
+                    run.id,
+                    run.result_id,
+                    "overall",
+                    0.0,
+                    0.0,
+                    "ok",
+                    50,
+                    50,
+                    0.0,
+                    0.0,
+                    0.0,
+                    "ok",
+                    "stratified_wor_fpc",
+                )
+            ],
+        )
+        runs.append(run)
+    with (
+        patch(
+            "tracer.services.derived_metrics.service.get_clickhouse_client",
+            return_value=metric_ch,
+        ),
+        patch(
+            "tracer.services.derived_metrics.comparison.get_clickhouse_client",
+            return_value=metric_ch,
+        ),
+    ):
+        response = auth_client.get(
+            f"{RUNS}{runs[1].id}/compare/", {"baseline_run_id": str(runs[0].id)}
+        )
+    assert response.status_code == 200, response.data
+    assert response.data["delta"] == 0
+    interval = response.data["delta_uncertainty"]
+    if case == "census":
+        assert interval["status"] == "ok" and interval["method"] == "census"
+        assert interval["ci_low"] == interval["ci_high"] == interval["std_error"] == 0
+    else:
+        assert interval["status"] == "not_estimable"
+        assert interval["reason"] == "paired_covariance_unavailable"
+        assert interval["method"] == ""
+        assert (
+            interval["ci_low"] is interval["ci_high"] is interval["std_error"] is None
+        )
 
 
 @pytest.mark.django_db
