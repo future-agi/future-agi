@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, ButtonBase, Stack, Typography } from "@mui/material";
+import { Box, ButtonBase, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SectionCard } from "../components/primitives";
 import { agentVersions, currentAgentVersion } from "../_mock/versions";
@@ -102,6 +102,13 @@ export default function WorldPanel({ env, envState, patch, onGo, locked = false,
   /* Everything the agent calls: its own tools and the ones its MCP servers list. */
   /* Everything the agent calls at the version tested: its own tools and the ones its MCP servers list. */
   const callsCount = agentCallsOf(env, envState).size || new Set([...fit.calls.map((t) => t.name), ...agentMcp.map((t) => t.name)]).size;
+  /* The strip's summary — while the world builds, and when the banner already says what doesn't fit, it says nothing. */
+  const summaryText = inBuild || (activeAgent && !fit.fits) ? null
+    : !activeAgent
+      ? (fit.world.length ? `No agent connected yet — the world answers the ${fit.world.length} tools it was built for.` : "No agent connected yet, and no tools in the world yet.")
+      : mcpMissing
+        ? `Agent ${activeAgent} calls ${callsCount} tools — the world answers ${callsCount - mcpMissing}; ${mcpMissing} from its MCP server it doesn't answer yet.`
+        : `Agent ${activeAgent} calls ${callsCount} tools — the world answers every one.`;
   const allRows = [
     ...fit.world.map((t) => ({ tool: t, answered: true })),
     ...fit.missing.map((t) => ({ tool: t, answered: false })),
@@ -126,30 +133,37 @@ export default function WorldPanel({ env, envState, patch, onGo, locked = false,
 
   return (
     <Box sx={{ p: 2 }}>
-      {/* No heading — the tab names the page; its description is the tab's
-          hover hint. Where the world lives in the repo is content, so it stays. */}
-      {origin && (
-        <Box sx={{ mb: 2 }}>
-          <Stack direction="row" alignItems="center" spacing={0.75}>
-            <Iconify icon="solar:folder-with-files-linear" width={13} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              <Box component="span" sx={{ fontFamily: "ui-monospace, Menlo, monospace", color: "text.secondary" }}>tools-api/</Box>
-              {" and "}
-              <Box component="span" sx={{ fontFamily: "ui-monospace, Menlo, monospace", color: "text.secondary" }}>db/</Box>
-              {" in "}
-              <Box component="span" sx={{ fontFamily: "ui-monospace, Menlo, monospace", color: "text.secondary" }}>{`${origin.repo} @ ${origin.ref}`}</Box>
-              {" — a commit touching these is a world change"}
-            </Typography>
-          </Stack>
-        </Box>
-      )}
+      {/* One line above the world: what the agent calls against what the world
+          answers, and how to add more — then, quieter on the right, the kind of
+          proof a run is and where the world lives in the repo (each explained
+          on hover). No heading: the tab names the page. */}
+      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 2, px: 0.5, minHeight: 24, flexWrap: "wrap", rowGap: 0.75 }}>
+        {summaryText && <Typography sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}>{summaryText}</Typography>}
+        {canAddTools && (
+          <ButtonBase
+            onClick={() => setMcp({ prefill: null })}
+            sx={{ ...focusRing, typography: "s2", fontWeight: 600, color: "text.primary", textDecoration: "underline", textUnderlineOffset: 3, textDecorationColor: (t) => t.palette.text.disabled, borderRadius: 0.5, flexShrink: 0, "&:hover": { textDecorationColor: "currentColor" } }}
+          >
+            Add tools from an MCP server
+          </ButtonBase>
+        )}
+        <Box flex={1} />
+        <EnvironmentKindNote env={env} envState={envState} compact />
+        {origin && (
+          <Tooltip arrow title={`tools-api/ and db/ in ${origin.repo} @ ${origin.ref} — a commit touching these is a world change.`}>
+            <Stack direction="row" alignItems="center" spacing={0.5} sx={{ minWidth: 0, cursor: "default" }}>
+              <Iconify icon="solar:folder-with-files-linear" width={13} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+              <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", fontFamily: "ui-monospace, Menlo, monospace" }}>
+                {`${String(origin.repo).split("/").pop()} @ ${origin.ref}`}
+              </Typography>
+            </Stack>
+          </Tooltip>
+        )}
+      </Stack>
 
       {inBuild && (handlers < allRows.length
         ? <BuildStreamNote label="Writing a handler for each tool" count={handlers} total={allRows.length} />
         : <BuildStreamNote label="Seeding the world" count={buildProgress?.stores || 0} total={env.seed?.tables?.length || 0} />)}
-
-      {/* Sealed or Live — how much a pass in this world proves. */}
-      <EnvironmentKindNote env={env} envState={envState} sx={{ mb: 2 }} />
 
       {!inBuild && <ToolFitBanner env={env} envState={envState} patch={patch} sx={{ mb: 2 }} locked={locked} />}
 
@@ -207,24 +221,7 @@ export default function WorldPanel({ env, envState, patch, onGo, locked = false,
             ))}
           </Stack>
         </SectionCard>
-      ) : (!activeAgent || fit.fits) && (
-        /* When tools don't fit, the banner above already says so — once. */
-        <Typography sx={{ typography: "s2", color: "text.secondary", px: 0.5, mb: 2 }}>
-          {!activeAgent
-            ? (allRows.length ? `No agent connected yet — the world answers the ${allRows.length} tools it was built for.` : "No agent connected yet, and no tools in the world yet.")
-            : mcpMissing
-              ? `Agent ${activeAgent} calls ${callsCount} tools — the world answers ${callsCount - mcpMissing}; ${mcpMissing} from its MCP server it doesn't answer yet.`
-              : `Agent ${activeAgent} calls ${callsCount} tools — the world answers every one.`}
-          {canAddTools && (
-            <ButtonBase
-              onClick={() => setMcp({ prefill: null })}
-              sx={{ ...focusRing, ml: 1, verticalAlign: "baseline", typography: "s2", fontWeight: 600, color: "text.primary", textDecoration: "underline", textUnderlineOffset: 3, textDecorationColor: (t) => t.palette.text.disabled, borderRadius: 0.5, "&:hover": { textDecorationColor: "currentColor" } }}
-            >
-              Add tools from an MCP server
-            </ButtonBase>
-          )}
-        </Typography>
-      )}
+      ) : null}
 
       {/* The graph and the world's internals land once the world is built. */}
       {!inBuild && envState?.twinBacking && (
@@ -237,10 +234,7 @@ export default function WorldPanel({ env, envState, patch, onGo, locked = false,
         <Box sx={{ mb: 2 }}>
           {graphOpen ? (
             <>
-              <CapabilityGraph env={env} envState={envState} onGo={onGo} />
-              <ButtonBase onClick={() => setGraphOpen(false)} aria-expanded sx={{ ...focusRing, mt: 0.75, px: 0.5, typography: "s3", fontWeight: 600, color: "text.secondary", borderRadius: 0.5, "&:hover": { color: "text.primary" } }}>
-                Hide capability graph
-              </ButtonBase>
+              <CapabilityGraph env={env} envState={envState} onGo={onGo} onClose={() => setGraphOpen(false)} />
             </>
           ) : (
             <ButtonBase

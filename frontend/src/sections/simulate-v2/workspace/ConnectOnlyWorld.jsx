@@ -130,7 +130,7 @@ const runsLocally = (env) => env?.runsOn === "local" || env?.builtFrom?.worldSou
 /* "test copy" → "a test copy"; leaves "your agent" or "the draft" alone. */
 const withArticle = (phrase) => (/^(a|an|the|your)\b/i.test(phrase) ? phrase : `${/^[aeiou]/i.test(phrase) ? "an" : "a"} ${phrase}`);
 
-export function EnvironmentKindNote({ env, envState, sx }) {
+export function EnvironmentKindNote({ env, envState, sx, compact = false }) {
   const agent = envState?.agent;
   const soon = isComingSoon(env);
   if (!agent && !soon) return null;
@@ -151,6 +151,18 @@ export function EnvironmentKindNote({ env, envState, sx }) {
     rep?.how,
     unpinned ? "Your Retell numbers aren't pinned to a released version, so tests use settings overridden for one call until they are." : null,
   ].filter(Boolean).join(" ");
+  /* Compact: the label alone, everything else on hover — for a strip that carries other things. */
+  if (compact) {
+    if (!pk && !soon) return null;
+    return (
+      <Tooltip arrow title={[short && `${pk?.label} — ${short}.`, tip, soon ? COMING_SOON_NOTE : null].filter(Boolean).join(" ")}>
+        <Stack direction="row" spacing={0.5} alignItems="center" sx={{ cursor: "default", flexShrink: 0, ...sx }}>
+          <Iconify icon={copy?.icon || "solar:clock-circle-linear"} width={13} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+          <Typography sx={{ typography: "s3", fontWeight: 600, color: "text.secondary" }}>{pk?.label || "Coming soon"}</Typography>
+        </Stack>
+      </Tooltip>
+    );
+  }
   return (
     <Stack direction="row" spacing={1} alignItems="center" sx={{ px: 0.5, ...sx }}>
       <Iconify icon={copy?.icon || "solar:clock-circle-linear"} width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
@@ -169,4 +181,4 @@ export function EnvironmentKindNote({ env, envState, sx }) {
     </Stack>
   );
 }
-EnvironmentKindNote.propTypes = { env: PropTypes.object, envState: PropTypes.object, sx: PropTypes.object };
+EnvironmentKindNote.propTypes = { env: PropTypes.object, envState: PropTypes.object, sx: PropTypes.object, compact: PropTypes.bool };

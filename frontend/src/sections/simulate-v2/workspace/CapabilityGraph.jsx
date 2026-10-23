@@ -30,7 +30,7 @@ const BRANCHES = [
 
 const MAX_LEAVES = 5;
 
-export default function CapabilityGraph({ env, envState, onGo }) {
+export default function CapabilityGraph({ env, envState, onGo, onClose }) {
   const theme = useTheme();
   const [focus, setFocus] = useState(null);
   const contract = contractFor(env);
@@ -102,18 +102,30 @@ export default function CapabilityGraph({ env, envState, onGo }) {
       subtitle="Everything read from your agent, as one object rather than four lists"
       sx={{ mb: 2 }}
       action={
-        <SegmentedTabs
-          value={focus || "all"}
-          onChange={(_, v) => setFocus(v === "all" ? null : v)}
-          variant="scrollable"
-          scrollButtons={false}
-          sx={{ flexShrink: 0 }}
-        >
-          <Tab value="all" label="All" />
-          {BRANCHES.map((b) => (
-            <Tab key={b.id} value={b.id} label={b.label} />
-          ))}
-        </SegmentedTabs>
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ flexShrink: 0 }}>
+          <SegmentedTabs
+            value={focus || "all"}
+            onChange={(_, v) => setFocus(v === "all" ? null : v)}
+            variant="scrollable"
+            scrollButtons={false}
+            sx={{ flexShrink: 0 }}
+          >
+            <Tab value="all" label="All" />
+            {BRANCHES.map((b) => (
+              <Tab key={b.id} value={b.id} label={b.label} />
+            ))}
+          </SegmentedTabs>
+          {/* Folds back to the one-line row it opened from — in the header, where it opened. */}
+          {onClose && (
+            <Button
+              size="small" variant="outlined" onClick={onClose} aria-expanded
+              startIcon={<Iconify icon="solar:alt-arrow-up-linear" width={14} />}
+              sx={{ typography: "s3", fontWeight: 700, color: "text.primary", borderColor: "divider", whiteSpace: "nowrap" }}
+            >
+              Hide
+            </Button>
+          )}
+        </Stack>
       }
     >
       <Box sx={{ p: 2.5, overflowX: "auto" }}>
@@ -207,4 +219,5 @@ CapabilityGraph.propTypes = {
   env: PropTypes.object.isRequired,
   envState: PropTypes.object,
   onGo: PropTypes.func,
+  onClose: PropTypes.func,
 };
