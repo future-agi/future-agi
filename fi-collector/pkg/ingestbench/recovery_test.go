@@ -389,7 +389,9 @@ func (rc *restartableCollector) stop() error {
 	var err error
 	select {
 	case err = <-rc.done:
-	case <-time.After(30 * time.Second):
+	case <-time.After(20 * time.Minute):
+		// The final drain waits for in-flight inserts (minutes on a slow
+		// shared ClickHouse).
 		return context.DeadlineExceeded
 	}
 	_ = rc.admin.Close()
@@ -505,9 +507,9 @@ func requireRecovered(t *testing.T, r Result, name string) FaultResult {
 		}
 		return strconv.FormatFloat(*v, 'f', 3, 64)
 	}
-	t.Logf("%s (mock ClickHouse, in-process collector): fault %.3f-%.3fs; recovery %ss = max(first ack %ss, backlog at baseline %ss, earlier sentinels visible %ss); "+
+	t.Logf("%s (%s, ClickHouse %s): fault %.3f-%.3fs; recovery %ss = max(first ack %ss, backlog at baseline %ss, earlier sentinels visible %ss); "+
 		"backlog max %d rows, slope %.1f rows/s; requests during fault %+v; acknowledged-missing %d; visible duplicates %d; ambiguous persisted %d; read-visible upper p99 %.0f ms",
-		name, f.StartS, f.EndS, opt(f.RecoverySeconds), opt(f.FirstAckAfterEndS), opt(f.BacklogDrainedAfterEnd), opt(f.EarlierVisibleAfterEndS),
+		name, r.Config.Environment, r.Provenance.ClickHouse.Version, f.StartS, f.EndS, opt(f.RecoverySeconds), opt(f.FirstAckAfterEndS), opt(f.BacklogDrainedAfterEnd), opt(f.EarlierVisibleAfterEndS),
 		r.Backlog.MaxBufferedRows, r.Backlog.SlopeRowsPerSecond, f.RequestsScheduledDuring, rec.AcknowledgedMissing, rec.VisibleDuplicates, rec.AmbiguousPersisted, r.Lag.FromScheduled.P99)
 	return f
 }

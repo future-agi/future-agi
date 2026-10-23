@@ -147,7 +147,7 @@ type FaultResult struct {
 	EndS   float64 `json:"end_offset_seconds"`
 	Error  string  `json:"error,omitempty"`
 	// Outcomes of the requests SCHEDULED inside the fault window.
-	RequestsScheduledDuring RequestOutcomes `json:"requests_scheduled_during_fault"`
+	RequestsScheduledDuring ScheduledOutcomes `json:"requests_scheduled_during_fault"`
 	// FirstAckAfterEndS: until the first acknowledgement after the fault
 	// ended (upper bound, 100 ms resolution).
 	FirstAckAfterEndS *float64 `json:"first_acknowledgement_after_end_seconds"`
@@ -289,14 +289,26 @@ func recoveryTime(f FaultResult, backlogObserved bool) (*float64, bool, string) 
 	return f64(t), true, ""
 }
 
+// ScheduledOutcomes counts the requests scheduled inside a window by outcome
+// class; NotSent are planned requests of the window that were never sent.
+type ScheduledOutcomes struct {
+	Acknowledged         int64 `json:"acknowledged"`
+	PartialRejection     int64 `json:"partial_rejection"`
+	RejectedRetryable    int64 `json:"whole_request_rejected_retryable"`
+	RejectedNonRetryable int64 `json:"whole_request_rejected_non_retryable"`
+	Ambiguous            int64 `json:"ambiguous"`
+	NotSent              int64 `json:"not_sent"`
+}
+
 // outcomesScheduled counts requests by class whose scheduled send is inside
 // [fromS, toS] seconds of the run.
-func (l *outcomeLedger) outcomesScheduled(c Config, fromS, toS float64) RequestOutcomes {
-	var o RequestOutcomes
+func (l *outcomeLedger) outcomesScheduled(c Config, fromS, toS float64) ScheduledOutcomes {
+	var o ScheduledOutcomes
 	first := int64(math.Ceil(fromS * float64(c.Rate) / float64(l.batch)))
 	last := int64(math.Floor(toS * float64(c.Rate) / float64(l.batch)))
-	for r := max(first, 0); r <= last && r < int64(len(l.classes)); r++ {
-		switch l.classes[r] {
+	planned := (c.PlannedSpans() + l.batch - 1) / l.batch
+	for r := max(first, 0); r <= last && r < planned; r++ {
+		switch l.class(r) {
 		case outcomeAcknowledged:
 			o.Acknowledged++
 		case outcomePartial:
@@ -307,6 +319,8 @@ func (l *outcomeLedger) outcomesScheduled(c Config, fromS, toS float64) RequestO
 			o.RejectedNonRetryable++
 		case outcomeAmbiguous:
 			o.Ambiguous++
+		default:
+			o.NotSent++
 		}
 	}
 	return o
