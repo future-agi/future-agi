@@ -231,6 +231,71 @@ describe("SQL workbench page", () => {
     // The estimate opens no dialog (the E2E flow asserts none is open).
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
+  it.each([false, true])(
+    "runs an opened saved query fresh (edited=%s)",
+    async (edited) => {
+      const saved = {
+        id: "saved-1",
+        name: "Saved count",
+        sql: "SELECT count() FROM spans",
+        window_hours: 24,
+        chart: { type: "table" },
+        visibility: "private",
+        created_by_id: "owner",
+      };
+      sqlApi.saved.mockResolvedValue({ items: [saved], has_more: false });
+      sqlApi.runSaved.mockResolvedValue({
+        id: "fresh-saved",
+        state: "succeeded",
+        sql: saved.sql,
+      });
+      sqlApi.run.mockResolvedValue({
+        id: "fresh-edit",
+        state: "succeeded",
+        sql: "SELECT count() FROM traces",
+      });
+      renderPage();
+      fireEvent.click(await screen.findByText("Saved count"));
+      if (edited) {
+        fireEvent.change(screen.getByLabelText("SQL query editor"), {
+          target: { value: "SELECT count() FROM traces" },
+        });
+      }
+      for (let count = 1; count <= 2; count += 1) {
+        fireEvent.click(
+          screen.getByRole("button", { name: "Run query", exact: true }),
+        );
+        const route = edited ? sqlApi.run : sqlApi.runSaved;
+        await waitFor(() => expect(route).toHaveBeenCalledTimes(count));
+        await waitFor(() =>
+          expect(
+            screen.getByRole("button", { name: "Run query", exact: true }),
+          ).not.toBeDisabled(),
+        );
+      }
+      if (edited) {
+        expect(sqlApi.runSaved).not.toHaveBeenCalled();
+        expect(sqlApi.run).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            project_id: "project",
+            sql: "SELECT count() FROM traces",
+          }),
+          expect.any(Object),
+        );
+      } else {
+        expect(sqlApi.run).not.toHaveBeenCalled();
+        expect(sqlApi.runSaved).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            project_id: "project",
+            saved_query_id: "saved-1",
+            start: expect.any(String),
+            end: expect.any(String),
+          }),
+          expect.any(Object),
+        );
+      }
+    },
+  );
   it("inserts a vetted example in one click and offers Undo", async () => {
     sqlApi.catalog.mockResolvedValue({
       ...schema,

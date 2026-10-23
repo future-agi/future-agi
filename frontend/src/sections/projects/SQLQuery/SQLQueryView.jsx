@@ -112,11 +112,17 @@ export default function SQLQueryView() {
   }, [observeId, search]);
   const execute = () => {
     const end = new Date();
-    run({
-      sql,
+    const window = {
       start: new Date(end.getTime() - hours * 3600000).toISOString(),
       end: end.toISOString(),
-    });
+    };
+    if (selected && selected.sql === sql) {
+      // Reauthorize the stored definition and bypass ad-hoc result reuse.
+      run({ saved_query_id: selected.id, ...window }, true);
+    } else {
+      // Edits are an ad-hoc query, never silently execute the stored SQL.
+      run({ sql, ...window });
+    }
   };
   // An example replaces the editor text and starts a new, unsaved query, so
   // saving it never overwrites the saved query that was open. Undo restores.
