@@ -107,6 +107,7 @@ from .views.harness_environment import HarnessEnvironmentViewSet
 from .views.harness_job import HarnessJobViewSet
 from .views.harness_release import (
     HarnessAdaptationViewSet,
+    HarnessDesignViewSet,
     HarnessHostedAgentViewSet,
     HarnessReleaseViewSet,
 )
@@ -162,6 +163,9 @@ router.register(
 )
 router.register(
     r"harness-hosted-agents", HarnessHostedAgentViewSet, basename="harness-hosted-agent"
+)
+router.register(
+    r"harness-environment-designs", HarnessDesignViewSet, basename="harness-design"
 )
 router.register(
     r"harness/attempts",

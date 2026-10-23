@@ -12,7 +12,8 @@ import uuid
 from django.db import models
 from django.db.models import Q
 
-from accounts.models import Organization
+from accounts.models import Organization, User
+from accounts.models.workspace import Workspace
 from tfc.utils.base_model import BaseModel
 
 
@@ -157,3 +158,37 @@ class HarnessRunManifest(BaseModel):
     class Meta:
         db_table = "simulate_harness_run_manifest"
         indexes = [models.Index(fields=["organization", "digest"])]
+
+
+class HarnessDesignDocument(BaseModel):
+    """A document a person uploaded for an environment design (contract §7.9): a product list, a
+    policy, a schedule. Stored once under `harness-design-documents/<organization>/` and parsed
+    only inside the sandbox of a design job that lists it."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="harness_design_documents"
+    )
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="harness_design_documents",
+    )
+    uploaded_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="harness_design_documents",
+    )
+    name = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=100)
+    sha256 = models.CharField(max_length=64)
+    size = models.PositiveIntegerField()
+    object_key = models.CharField(max_length=1024)
+
+    class Meta:
+        db_table = "simulate_harness_design_document"
+        ordering = ("-created_at",)

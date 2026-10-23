@@ -113,14 +113,17 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     pagination_class = ExtendedPageNumberPagination
 
     def _queryset(self, request):
-        # An adaptation is followed as a job; its composition is the environment.
+        # Adaptations and designs are followed as jobs: a composition is an adaptation's
+        # environment, and a design's are the releases it sealed.
         return annotate_for_list(
             scope_jobs(
                 HostedHarnessJob.no_workspace_objects.filter(
                     organization=request_organization(request),
                     environment__isnull=True,
                     deleted=False,
-                ).exclude(payload__metadata__has_key="adaptation"),
+                )
+                .exclude(payload__metadata__has_key="adaptation")
+                .exclude(payload__metadata__has_key="design"),
                 request,
             )
         )

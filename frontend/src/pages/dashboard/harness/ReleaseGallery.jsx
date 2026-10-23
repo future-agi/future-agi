@@ -34,6 +34,7 @@ import {
 } from "src/api/harness/releases";
 import { paths } from "src/routes/paths";
 
+import { DesignDialog } from "./DesignForm";
 import {
   errorMessage,
   providerCredentialName,
@@ -414,7 +415,7 @@ HostedAgentDialog.propTypes = {
   onClose: PropTypes.func.isRequired,
 };
 
-function ReleaseCard({ release, onUse, onHosted }) {
+function ReleaseCard({ release, onUse, onHosted, onCustomize }) {
   const tools = release.tools || [];
   const parameters = release.policy?.parameters || [];
   const rules = release.policy?.agent_rules || [];
@@ -425,11 +426,27 @@ function ReleaseCard({ release, onUse, onHosted }) {
           <Typography variant="subtitle1" sx={{ flex: 1 }} noWrap>
             {release.name}
           </Typography>
-          {release.system && <Chip size="small" label="Future AGI" />}
+          {release.system ? (
+            <Chip size="small" label="Future AGI" />
+          ) : (
+            <Chip
+              size="small"
+              color="primary"
+              variant="outlined"
+              label="Yours"
+            />
+          )}
           {release.parent && (
             <Chip size="small" variant="outlined" label="Extension" />
           )}
         </Stack>
+        {release.derived_from && (
+          <Typography variant="caption" color="text.secondary">
+            Customized from{" "}
+            {release.derived_from.name ||
+              shortDigest(release.derived_from.digest)}
+          </Typography>
+        )}
         <Typography variant="caption" color="text.secondary">
           {tools.length} tools · {parameters.length} policy parameters ·{" "}
           {rules.length} agent rules · {shortDigest(release.digest)}
@@ -470,6 +487,20 @@ function ReleaseCard({ release, onUse, onHosted }) {
           >
             Run our agent
           </Button>
+          {/* A customization is a new root, so an extension is not a template. */}
+          {!release.parent && (
+            <Button
+              size="small"
+              color="inherit"
+              disabled={!release.suites?.length}
+              onClick={() => onCustomize(release)}
+              startIcon={
+                <Iconify icon="solar:pen-new-square-linear" width={16} />
+              }
+            >
+              Customize
+            </Button>
+          )}
         </Stack>
       </Stack>
     </Paper>
@@ -480,6 +511,7 @@ ReleaseCard.propTypes = {
   release: PropTypes.object.isRequired,
   onUse: PropTypes.func.isRequired,
   onHosted: PropTypes.func.isRequired,
+  onCustomize: PropTypes.func.isRequired,
 };
 
 // Released environments: proved worlds and suites a hosted agent can run against without
@@ -488,6 +520,7 @@ export default function ReleaseGallery({ empty = null }) {
   const { data: releases = [], error, isLoading } = useHarnessReleases();
   const [using, setUsing] = useState(null);
   const [hosting, setHosting] = useState(null);
+  const [customizing, setCustomizing] = useState(null);
 
   if (error) {
     return (
@@ -522,6 +555,7 @@ export default function ReleaseGallery({ empty = null }) {
             release={release}
             onUse={setUsing}
             onHosted={setHosting}
+            onCustomize={setCustomizing}
           />
         ))}
       </Box>
@@ -533,6 +567,13 @@ export default function ReleaseGallery({ empty = null }) {
           open
           release={hosting}
           onClose={() => setHosting(null)}
+        />
+      )}
+      {customizing && (
+        <DesignDialog
+          open
+          template={customizing}
+          onClose={() => setCustomizing(null)}
         />
       )}
     </Box>

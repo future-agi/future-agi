@@ -380,7 +380,11 @@ export const shortDigest = (digest) => {
 export const ADAPTATION_STEPS = [
   { key: "binding", label: "Binding drafted", tool: "submit_binding" },
   { key: "proof", label: "Binding proved", tool: "run_proof" },
-  { key: "conflicts", label: "Policy conflicts reviewed", tool: "report_conflicts" },
+  {
+    key: "conflicts",
+    label: "Policy conflicts reviewed",
+    tool: "report_conflicts",
+  },
   { key: "sealed", label: "Approved and sealed", tool: "finish_adaptation" },
 ];
 
@@ -397,6 +401,55 @@ export const adaptationProgress = (conversation) => {
     if (!step) continue;
     if (step.key === "binding") done.delete("proof");
     done.add(step.key);
+  }
+  return done;
+};
+
+// A design's steps (environment-releases.md §7.9), each done once the builder's tool for it
+// succeeded. Building starts only after the person approves the proposal, so the first build
+// tool to succeed marks the design approved.
+export const DESIGN_STEPS = [
+  {
+    key: "approved",
+    label: "Design approved",
+    tools: [
+      "create_schema",
+      "define_tool",
+      "add_policy_rule",
+      "import_rows",
+      "save_world",
+    ],
+  },
+  {
+    key: "world",
+    label: "World, tools and rules built",
+    tools: ["save_world"],
+  },
+  {
+    key: "suite",
+    label: "Scenarios written and proved",
+    tools: ["check_design"],
+  },
+  {
+    key: "sealed",
+    label: "Sealed as your environment",
+    tools: ["finish_design"],
+  },
+];
+
+// The failure codes of a design that can be continued from its checkpoint.
+export const CONTINUABLE_DESIGN_CODES = ["design_waiting", "design_unfinished"];
+
+export const designProgress = (conversation) => {
+  const done = new Set();
+  for (const event of conversation?.events || []) {
+    if (event?.kind !== "tool_result" || event?.payload?.is_error) continue;
+    const tool = String(event?.payload?.tool || "");
+    for (const step of DESIGN_STEPS) {
+      if (step.tools.some((one) => tool === one || tool.endsWith(`__${one}`))) {
+        done.add(step.key);
+      }
+    }
   }
   return done;
 };

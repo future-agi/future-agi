@@ -20,6 +20,39 @@ export const createHarnessHostedAgent = async (payload) =>
   (await axios.post(apiPath("/simulate/api/harness-hosted-agents/"), payload))
     .data;
 
+// Takes `{name, requirements, modality, template_suite_id?, document_ids?, idempotency_key}` and
+// answers 202 with the design job (§7.9): its builder designs and seals the environment.
+export const createHarnessDesign = async (payload) =>
+  (
+    await axios.post(
+      apiPath("/simulate/api/harness-environment-designs/"),
+      payload,
+    )
+  ).data;
+
+// One document for a design: answers 201 `{id, name, content_type, sha256, size}`.
+export const uploadHarnessDesignDocument = async (file) => {
+  const form = new FormData();
+  form.append("file", file);
+  return (
+    await axios.post(
+      apiPath("/simulate/api/harness-environment-designs/documents/"),
+      form,
+    )
+  ).data;
+};
+
+// A design that stopped at an unanswered question carries on as a new design job.
+export const continueHarnessDesign = async (id, payload) =>
+  (
+    await axios.post(
+      apiPath("/simulate/api/harness-environment-designs/{id}/continue/", {
+        id,
+      }),
+      payload,
+    )
+  ).data;
+
 export const getHarnessRunReport = async (id, runId, baseline) =>
   (
     await axios.get(

@@ -32,6 +32,7 @@ import CustomTooltip from "src/components/tooltip";
 import StageOutput from "./StageOutput";
 import ConversationPrompt from "./ConversationPrompt";
 import AdaptationProgress from "./AdaptationProgress";
+import DesignProgress from "./DesignProgress";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import EnvironmentSwitcher from "src/components/harness/EnvironmentSwitcher";
 import { compactActivityEvents } from "./activityEvents";
@@ -440,6 +441,7 @@ export default function HarnessDetail() {
     blockingInput?.question ? { value: content } : null;
   const answeredIds = answeredMessageIds(current?.conversation?.messages);
   const isAdaptation = Boolean(current?.job?.metadata?.adaptation);
+  const isDesign = Boolean(current?.job?.metadata?.design);
 
   // Only the finished prefix folds away, so the stage a run failed or stopped on is never
   // hidden by collapsing — it is the first row still on screen.
@@ -999,6 +1001,14 @@ export default function HarnessDetail() {
                 job={current.job}
                 conversation={current.conversation}
                 stage={status?.stage}
+              />
+            )}
+            {isDesign && (
+              <DesignProgress
+                job={current.job}
+                conversation={current.conversation}
+                stage={status?.stage}
+                failure={status?.failure}
               />
             )}
 

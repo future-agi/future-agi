@@ -36,14 +36,15 @@ describe("BuildEnvironmentTab", () => {
     navigate.mockReset();
   });
 
-  it("renders the two hero cards and five option cards in order", () => {
+  it("renders the two hero cards, the design card and five option cards in order", () => {
     renderTab();
     const cards = screen.getAllByRole("button");
-    expect(cards).toHaveLength(7);
+    expect(cards).toHaveLength(8);
 
     [
       "Prebuilt Environments",
       "Web Environments",
+      "Describe your environment",
       "Source repository",
       "Code upload",
       "Hosted platform",
