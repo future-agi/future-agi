@@ -1,11 +1,15 @@
 package ingestbench
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -174,6 +178,50 @@ func TestLiveClickHouseBackpressureAccounting(t *testing.T) {
 		})
 	}
 	writeLiveArtifact(t, "OTLPBENCH_LIVE_BACKPRESSURE_RESULT", results)
+}
+
+// F3 on real ClickHouse: the durable lag's server-side bucketing (SQL) puts
+// every value in the same bucket as the Go histogram, including the exact and
+// log-linear edges and the clamp.
+func TestLiveClickHouseLatencyBucketsMatchGo(t *testing.T) {
+	lt := requireLiveTarget(t)
+	values := []int64{0, 1, 127, 255, 256, 257, 258, 511, 512, 513, 1000, 1023, 1024, 4095, 4096, 65535, 65536, 999_999, 1_000_000,
+		10_000_000, 10_001_000, 3_600_000_000, 86_400_000_000, 1<<37 - 1, 1 << 37, 1 << 40}
+	for e := 9; e < 40; e++ {
+		values = append(values, int64(1)<<e-1, int64(1)<<e, int64(1)<<e+1)
+	}
+	list := make([]string, len(values))
+	for i, v := range values {
+		list[i] = strconv.FormatInt(v, 10)
+	}
+	c := testConfig()
+	c.ClickHouseURL, c.Database, c.Table = lt.url, lt.database, lt.table
+	ch := clickHouse{cfg: c, client: c.readClient(), headers: lt.headers}
+	body, err := ch.queryWith(context.Background(), "WITH "+latencyExponentSQL+" SELECT lag_us, "+latencyBucketSQL+" AS b FROM (SELECT toInt64(arrayJoin(["+strings.Join(list, ",")+"])) AS lag_us) ORDER BY lag_us", nil, c.controlLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := json.NewDecoder(bytes.NewReader(body))
+	n := 0
+	for {
+		var row struct {
+			Lag *int64 `json:"lag_us"`
+			B   *int64 `json:"b"`
+		}
+		if err := d.Decode(&row); err == io.EOF {
+			break
+		} else if err != nil || row.Lag == nil || row.B == nil {
+			t.Fatalf("bucket response: %v %s", err, body)
+		}
+		if want := int64(latencyBucketMicros(*row.Lag)); *row.B != want {
+			t.Fatalf("lag %d us: ClickHouse bucket %d, Go bucket %d", *row.Lag, *row.B, want)
+		}
+		n++
+	}
+	if n != len(values) {
+		t.Fatalf("%d of %d values bucketed", n, len(values))
+	}
+	t.Logf("ClickHouse and Go agree on the bucket of all %d probe values", n)
 }
 
 // M2 on real ClickHouse: a CI-sized recovery case. The real collector is

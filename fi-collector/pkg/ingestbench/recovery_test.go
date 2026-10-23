@@ -52,20 +52,22 @@ func TestSentinelLagIsBracketedFromTheScheduledSend(t *testing.T) {
 	}
 	// Upper from scheduled: 400 and 250 ms; lower: 300 and 0 ms; from the
 	// actual send: 350 and 250 ms.
-	if r.FromScheduled.Count != 2 || r.FromScheduled.Max != 400 || r.FromScheduled.P50 != 250 {
+	// 250 ms is reported as the upper edge of its bucket (within 1/128 above).
+	b250 := latencyBucketMicros(250_000)
+	if r.FromScheduled.Count != 2 || r.FromScheduled.Max != 400 || r.FromScheduled.P50 != latencyEdge(b250) || latencyEdge(b250) > 250*(1+1.0/128) {
 		t.Fatalf("upper bound from scheduled: %+v", r.FromScheduled)
 	}
 	if r.LowerFromScheduled.Max != 300 || r.LowerFromScheduled.P50 != 0 {
 		t.Fatalf("lower bound from scheduled: %+v", r.LowerFromScheduled)
 	}
-	if r.Latency.Max != 350 || r.Latency.P50 != 250 {
+	if r.Latency.Max != 350 || r.Latency.P50 != latencyEdge(b250) {
 		t.Fatalf("upper bound from the actual send: %+v", r.Latency)
 	}
 	// Windows by scheduled send: [0,10) holds two seen, [10,20) one unseen.
 	if len(r.Windows) != 2 || r.Windows[0].Seen != 2 || r.Windows[0].Unseen != 0 || r.Windows[1].Seen != 0 || r.Windows[1].Unseen != 1 || r.WindowSeconds != 10 {
 		t.Fatalf("lag windows: %+v", r.Windows)
 	}
-	if len(r.Buckets) != 2 || r.Buckets[0] != (HistogramBucket{UpperMS: 250, Count: 1}) {
+	if len(r.Buckets) != 2 || r.Buckets[0] != (HistogramBucket{LowerMS: latencyLowerEdge(b250), UpperMS: latencyEdge(b250), Count: 1}) || r.Buckets[0].LowerMS > 250 {
 		t.Fatalf("raw buckets: %+v", r.Buckets)
 	}
 }
@@ -158,7 +160,9 @@ func TestDurableLagCoversEveryStoredSpanAndIsFalsifiable(t *testing.T) {
 	})
 	t.Run("forged-created-at", func(t *testing.T) {
 		d := run(t, func(m *mockStorage) { m.createdAtShift = 3 * time.Second }).Verification.DurableLag
-		if d.Status != "measured" || d.Lag.Count != 12 || d.Lag.P50 < 3000 {
+		// Every true lag is at least 3 s; the durable lag is a lower bound, so its
+		// quantiles are bucket lower edges (at most 1/128 below the value).
+		if d.Status != "measured" || d.Lag.Count != 12 || d.Lag.P50 < 3000*(1-1.0/128) || d.Lag.Max < 3000 {
 			t.Fatalf("a created_at 3 s late did not move the distribution: %+v", d)
 		}
 	})

@@ -24,7 +24,7 @@ import (
 // lower and an upper bound), adds the server-side insert lag of every stored
 // span, the collector backlog series, request latency from the scheduled send,
 // missing-span ranges by request and recovery from injected or declared faults.
-const SchemaVersion = "fi.otlpbench.v3"
+const SchemaVersion = "fi.otlpbench.v4"
 
 // Wire encodings of the measured path. protobuf and grpc are what production SDK
 // exporters use; json is kept for browser-style clients and debugging.

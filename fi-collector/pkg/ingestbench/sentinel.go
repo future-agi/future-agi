@@ -55,11 +55,11 @@ func (c Config) lagWindow() time.Duration {
 // LagWindow summarises the acknowledged sentinels SCHEDULED inside one window
 // of the run.
 type LagWindow struct {
-	StartS float64      `json:"start_offset_seconds"`
-	EndS   float64      `json:"end_offset_seconds"`
-	Seen   int64        `json:"seen"`
-	Unseen int64        `json:"unseen"`
-	Upper  Distribution `json:"upper_bound_from_scheduled_ms"`
+	StartS float64     `json:"start_offset_seconds"`
+	EndS   float64     `json:"end_offset_seconds"`
+	Seen   int64       `json:"seen"`
+	Unseen int64       `json:"unseen"`
+	Upper  Percentiles `json:"upper_bound_from_scheduled"`
 }
 
 type LagResult struct {
@@ -232,10 +232,10 @@ func (s *runState) lagResult(c Config, start time.Time) LagResult {
 		Registered: s.sentinelsRegistered, DroppedNotAcknowledged: s.sentinelsDropped,
 		Stride: c.sentinelStride(), MaxSentinels: c.MaxSentinels, PollIntervalMS: float64(c.PollInterval) / float64(time.Millisecond),
 		WindowSeconds: c.lagWindow().Seconds(), PollQuery: s.pollLatency.summary(), Windows: []LagWindow{}}
-	actual, upper, lower := &histogram{}, &histogram{}, &histogram{}
+	actual, upper, lower := &histogram{}, &histogram{}, &histogram{lowerBound: true}
 	type window struct {
 		seen, unseen int64
-		upper        valueHistogram
+		upper        histogram
 	}
 	windows := map[int64]*window{}
 	width := c.lagWindow()
@@ -258,7 +258,7 @@ func (s *runState) lagResult(c Config, start time.Time) LagResult {
 		w.seen++
 		actual.add(st.seenAt.Sub(st.sent))
 		upper.add(st.seenAt.Sub(st.due))
-		w.upper.add(st.seenAt.Sub(st.due).Milliseconds())
+		w.upper.add(st.seenAt.Sub(st.due))
 		// It cannot have become visible before it was sent, nor before the
 		// last query that missed it started.
 		floor := st.sent

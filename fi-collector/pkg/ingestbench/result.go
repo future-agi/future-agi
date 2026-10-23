@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/bits"
 	"sort"
 	"strings"
 	"time"
@@ -201,44 +202,105 @@ type Percentiles struct {
 	Max   float64 `json:"max_ms"`
 }
 
-// histogramBuckets is the number of latency buckets: upper edges are 1ms up to
-// 10s and 1s thereafter, through 24h.
-const histogramBuckets = 96401
+// Latency histograms are log-linear over whole microseconds (the HdrHistogram
+// layout): exact below 256 us, then 128 sub-buckets per power of two, so from
+// 256 us up every bucket is at most 1/128 (0.79%) as wide as its lower edge.
+// They span 0 to 2^37 us (38 h); larger values share the last bucket, whose
+// quantiles are then capped at the exact maximum.
+const (
+	subBucketBits    = 7
+	subBuckets       = 1 << subBucketBits
+	histogramMaxExp  = 37
+	histogramBuckets = 2*subBuckets + (histogramMaxExp-subBucketBits-1)*subBuckets
+	// histogramLastBucket is histogramBuckets-1 as SQL text.
+	histogramLastBucket = "3967"
+)
 
-// latencyBucket is the bucket of a duration in milliseconds, rounded up.
-func latencyBucket(ms float64) int {
-	bucket := int(math.Ceil(ms))
-	if bucket > 10000 {
-		bucket = 10000 + int(math.Ceil((ms-10000)/1000))
+// HistogramMethod describes the latency histograms of a result.
+var HistogramMethod = LatencyHistogram{
+	Method:             "log-linear over whole microseconds: exact below 0.256 ms, then 128 sub-buckets per power of two through 2^37 us (38 h)",
+	MaxRelativeWidth:   1.0 / subBuckets,
+	ExactBelowMS:       2 * subBuckets / 1000.0,
+	UpperSeriesQuantum: "upper edge of the quantile's bucket, capped at the exact maximum: never below the true value",
+	LowerSeriesQuantum: "lower edge of the quantile's bucket: never above the true value",
+	LowerBoundSeries: []string{"lag.read_visible_lag_lower_bound_from_scheduled_send", "verification.durable_lag.insert_lag_from_scheduled_send",
+		"direct_clickhouse_reads[].censored_query_elapsed_lower_bound", "application_reads[].censored_response_elapsed_lower_bound"},
+}
+
+// LatencyHistogram states how quantiles are quantised: MaxRelativeWidth is the
+// widest bucket relative to its lower edge from ExactBelowMS up.
+type LatencyHistogram struct {
+	Method             string   `json:"method"`
+	MaxRelativeWidth   float64  `json:"max_relative_bucket_width"`
+	ExactBelowMS       float64  `json:"exact_microsecond_buckets_below_ms"`
+	UpperSeriesQuantum string   `json:"quantile_of_measured_and_upper_bound_series"`
+	LowerSeriesQuantum string   `json:"quantile_of_lower_bound_series"`
+	LowerBoundSeries   []string `json:"lower_bound_series"`
+}
+
+// latencyBucketMicros is the bucket of a duration in whole microseconds
+// (negative counts as 0).
+func latencyBucketMicros(us int64) int {
+	if us < 2*subBuckets {
+		return int(max(us, 0))
 	}
-	return min(bucket, histogramBuckets-1)
+	e := bits.Len64(uint64(us)) - 1
+	b := 2*subBuckets + (e-subBucketBits-1)*subBuckets + int(us>>(e-subBucketBits)) - subBuckets
+	return min(b, histogramBuckets-1)
+}
+
+// latencyBucket is the bucket of a duration given in milliseconds.
+func latencyBucket(ms float64) int {
+	return latencyBucketMicros(int64(math.Floor(ms * 1000)))
+}
+
+// bucketBoundsMicros is the half-open range [lo, hi) of whole microseconds a
+// bucket holds.
+func bucketBoundsMicros(i int) (lo, hi int64) {
+	if i < 2*subBuckets {
+		return int64(i), int64(i) + 1
+	}
+	k := i - 2*subBuckets
+	shift := k / subBuckets
+	m := int64(k%subBuckets + subBuckets)
+	return m << (shift + 1), (m + 1) << (shift + 1)
 }
 
 // latencyEdge is the upper edge, in milliseconds, of a latency bucket.
 func latencyEdge(i int) float64 {
-	if i > 10000 {
-		return float64(10000 + (i-10000)*1000)
-	}
-	return float64(i)
+	_, hi := bucketBoundsMicros(i)
+	return float64(hi) / 1000
 }
 
-// histogram has constant memory even for day-long runs. Bucket upper edges are
-// 1ms up to 10s and 1s thereafter (through 24h); values are rounded up, not down.
+// latencyLowerEdge is the lower edge, in milliseconds, of a latency bucket.
+func latencyLowerEdge(i int) float64 {
+	lo, _ := bucketBoundsMicros(i)
+	return float64(lo) / 1000
+}
+
+func durationMicros(d time.Duration) int64 {
+	return max(0, int64(d/time.Microsecond))
+}
+
+// histogram has constant memory (about 31 KiB) even for day-long runs.
+// Quantiles of a measured or upper-bound series are bucket upper edges capped at
+// the maximum; a lower-bound series reads bucket lower edges (lowerBound).
 type histogram struct {
-	counts [histogramBuckets]int64
-	n      int64
-	max    float64
+	counts     [histogramBuckets]int64
+	n          int64
+	max        float64
+	lowerBound bool
 }
 
 func (h *histogram) add(d time.Duration) {
-	ms := math.Max(0, float64(d)/float64(time.Millisecond))
-	h.counts[latencyBucket(ms)]++
+	us := durationMicros(d)
+	h.counts[latencyBucketMicros(us)]++
 	h.n++
-	h.max = math.Max(h.max, ms)
+	h.max = math.Max(h.max, float64(us)/1000)
 }
 
 func (h *histogram) summary() Percentiles {
-	return percentiles(h.n, h.max, func(yield func(int, int64) bool) {
+	return percentiles(h.n, h.max, h.lowerBound, func(yield func(int, int64) bool) {
 		for i, n := range h.counts {
 			if n != 0 && !yield(i, n) {
 				return
@@ -253,22 +315,25 @@ func (h *histogram) buckets() []HistogramBucket {
 	var out []HistogramBucket
 	for i, n := range h.counts {
 		if n != 0 {
-			out = append(out, HistogramBucket{UpperMS: latencyEdge(i), Count: n})
+			out = append(out, HistogramBucket{LowerMS: latencyLowerEdge(i), UpperMS: latencyEdge(i), Count: n})
 		}
 	}
 	return out
 }
 
-// HistogramBucket is one non-empty bucket: Count values at most UpperMS.
+// HistogramBucket is one non-empty bucket: Count values at least LowerMS and
+// below UpperMS.
 type HistogramBucket struct {
+	LowerMS float64 `json:"lower_ms"`
 	UpperMS float64 `json:"upper_ms"`
 	Count   int64   `json:"count"`
 }
 
-// percentiles reads quantiles from buckets visited in increasing order. A
-// quantile is the upper edge of its bucket, capped at the exact maximum (no
-// value exceeds it): never understated, never above the max.
-func percentiles(n int64, maxMS float64, visit func(func(int, int64) bool)) Percentiles {
+// percentiles reads quantiles from buckets visited in increasing order. For a
+// measured or upper-bound series a quantile is the upper edge of its bucket,
+// capped at the exact maximum: never understated, never above the max. For a
+// lower-bound series (lowerBound) it is the lower edge: never overstated.
+func percentiles(n int64, maxMS float64, lowerBound bool, visit func(func(int, int64) bool)) Percentiles {
 	p := Percentiles{Count: n, Max: maxMS}
 	if n == 0 {
 		return p
@@ -280,7 +345,11 @@ func percentiles(n int64, maxMS float64, visit func(func(int, int64) bool)) Perc
 	visit(func(i int, c int64) bool {
 		sum += c
 		for next < len(targets) && sum >= int64(math.Ceil(targets[next]*float64(n))) {
-			*out[next] = math.Min(latencyEdge(i), maxMS)
+			if lowerBound {
+				*out[next] = math.Min(latencyLowerEdge(i), maxMS)
+			} else {
+				*out[next] = math.Min(latencyEdge(i), maxMS)
+			}
 			next++
 		}
 		return next < len(targets)
@@ -303,10 +372,10 @@ func (h *sparseHistogram) addN(d time.Duration, n int64) {
 	if h.Counts == nil {
 		h.Counts = map[int]int64{}
 	}
-	ms := math.Max(0, float64(d)/float64(time.Millisecond))
-	h.Counts[latencyBucket(ms)] += n
+	us := durationMicros(d)
+	h.Counts[latencyBucketMicros(us)] += n
 	h.N += n
-	h.MaxMS = math.Max(h.MaxMS, ms)
+	h.MaxMS = math.Max(h.MaxMS, float64(us)/1000)
 }
 
 // addBucket adds n values already bucketed (by the server) to bucket b; maxMS
@@ -330,26 +399,29 @@ func (h *sparseHistogram) merge(o sparseHistogram) {
 	h.MaxMS = math.Max(h.MaxMS, o.MaxMS)
 }
 
-func (h *sparseHistogram) buckets() []HistogramBucket {
+func (h *sparseHistogram) sortedKeys() []int {
 	keys := make([]int, 0, len(h.Counts))
 	for k := range h.Counts {
 		keys = append(keys, k)
 	}
 	sort.Ints(keys)
+	return keys
+}
+
+func (h *sparseHistogram) buckets() []HistogramBucket {
+	keys := h.sortedKeys()
 	out := make([]HistogramBucket, 0, len(keys))
 	for _, k := range keys {
-		out = append(out, HistogramBucket{UpperMS: latencyEdge(k), Count: h.Counts[k]})
+		out = append(out, HistogramBucket{LowerMS: latencyLowerEdge(k), UpperMS: latencyEdge(k), Count: h.Counts[k]})
 	}
 	return out
 }
 
-func (h *sparseHistogram) summary() Percentiles {
-	keys := make([]int, 0, len(h.Counts))
-	for k := range h.Counts {
-		keys = append(keys, k)
-	}
-	sort.Ints(keys)
-	return percentiles(h.N, h.MaxMS, func(yield func(int, int64) bool) {
+// summary reads the quantiles as upper edges, or as lower edges for a
+// lower-bound series.
+func (h *sparseHistogram) summary(lowerBound bool) Percentiles {
+	keys := h.sortedKeys()
+	return percentiles(h.N, h.MaxMS, lowerBound, func(yield func(int, int64) bool) {
 		for _, k := range keys {
 			if !yield(k, h.Counts[k]) {
 				return
@@ -401,6 +473,7 @@ type Result struct {
 	Backlog                     BacklogResult      `json:"collector_backlog"`
 	Clock                       ClockResult        `json:"clock"`
 	Recovery                    *RecoveryResult    `json:"recovery,omitempty"`
+	LatencyHistogram            LatencyHistogram   `json:"latency_histogram"`
 	Reads                       []ProbeResult      `json:"application_reads"`
 	DirectReads                 []DirectReadResult `json:"direct_clickhouse_reads"`
 	Resources                   []ResourceSnapshot `json:"resources"`
@@ -409,7 +482,7 @@ type Result struct {
 }
 
 func newResult(c Config) Result {
-	r := Result{SchemaVersion: SchemaVersion, Status: "dry-run", Config: c,
+	r := Result{SchemaVersion: SchemaVersion, Status: "dry-run", Config: c, LatencyHistogram: HistogramMethod,
 		PlannedSpans: c.PlannedSpans(), Statuses: map[string]int64{}, Warnings: []string{},
 		Limitations: []string{
 			"Synthetic payload profiles are a seeded model, not measured customer payload distributions.",

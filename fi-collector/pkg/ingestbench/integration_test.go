@@ -308,7 +308,7 @@ func (m *mockStorage) durableLag(q map[string][]string, query string, enc *json.
 		lag := created - offset - (origin + seq/batch*batch*1000000/rate)
 		b := int64(-1)
 		if lag >= 0 {
-			b = int64(latencyBucket(float64(lag) / 1000))
+			b = int64(latencyBucketMicros(lag))
 		}
 		if buckets[b] == nil {
 			buckets[b] = &bucket{max: lag}

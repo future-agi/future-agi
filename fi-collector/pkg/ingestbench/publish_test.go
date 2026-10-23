@@ -157,7 +157,7 @@ func TestPublicationHeadlineNeedsAnEarnedRun(t *testing.T) {
 		t.Fatalf("another run's telemetry accepted: %v", err)
 	}
 	old := base
-	old.SchemaVersion = "fi.otlpbench.v2"
+	old.SchemaVersion = "fi.otlpbench.v3"
 	if _, err := Publish(old, opts); err == nil {
 		t.Fatal("published a result of an older schema")
 	}

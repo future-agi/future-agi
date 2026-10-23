@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -491,7 +492,7 @@ func TestReportDoesNotClaimUnverifiedLossOrAppLatency(t *testing.T) {
 			t.Fatalf("missing honesty qualifier %q", phrase)
 		}
 	}
-	r.SchemaVersion = "fi.otlpbench.v2"
+	r.SchemaVersion = "fi.otlpbench.v3"
 	if Report(&out, r) == nil {
 		t.Fatal("accepted an older schema whose counters mean something else")
 	}
@@ -506,26 +507,78 @@ func TestHistogramBoundaries(t *testing.T) {
 		h.add(time.Duration(i) * time.Millisecond)
 	}
 	p := h.summary()
-	if p.P50 != 50 || p.P95 != 95 || p.P99 != 99 || p.Max != 100 {
+	within := func(got, want float64) bool { return got >= want && got <= want*(1+1.0/128) }
+	if !within(p.P50, 50) || !within(p.P95, 95) || !within(p.P99, 99) || p.Max != 100 {
 		t.Fatalf("quantiles: %+v", p)
 	}
-	// Coarse (1 s) buckets above 10 s must never understate: a quantile is the
-	// bucket's upper edge, capped at the exact maximum, so it is never below the
-	// true value and never above the max.
+	// An upper quantile is never below the true value and never above the max;
+	// the old 1 s buckets above 10 s reported 10,001 ms as 11,000 ms.
 	h = &histogram{}
 	h.add(10001 * time.Millisecond)
 	if p := h.summary(); p.P99 < 10001 || p.P99 > p.Max || p.Max != 10001 {
-		t.Fatalf("coarse buckets must be upper bounds no larger than the max: %+v", p)
+		t.Fatalf("an upper quantile must be an upper bound no larger than the max: %+v", p)
 	}
 	h = &histogram{}
 	for _, ms := range []int{10001, 10002, 10500} {
 		h.add(time.Duration(ms) * time.Millisecond)
 	}
-	// The median 10002 ms is in the bucket ending at 11000 ms; the cap keeps it
-	// an upper bound (>= 10002) without exceeding the observed max (10500).
-	if p := h.summary(); p.P50 != 10500 || p.P99 != 10500 || p.Max != 10500 {
-		t.Fatalf("capped coarse quantiles: %+v", p)
+	if p := h.summary(); !within(p.P50, 10002) || p.P99 != 10500 || p.Max != 10500 {
+		t.Fatalf("upper quantiles: %+v", p)
 	}
+	// A lower-bound series reads lower edges: with lower bounds 10,200 and
+	// 10,900 ms the median lower bound may not exceed 10,200 ms (the old rule
+	// reported 10,900 ms, above the true lag it was meant to bound from below).
+	lower := &histogram{lowerBound: true}
+	lower.add(10200 * time.Millisecond)
+	lower.add(10900 * time.Millisecond)
+	if p := lower.summary(); p.P50 > 10200 || p.P50 < 10200*(1-1.0/128) || p.P99 > 10900 || p.Max != 10900 {
+		t.Fatalf("lower-bound quantiles must not overstate: %+v", p)
+	}
+	var sparse sparseHistogram
+	sparse.addN(10200*time.Millisecond, 1)
+	sparse.addN(10900*time.Millisecond, 1)
+	if got, want := sparse.summary(true), lower.summary(); got != want {
+		t.Fatalf("sparse lower-bound quantiles %+v differ from %+v", got, want)
+	}
+}
+
+// BM-T09: quantisation error at most 1% from 1 ms to 24 h. Every value lies in
+// its bucket, consecutive buckets tile the axis, and both edges are within 1%
+// (in fact 1/128) of the value.
+func TestHistogramQuantisationIsWithinOnePercentFrom1msTo24h(t *testing.T) {
+	values := []int64{0, 1, 255, 256, 257, 511, 512, 999, 1000, 1001, 1023, 1024, 65535, 65536, 10_000_000, 10_001_000, 86_400_000_000, 1<<37 - 1}
+	for us := int64(1000); us <= 86_400_000_000; us += max(1, us/97) {
+		values = append(values, us)
+	}
+	worst := 0.0
+	for _, us := range values {
+		b := latencyBucketMicros(us)
+		lo, hi := bucketBoundsMicros(b)
+		if us < lo || us >= hi {
+			t.Fatalf("%d us not in its bucket %d [%d, %d)", us, b, lo, hi)
+		}
+		if us >= 1000 {
+			if rel := math.Max(float64(hi-us)/float64(us), float64(us-lo)/float64(us)); rel > worst {
+				worst = rel
+			}
+		}
+	}
+	if worst > 0.01 {
+		t.Fatalf("worst relative quantisation error from 1 ms to 24 h is %.4f, above 1%%", worst)
+	}
+	for b := 0; b < histogramBuckets-1; b++ {
+		_, hi := bucketBoundsMicros(b)
+		if lo, _ := bucketBoundsMicros(b + 1); lo != hi || latencyBucketMicros(hi-1) != b || latencyBucketMicros(hi) != b+1 {
+			t.Fatalf("buckets %d and %d do not tile: hi %d next lo %d", b, b+1, hi, lo)
+		}
+	}
+	if latencyBucketMicros(1<<40) != histogramBuckets-1 || latencyBucketMicros(-5) != 0 || strconv.Itoa(histogramBuckets-1) != histogramLastBucket {
+		t.Fatal("out-of-range values are not clamped, or the SQL bucket bound is stale")
+	}
+	if h := newResult(testConfig()).LatencyHistogram; h.MaxRelativeWidth != 1.0/128 || h.ExactBelowMS != 0.256 || len(h.LowerBoundSeries) != 4 {
+		t.Fatalf("the result does not state its quantisation: %+v", h)
+	}
+	t.Logf("worst relative quantisation error from 1 ms to 24 h: %.4f%% over %d values", worst*100, len(values))
 }
 
 func TestCredentialHeadersAreNotPersisted(t *testing.T) {

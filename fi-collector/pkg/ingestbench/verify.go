@@ -375,15 +375,24 @@ func (c Config) durableLagOrigin(start time.Time, clock ClockSample) *lagOrigin 
 	return o
 }
 
+// latencyBucketSQL is latencyBucketMicros in ClickHouse SQL, for a
+// non-negative Int64 lag_us: exact below 256 us, else 128 sub-buckets per power
+// of two, clamped to the last bucket. The exponent e is floor(log2(lag_us)),
+// taken from log2 and then corrected by one either way with exact shifts, so
+// floating-point rounding can never move a value to a neighbouring bucket.
+const latencyBucketSQL = "if(lag_us < 256, lag_us, least(toInt64(" + histogramLastBucket + "), 256 + (e - 8) * 128 + toInt64(bitShiftRight(lag_us, greatest(e - 7, 0))) - 128))"
+
+const latencyExponentSQL = "toInt64(floor(log2(greatest(lag_us, 1)))) AS e0, e0 - toInt64(bitShiftRight(lag_us, e0) = 0) + toInt64(bitShiftRight(lag_us, e0 + 1) > 0) AS e"
+
 // durableLagQuery buckets, per distinct stored span of a chunk, its first
 // created_at minus its request's scheduled send (microseconds, offset
 // corrected) into the latency histogram's buckets; bucket -1 holds negative
 // lags (inserted before the scheduled send: clock error or a forged value).
-const durableLagQuery = "SELECT if(lag_us < 0, toInt64(-1), if(lag_us <= 10000000, toInt64(ceil(lag_us / 1000)), toInt64(10000 + ceil((lag_us - 10000000) / 1000000)))) AS b," +
+const durableLagQuery = "WITH " + latencyExponentSQL + " SELECT if(lag_us < 0, toInt64(-1), " + latencyBucketSQL + ") AS b," +
 	" count() AS n, max(lag_us) AS max_us FROM (WITH " + sequenceExpr + " AS seq, (" + identityExpr + " AND seq >= {lo:UInt64} AND seq < {hi:UInt64}) AS valid" +
 	" SELECT seq, toInt64(min(toUnixTimestamp64Micro(created_at))) - {offset:Int64} - ({origin:Int64} + toInt64(intDiv(intDiv(seq, {batch:UInt64}) * {batch:UInt64} * 1000000, {rate:UInt64}))) AS lag_us"
 
-const checkpointSchema = "fi.otlpbench.verify-checkpoint.v2"
+const checkpointSchema = "fi.otlpbench.verify-checkpoint.v3"
 
 // verifyCheckpoint is everything a verification needs to resume in another
 // process: the plan, the request outcomes and the progress. It holds no
@@ -840,7 +849,7 @@ func (vf *verifier) durableLag(distinct uint64, complete bool) DurableLagResult 
 	}
 	a := vf.cp.Accum
 	r := DurableLagResult{Method: "per distinct stored span: first created_at (server, DEFAULT now64(6)) minus the scheduled send of its request, corrected by the measured clock offset",
-		Rows: uint64(a.DurableLag.N) + a.DurableNegative, NegativeRows: a.DurableNegative, Lag: a.DurableLag.summary(), Buckets: a.DurableLag.buckets(),
+		Rows: uint64(a.DurableLag.N) + a.DurableNegative, NegativeRows: a.DurableNegative, Lag: a.DurableLag.summary(true), Buckets: a.DurableLag.buckets(),
 		ClockOffsetMS: float64(o.OffsetMicro) / 1000, ClockUncertaintyMS: float64(o.UncertaintyMicro) / 1000, ClockMeasured: o.OffsetMeasured}
 	switch {
 	case a.DurableError != "":
