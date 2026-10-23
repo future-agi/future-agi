@@ -1,6 +1,7 @@
 package ingestbench
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -679,6 +680,134 @@ func runOverBudgetCase(t *testing.T, chURL string, headers http.Header, writer c
 		t.Fatalf("the over-budget plan was not warned about loudly: %q", warn.String())
 	}
 	return r
+}
+
+// tamperProxy sits between a collector's writer and ClickHouse and corrupts the
+// span INSERTs the way a lossy, duplicating storage path would: it drops the
+// first `drop` rows that pass and stores the next `dup` rows twice. The copy
+// differs only in service_name, a column of the table's ORDER BY key, so no
+// ReplacingMergeTree merge can collapse it before the verification reads it;
+// its trace and span IDs are unchanged, so it is a duplicate of a span of the
+// run. Every other request, including the curated-table inserts, passes as is.
+type tamperProxy struct {
+	table              string
+	proxy              *httputil.ReverseProxy
+	mu                 sync.Mutex
+	drop, dup          int
+	dropped, duplicate int
+}
+
+func newTamperProxy(t *testing.T, target, table string, drop, dup int) (*tamperProxy, string) {
+	t.Helper()
+	u, err := url.Parse(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &tamperProxy{table: table, proxy: httputil.NewSingleHostReverseProxy(u), drop: drop, dup: dup}
+	srv := httptest.NewServer(p)
+	t.Cleanup(srv.Close)
+	return p, srv.URL
+}
+
+func (p *tamperProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.URL.Query().Get("query"), "INSERT INTO "+p.table+" ") {
+		p.proxy.ServeHTTP(w, r)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read insert", http.StatusBadRequest)
+		return
+	}
+	var out bytes.Buffer
+	d := json.NewDecoder(bytes.NewReader(body))
+	d.UseNumber() // re-encode numbers exactly
+	p.mu.Lock()
+	for {
+		var row map[string]any
+		if err := d.Decode(&row); err == io.EOF {
+			break
+		} else if err != nil {
+			p.mu.Unlock()
+			http.Error(w, "invalid insert row", http.StatusBadRequest)
+			return
+		}
+		if p.dropped < p.drop {
+			p.dropped++
+			continue
+		}
+		line, _ := json.Marshal(row)
+		out.Write(append(line, '\n'))
+		if p.duplicate < p.dup {
+			p.duplicate++
+			row["service_name"] = fmt.Sprint(row["service_name"]) + "-duplicate-copy"
+			line, _ = json.Marshal(row)
+			out.Write(append(line, '\n'))
+		}
+	}
+	p.mu.Unlock()
+	r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(out.Bytes())), int64(out.Len())
+	r.Header.Set("Content-Length", strconv.Itoa(out.Len()))
+	p.proxy.ServeHTTP(w, r)
+}
+
+// BM-T01 fallibility: with K rows of acknowledged spans removed from storage and
+// J further spans stored twice, the exact-ID verification must report exactly K
+// missing (all acknowledged-but-missing, data loss) and exactly J duplicate rows,
+// no unexpected row, and must not certify the run.
+func runTamperCase(t *testing.T, chURL string, headers http.Header, writer chwriter.Config, prepare func(Config) Config) Result {
+	t.Helper()
+	// Equal counts deliberately hide corruption from a plain count(): only
+	// the exact identity verifier can distinguish the lost and duplicated rows.
+	const drop, dup = 3, 3
+	c := mockRunConfig()
+	c.RunID = NewRunID()
+	c.Rate, c.Duration, c.BatchSize, c.VerifyChunk = 20, time.Second, 4, 7
+	c.Payload, c.Settle = "small", time.Second
+	c.DirectProbes.Enabled = false
+	proxy, front := newTamperProxy(t, writer.URL, writer.Table, drop, dup)
+	writer.URL = front
+	fixture := startCollector(t, writer, server.Config{})
+	c.ClickHouseURL, c.Endpoint = chURL, fixture.endpoint(EncodingProtobuf)
+	c = prepare(c)
+	r, err := Run(context.Background(), c, Options{ClickHouseHeaders: headers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy.mu.Lock()
+	dropped, duplicated := proxy.dropped, proxy.duplicate
+	proxy.mu.Unlock()
+	co, v := r.Counters, r.Verification
+	if dropped != drop || duplicated != dup || co.Attempted != 20 || co.Acknowledged != 20 || co.CheckIdentity() != nil {
+		t.Fatalf("tamper setup: dropped %d duplicated %d, counters %+v", dropped, duplicated, co)
+	}
+	var rangeSpans uint64
+	for _, m := range v.MissingRanges {
+		if m.Class != outcomeAcknowledged.String() {
+			t.Fatalf("missing range of class %s: %+v", m.Class, v.MissingRanges)
+		}
+		rangeSpans += m.MissingSpans
+	}
+	if !v.Complete || v.Missing != drop || v.MissingBy.AcknowledgedMissing != drop || !v.DataLossDetected || rangeSpans != drop ||
+		v.DuplicateRows != dup || v.DistinctExpected != 20-drop || v.Rows != 20-drop+dup || v.UnexpectedRows != 0 || v.ContractViolation {
+		t.Fatalf("the verifier did not report exactly %d missing and %d duplicates: %+v", drop, dup, v)
+	}
+	if r.Status == "measured-profile-complete" {
+		t.Fatalf("a run with lost and duplicated spans was certified: %s", r.Status)
+	}
+	return r
+}
+
+func TestVerifierCountsExactlyTheDroppedAndDuplicatedSpans(t *testing.T) {
+	store := &mockStorage{}
+	ch := httptest.NewServer(http.HandlerFunc(store.serve))
+	defer ch.Close()
+	runTamperCase(t, ch.URL, nil, chwriter.Config{URL: ch.URL, Table: "spans", Database: "default"}, func(c Config) Config {
+		store.mu.Lock()
+		store.cfg = c
+		store.mu.Unlock()
+		return c
+	})
 }
 
 func TestBackpressureAndOverBudgetAccountingThroughRealCollector(t *testing.T) {

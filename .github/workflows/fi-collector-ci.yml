@@ -218,17 +218,23 @@ jobs:
         run: |
           set -o pipefail
           # The backpressure case runs a real collector with a 16-row budget
-          # (the in-process equivalent of FI_MAX_PENDING_ROWS=16) over HTTP
-          # protobuf, HTTP JSON+gzip and gRPC+gzip, and sends requests larger
-          # than the whole budget to prove they are refused as non-retryable.
+          # (the in-process equivalent of FI_MAX_PENDING_ROWS=16) behind a slow
+          # insert path over HTTP protobuf, HTTP JSON+gzip and gRPC+gzip, and
+          # sends requests larger than the whole budget: one into an empty buffer
+          # must be stored, one while the buffer is over must be refused as
+          # retryable. The tamper case drops 3 stored rows and stores 3 spans
+          # twice; count() stays unchanged, but the exact-ID SQL must report
+          # exactly 3 missing and 3 duplicates. The bucket case checks the durable lag's SQL bucketing
+          # against the Go histogram.
           # The recovery case restarts the real collector mid-run and, separately,
           # holds every writer request to ClickHouse for 1.5 s; no acknowledged
           # span may be missing and each fault must recover within the run.
           OTLPBENCH_LIVE_RESULT="$RUNNER_TEMP/otlpbench-real-smoke.json" \
           OTLPBENCH_LIVE_BACKPRESSURE_RESULT="$RUNNER_TEMP/otlpbench-real-backpressure.json" \
           OTLPBENCH_LIVE_RECOVERY_RESULT="$RUNNER_TEMP/otlpbench-real-recovery.json" \
+          OTLPBENCH_LIVE_TAMPER_RESULT="$RUNNER_TEMP/otlpbench-real-tamper.json" \
             go test -race -count=1 -p 1 -timeout 360s -json \
-            -run '^(TestLiveClickHouseCollectorPipeline|TestLiveClickHouseBackpressureAccounting|TestLiveClickHouseRecovery)$' ./pkg/ingestbench \
+            -run '^(TestLiveClickHouseCollectorPipeline|TestLiveClickHouseBackpressureAccounting|TestLiveClickHouseRecovery|TestLiveClickHouseVerifierCountsDroppedAndDuplicatedSpans|TestLiveClickHouseLatencyBucketsMatchGo)$' ./pkg/ingestbench \
             | tee "$RUNNER_TEMP/otlpbench-smoke-tests.jsonl"
           python3 - <<'PY'
           import json
@@ -245,6 +251,8 @@ jobs:
               'TestLiveClickHouseRecovery',
               'TestLiveClickHouseRecovery/collector-restart',
               'TestLiveClickHouseRecovery/clickhouse-pause',
+              'TestLiveClickHouseVerifierCountsDroppedAndDuplicatedSpans',
+              'TestLiveClickHouseLatencyBucketsMatchGo',
           }
           missing = required - passed
           if missing:
@@ -283,6 +291,7 @@ jobs:
             ${{ runner.temp }}/otlpbench-real-smoke.json
             ${{ runner.temp }}/otlpbench-real-backpressure.json
             ${{ runner.temp }}/otlpbench-real-recovery.json
+            ${{ runner.temp }}/otlpbench-real-tamper.json
             ${{ runner.temp }}/otlpbench-real-smoke.md
             ${{ runner.temp }}/otlpbench-real-smoke.publication.json
             ${{ runner.temp }}/otlpbench-smoke-tests.jsonl

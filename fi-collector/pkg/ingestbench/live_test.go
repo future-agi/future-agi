@@ -180,6 +180,18 @@ func TestLiveClickHouseBackpressureAccounting(t *testing.T) {
 	writeLiveArtifact(t, "OTLPBENCH_LIVE_BACKPRESSURE_RESULT", results)
 }
 
+// BM-T01 fallibility on real ClickHouse: 3 rows of acknowledged spans never
+// reach storage and 3 spans are stored twice (by a proxy in front of the real
+// server); count() stays 20 but the exact-ID SQL must report 3 missing and 3 duplicates.
+func TestLiveClickHouseVerifierCountsDroppedAndDuplicatedSpans(t *testing.T) {
+	lt := requireLiveTarget(t)
+	r := runTamperCase(t, lt.url, lt.headers, lt.writer, lt.apply)
+	writeLiveArtifact(t, "OTLPBENCH_LIVE_TAMPER_RESULT", r)
+	t.Logf("real ClickHouse %s: missing %d (acknowledged-but-missing %d), duplicate rows %d, distinct %d of %d, run_id=%s",
+		r.Provenance.ClickHouse.Version, r.Verification.Missing, r.Verification.MissingBy.AcknowledgedMissing, r.Verification.DuplicateRows,
+		r.Verification.DistinctExpected, r.Counters.Attempted, r.Config.RunID)
+}
+
 // F3 on real ClickHouse: the durable lag's server-side bucketing (SQL) puts
 // every value in the same bucket as the Go histogram, including the exact and
 // log-linear edges and the clamp.
@@ -248,7 +260,7 @@ func TestLiveClickHouseRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
 	t.Run("collector-restart", func(t *testing.T) {
-		collector := newRestartableCollector(t, lt.writer, server.Config{})
+		collector := newRestartableCollector(t, lt.writer, server.Config{MaxPendingRows: 20000})
 		c := scale(lt.apply(recoveryConfig(collector)))
 		c.RunID, c.ClickHouseURL = NewRunID(), lt.url
 		at, d := faultAt(1500*time.Millisecond, 800*time.Millisecond)
