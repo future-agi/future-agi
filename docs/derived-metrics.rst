@@ -146,20 +146,40 @@ in ``tracer/services/derived_metrics/uncertainty.py``:
   the window's units as independent draws of the underlying process. An
   unweighted total of every unit is an exact count and has no interval.
 
-Rates (a 0/1 numerator inside a 0/1 denominator) use a Wilson score interval at
-the design-effective sample size ``p(1-p)/V``; other metrics use
-``value +/- t * SE``. Both use ``t(0.975, units - strata)``. A weighted window whose
-units were all kept with certainty is a census with a zero-width interval.
+Rates proven by the saved formula use a Wilson score interval at the
+design-effective sample size ``p(1-p)/V``; other metrics use ``value +/- t * SE``.
+An observed sample of zeros and ones does **not** establish a bound on an arbitrary
+numeric evaluation or attribute. For example, ``mean(y)`` remains a numeric mean,
+whereas ``mean(y > 0)`` explicitly estimates the fraction satisfying a predicate.
+For ``ratio``, both operands must be indicators and the numerator must be a
+provable subset of the denominator: ``ratio((y > 0) and (x > 0), x > 0)`` qualifies;
+``ratio(y > 0, x > 0)`` does not. The compiler recognizes identical predicates,
+conjunctions and products of indicators, but does not infer general numeric
+implications between distinct comparisons. Unproved cases retain generic numeric
+inference. The proof is derived from immutable definition text for previews and
+persisted rollups, not from live evaluator metadata or a sample's observed range.
+
+Both interval families use ``t(0.975, df)``. For closed designs, ``df`` is the
+smallest ``m_h - 1`` among non-certainty strata, with ``m_h`` the number of valid
+observed units in the group. This is a conservative lower bound on
+Welch-Satterthwaite effective degrees of freedom, not a pooled count. A large
+unrelated stratum, domain-zero padding, or known census values cannot add precision
+to a small stratum's estimated variance. Live designs use the number of units with
+``p < 1`` minus one; iid designs use valid units minus one. All-census groups have
+``df = 0`` and an exact zero-width interval, including a single certainty unit.
+These changes leave point estimates and the default point-alert mode unchanged;
+unsupported intervals are withheld, and small-stratum intervals can be wider.
 
 No interval is produced when the design cannot support one: the snapshot predates
 design capture, designs are mixed, a closed stratum has a single sampled unit or
-no population size or an inconsistent probability, fewer than two units are
-valid, the value itself is missing, or expanded second moments suffer numerical
-cancellation (``unstable_variance``). The same reason withholds non-census,
-non-rate intervals when the estimated variance is zero, including all-zero
-``sum`` and ``count_if`` samples. No observed events do not prove a zero population
-total: the zero point estimate remains available, but cannot trigger a confident
-alert without an interval. A boundary-aware total interval is not implemented.
+no population size or an inconsistent probability, a non-census group has too few
+sampled units/degrees of freedom, the value itself is missing, or expanded second
+moments suffer numerical cancellation (``unstable_variance``). The same reason
+withholds non-census, non-rate intervals when the estimated variance is zero,
+including all-zero ``sum``, ``count_if``, numeric ``mean`` and numeric ``ratio``
+samples. No observed events do not prove a zero population total or mean: the zero
+point estimate remains available, but cannot trigger a confident alert without an
+interval. A boundary-aware numeric interval is not implemented.
 The rare-event regression reports withheld draws separately from coverage among
 issued intervals; withholding an interval is not counted as covering the truth.
 A stratum with more valid units than its recorded sample size is inconsistent. Intervals are conditional on the documented
@@ -172,7 +192,11 @@ The interval is persisted (``std_error``, ``ci_low``, ``ci_high``, ``effective_n
 readable through the ``derived_metrics`` SQL view, returned on previews and, with
 ``include_uncertainty=true``, on persisted results, and shown on dashboard metric
 cards as text beside the value. Persisted rows from before this column existed
-report ``not_computed``.
+report ``not_computed``. Previously committed intervals are not silently rewritten
+by estimator fixes: explicitly recompute affected runs before using their historic
+intervals for confidence-based decisions. In particular, earlier inferred-binary
+numeric intervals and pooled-degrees-of-freedom intervals are not corrected by
+merely reading an old result.
 
 Calibration is measured, not assumed. ``tracer/tests/test_derived_metric_uncertainty.py``
 draws 2,000 seeded replicates per design from known synthetic populations,
@@ -181,11 +205,25 @@ every replicate against an independent NumPy reference to 1e-9 relative, and
 requires empirical coverage within [92%, 98%], bias within 4 Monte Carlo standard
 errors and mean estimated variance within 15% of the empirical variance. With
 seed 20261023 and its four successive seeds on ClickHouse 25.3, measured coverage
-was 93.10% (closed stratified rate), 93.85% (live continuous ratio), 94.65%
-(closed total), 93.90% (unweighted process mean) and 95.35% (near-boundary rate).
+was 93.15% (closed stratified predicate rate), 93.85% (live continuous ratio),
+94.70% (closed total), 93.90% (unweighted process mean) and 96.60% (near-boundary
+predicate rate), with the conservative non-certainty-stratum degrees of freedom.
 These are calibration results for those fixtures, not guaranteed coverage for
-arbitrary populations. The closed-rate weighted bias was 0.00028525 versus
--0.17443587 for the unweighted estimator on the same draws.
+arbitrary populations, and they do not all meet a stricter 94–96% target.
+The closed-rate weighted bias was 0.00028525 versus -0.17443587 for the unweighted
+estimator on the same draws.
+
+``test_derived_metric_uncertainty_safety.py`` adds two 2,000-draw production-SQL
+campaigns. For a population of 9,900 zeros and 100 values of 1,000 (true numeric
+mean 10), samples of size 50 withheld 1,230 intervals; all 770 issued intervals
+covered the truth and no confident less-than-5 alert fired. Withholding is not
+coverage, and this conditional result is not a guarantee for other populations.
+For a centered normal finite population with only two sampled units plus a
+100-unit known-zero census stratum, total-interval coverage was 94.50%; applying
+the former pooled-df multiplier to those same estimates and standard errors
+would cover 70.00%. Separate regressions verify unchanged endpoints when 1,000
+certainty-zero units are appended, and withhold an interval when only one
+non-certainty observation supplies variance information.
 
 Contributor evidence and version comparison
 -------------------------------------------
@@ -423,7 +461,12 @@ guarded ClickHouse test sidecar::
       tracer/tests/test_derived_metric_formula.py \
       tracer/tests/test_derived_metric_clickhouse.py \
       tracer/tests/test_derived_metric_api.py \
-      tracer/tests/test_derived_metric_hardening.py
+      tracer/tests/test_derived_metric_hardening.py \
+      tracer/tests/test_derived_metric_uncertainty.py \
+      tracer/tests/test_derived_metric_uncertainty_safety.py \
+      tracer/tests/test_derived_metric_contributors.py \
+      tracer/tests/test_derived_metric_comparison.py \
+      tracer/tests/test_derived_monitor_confidence.py
     NO_STARTUP_DB_MUTATIONS=false DJANGO_SETTINGS_MODULE=tfc.settings.test \
       python manage.py makemigrations --check --dry-run
 
