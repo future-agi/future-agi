@@ -1,10 +1,6 @@
 import { Button } from "@mui/material";
 import React from "react";
 import SvgColor from "src/components/svg-color";
-import {
-  GeneratePromptButton,
-  GeneratePromptButtonIcon,
-} from "../../../../components/PromptCards/PromptCardStyleComponents";
 import PropTypes from "prop-types";
 import { VIEW } from "../../store";
 
@@ -52,22 +48,6 @@ export default function HeaderActions({
           Import from Dataset
         </Button>
       )}
-      <GeneratePromptButton
-        // onClick={handleGenerateDataClick}
-        startIcon={<GeneratePromptButtonIcon />}
-        size="small"
-        borderRadius={"4px"}
-        padding="5px 12px"
-        height="30px"
-        disabled={disabled}
-        sx={{
-          "& .svg-color": {
-            mr: 1,
-          },
-        }}
-      >
-        Generate Sample Data
-      </GeneratePromptButton>
     </>
   );
 }
