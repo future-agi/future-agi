@@ -975,9 +975,9 @@ export default function NewReport({
           <Button
             variant="contained"
             onClick={runReport}
-            disabled={
-              Boolean(blocker) || busy || (!fixed && !population && counting)
-            }
+            // While a new scope or sample size is costed, the shown cost is
+            // the previous one: Run waits for the server's figure.
+            disabled={Boolean(blocker) || busy || (!fixed && counting)}
             startIcon={<Iconify icon="mdi:play" width={16} />}
           >
             Run report

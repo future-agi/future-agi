@@ -1259,6 +1259,36 @@ describe("InsightsView", () => {
       expect(screen.getByRole("button", { name: "Run report" })).toBeEnabled();
     });
 
+    it("holds Run while a new sample size is costed", async () => {
+      let release;
+      mocks.post.mockImplementation((url, body) => {
+        if (url !== "/tracer/insights/estimate/")
+          return ok({ run_id: RUN_ID, config_id: CONFIG_ID });
+        if (body.sample_size !== 300)
+          return new Promise((resolve) => {
+            release = () =>
+              resolve(estimate(body.sample_size, { credits_estimate: 12 }));
+          });
+        return estimate(300);
+      });
+      renderAt("?new=1&lens=failures");
+      await screen.findAllByText(/about 3\.6 credits/);
+      expect(screen.getByRole("button", { name: "Run report" })).toBeEnabled();
+      fireEvent.mouseDown(
+        screen.getByRole("combobox", { name: "Sample size" }),
+      );
+      const options = screen.getAllByRole("option");
+      fireEvent.click(options[options.length - 1]);
+      await waitFor(() =>
+        expect(estimates().at(-1)[1].sample_size).not.toBe(300),
+      );
+      // The previous cost is still on screen: Run waits for the new one.
+      expect(screen.getByRole("button", { name: "Run report" })).toBeDisabled();
+      release();
+      await screen.findAllByText(/about 12 credits/, {}, { timeout: 4000 });
+      expect(screen.getByRole("button", { name: "Run report" })).toBeEnabled();
+    });
+
     it("leads to billing when no sample fits", async () => {
       mocks.post.mockImplementation((url, body) =>
         url === "/tracer/insights/estimate/"

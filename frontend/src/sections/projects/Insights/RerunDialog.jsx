@@ -291,8 +291,13 @@ function RerunForm({
         <Button
           variant="contained"
           onClick={run}
+          // A new sample size is costed first: the shown cost is the
+          // previous one until the server answers.
           disabled={
-            busy || creditLimited || (Number.isFinite(total) && total === 0)
+            busy ||
+            creditLimited ||
+            counting ||
+            (Number.isFinite(total) && total === 0)
           }
           startIcon={
             busy ? <CircularProgress size={14} color="inherit" /> : null
