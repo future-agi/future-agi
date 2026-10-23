@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,7 +42,7 @@ func TestPublicationOfAShortRunWithholdsTheHeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Headline.Status != "withheld" || p.Headline.VerifiedSpansPerSecond != nil || len(p.Headline.WithheldReasons) != 1 ||
+	if p.Headline.Status != "withheld" || p.Headline.SustainedOfferedSpansPerSecond != nil || p.Headline.AchievedAcknowledgedSpansPerSecond != nil || len(p.Headline.WithheldReasons) != 1 ||
 		!strings.Contains(p.Headline.WithheldReasons[0], "below the configured minimum 1h0m0s") {
 		t.Fatalf("headline of a 1 s run: %+v", p.Headline)
 	}
@@ -84,7 +85,7 @@ func TestPublicationOfAShortRunWithholdsTheHeadline(t *testing.T) {
 			t.Fatalf("markdown misses %q:\n%s", want, md.String())
 		}
 	}
-	for _, banned := range []string{"10x", "faster than", "zero data loss", "verified sustained spans/s"} {
+	for _, banned := range []string{"10x", "faster than", "zero data loss", "sustained the offered", "acknowledged spans/s over"} {
 		if strings.Contains(strings.ToLower(md.String()), strings.ToLower(banned)) {
 			t.Fatalf("markdown of a smoke run contains %q", banned)
 		}
@@ -109,13 +110,25 @@ func TestPublicationHeadlineNeedsAnEarnedRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Headline.Status != "published" || p.Headline.VerifiedSpansPerSecond == nil || *p.Headline.VerifiedSpansPerSecond != 12 || len(p.Headline.WithheldReasons) != 0 {
-		t.Fatalf("an earned 1 s run with a 500 ms minimum: %+v", p.Headline)
+	// F7: the published figure is the offered rate (a pass), stated as such;
+	// the measured figure is acknowledged spans over the measured load window,
+	// which includes the completion of the last export, so it is below the
+	// offered rate.
+	h := p.Headline
+	if h.Status != "published" || h.SustainedOfferedSpansPerSecond == nil || *h.SustainedOfferedSpansPerSecond != base.Config.Rate || len(h.WithheldReasons) != 0 ||
+		h.AchievedAcknowledgedSpansPerSecond == nil || h.LoadWindowSeconds != base.LoadSeconds || base.LoadSeconds < base.Config.Duration.Seconds() ||
+		*h.AchievedAcknowledgedSpansPerSecond != float64(base.Counters.Acknowledged)/base.LoadSeconds || *h.AchievedAcknowledgedSpansPerSecond > float64(base.Config.Rate) {
+		t.Fatalf("an earned 1 s run with a 500 ms minimum: %+v (load %.3f s)", h, base.LoadSeconds)
 	}
 	var md bytes.Buffer
 	_ = WritePublicationMarkdown(&md, p)
-	if !strings.Contains(md.String(), "**12.0 verified sustained spans/s** for 1 s at an offered 12 spans/s") {
-		t.Fatalf("published headline:\n%s", md.String())
+	for _, want := range []string{"**Sustained the offered 12 spans/s for 1 s (verified):**", fmt.Sprintf("Achieved %.1f acknowledged spans/s over the measured %.3f s load window", *h.AchievedAcknowledgedSpansPerSecond, base.LoadSeconds), "not a capacity limit"} {
+		if !strings.Contains(md.String(), want) {
+			t.Fatalf("published headline misses %q:\n%s", want, md.String())
+		}
+	}
+	if strings.Contains(md.String(), "verified sustained spans/s") {
+		t.Fatalf("the offered rate is presented as a measured throughput:\n%s", md.String())
 	}
 	tampered := bytes.Replace(telemetry, []byte(`"in_flight_spans":0`), []byte(`"in_flight_spans":1`), 1)
 	for name, tc := range map[string]struct {
@@ -127,7 +140,11 @@ func TestPublicationHeadlineNeedsAnEarnedRun(t *testing.T) {
 		"incomplete": {func(r *Result) {
 			r.Verification.Complete, r.Verification.Error = false, "verification budget exhausted"
 		}, opts, "verification is incomplete (verification budget exhausted)"},
-		"missing":          {func(r *Result) { r.Verification.Missing, r.Verification.MissingBy.AcknowledgedMissing = 1, 1 }, opts, "1 attempted spans are missing"},
+		"missing":         {func(r *Result) { r.Verification.Missing, r.Verification.MissingBy.AcknowledgedMissing = 1, 1 }, opts, "1 attempted spans are missing"},
+		"unexpected-rows": {func(r *Result) { r.Verification.UnexpectedRows = 1 }, opts, "storage holds 1 rows that are not this run's identities"},
+		"contract-violation": {func(r *Result) {
+			r.Verification.ContractViolation, r.Verification.PersistedBy.RejectedButPersisted = true, 2
+		}, opts, "storage holds spans of requests the collector refused (2 whole-request rejected"},
 		"not-all-accepted": {func(r *Result) { r.Counters.Acknowledged -= 4 }, opts, "4 of 12 attempted spans not acknowledged"},
 		"not-all-started":  {func(r *Result) { r.StopReason = "byte-budget" }, opts, "stop reason byte-budget"},
 		"recovery":         {func(r *Result) { r.Recovery = &RecoveryResult{} }, opts, "not a throughput measurement"},
@@ -146,7 +163,7 @@ func TestPublicationHeadlineNeedsAnEarnedRun(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if p.Headline.Status != "withheld" || p.Headline.VerifiedSpansPerSecond != nil || !strings.Contains(strings.Join(p.Headline.WithheldReasons, "; "), tc.reason) {
+			if p.Headline.Status != "withheld" || p.Headline.SustainedOfferedSpansPerSecond != nil || p.Headline.AchievedAcknowledgedSpansPerSecond != nil || !strings.Contains(strings.Join(p.Headline.WithheldReasons, "; "), tc.reason) {
 				t.Fatalf("headline %+v, want withheld because %q", p.Headline, tc.reason)
 			}
 		})

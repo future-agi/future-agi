@@ -18,7 +18,7 @@ import (
 // withheld with every reason. Markdown is rendered from the same structure as
 // the JSON, so the two cannot disagree.
 
-const PublicationSchema = "fi.otlpbench.publication.v1"
+const PublicationSchema = "fi.otlpbench.publication.v2"
 
 // DefaultMinSustained is the shortest load window whose throughput may be
 // published as sustained. The TH-8687 acceptance profile is 24 hours.
@@ -32,19 +32,25 @@ type PublishOptions struct {
 	Telemetry io.Reader
 }
 
-// Headline is the single throughput figure of a publication, or why there is
-// none.
+// Headline is the single throughput statement of a publication, or why there is
+// none. It is a pass at the OFFERED rate, not a measured capacity: the rules
+// require every offered span to be started, acknowledged and found stored, so
+// a published headline always states the offered rate.
 type Headline struct {
 	Status          string   `json:"status"`
 	WithheldReasons []string `json:"withheld_reasons"`
 	Definition      string   `json:"definition"`
 	Rule            string   `json:"rule"`
-	// Published only: acknowledged spans the exact-ID verification found
-	// stored, divided by the scheduled load duration.
-	VerifiedSpansPerSecond *float64 `json:"verified_sustained_spans_per_second,omitempty"`
-	OfferedSpansPerSecond  int64    `json:"offered_spans_per_second"`
-	SustainedSeconds       float64  `json:"sustained_seconds"`
-	MinSustainedSeconds    float64  `json:"min_sustained_seconds"`
+	// Published only: the offered rate, sustained and verified under the rule.
+	SustainedOfferedSpansPerSecond *int64 `json:"sustained_offered_spans_per_second,omitempty"`
+	// Published only: acknowledged spans over the measured load window (from
+	// the start of the load to the completion of its last export), a measured
+	// figure that is at most the offered rate.
+	AchievedAcknowledgedSpansPerSecond *float64 `json:"achieved_acknowledged_spans_per_second_over_load_window,omitempty"`
+	LoadWindowSeconds                  float64  `json:"load_window_seconds"`
+	OfferedSpansPerSecond              int64    `json:"offered_spans_per_second"`
+	SustainedSeconds                   float64  `json:"sustained_seconds"`
+	MinSustainedSeconds                float64  `json:"min_sustained_seconds"`
 }
 
 // Stage is one of the five stages a span passes, with its count.
@@ -164,8 +170,9 @@ func stages(r Result) []Stage {
 
 func headline(r Result, minSustained time.Duration, telemetry *TelemetryCheck) Headline {
 	h := Headline{Status: "withheld", WithheldReasons: []string{}, OfferedSpansPerSecond: r.Config.Rate, SustainedSeconds: r.Config.Duration.Seconds(), MinSustainedSeconds: minSustained.Seconds(),
-		Definition: "verified sustained throughput = acknowledged spans the exact-ID verification found stored / scheduled load duration",
-		Rule:       "printed only for an executed run of at least the minimum duration whose verification completed with no missing or unexpected span, that started and acknowledged all offered load, saw every sentinel and had no fault"}
+		LoadWindowSeconds: r.LoadSeconds,
+		Definition:        "a pass at the offered rate, not a capacity: the offered spans/s is stated as sustained when every offered span was started, acknowledged and found stored by the exact-ID verification; the achieved figure is acknowledged spans / measured load window (load start to the completion of the last export)",
+		Rule:              "printed only for an executed run of at least the minimum duration whose verification completed with no missing or unexpected span and no stored span of a refused request, that started and acknowledged all offered load, saw every sentinel and had no fault"}
 	why := func(format string, args ...any) {
 		h.WithheldReasons = append(h.WithheldReasons, fmt.Sprintf(format, args...))
 	}
@@ -191,8 +198,11 @@ func headline(r Result, minSustained time.Duration, telemetry *TelemetryCheck) H
 	if v.Complete && v.Missing != 0 {
 		why("%d attempted spans are missing from storage (%d acknowledged-but-missing)", v.Missing, v.MissingBy.AcknowledgedMissing)
 	}
-	if v.Complete && (v.UnexpectedRows != 0 || v.ContractViolation) {
-		why("storage holds %d rows that are not this run's identities, or stored spans of refused requests", v.UnexpectedRows)
+	if v.Complete && v.UnexpectedRows != 0 {
+		why("storage holds %d rows that are not this run's identities", v.UnexpectedRows)
+	}
+	if v.Complete && v.ContractViolation {
+		why("storage holds spans of requests the collector refused (%d whole-request rejected, %d beyond a partial rejection)", v.PersistedBy.RejectedButPersisted, v.PersistedBy.PartialExcess)
 	}
 	if r.Recovery != nil {
 		why("the run injected or declared faults: a recovery case is not a throughput measurement")
@@ -203,9 +213,12 @@ func headline(r Result, minSustained time.Duration, telemetry *TelemetryCheck) H
 	if telemetry != nil && telemetry.IdentityViolations > 0 {
 		why("%d telemetry progress lines break the accounting identity", telemetry.IdentityViolations)
 	}
+	if len(h.WithheldReasons) == 0 && r.LoadSeconds <= 0 {
+		why("the load window was not measured")
+	}
 	if len(h.WithheldReasons) == 0 {
-		rate := float64(c.Acknowledged-int64(v.MissingBy.AcknowledgedMissing)) / r.Config.Duration.Seconds()
-		h.Status, h.VerifiedSpansPerSecond = "published", &rate
+		offered, achieved := r.Config.Rate, float64(c.Acknowledged)/r.LoadSeconds
+		h.Status, h.SustainedOfferedSpansPerSecond, h.AchievedAcknowledgedSpansPerSecond = "published", &offered, &achieved
 	}
 	return h
 }
@@ -444,7 +457,8 @@ func WritePublicationMarkdown(w io.Writer, p Publication) error {
 	f("Result schema `%s`, publication schema `%s`. Run status: **%s**. Started %s.\n\n", p.ResultSchema, p.Schema, p.RunStatus, p.Started.UTC().Format(time.RFC3339))
 	f("## Headline\n\n")
 	if p.Headline.Status == "published" {
-		f("**%.1f verified sustained spans/s** for %.0f s at an offered %d spans/s.\n\n", *p.Headline.VerifiedSpansPerSecond, p.Headline.SustainedSeconds, p.Headline.OfferedSpansPerSecond)
+		f("**Sustained the offered %d spans/s for %.0f s (verified):** every offered span was started, acknowledged and found stored. Achieved %.1f acknowledged spans/s over the measured %.3f s load window. This is a pass at the offered rate, not a capacity limit.\n\n",
+			*p.Headline.SustainedOfferedSpansPerSecond, p.Headline.SustainedSeconds, *p.Headline.AchievedAcknowledgedSpansPerSecond, p.Headline.LoadWindowSeconds)
 		f("Definition: %s; %s (minimum %.0f s).\n\n", p.Headline.Definition, p.Headline.Rule, p.Headline.MinSustainedSeconds)
 	} else {
 		f("**No headline throughput.** It is withheld because:\n\n")
