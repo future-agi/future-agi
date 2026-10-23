@@ -53,6 +53,9 @@ case "$profile" in
     # BENCH_DECLARED_FAULTS (space-separated name@offset+duration, offsets from
     # load start), e.g. "clickhouse-stop@30m+60m" for a 60-minute ClickHouse stop.
     : "${BENCH_DECLARED_FAULTS:?Set BENCH_DECLARED_FAULTS to the disruptions you will perform, e.g. clickhouse-stop@30m+60m}"
+    # A fault counts as recovered only when the collector backlog was seen to
+    # drain, which needs the collector's /healthz.
+    : "${BENCH_COLLECTOR_HEALTH_URL:?A recovery run needs BENCH_COLLECTOR_HEALTH_URL: without the collector backlog no fault can count as recovered}"
     rate=15000 batch=500 concurrency=16
     load=(--rate "$rate" --duration 3h --max-duration 3h --max-bytes 900000000000
       --batch-size "$batch" --concurrency "$concurrency" --settle 10m)
@@ -114,9 +117,6 @@ this script cannot change them):
 EOF
 if [[ -z "${BENCH_COLLECTOR_HEALTH_URL:-}" ]]; then
   echo "*** WARNING: BENCH_COLLECTOR_HEALTH_URL is unset: the collector's real budget and revision cannot be checked ***" >&2
-fi
-if [[ "$profile" == recovery && -z "${BENCH_COLLECTOR_HEALTH_URL:-}" ]]; then
-  echo "*** WARNING: a recovery run without BENCH_COLLECTOR_HEALTH_URL cannot follow the collector backlog or see dead-lettered rows ***" >&2
 fi
 if [[ "$profile" != smoke && -z "${BENCH_VERIFY_CHECKPOINT:-}" ]]; then
   echo "*** WARNING: BENCH_VERIFY_CHECKPOINT is unset: an interrupted verification of this profile cannot be resumed ***" >&2

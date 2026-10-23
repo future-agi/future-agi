@@ -272,23 +272,26 @@ func analyseRecovery(c Config, faults []FaultResult, s *runState, start time.Tim
 }
 
 // recoveryTime is the largest of the observed recovery components, or why the
-// system did not recover within the run.
+// system did not recover within the run. All three components must be
+// observed: a fault whose backlog was never sampled (no collector health URL)
+// or had no sample before it (no baseline) is not recovered, because its drain
+// is unknown.
 func recoveryTime(f FaultResult, backlogObserved bool) (*float64, bool, string) {
 	switch {
 	case f.FirstAckAfterEndS == nil:
 		return nil, false, "no request was acknowledged after the fault ended"
-	case backlogObserved && f.BacklogBaselineRows != nil && f.BacklogDrainedAfterEnd == nil:
+	case !backlogObserved:
+		return nil, false, "the collector backlog was not observed (no collector health URL), so its drain after the fault is unknown"
+	case f.BacklogBaselineRows == nil:
+		return nil, false, "no collector backlog sample before the fault, so its pre-fault baseline and drain are unknown"
+	case f.BacklogDrainedAfterEnd == nil:
 		return nil, false, "the collector backlog did not return to its pre-fault baseline"
 	case f.EarlierSentinels == 0:
 		return nil, false, "no acknowledged sentinel was scheduled before the fault ended"
 	case f.EarlierSentinelsUnseen > 0:
 		return nil, false, fmt.Sprintf("%d acknowledged sentinels scheduled before the fault ended never became visible", f.EarlierSentinelsUnseen)
 	}
-	t := max(*f.FirstAckAfterEndS, *f.EarlierVisibleAfterEndS)
-	if f.BacklogDrainedAfterEnd != nil {
-		t = max(t, *f.BacklogDrainedAfterEnd)
-	}
-	return f64(t), true, ""
+	return f64(max(*f.FirstAckAfterEndS, *f.EarlierVisibleAfterEndS, *f.BacklogDrainedAfterEnd)), true, ""
 }
 
 // ScheduledOutcomes counts the requests scheduled inside a window by outcome

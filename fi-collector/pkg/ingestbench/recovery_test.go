@@ -553,6 +553,52 @@ func TestRecoveryFromACollectorRestartLosesNoAcknowledgedSpan(t *testing.T) {
 	requireTelemetry(t, telemetry.Bytes(), "collector-restart")
 }
 
+// F6: a fault counts as recovered only when all three components were observed.
+// Without the collector backlog (no health URL), or without a backlog sample
+// before the fault (no baseline), the drain is unknown and the fault is not
+// recovered, whatever the acknowledgements and sentinels say.
+func TestRecoveryNeedsAnObservedBacklogDrain(t *testing.T) {
+	ack, visible, drained, baseline := f64(0.2), f64(0.1), f64(0.3), int64(5)
+	full := FaultResult{FirstAckAfterEndS: ack, EarlierSentinels: 3, EarlierVisibleAfterEndS: visible, BacklogBaselineRows: &baseline, BacklogDrainedAfterEnd: drained}
+	if got, ok, why := recoveryTime(full, true); !ok || got == nil || *got != 0.3 || why != "" {
+		t.Fatalf("all components observed: %v %v %q", got, ok, why)
+	}
+	if _, ok, why := recoveryTime(full, false); ok || !strings.Contains(why, "not observed") {
+		t.Fatalf("no backlog samples: recovered=%v %q", ok, why)
+	}
+	noBaseline := full
+	noBaseline.BacklogBaselineRows, noBaseline.BacklogDrainedAfterEnd = nil, nil
+	if _, ok, why := recoveryTime(noBaseline, true); ok || !strings.Contains(why, "baseline") {
+		t.Fatalf("no pre-fault sample: recovered=%v %q", ok, why)
+	}
+	notDrained := full
+	notDrained.BacklogDrainedAfterEnd = nil
+	if _, ok, why := recoveryTime(notDrained, true); ok || !strings.Contains(why, "did not return") {
+		t.Fatalf("backlog not drained: recovered=%v %q", ok, why)
+	}
+
+	// End to end: the restart case without a health URL is not a recovery.
+	store := &mockStorage{}
+	ch := httptest.NewServer(http.HandlerFunc(store.serve))
+	defer ch.Close()
+	collector := newRestartableCollector(t, chwriter.Config{URL: ch.URL, Table: "spans", Database: "default"}, server.Config{})
+	c := recoveryConfig(collector)
+	c.ClickHouseURL, c.CollectorHealthURL = ch.URL, ""
+	store.cfg = c
+	r, err := Run(context.Background(), c, Options{Faults: []Fault{{Name: "collector-restart", At: 1500 * time.Millisecond, Duration: 800 * time.Millisecond,
+		Inject: func(context.Context) error { return collector.stop() }, Restore: func(context.Context) error { return collector.start() }}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Recovery == nil || len(r.Recovery.Faults) != 1 {
+		t.Fatalf("no recovery result: %+v", r.Recovery)
+	}
+	f := r.Recovery.Faults[0]
+	if f.Recovered || f.RecoverySeconds != nil || !strings.Contains(f.NotRecoveredReason, "not observed") || r.Recovery.Passed() || r.Status == "measured-recovery-complete" {
+		t.Fatalf("a recovery without any backlog observation was accepted: status %s fault %+v", r.Status, f)
+	}
+}
+
 // M2: ClickHouse is paused (every writer request held) for 1.5 s while the
 // collector runs with a 24-row budget. The backlog grows to the budget, the
 // collector refuses with a retry hint instead of dropping, the held inserts
