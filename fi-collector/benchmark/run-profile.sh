@@ -47,7 +47,20 @@ case "$profile" in
       --batch-size "$batch" --concurrency "$concurrency" --settle 2m)
     verify=(--verify-chunk 1000000 --verify-query-timeout 2m --verify-timeout 1h --verify-max-memory 4294967296
       --direct-probe-interval 2s --direct-probe-min-age 10s --direct-probe-after-settle 20) ;;
-  *) echo 'profile must be smoke, sustained or burst' >&2; exit 2 ;;
+  recovery)
+    # Operator-run recovery case on an ISOLATED stack. This script never stops,
+    # pauses or kills anything: YOU perform each disruption and declare it in
+    # BENCH_DECLARED_FAULTS (space-separated name@offset+duration, offsets from
+    # load start), e.g. "clickhouse-stop@30m+60m" for a 60-minute ClickHouse stop.
+    : "${BENCH_DECLARED_FAULTS:?Set BENCH_DECLARED_FAULTS to the disruptions you will perform, e.g. clickhouse-stop@30m+60m}"
+    rate=15000 batch=500 concurrency=16
+    load=(--rate "$rate" --duration 3h --max-duration 3h --max-bytes 900000000000
+      --batch-size "$batch" --concurrency "$concurrency" --settle 10m)
+    verify=(--verify-chunk 1000000 --verify-query-timeout 5m --verify-timeout 6h --verify-max-memory 4294967296
+      --direct-probe-interval 10s --direct-probe-min-age 30s --direct-probe-after-settle 20)
+    read -r -a declared <<<"$BENCH_DECLARED_FAULTS"
+    for fault in "${declared[@]}"; do verify+=(--declare-fault "$fault"); done ;;
+  *) echo 'profile must be smoke, sustained, burst or recovery' >&2; exit 2 ;;
 esac
 
 args=(
@@ -100,6 +113,9 @@ EOF
 if [[ -z "${BENCH_COLLECTOR_HEALTH_URL:-}" ]]; then
   echo "*** WARNING: BENCH_COLLECTOR_HEALTH_URL is unset: the collector's real budget and revision cannot be checked ***" >&2
 fi
+if [[ "$profile" == recovery && -z "${BENCH_COLLECTOR_HEALTH_URL:-}" ]]; then
+  echo "*** WARNING: a recovery run without BENCH_COLLECTOR_HEALTH_URL cannot follow the collector backlog or see dead-lettered rows ***" >&2
+fi
 if [[ "$profile" != smoke && -z "${BENCH_VERIFY_CHECKPOINT:-}" ]]; then
   echo "*** WARNING: BENCH_VERIFY_CHECKPOINT is unset: an interrupted verification of this profile cannot be resumed ***" >&2
 fi
@@ -107,4 +123,6 @@ fi
 # offline. Warnings go to stderr; the JSON check to stdout.
 go run ./cmd/otlpbench collector-budget "${budget[@]}"
 # Arguments are passed as an array, never evaluated as a shell command.
+# Afterwards: go run ./cmd/otlpbench publish --markdown new.md --json new.json \
+#   --telemetry <out>.telemetry.jsonl <out>   (the headline needs >= --min-sustained)
 exec go run ./cmd/otlpbench "${args[@]}" "$@"
