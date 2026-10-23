@@ -120,7 +120,11 @@ export const HERO_COPY = {
   },
 };
 
-export const ENTRY_TAB = { BUILD: "build", MY: "my-environments" };
+export const ENTRY_TAB = {
+  BUILD: "build",
+  MY: "my-environments",
+  PERSONAS: "personas",
+};
 export const DEFAULT_ENTRY_TAB = ENTRY_TAB.BUILD;
 
 // Matches the product tab rail (see HarnessDetail): the theme gives every tab a

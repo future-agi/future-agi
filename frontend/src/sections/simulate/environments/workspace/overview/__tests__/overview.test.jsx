@@ -22,7 +22,7 @@ const renderPanel = (props = {}) =>
       onGo={vi.fn()}
       agentConnected
       {...props}
-    />
+    />,
   );
 
 describe("OverviewPanel", () => {
@@ -68,7 +68,12 @@ describe("OverviewPanel", () => {
         stores: [],
         amendments: [],
         dependencies: [
-          { name: "postgres", kind: "datastore", what: "Stores rider rows", used_by: ["book_ride"] },
+          {
+            name: "postgres",
+            kind: "datastore",
+            what: "Stores rider rows",
+            used_by: ["book_ride"],
+          },
         ],
       },
     });
@@ -125,7 +130,14 @@ describe("OverviewPanel", () => {
 
   it("shows the seeded tables under The world for a backed env", () => {
     renderPanel({
-      env: { ...MOCK_WORLD, seed: { tables: [{ name: "bookings", rows: 900, note: "world_db · postgres" }] } },
+      env: {
+        ...MOCK_WORLD,
+        seed: {
+          tables: [
+            { name: "bookings", rows: 900, note: "world_db · postgres" },
+          ],
+        },
+      },
       backedWorld: BACKED_WORLD,
     });
     expect(screen.getByText("Seeded data")).toBeInTheDocument();
@@ -135,7 +147,10 @@ describe("OverviewPanel", () => {
 
   it("shows a seeded table the API sent without a row count, without breaking", () => {
     renderPanel({
-      env: { ...MOCK_WORLD, seed: { tables: [{ name: "bookings", rows: 900 }, { name: "fares" }] } },
+      env: {
+        ...MOCK_WORLD,
+        seed: { tables: [{ name: "bookings", rows: 900 }, { name: "fares" }] },
+      },
       backedWorld: BACKED_WORLD,
     });
     expect(screen.getByText("fares")).toBeInTheDocument();
@@ -149,7 +164,12 @@ describe("OverviewPanel", () => {
     renderPanel({
       env: {
         ...MOCK_WORLD,
-        seed: { tables: [{ name: "_alk_tool_trace", rows: 0 }, { name: "harness_seed_sentinel", rows: 1 }] },
+        seed: {
+          tables: [
+            { name: "_alk_tool_trace", rows: 0 },
+            { name: "harness_seed_sentinel", rows: 1 },
+          ],
+        },
       },
       backedWorld: BACKED_WORLD,
     });
@@ -161,7 +181,13 @@ describe("OverviewPanel", () => {
     renderPanel({
       env: {
         ...MOCK_WORLD,
-        testSubject: { id: "a", name: "Ride bot", provider: "livekit_bridge", versions_count: 1, active_version: "v1" },
+        testSubject: {
+          id: "a",
+          name: "Ride bot",
+          provider: "livekit_bridge",
+          versions_count: 1,
+          active_version: "v1",
+        },
       },
       backedWorld: BACKED_WORLD,
     });
@@ -186,7 +212,9 @@ describe("OverviewPanel", () => {
     expect(screen.getByText("Retell · 2 versions")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /View agent/ })).toHaveAttribute(
       "href",
-      "/dashboard/simulate/agent-definitions/agent-1",
+      // The Connected agent page, which every org can open; the old Agent
+      // Definition page is hidden from orgs restricted to Environments.
+      "/dashboard/agents/connected/agent-1",
     );
   });
 
