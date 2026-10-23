@@ -133,6 +133,63 @@ type Verification struct {
 	Error              string  `json:"error,omitempty"`
 	ElapsedSeconds     float64 `json:"elapsed_seconds"`
 	PreexistingRunRows uint64  `json:"preexisting_run_rows"`
+	// MissingRanges lists maximal runs of consecutive requests of one outcome
+	// class that each miss at least one span, in request order (at most
+	// maxMissingRanges; the rest are counted as omitted).
+	MissingRanges             []MissingRange `json:"missing_ranges"`
+	MissingRangesOmitted      int64          `json:"missing_ranges_omitted"`
+	MissingRangesOmittedSpans uint64         `json:"missing_ranges_omitted_spans"`
+	// DurableLag is the server-side insert lag of every stored span.
+	DurableLag DurableLagResult `json:"durable_lag"`
+}
+
+// MissingRange is a run of requests [FirstRequest, LastRequest] of one outcome
+// class, each missing at least one span; MissingSpans is their total. Scheduled
+// offsets are seconds from load start (request k is due at k*batch/rate).
+type MissingRange struct {
+	Class           string  `json:"class"`
+	FirstRequest    int64   `json:"first_request"`
+	LastRequest     int64   `json:"last_request"`
+	FirstScheduledS float64 `json:"first_scheduled_offset_seconds"`
+	LastScheduledS  float64 `json:"last_scheduled_offset_seconds"`
+	MissingSpans    uint64  `json:"missing_spans"`
+}
+
+// DurableLagResult is, for every distinct stored span of the run, ClickHouse's
+// own insert timestamp (created_at, DEFAULT now64(6) evaluated when the server
+// processes the INSERT, not set by the collector) minus the scheduled send of
+// the span's request, corrected by the measured server-minus-generator clock
+// offset. created_at is taken before the part is committed, so this is a lower
+// bound on scheduled-send-to-commit latency; duplicates count once, with their
+// first insert.
+type DurableLagResult struct {
+	Status string `json:"status"`
+	Method string `json:"method"`
+	// Rows is the stored spans measured: Lag.Count plus NegativeRows. With a
+	// complete verification it equals the distinct stored attempted spans.
+	Rows         uint64            `json:"stored_spans_measured"`
+	NegativeRows uint64            `json:"spans_inserted_before_scheduled_send"`
+	Lag          Percentiles       `json:"insert_lag_from_scheduled_send"`
+	Buckets      []HistogramBucket `json:"insert_lag_buckets"`
+	// The clock correction applied (server minus generator) and its
+	// uncertainty; lags below the uncertainty are not resolved.
+	ClockOffsetMS      float64 `json:"clock_offset_applied_ms"`
+	ClockUncertaintyMS float64 `json:"clock_offset_uncertainty_ms"`
+	ClockMeasured      bool    `json:"clock_offset_measured"`
+}
+
+// ScheduleResult relates the open-loop schedule to what was started.
+type ScheduleResult struct {
+	Method string `json:"method"`
+	// ScheduledSpans: spans whose scheduled send passed while the producer
+	// ran; NotStartedSpans of them were never sent (k6 calls these dropped
+	// iterations).
+	ScheduledSpans          int64       `json:"scheduled_spans"`
+	NotStartedSpans         int64       `json:"scheduled_but_not_started_spans"`
+	LateStartThresholdMS    float64     `json:"late_start_threshold_ms"`
+	LateStartRequests       int64       `json:"late_start_requests"`
+	LateStartRequestsOver1s int64       `json:"late_start_requests_over_1s"`
+	StartDelay              Percentiles `json:"start_delay_after_scheduled_send"`
 }
 
 type Percentiles struct {
@@ -140,52 +197,164 @@ type Percentiles struct {
 	P50   float64 `json:"p50_ms"`
 	P95   float64 `json:"p95_ms"`
 	P99   float64 `json:"p99_ms"`
+	P999  float64 `json:"p999_ms"`
 	Max   float64 `json:"max_ms"`
+}
+
+// histogramBuckets is the number of latency buckets: upper edges are 1ms up to
+// 10s and 1s thereafter, through 24h.
+const histogramBuckets = 96401
+
+// latencyBucket is the bucket of a duration in milliseconds, rounded up.
+func latencyBucket(ms float64) int {
+	bucket := int(math.Ceil(ms))
+	if bucket > 10000 {
+		bucket = 10000 + int(math.Ceil((ms-10000)/1000))
+	}
+	return min(bucket, histogramBuckets-1)
+}
+
+// latencyEdge is the upper edge, in milliseconds, of a latency bucket.
+func latencyEdge(i int) float64 {
+	if i > 10000 {
+		return float64(10000 + (i-10000)*1000)
+	}
+	return float64(i)
 }
 
 // histogram has constant memory even for day-long runs. Bucket upper edges are
 // 1ms up to 10s and 1s thereafter (through 24h); values are rounded up, not down.
 type histogram struct {
-	counts [96401]int64
+	counts [histogramBuckets]int64
 	n      int64
 	max    float64
 }
 
 func (h *histogram) add(d time.Duration) {
 	ms := math.Max(0, float64(d)/float64(time.Millisecond))
-	bucket := int(math.Ceil(ms))
-	if bucket > 10000 {
-		bucket = 10000 + int(math.Ceil((ms-10000)/1000))
-	}
-	if bucket >= len(h.counts) {
-		bucket = len(h.counts) - 1
-	}
-	h.counts[bucket]++
+	h.counts[latencyBucket(ms)]++
 	h.n++
 	h.max = math.Max(h.max, ms)
 }
 
 func (h *histogram) summary() Percentiles {
-	p := Percentiles{Count: h.n, Max: h.max}
-	quantile := func(q float64) float64 {
-		if h.n == 0 {
-			return 0
-		}
-		target := int64(math.Ceil(q * float64(h.n)))
-		var sum int64
+	return percentiles(h.n, h.max, func(yield func(int, int64) bool) {
 		for i, n := range h.counts {
-			sum += n
-			if sum >= target {
-				if i > 10000 {
-					return float64(10000 + (i-10000)*1000)
-				}
-				return float64(i)
+			if n != 0 && !yield(i, n) {
+				return
 			}
 		}
-		return h.max
+	})
+}
+
+// buckets lists the non-empty buckets, so a published result can carry its raw
+// distribution, not only the percentiles.
+func (h *histogram) buckets() []HistogramBucket {
+	var out []HistogramBucket
+	for i, n := range h.counts {
+		if n != 0 {
+			out = append(out, HistogramBucket{UpperMS: latencyEdge(i), Count: n})
+		}
 	}
-	p.P50, p.P95, p.P99 = quantile(.5), quantile(.95), quantile(.99)
+	return out
+}
+
+// HistogramBucket is one non-empty bucket: Count values at most UpperMS.
+type HistogramBucket struct {
+	UpperMS float64 `json:"upper_ms"`
+	Count   int64   `json:"count"`
+}
+
+// percentiles reads quantiles from buckets visited in increasing order. A
+// quantile is the upper edge of its bucket: never understated.
+func percentiles(n int64, maxMS float64, visit func(func(int, int64) bool)) Percentiles {
+	p := Percentiles{Count: n, Max: maxMS}
+	if n == 0 {
+		return p
+	}
+	targets := []float64{.5, .95, .99, .999}
+	out := []*float64{&p.P50, &p.P95, &p.P99, &p.P999}
+	next := 0
+	var sum int64
+	visit(func(i int, c int64) bool {
+		sum += c
+		for next < len(targets) && sum >= int64(math.Ceil(targets[next]*float64(n))) {
+			*out[next] = latencyEdge(i)
+			next++
+		}
+		return next < len(targets)
+	})
 	return p
+}
+
+// sparseHistogram is the latency histogram in a form that serialises compactly
+// (a verification checkpoint carries it): bucket index -> count.
+type sparseHistogram struct {
+	Counts map[int]int64 `json:"counts"`
+	N      int64         `json:"n"`
+	MaxMS  float64       `json:"max_ms"`
+}
+
+func (h *sparseHistogram) addN(d time.Duration, n int64) {
+	if n <= 0 {
+		return
+	}
+	if h.Counts == nil {
+		h.Counts = map[int]int64{}
+	}
+	ms := math.Max(0, float64(d)/float64(time.Millisecond))
+	h.Counts[latencyBucket(ms)] += n
+	h.N += n
+	h.MaxMS = math.Max(h.MaxMS, ms)
+}
+
+// addBucket adds n values already bucketed (by the server) to bucket b; maxMS
+// is the largest of them.
+func (h *sparseHistogram) addBucket(b int, n int64, maxMS float64) {
+	if n <= 0 {
+		return
+	}
+	if h.Counts == nil {
+		h.Counts = map[int]int64{}
+	}
+	h.Counts[min(max(b, 0), histogramBuckets-1)] += n
+	h.N += n
+	h.MaxMS = math.Max(h.MaxMS, maxMS)
+}
+
+func (h *sparseHistogram) merge(o sparseHistogram) {
+	for b, n := range o.Counts {
+		h.addBucket(b, n, 0)
+	}
+	h.MaxMS = math.Max(h.MaxMS, o.MaxMS)
+}
+
+func (h *sparseHistogram) buckets() []HistogramBucket {
+	keys := make([]int, 0, len(h.Counts))
+	for k := range h.Counts {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	out := make([]HistogramBucket, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, HistogramBucket{UpperMS: latencyEdge(k), Count: h.Counts[k]})
+	}
+	return out
+}
+
+func (h *sparseHistogram) summary() Percentiles {
+	keys := make([]int, 0, len(h.Counts))
+	for k := range h.Counts {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	return percentiles(h.N, h.MaxMS, func(yield func(int, int64) bool) {
+		for _, k := range keys {
+			if !yield(k, h.Counts[k]) {
+				return
+			}
+		}
+	})
 }
 
 type ProbeResult struct {
@@ -201,14 +370,6 @@ type ProbeResult struct {
 	ResponseBytes  int64         `json:"response_bytes"`
 }
 
-type LagResult struct {
-	Method      string      `json:"method"`
-	Sampled     int         `json:"sampled_spans"`
-	Unseen      int         `json:"unseen_sampled_spans"`
-	QueryErrors int64       `json:"query_errors"`
-	Latency     Percentiles `json:"visibility_lag_upper_bound"`
-}
-
 // RetryHints summarises server-requested delays on retryable rejections.
 type RetryHints struct {
 	Requests int64       `json:"requests_with_retry_hint"`
@@ -216,27 +377,34 @@ type RetryHints struct {
 }
 
 type Result struct {
-	SchemaVersion   string             `json:"schema_version"`
-	Status          string             `json:"status"`
-	Config          Config             `json:"config"`
-	Provenance      Provenance         `json:"provenance"`
-	Started         time.Time          `json:"started_at"`
-	LoadSeconds     float64            `json:"load_elapsed_seconds"`
-	StopReason      string             `json:"stop_reason"`
-	PlannedSpans    int64              `json:"planned_spans"`
-	Counters        Counters           `json:"counters"`
-	AccountingError string             `json:"accounting_error,omitempty"`
-	Statuses        map[string]int64   `json:"response_statuses"`
-	RetryHints      RetryHints         `json:"retry_hints"`
-	RequestLatency  Percentiles        `json:"otlp_request_latency"`
-	Workload        WorkloadStats      `json:"workload"`
-	Verification    Verification       `json:"verification"`
-	Lag             LagResult          `json:"lag"`
-	Reads           []ProbeResult      `json:"application_reads"`
-	DirectReads     []DirectReadResult `json:"direct_clickhouse_reads"`
-	Resources       []ResourceSnapshot `json:"resources"`
-	Warnings        []string           `json:"warnings"`
-	Limitations     []string           `json:"limitations"`
+	SchemaVersion   string           `json:"schema_version"`
+	Status          string           `json:"status"`
+	Config          Config           `json:"config"`
+	Provenance      Provenance       `json:"provenance"`
+	Started         time.Time        `json:"started_at"`
+	LoadSeconds     float64          `json:"load_elapsed_seconds"`
+	StopReason      string           `json:"stop_reason"`
+	PlannedSpans    int64            `json:"planned_spans"`
+	Counters        Counters         `json:"counters"`
+	AccountingError string           `json:"accounting_error,omitempty"`
+	Statuses        map[string]int64 `json:"response_statuses"`
+	RetryHints      RetryHints       `json:"retry_hints"`
+	RequestLatency  Percentiles      `json:"otlp_request_latency"`
+	// RequestLatencyFromScheduled is the same requests timed from their
+	// scheduled send (coordinated-omission corrected).
+	RequestLatencyFromScheduled Percentiles        `json:"otlp_request_latency_from_scheduled_send"`
+	Schedule                    ScheduleResult     `json:"schedule"`
+	Workload                    WorkloadStats      `json:"workload"`
+	Verification                Verification       `json:"verification"`
+	Lag                         LagResult          `json:"lag"`
+	Backlog                     BacklogResult      `json:"collector_backlog"`
+	Clock                       ClockResult        `json:"clock"`
+	Recovery                    *RecoveryResult    `json:"recovery,omitempty"`
+	Reads                       []ProbeResult      `json:"application_reads"`
+	DirectReads                 []DirectReadResult `json:"direct_clickhouse_reads"`
+	Resources                   []ResourceSnapshot `json:"resources"`
+	Warnings                    []string           `json:"warnings"`
+	Limitations                 []string           `json:"limitations"`
 }
 
 func newResult(c Config) Result {
@@ -246,7 +414,8 @@ func newResult(c Config) Result {
 			"Synthetic payload profiles are a seeded model, not measured customer payload distributions.",
 			"Accepted/acknowledged means the collector's OTLP response claims acceptance; neither means durable storage.",
 			"No client retries. Ambiguous exports may still be persisted; partial success does not identify rejected IDs, so loss inside partial-success requests is a lower bound.",
-			"Visibility lag is sampled send-to-first-query-observation, an upper bound including polling/query delay, not storage commit latency.",
+			"Read-visible lag is measured on sentinel spans of the load (the first span of every k-th acknowledged request) and bracketed by the polls around it; its upper bound includes polling/query delay. It is not storage commit latency.",
+			"Durable lag uses ClickHouse's created_at, evaluated when the server processes the INSERT and before the part is committed, corrected by a measured clock offset: a lower bound on commit latency.",
 			"Duplicate counts cover rows visible during verification, not duplicates already removed by MergeTree merges.",
 			"Verification is chunked by trace range and time window, not a transactional cross-shard snapshot; quiesce the run and record replica routing/consistency.",
 			"Direct ClickHouse reads measure database latency for fixed probe queries, not application API or browser latency.",
@@ -308,10 +477,57 @@ func Report(w io.Writer, r Result) error {
 	if !v.Complete {
 		fmt.Fprintln(w, "No zero-loss conclusion: independent verification is incomplete.")
 	}
-	if r.Lag.Latency.Count == 0 {
-		fmt.Fprintf(w, "Sampled visibility lag: not measured; seen 0 of %d samples\n", r.Lag.Sampled)
+	for i, m := range v.MissingRanges {
+		if i == 20 {
+			fmt.Fprintf(w, "... %d more missing ranges in the result JSON\n", len(v.MissingRanges)-20)
+			break
+		}
+		fmt.Fprintf(w, "Missing range: requests %d-%d (%s), scheduled at %.3f-%.3fs, %d spans missing\n", m.FirstRequest, m.LastRequest, m.Class, m.FirstScheduledS, m.LastScheduledS, m.MissingSpans)
+	}
+	if v.MissingRangesOmitted > 0 {
+		fmt.Fprintf(w, "Missing ranges beyond the first %d: %d ranges, %d spans\n", maxMissingRanges, v.MissingRangesOmitted, v.MissingRangesOmittedSpans)
+	}
+	l := r.Lag
+	if l.FromScheduled.Count == 0 {
+		fmt.Fprintf(w, "Read-visible lag: not measured; seen 0 of %d acknowledged sentinels (%d registered)\n", l.Sampled, l.Registered)
 	} else {
-		fmt.Fprintf(w, "Sampled visibility lag upper bound p50/p95/p99: %.3f/%.3f/%.3f ms; seen %d of %d\n", r.Lag.Latency.P50, r.Lag.Latency.P95, r.Lag.Latency.P99, r.Lag.Latency.Count, r.Lag.Sampled)
+		fmt.Fprintf(w, "Read-visible lag from the scheduled send (sentinels: %d seen of %d acknowledged, %d never seen; poll %.0f ms): upper bound p50/p95/p99/p99.9/max %.0f/%.0f/%.0f/%.0f/%.0f ms; lower bound p50/p99 %.0f/%.0f ms\n",
+			l.FromScheduled.Count, l.Sampled, l.Unseen, l.PollIntervalMS, l.FromScheduled.P50, l.FromScheduled.P95, l.FromScheduled.P99, l.FromScheduled.P999, l.FromScheduled.Max, l.LowerFromScheduled.P50, l.LowerFromScheduled.P99)
+	}
+	d := v.DurableLag
+	if d.Lag.Count == 0 {
+		fmt.Fprintf(w, "Durable (server insert) lag: %s; %d spans measured, %d inserted before their scheduled send\n", orUnknown(d.Status), d.Rows, d.NegativeRows)
+	} else {
+		fmt.Fprintf(w, "Durable (server insert) lag from the scheduled send, %s, %d stored spans (%d before their scheduled send): p50/p95/p99/p99.9/max %.0f/%.0f/%.0f/%.0f/%.0f ms; clock offset applied %.3f ms +/- %.3f ms\n",
+			d.Status, d.Rows, d.NegativeRows, d.Lag.P50, d.Lag.P95, d.Lag.P99, d.Lag.P999, d.Lag.Max, d.ClockOffsetMS, d.ClockUncertaintyMS)
+	}
+	if r.Clock.Limited {
+		fmt.Fprintln(w, "Clock-limited: the generator-to-ClickHouse offset or its uncertainty exceeds 10 ms; durable lags below that are not resolved.")
+	}
+	if k := r.RequestLatencyFromScheduled; k.Count > 0 {
+		fmt.Fprintf(w, "OTLP request latency p50/p99/max: %.0f/%.0f/%.0f ms from the actual send, %.0f/%.0f/%.0f ms from the scheduled send\n",
+			r.RequestLatency.P50, r.RequestLatency.P99, r.RequestLatency.Max, k.P50, k.P99, k.Max)
+	}
+	if sc := r.Schedule; sc.ScheduledSpans > 0 {
+		fmt.Fprintf(w, "Schedule: %d spans scheduled, %d never started; %d requests started more than %.0f ms late (%d more than 1 s)\n",
+			sc.ScheduledSpans, sc.NotStartedSpans, sc.LateStartRequests, sc.LateStartThresholdMS, sc.LateStartRequestsOver1s)
+	}
+	b := r.Backlog
+	if b.Status == "measured" || b.Status == "measured-with-gaps" {
+		fmt.Fprintf(w, "Collector backlog (%s, %d samples, %d failed): buffered rows p50/p99/max %d/%d/%d of %d; slope %.2f rows/s (second half %.2f); drained after load: %t (%.3fs); restarts seen %d; insert stalls %d\n",
+			b.Status, b.Samples, b.FailedSamples, b.BufferedRows.P50, b.BufferedRows.P99, b.MaxBufferedRows, b.MaxPendingRows, b.SlopeRowsPerSecond, b.SecondHalfSlopeRowsPerSecond, b.Drained, b.DrainSeconds, b.CounterResets, len(b.InsertStalls))
+	} else {
+		fmt.Fprintf(w, "Collector backlog: %s\n", orUnknown(b.Status))
+	}
+	if rec := r.Recovery; rec != nil {
+		fmt.Fprintf(w, "Recovery: verification complete %t; acknowledged-but-missing %d; visible duplicates %d; ambiguous-but-persisted %d\n", rec.Complete, rec.AcknowledgedMissing, rec.VisibleDuplicates, rec.AmbiguousPersisted)
+		for _, f := range rec.Faults {
+			recovery := "NOT recovered: " + f.NotRecoveredReason
+			if f.RecoverySeconds != nil {
+				recovery = fmt.Sprintf("recovered in %.3fs after the fault ended", *f.RecoverySeconds)
+			}
+			fmt.Fprintf(w, "Fault %s (%s) %.3f-%.3fs: %s; requests scheduled during it %+v\n", f.Name, f.Source, f.StartS, f.EndS, recovery, f.RequestsScheduledDuring)
+		}
 	}
 	for _, d := range r.DirectReads {
 		if d.Latency.Count == 0 {

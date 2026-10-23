@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"net/url"
@@ -70,7 +73,94 @@ type ClickHouseInfo struct {
 	Clusters         []ClusterInfo      `json:"clusters"`
 	DeclaredTopology string             `json:"declared_topology"`
 	Hardware         ClickHouseHardware `json:"server_hardware"`
-	Error            string             `json:"error,omitempty"`
+	// CreateTableSHA256 identifies the table DDL (create_table_query).
+	CreateTableSHA256 string `json:"create_table_query_sha256,omitempty"`
+	// SessionInsertSettings are insert-related settings of the VERIFICATION
+	// user's session; the collector's writer sets async_insert itself (see the
+	// collector's /healthz writer block) and its user profile may differ.
+	SessionInsertSettings map[string]string `json:"session_insert_settings,omitempty"`
+	// MergeTreeSettings are server-level MergeTree defaults that decide what an
+	// acknowledged insert means on disk (fsync) and insert deduplication. A
+	// table-level override appears in the table DDL, not here.
+	MergeTreeSettings map[string]string `json:"merge_tree_settings,omitempty"`
+	SettingsError     string            `json:"settings_error,omitempty"`
+	// Storage of the whole table on the queried server, before the load and
+	// after verification. It includes every other run's data.
+	StorageBefore *TableStorage `json:"table_storage_before_load,omitempty"`
+	StorageAfter  *TableStorage `json:"table_storage_after_verification,omitempty"`
+	Error         string        `json:"error,omitempty"`
+}
+
+// TableStorage sums the table's active parts on the server answering the
+// verification connection (one node of a cluster; a Distributed table has
+// none of its own).
+type TableStorage struct {
+	Scope             string `json:"scope"`
+	Rows              uint64 `json:"rows"`
+	BytesOnDisk       uint64 `json:"bytes_on_disk"`
+	UncompressedBytes uint64 `json:"data_uncompressed_bytes"`
+	ActiveParts       uint64 `json:"active_parts"`
+	Error             string `json:"error,omitempty"`
+}
+
+const tableStorageQuery = "SELECT sum(rows) AS rows, sum(bytes_on_disk) AS bytes, sum(data_uncompressed_bytes) AS uncompressed, count() AS parts" +
+	" FROM system.parts WHERE database = {db:String} AND table = {table:String} AND active"
+
+func tableStorage(ctx context.Context, ch clickHouse) TableStorage {
+	t := TableStorage{Scope: "active parts of the whole table on the queried server, including data of other runs"}
+	body, err := ch.query(ctx, tableStorageQuery, map[string]string{"db": ch.cfg.Database, "table": ch.cfg.Table})
+	if err != nil {
+		t.Error = err.Error()
+		return t
+	}
+	var row struct {
+		Rows         *uint64 `json:"rows"`
+		Bytes        *uint64 `json:"bytes"`
+		Uncompressed *uint64 `json:"uncompressed"`
+		Parts        *uint64 `json:"parts"`
+	}
+	if decodeOne(body, &row) != nil || row.Rows == nil || row.Bytes == nil || row.Uncompressed == nil || row.Parts == nil {
+		t.Error = "invalid table storage response"
+		return t
+	}
+	t.Rows, t.BytesOnDisk, t.UncompressedBytes, t.ActiveParts = *row.Rows, *row.Bytes, *row.Uncompressed, *row.Parts
+	return t
+}
+
+const sessionInsertSettingsQuery = "SELECT name, value FROM system.settings WHERE name IN ('async_insert', 'wait_for_async_insert', 'async_insert_deduplicate'," +
+	" 'insert_deduplicate', 'insert_quorum', 'insert_quorum_parallel', 'distributed_foreground_insert') ORDER BY name"
+
+const mergeTreeSettingsQuery = "SELECT name, value FROM system.merge_tree_settings WHERE name IN ('fsync_after_insert', 'fsync_part_directory'," +
+	" 'non_replicated_deduplication_window', 'replicated_deduplication_window', 'replicated_deduplication_window_seconds') ORDER BY name"
+
+var errInvalidSettings = errors.New("invalid or empty settings response")
+
+// nameValues reads a name/value listing.
+func nameValues(ctx context.Context, ch clickHouse, query string) (map[string]string, error) {
+	body, err := ch.query(ctx, query, nil)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	d := json.NewDecoder(bytes.NewReader(body))
+	for {
+		var row struct {
+			Name  *string `json:"name"`
+			Value *string `json:"value"`
+		}
+		err := d.Decode(&row)
+		if err == io.EOF {
+			break
+		}
+		if err != nil || row.Name == nil || row.Value == nil {
+			return nil, errInvalidSettings
+		}
+		out[*row.Name] = *row.Value
+	}
+	if len(out) == 0 {
+		return nil, errInvalidSettings
+	}
+	return out, nil
 }
 
 // ClickHouseHardware is what the ClickHouse server reports about the machine
@@ -297,16 +387,31 @@ func clickHouseInfo(ctx context.Context, ch clickHouse) ClickHouseInfo {
 	}
 	info.Version, info.Timezone, info.UptimeSeconds = server.Version, server.Timezone, server.Uptime
 	info.Hardware = clickHouseHardware(ctx, ch)
-	body, err = ch.query(ctx, "SELECT engine, sorting_key, primary_key, partition_key FROM system.tables WHERE database = {db:String} AND name = {table:String}", map[string]string{"db": ch.cfg.Database, "table": ch.cfg.Table})
+	if settings, err := nameValues(ctx, ch, sessionInsertSettingsQuery); err == nil {
+		info.SessionInsertSettings = settings
+	} else {
+		info.SettingsError = "session insert settings: " + err.Error()
+	}
+	if settings, err := nameValues(ctx, ch, mergeTreeSettingsQuery); err == nil {
+		info.MergeTreeSettings = settings
+	} else {
+		info.SettingsError = strings.TrimPrefix(info.SettingsError+"; merge tree settings: "+err.Error(), "; ")
+	}
+	body, err = ch.query(ctx, "SELECT engine, sorting_key, primary_key, partition_key, create_table_query FROM system.tables WHERE database = {db:String} AND name = {table:String}", map[string]string{"db": ch.cfg.Database, "table": ch.cfg.Table})
 	if err == nil {
 		var table struct {
 			Engine       string `json:"engine"`
 			SortingKey   string `json:"sorting_key"`
 			PrimaryKey   string `json:"primary_key"`
 			PartitionKey string `json:"partition_key"`
+			Create       string `json:"create_table_query"`
 		}
 		if decodeOne(body, &table) == nil {
 			info.TableEngine, info.SortingKey, info.PrimaryKey, info.PartitionKey = table.Engine, table.SortingKey, table.PrimaryKey, table.PartitionKey
+			if table.Create != "" {
+				sum := sha256.Sum256([]byte(table.Create))
+				info.CreateTableSHA256 = hex.EncodeToString(sum[:])
+			}
 		} else {
 			info.Error = "table definition not found"
 		}

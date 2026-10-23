@@ -17,10 +17,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// SchemaVersion changes whenever the meaning of a counter changes. v2 splits
+// SchemaVersion changes whenever the meaning of a counter changes. v2 split
 // whole-request rejections and ambiguous failures out of "unacknowledged",
-// decomposes missing spans by acknowledgement outcome and adds provenance.
-const SchemaVersion = "fi.otlpbench.v2"
+// decomposed missing spans by acknowledgement outcome and added provenance. v3
+// measures read-visible lag with sentinels timed from the SCHEDULED send (a
+// lower and an upper bound), adds the server-side insert lag of every stored
+// span, the collector backlog series, request latency from the scheduled send,
+// missing-span ranges by request and recovery from injected or declared faults.
+const SchemaVersion = "fi.otlpbench.v3"
 
 // Wire encodings of the measured path. protobuf and grpc are what production SDK
 // exporters use; json is kept for browser-style clients and debugging.
@@ -92,6 +96,21 @@ type Config struct {
 	// build and admission limits; a declared row budget is used when it is not.
 	CollectorHealthURL      string `json:"collector_health_url,omitempty"`
 	CollectorMaxPendingRows int64  `json:"declared_collector_max_pending_rows,omitempty"`
+	// CollectorPollInterval is how often /healthz is sampled for the backlog
+	// series while the run goes on (only with CollectorHealthURL).
+	CollectorPollInterval time.Duration `json:"collector_poll_interval_ns"`
+
+	// MaxSentinels caps the read-visible lag sentinels: the first span of every
+	// k-th request, k chosen so the run has at most this many (sentinel.go).
+	MaxSentinels int `json:"max_sentinels"`
+	// DurableLag adds one query per verification chunk that measures, for every
+	// stored span, the server's insert timestamp (created_at) minus the
+	// scheduled send of its request.
+	DurableLag bool `json:"durable_lag"`
+	// DeclaredFaults are disruptions an operator performs outside the tool
+	// (for example stopping ClickHouse of an isolated stack). They are recorded
+	// as declared, not observed, and analysed like injected ones.
+	DeclaredFaults []DeclaredFault `json:"declared_faults,omitempty"`
 
 	DirectProbes DirectProbeConfig `json:"direct_probes"`
 
@@ -107,7 +126,8 @@ func DefaultConfig() Config {
 		Database: "default", Table: "spans", Profile: "smoke", Payload: "mixed",
 		Rate: 100, Duration: 5 * time.Second, MaxDuration: time.Minute, MaxBytes: 16 << 20,
 		BatchSize: 100, Concurrency: 2, SpansPerTrace: 8, TracesPerSession: 4,
-		Timeout: 10 * time.Second, Settle: 15 * time.Second, PollInterval: time.Second,
+		Timeout: 10 * time.Second, Settle: 15 * time.Second, PollInterval: 100 * time.Millisecond,
+		CollectorPollInterval: time.Second, MaxSentinels: 40960, DurableLag: true,
 		VerifyChunk: 65536, Environment: "unclassified", Topology: "single-node",
 		Encoding: EncodingProtobuf, Seed: 8687, ErrorRate: 0.01, TreeDepth: 4, FanOut: 4,
 		CohortVariantFraction: 0.5, BytesPerToken: 4, TextPoolBlocks: 1024,
@@ -172,6 +192,20 @@ func (c Config) Validate() error {
 	}
 	if c.CollectorMaxPendingRows < 0 {
 		return fmt.Errorf("declared collector max pending rows must not be negative")
+	}
+	if c.CollectorHealthURL != "" && (c.CollectorPollInterval < 100*time.Millisecond || c.CollectorPollInterval > time.Minute) {
+		return fmt.Errorf("collector-poll-interval must be 100ms..1m")
+	}
+	if c.MaxSentinels < 1 || c.MaxSentinels > 1<<20 {
+		return fmt.Errorf("max-sentinels must be 1..1048576")
+	}
+	if len(c.DeclaredFaults) > 16 {
+		return fmt.Errorf("at most 16 declared faults")
+	}
+	for _, f := range c.DeclaredFaults {
+		if err := validateFault(f.Name, f.At, f.Duration, c.Duration); err != nil {
+			return err
+		}
 	}
 	if err := c.DirectProbes.validate(); err != nil {
 		return err

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 )
 
 type failingWriter struct{}
@@ -16,8 +17,8 @@ func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("fixture 
 func TestTelemetryIsVersionedAndCarriesFinalCounts(t *testing.T) {
 	var out bytes.Buffer
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &runState{counters: Counters{Generated: 12, Attempted: 12, Acknowledged: 8, PartialRejected: 1, WholeRequestRejected: 1, RejectedRetryable: 1, Unacknowledged: 1}}
-	stop, wait := startTelemetry(ctx, testConfig(), clickHouse{}, s, &out)
+	s := &runState{counters: Counters{Generated: 12, Attempted: 12, Acknowledged: 8, PartialRejected: 1, WholeRequestRejected: 1, RejectedRetryable: 1, Unacknowledged: 1}, seen: 3}
+	stop, wait := startTelemetry(ctx, testConfig(), clickHouse{}, s, newTelemetrySink(&out, testConfig().RunID, time.Now()))
 	stop()
 	cancel()
 	if err := wait(); err != nil {
@@ -42,6 +43,10 @@ func TestTelemetryIsVersionedAndCarriesFinalCounts(t *testing.T) {
 			if event.Counters.Attempted != 12 || event.Counters.Unacknowledged != 1 || event.Counters.WholeRequestRejected != 1 || event.InFlightSpans == nil || *event.InFlightSpans != 2 {
 				t.Fatal("incorrect final counter snapshot")
 			}
+			// The scheduled and read-visible stages ride the same 1 s series.
+			if event.ScheduledSpans == nil || event.SentinelsSeen == nil || *event.SentinelsSeen != 3 {
+				t.Fatal("scheduled or read-visible stage missing from the progress series")
+			}
 		}
 	}
 	if !foundFinal {
@@ -51,7 +56,7 @@ func TestTelemetryIsVersionedAndCarriesFinalCounts(t *testing.T) {
 
 func TestTelemetryReportsArtifactWriteFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	stop, wait := startTelemetry(ctx, testConfig(), clickHouse{}, &runState{}, failingWriter{})
+	stop, wait := startTelemetry(ctx, testConfig(), clickHouse{}, &runState{}, newTelemetrySink(failingWriter{}, testConfig().RunID, time.Now()))
 	stop()
 	cancel()
 	if err := wait(); err == nil {

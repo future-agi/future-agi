@@ -325,9 +325,9 @@ func TestHTTPResponsesClassifyIntoOneOutcome(t *testing.T) {
 			if o.class != tc.class || o.rejected != tc.rejected || o.retryHint != tc.hint {
 				t.Fatalf("got class %s rejected %d hint %t", o.class, o.rejected, o.retryHint)
 			}
-			s := newRunState(testConfig())
+			s := newRunState(testConfig(), time.Now(), false)
 			s.counters.Attempted, s.counters.Requests = 10, 1
-			s.finish(0, 10, 2, 2, o, time.Millisecond)
+			s.finish(0, 10, 2, 2, o, time.Millisecond, time.Millisecond, time.Now())
 			if err := s.counters.CheckIdentity(); err != nil {
 				t.Fatalf("%v: %+v", err, s.counters)
 			}
@@ -381,7 +381,7 @@ func TestGRPCStatusesClassifyIntoOneOutcome(t *testing.T) {
 // B2: the counters keep the accounting identity over a mix of outcomes and
 // report whole-request rejections separately from partial rejections.
 func TestCountersKeepTheAccountingIdentity(t *testing.T) {
-	s := newRunState(testConfig())
+	s := newRunState(testConfig(), time.Now(), false)
 	outcomes := []exportOutcome{
 		{class: outcomeAcknowledged, statusLabel: "http:200", successStatus: true},
 		{class: outcomePartial, rejected: 30, statusLabel: "http:200", successStatus: true},
@@ -394,7 +394,7 @@ func TestCountersKeepTheAccountingIdentity(t *testing.T) {
 		seq := int64(i * 100)
 		s.counters.Attempted += 100
 		s.counters.Requests++
-		s.finish(seq, 100, 1000, 900, o, time.Millisecond)
+		s.finish(seq, 100, 1000, 900, o, time.Millisecond, time.Millisecond, time.Now())
 	}
 	c := s.counters
 	if err := c.CheckIdentity(); err != nil {
@@ -491,7 +491,7 @@ func TestReportDoesNotClaimUnverifiedLossOrAppLatency(t *testing.T) {
 			t.Fatalf("missing honesty qualifier %q", phrase)
 		}
 	}
-	r.SchemaVersion = "fi.otlpbench.v1"
+	r.SchemaVersion = "fi.otlpbench.v2"
 	if Report(&out, r) == nil {
 		t.Fatal("accepted an older schema whose counters mean something else")
 	}

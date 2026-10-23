@@ -294,9 +294,90 @@ type verifyAccum struct {
 	PartialLoss      uint64          `json:"partial_loss"`
 	PartialRejected  uint64          `json:"partial_rejected_missing"`
 	PartialExcess    uint64          `json:"partial_excess"`
+	// Missing-span ranges by request (closed ranges, the open one and what
+	// did not fit).
+	Ranges             []MissingRange `json:"missing_ranges"`
+	RangeOpen          *MissingRange  `json:"missing_range_open,omitempty"`
+	RangesOmitted      int64          `json:"missing_ranges_omitted"`
+	RangesOmittedSpans uint64         `json:"missing_ranges_omitted_spans"`
+	// Durable (server insert) lag of every distinct stored span so far.
+	DurableLag      sparseHistogram `json:"durable_lag"`
+	DurableNegative uint64          `json:"durable_lag_negative_rows"`
+	DurableError    string          `json:"durable_lag_error,omitempty"`
 }
 
-const checkpointSchema = "fi.otlpbench.verify-checkpoint.v1"
+// maxMissingRanges bounds the missing-span ranges a result lists.
+const maxMissingRanges = 1000
+
+// trackMissing extends or starts the missing range for request r, whose part
+// in the chunk being scanned misses `missing` spans. Requests arrive in
+// increasing order; a request split across two chunks arrives twice.
+func (a *verifyAccum) trackMissing(r int64, class outcomeClass, missing uint64, batch, rate int64) {
+	open := a.RangeOpen
+	if missing == 0 {
+		if open != nil && open.LastRequest < r {
+			a.closeRange()
+		}
+		return
+	}
+	scheduled := float64(r*batch) / float64(rate)
+	if open != nil && open.Class == class.String() && open.LastRequest >= r-1 {
+		open.LastRequest, open.LastScheduledS = r, scheduled
+		open.MissingSpans += missing
+		return
+	}
+	a.closeRange()
+	a.RangeOpen = &MissingRange{Class: class.String(), FirstRequest: r, LastRequest: r, FirstScheduledS: scheduled, LastScheduledS: scheduled, MissingSpans: missing}
+}
+
+func (a *verifyAccum) closeRange() {
+	if a.RangeOpen == nil {
+		return
+	}
+	if len(a.Ranges) < maxMissingRanges {
+		a.Ranges = append(a.Ranges, *a.RangeOpen)
+	} else {
+		a.RangesOmitted++
+		a.RangesOmittedSpans += a.RangeOpen.MissingSpans
+	}
+	a.RangeOpen = nil
+}
+
+// lagOrigin places each request's scheduled send on the server's clock, so the
+// server can compute created_at minus the scheduled send for every stored span.
+type lagOrigin struct {
+	StartUnixMicro   int64 `json:"load_start_unix_micro"`
+	Rate             int64 `json:"rate"`
+	OffsetMicro      int64 `json:"server_minus_generator_micro"`
+	UncertaintyMicro int64 `json:"offset_uncertainty_micro"`
+	OffsetMeasured   bool  `json:"offset_measured"`
+}
+
+// durableLagOrigin is the lag origin of a run that started at start, or nil
+// when durable lag is disabled. Without a measured clock offset no
+// correction is applied and the result says so.
+func (c Config) durableLagOrigin(start time.Time, clock ClockSample) *lagOrigin {
+	if !c.DurableLag {
+		return nil
+	}
+	o := &lagOrigin{StartUnixMicro: start.UnixMicro(), Rate: c.Rate}
+	if clock.Measured {
+		o.OffsetMicro = int64(math.Round(clock.OffsetMS * 1000))
+		o.UncertaintyMicro = int64(math.Ceil(clock.UncertaintyMS * 1000))
+		o.OffsetMeasured = true
+	}
+	return o
+}
+
+// durableLagQuery buckets, per distinct stored span of a chunk, its first
+// created_at minus its request's scheduled send (microseconds, offset
+// corrected) into the latency histogram's buckets; bucket -1 holds negative
+// lags (inserted before the scheduled send: clock error or a forged value).
+const durableLagQuery = "SELECT if(lag_us < 0, toInt64(-1), if(lag_us <= 10000000, toInt64(ceil(lag_us / 1000)), toInt64(10000 + ceil((lag_us - 10000000) / 1000000)))) AS b," +
+	" count() AS n, max(lag_us) AS max_us FROM (WITH " + sequenceExpr + " AS seq, (" + identityExpr + " AND seq >= {lo:UInt64} AND seq < {hi:UInt64}) AS valid" +
+	" SELECT seq, toInt64(min(toUnixTimestamp64Micro(created_at))) - {offset:Int64} - ({origin:Int64} + toInt64(intDiv(intDiv(seq, {batch:UInt64}) * {batch:UInt64} * 1000000, {rate:UInt64}))) AS lag_us"
+
+const checkpointSchema = "fi.otlpbench.verify-checkpoint.v2"
 
 // verifyCheckpoint is everything a verification needs to resume in another
 // process: the plan, the request outcomes and the progress. It holds no
@@ -315,6 +396,8 @@ type verifyCheckpoint struct {
 	Interesting []chunkSummary `json:"rechecked_chunk_summaries"`
 	Complete    bool           `json:"complete"`
 	Preexisting uint64         `json:"preexisting_run_rows"`
+	// DurableLagOrigin is nil when durable lag is not measured.
+	DurableLagOrigin *lagOrigin `json:"durable_lag_origin"`
 }
 
 func newCheckpoint(c Config, attempted int64, ledger *outcomeLedger, tl *timeline) *verifyCheckpoint {
@@ -466,6 +549,7 @@ func (vf *verifier) run(ctx context.Context) Verification {
 	}
 	v.conclude()
 	v.Complete = true
+	v.DurableLag = vf.durableLag(v.DistinctExpected, true)
 	vf.cp.Complete = true
 	v.ElapsedSeconds = time.Since(start).Seconds()
 	if err := vf.save(); err != nil {
@@ -500,6 +584,12 @@ func (vf *verifier) fill(v *Verification) {
 		AmbiguousMissing:       a.Expected[outcomeAmbiguous] - a.Present[outcomeAmbiguous],
 	}
 	v.PersistedBy = PersistedByAcknowledgement{RejectedButPersisted: rejectedPresent, PartialExcess: a.PartialExcess, AmbiguousPersisted: a.Present[outcomeAmbiguous]}
+	v.MissingRanges = append([]MissingRange{}, a.Ranges...)
+	if a.RangeOpen != nil {
+		v.MissingRanges = append(v.MissingRanges, *a.RangeOpen)
+	}
+	v.MissingRangesOmitted, v.MissingRangesOmittedSpans = a.RangesOmitted, a.RangesOmittedSpans
+	v.DurableLag = vf.durableLag(v.DistinctExpected, false)
 	// Only a finished, rechecked verification may conclude anything; run()
 	// sets these after the recheck succeeds.
 	v.DataLossDetected, v.ContractViolation = false, false
@@ -609,11 +699,11 @@ func (vf *verifier) chunk(ctx context.Context, idx int64, accumulate bool) (chun
 	if spec.Last {
 		upper = "<="
 	}
+	filter := " AND trace_id >= {trace_lo:String} AND trace_id " + upper + " {trace_hi:String}" +
+		" AND start_time >= {time_lo:DateTime64(6, 'UTC')} AND start_time < {time_hi:DateTime64(6, 'UTC')}"
 	query := "WITH " + sequenceExpr + " AS seq, (" + identityExpr + " AND seq >= {lo:UInt64} AND seq < {hi:UInt64}) AS valid" +
 		" SELECT if(valid, intDiv(seq, {batch:UInt64}), toUInt64(18446744073709551615)) AS r, uniqExactIf(seq, valid) AS d, count() AS n" +
-		vf.ch.scope() + " AND trace_id >= {trace_lo:String} AND trace_id " + upper + " {trace_hi:String}" +
-		" AND start_time >= {time_lo:DateTime64(6, 'UTC')} AND start_time < {time_hi:DateTime64(6, 'UTC')}" +
-		" GROUP BY r ORDER BY r"
+		vf.ch.scope() + filter + " GROUP BY r ORDER BY r"
 	body, err := vf.withRetries(ctx, query, params)
 	if err != nil {
 		return chunkSummary{}, err
@@ -670,6 +760,7 @@ func (vf *verifier) chunk(ctx context.Context, idx int64, accumulate bool) (chun
 			}
 		}
 	}
+	present := map[int64]uint64{}
 	for _, g := range groups {
 		a.Rows += g.n
 		if g.r == sentinelRequest {
@@ -679,10 +770,18 @@ func (vf *verifier) chunk(ctx context.Context, idx int64, accumulate bool) (chun
 		class := vf.ledger.class(int64(g.r))
 		a.Present[class] += g.d
 		a.Duplicates += g.n - g.d
+		present[int64(g.r)] += g.d
 		if class == outcomePartial {
 			a.PartialOpen[int64(g.r)] += int64(g.d)
 		}
 	}
+	for r := firstReq; r <= lastReq; r++ {
+		a.trackMissing(r, vf.ledger.class(r), uint64(overlap(r))-present[r], batch, c.Rate)
+	}
+	if spec.Last {
+		a.closeRange()
+	}
+	vf.durableChunk(ctx, spec, params, filter)
 	// A partial request is final once the scan has passed its last span.
 	for r := firstReq; r <= lastReq; r++ {
 		present, open := a.PartialOpen[r]
@@ -725,10 +824,80 @@ func (vf *verifier) namespaceWindow(ctx context.Context, w timeWindow) error {
 	return nil
 }
 
+// durableLag summarises the durable lag accumulated so far. complete says the
+// verification finished, so the measured rows must equal the distinct stored
+// spans.
+func (vf *verifier) durableLag(distinct uint64, complete bool) DurableLagResult {
+	o := vf.cp.DurableLagOrigin
+	if o == nil {
+		return DurableLagResult{Status: "not-measured", Method: "disabled (--durable-lag=false)"}
+	}
+	a := vf.cp.Accum
+	r := DurableLagResult{Method: "per distinct stored span: first created_at (server, DEFAULT now64(6)) minus the scheduled send of its request, corrected by the measured clock offset",
+		Rows: uint64(a.DurableLag.N) + a.DurableNegative, NegativeRows: a.DurableNegative, Lag: a.DurableLag.summary(), Buckets: a.DurableLag.buckets(),
+		ClockOffsetMS: float64(o.OffsetMicro) / 1000, ClockUncertaintyMS: float64(o.UncertaintyMicro) / 1000, ClockMeasured: o.OffsetMeasured}
+	switch {
+	case a.DurableError != "":
+		r.Status = "errors"
+		r.Method += "; stopped after a query failure: " + a.DurableError
+	case !complete:
+		r.Status = "partial"
+	case r.Rows != distinct:
+		// Rows arrived or merged between the identity and lag queries.
+		r.Status = "inconsistent"
+	default:
+		r.Status = "measured"
+	}
+	return r
+}
+
+// durableChunk adds one chunk's durable lags. A failure stops further durable
+// lag queries but never the exact-ID verification.
+func (vf *verifier) durableChunk(ctx context.Context, spec chunkSpec, params map[string]string, filter string) {
+	o, a := vf.cp.DurableLagOrigin, &vf.cp.Accum
+	if o == nil || a.DurableError != "" {
+		return
+	}
+	params["offset"], params["origin"], params["rate"] = strconv.FormatInt(o.OffsetMicro, 10), strconv.FormatInt(o.StartUnixMicro, 10), strconv.FormatInt(o.Rate, 10)
+	body, err := vf.withRetries(ctx, durableLagQuery+vf.ch.scope()+filter+" AND valid GROUP BY seq) GROUP BY b ORDER BY b", params)
+	if err != nil {
+		if ctx.Err() == nil {
+			a.DurableError = err.Error()
+		}
+		return
+	}
+	d := json.NewDecoder(bytes.NewReader(body))
+	var hist sparseHistogram
+	var negative uint64
+	for {
+		var row struct {
+			B   *int64  `json:"b"`
+			N   *uint64 `json:"n"`
+			Max *int64  `json:"max_us"`
+		}
+		err := d.Decode(&row)
+		if err == io.EOF {
+			break
+		}
+		if err != nil || row.B == nil || row.N == nil || row.Max == nil || *row.B < -1 || *row.N > uint64(spec.Hi-spec.Lo) {
+			a.DurableError = "invalid durable lag response"
+			return
+		}
+		if *row.B < 0 {
+			negative += *row.N
+			continue
+		}
+		hist.addBucket(int(min(*row.B, histogramBuckets-1)), int64(*row.N), float64(*row.Max)/1000)
+	}
+	a.DurableLag.merge(hist)
+	a.DurableNegative += negative
+}
+
 // verifyRun plans and runs the verification of a finished load.
-func verifyRun(ctx context.Context, ch clickHouse, ledger *outcomeLedger, tl *timeline, attempted int64, preexisting uint64) Verification {
+func verifyRun(ctx context.Context, ch clickHouse, ledger *outcomeLedger, tl *timeline, attempted int64, preexisting uint64, origin *lagOrigin) Verification {
 	cp := newCheckpoint(ch.cfg, attempted, ledger, tl)
 	cp.Preexisting = preexisting
+	cp.DurableLagOrigin = origin
 	vf := &verifier{ch: ch, cfg: ch.cfg, ledger: ledger, cp: cp, path: ch.cfg.VerifyCheckpoint}
 	return vf.run(ctx)
 }
@@ -768,55 +937,8 @@ func ResumeVerification(ctx context.Context, path string, headers http.Header, o
 		v := Verification{Complete: true, Method: "chunked-exact-id-per-request-outcome", TotalChunks: int64(len(cp.Chunks)), Chunks: int64(len(cp.Chunks)), ChunkSpans: cp.ChunkSpans, NamespaceWindows: int64(len(cp.Windows)), PreexistingRunRows: cp.Preexisting}
 		vf.fill(&v)
 		v.conclude()
+		v.DurableLag = vf.durableLag(v.DistinctExpected, true)
 		return cp.Config, v, nil
 	}
 	return cp.Config, vf.run(ctx), nil
-}
-
-type lagSample struct {
-	Seq  int64
-	Sent time.Time
-	Seen time.Time
-}
-
-func (ch clickHouse) observe(ctx context.Context, samples []lagSample) (map[int64]time.Time, error) {
-	seen := map[int64]time.Time{}
-	for start := 0; start < len(samples); start += 256 {
-		chunk := samples[start:min(start+256, len(samples))]
-		params := ch.params()
-		ids := make([]string, 0, len(chunk))
-		traces := make([]string, 0, len(chunk))
-		byID := map[string]int64{}
-		for _, sample := range chunk {
-			id := spanID(sample.Seq)
-			ids = append(ids, id)
-			traces = append(traces, ch.cfg.traceString(sample.Seq))
-			byID[id] = sample.Seq
-		}
-		// IDs are generated hexadecimal/UUID values, not user strings.
-		params["ids"] = "['" + strings.Join(ids, "','") + "']"
-		params["traces"] = "['" + strings.Join(traces, "','") + "']"
-		body, err := ch.query(ctx, "SELECT DISTINCT id"+ch.scope()+" AND id IN {ids:Array(String)} AND trace_id IN {traces:Array(String)}", params)
-		if err != nil {
-			return seen, err
-		}
-		observed := time.Now()
-		d := json.NewDecoder(bytes.NewReader(body))
-		for {
-			var row struct {
-				ID string `json:"id"`
-			}
-			err := d.Decode(&row)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				return seen, fmt.Errorf("invalid visibility response")
-			}
-			if seq, ok := byID[row.ID]; ok {
-				seen[seq] = observed
-			}
-		}
-	}
-	return seen, nil
 }

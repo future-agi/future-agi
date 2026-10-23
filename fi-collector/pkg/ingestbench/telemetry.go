@@ -11,6 +11,9 @@ import (
 
 // Each line is independently versioned. Counter deltas / elapsed-time deltas
 // give achieved interval rates without retaining a day of samples in memory.
+// Progress lines (1 s) carry the attempted and accepted stages and the read-
+// visible sentinels; collector lines carry the backlog and the writer's insert
+// counters (the durable stage as the collector sees it).
 type telemetryEvent struct {
 	SchemaVersion  string            `json:"schema_version"`
 	RunID          string            `json:"run_id"`
@@ -19,34 +22,70 @@ type telemetryEvent struct {
 	ElapsedSeconds float64           `json:"elapsed_seconds"`
 	Counters       *Counters         `json:"counters,omitempty"`
 	InFlightSpans  *int64            `json:"in_flight_spans,omitempty"`
+	ScheduledSpans *int64            `json:"scheduled_spans,omitempty"`
+	SentinelsSeen  *int64            `json:"sentinels_seen,omitempty"`
 	Resource       *ResourceSnapshot `json:"resource,omitempty"`
+	Collector      *CollectorSample  `json:"collector,omitempty"`
+	Fault          *FaultEvent       `json:"fault,omitempty"`
+}
+
+// telemetrySink serialises telemetry lines; a nil writer discards them.
+type telemetrySink struct {
+	mu     sync.Mutex
+	w      io.Writer
+	runID  string
+	start  time.Time
+	failed bool
+}
+
+func newTelemetrySink(w io.Writer, runID string, start time.Time) *telemetrySink {
+	return &telemetrySink{w: w, runID: runID, start: start}
+}
+
+func (t *telemetrySink) write(event telemetryEvent) error {
+	if t == nil || t.w == nil {
+		return nil
+	}
+	event.SchemaVersion, event.RunID, event.At = SchemaVersion, t.runID, time.Now().UTC()
+	event.ElapsedSeconds = time.Since(t.start).Seconds()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if err := json.NewEncoder(t.w).Encode(event); err != nil {
+		t.failed = true
+		return fmt.Errorf("telemetry artifact write failed")
+	}
+	return nil
+}
+
+func (t *telemetrySink) err() error {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.failed {
+		return fmt.Errorf("telemetry artifact write failed")
+	}
+	return nil
 }
 
 // snapshot returns the counters and the attempted spans whose request has not
 // finished yet (attempted minus every outcome class).
-func (s *runState) snapshot() (Counters, int64) {
+func (s *runState) snapshot() (Counters, int64, int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c := s.counters
-	return c, c.Attempted - c.Acknowledged - c.PartialRejected - c.WholeRequestRejected - c.Ambiguous
+	return c, c.Attempted - c.Acknowledged - c.PartialRejected - c.WholeRequestRejected - c.Ambiguous, s.seen
 }
 
-func startTelemetry(ctx context.Context, c Config, ch clickHouse, s *runState, writer io.Writer) (func(), func() error) {
-	if writer == nil {
+func startTelemetry(ctx context.Context, c Config, ch clickHouse, s *runState, sink *telemetrySink) (func(), func() error) {
+	if sink == nil || sink.w == nil {
 		return func() {}, func() error { return nil }
 	}
 	progressCtx, stopProgress := context.WithCancel(ctx)
-	start := time.Now()
-	var mu sync.Mutex
-	write := func(event telemetryEvent) error {
-		event.SchemaVersion, event.RunID, event.At = SchemaVersion, c.RunID, time.Now().UTC()
-		event.ElapsedSeconds = time.Since(start).Seconds()
-		mu.Lock()
-		defer mu.Unlock()
-		if err := json.NewEncoder(writer).Encode(event); err != nil {
-			return fmt.Errorf("telemetry artifact write failed")
-		}
-		return nil
+	scheduled := func() *int64 {
+		n := min(c.PlannedSpans(), int64(time.Since(sink.start).Seconds()*float64(c.Rate)))
+		return &n
 	}
 	var wg sync.WaitGroup
 	errors := make(chan error, 2)
@@ -56,15 +95,15 @@ func startTelemetry(ctx context.Context, c Config, ch clickHouse, s *runState, w
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
-			counters, inFlight := s.snapshot()
-			if err := write(telemetryEvent{Kind: "progress", Counters: &counters, InFlightSpans: &inFlight}); err != nil {
+			counters, inFlight, seen := s.snapshot()
+			if err := sink.write(telemetryEvent{Kind: "progress", Counters: &counters, InFlightSpans: &inFlight, ScheduledSpans: scheduled(), SentinelsSeen: &seen}); err != nil {
 				errors <- err
 				return
 			}
 			select {
 			case <-progressCtx.Done():
-				counters, inFlight = s.snapshot()
-				if err := write(telemetryEvent{Kind: "progress-final", Counters: &counters, InFlightSpans: &inFlight}); err != nil {
+				counters, inFlight, seen = s.snapshot()
+				if err := sink.write(telemetryEvent{Kind: "progress-final", Counters: &counters, InFlightSpans: &inFlight, ScheduledSpans: scheduled(), SentinelsSeen: &seen}); err != nil {
 					errors <- err
 				}
 				return
@@ -82,7 +121,7 @@ func startTelemetry(ctx context.Context, c Config, ch clickHouse, s *runState, w
 				return
 			case <-ticker.C:
 				for _, snapshot := range resourceSnapshots(ctx, ch) {
-					if err := write(telemetryEvent{Kind: "resource", Resource: &snapshot}); err != nil {
+					if err := sink.write(telemetryEvent{Kind: "resource", Resource: &snapshot}); err != nil {
 						errors <- err
 						return
 					}
@@ -98,6 +137,6 @@ func startTelemetry(ctx context.Context, c Config, ch clickHouse, s *runState, w
 				return err
 			}
 		}
-		return nil
+		return sink.err()
 	}
 }

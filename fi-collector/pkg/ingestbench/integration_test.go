@@ -36,7 +36,16 @@ type mockStorage struct {
 	failChunk    int
 	chunkQueries int
 	inserts      atomic.Int64
+	// clockSkew is how far the mock server's clock runs ahead of the
+	// generator's; it stamps created_at (DEFAULT now64(6)) and answers now64.
+	clockSkew time.Duration
+	// createdAtShift forges created_at by this much on top of the clock.
+	createdAtShift time.Duration
+	// failDurable fails every durable lag query with HTTP 500.
+	failDurable bool
 }
+
+const mockTimeLayout = "2006-01-02 15:04:05.000000"
 
 func (m *mockStorage) matching(q map[string][]string) []map[string]any {
 	project, run := first(q, "param_project"), first(q, "param_run")
@@ -100,6 +109,10 @@ func (m *mockStorage) serve(w http.ResponseWriter, r *http.Request) {
 			if m.drop && row["id"] == spanID(3) {
 				continue
 			}
+			if _, ok := row["created_at"]; !ok {
+				// The column DEFAULT, evaluated on the server's clock.
+				row["created_at"] = time.Now().Add(m.clockSkew + m.createdAtShift).UTC().Format(mockTimeLayout)
+			}
 			m.rows = append(m.rows, row)
 			if m.duplicate && row["id"] == spanID(2) {
 				m.rows = append(m.rows, row)
@@ -119,10 +132,28 @@ func (m *mockStorage) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
 	switch {
+	case strings.Contains(query, "now64(6)) AS t"):
+		_ = enc.Encode(map[string]any{"t": time.Now().Add(m.clockSkew).UnixMicro()})
+	case strings.Contains(query, "toUnixTimestamp64Micro(created_at)"):
+		if m.failDurable {
+			http.Error(w, "Code: 241. DB::Exception: Memory limit exceeded (MEMORY_LIMIT_EXCEEDED)", 500)
+			return
+		}
+		m.durableLag(q, query, enc)
+	case strings.Contains(query, "FROM system.settings WHERE name IN"):
+		for _, kv := range [][2]string{{"async_insert", "0"}, {"insert_quorum", "0"}, {"wait_for_async_insert", "1"}} {
+			_ = enc.Encode(map[string]any{"name": kv[0], "value": kv[1]})
+		}
+	case strings.Contains(query, "FROM system.merge_tree_settings"):
+		for _, kv := range [][2]string{{"fsync_after_insert", "0"}, {"non_replicated_deduplication_window", "0"}} {
+			_ = enc.Encode(map[string]any{"name": kv[0], "value": kv[1]})
+		}
+	case strings.Contains(query, "FROM system.parts"):
+		_ = enc.Encode(map[string]any{"rows": len(m.rows), "bytes": 100 * len(m.rows), "uncompressed": 400 * len(m.rows), "parts": 1})
 	case strings.Contains(query, "SELECT version()"):
 		_ = enc.Encode(map[string]any{"version": "mock", "timezone": "UTC", "uptime": 1})
 	case strings.Contains(query, "FROM system.tables"):
-		_ = enc.Encode(map[string]any{"engine": "MockMergeTree", "sorting_key": "trace_id, id", "primary_key": "trace_id", "partition_key": ""})
+		_ = enc.Encode(map[string]any{"engine": "MockMergeTree", "sorting_key": "trace_id, id", "primary_key": "trace_id", "partition_key": "", "create_table_query": "CREATE TABLE mock.spans (id String) ENGINE = MockMergeTree"})
 	case strings.Contains(query, "FROM system.clusters"):
 	case strings.HasPrefix(query, clickHouseHardwareQuery):
 		_ = enc.Encode(map[string]any{"max_threads": "'auto(4)'", "os_memory_total": 8 << 30, "cgroup_max_cpu": 0, "cgroup_memory_total": 0})
@@ -235,6 +266,61 @@ func (m *mockStorage) chunk(q map[string][]string, query string, enc *json.Encod
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 	for _, k := range keys {
 		_ = enc.Encode(map[string]any{"r": k, "d": len(groups[k].d), "n": groups[k].n})
+	}
+}
+
+// durableLag emulates the durable lag query: per distinct valid span of the
+// chunk, its first created_at minus its request's scheduled send, bucketed like
+// the latency histogram.
+func (m *mockStorage) durableLag(q map[string][]string, query string, enc *json.Encoder) {
+	num := func(k string) int64 { v, _ := strconv.ParseInt(first(q, "param_"+k), 10, 64); return v }
+	lo, hi, batch, rate, origin, offset := num("lo"), num("hi"), num("batch"), num("rate"), num("origin"), num("offset")
+	traceLo, traceHi := first(q, "param_trace_lo"), first(q, "param_trace_hi")
+	inclusive := strings.Contains(query, "trace_id <= {trace_hi:String}")
+	tlo, thi := paramTime(q, "param_time_lo"), paramTime(q, "param_time_hi")
+	firstCreated := map[int64]int64{}
+	for _, row := range m.matching(q) {
+		tr := row["trace_id"].(string)
+		if tr < traceLo || (inclusive && tr > traceHi) || (!inclusive && tr >= traceHi) {
+			continue
+		}
+		if st := rowTime(row); st.Before(tlo) || !st.Before(thi) {
+			continue
+		}
+		seq, ok := rowSeq(row)
+		if !ok || seq < lo || seq >= hi || row["trace_id"] != m.cfg.traceString(seq) || row["id"] != spanID(seq) {
+			continue
+		}
+		stamp, _ := row["created_at"].(string)
+		created, err := time.Parse(mockTimeLayout, stamp)
+		if err != nil {
+			continue
+		}
+		if prev, ok := firstCreated[seq]; !ok || created.UnixMicro() < prev {
+			firstCreated[seq] = created.UnixMicro()
+		}
+	}
+	type bucket struct{ n, max int64 }
+	buckets := map[int64]*bucket{}
+	for seq, created := range firstCreated {
+		lag := created - offset - (origin + seq/batch*batch*1000000/rate)
+		b := int64(-1)
+		if lag >= 0 {
+			b = int64(latencyBucket(float64(lag) / 1000))
+		}
+		if buckets[b] == nil {
+			buckets[b] = &bucket{max: lag}
+		}
+		buckets[b].n++
+		buckets[b].max = max(buckets[b].max, lag)
+	}
+	keys := make([]int64, 0, len(buckets))
+	for k := range buckets {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	for _, k := range keys {
+		_ = enc.Encode(map[string]any{"b": k, "n": buckets[k].n, "max_us": buckets[k].max})
 	}
 }
 
@@ -664,7 +750,7 @@ func cannedVerifier(t *testing.T, handler http.HandlerFunc, attempted int64, pre
 	}
 	tl := newTimeline(time.Now())
 	tl.add(time.Now(), 0, attempted)
-	return verifyRun(context.Background(), clickHouse{cfg: c, client: c.readClient()}, ledger, tl, attempted, preexisting)
+	return verifyRun(context.Background(), clickHouse{cfg: c, client: c.readClient()}, ledger, tl, attempted, preexisting, nil)
 }
 
 func TestVerificationRejectsInvalidAndChangingResponses(t *testing.T) {
@@ -875,7 +961,7 @@ func TestMissingSpansDecomposeByRequestOutcome(t *testing.T) {
 	}
 	tl := newTimeline(start)
 	tl.add(start, 0, 36)
-	v := verifyRun(context.Background(), clickHouse{cfg: c, client: c.readClient()}, ledger, tl, 36, 0)
+	v := verifyRun(context.Background(), clickHouse{cfg: c, client: c.readClient()}, ledger, tl, 36, 0, nil)
 	if !v.Complete || v.Error != "" || v.TotalChunks != 5 {
 		t.Fatalf("verification did not finish: %+v", v)
 	}
@@ -888,6 +974,26 @@ func TestMissingSpansDecomposeByRequestOutcome(t *testing.T) {
 	}
 	if v.Rows != 24 || v.DistinctExpected != 23 || v.DuplicateRows != 1 || v.UnexpectedRows != 0 || !v.DataLossDetected || !v.ContractViolation {
 		t.Fatalf("totals or conclusions: %+v", v)
+	}
+	// BM-T12: every missing span is placed in a request range of one outcome
+	// class, in request order, with its scheduled offset. r1 crosses the chunk
+	// boundary at span 8 and is still one range.
+	at := func(r int64) float64 { return float64(r*int64(c.BatchSize)) / float64(c.Rate) }
+	wantRanges := []MissingRange{
+		{Class: "partial_rejection", FirstRequest: 1, LastRequest: 1, FirstScheduledS: at(1), LastScheduledS: at(1), MissingSpans: 3},
+		{Class: "whole_request_rejected_retryable", FirstRequest: 2, LastRequest: 2, FirstScheduledS: at(2), LastScheduledS: at(2), MissingSpans: 5},
+		{Class: "acknowledged", FirstRequest: 3, LastRequest: 3, FirstScheduledS: at(3), LastScheduledS: at(3), MissingSpans: 1},
+		{Class: "ambiguous", FirstRequest: 4, LastRequest: 4, FirstScheduledS: at(4), LastScheduledS: at(4), MissingSpans: 4},
+	}
+	if fmt.Sprint(v.MissingRanges) != fmt.Sprint(wantRanges) || v.MissingRangesOmitted != 0 {
+		t.Fatalf("missing ranges %+v, want %+v", v.MissingRanges, wantRanges)
+	}
+	var inRanges uint64
+	for _, m := range v.MissingRanges {
+		inRanges += m.MissingSpans
+	}
+	if inRanges != v.Missing {
+		t.Fatalf("ranges hold %d of %d missing spans", inRanges, v.Missing)
 	}
 }
 

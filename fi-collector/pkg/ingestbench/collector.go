@@ -19,19 +19,33 @@ type CollectorLimits struct {
 	MaxHTTPBodyBytes int64 `json:"max_http_body_bytes"`
 }
 
+// WriterPolicy mirrors the "writer" object of the collector's /healthz.
+type WriterPolicy struct {
+	Table            string `json:"table"`
+	InsertSettings   string `json:"insert_settings"`
+	MaxRetries       int    `json:"max_retries"`
+	InitialBackoffMS int64  `json:"initial_backoff_ms"`
+	MaxBackoffMS     int64  `json:"max_backoff_ms"`
+	RequestTimeoutMS int64  `json:"request_timeout_ms"`
+	DeadLetter       bool   `json:"dead_letter_after_retries"`
+}
+
 // Defaults of the fi-collector when /healthz is not available to report them.
 var collectorDefaultLimits = CollectorLimits{MaxPendingRows: 20000, BatchMaxRows: 5000, BatchMaxAgeMS: 5000, GRPCMaxRecvMiB: 16, MaxHTTPBodyBytes: 16 << 20}
 
 // CollectorInfo is what the run knows about the collector under test.
 type CollectorInfo struct {
-	HealthURL              string           `json:"health_url,omitempty"`
-	Status                 string           `json:"health_status,omitempty"`
-	Build                  map[string]any   `json:"build,omitempty"`
-	Runtime                map[string]any   `json:"runtime,omitempty"`
-	Limits                 *CollectorLimits `json:"limits,omitempty"`
-	DeclaredMaxPendingRows int64            `json:"declared_max_pending_rows,omitempty"`
-	Budget                 BudgetCheck      `json:"budget_check"`
-	Error                  string           `json:"error,omitempty"`
+	HealthURL string           `json:"health_url,omitempty"`
+	Status    string           `json:"health_status,omitempty"`
+	Build     map[string]any   `json:"build,omitempty"`
+	Runtime   map[string]any   `json:"runtime,omitempty"`
+	Limits    *CollectorLimits `json:"limits,omitempty"`
+	// Writer is the collector writer's insert mode and retry policy as its
+	// /healthz reports them: what an acknowledged insert meant for the run.
+	Writer                 *WriterPolicy `json:"writer,omitempty"`
+	DeclaredMaxPendingRows int64         `json:"declared_max_pending_rows,omitempty"`
+	Budget                 BudgetCheck   `json:"budget_check"`
+	Error                  string        `json:"error,omitempty"`
 }
 
 // BudgetCheck compares the collector's pending-row budget with what the load
@@ -115,12 +129,13 @@ func FetchCollectorHealth(ctx context.Context, client *http.Client, healthURL st
 		Build   map[string]any   `json:"build"`
 		Runtime map[string]any   `json:"runtime"`
 		Limits  *CollectorLimits `json:"limits"`
+		Writer  *WriterPolicy    `json:"writer"`
 	}
 	if err := json.Unmarshal(body, &health); err != nil {
 		info.Error = fmt.Sprintf("collector health HTTP %d is not JSON", resp.StatusCode)
 		return info
 	}
-	info.Status, info.Build, info.Runtime, info.Limits = health.Status, health.Build, health.Runtime, health.Limits
+	info.Status, info.Build, info.Runtime, info.Limits, info.Writer = health.Status, health.Build, health.Runtime, health.Limits, health.Writer
 	if info.Limits == nil {
 		info.Error = "collector /healthz does not report limits (collector predates limit reporting)"
 	}

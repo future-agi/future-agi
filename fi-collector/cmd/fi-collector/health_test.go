@@ -12,6 +12,7 @@ import (
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/ingestbench"
 	"github.com/future-agi/future-agi/fi-collector/pkg/server"
 )
 
@@ -112,5 +113,35 @@ func TestAdminHealthReportsBuildAndAdmissionLimits(t *testing.T) {
 	adminHandler(writer, nil, server.New(server.Config{}, writer, nil, nil, nil)).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"max_pending_rows":20000`)) {
 		t.Fatalf("default budget not reported: %s", rec.Body.String())
+	}
+}
+
+// The benchmark samples this handler for its backlog series and reads its writer
+// policy for the report: the production body must parse as a valid sample and
+// policy there, so the two cannot drift apart unnoticed.
+func TestAdminHealthFeedsTheBenchmarkBacklogSampler(t *testing.T) {
+	writer, err := chwriter.New(chwriter.Config{URL: "http://127.0.0.1:1", AsyncInsert: true, DeadLetterFile: t.TempDir() + "/dl.jsonl"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	srv := server.New(server.Config{MaxPendingRows: 77}, writer, nil, nil, nil)
+	admin := httptest.NewServer(adminHandler(writer, nil, srv))
+	defer admin.Close()
+	resp, err := http.Get(admin.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := new(bytes.Buffer)
+	_, _ = body.ReadFrom(resp.Body)
+	resp.Body.Close()
+	sample := ingestbench.ParseCollectorHealth(resp.StatusCode, body.Bytes())
+	if !sample.OK || sample.MaxPendingRows != 77 || sample.BufferedRows != 0 || sample.Error != "" {
+		t.Fatalf("benchmark could not sample the production /healthz: %+v\n%s", sample, body)
+	}
+	info := ingestbench.FetchCollectorHealth(t.Context(), http.DefaultClient, admin.URL+"/healthz")
+	if info.Error != "" || info.Limits == nil || info.Limits.MaxPendingRows != 77 || info.Writer == nil ||
+		info.Writer.InsertSettings != "async_insert=1&wait_for_async_insert=0" || info.Writer.MaxRetries != 5 || !info.Writer.DeadLetter {
+		t.Fatalf("benchmark could not read the production limits and writer policy: %+v %+v", info, info.Writer)
 	}
 }

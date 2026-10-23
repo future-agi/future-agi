@@ -20,6 +20,10 @@ type Options struct {
 	CommandLine []string
 	// Warn receives loud human-readable warnings (for example stderr).
 	Warn io.Writer
+	// Faults are disruptions a test harness that owns the system under test
+	// injects during the load (recovery.go). The tool itself never stops,
+	// pauses or restarts infrastructure.
+	Faults []Fault
 }
 
 type recentAck struct {
@@ -29,21 +33,38 @@ type recentAck struct {
 
 type runState struct {
 	mu             sync.Mutex
+	start          time.Time
 	counters       Counters
 	statuses       map[string]int64
 	requestLatency histogram
-	retryDelay     histogram
-	samples        map[int64]lagSample
-	lagErrors      int64
-	ledger         *outcomeLedger
-	ledgerErr      error
-	workload       *workloadAccumulator
-	recent         [64]recentAck
-	recentN        int
+	// fromScheduled is request latency from the scheduled send (corrected
+	// for coordinated omission); requestLatency is from the actual send.
+	fromScheduled histogram
+	retryDelay    histogram
+	lagErrors     int64
+	ledger        *outcomeLedger
+	ledgerErr     error
+	workload      *workloadAccumulator
+	recent        [64]recentAck
+	recentN       int
+	// Read-visible sentinels (sentinel.go).
+	sentinels           map[int64]*sentinel
+	pending             map[int64]*sentinel
+	seen                int64
+	sentinelsRegistered int64
+	sentinelsDropped    int64
+	pollLatency         histogram
+	// acks is the acknowledgement series recovery uses; nil without faults.
+	acks *ackSeries
 }
 
-func newRunState(c Config) *runState {
-	return &runState{statuses: map[string]int64{}, samples: map[int64]lagSample{}, ledger: newOutcomeLedger(int64(c.BatchSize)), workload: newWorkloadAccumulator()}
+func newRunState(c Config, start time.Time, faults bool) *runState {
+	s := &runState{start: start, statuses: map[string]int64{}, ledger: newOutcomeLedger(int64(c.BatchSize)), workload: newWorkloadAccumulator(),
+		sentinels: map[int64]*sentinel{}, pending: map[int64]*sentinel{}}
+	if faults {
+		s.acks = &ackSeries{}
+	}
+	return s
 }
 
 func (r *Result) warn(options Options, message string) {
@@ -63,6 +84,17 @@ func Run(ctx context.Context, c Config, options Options) (Result, error) {
 	r.Provenance.SUT, _ = resolveSUT(c.Revision, CollectorInfo{}, c.SUTNotes)
 	if err := c.Validate(); err != nil {
 		return r, err
+	}
+	if len(options.Faults) > 16 {
+		return r, fmt.Errorf("at most 16 injected faults")
+	}
+	for _, f := range options.Faults {
+		if err := validateFault(f.Name, f.At, f.Duration, c.Duration); err != nil {
+			return r, err
+		}
+		if f.Inject == nil || f.Restore == nil {
+			return r, fmt.Errorf("fault %q needs Inject and Restore", f.Name)
+		}
 	}
 	// Generate one bounded preview during dry-run, but make NO network requests.
 	preview, _, err := c.buildRequest(0, min(c.BatchSize, int(c.PlannedSpans())), time.Unix(1700000000, 0))
@@ -145,17 +177,29 @@ func Run(ctx context.Context, c Config, options Options) (Result, error) {
 	defer exp.close()
 
 	r.Resources = resourceSnapshots(ctx, ch)
+	storage := tableStorage(ctx, ch)
+	r.Provenance.ClickHouse.StorageBefore = &storage
+	r.Clock = ClockResult{Method: clockMethod, Start: measureClock(ctx, ch)}
 	r.Started = time.Now().UTC()
 	start := time.Now()
 	tl := newTimeline(start)
 	loadCtx, stopLoad := context.WithTimeout(ctx, c.Duration)
 	defer stopLoad()
 	monitorCtx, stopMonitor := context.WithCancel(ctx)
-	s := newRunState(c)
+	s := newRunState(c, start, len(options.Faults)+len(c.DeclaredFaults) > 0)
+	sink := newTelemetrySink(options.ResourceWriter, c.RunID, start)
 	var monitorWG sync.WaitGroup
-	monitorWG.Add(1)
+	monitorWG.Add(2)
 	go func() { defer monitorWG.Done(); s.monitor(monitorCtx, ch) }()
-	stopProgress, waitTelemetry := startTelemetry(monitorCtx, c, ch, s, options.ResourceWriter)
+	backlog := newBacklogPoller(c, readClient, start, sink)
+	go func() { defer monitorWG.Done(); backlog.run(monitorCtx) }()
+	stopProgress, waitTelemetry := startTelemetry(monitorCtx, c, ch, s, sink)
+	faults := &faultRecorder{}
+	var faultWG sync.WaitGroup
+	if len(options.Faults) > 0 {
+		faultWG.Add(1)
+		go func() { defer faultWG.Done(); runFaults(loadCtx, options.Faults, start, sink, faults) }()
+	}
 	reads := make(chan ProbeResult, len(c.ReadProbes))
 	var readWG sync.WaitGroup
 	for _, p := range c.ReadProbes {
@@ -185,12 +229,13 @@ func Run(ctx context.Context, c Config, options Options) (Result, error) {
 	sem := make(chan struct{}, c.Concurrency)
 	var sendWG sync.WaitGroup
 	var generated, dispatched, uncompressedBytes int64
-	stride := max(int64(1), (c.PlannedSpans()+int64(c.BatchSize)*4096-1)/(int64(c.BatchSize)*4096))
+	stride := c.sentinelStride()
 	pipeCtx, stopPipe := context.WithCancel(loadCtx)
 	defer stopPipe()
 	pipe, workers := c.buildPipeline(pipeCtx, start)
 	r.Workload.BuildWorkers = workers
 	var buildLatency, dispatchDelay histogram
+	var lateOver10ms, lateOver1s int64
 	r.StopReason = "planned-span-count"
 produce:
 	for generated < c.PlannedSpans() {
@@ -251,27 +296,38 @@ produce:
 			break
 		}
 		buildLatency.add(b.buildTime)
-		dispatchDelay.add(time.Since(due))
+		// The start delay after the scheduled send: what a closed-loop
+		// generator would silently omit.
+		delay := time.Since(due)
+		dispatchDelay.add(delay)
+		if delay > lateStartThreshold {
+			lateOver10ms++
+		}
+		if delay > time.Second {
+			lateOver1s++
+		}
 		uncompressedBytes += int64(b.batch.uncompressed)
 		dispatched += int64(b.n)
 		tl.add(b.now, b.seq, int64(b.n))
 		s.mu.Lock()
 		s.workload.addSpans(c, b.plans)
 		s.mu.Unlock()
-		sample := (b.seq/int64(c.BatchSize))%stride == 0
+		isSentinel := (b.seq/int64(c.BatchSize))%stride == 0
 		sendWG.Add(1)
-		go func(seq int64, n int, batch encodedBatch, sample bool) {
+		go func(b builtBatch, sentinel bool, due time.Time) {
 			defer sendWG.Done()
 			defer func() { <-sem }()
-			s.send(ctx, exp, seq, n, batch, sample)
-		}(b.seq, b.n, b.batch, sample)
+			s.send(ctx, exp, b.seq, b.n, b.batch, sentinel, due, b.now)
+		}(b, isSentinel, due)
 	}
+	produceEnd := time.Since(start)
 	stopPipe()
 	r.Workload.BuildLatency, r.Workload.DispatchDelay = buildLatency.summary(), dispatchDelay.summary()
 	if r.StopReason == "planned-span-count" {
 		waitUntil(loadCtx, start.Add(c.Duration))
 	}
 	sendWG.Wait()
+	faultWG.Wait()
 	stopProgress()
 	r.LoadSeconds = time.Since(start).Seconds()
 	stopLoad()
@@ -285,11 +341,14 @@ produce:
 		}
 	}
 	// Always give asynchronously acknowledged rows the configured quiet settle
-	// window. Polling remains active; no writes or destructive cluster commands.
+	// window. Sentinel and backlog polling remain active; no writes or
+	// destructive cluster commands.
 	waitUntil(ctx, time.Now().Add(c.Settle))
 	stopMonitor()
 	monitorWG.Wait()
 	resourceErr := waitTelemetry()
+	r.Clock.End = measureClock(ctx, ch)
+	r.Clock.conclude()
 	if c.DirectProbes.Enabled {
 		for i := 0; i < c.DirectProbes.AfterSettleSamples && ctx.Err() == nil; i++ {
 			direct.round(ctx, "after-settle", s.settledCandidate(i, c.DirectProbes.AfterSettleSamples))
@@ -302,27 +361,49 @@ produce:
 	r.Counters = s.counters
 	r.Statuses = s.statuses
 	r.RequestLatency = s.requestLatency.summary()
+	r.RequestLatencyFromScheduled = s.fromScheduled.summary()
 	r.RetryHints = RetryHints{Requests: s.counters.RequestOutcomes.RejectedWithRetryHint, Delay: s.retryDelay.summary()}
 	workers, buildLat, delay := r.Workload.BuildWorkers, r.Workload.BuildLatency, r.Workload.DispatchDelay
 	r.Workload = s.workload.stats(c)
 	r.Workload.BuildWorkers, r.Workload.BuildLatency, r.Workload.DispatchDelay = workers, buildLat, delay
 	ledger, ledgerErr := s.ledger, s.ledgerErr
-	r.Lag = s.lagResult()
+	r.Lag = s.lagResult(c, start)
 	s.mu.Unlock()
 	r.Counters.Generated = generated
+	r.Schedule = scheduleResult(c, produceEnd, r.Counters.Attempted, delay, lateOver10ms, lateOver1s)
 	if err := r.Counters.CheckIdentity(); err != nil {
 		r.AccountingError = err.Error()
 	} else if ledgerErr != nil {
 		r.AccountingError = ledgerErr.Error()
 	}
+	r.Backlog = backlog.result(r.LoadSeconds, int64(c.BatchSize), stallThreshold(r.Provenance.Collector.Limits))
 	r.Resources = append(r.Resources, resourceSnapshots(ctx, ch)...)
-	r.Verification = verifyRun(ctx, ch, ledger, tl, r.Counters.Attempted, preexisting)
+	r.Verification = verifyRun(ctx, ch, ledger, tl, r.Counters.Attempted, preexisting, c.durableLagOrigin(start, r.Clock.Start))
+	storage = tableStorage(ctx, ch)
+	r.Provenance.ClickHouse.StorageAfter = &storage
+	if len(options.Faults)+len(c.DeclaredFaults) > 0 {
+		records := faults.all()
+		for _, f := range c.DeclaredFaults {
+			records = append(records, FaultResult{Name: f.Name, Source: "operator-declared", StartS: f.At.Seconds(), EndS: (f.At + f.Duration).Seconds()})
+		}
+		sort.Slice(records, func(i, j int) bool { return records[i].StartS < records[j].StartS })
+		s.mu.Lock()
+		records = analyseRecovery(c, records, s, start, backlog.kept())
+		s.mu.Unlock()
+		rec := &RecoveryResult{Method: recoveryMethod, Faults: records}
+		rec.attachVerification(c, r.Verification, r.Backlog, r.Provenance.Collector.Budget)
+		r.Recovery = rec
+	}
 	r.Status = "incomplete"
 	if r.Verification.Complete && r.AccountingError == "" {
 		r.Status = "measured-with-errors"
 		v := r.Verification
-		if v.Missing == 0 && v.DuplicateRows == 0 && v.UnexpectedRows == 0 && r.Counters.Acknowledged == r.Counters.Attempted && r.Counters.Attempted == r.PlannedSpans && r.StopReason == "planned-span-count" {
+		profileDone := r.Counters.Attempted == r.PlannedSpans && r.StopReason == "planned-span-count"
+		if r.Recovery == nil && profileDone && v.Missing == 0 && v.DuplicateRows == 0 && v.UnexpectedRows == 0 && r.Counters.Acknowledged == r.Counters.Attempted {
 			r.Status = "measured-profile-complete"
+		}
+		if r.Recovery != nil && profileDone && r.Recovery.Passed() {
+			r.Status = "measured-recovery-complete"
 		}
 	}
 	for _, read := range r.Reads {
@@ -341,6 +422,19 @@ produce:
 	if r.Verification.ContractViolation {
 		r.warn(options, "spans of rejected requests (or beyond a partial acknowledgement) were stored: the collector's rejection contract was violated")
 	}
+	if r.Lag.Unseen > 0 {
+		r.warn(options, fmt.Sprintf("%d acknowledged sentinels never became visible by the end of the settle window", r.Lag.Unseen))
+	}
+	if r.Recovery != nil {
+		for _, f := range r.Recovery.Faults {
+			if f.Error != "" {
+				r.warn(options, fmt.Sprintf("fault %s: %s", f.Name, f.Error))
+			}
+			if !f.Recovered {
+				r.warn(options, fmt.Sprintf("fault %s: not recovered within the run: %s", f.Name, f.NotRecoveredReason))
+			}
+		}
+	}
 	if resourceErr != nil {
 		return r, resourceErr
 	}
@@ -348,6 +442,21 @@ produce:
 		return r, ctx.Err()
 	}
 	return r, nil
+}
+
+// lateStartThreshold is the start delay after the scheduled send above which a
+// request counts as a late start.
+const lateStartThreshold = 10 * time.Millisecond
+
+// scheduleResult relates what the open-loop schedule called for to what was
+// started: spans whose scheduled send passed while the producer was running,
+// how many of them never started, and how late the started ones were.
+func scheduleResult(c Config, produceEnd time.Duration, attempted int64, delay Percentiles, over10ms, over1s int64) ScheduleResult {
+	batches := int64(produceEnd.Seconds()*float64(c.Rate)/float64(c.BatchSize)) + 1
+	scheduled := min(c.PlannedSpans(), batches*int64(c.BatchSize))
+	return ScheduleResult{Method: "open-loop: request k is due at load start + k*batch_size/rate; delays are measured from that due time",
+		ScheduledSpans: scheduled, NotStartedSpans: max(0, scheduled-attempted), LateStartThresholdMS: float64(lateStartThreshold) / float64(time.Millisecond),
+		LateStartRequests: over10ms, LateStartRequestsOver1s: over1s, StartDelay: delay}
 }
 
 // buildLookahead is how far ahead of its scheduled dispatch a request may be
@@ -419,7 +528,7 @@ func batchStop(loadCtx context.Context, b builtBatch, generated int64) string {
 }
 
 func downgrade(status string) string {
-	if status == "measured-profile-complete" {
+	if status == "measured-profile-complete" || status == "measured-recovery-complete" {
 		return "measured-with-errors"
 	}
 	return status
@@ -439,29 +548,34 @@ func waitUntil(ctx context.Context, due time.Time) bool {
 	}
 }
 
-func (s *runState) send(ctx context.Context, exp exporter, seq int64, n int, b encodedBatch, sample bool) {
+// send exports one request. due is its scheduled send, built the time its span
+// timestamps were taken.
+func (s *runState) send(ctx context.Context, exp exporter, seq int64, n int, b encodedBatch, sentinel bool, due, built time.Time) {
 	start := time.Now()
 	s.mu.Lock()
 	s.counters.Attempted += int64(n)
 	s.counters.Requests++
 	s.counters.UncompressedBytes += int64(b.uncompressed)
-	if sample {
-		s.samples[seq] = lagSample{Seq: seq, Sent: start}
+	if sentinel {
+		s.registerSentinel(seq, due, start, built)
 	}
 	s.mu.Unlock()
 	o, wire := exp.export(ctx, b, n)
-	s.finish(seq, n, b.uncompressed, wire, o, time.Since(start))
+	end := time.Now()
+	s.finish(seq, n, b.uncompressed, wire, o, end.Sub(start), end.Sub(due), end)
 }
 
 // finish records one request's outcome. Every request lands in exactly one
-// outcome class, so the counters keep the accounting identity.
-func (s *runState) finish(seq int64, n int, uncompressed, wire int, o exportOutcome, elapsed time.Duration) {
+// outcome class, so the counters keep the accounting identity. elapsed is the
+// latency from the actual send, fromScheduled from the scheduled send.
+func (s *runState) finish(seq int64, n int, uncompressed, wire int, o exportOutcome, elapsed, fromScheduled time.Duration, end time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	spans := int64(n)
 	c := &s.counters
 	s.statuses[o.statusLabel]++
 	s.requestLatency.add(elapsed)
+	s.fromScheduled.add(fromScheduled)
 	c.Bytes += int64(wire)
 	s.workload.addRequest(uncompressed, wire)
 	if o.successStatus {
@@ -500,13 +614,15 @@ func (s *runState) finish(seq int64, n int, uncompressed, wire int, o exportOutc
 		c.RequestErrors++
 	}
 	if o.class == outcomeAcknowledged || o.class == outcomePartial {
-		s.recent[s.recentN%len(s.recent)] = recentAck{seq: seq, at: time.Now()}
+		s.recent[s.recentN%len(s.recent)] = recentAck{seq: seq, at: end}
 		s.recentN++
-	} else {
-		// Lag is measured only for acknowledged spans; a rejected span is
-		// expected never to appear.
-		delete(s.samples, seq)
+		if s.acks != nil {
+			s.acks.add(end.Sub(s.start))
+		}
 	}
+	// Lag is measured only for fully acknowledged requests: a rejected span is
+	// expected never to appear, and a partial rejection does not say which.
+	s.sentinelFinished(seq, o.class == outcomeAcknowledged)
 	if err := s.ledger.record(seq, o); err != nil && s.ledgerErr == nil {
 		s.ledgerErr = err
 	}
@@ -543,51 +659,4 @@ func (s *runState) settledCandidate(i, n int) candidate {
 		}
 	}
 	return candidate{}
-}
-
-func (s *runState) monitor(ctx context.Context, ch clickHouse) {
-	ticker := time.NewTicker(ch.cfg.PollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.mu.Lock()
-			pending := []lagSample{}
-			for _, sample := range s.samples {
-				if sample.Seen.IsZero() {
-					pending = append(pending, sample)
-				}
-			}
-			s.mu.Unlock()
-			sort.Slice(pending, func(i, j int) bool { return pending[i].Seq < pending[j].Seq })
-			seen, err := ch.observe(ctx, pending)
-			s.mu.Lock()
-			if err != nil && ctx.Err() == nil {
-				s.lagErrors++
-			}
-			for seq, at := range seen {
-				if sample, ok := s.samples[seq]; ok {
-					sample.Seen = at
-					s.samples[seq] = sample
-				}
-			}
-			s.mu.Unlock()
-		}
-	}
-}
-
-func (s *runState) lagResult() LagResult {
-	r := LagResult{Method: "sampled_send_to_first_query_visibility_upper_bound_acknowledged_only", Sampled: len(s.samples), QueryErrors: s.lagErrors}
-	h := &histogram{}
-	for _, sample := range s.samples {
-		if sample.Seen.IsZero() {
-			r.Unseen++
-		} else {
-			h.add(sample.Seen.Sub(sample.Sent))
-		}
-	}
-	r.Latency = h.summary()
-	return r
 }
