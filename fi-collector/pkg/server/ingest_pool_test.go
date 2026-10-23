@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -128,4 +129,24 @@ func TestLeaseGrow(t *testing.T) {
 	if p.inUse.Load() != 0 {
 		t.Errorf("%d bytes in use after release", p.inUse.Load())
 	}
+}
+
+// A waiter keeps its place while the pool is busy freeing capacity (for the
+// work pool, a drain storing rows), even when nothing was given back for
+// longer than the wait. (Before, a waiter gave up whenever one drain took
+// longer than the wait, as large drains to a slow ClickHouse do.)
+func TestPoolWaiterWaitsWhileThePoolIsBusy(t *testing.T) {
+	p := newMemPool("work", 100)
+	p.wait = 200 * time.Millisecond
+	var draining atomic.Bool
+	draining.Store(true)
+	p.busy = draining.Load
+	held := holdLeases(t, p, 1, 100)[0]
+	time.AfterFunc(700*time.Millisecond, func() { draining.Store(false); held.release() }) // one drain, 700 ms
+	start := time.Now()
+	l, err := p.acquire(context.Background(), 50)
+	if err != nil {
+		t.Fatalf("acquire during a drain: %v after %v, want the lease when the drain ends", err, time.Since(start))
+	}
+	l.release()
 }

@@ -110,6 +110,7 @@ type Server struct {
 	grpcConnsRefused, httpConnsRefused atomic.Int64
 	smallFrameConns                    atomic.Int64
 	tapRefusalConns                    atomic.Int64 // closed at grpcMaxTapRefusals
+	draining                           atomic.Int32 // drains under way (the work pool's busy)
 	// grpcConns holds the open OTLP/gRPC connections by remote address, for
 	// grpcConnTracker.
 	grpcConns sync.Map
@@ -247,6 +248,7 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	s.grpcAuth, s.requireCreds = authenticator.AuthenticateGRPC, authenticator != nil
 	s.grpcKnown = authenticator.KnownGRPCCredentials
 	s.work.onBlock = s.kickFlush
+	s.work.busy = func() bool { return s.draining.Load() > 0 }
 	if writer != nil {
 		writer.SetMaxInsertBytes(int(limits.insertMax))
 	}
@@ -761,6 +763,8 @@ func (s *Server) drainNow(ctx context.Context) {
 	s.pendRoots = nil
 	s.pendLeases, s.pendLeased = nil, 0
 	s.pendMu.Unlock()
+	s.draining.Add(1)
+	defer s.draining.Add(-1)
 	// The rows' leases cover everything below: the span insert, the
 	// stored-root notice, the catalog handoff and the curated write.
 	defer func() {

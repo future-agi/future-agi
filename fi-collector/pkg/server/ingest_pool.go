@@ -34,10 +34,10 @@ import (
 // The flusher, which is what returns the rows part, never waits on either
 // pool. Waiters are served in arrival order (golang.org/x/sync/semaphore is
 // FIFO), so a large request is not starved by a stream of small ones. A
-// waiter keeps its place for as long as the pool keeps giving capacity back
-// (some lease was released within the last wait), up to maxWait or the
-// request's own deadline; then it is answered as busy, which OTLP exporters
-// retry.
+// waiter keeps its place for as long as the pool makes progress (some lease
+// was released within the last wait, or freeing is under way: busy), up to
+// maxWait or the request's own deadline; then it is answered as busy, which
+// OTLP exporters retry.
 type memPool struct {
 	name    string
 	sem     *semaphore.Weighted
@@ -48,6 +48,10 @@ type memPool struct {
 	// every wait while it does. The work pool uses it to start a drain,
 	// which is what frees most of it.
 	onBlock func()
+	// busy, when set, reports that capacity is being freed even though none
+	// was given back yet: for the work pool, a drain is storing rows, and
+	// gives their leases back when it ends.
+	busy func() bool
 
 	inUse     atomic.Int64 // bytes leased right now
 	peak      atomic.Int64 // most bytes ever leased at once
@@ -102,7 +106,8 @@ func (p *memPool) take(ctx context.Context, n int64) error {
 }
 
 // waitFor waits in line for n bytes. It gives up (errPoolBusy) when nothing
-// was given back to the pool for p.wait, after p.maxWait, or when ctx ends.
+// was given back to the pool for p.wait while it was not busy, after
+// p.maxWait, or when ctx ends.
 func (p *memPool) waitFor(ctx context.Context, n int64) error {
 	if p.onBlock != nil {
 		p.onBlock()
@@ -123,7 +128,7 @@ func (p *memPool) waitFor(ctx context.Context, n int64) error {
 			case <-t.C:
 			}
 			now := p.freed.Load()
-			if now == last {
+			if now == last && (p.busy == nil || !p.busy()) {
 				cancel()
 				return
 			}
