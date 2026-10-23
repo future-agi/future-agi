@@ -49,8 +49,8 @@ SPAN_TABLES = (
     "observation_span",
 )
 
-# The open-source tree has no ``ee`` package, so its readers cannot be missing there.
-ENTERPRISE_PREFIX = "ee."
+# Public ``ee`` code is always scanned; only the private cloud checkout is optional.
+CLOUD_PREFIX = "ee.cloud."
 
 # ---------------------------------------------------------------------------
 # The categories
@@ -2259,12 +2259,12 @@ def test_every_spans_reading_function_is_filed():
         "tracer.services.clickhouse.v2.span_reader:CHSpanReader.get" in readers
     ), "the scan did not reach the code it is meant to cover"
 
-    enterprise_present = (FUTUREAGI / ENTERPRISE_PREFIX.rstrip(".")).is_dir()
+    cloud_present = (FUTUREAGI / "ee" / "cloud").is_dir()
     unfiled = sorted(set(readers) - set(FILED))
     stale = sorted(
         key
         for key in set(FILED) - set(readers)
-        if enterprise_present or not key.startswith(ENTERPRISE_PREFIX)
+        if cloud_present or not key.startswith(CLOUD_PREFIX)
     )
     assert not unfiled, (
         "these functions or templates read a span table and nobody filed them; "
