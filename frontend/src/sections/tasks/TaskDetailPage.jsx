@@ -29,6 +29,7 @@ import TaskHeader from "./components/TaskHeader";
 import TaskConfigPanel from "./components/TaskConfigPanel";
 import TaskLivePreview from "./components/TaskLivePreview";
 import TaskUsageTab from "./components/TaskUsageTab";
+import SamplingAuditPanel from "./components/SamplingAuditPanel";
 import {
   NewTaskValidationSchema,
   getDefaultTaskValues,
@@ -47,6 +48,12 @@ const TAB_OPTIONS = [
   { label: "Logs", value: "logs", icon: "solar:notebook-linear" },
   { label: "Usage", value: "usage", icon: "solar:chart-2-linear" },
 ];
+// Shown only for tasks with a sampling policy: an advisory, read-only audit.
+const SAMPLING_AUDIT_TAB = {
+  label: "Sampling audit",
+  value: "sampling",
+  icon: "solar:pie-chart-2-linear",
+};
 
 const firstFilterValue = (value) => {
   if (Array.isArray(value)) return value.find(Boolean) || null;
@@ -607,7 +614,10 @@ const TaskDetailPage = () => {
                 : "background.neutral",
           }}
         >
-          {TAB_OPTIONS.map((t) => (
+          {(taskDetails?.sampling_policy
+            ? [...TAB_OPTIONS, SAMPLING_AUDIT_TAB]
+            : TAB_OPTIONS
+          ).map((t) => (
             <Tab
               key={t.value}
               value={t.value}
@@ -684,6 +694,12 @@ const TaskDetailPage = () => {
         {tab === "usage" && (
           <Box sx={{ height: "100%", overflow: "hidden" }}>
             <TaskUsageTab taskId={taskId} />
+          </Box>
+        )}
+
+        {tab === "sampling" && taskDetails?.sampling_policy && (
+          <Box sx={{ height: "100%", overflow: "auto", p: 2 }}>
+            <SamplingAuditPanel taskId={taskId} />
           </Box>
         )}
       </Box>
