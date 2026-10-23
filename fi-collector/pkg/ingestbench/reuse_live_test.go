@@ -8,8 +8,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 )
 
 func TestLiveClickHouseReusePreflightChecksLaterTraces(t *testing.T) {
@@ -25,11 +23,7 @@ func TestLiveClickHouseReusePreflightChecksLaterTraces(t *testing.T) {
 	if n, err := ch.preflight(ctx); err != nil || n != 0 {
 		t.Fatalf("fresh run preflight: %d %v", n, err)
 	}
-	writer, err := chwriter.New(lt.writer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer writer.Close()
+	writer := lt.fixtureWriter(t)
 	rows := []map[string]any{}
 	for seq := int64(64); seq < 68; seq++ {
 		rows = append(rows, storedRow(c, seq, time.Now().Add(-10*time.Second)))

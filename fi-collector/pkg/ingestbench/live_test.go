@@ -77,6 +77,20 @@ func (lt liveTarget) apply(c Config) Config {
 	return c
 }
 
+// fixtureWriter keeps every failure artifact in the test's own temporary
+// directory, never in the production writer's default /var/lib path.
+func (lt liveTarget) fixtureWriter(t *testing.T) *chwriter.Writer {
+	t.Helper()
+	cfg := lt.writer
+	cfg.DeadLetterFile = t.TempDir() + "/dead-letter.jsonl"
+	writer, err := chwriter.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { writer.Close() })
+	return writer
+}
+
 func writeLiveArtifact(t *testing.T, env string, v any) {
 	t.Helper()
 	path := os.Getenv(env)

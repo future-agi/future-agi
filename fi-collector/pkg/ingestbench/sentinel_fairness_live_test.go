@@ -4,8 +4,6 @@ import (
 	"context"
 	"testing"
 	"time"
-
-	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 )
 
 func TestLiveClickHouseSentinelPollingFairness(t *testing.T) {
@@ -15,11 +13,7 @@ func TestLiveClickHouseSentinelPollingFairness(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	start := time.Now()
-	writer, err := chwriter.New(lt.writer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer writer.Close()
+	writer := lt.fixtureWriter(t)
 	// Only the newest identity is stored. The earlier 4,096 remain missing.
 	if err := writer.Insert(ctx, []map[string]any{storedRow(c, maxPollIDsPerTick, start)}); err != nil {
 		t.Fatal(err)

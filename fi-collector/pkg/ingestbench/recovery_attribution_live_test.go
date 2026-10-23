@@ -4,8 +4,6 @@ import (
 	"context"
 	"testing"
 	"time"
-
-	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 )
 
 // Real storage/query proof, with synthetic request acknowledgements: unequal
@@ -18,11 +16,7 @@ func TestLiveClickHouseFaultLossAttribution(t *testing.T) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	writer, err := chwriter.New(lt.writer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer writer.Close()
+	writer := lt.fixtureWriter(t)
 	var rows []map[string]any
 	for _, seq := range []int64{1, 2, 3, 5, 9, 10} {
 		rows = append(rows, storedRow(c, seq, start))
