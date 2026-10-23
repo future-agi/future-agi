@@ -640,7 +640,11 @@ func (s *runState) finish(seq int64, n int, uncompressed, wire int, o exportOutc
 // candidate is the newest retained acknowledgement at least minAge old.
 // minAge is the run's configured DirectProbes.MinAge (the retention horizon).
 func (s *runState) candidate(minAge time.Duration) candidate {
-	return s.candidateAt(minAge, time.Now())
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Sample age after acquiring the lock: a stalled probe must not compare
+	// newly retained acknowledgements with a clock captured before the stall.
+	return s.candidates.selectAt(minAge, time.Since(s.start))
 }
 
 func (s *runState) candidateAt(minAge time.Duration, now time.Time) candidate {
