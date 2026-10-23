@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -191,22 +190,18 @@ func (ch clickHouse) params() map[string]string {
 	return map[string]string{"project": ch.cfg.ProjectID, "run": ch.cfg.RunID, "spt": strconv.FormatInt(ch.cfg.SpansPerTrace, 10)}
 }
 
-// preflightTraces is how many leading trace IDs of the namespace the reuse
-// check looks up. Equality on trace_id uses the bloom-filter index, so the
-// check stays cheap on a project that already holds billions of rows; a full
-// count of the run tag would scan the whole project.
-const preflightTraces = 64
-
-// preflight counts rows already stored under the first trace IDs of this run's
-// namespace. A run that reused this run ID wrote its first trace first.
+// preflight checks the entire project/run tag, without trace or time pruning:
+// an earlier execution may have delivered only its last request. LIMIT 1 stops
+// on the first match; zero requires a complete search. The returned count is a
+// lower bound (0 or 1), not the total number of old rows. Errors fail closed.
+// This is not an atomic reservation against concurrent executions or a check
+// for inserts still invisible on the chosen read target.
 func (ch clickHouse) preflight(ctx context.Context) (uint64, error) {
-	traces := make([]string, 0, preflightTraces)
-	for t := int64(0); t < preflightTraces; t++ {
-		traces = append(traces, "'"+ch.cfg.traceString(t*ch.cfg.SpansPerTrace)+"'")
-	}
-	params := ch.params()
-	params["traces"] = "[" + strings.Join(traces, ",") + "]"
-	body, err := ch.query(ctx, "SELECT count() AS rows"+ch.scope()+" AND trace_id IN {traces:Array(String)}", params)
+	lim := ch.cfg.controlLimits()
+	// A deployment's "break" overflow policy must not turn an incomplete scan
+	// into a successful zero-row result.
+	lim.settings = map[string]string{"timeout_overflow_mode": "throw", "read_overflow_mode": "throw", "read_overflow_mode_leaf": "throw", "result_overflow_mode": "throw"}
+	body, err := ch.queryWith(ctx, "SELECT count() AS rows FROM (SELECT 1"+ch.scope()+" LIMIT 1)", ch.params(), lim)
 	if err != nil {
 		return 0, err
 	}

@@ -512,10 +512,15 @@ own client) and checks EVERY attempted span by BOTH deterministic IDs:
 
   The resumed answer equals an uninterrupted one (tested); a completed checkpoint
   answers without querying again.
-* **Reuse preflight.** Before load, the tool looks up the first 64 trace IDs of the
-  run's namespace (bloom-filter-indexed equality, cheap on a project holding
-  billions of rows) and refuses a run ID that already has rows there. The count is
-  kept in ``preexisting_run_rows``.
+* **Reuse preflight.** Before load, the tool searches the entire project/run tag,
+  without restricting trace IDs or timestamps, and refuses reuse if any row is
+  found. It stops at the first match: ``preexisting_run_rows`` is a lower bound
+  (0 or 1), not a total count. Proving absence can scan the whole project and is
+  not claimed cheap at scale. The query uses the control-query timeout (at least
+  30s, raised by ``--verify-query-timeout``); timeout, resource-limit or invalid
+  responses refuse load, with no sampled fallback. This is not an atomic
+  reservation: use a fresh run ID, quiesce earlier writers and choose a consistent
+  read target; concurrent reuse and old inserts not yet visible are not excluded.
 
 ``measured-profile-complete`` means the requested span count was acknowledged and
 independently verified with no missing, duplicate or unexpected rows. It does NOT

@@ -160,6 +160,8 @@ func (m *mockStorage) serve(w http.ResponseWriter, r *http.Request) {
 	case strings.Contains(query, "FROM system.clusters"):
 	case strings.HasPrefix(query, clickHouseHardwareQuery):
 		_ = enc.Encode(map[string]any{"max_threads": "'auto(4)'", "os_memory_total": 8 << 30, "cgroup_max_cpu": 0, "cgroup_memory_total": 0})
+	case strings.HasPrefix(query, "SELECT count() AS rows FROM (SELECT 1"):
+		_ = enc.Encode(map[string]any{"rows": min(1, len(m.matching(q)))})
 	case strings.Contains(query, "trace_id IN {traces:Array(String)}") && strings.Contains(query, "count() AS rows"):
 		n := 0
 		for _, row := range m.matching(q) {

@@ -174,7 +174,7 @@ func Run(ctx context.Context, c Config, options Options) (Result, error) {
 		return r, fmt.Errorf("verification preflight: %w", err)
 	}
 	if preexisting != 0 {
-		return r, fmt.Errorf("run-id already has %d rows; choose a new run-id (no data was sent)", preexisting)
+		return r, fmt.Errorf("run-id already has at least %d rows; choose a new run-id (no data was sent)", preexisting)
 	}
 	exp, err := c.newExporter(client, options.OTLPHeaders)
 	if err != nil {
