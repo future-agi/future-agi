@@ -26,11 +26,6 @@ type Options struct {
 	Faults []Fault
 }
 
-type recentAck struct {
-	seq int64
-	at  time.Time
-}
-
 type runState struct {
 	mu             sync.Mutex
 	start          time.Time
@@ -45,8 +40,7 @@ type runState struct {
 	ledger        *outcomeLedger
 	ledgerErr     error
 	workload      *workloadAccumulator
-	recent        [64]recentAck
-	recentN       int
+	candidates    ackCandidates
 	// inFlightSpans/inFlightRequests are the requests started (send) and not
 	// finished yet, counted on their own: telemetry checks them against
 	// attempted minus the outcome classes, so a class that misses a request
@@ -67,7 +61,7 @@ type runState struct {
 
 func newRunState(c Config, start time.Time, faults bool) *runState {
 	s := &runState{start: start, statuses: map[string]int64{}, ledger: newOutcomeLedger(int64(c.BatchSize)), workload: newWorkloadAccumulator(),
-		sentinels: map[int64]*sentinel{}, pending: map[int64]*sentinel{}}
+		sentinels: map[int64]*sentinel{}, pending: map[int64]*sentinel{}, candidates: newAckCandidates(c.DirectProbes.MinAge)}
 	if faults {
 		s.acks = &ackSeries{}
 	}
@@ -627,8 +621,7 @@ func (s *runState) finish(seq int64, n int, uncompressed, wire int, o exportOutc
 		c.RequestErrors++
 	}
 	if o.class == outcomeAcknowledged || o.class == outcomePartial {
-		s.recent[s.recentN%len(s.recent)] = recentAck{seq: seq, at: end}
-		s.recentN++
+		s.candidates.add(seq, end.Sub(s.start))
 		if s.acks != nil {
 			s.acks.add(end.Sub(s.start))
 		}
@@ -641,20 +634,17 @@ func (s *runState) finish(seq int64, n int, uncompressed, wire int, o exportOutc
 	}
 }
 
-// candidate is the newest acknowledged request at least minAge old.
+// candidate is the newest retained acknowledgement at least minAge old.
+// minAge is the run's configured DirectProbes.MinAge (the retention horizon).
 func (s *runState) candidate(minAge time.Duration) candidate {
+	return s.candidateAt(minAge, time.Now())
+}
+
+func (s *runState) candidateAt(minAge time.Duration, now time.Time) candidate {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cutoff := time.Now().Add(-minAge)
-	best := candidate{}
-	var bestAt time.Time
-	for i := 0; i < min(s.recentN, len(s.recent)); i++ {
-		a := s.recent[i]
-		if !a.at.After(cutoff) && a.at.After(bestAt) {
-			best, bestAt = candidate{seq: a.seq, ok: true}, a.at
-		}
-	}
-	return best
+	// Sub uses Go's monotonic clock, as does finish's acknowledgement offset.
+	return s.candidates.selectAt(minAge, now.Sub(s.start))
 }
 
 // settledCandidate spreads after-settle probes across the run: sample i of n
