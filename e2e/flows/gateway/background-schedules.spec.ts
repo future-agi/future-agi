@@ -17,10 +17,14 @@ import { MockUpstream } from '../../lib/upstream';
 //   poll_agentcc_batches_activity every 60 s; all on queue "default"), in
 //   tfc/temporal/schedules/__init__.py ALL_SCHEDULES, registered on a Standalone
 //   boot by deploy/standalone/bin/bootstrap.py (register_temporal_schedules) and the
-//   embedded worker (tfc/temporal/embedded.py a_register_schedules); each action
-//   starts TaskRunnerWorkflow with a TaskRunnerInput naming the activity
-//   (tfc/temporal/schedules/manager.py _build_schedule_for_config, task_queue =
-//   config.queue). Read through e2e/lib/temporal-probe.ts (the image's Temporal CLI).
+//   embedded worker (tfc/temporal/embedded.py a_register_schedules), and on a
+//   Distributed boot by the postgres-schema-bootstrap job (docker-compose.distributed.yml
+//   REGISTER_TEMPORAL_SCHEDULES "true"; futureagi/entrypoint.sh
+//   should_register_temporal_schedules); each action starts TaskRunnerWorkflow with a
+//   TaskRunnerInput naming the activity (tfc/temporal/schedules/manager.py
+//   _build_schedule_for_config, task_queue = config.queue). Read through
+//   e2e/lib/temporal-probe.ts with the Temporal CLI inside each stack's Temporal
+//   container (Standalone `app`, Distributed `temporal`), so the flow holds on both.
 // - the retry a delivery schedule performs: a refused delivery leaves the event
 //   pending with next_retry_at = now + 30 s (agentcc/services/webhook_delivery.py
 //   retry_delay, _record_failure); only agentcc-webhook-delivery delivers it then

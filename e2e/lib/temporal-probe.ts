@@ -1,10 +1,18 @@
 // Look up, pause, trigger, delete and re-register the product's Temporal
-// schedules on the Standalone stack, where Temporal listens on 127.0.0.1:7233
-// inside `app` only (deploy/standalone/supervisord.conf [program:temporal]). It
-// runs the Temporal CLI the image ships (deploy/standalone/bin/verify-binaries;
-// 1.9.1 when this was written) and the product's own `manage.py
-// register_temporal_schedules` in that container, through `bin/e2e compose exec`,
-// which uses DOCKER_HOST from the environment (never a Docker context).
+// schedules. It runs the Temporal CLI inside the stack's own Temporal container,
+// through `bin/e2e compose exec`, which uses DOCKER_HOST from the environment
+// (never a Docker context), on the stack bin/e2e manages (E2E_STACK):
+// - Standalone (E2E_STACK=standalone): Temporal listens on 127.0.0.1:7233 inside
+//   `app` only (deploy/standalone/supervisord.conf [program:temporal]), and the CLI
+//   is the one the image ships (deploy/standalone/bin/verify-binaries; the fixture
+//   below is its 1.9.1 output). The product's own `manage.py
+//   register_temporal_schedules` and the manager's interval change run in that
+//   container too, so those commands are Standalone only.
+// - Distributed (the default): Temporal is the `temporal` service
+//   (docker-compose.distributed.yml, temporalio/auto-setup, which ships the
+//   `temporal` CLI with the same `--output json`). Its frontend listens on the
+//   container's own address, the one `temporal:7233` resolves to and the backend's
+//   TEMPORAL_HOST names, so every CLI command runs there with that address.
 //
 // Output shapes are the CLI's `--output json` (proto JSON), captured from the
 // image into e2e/fixtures/temporal/schedule-describe.json: the action's input is
@@ -25,7 +33,23 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const TEMPORAL = ['--address', '127.0.0.1:7233', '--namespace', 'default'];
+
+/** The stacks bin/e2e manages. */
+export type E2EStack = 'standalone' | 'distributed';
+/** The container a command runs in, and its working directory there (null: the image's own). */
+export interface ExecTarget { service: string; workdir: string | null }
+
+/** Each stack's Temporal container and the frontend address the CLI dials inside it (see the header). */
+const TEMPORAL_CLI: Record<E2EStack, ExecTarget & { address: string }> = {
+  standalone: { service: 'app', workdir: '/app/backend', address: '127.0.0.1:7233' },
+  distributed: { service: 'temporal', workdir: null, address: 'temporal:7233' },
+};
+/** The product's own commands: the Standalone `app`, in the backend's directory. */
+const PRODUCT_TARGET: ExecTarget = { service: 'app', workdir: '/app/backend' };
+
+/** The stack bin/e2e manages: E2E_STACK=standalone, otherwise Distributed (its default). */
+const currentStack = (): E2EStack => (process.env.E2E_STACK === 'standalone' ? 'standalone' : 'distributed');
+
 const SCHEDULE_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 const PRODUCT_COMMAND = ['env', 'NO_STARTUP_DB_MUTATIONS=false', 'python', 'manage.py', 'register_temporal_schedules'];
 // Ends with os._exit, as register_temporal_schedules does: the SDK's thread aborts
@@ -87,23 +111,37 @@ export function parseScheduleList(raw: string): string[] {
   return rows.map((r) => r.scheduleId as string).sort();
 }
 
-/** Runs a command in the Standalone `app` container and returns its stdout. */
-export type AppExec = (argv: string[]) => string;
+/** Runs a command in one container of the stack bin/e2e manages and returns its stdout. */
+export type StackExec = (argv: string[], target: ExecTarget) => string;
 
-export const composeExec: AppExec = (argv) => {
-  if (process.env.E2E_STACK !== 'standalone') throw new Error('temporal probe: Standalone stack only (E2E_STACK=standalone)');
+export const composeExec: StackExec = (argv, { service, workdir }) => {
   const env = { ...process.env };
   delete env.DOCKER_CONTEXT; // DOCKER_HOST from the environment only, never a context
-  return execFileSync(`${root}bin/e2e`, ['compose', 'exec', '-T', '-w', '/app/backend', 'app', ...argv],
+  return execFileSync(`${root}bin/e2e`, ['compose', 'exec', '-T', ...(workdir === null ? [] : ['-w', workdir]), service, ...argv],
     { encoding: 'utf8', env, timeout: 120_000, maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
 };
 
 export class TemporalProbe {
-  constructor(private readonly exec: AppExec = composeExec) {}
+  private readonly cli: ExecTarget & { address: string };
+
+  /** `stack`: whose containers it runs in; by default the stack bin/e2e manages. */
+  constructor(private readonly exec: StackExec = composeExec, private readonly stack: E2EStack = currentStack()) {
+    this.cli = TEMPORAL_CLI[stack];
+  }
 
   private temporal(sub: string[], id?: string): string {
     if (id !== undefined && !SCHEDULE_ID.test(id)) throw new Error(`temporal probe: bad schedule id ${JSON.stringify(id)}`);
-    return this.exec(['temporal', 'schedule', ...sub, ...(id === undefined ? [] : ['--schedule-id', id]), ...TEMPORAL]);
+    const { service, workdir, address } = this.cli;
+    return this.exec(['temporal', 'schedule', ...sub, ...(id === undefined ? [] : ['--schedule-id', id]),
+      '--address', address, '--namespace', 'default'], { service, workdir });
+  }
+
+  /** The product's own commands run in the Standalone `app` only (see the header). */
+  private product(argv: string[]): string {
+    if (this.stack !== 'standalone') {
+      throw new Error('temporal probe: the product\'s schedule commands run on the Standalone stack only (E2E_STACK=standalone)');
+    }
+    return this.exec(argv, PRODUCT_TARGET);
   }
 
   /** Every schedule id, sorted (Temporal's visibility list: a new schedule can take a moment to appear). */
@@ -121,7 +159,7 @@ export class TemporalProbe {
 
   /** The product's own registration of every ALL_SCHEDULES entry (no flag). */
   async registerSchedules(): Promise<string> {
-    return this.exec(PRODUCT_COMMAND);
+    return this.product(PRODUCT_COMMAND);
   }
 
   /** Re-registers one ALL_SCHEDULES entry with another interval through the
@@ -129,13 +167,13 @@ export class TemporalProbe {
    *  schedule and keeps its state), as a deploy that changed the config would. */
   async setIntervalViaManager(id: string, seconds: number): Promise<void> {
     if (!SCHEDULE_ID.test(id) || !(Number.isInteger(seconds) && seconds > 0)) throw new Error('temporal probe: bad interval change');
-    const out = this.exec(['python', '-c', MANAGER_UPDATE, id, String(seconds)]);
+    const out = this.product(['python', '-c', MANAGER_UPDATE, id, String(seconds)]);
     if (!out.includes(`updated ${id} ${seconds}`)) throw new Error(`temporal probe: interval change not confirmed for ${id}`);
   }
 
   /** The product's own `--list`: the schedule ids it prints, sorted. */
   async productList(): Promise<string[]> {
-    const out = this.exec([...PRODUCT_COMMAND, '--list']);
+    const out = this.product([...PRODUCT_COMMAND, '--list']);
     return out.split('\n').map((l) => /^ {2}- (\S+)$/.exec(l)?.[1]).filter((x): x is string => !!x).sort();
   }
 }

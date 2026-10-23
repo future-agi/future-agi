@@ -1244,7 +1244,7 @@
 ### GW-E2E-013 — the gateway's background schedules are registered and running on a fresh install, so a refused webhook delivery is retried on its own
 
 **Goal:** On a fresh install, the gateway's background jobs (alert evaluation, webhook delivery retries and console batch reporting) are scheduled and running without anyone opening the console, so a webhook delivery that failed is retried on its own  
-**Spec:** `flows/gateway/background-schedules.spec.ts:62`  
+**Spec:** `flows/gateway/background-schedules.spec.ts:66`  
 **Tags:** —
 
 **User steps:**

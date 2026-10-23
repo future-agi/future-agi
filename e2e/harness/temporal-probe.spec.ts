@@ -42,7 +42,7 @@ test('temporal probe offline: list ids, sorted; the exact CLI and product comman
     if (argv.includes('--list')) return 'Listing all Temporal schedules...\n\nFound 2 schedules:\n  - b\n  - a\n';
     if (argv[1] === '-c') return `updated ${argv[3]} ${argv[4]}\n`;
     return '';
-  });
+  }, 'standalone');
   await probe.listSchedules();
   await probe.describeSchedule('agentcc-log-retention');
   await probe.pauseSchedule('s1');
@@ -65,6 +65,48 @@ test('temporal probe offline: list ids, sorted; the exact CLI and product comman
   expect(calls[7]).toEqual(['env', 'NO_STARTUP_DB_MUTATIONS=false', 'python', 'manage.py', 'register_temporal_schedules', '--list']);
   expect([calls[8][0], calls[8][1], calls[8][3], calls[8][4]]).toEqual(['python', '-c', 's1', '120']);
   await expect(probe.describeSchedule('bad id; rm')).rejects.toThrow('bad schedule id');
+});
+
+test('temporal probe offline: each stack runs the CLI in its own Temporal container at its own address; the product commands run in the Standalone app only', async () => {
+  type Call = { argv: string[]; service?: string; workdir?: string | null };
+  const read = async (stack?: 'standalone' | 'distributed') => {
+    const calls: Call[] = [];
+    const probe = new TemporalProbe((argv: string[], target?: { service: string; workdir: string | null }) => {
+      calls.push({ argv, service: target?.service, workdir: target?.workdir });
+      return argv[2] === 'list' ? '[{"scheduleId":"x"}]' : describeJson;
+    }, stack);
+    await probe.listSchedules();
+    await probe.describeSchedule('agentcc-webhook-delivery');
+    return { probe, calls };
+  };
+  const cli = (service: string, workdir: string | null, address: string): Call[] => [
+    { argv: ['temporal', 'schedule', 'list', '--output', 'json', '--address', address, '--namespace', 'default'], service, workdir },
+    { argv: ['temporal', 'schedule', 'describe', '--output', 'json', '--time-format', 'iso',
+      '--schedule-id', 'agentcc-webhook-delivery', '--address', address, '--namespace', 'default'], service, workdir },
+  ];
+  const STANDALONE = cli('app', '/app/backend', '127.0.0.1:7233');
+  const DISTRIBUTED = cli('temporal', null, 'temporal:7233');
+  expect((await read('standalone')).calls).toEqual(STANDALONE);
+  const distributed = await read('distributed');
+  expect(distributed.calls).toEqual(DISTRIBUTED);
+  for (const product of [() => distributed.probe.registerSchedules(), () => distributed.probe.productList(),
+    () => distributed.probe.setIntervalViaManager('s1', 120)]) {
+    await expect(product()).rejects.toThrow('Standalone stack only');
+  }
+  expect(distributed.calls).toHaveLength(2);
+  // No stack given: the one bin/e2e manages (E2E_STACK=standalone, otherwise Distributed).
+  const saved = process.env.E2E_STACK;
+  try {
+    process.env.E2E_STACK = 'standalone';
+    expect((await read()).calls).toEqual(STANDALONE);
+    delete process.env.E2E_STACK;
+    expect((await read()).calls).toEqual(DISTRIBUTED);
+    process.env.E2E_STACK = 'distributed';
+    expect((await read()).calls).toEqual(DISTRIBUTED);
+  } finally {
+    if (saved === undefined) delete process.env.E2E_STACK;
+    else process.env.E2E_STACK = saved;
+  }
 });
 
 // tfc/temporal/schedules/agentcc_retention.py: a schedule no gateway flow uses, so
