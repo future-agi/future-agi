@@ -1,7 +1,6 @@
 import type { APIResponse, Locator, Page, Route } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
 import type { StateProbe } from '../../lib/state-probe';
-import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
 
 // The isolated E2E stack runs the OSS image with no Enterprise licence. Jev
@@ -187,7 +186,7 @@ test('EVAL-E2E-006: Jev models are listed and saved on a Community stack without
       'both Jev rows are enabled, prompt for a TypeSafe API key and show no "Not included in your plan" tooltip',
     ],
   }),
-}, async ({ page, actor, probe, request }, testInfo) => {
+}, async ({ page, actor, probe }, testInfo) => {
   test.setTimeout(240_000); // Three UI_READY browser stages (draft, picker, hover) 180 + API/PG reads and headroom 60.
   page.setDefaultTimeout(UI_READY);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
@@ -240,17 +239,12 @@ test('EVAL-E2E-006: Jev models are listed and saved on a Community stack without
     const before = await read();
     expect(before).toHaveLength(1);
     expect(before[0].model).toBe(SAVEABLE_MODEL);
-    // ApiClient has no PUT, so send the bearer and scope headers it would send.
     // The body is what EvalCreatePage publishes for a Jev pass/fail evaluator.
-    const response = await request.put(`${E2E.apiUrl}${TEMPLATES}${id}/update/`, {
-      headers: { Authorization: `Bearer ${actor.tokens.access}`,
-        'X-Organization-Id': actor.organizationId, 'X-Workspace-Id': actor.workspaceId },
-      data: { model: JEV_MODEL, output_type: 'pass_fail', jev_mapping: mapping },
-    });
-    const body = await response.json() as Record<string, unknown>;
+    // The client throws on any status from 400 up.
+    const body = await actor.api.put<Record<string, unknown>>(`${TEMPLATES}${id}/update/`,
+      { model: JEV_MODEL, output_type: 'pass_fail', jev_mapping: mapping });
     await testInfo.attach('jev-update', { contentType: 'application/json',
-      body: JSON.stringify({ id, status: response.status(), body }) });
-    expect(response.status()).toBe(200);
+      body: JSON.stringify({ id, body }) });
     const after = await read();
     expect(after).toHaveLength(1);
     expect(after[0]).toMatchObject({ model: JEV_MODEL, output_type_normalized: 'pass_fail' });
