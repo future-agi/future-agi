@@ -208,3 +208,44 @@ func TestConsumerTopologyFailureAfterKeysReplaysWithoutCommitting(t *testing.T) 
 		t.Fatal("partial write did not replay completely", err, source.commits, keys, values)
 	}
 }
+
+func TestDistributedCatalogRequiresExplicitVerifiedTarget(t *testing.T) {
+	for _, foreign := range []bool{false, true} {
+		inserts := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			if strings.HasPrefix(q.Get("query"), "SELECT ") {
+				table := q.Get("param_table")
+				if strings.Contains(q.Get("query"), "system.replicas") {
+					fmt.Fprint(w, `{"replicas":2}`)
+				} else if strings.HasSuffix(table, "_local") {
+					fmt.Fprint(w, `{"engine":"ReplicatedAggregatingMergeTree"}`)
+				} else {
+					cluster := "fixture"
+					if foreign {
+						cluster = "foreign"
+					}
+					fmt.Fprintf(w, `{"engine":"Distributed","engine_full":"Distributed('%s', 'catalog', '%s_local', cityHash64(project_id))"}`, cluster, table)
+				}
+				return
+			}
+			inserts++
+			if q.Get("distributed_foreground_insert") != "1" || q.Get("insert_quorum") != "2" || q.Get("async_insert") != "0" {
+				t.Error("unsafe distributed acknowledgement", q)
+			}
+		}))
+		sink, err := NewClickHouseSink(ClickHouseConfig{URL: server.URL, Database: "catalog", Cluster: "fixture", InsertQuorum: 2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = sink.Insert(context.Background(), testBatch(t))
+		server.Close()
+		if foreign {
+			if err == nil || inserts != 0 {
+				t.Fatal("foreign target was accepted")
+			}
+		} else if err != nil || inserts != 2 {
+			t.Fatal("confirmed clustered delivery failed", err, inserts)
+		}
+	}
+}

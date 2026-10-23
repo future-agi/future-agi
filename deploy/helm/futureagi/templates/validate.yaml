@@ -32,6 +32,38 @@ Renders nothing when the values are consistent.
 {{- if eq $v.clickhouse.database $v.clickhouse.propertyCatalogDatabase -}}
 {{- $errors = append $errors "clickhouse.propertyCatalogDatabase must differ from clickhouse.database" -}}
 {{- end -}}
+{{- if not $v.clickhouse.cluster.enabled -}}
+{{- $priorCluster := lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-cluster" (include "futureagi.component" (dict "root" . "component" "clickhouse"))) -}}
+{{- if $priorCluster -}}
+{{- $errors = append $errors "cannot disable cluster mode in place; switch clients back through the staged rollback procedure instead of replacing the cluster with an empty single node" -}}
+{{- end -}}
+{{- end -}}
+{{- if $v.clickhouse.cluster.enabled -}}
+{{- if or (eq $v.clickhouse.database "default") (not (regexMatch "^[A-Za-z_][A-Za-z0-9_]*$" $v.clickhouse.database)) -}}
+{{- $errors = append $errors "cluster mode requires a new explicitly named clickhouse.database (not default); use the staged migration runbook" -}}
+{{- end -}}
+{{- if not $v.clickhouse.cluster.privateNetwork -}}
+{{- $errors = append $errors "cluster mode requires clickhouse.cluster.privateNetwork=true: private HTTP/native endpoints or an encrypting mesh; public plaintext endpoints are unsupported" -}}
+{{- end -}}
+{{- if gt (int $v.clickhouse.cluster.insertQuorum) (int $v.clickhouse.cluster.replicas) -}}
+{{- $errors = append $errors "clickhouse.cluster.insertQuorum must not exceed replicas" -}}
+{{- end -}}
+{{- if and (eq $v.clickhouse.mode "bundled") (not $v.networkPolicy.enabled) -}}
+{{- $errors = append $errors "bundled cluster mode requires networkPolicy.enabled=true and a NetworkPolicy-capable CNI" -}}
+{{- end -}}
+{{- if and (eq $v.clickhouse.mode "external") (not $v.clickhouse.password) (not $v.clickhouse.existingSecret) -}}
+{{- $errors = append $errors "external cluster mode requires clickhouse.password or existingSecret" -}}
+{{- end -}}
+{{- $clusterConfig := lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-cluster" (include "futureagi.component" (dict "root" . "component" "clickhouse"))) -}}
+{{- $identity := toJson (dict "database" $v.clickhouse.database "shards" $v.clickhouse.cluster.shards "replicas" $v.clickhouse.cluster.replicas "keeper" $v.clickhouse.cluster.keeperPathPrefix "cluster" $v.clickhouse.cluster.name "keeperReplicas" $v.clickhouse.cluster.keeper.replicas) -}}
+{{- if and $clusterConfig (ne (dig "metadata" "annotations" "futureagi.io/topology" "" $clusterConfig) $identity) -}}
+{{- $errors = append $errors "cluster topology is immutable on this release; migrate into a new database/release instead of changing shard count, replicas, name or Keeper path" -}}
+{{- end -}}
+{{- $old := lookup "apps/v1" "StatefulSet" .Release.Namespace (include "futureagi.component" (dict "root" . "component" "clickhouse")) -}}
+{{- if $old -}}
+{{- $errors = append $errors "cannot enable cluster mode over the existing single-node StatefulSet; provision a separate release and migrate" -}}
+{{- end -}}
+{{- end -}}
 {{- if and (eq $v.redis.mode "external") (not $v.redis.external.host) -}}
 {{- $errors = append $errors "redis.external.host is required: your Redis 6+ server (or set redis.mode=bundled)" -}}
 {{- end -}}

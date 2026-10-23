@@ -139,6 +139,12 @@ is only port-forwarded). */ -}}
       "CH_DATABASE" $v.clickhouse.database
       "CH25_DATABASE" $v.clickhouse.database
       "CH_USE_REPLICATED_ENGINES" "false"
+      "CH_CLUSTER_ENABLED" (toString $v.clickhouse.cluster.enabled)
+      "CH_CLUSTER_NAME" $v.clickhouse.cluster.name
+      "CH_CLUSTER_KEEPER_PREFIX" $v.clickhouse.cluster.keeperPathPrefix
+      "CH_CLUSTER_SHARDS" (toString $v.clickhouse.cluster.shards)
+      "CH_CLUSTER_REPLICAS" (toString $v.clickhouse.cluster.replicas)
+      "CH_CLUSTER_INSERT_QUORUM" (toString $v.clickhouse.cluster.insertQuorum)
       "CH25_DROP_LEGACY_CDC_CHAIN" "true"
       "CH25_EVAL_LOGGER_TABLE" "tracer_eval_logger"
       "CH25_QUERY_TYPES_V2_ONLY" "span_list,trace_list,session_list,voice_call_list,dashboard,monitor_metrics,eval_metrics,filter_builder,trace_detail,annotation_labels"
@@ -319,6 +325,8 @@ pod's 1Gi emptyDir with the dead-letter file. */ -}}
 {{- $plain := dict
       "FI_CH_URL" (printf "http://%s:%s" (include "futureagi.clickhouse.host" $root) (include "futureagi.clickhouse.httpPort" $root))
       "FI_CH_DATABASE" $v.clickhouse.database
+      "FI_CH_DISTRIBUTED" (toString $v.clickhouse.cluster.enabled)
+      "FI_CH_INSERT_QUORUM" (ternary (toString $v.clickhouse.cluster.insertQuorum) "0" $v.clickhouse.cluster.enabled)
       "FI_CH_USERNAME" $v.clickhouse.user
       "FI_PG_WRITE_HOST" $pgHost
       "FI_PG_WRITE_PORT" $pgPort
@@ -343,6 +351,10 @@ pod's 1Gi emptyDir with the dead-letter file. */ -}}
 {{- $_ := set $plain "FI_OBSERVED_CATALOG_CH_URL" (get $plain "FI_CH_URL") -}}
 {{- $_ := set $plain "FI_OBSERVED_CATALOG_CH_DATABASE" $v.clickhouse.propertyCatalogDatabase -}}
 {{- $_ := set $plain "FI_OBSERVED_CATALOG_CH_USERNAME" "observed_catalog_writer" -}}
+{{- if $v.clickhouse.cluster.enabled -}}
+{{- $_ := set $plain "FI_OBSERVED_CATALOG_CH_CLUSTER" $v.clickhouse.cluster.name -}}
+{{- $_ := set $plain "FI_OBSERVED_CATALOG_CH_INSERT_QUORUM" (toString $v.clickhouse.cluster.insertQuorum) -}}
+{{- end -}}
 {{- end -}}
 {{- if not $redisTls }}{{ $_ := set $plain "FI_AUTH_REDIS_ADDR" (printf "%s:%s" (include "futureagi.redis.host" $root) (include "futureagi.redis.port" $root)) }}{{ end -}}
 {{- $plain = mergeOverwrite $plain (include "futureagi.env.platform" (dict "root" $root "kind" "collector") | fromYaml) $overrides -}}

@@ -772,6 +772,81 @@
           ],
           "description": "`external` or `bundled`. ClickHouse 25.3 or newer."
         },
+        "cluster": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Opt-in sharded topology. Existing installs must migrate to a new database/release; never flip in place."
+            },
+            "name": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+              "description": "remote_servers cluster name (must already exist on every external node)."
+            },
+            "shards": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64,
+              "description": "Immutable at install. Changing shard count requires resharding into a new database."
+            },
+            "replicas": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 5,
+              "description": "Replicas per shard. Two copies is the small reference profile."
+            },
+            "keeperPathPrefix": {
+              "type": "string",
+              "pattern": "^/[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$",
+              "description": "Keeper namespace, unique per installation. The database/shard/table are appended."
+            },
+            "insertQuorum": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5,
+              "description": "Successful writes require this many copies. 2 blocks writes with one of two replicas unavailable; 1 prioritizes availability, not two-copy durability."
+            },
+            "privateNetwork": {
+              "type": "boolean",
+              "description": "Explicit acknowledgement that HTTP/native traffic needs a private network or an encrypting service mesh. Public endpoints are unsupported."
+            },
+            "keeper": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "replicas": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "enum": [
+                    3,
+                    5
+                  ],
+                  "description": "Bundled Keeper voting members; production requires an odd majority (3 or 5)."
+                },
+                "persistence": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "size": {
+                      "type": "string",
+                      "description": "Persistent volume per Keeper member; retained across pod restarts."
+                    },
+                    "storageClass": {
+                      "type": "string",
+                      "description": "Keeper StorageClass. Empty uses global.storageClass or the cluster default."
+                    }
+                  }
+                },
+                "resources": {
+                  "type": "object",
+                  "description": "Resources per Keeper member."
+                }
+              }
+            }
+          }
+        },
         "database": {
           "type": "string",
           "description": "[CH_DATABASE, CH25_DATABASE] database of traces and analytics."

@@ -84,6 +84,7 @@ from tracer.services.clickhouse.oss_cdc_source import (
     SourceTable,
     inspect_source,
 )
+from tracer.services.clickhouse.v2.cluster_schema import cluster_enabled
 
 if TYPE_CHECKING:
     from clickhouse_connect.driver.client import Client
@@ -996,9 +997,14 @@ def add_source_columns(
     if missing:
         _reset_snapshots(pg, (table,))
     for column, data_type in missing:
-        ch.command(
-            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS `{column}` {data_type}"
-        )
+        if cluster_enabled():
+            from tracer.services.clickhouse.v2.cluster_cdc import add_column
+
+            add_column(ch, table, column, data_type)
+        else:
+            ch.command(
+                f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS `{column}` {data_type}"
+            )
     return [f"{table}.{column}" for column, _ in missing]
 
 
@@ -1585,23 +1591,28 @@ def install(
             take_over_from_peerdb(pg, ch, peerdb)
         # 1. Capture first: every write after this point is in the outbox.
         capture = install_capture(pg, tables)
-        # 2. Landing tables in the exact PeerDB-created shape.
-        created, added = ensure_landing_tables(
-            ch, source, include_usage_schema=config.include_usage_schema, pg=pg
-        )
-        # 3. Derived usage columns, dictionaries, views and full qualification,
-        #    through the PeerDB-path installer unchanged.
-        result = core.bootstrap_cdc(
-            ch,
-            database=config.destination.database,
-            inspect_mirrors=lambda: _inventory(config, tables),
-            inspect_source=lambda: source,
-            applied_by="oss-outbox-cdc",
-            include_usage_schema=config.include_usage_schema,
-            # Dictionaries read their CLICKHOUSE source with these credentials.
-            ch_user=config.ch_user,
-            ch_password=config.ch_password,
-        )
+        if cluster_enabled():
+            from tracer.services.clickhouse.v2.cluster_cdc import apply_cdc
+
+            created, added, result = apply_cdc(ch, source, config=config, pg=pg)
+        else:
+            # 2. Landing tables in the exact PeerDB-created shape.
+            created, added = ensure_landing_tables(
+                ch, source, include_usage_schema=config.include_usage_schema, pg=pg
+            )
+            # 3. Derived usage columns, dictionaries, views and full qualification,
+            #    through the PeerDB-path installer unchanged.
+            result = core.bootstrap_cdc(
+                ch,
+                database=config.destination.database,
+                inspect_mirrors=lambda: _inventory(config, tables),
+                inspect_source=lambda: source,
+                applied_by="oss-outbox-cdc",
+                include_usage_schema=config.include_usage_schema,
+                # Dictionaries read their CLICKHOUSE source with these credentials.
+                ch_user=config.ch_user,
+                ch_password=config.ch_password,
+            )
         with writer(pg, wait=True) as clock:
             # 4. Versions above anything already in CH (PeerDB-era rows included).
             clock.last = max(clock.last, _ch_max_version(ch, tables))
@@ -1690,15 +1701,20 @@ def check(
                 "`requeue --apply`"
             )
     try:
-        core.inspect_bootstrap(
-            ch,
-            database=config.destination.database,
-            inspect_mirrors=lambda: _inventory(config, tables),
-            inspect_source=lambda: source,
-            require_complete=True,
-            include_usage_schema=config.include_usage_schema,
-        )
-    except (core.BootstrapError, upgrade.CDCUpgradeError) as error:
+        if cluster_enabled():
+            from tracer.services.clickhouse.v2.cluster_cdc import check_cdc
+
+            check_cdc(ch, source, config=config)
+        else:
+            core.inspect_bootstrap(
+                ch,
+                database=config.destination.database,
+                inspect_mirrors=lambda: _inventory(config, tables),
+                inspect_source=lambda: source,
+                require_complete=True,
+                include_usage_schema=config.include_usage_schema,
+            )
+    except (core.BootstrapError, upgrade.CDCUpgradeError, ValueError) as error:
         problems.append(f"ClickHouse landing schema: {error}")
     return {"ready": not problems, "applied": False, "problems": problems, **state}
 

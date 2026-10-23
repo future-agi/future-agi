@@ -1,0 +1,153 @@
+{{- if and (eq .Values.clickhouse.mode "bundled") .Values.clickhouse.cluster.enabled }}
+{{- $c := .Values.clickhouse -}}
+{{- $keeper := $c.cluster.keeper -}}
+{{- $ctx := dict "root" . "component" "clickhouse-keeper" -}}
+{{- $name := include "futureagi.component" $ctx -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "futureagi.datastoreSyncWave" $ | nindent 4 }}
+data:
+  keeper.xml: |
+    <clickhouse>
+      <logger><level>information</level><console>true</console></logger>
+      <listen_host>0.0.0.0</listen_host>
+      <keeper_server>
+        <tcp_port>9181</tcp_port><server_id from_env="KEEPER_ID"/>
+        <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+        <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
+        <four_letter_word_white_list>ruok,mntr,srvr</four_letter_word_white_list>
+        <coordination_settings><operation_timeout_ms>10000</operation_timeout_ms><session_timeout_ms>30000</session_timeout_ms></coordination_settings>
+        <raft_configuration>
+        {{- range $i := until (int $keeper.replicas) }}
+          <server><id>{{ add1 $i }}</id><hostname>{{ $name }}-{{ $i }}.{{ $name }}.{{ $.Release.Namespace }}.svc.cluster.local</hostname><port>9234</port></server>
+        {{- end }}
+        </raft_configuration>
+      </keeper_server>
+    </clickhouse>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "futureagi.datastoreSyncWave" $ | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - {name: client, port: 9181, targetPort: client}
+    - {name: raft, port: 9234, targetPort: raft}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "futureagi.datastoreSyncWave" $ | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "futureagi.datastoreSyncWave" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/instance: {{ .Release.Name }}}
+            matchExpressions:
+              - {key: app.kubernetes.io/component, operator: In, values: [clickhouse, clickhouse-keeper]}
+      ports:
+        - {port: 9181, protocol: TCP}
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "futureagi.selectorLabels" $ctx | nindent 14 }}
+      ports:
+        - {port: 9234, protocol: TCP}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "futureagi.datastoreSyncWave" $ | nindent 4 }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  replicas: {{ $keeper.replicas }}
+  serviceName: {{ $name }}
+  podManagementPolicy: Parallel
+  updateStrategy: {type: OnDelete}
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.datastorePodLabels" $ctx | nindent 8 }}
+      annotations:
+        checksum/config: {{ toJson $keeper | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 90
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "root" $ "uid" 101 "overrides" $c.bundled.podSecurityContext) | nindent 8 }}
+      {{- include "futureagi.clickhouse.clusterScheduling" (dict "root" $ "values" $c.bundled "selector" (include "futureagi.selectorLabels" $ctx | fromYaml)) | nindent 6 }}
+      containers:
+        - name: keeper
+          image: {{ include "futureagi.image" (dict "root" . "image" $c.bundled.image) }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $c.bundled.image) }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - export KEEPER_ID=$((${HOSTNAME##*-} + 1)); exec clickhouse keeper --config-file=/etc/clickhouse-keeper/keeper.xml
+          ports:
+            - {name: client, containerPort: 9181}
+            - {name: raft, containerPort: 9234}
+          readinessProbe:
+            exec: {command: ["/bin/sh", "-ec", "test \"$(echo ruok | nc -w 2 127.0.0.1 9181)\" = imok"]}
+            periodSeconds: 10
+          startupProbe:
+            tcpSocket: {port: client}
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            {{- toYaml $keeper.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict "root" $ "readOnly" false "overrides" $c.bundled.containerSecurityContext) | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/clickhouse}
+            - {name: config, mountPath: /etc/clickhouse-keeper/keeper.xml, subPath: keeper.xml, readOnly: true}
+      volumes:
+        - {name: config, configMap: {name: {{ $name }}}}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- include "futureagi.storageClass" (dict "root" . "storageClass" $keeper.persistence.storageClass) | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ $keeper.persistence.size }}
+{{- end }}

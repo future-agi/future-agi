@@ -77,6 +77,9 @@ value_sets=(
   "openshift|examples/bundled.yaml ci/openshift.yaml"
 )
 
+echo "== opt-in cluster manifests and validation"
+"$python" "$chart/hack/test_cluster.py"
+
 echo "== chart defaults: refuse to render, with guidance"
 if "$helm" template futureagi "$chart" >"$out/default.txt" 2>&1; then
   fail "the chart rendered without any datastore configured"

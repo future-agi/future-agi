@@ -88,6 +88,12 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **opts):
+        from tracer.services.clickhouse.v2.cluster_schema import cluster_enabled
+
+        if cluster_enabled():
+            raise CommandError(
+                "sharded topology uses ch25_cluster_schema; historical migrations must not run against Distributed tables"
+            )
         topology = _schema_topology_from_options(opts)
 
         # Defer the import so a missing CH client doesn't break `manage.py help`.

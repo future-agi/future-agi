@@ -1,0 +1,196 @@
+{{- if and (eq .Values.clickhouse.mode "bundled") .Values.clickhouse.cluster.enabled }}
+{{- $c := .Values.clickhouse -}}
+{{- $cluster := $c.cluster -}}
+{{- $ctx := dict "root" . "component" "clickhouse" -}}
+{{- $name := include "futureagi.component" $ctx -}}
+{{- $keeper := printf "%s-keeper" $name -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-cluster
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    futureagi.io/topology: {{ toJson (dict "database" $c.database "shards" $cluster.shards "replicas" $cluster.replicas "keeper" $cluster.keeperPathPrefix "cluster" $cluster.name "keeperReplicas" $cluster.keeper.replicas) | quote }}
+    {{- include "futureagi.datastoreSyncWave" . | nindent 4 }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+data:
+  storage-policy.xml: |
+    {{- .Files.Get "files/clickhouse/config.d/storage-policy.xml" | nindent 4 }}
+  cluster.xml: |
+    <clickhouse>
+      <listen_host>0.0.0.0</listen_host>
+      <interserver_http_host from_env="POD_FQDN"/>
+      <interserver_http_credentials>
+        <user>replication</user><password from_env="CLICKHOUSE_DEFAULT_PASSWORD"/>
+      </interserver_http_credentials>
+      <macros><shard from_env="CH_SHARD"/><replica from_env="POD_NAME"/></macros>
+      <zookeeper>
+      {{- range $i := until (int $cluster.keeper.replicas) }}
+        <node><host>{{ $keeper }}-{{ $i }}.{{ $keeper }}.{{ $.Release.Namespace }}.svc.cluster.local</host><port>9181</port></node>
+      {{- end }}
+      </zookeeper>
+      <distributed_ddl><path>{{ $cluster.keeperPathPrefix }}/{{ $c.database }}/ddl</path></distributed_ddl>
+      <remote_servers>
+        <{{ $cluster.name }}>
+        {{- range $s := until (int $cluster.shards) }}
+          <shard><internal_replication>true</internal_replication>
+          {{- range $r := until (int $cluster.replicas) }}
+            <replica><host>{{ $name }}-shard-{{ add1 $s }}-{{ $r }}.{{ $name }}-shard-{{ add1 $s }}.{{ $.Release.Namespace }}.svc.cluster.local</host><port>9000</port><user>default</user><password from_env="CLICKHOUSE_DEFAULT_PASSWORD"/></replica>
+          {{- end }}
+          </shard>
+        {{- end }}
+        </{{ $cluster.name }}>
+      </remote_servers>
+    </clickhouse>
+  users.xml: |
+    <clickhouse>
+      <profiles><default>
+        <async_insert>0</async_insert><wait_for_async_insert>1</wait_for_async_insert>
+        <distributed_foreground_insert>1</distributed_foreground_insert>
+        <insert_quorum>{{ $cluster.insertQuorum }}</insert_quorum><insert_quorum_timeout>10000</insert_quorum_timeout>
+        <distributed_product_mode>global</distributed_product_mode><prefer_global_in_and_join>1</prefer_global_in_and_join>
+        <distributed_group_by_no_merge>0</distributed_group_by_no_merge><optimize_skip_unused_shards>0</optimize_skip_unused_shards><optimize_distributed_group_by_sharding_key>0</optimize_distributed_group_by_sharding_key>
+        <max_parallel_replicas>1</max_parallel_replicas><skip_unavailable_shards>0</skip_unavailable_shards>
+        <insert_deduplicate>1</insert_deduplicate><deduplicate_blocks_in_dependent_materialized_views>1</deduplicate_blocks_in_dependent_materialized_views>
+      </default></profiles>
+      <users><default><password from_env="CLICKHOUSE_DEFAULT_PASSWORD"/><networks><ip>::/0</ip></networks><access_management>1</access_management></default></users>
+    </clickhouse>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "futureagi.datastoreSyncWave" $ | nindent 4 }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - {name: http, port: 8123, targetPort: http}
+    - {name: native, port: 9000, targetPort: native}
+{{- range $s := until (int $cluster.shards) }}
+{{- $shard := printf "%s-shard-%d" $name (int (add1 $s)) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $shard }}
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    {{- include "futureagi.datastoreSyncWave" $ | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
+    futureagi.io/shard: {{ add1 $s | quote }}
+  ports:
+    - {name: http, port: 8123, targetPort: http}
+    - {name: native, port: 9000, targetPort: native}
+    - {name: interserver, port: 9009, targetPort: interserver}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $shard }}
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    {{- include "futureagi.datastoreSyncWave" $ | nindent 4 }}
+spec:
+  # The strict two-copy profile refuses voluntary replica loss. Deliberate
+  # maintenance needs an operator-approved quorum/durability decision.
+  minAvailable: {{ $cluster.insertQuorum }}
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+      futureagi.io/shard: {{ add1 $s | quote }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $shard }}
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    {{- include "futureagi.datastoreSyncWave" $ | nindent 4 }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  replicas: {{ $cluster.replicas }}
+  serviceName: {{ $shard }}
+  podManagementPolicy: Parallel
+  updateStrategy: {type: OnDelete}
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+      futureagi.io/shard: {{ add1 $s | quote }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.datastorePodLabels" $ctx | nindent 8 }}
+        futureagi.io/shard: {{ add1 $s | quote }}
+      annotations:
+        checksum/config: {{ toJson $cluster | sha256sum }}
+        checksum/secrets: {{ toJson (pick $c "password" "existingSecret" "existingSecretPasswordKey") | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 120
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" $) "indent" 6) }}
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "root" $ "uid" 101 "overrides" $c.bundled.podSecurityContext) | nindent 8 }}
+      {{- $selector := include "futureagi.selectorLabels" $ctx | fromYaml -}}
+      {{- $_ := set $selector "futureagi.io/shard" (toString (add1 $s)) }}
+      {{- include "futureagi.clickhouse.clusterScheduling" (dict "root" $ "values" $c.bundled "selector" $selector) | nindent 6 }}
+      containers:
+        - name: clickhouse
+          image: {{ include "futureagi.image" (dict "root" $ "image" $c.bundled.image) }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" $ "image" $c.bundled.image) }}
+          env:
+            - {name: CLICKHOUSE_SKIP_USER_SETUP, value: "1"}
+            - {name: CH_SHARD, value: {{ add1 $s | quote }}}
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - {name: POD_FQDN, value: "$(POD_NAME).{{ $shard }}.{{ $.Release.Namespace }}.svc.cluster.local"}
+            {{- include "futureagi.clickhouse.passwordEnv" (dict "root" $ "name" "CLICKHOUSE_DEFAULT_PASSWORD") | nindent 12 }}
+          ports:
+            - {name: http, containerPort: 8123}
+            - {name: native, containerPort: 9000}
+            - {name: interserver, containerPort: 9009}
+          startupProbe:
+            httpGet: {path: /ping, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /ping, port: http}
+          livenessProbe:
+            httpGet: {path: /ping, port: http}
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            {{- toYaml $c.bundled.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict "root" $ "readOnly" false "overrides" $c.bundled.containerSecurityContext) | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/clickhouse}
+            - {name: logs, mountPath: /var/log/clickhouse-server}
+            - {name: config, mountPath: /etc/clickhouse-server/config.d/cluster.xml, subPath: cluster.xml, readOnly: true}
+            - {name: config, mountPath: /etc/clickhouse-server/config.d/storage-policy.xml, subPath: storage-policy.xml, readOnly: true}
+            - {name: config, mountPath: /etc/clickhouse-server/users.d/futureagi.xml, subPath: users.xml, readOnly: true}
+      volumes:
+        - {name: config, configMap: {name: {{ $name }}-cluster}}
+        - {name: logs, emptyDir: {sizeLimit: 512Mi}}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- include "futureagi.storageClass" (dict "root" $ "storageClass" $c.bundled.persistence.storageClass) | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ $c.bundled.persistence.size }}
+{{- end }}
+{{- end }}

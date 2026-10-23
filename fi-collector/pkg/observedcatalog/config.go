@@ -72,10 +72,17 @@ func ClickHouseConfigFromEnv(getenv func(string) string) (ClickHouseConfig, erro
 }
 
 func clickHouseFromEnv(c ClickHouseConfig, getenv func(string) string) (ClickHouseConfig, error) {
-	for suffix, target := range map[string]*string{"CH_URL": &c.URL, "CH_DATABASE": &c.Database, "CH_USERNAME": &c.Username, "CH_PASSWORD": &c.Password} {
+	for suffix, target := range map[string]*string{"CH_URL": &c.URL, "CH_DATABASE": &c.Database, "CH_USERNAME": &c.Username, "CH_PASSWORD": &c.Password, "CH_CLUSTER": &c.Cluster} {
 		if value := getenv(envPrefix + suffix); value != "" {
 			*target = value
 		}
+	}
+	if value := getenv(envPrefix + "CH_INSERT_QUORUM"); value != "" {
+		quorum, err := strconv.Atoi(value)
+		if err != nil || quorum < 1 {
+			return c, fmt.Errorf("%sCH_INSERT_QUORUM must be positive", envPrefix)
+		}
+		c.InsertQuorum = quorum
 	}
 	if err := durationEnv(getenv, "CH_TIMEOUT", &c.Timeout, maxClickHouseRequestTimeout); err != nil {
 		return c, err
