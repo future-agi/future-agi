@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 CATALOG_VERSION = 1
@@ -241,8 +241,8 @@ def sources(scope: Scope) -> dict[str, str]:
     project = f"toUUID('{scope.project_id}')"
     org = f"toUUID('{scope.organization_id}')"
     workspace = f"toUUID('{scope.workspace_id}')"
-    start = scope.start.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
-    end = scope.end.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+    start = scope.start.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
+    end = scope.end.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
 
     def window(column):
         return (
