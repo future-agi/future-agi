@@ -27,7 +27,15 @@ logger = structlog.get_logger(__name__)
 
 MAX_SAMPLE = 1000
 EXTRACT_WORKERS = 8
-STAGES = ["queued", "reading", "summarising", "grouping", "measuring", "writing", "done"]
+STAGES = [
+    "queued",
+    "reading",
+    "summarising",
+    "grouping",
+    "measuring",
+    "writing",
+    "done",
+]
 
 
 def _models():
@@ -52,7 +60,9 @@ def sample_evenly(population: list[dict], size: int) -> list[dict]:
     return [ordered[round(i * (len(ordered) - 1) / (size - 1))] for i in range(size)]
 
 
-def sampling_method(population: list[dict], sampled: list[dict], *, drawn: bool, total: int) -> str:
+def sampling_method(
+    population: list[dict], sampled: list[dict], *, drawn: bool, total: int
+) -> str:
     """How a run's units were chosen, as "How this report was made" says it:
     "all" (every unit was read), "uniform" (the server's hash-ordered draw
     from a scope), "even_over_time" (rows handed over with their times) or
@@ -79,7 +89,9 @@ def _log_spend(run_id, stage: str, spend: Spend) -> None:
     )
 
 
-def set_progress(run, stage: str, done: int | None = None, total: int | None = None, **extra):
+def set_progress(
+    run, stage: str, done: int | None = None, total: int | None = None, **extra
+):
     progress = dict(run.progress or {})
     progress.update({"stage": stage, "stage_index": STAGES.index(stage)})
     if done is not None:
@@ -142,7 +154,12 @@ def create_run(
             sample_size=len(sampled),
             taxonomy_mode="classify" if taxonomy.get("subs") else "discover",
             models_used={"fast": model_for(FAST), "thinking": model_for(THINKING)},
-            progress={"stage": "queued", "stage_index": 0, "done": 0, "total": len(sampled)},
+            progress={
+                "stage": "queued",
+                "stage_index": 0,
+                "done": 0,
+                "total": len(sampled),
+            },
         )
         InsightUnit.objects.bulk_create(
             [
@@ -183,7 +200,9 @@ def prepare(run_id: str) -> list[int]:
     ids = [u.unit_id for u in units]
     for start in range(0, len(ids), 200):
         loaded.update(
-            load_units(run.unit, str(run.project_id), ids[start : start + 200], since, until)
+            load_units(
+                run.unit, str(run.project_id), ids[start : start + 200], since, until
+            )
         )
     ready = []
     for unit in units:
@@ -202,7 +221,17 @@ def prepare(run_id: str) -> list[int]:
             ready.append(unit.pk)
     InsightUnit.objects.bulk_update(
         units,
-        ["status", "error", "content", "excerpt", "label", "user_id", "session_id", "time", "metrics"],
+        [
+            "status",
+            "error",
+            "content",
+            "excerpt",
+            "label",
+            "user_id",
+            "session_id",
+            "time",
+            "metrics",
+        ],
         batch_size=200,
     )
     set_progress(run, "summarising", 0, len(ready))
@@ -252,7 +281,9 @@ def extract_batch(run_id: str, unit_pks: list[int]) -> dict:
     )
     with transaction.atomic():
         locked = InsightRun.objects.select_for_update().get(id=run_id)
-        done = InsightUnit.objects.filter(run_id=run_id, status__in=["done", "failed"]).count()
+        done = InsightUnit.objects.filter(
+            run_id=run_id, status__in=["done", "failed"]
+        ).count()
         progress = dict(locked.progress or {})
         progress["done"] = done
         recent = [u.summary for u in finished if u.summary][-6:]
@@ -262,7 +293,10 @@ def extract_batch(run_id: str, unit_pks: list[int]) -> dict:
         locked.cost_usd = (locked.cost_usd or 0) + spend.cost_usd
         locked.save(update_fields=["progress", "cost_usd", "updated_at"])
     _log_spend(run_id, "read", spend)
-    return {"done": len(finished), "failed": sum(1 for u in finished if u.status == "failed")}
+    return {
+        "done": len(finished),
+        "failed": sum(1 for u in finished if u.status == "failed"),
+    }
 
 
 def _read_with_agent(run, units, attributes, spend) -> list:
@@ -334,7 +368,8 @@ def organise(run_id: str) -> dict:
     done = InsightUnit.objects.filter(run=run, status="done").count()
     if done == 0:
         raise InsightModelError(
-            "Nothing could be read from these items." if not failed
+            "Nothing could be read from these items."
+            if not failed
             else "The analysis model could not read these items. Try again shortly.",
             unavailable=bool(failed),
         )
@@ -343,7 +378,9 @@ def organise(run_id: str) -> dict:
     info: dict = {}
     taxonomy = run.config.taxonomy or {}
     if run.taxonomy_mode == "classify" and taxonomy.get("subs"):
-        assigned = clustering.classify(items, taxonomy["subs"], context=context, spend=spend)
+        assigned = clustering.classify(
+            items, taxonomy["subs"], context=context, spend=spend
+        )
         subs = [dict(s) for s in taxonomy["subs"]]
         tops = [dict(t) for t in taxonomy["tops"]]
         parent_of = {s["id"]: s["parent_id"] for s in subs}
@@ -408,7 +445,9 @@ def organise(run_id: str) -> dict:
         sub_id = sub_of.get(key, "")
         unit.sub_category_id = sub_id
         unit.category_id = parent_of.get(sub_id, "") or ""
-    InsightUnit.objects.bulk_update(units, ["category_id", "sub_category_id"], batch_size=200)
+    InsightUnit.objects.bulk_update(
+        units, ["category_id", "sub_category_id"], batch_size=200
+    )
     result = dict(run.result or {})
     result["taxonomy"] = {"tops": tops, "subs": subs}
     result["clustering"] = info
@@ -458,68 +497,9 @@ def _previous_result(run) -> dict | None:
     }
 
 
-def finish(run_id: str) -> dict:
-    InsightRun, InsightUnit = _models()
-    run = InsightRun.objects.get(id=run_id)
-    set_progress(run, "measuring")
-    s = run.settings
-    attributes = s.get("attributes") or []
-    taxonomy = (run.result or {}).get("taxonomy", {"tops": [], "subs": []})
-    units = [_unit_dict(u) for u in InsightUnit.objects.filter(run=run, status="done", included=True)]
-    children = {t["id"]: [] for t in taxonomy["tops"]}
-    for sub in taxonomy["subs"]:
-        children.setdefault(sub.get("parent_id"), []).append(sub["id"])
-    tops = [{**t, "children": children.get(t["id"], [])} for t in taxonomy["tops"]]
-    measured = measure(units, tops, taxonomy["subs"], attributes)
-    # Single-level reports (a top with one identical child) read as one level.
-    for category in measured["categories"]:
-        category["has_children"] = bool(category.get("children"))
-    measured["categories"] = [c for c in measured["categories"] if c["stats"]["count"] > 0]
-    result = dict(run.result or {})
-    result.update(measured)
-    result["population_size"] = run.population_size
-    result["sample_size"] = run.sample_size
-    result["excluded"] = InsightUnit.objects.filter(run=run, status="done", included=False).count()
-    result["failed"] = InsightUnit.objects.filter(run=run, status="failed").count()
-    result["skipped"] = InsightUnit.objects.filter(run=run, status="skipped").count()
-    previous = _previous_result(run)
-    if previous:
-        changes = compare_runs(result, previous["result"])
-        if changes:
-            changes.update({
-                "previous_run_id": str(previous["id"]),
-                "previous_finished_at": previous["finished_at"],
-            })
-            result["changes"] = changes
-    set_progress(run, "writing")
-    spend = Spend()
-    contents = dict(
-        InsightUnit.objects.filter(run=run, status="done", included=True)
-        .values_list("pk", "content")
-    )
-    contents = {str(k): v or "" for k, v in contents.items()}
-    if not run.settings.get("question"):
-        run.settings = {**run.settings, "question": lens_for(s.get("lens", "usage")).title}
-    try:
-        summary = report.write(run, result, units, contents, spend)
-        insights = summary.pop("category_insights", {}) or {}
-        for category in result["categories"]:
-            if category["id"] in insights:
-                category["insight"] = insights[category["id"]]
-        result["summary"] = summary
-    except InsightModelError:
-        result["summary"] = {
-            "title": "", "findings": [], "key_points": [], "highlights": [], "examples": [],
-            "error": "unavailable",
-        }
-    result["engine"] = insight_agent.engine()
-    run.result = result
-    run.cost_usd = (run.cost_usd or 0) + spend.cost_usd
-    run.status = "completed"
-    run.finished_at = timezone.now()
-    run.save(update_fields=["result", "cost_usd", "status", "finished_at", "updated_at"])
-    _log_spend(run_id, "write", spend)
-    # Charged once the report is written; a failed report isn't charged.
+def _settle_written(run, taxonomy) -> None:
+    """What follows a written report: charge it (idempotent per run), mark it
+    done and, for a discovery run, save its categories on the report."""
     billing.charge_run(run)
     set_progress(run, "done")
     config = run.config
@@ -531,6 +511,100 @@ def finish(run_id: str) -> dict:
             "frozen_at": timezone.now().isoformat(),
         }
         config.save(update_fields=["taxonomy", "updated_at"])
+
+
+def finish(run_id: str) -> dict:
+    InsightRun, InsightUnit = _models()
+    run = InsightRun.objects.get(id=run_id)
+    taxonomy = (run.result or {}).get("taxonomy", {"tops": [], "subs": []})
+    if run.status == "completed" and "summary" in (run.result or {}):
+        # A retry after the report was already written and saved (charging
+        # or saving the categories failed): finish that, never write the
+        # report again or add its model spend twice.
+        _settle_written(run, taxonomy)
+        return {"categories": len((run.result or {}).get("categories") or [])}
+    set_progress(run, "measuring")
+    s = run.settings
+    attributes = s.get("attributes") or []
+    units = [
+        _unit_dict(u)
+        for u in InsightUnit.objects.filter(run=run, status="done", included=True)
+    ]
+    children = {t["id"]: [] for t in taxonomy["tops"]}
+    for sub in taxonomy["subs"]:
+        children.setdefault(sub.get("parent_id"), []).append(sub["id"])
+    tops = [{**t, "children": children.get(t["id"], [])} for t in taxonomy["tops"]]
+    measured = measure(units, tops, taxonomy["subs"], attributes)
+    # Single-level reports (a top with one identical child) read as one level.
+    for category in measured["categories"]:
+        category["has_children"] = bool(category.get("children"))
+    measured["categories"] = [
+        c for c in measured["categories"] if c["stats"]["count"] > 0
+    ]
+    result = dict(run.result or {})
+    result.update(measured)
+    result["population_size"] = run.population_size
+    result["sample_size"] = run.sample_size
+    result["excluded"] = InsightUnit.objects.filter(
+        run=run, status="done", included=False
+    ).count()
+    result["failed"] = InsightUnit.objects.filter(run=run, status="failed").count()
+    result["skipped"] = InsightUnit.objects.filter(run=run, status="skipped").count()
+    # Categories match across runs by id. A discovery run mints new ids (the
+    # first run, or one after "Rediscover categories"), so comparing it with
+    # the previous run would call every category new: only a run classified
+    # into the saved categories is compared.
+    previous = _previous_result(run) if run.taxonomy_mode == "classify" else None
+    if previous:
+        changes = compare_runs(result, previous["result"])
+        if changes:
+            changes.update(
+                {
+                    "previous_run_id": str(previous["id"]),
+                    "previous_finished_at": previous["finished_at"],
+                }
+            )
+            result["changes"] = changes
+    set_progress(run, "writing")
+    spend = Spend()
+    contents = dict(
+        InsightUnit.objects.filter(run=run, status="done", included=True).values_list(
+            "pk", "content"
+        )
+    )
+    contents = {str(k): v or "" for k, v in contents.items()}
+    if not run.settings.get("question"):
+        run.settings = {
+            **run.settings,
+            "question": lens_for(s.get("lens", "usage")).title,
+        }
+    try:
+        summary = report.write(run, result, units, contents, spend)
+        insights = summary.pop("category_insights", {}) or {}
+        for category in result["categories"]:
+            if category["id"] in insights:
+                category["insight"] = insights[category["id"]]
+        result["summary"] = summary
+    except InsightModelError:
+        result["summary"] = {
+            "title": "",
+            "findings": [],
+            "key_points": [],
+            "highlights": [],
+            "examples": [],
+            "error": "unavailable",
+        }
+    result["engine"] = insight_agent.engine()
+    run.result = result
+    run.cost_usd = (run.cost_usd or 0) + spend.cost_usd
+    run.status = "completed"
+    run.finished_at = timezone.now()
+    run.save(
+        update_fields=["result", "cost_usd", "status", "finished_at", "updated_at"]
+    )
+    _log_spend(run_id, "write", spend)
+    # Charged once the report is written; a failed report isn't charged.
+    _settle_written(run, taxonomy)
     return {"categories": len(measured["categories"])}
 
 

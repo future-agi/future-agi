@@ -14,10 +14,18 @@ from datetime import UTC, datetime
 import numpy as np
 import pytest
 
-from ee.agenthub.insights import agent, clustering, facets, pipeline, summary
-from ee.agenthub.insights.llm import InsightModelError
-from ee.agenthub.insights.units import UnitText
-from tracer.models.insights import InsightConfig, InsightRun, InsightUnit
+pytest.importorskip("ee.agenthub.insights")
+
+from ee.agenthub.insights import (  # noqa: E402
+    agent,
+    clustering,
+    facets,
+    pipeline,
+    summary,
+)
+from ee.agenthub.insights.llm import InsightModelError  # noqa: E402
+from ee.agenthub.insights.units import UnitText  # noqa: E402
+from tracer.models.insights import InsightConfig, InsightRun, InsightUnit  # noqa: E402
 
 WINDOW = ["2026-10-01T00:00:00+00:00", "2026-10-08T00:00:00+00:00"]
 
@@ -433,3 +441,69 @@ def test_later_runs_classify_into_the_frozen_categories(report, user, model, loa
     assert config.taxonomy == frozen
     assert frozen["source_run_id"] == str(first.id)
     assert InsightRun.objects.filter(config=config, status="completed").count() == 3
+
+
+@pytest.mark.django_db
+def test_a_retried_finish_does_not_write_or_charge_the_report_twice(
+    report, user, model, loaded, monkeypatch
+):
+    """The run is saved completed before it is charged: when charging fails
+    the activity retries finish, which settles the written report instead of
+    writing it again and adding its model spend twice."""
+    from ee.agenthub.insights import billing
+
+    charged = []
+
+    def charge_run(run):
+        charged.append(run.id)
+        if len(charged) == 1:
+            raise RuntimeError("billing blip")
+
+    monkeypatch.setattr(billing, "charge_run", charge_run)
+    run = pipeline.create_run(
+        config=report,
+        scope={"window": WINDOW, "preset": "Custom"},
+        population=[{"id": i} for i in ids(order=6, human=6, refund=6, stock=6)],
+        sample_size=24,
+        user=user,
+    )
+    ready = pipeline.prepare(str(run.id))
+    pipeline.extract_batch(str(run.id), ready)
+    pipeline.organise(str(run.id))
+    with pytest.raises(RuntimeError):
+        pipeline.finish(str(run.id))
+    run.refresh_from_db()
+    cost, summaries, written = run.cost_usd, model.calls["summary"], run.result
+    assert run.status == "completed"
+
+    pipeline.finish(str(run.id))
+    run.refresh_from_db()
+    assert model.calls["summary"] == summaries
+    assert run.cost_usd == cost
+    assert run.result == written
+    assert charged == [run.id, run.id]
+    assert run.stage == "done"
+    report.refresh_from_db()
+    assert report.taxonomy["source_run_id"] == str(run.id)
+
+
+@pytest.mark.django_db
+def test_a_rediscovered_run_is_not_compared_with_the_last_one(
+    report, user, model, loaded
+):
+    """Discovery mints new category ids, so after "Rediscover categories"
+    every category would read as new: the run carries no changes."""
+    first, _, _ = run_report(
+        report, user, ids(order=6, human=6, refund=6, stock=6), model=model
+    )
+    second, _, _ = run_report(
+        report, user, ids(order=6, human=6, refund=6, stock=6), model=model
+    )
+    assert second.taxonomy_mode == "classify"
+    InsightConfig.objects.filter(id=report.id).update(taxonomy={})
+    report.refresh_from_db()
+    third, _, _ = run_report(
+        report, user, ids(order=6, human=6, refund=6, stock=6), model=model
+    )
+    assert third.taxonomy_mode == "discover"
+    assert "changes" not in third.result
