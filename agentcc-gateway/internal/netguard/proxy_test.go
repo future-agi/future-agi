@@ -2,7 +2,10 @@ package netguard
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -202,6 +205,126 @@ func TestProxiedDirectRequestsAreStillChecked(t *testing.T) {
 
 	if got := proxy.requests(); len(got) != 1 {
 		t.Fatalf("the proxy was asked for %q, want only the public destination", got)
+	}
+}
+
+// Over HTTP/1.1 the host is checked on every request, one sent over a pooled
+// connection to the proxy included, and a lookup that fails fails the
+// request: the check fails closed.
+func TestProxiedChecksEveryHTTP1RequestAndFailsClosed(t *testing.T) {
+	proxy := newTestProxy(t)
+	answers := map[string][]string{"public.example": {"203.0.113.7"}}
+	stubLookup(t, answers)
+	client := proxiedClient(t, false, http.ProxyURL(proxy.url(t)))
+
+	resp, err := client.Get("http://public.example/first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	delete(answers, "public.example") // the next lookup fails
+	if resp, err := client.Get("http://public.example/second"); err == nil {
+		resp.Body.Close()
+		t.Fatalf("status %d after a failed lookup, want the request refused", resp.StatusCode)
+	}
+	if got := proxy.requests(); len(got) != 1 {
+		t.Fatalf("the proxy was asked for %q, want only the first request", got)
+	}
+}
+
+// newTunnelProxy is a forward proxy on loopback that serves every CONNECT, as
+// for an HTTPS destination, with a tunnel to target, and records the
+// authorities it was asked for.
+func newTunnelProxy(t *testing.T, target string) *testProxy {
+	t.Helper()
+	p := &testProxy{}
+	p.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p.mu.Lock()
+		p.asked = append(p.asked, r.Method+" "+r.Host)
+		p.mu.Unlock()
+		if r.Method != http.MethodConnect {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		upstream, err := net.Dial("tcp", target)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		defer upstream.Close()
+		conn, buffered, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		io.WriteString(conn, "HTTP/1.1 200 Connection established\r\n\r\n")
+		go func() {
+			io.Copy(upstream, buffered.Reader)
+			upstream.Close()
+		}()
+		io.Copy(conn, upstream)
+	}))
+	t.Cleanup(p.Close)
+	return p
+}
+
+// Through a CONNECT tunnel, as to an HTTPS vendor, a request that needs a new
+// connection is checked. Over HTTP/1.1 every other request is too, and a
+// failed lookup fails it; a request on an open HTTP/2 connection reuses the
+// check made when that connection was opened.
+func TestProxiedHTTPSChecksEachConnectionAndEachHTTP1Request(t *testing.T) {
+	for _, http2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("http2=%v", http2), func(t *testing.T) {
+			upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			upstream.EnableHTTP2 = http2
+			upstream.StartTLS()
+			t.Cleanup(upstream.Close)
+			proxy := newTunnelProxy(t, upstream.Listener.Addr().String())
+			// The test server's certificate names example.com.
+			answers := map[string][]string{"example.com": {"203.0.113.7"}}
+			stubLookup(t, answers)
+			roots := x509.NewCertPool()
+			roots.AddCert(upstream.Certificate())
+			// Set up as the decision providers' transports are.
+			dial, pick := Proxied(net.Dialer{}, false, http.ProxyURL(proxy.url(t)))
+			transport := &http.Transport{DialContext: dial, Proxy: pick, ForceAttemptHTTP2: true, TLSClientConfig: &tls.Config{RootCAs: roots}}
+			t.Cleanup(transport.CloseIdleConnections)
+			client := &http.Client{Transport: transport}
+			get := func(path string) (int, error) {
+				resp, err := client.Get("https://example.com" + path)
+				if err != nil {
+					return 0, err
+				}
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				return resp.ProtoMajor, nil
+			}
+
+			wantProto := 1
+			if http2 {
+				wantProto = 2
+			}
+			if proto, err := get("/first"); err != nil || proto != wantProto {
+				t.Fatalf("first request: HTTP/%d, %v; want HTTP/%d", proto, err, wantProto)
+			}
+			delete(answers, "example.com") // every lookup from now on fails
+			_, err := get("/second")
+			if http2 && err != nil {
+				t.Fatalf("a request on the open HTTP/2 connection: %v", err)
+			}
+			if !http2 && err == nil {
+				t.Fatal("over HTTP/1.1 a request was sent after its lookup failed")
+			}
+			transport.CloseIdleConnections()
+			if _, err := get("/third"); err == nil {
+				t.Fatal("a new connection was opened after the lookup failed")
+			}
+			if got := proxy.requests(); len(got) != 1 || got[0] != "CONNECT example.com:443" {
+				t.Fatalf("the proxy was asked for %q, want one tunnel", got)
+			}
+		})
 	}
 }
 

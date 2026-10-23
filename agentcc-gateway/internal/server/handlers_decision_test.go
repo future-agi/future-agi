@@ -677,6 +677,76 @@ func TestKeyedDecisionProvidersDropIdleKeys(t *testing.T) {
 	}
 }
 
+// With no further call to drop it, the sweep drops an idle key on its own,
+// and stops once the cache is empty.
+func TestKeyedDecisionProvidersSweepIdleKeys(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	c := keyedDecisionProviders{now: func() time.Time { return now }}
+	if _, err := c.get("typesafe", "", "ONE-CALL-KEY"); err != nil {
+		t.Fatal(err)
+	}
+	armed := func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.sweep != nil
+	}
+	if !armed() {
+		t.Fatal("no sweep is scheduled for the cached key")
+	}
+	now = now.Add(keyedDecisionIdleTTL / 2)
+	c.sweepIdle()
+	if c.size() != 1 || !armed() {
+		t.Fatalf("cache entries = %d, sweep scheduled %v: a key not yet idle was dropped", c.size(), armed())
+	}
+	now = now.Add(keyedDecisionIdleTTL)
+	c.sweepIdle()
+	if c.size() != 0 {
+		t.Fatal("the idle key is still held")
+	}
+	if armed() {
+		t.Fatal("an empty cache keeps a sweep scheduled")
+	}
+}
+
+// At the bound the least recently used key goes, not one at random.
+func TestKeyedDecisionProvidersEvictLeastRecentlyUsed(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	c := keyedDecisionProviders{now: func() time.Time { return now }}
+	key := func(i int) string { return fmt.Sprintf("CALLER-KEY-%d", i) }
+	first, err := c.get("typesafe", "", key(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := c.get("typesafe", "", key(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 2; i < maxKeyedDecisionProviders; i++ {
+		now = now.Add(time.Millisecond)
+		if _, err := c.get("typesafe", "", key(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The first key is used again, so the second is now the oldest.
+	now = now.Add(time.Millisecond)
+	if p, _ := c.get("typesafe", "", key(0)); p != first {
+		t.Fatal("the first key's provider was not cached")
+	}
+	now = now.Add(time.Millisecond)
+	if _, err := c.get("typesafe", "", key(maxKeyedDecisionProviders)); err != nil {
+		t.Fatal(err)
+	}
+	if c.size() != maxKeyedDecisionProviders {
+		t.Fatalf("cache entries = %d, want %d", c.size(), maxKeyedDecisionProviders)
+	}
+	if p, _ := c.get("typesafe", "", key(0)); p != first {
+		t.Fatal("the recently used key was evicted")
+	}
+	if p, _ := c.get("typesafe", "", key(1)); p == second {
+		t.Fatal("the least recently used key was kept")
+	}
+}
+
 // An internal caller names the vendor as the model prefix; anything else is
 // refused before any call.
 func TestDecisionInternalKeyNeedsAVendorPrefix(t *testing.T) {
@@ -1287,7 +1357,11 @@ func TestDecisionModelsListing(t *testing.T) {
 		return resp.Data
 	}
 
+	built := g.srv.OrgProviderCache.Count()
 	got := list(keyByok)
+	if n := g.srv.OrgProviderCache.Count(); n != built {
+		t.Errorf("listing built %d providers; it reads the format from their config", n-built)
+	}
 	want := []decisionModel{
 		{ID: "openai/gpt-6-luna", Object: "model", Provider: "openai", Format: "openai", Pricing: &decisionModelPricing{InputPerMTok: 0.1}},
 		{ID: "typesafe/jev-1.13.0", Object: "model", Provider: "typesafe", Format: "systemone", Pricing: &decisionModelPricing{InputPerMTok: 0.042}},
@@ -1311,6 +1385,97 @@ func TestDecisionModelsListing(t *testing.T) {
 	for _, m := range list(keyByok) {
 		if m.ID == "typesafe/jev-latest" && (m.Pricing == nil || m.Pricing.InputPerMTok != 0.03) {
 			t.Errorf("custom pricing ignored: %+v", m.Pricing)
+		}
+	}
+	expectNoCalls(t, g)
+}
+
+// The listing reads a provider's decision format from its config; a call
+// reads it from the provider built. The two agree for every api_format, the
+// provider IDs that name a System One vendor, and an org provider layered onto
+// a config.yaml entry (whose api_format wins). A provider the listing would
+// show is one that builds, for every base_url judged without a lookup.
+func TestDecisionFormatFromConfigMatchesTheBuiltProvider(t *testing.T) {
+	formats := []string{"", "openai", "anthropic", "gemini", "google", "bedrock", "cohere", "azure", "systemone", "typesafe", "deepgram", "cartesia"}
+	baseURLs := []string{"", "https://10.1.2.3", "https://203.0.113.7", "http://127.0.0.1:8080", "http://169.254.169.254",
+		"http://metadata.google.internal", "ftp://203.0.113.7", "http://"}
+	compared := map[string]int{}
+	refused := 0
+	for _, allowPrivate := range []bool{true, false} {
+		cache := providers.NewOrgProviderCache(map[string]config.ProviderConfig{
+			"layered":           {BaseURL: "https://10.1.2.3", APIFormat: "openai"},
+			"layered-systemone": {APIFormat: "systemone"},
+		}, allowPrivate)
+		for _, id := range []string{"custom", "typesafe", "perplexity-decider", "openai", "layered", "layered-systemone"} {
+			for _, baseURL := range baseURLs {
+				for _, apiFormat := range formats {
+					pcfg := &tenant.ProviderConfig{APIKey: "KEY", APIFormat: apiFormat, BaseURL: baseURL, AWSRegion: "us-east-1"}
+					name := fmt.Sprintf("%s|%s|%s|private=%v", id, baseURL, apiFormat, allowPrivate)
+					fromConfig, ok := cache.APIFormat(id, pcfg)
+					format := apiFormatDecisionFormat(fromConfig, id, baseURL)
+					p, err := cache.GetOrCreateWithTenantConfig(name, id, "KEY", pcfg)
+					if err != nil {
+						if ok && format != "" {
+							t.Errorf("%s: listed as %q, but the build is refused: %v", name, format, err)
+						}
+						refused++
+						continue
+					}
+					if !ok {
+						t.Errorf("%s: builds, but the listing leaves it out", name)
+						continue
+					}
+					want := decisionFormatOf(p, id, baseURL)
+					if format != want {
+						t.Errorf("%s: format from config %q, built provider %q", name, format, want)
+					}
+					compared[want]++
+				}
+			}
+		}
+	}
+	if compared[models.DecisionFormatSystemOne] == 0 || compared[models.DecisionFormatOpenAI] == 0 || compared[""] == 0 || refused == 0 {
+		t.Fatalf("compared %v, refused %d: every outcome should be covered", compared, refused)
+	}
+	t.Logf("compared %v, refused %d", compared, refused)
+}
+
+// A provider whose build its config alone shows would be refused is not
+// listed: a System One endpoint with no base_url, or a base_url the gateway
+// refuses without resolving it. The one that builds is listed.
+func TestDecisionModelsListingLeavesOutProvidersThatCannotBuild(t *testing.T) {
+	judge := func(apiFormat, baseURL, model string) *tenant.ProviderConfig {
+		return &tenant.ProviderConfig{APIKey: orgTypeSafeKey, APIFormat: apiFormat, BaseURL: baseURL, Models: []string{model}, Enabled: true}
+	}
+	org := &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
+		"custom":          judge("systemone", "", "judge-1"),
+		"custom-public":   judge("systemone", "https://203.0.113.7", "judge-1"),
+		"custom-private":  judge("systemone", "https://10.1.2.3", "judge-1"),
+		"custom-loopback": judge("systemone", "http://127.0.0.1:8080", "judge-1"),
+		"custom-metadata": judge("typesafe", "http://metadata.google.internal", "judge-1"),
+		"custom-ftp":      judge("systemone", "ftp://203.0.113.7", "judge-1"),
+		"openai-private":  judge("openai", "https://10.1.2.3", "gpt-6-luna"),
+	}}
+	g := newDecisionGateway(t, decisionGatewayOptions{orgs: map[string]*tenant.OrgConfig{"org-a": org}})
+
+	rr := g.do(t, http.MethodGet, "/v1/decisions/models", keyByok, "")
+	var resp struct {
+		Data []decisionModel `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); rr.Code != http.StatusOK || err != nil {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+	}
+	want := []decisionModel{{ID: "custom-public/judge-1", Object: "model", Provider: "custom-public", Format: "systemone"}}
+	if gotJSON, wantJSON := mustJSON(resp.Data), mustJSON(want); gotJSON != wantJSON {
+		t.Fatalf("models =\n%s\nwant\n%s", gotJSON, wantJSON)
+	}
+	if n := g.srv.OrgProviderCache.Count(); n != 0 {
+		t.Fatalf("listing built %d providers", n)
+	}
+	for id, pcfg := range org.Providers {
+		_, err := g.srv.OrgProviderCache.GetOrCreateWithTenantConfig("org-a", id, pcfg.APIKey, pcfg)
+		if listed := id == "custom-public"; listed != (err == nil) {
+			t.Errorf("%s: listed %v, build error %v", id, listed, err)
 		}
 	}
 	expectNoCalls(t, g)

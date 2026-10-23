@@ -739,6 +739,28 @@ func TestCostPlugin_DecisionUnpriced_MarkedWithDecisionHint(t *testing.T) {
 	}
 }
 
+// A decision model that shares an unpriced chat model's name still warns with
+// the decision hint: the chat warning for that name names the wrong key.
+func TestCostPlugin_DecisionUnpriced_WarnsAfterChatOfTheSameName(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	p := testPlugin()
+	p.ProcessResponse(context.Background(), newRC("decider-x", 1_000, 0))
+	p.ProcessResponse(context.Background(), decisionRC("selfhosted/decider-x", "decider-x", "decider-x", 1_000, 0))
+	p.ProcessResponse(context.Background(), decisionRC("selfhosted/decider-x", "decider-x", "decider-x", 1_000, 0))
+
+	out := buf.String()
+	if n := strings.Count(out, "model=decider-x"); n != 2 {
+		t.Fatalf("warned %d times for decider-x, want once as chat and once as a decision\n%s", n, out)
+	}
+	if !strings.Contains(out, `decision:<model>`) {
+		t.Fatalf("the decision warning was swallowed by the chat one\n%s", out)
+	}
+}
+
 // A caller sending the bare upstream name is charged the org price the
 // models listing shows under the provider-qualified id.
 func TestCostPlugin_DecisionOrgPricingByProviderQualifiedID(t *testing.T) {

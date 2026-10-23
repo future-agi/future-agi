@@ -42,18 +42,21 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 	return NewForDialect(id, cfg, dialect)
 }
 
+// Check returns the error New would return, without building the provider.
+func Check(id string, cfg config.ProviderConfig) error {
+	dialect, err := DialectFor(id, cfg.BaseURL)
+	if err != nil {
+		return err
+	}
+	_, err = endpointFor(id, cfg, dialect)
+	return err
+}
+
 // NewForDialect builds a provider for a dialect chosen by the caller.
 func NewForDialect(id string, cfg config.ProviderConfig, dialect Dialect) (*Provider, error) {
-	base := strings.TrimSpace(cfg.BaseURL)
-	if base == "" {
-		base = dialect.DefaultBase
-	}
-	if base == "" {
-		return nil, ErrBaseURLRequired
-	}
-	endpoint := config.JoinEndpoint(base, cfg.EffectiveAPIPathPrefix(), dialect.Leaf)
-	if u, err := url.Parse(endpoint); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, fmt.Errorf("systemone: provider %q has an invalid base_url", id)
+	endpoint, err := endpointFor(id, cfg, dialect)
+	if err != nil {
+		return nil, err
 	}
 	timeout := cfg.DefaultTimeout
 	if timeout <= 0 {
@@ -89,6 +92,23 @@ func NewForDialect(id string, cfg config.ProviderConfig, dialect Dialect) (*Prov
 		},
 		semaphore: make(chan struct{}, maxConcurrent),
 	}, nil
+}
+
+// endpointFor returns the URL a provider of dialect posts to: its base_url,
+// or the dialect's default upstream when it states none.
+func endpointFor(id string, cfg config.ProviderConfig, dialect Dialect) (string, error) {
+	base := strings.TrimSpace(cfg.BaseURL)
+	if base == "" {
+		base = dialect.DefaultBase
+	}
+	if base == "" {
+		return "", ErrBaseURLRequired
+	}
+	endpoint := config.JoinEndpoint(base, cfg.EffectiveAPIPathPrefix(), dialect.Leaf)
+	if u, err := url.Parse(endpoint); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("systemone: provider %q has an invalid base_url", id)
+	}
+	return endpoint, nil
 }
 
 func (p *Provider) ID() string { return p.id }

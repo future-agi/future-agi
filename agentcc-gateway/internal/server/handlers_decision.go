@@ -219,7 +219,7 @@ func (h *Handlers) DecisionModels(w http.ResponseWriter, r *http.Request) {
 	} else {
 		h.peekKeyOrgID(rc)
 		if orgID, orgCfg := h.resolveOrgConfig(rc); orgID != "" && orgCfg != nil && rc.Metadata["key_type"] != "internal" {
-			entries = h.orgDecisionModels(orgID, orgCfg)
+			entries = h.orgDecisionModels(orgCfg)
 		}
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].ID < entries[j].ID })
@@ -231,8 +231,10 @@ func (h *Handlers) DecisionModels(w http.ResponseWriter, r *http.Request) {
 
 // orgDecisionModels lists the decision models among an org's enabled,
 // credentialed providers. A System One provider's models all are; an OpenAI
-// provider's are only those known as decision models.
-func (h *Handlers) orgDecisionModels(orgID string, orgCfg *tenant.OrgConfig) []decisionModel {
+// provider's are only those known as decision models. The format comes from
+// the provider's config: listing builds no provider, and leaves out one whose
+// build its config alone shows would be refused.
+func (h *Handlers) orgDecisionModels(orgCfg *tenant.OrgConfig) []decisionModel {
 	entries := []decisionModel{}
 	if h.orgProviderCache == nil {
 		return entries
@@ -242,11 +244,11 @@ func (h *Handlers) orgDecisionModels(orgID string, orgCfg *tenant.OrgConfig) []d
 		if pcfg == nil || !pcfg.Enabled || !pcfg.HasCredentials() {
 			continue
 		}
-		p, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, id, pcfg.APIKey, pcfg)
-		if err != nil {
+		apiFormat, ok := h.orgProviderCache.APIFormat(id, pcfg)
+		if !ok {
 			continue
 		}
-		format := decisionFormatOf(p, id, pcfg.BaseURL)
+		format := apiFormatDecisionFormat(apiFormat, id, pcfg.BaseURL)
 		for _, model := range pcfg.Models {
 			if entry, ok := newDecisionModel(db, orgCfg, id, model, format); ok {
 				entries = append(entries, entry)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/netguard"
+	"github.com/futureagi/agentcc-gateway/internal/providers/systemone"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
@@ -81,40 +82,23 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 		return p, nil
 	}
 
-	baseCfg, ok := c.baseCfgs[providerID]
-	// An org that names its own upstream must get exactly that upstream.
-	// Layering it onto a config.yaml entry that shares the provider ID would
-	// send the org's key to the operator's base_url instead.
-	if tenantCfg != nil && (!ok || tenantCfg.BaseURL != "" || tenantCfg.ServiceAccountJSON != "") {
+	baseCfg, ok := c.baseConfig(providerID, tenantCfg)
+	if !ok {
+		return nil, fmt.Errorf("no base config for provider %q", providerID)
+	}
+	if tenantCfg != nil {
 		// Validate base URL to prevent SSRF via tenant-supplied config.
 		if err := validateBaseURL(tenantCfg.BaseURL, c.allowPrivateBaseURLs); err != nil {
 			return nil, fmt.Errorf("org %s provider %s: %w", orgID, providerID, err)
 		}
-
-		// Managed mode: the org's upstream, with defaults for what it leaves
-		// unset. resolveOrgConfig applies the rest of the org's config.
-		apiFormat := tenantCfg.APIFormat
-		if apiFormat == "" {
-			apiFormat = inferAPIFormat(providerID)
-		}
-		baseCfg = config.ProviderConfig{
-			BaseURL:        tenantCfg.BaseURL,
-			APIFormat:      apiFormat,
-			DefaultTimeout: 60 * time.Second,
-			MaxConcurrent:  100,
-			ConnPoolSize:   100,
-		}
-		ok = true
-	}
-	if !ok {
-		return nil, fmt.Errorf("no base config for provider %q", providerID)
 	}
 
 	orgCfg := resolveOrgConfig(baseCfg, apiKey, tenantCfg)
 	if tenantCfg != nil && tenantCfg.BaseURL != "" {
 		if IsSystemOneFormat(orgCfg.APIFormat) {
-			// Decision calls go through the operator's proxy, so the org's
-			// host is checked before each request, not only at the dial.
+			// Decision calls go through the operator's proxy, whose dial sees
+			// only the proxy's address, so the org's host is checked when the
+			// transport picks the proxy (see netguard.Proxied).
 			orgCfg.DialContext, orgCfg.Proxy = netguard.Proxied(net.Dialer{}, c.allowPrivateBaseURLs, decisionProxy)
 		} else {
 			orgCfg.DialContext = orgDialContext(c.allowPrivateBaseURLs)
@@ -135,6 +119,52 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 	)
 
 	return p, nil
+}
+
+// baseConfig returns the config an org provider is layered onto: the org's own
+// upstream when it names one (or a service account), or when config.yaml has
+// no entry for providerID; otherwise that entry. An org that names its own
+// upstream must get exactly that upstream. Layering it onto a config.yaml
+// entry that shares the provider ID would send the org's key to the
+// operator's base_url instead.
+func (c *OrgProviderCache) baseConfig(providerID string, tenantCfg *tenant.ProviderConfig) (config.ProviderConfig, bool) {
+	baseCfg, ok := c.baseCfgs[providerID]
+	if tenantCfg == nil || (ok && tenantCfg.BaseURL == "" && tenantCfg.ServiceAccountJSON == "") {
+		return baseCfg, ok
+	}
+	// Managed mode: the org's upstream, with defaults for what it leaves
+	// unset. resolveOrgConfig applies the rest of the org's config.
+	apiFormat := tenantCfg.APIFormat
+	if apiFormat == "" {
+		apiFormat = inferAPIFormat(providerID)
+	}
+	return config.ProviderConfig{
+		BaseURL:        tenantCfg.BaseURL,
+		APIFormat:      apiFormat,
+		DefaultTimeout: 60 * time.Second,
+		MaxConcurrent:  100,
+		ConnPoolSize:   100,
+	}, true
+}
+
+// APIFormat returns the api_format GetOrCreateWithTenantConfig would build the
+// org's provider with, without building it: no DNS lookup, no transport.
+// False when there is nothing to build it from, or when the build is refused
+// for what the config alone shows: a base_url refused without resolving its
+// host, or a System One provider with no endpoint. A host that resolves only
+// to refused addresses is refused when the provider is built.
+func (c *OrgProviderCache) APIFormat(providerID string, tenantCfg *tenant.ProviderConfig) (string, bool) {
+	baseCfg, ok := c.baseConfig(providerID, tenantCfg)
+	if !ok {
+		return "", false
+	}
+	if tenantCfg != nil && checkBaseURL(tenantCfg.BaseURL, c.allowPrivateBaseURLs, false) != nil {
+		return "", false
+	}
+	if IsSystemOneFormat(baseCfg.APIFormat) && systemone.Check(providerID, resolveOrgConfig(baseCfg, "", tenantCfg)) != nil {
+		return "", false
+	}
+	return baseCfg.APIFormat, true
 }
 
 // resolveOrgConfig clones a base provider config for one org. The upstream it
@@ -272,6 +302,13 @@ var (
 // unspecified addresses never. The provider's dialer checks again on every
 // connection. Returns a *BaseURLError.
 func validateBaseURL(baseURL string, allowPrivate bool) error {
+	return checkBaseURL(baseURL, allowPrivate, true)
+}
+
+// checkBaseURL is validateBaseURL. With resolve false a host name that names
+// no cloud metadata service passes unresolved, so only what the URL itself
+// shows is refused.
+func checkBaseURL(baseURL string, allowPrivate, resolve bool) error {
 	if baseURL == "" {
 		return nil
 	}
@@ -290,8 +327,15 @@ func validateBaseURL(baseURL string, allowPrivate bool) error {
 		return &BaseURLError{BaseURL: baseURL, Host: host, Reason: BaseURLForbidden}
 	}
 
-	ips := []net.IP{net.ParseIP(host)}
+	literal := host
+	if i := strings.IndexByte(literal, '%'); i >= 0 {
+		literal = literal[:i] // IPv6 zone, as netguard strips it
+	}
+	ips := []net.IP{net.ParseIP(literal)}
 	if ips[0] == nil {
+		if !resolve {
+			return nil
+		}
 		ips, err = lookupIP(host)
 		if err == nil && len(ips) == 0 {
 			err = fmt.Errorf("no addresses")

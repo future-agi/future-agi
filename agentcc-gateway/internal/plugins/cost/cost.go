@@ -51,7 +51,7 @@ type Plugin struct {
 	tenantStore      *tenant.Store
 	aliasCostFactors map[string]float64 // alias prefix → cost multiplier
 
-	unpricedWarned      sync.Map     // model → struct{}: models already warned about
+	unpricedWarned      sync.Map     // price hint + model → struct{}: already warned about
 	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
 }
 
@@ -65,8 +65,8 @@ func New(enabled bool, modelDBGetter func() *modeldb.ModelDB, tenantStore *tenan
 	}
 }
 
-func (p *Plugin) Name() string           { return "cost" }
-func (p *Plugin) Priority() int          { return 500 }
+func (p *Plugin) Name() string               { return "cost" }
+func (p *Plugin) Priority() int              { return 500 }
 func (p *Plugin) ShouldSkipOnCacheHit() bool { return true } // No cost to calculate on cache hits.
 
 // ProcessRequest is a no-op for the cost plugin.
@@ -193,13 +193,15 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	return pipeline.ResultContinue()
 }
 
-// warnUnpriced logs, once per model, that traffic is being recorded without a
-// cost. priceHint names the model-database price to set for the endpoint.
+// warnUnpriced logs, once per model and price to set, that traffic is being
+// recorded without a cost. priceHint names the model-database price to set for
+// the endpoint. A decision model can share a chat model's name, so each warns
+// with its own hint: the decision one is never swallowed by the chat one.
 func (p *Plugin) warnUnpriced(rc *models.RequestContext, model, priceHint string) {
 	if p.unpricedWarnedCount.Load() >= maxUnpricedWarnings {
 		return
 	}
-	if _, seen := p.unpricedWarned.LoadOrStore(model, struct{}{}); seen {
+	if _, seen := p.unpricedWarned.LoadOrStore(priceHint+"\x00"+model, struct{}{}); seen {
 		return
 	}
 	p.unpricedWarnedCount.Add(1)

@@ -276,6 +276,20 @@ func decisionFormatOf(p providers.Provider, id, baseURL string) string {
 	return ""
 }
 
+// apiFormatDecisionFormat is decisionFormatOf for a provider not built yet:
+// a System One api_format builds a System One provider, "openai" the only
+// provider that serves OpenAI Decisions.
+func apiFormatDecisionFormat(apiFormat, id, baseURL string) string {
+	switch {
+	case providers.IsSystemOneFormat(apiFormat):
+		return models.DecisionFormatSystemOne
+	case apiFormat == "openai" && !systemone.IsVendor(id, baseURL):
+		return models.DecisionFormatOpenAI
+	default:
+		return ""
+	}
+}
+
 // listsModel reports whether a provider's model list has the requested model.
 func listsModel(registered []string, model, providerID string) bool {
 	for _, m := range registered {
@@ -404,6 +418,9 @@ func errFormatMismatch(model, providerID, providerFormat string) *models.APIErro
 type keyedDecisionProviders struct {
 	mu        sync.Mutex
 	providers map[[sha256.Size]byte]*keyedDecisionProvider
+	// sweep drops idle entries when no call comes to do it; nil while the
+	// cache is empty.
+	sweep *time.Timer
 	// now is time.Now, replaced in tests.
 	now func() time.Time
 }
@@ -414,8 +431,9 @@ type keyedDecisionProvider struct {
 }
 
 // maxKeyedDecisionProviders bounds the cache; past it the least recently used
-// entry is dropped. An entry idle for keyedDecisionIdleTTL is dropped too, so
-// a key used for one call isn't kept in memory until 256 others push it out.
+// entry is dropped. An entry idle for keyedDecisionIdleTTL is dropped too, by
+// the next call or within another TTL by the sweep, so a key used for one call
+// isn't kept in memory until 256 others push it out.
 const (
 	maxKeyedDecisionProviders = 256
 	keyedDecisionIdleTTL      = 10 * time.Minute
@@ -434,13 +452,7 @@ func (c *keyedDecisionProviders) get(dialect, baseURL, apiKey string) (providers
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.clock()
-	// Closing only drops idle connections; a call in flight finishes.
-	for key, entry := range c.providers {
-		if now.Sub(entry.lastUsed) > keyedDecisionIdleTTL {
-			entry.provider.Close()
-			delete(c.providers, key)
-		}
-	}
+	c.dropIdle(now)
 	if entry, ok := c.providers[sum]; ok {
 		entry.lastUsed = now
 		return entry.provider, nil
@@ -464,7 +476,34 @@ func (c *keyedDecisionProviders) get(dialect, baseURL, apiKey string) (providers
 		delete(c.providers, oldestKey)
 	}
 	c.providers[sum] = &keyedDecisionProvider{provider: p, lastUsed: now}
+	if c.sweep == nil {
+		c.sweep = time.AfterFunc(keyedDecisionIdleTTL, c.sweepIdle)
+	}
 	return p, nil
+}
+
+// dropIdle drops the entries idle past the TTL. Closing only drops idle
+// connections; a call in flight finishes. The caller holds c.mu.
+func (c *keyedDecisionProviders) dropIdle(now time.Time) {
+	for key, entry := range c.providers {
+		if now.Sub(entry.lastUsed) > keyedDecisionIdleTTL {
+			entry.provider.Close()
+			delete(c.providers, key)
+		}
+	}
+}
+
+// sweepIdle drops idle entries when no call has, and runs again while any are
+// left.
+func (c *keyedDecisionProviders) sweepIdle() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.dropIdle(c.clock())
+	if len(c.providers) == 0 {
+		c.sweep = nil
+	} else if c.sweep != nil {
+		c.sweep.Reset(keyedDecisionIdleTTL)
+	}
 }
 
 // size is how many providers the cache holds.

@@ -1055,10 +1055,12 @@ question types, never the state or the instructions.
 OpenAI Decisions on an internal caller's key. Other provider connections,
 chat and an organization's own OpenAI provider included, do not use the proxy
 yet. An organization provider with its own `base_url` keeps its address
-checks: before each call its host must resolve, from the gateway, only to
-addresses the gateway allows, and a direct connection (a `NO_PROXY` host) is
-checked again when it is dialled. The proxy resolves the host again for
-itself, so its own egress rules still apply.
+checks: its host must resolve, from the gateway, only to addresses the
+gateway allows. That is checked before every call over HTTP/1.1, and over
+HTTP/2 whenever a connection is opened (a call on an open connection reuses
+that check); a direct connection (a `NO_PROXY` host) is checked again when it
+is dialled. The proxy resolves the host again for itself, so its own egress
+rules still apply.
 
 ---
 

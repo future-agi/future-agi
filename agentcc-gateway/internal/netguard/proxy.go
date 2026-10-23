@@ -30,6 +30,15 @@ var lookupIPAddr = net.DefaultResolver.LookupIPAddr
 // loopback. A request whose own host is that address was checked like any
 // other.
 //
+// The check runs whenever the transport picks a proxy, which it does for every
+// request except one it sends on an open HTTP/2 connection. Over HTTP/1.1 each
+// request is checked, one sent over a pooled connection included: that costs
+// a DNS lookup per call, and a lookup that fails fails the request even when
+// a live connection was there to use (the check fails closed). A request on
+// an open HTTP/2 connection, as to an HTTPS vendor that speaks it, reuses the
+// check made when that connection was opened. The chat providers'
+// DialContext checks only when it dials.
+//
 // The proxy resolves the host again for itself. A host that answers the
 // gateway with a public address and the proxy with an internal one gets past
 // this check; the proxy's own rules have to stop that.

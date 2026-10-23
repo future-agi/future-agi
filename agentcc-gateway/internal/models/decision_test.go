@@ -335,4 +335,13 @@ func TestUpstreamErrorMessageParsesOnlyWhatItShows(t *testing.T) {
 			t.Errorf("%d: got %q, want the fallback", status, got)
 		}
 	}
+	// The statuses parsed are exactly those DecisionUpstreamError shows the
+	// message for: one more there would show the fallback instead.
+	for status := 100; status < 600; status++ {
+		shown := DecisionUpstreamError("Vendor", status, nil, "MESSAGE").Message == "MESSAGE"
+		parsed := req.UpstreamErrorMessage(status, body, "k", "generic") != "generic"
+		if shown != parsed {
+			t.Errorf("%d: message shown %v, parsed %v", status, shown, parsed)
+		}
+	}
 }
