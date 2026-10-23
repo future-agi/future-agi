@@ -123,8 +123,10 @@ func TestPublicationHeadlineNeedsAnEarnedRun(t *testing.T) {
 		opts   PublishOptions
 		reason string
 	}{
-		"too-short":        {func(*Result) {}, PublishOptions{}, "below the configured minimum"},
-		"incomplete":       {func(r *Result) { r.Verification.Complete, r.Verification.Error = false, "verification budget exhausted" }, opts, "verification is incomplete (verification budget exhausted)"},
+		"too-short": {func(*Result) {}, PublishOptions{}, "below the configured minimum"},
+		"incomplete": {func(r *Result) {
+			r.Verification.Complete, r.Verification.Error = false, "verification budget exhausted"
+		}, opts, "verification is incomplete (verification budget exhausted)"},
 		"missing":          {func(r *Result) { r.Verification.Missing, r.Verification.MissingBy.AcknowledgedMissing = 1, 1 }, opts, "1 attempted spans are missing"},
 		"not-all-accepted": {func(r *Result) { r.Counters.Acknowledged -= 4 }, opts, "4 of 12 attempted spans not acknowledged"},
 		"not-all-started":  {func(r *Result) { r.StopReason = "byte-budget" }, opts, "stop reason byte-budget"},
