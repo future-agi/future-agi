@@ -121,26 +121,25 @@ func (c Config) batch(start int64, n int, now time.Time) (ptrace.Traces, []spanP
 
 // encodedBatch is one export request ready to send.
 type encodedBatch struct {
-	request      ptraceotlp.ExportRequest // gRPC
-	body         []byte                   // HTTP body as sent (compressed when gzip)
-	uncompressed int                      // serialised size before compression
+	// body is the encoded message as sent, compressed when gzip: the HTTP body,
+	// or the gRPC message payload (protobuf).
+	body         []byte
+	uncompressed int // serialised size before compression
 }
 
 // buildRequest generates and encodes spans [start, start+n) in the configured
-// encoding. For gRPC the request is sent as a message; its protobuf size is the
-// uncompressed size and the transport reports the wire size.
+// encoding, including compression, so the timed send of every transport only
+// transmits: a gRPC message is protobuf exactly like an OTLP/HTTP protobuf
+// body, and the gRPC exporter sends these bytes without re-encoding them.
 func (c Config) buildRequest(start int64, n int, now time.Time) (encodedBatch, []spanPlan, error) {
 	traces, plans := c.batch(start, n, now)
 	req := ptraceotlp.NewExportRequestFromTraces(traces)
 	var raw []byte
 	var err error
 	switch c.Encoding {
-	case EncodingGRPC:
-		raw, err = req.MarshalProto()
-		return encodedBatch{request: req, uncompressed: len(raw)}, plans, err
 	case EncodingJSON:
 		raw, err = req.MarshalJSON()
-	case EncodingProtobuf:
+	case EncodingProtobuf, EncodingGRPC:
 		raw, err = req.MarshalProto()
 	default:
 		return encodedBatch{}, nil, fmt.Errorf("unknown encoding %q", c.Encoding)

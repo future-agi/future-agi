@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"mime"
 	"net"
 	"net/http"
@@ -14,11 +15,14 @@ import (
 
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/encoding/gzip"
+	// Registers the gzip decompressor for responses to gzip requests.
+	_ "google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/stats"
+	"google.golang.org/grpc/status"
 )
 
 // exporter sends one export request and classifies the response. It never
@@ -93,12 +97,60 @@ func (e *httpExporter) export(ctx context.Context, b encodedBatch, n int) (expor
 
 // grpcExporter speaks OTLP/gRPC, the transport most production SDK exporters
 // default to. Wire bytes come from the gRPC stats handler (after compression).
+//
+// It sends the protobuf bytes the build workers encoded (and gzip-compressed),
+// like the HTTP exporter sends its body: marshalling and compressing inside the
+// call would put generator CPU time into the timed send and into a concurrency
+// slot on this transport only.
 type grpcExporter struct {
-	cfg    Config
-	conn   *grpc.ClientConn
-	client ptraceotlp.GRPCClient
-	md     metadata.MD
+	cfg  Config
+	conn *grpc.ClientConn
+	md   metadata.MD
 }
+
+// otlpTraceExportMethod is the OTLP/gRPC trace export RPC.
+const otlpTraceExportMethod = "/opentelemetry.proto.collector.trace.v1.TraceService/Export"
+
+// rawMessage is an already-encoded protobuf message.
+type rawMessage struct{ b []byte }
+
+// rawCodec passes pre-encoded protobuf bytes through, in both directions. Its
+// name is "proto", the content-subtype of the messages it carries.
+type rawCodec struct{}
+
+func (rawCodec) Marshal(v any) ([]byte, error) {
+	m, ok := v.(*rawMessage)
+	if !ok {
+		return nil, fmt.Errorf("raw codec cannot marshal %T", v)
+	}
+	return m.b, nil
+}
+
+func (rawCodec) Unmarshal(data []byte, v any) error {
+	m, ok := v.(*rawMessage)
+	if !ok {
+		return fmt.Errorf("raw codec cannot unmarshal into %T", v)
+	}
+	m.b = append(m.b[:0], data...)
+	return nil
+}
+
+func (rawCodec) Name() string { return "proto" }
+
+// precompressedGzip is the compressor of a connection whose messages were
+// gzip-compressed by the build workers: it names the encoding (grpc-encoding:
+// gzip, compressed-flag set) and writes the compressed bytes unchanged.
+// grpc-go's per-call compressors always compress what they are given, so this
+// uses the connection-level Compressor API, deprecated but supported
+// throughout grpc-go 1.x.
+type precompressedGzip struct{}
+
+func (precompressedGzip) Do(w io.Writer, p []byte) error {
+	_, err := w.Write(p)
+	return err
+}
+
+func (precompressedGzip) Type() string { return "gzip" }
 
 type wireCounterKey struct{}
 
@@ -143,7 +195,7 @@ func newGRPCExporter(c Config, headers http.Header) (*grpcExporter, error) {
 		creds = credentials.NewTLS(&tls.Config{ServerName: serverName, MinVersion: tls.VersionTLS12})
 	}
 	dialer := &net.Dialer{Timeout: c.Timeout}
-	conn, err := grpc.NewClient("passthrough:///"+target,
+	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(creds),
 		// No proxy from the environment and no service-config retries: load and
 		// credentials go only to the approved address, exactly once.
@@ -160,7 +212,11 @@ func newGRPCExporter(c Config, headers http.Header) (*grpcExporter, error) {
 			}
 			return dialer.DialContext(ctx, "tcp", addr)
 		}),
-	)
+	}
+	if c.Gzip {
+		opts = append(opts, grpc.WithCompressor(precompressedGzip{})) //nolint:staticcheck // see precompressedGzip
+	}
+	conn, err := grpc.NewClient("passthrough:///"+target, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("create gRPC client: %w", err)
 	}
@@ -168,7 +224,7 @@ func newGRPCExporter(c Config, headers http.Header) (*grpcExporter, error) {
 	for k, values := range headers {
 		md.Set(strings.ToLower(k), values...)
 	}
-	return &grpcExporter{cfg: c, conn: conn, client: ptraceotlp.NewGRPCClient(conn), md: md}, nil
+	return &grpcExporter{cfg: c, conn: conn, md: md}, nil
 }
 
 func (e *grpcExporter) close() { _ = e.conn.Close() }
@@ -178,16 +234,19 @@ func (e *grpcExporter) export(ctx context.Context, b encodedBatch, n int) (expor
 	ctx, cancel := context.WithTimeout(ctx, e.cfg.Timeout)
 	defer cancel()
 	ctx = context.WithValue(metadata.NewOutgoingContext(ctx, e.md), wireCounterKey{}, &wire)
-	var opts []grpc.CallOption
-	if e.cfg.Gzip {
-		opts = append(opts, grpc.UseCompressor(gzip.Name))
-	}
-	resp, err := e.client.Export(ctx, b.request, opts...)
+	var reply rawMessage
+	err := e.conn.Invoke(ctx, otlpTraceExportMethod, &rawMessage{b: b.body}, &reply, grpc.ForceCodec(rawCodec{}))
 	var rejected int64
 	message := false
 	if err == nil {
-		rejected = resp.PartialSuccess().RejectedSpans()
-		message = resp.PartialSuccess().ErrorMessage() != ""
+		resp := ptraceotlp.NewExportResponse()
+		if uerr := resp.UnmarshalProto(reply.b); uerr != nil {
+			// What the generated client returns for an undecodable response.
+			err = status.Error(codes.Internal, "grpc: failed to unmarshal the received message")
+		} else {
+			rejected = resp.PartialSuccess().RejectedSpans()
+			message = resp.PartialSuccess().ErrorMessage() != ""
+		}
 	}
 	return classifyGRPC(err, rejected, message, n), int(wire.Load())
 }

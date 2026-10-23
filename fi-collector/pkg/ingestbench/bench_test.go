@@ -622,7 +622,7 @@ func BenchmarkBuildRequest(b *testing.B) {
 	for _, tc := range []struct {
 		encoding string
 		gzip     bool
-	}{{EncodingProtobuf, false}, {EncodingProtobuf, true}, {EncodingJSON, true}, {EncodingGRPC, false}} {
+	}{{EncodingProtobuf, false}, {EncodingProtobuf, true}, {EncodingJSON, true}, {EncodingGRPC, false}, {EncodingGRPC, true}} {
 		b.Run(tc.encoding+map[bool]string{true: "-gzip", false: ""}[tc.gzip], func(b *testing.B) {
 			c := testConfig()
 			c.Encoding, c.Gzip = tc.encoding, tc.gzip
