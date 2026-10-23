@@ -563,7 +563,7 @@ recorded verbatim in the result (``direct_clickhouse_reads``):
   of the run.
 
 They run every ``--direct-probe-interval`` during load (trace and session probes
-pick the newest request acknowledged at least ``--direct-probe-min-age`` ago) and
+pick the newest retained request acknowledged at least ``--direct-probe-min-age`` ago) and
 ``--direct-probe-after-settle`` rounds after the settle window (requests spread
 across the run), each with ``--direct-probe-timeout``, ``readonly=2`` and the
 query cache explicitly off. During-load and after-settle phases are reported
@@ -582,6 +582,16 @@ server-side, so the latency covers reading the payload columns but not
 transferring them to a client. A probe with no acknowledged candidate is counted as
 skipped, never as a success. These numbers are database latency for these queries,
 not application API or browser latency, and they add read load during the run.
+
+During-load candidates use 64 monotonic-time buckets, keeping the earliest
+acknowledgement in each bucket, plus one matured fallback across idle/resume.
+The bucket width is ``ceil(min-age / 63)`` (at least 1 ns). Retention is therefore
+bounded at 65 samples regardless of request rate or run length, and an eligible
+sample is not overwritten by a high request rate before reaching its minimum
+age. Selection is the newest eligible **retained sample**, not the exact newest
+acknowledgement. After-settle sampling is unchanged. In-process regression tests
+exercise both ID-query dispatch paths at the profile request rates; they are not
+real database latency measurements or evidence that full-scale profiles ran.
 
 Application read workload
 -------------------------
