@@ -20,12 +20,15 @@ def usage_event_id(cell_or_run_id, attempt):
     return str(uuid.uuid5(_EVENT_ID_NAMESPACE, f"jev:{cell_or_run_id}:{attempt}"))
 
 
-def build_usage_events(evaluator, *, org_id, cell_or_run_id, amount, attempt_offset=0):
-    """Preserve token units for each attempt; apply the existing fee once."""
+def build_usage_events(evaluator, *, org_id, cell_or_run_id, amount):
+    """One event per attempt the client made, so every attempt's token units
+    are reported: a 429 then a success is two events. Only the successful
+    attempt carries ``amount``; the others are zero-amount usage records.
+    Count runs by the ``outcome == "success"`` events, not by events."""
     actual = evaluator.last_jev or {}
     events = []
     for record in evaluator.client.attempts:
-        attempt = attempt_offset + record["attempt"]
+        attempt = record["attempt"]
         success = record["outcome"] == "success"
         usage = record.get("usage") or {}
         events.append(

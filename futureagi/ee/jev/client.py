@@ -271,8 +271,9 @@ class JevSystemOneClient:
                         raise self.invalid_response("not_object")
                     if "error" in response:
                         raise self.invalid_response("error_body")
-                    if self.clock() > deadline:
-                        raise JevGatewayError("JEV_TIMEOUT", True)
+                    # A returned 200 is final even when its read ran a little
+                    # past the deadline: the org's key was charged for it, and
+                    # the deadline is checked before every send.
                     # Only allowlisted accounting fields are retained; never the body.
                     self.attempts.append(
                         {

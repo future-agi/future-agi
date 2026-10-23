@@ -142,6 +142,29 @@ def test_a_jev_run_bills_once_with_the_metering_event(
 
 # The eval path closes DB connections, so these need real transactions.
 @pytest.mark.django_db(transaction=True)
+def test_a_failed_jev_usage_emit_is_logged_and_the_run_still_lands(
+    auth_client, user, workspace, jev_gateway
+):
+    from tracer.utils.external_eval import _execute_evaluation_on_external_platform
+
+    config = _config(auth_client, user, workspace, "jev-latest")
+    with (
+        patch("tfc.ee_gates._jev_denied_off_cloud", return_value=False),
+        patch("tfc.capabilities.service.check_or_raise"),
+        patch("httpx.post", return_value=httpx.Response(200, json=JEV_OK)),
+        patch("ee.usage.services.emitter.emit", side_effect=RuntimeError("redis down")),
+        patch("tracer.utils.external_eval._send_eval_result") as send,
+        patch("tracer.utils.external_eval.logger") as logger,
+    ):
+        _execute_evaluation_on_external_platform(config)
+    send.assert_called_once()
+    warned = [c for c in logger.warning.call_args_list if c.args]
+    assert [c.args[0] for c in warned] == ["jev_usage_emit_failed"]
+    assert warned[0].kwargs["exc_info"] is True
+
+
+# The eval path closes DB connections, so these need real transactions.
+@pytest.mark.django_db(transaction=True)
 def test_an_unknown_jev_model_is_rejected_before_anything_is_billed(
     auth_client, user, workspace, jev_gateway
 ):

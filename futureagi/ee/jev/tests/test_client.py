@@ -908,6 +908,22 @@ def test_r16_total_deadline_and_cancel(transport):
     assert post.call_count == 1
 
 
+def test_a_200_read_past_the_deadline_is_kept_not_retried(transport):
+    """httpx timeouts are per operation, so a slow read can land just past the
+    total deadline. The answer was charged to the org's key: it is final."""
+    now = [0.0]
+
+    def slow_ok(*args, **kwargs):
+        now[0] = 90.5
+        return reply(200)
+
+    with patch("httpx.post", side_effect=slow_ok) as post:
+        jev = client(clock=lambda: now[0], sleep=Mock(), jitter=lambda _: 0)
+        assert jev.evaluate("jev-latest", "x", QUESTIONS, timeout=35) == OK
+    assert post.call_count == 1
+    assert [a["outcome"] for a in jev.attempts] == ["success"]
+
+
 @pytest.mark.parametrize(
     "response",
     [

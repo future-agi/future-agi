@@ -1,17 +1,19 @@
 import structlog
 
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.views.eval_runner import EvaluationRunner
 from sdk.utils.helpers import _emit_jev_usage, _get_api_call_type, _is_jev_evaluator
+from tfc.constants.api_calls import APICallStatusChoices
 from tfc.temporal import temporal_activity
 from tracer.models.external_eval_config import (
     ExternalEvalConfig,
     PlatformChoices,
     StatusChoices,
 )
-from tfc.constants.api_calls import APICallStatusChoices
+
+logger = structlog.get_logger(__name__)
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -107,7 +109,9 @@ def _emit_external_eval_usage(config: ExternalEvalConfig):
         try:
             from ee.usage.utils.event_properties import token_usage_properties
         except ImportError:
-            token_usage_properties = lambda token_usage: {}
+
+            def token_usage_properties(token_usage):
+                return {}
 
         if emit is not None and UsageEvent is not None:
             emit(
@@ -296,7 +300,9 @@ def _execute_evaluation_on_external_platform(config: ExternalEvalConfig):
                 ),
             )
         except Exception:
-            pass  # Metering failure must not break the action
+            # Metering failure must not break the action, but a successful
+            # run left unbilled is logged.
+            logger.warning("jev_usage_emit_failed", exc_info=True)
 
     config.eval_results = eval_result
     config.save()
@@ -351,6 +357,7 @@ def _send_eval_result(config: ExternalEvalConfig, value: str, reason: str):
 
 def _send_langfuse_eval_result(config: ExternalEvalConfig, value, reason: str):
     from langfuse import Langfuse  # lazy
+
     langfuse = Langfuse(
         secret_key=config.credentials.get("langfuse_secret_key"),
         public_key=config.credentials.get("langfuse_public_key"),

@@ -7515,6 +7515,13 @@ class EvalPlayGroundAPIView(APIView):
                 )
                 return self._gm.bad_request(str(exc))
             except MissingProviderKeyError as exc:
+                from model_hub.utils.jev_templates import jev_error_response
+
+                # A missing TypeSafe key is the typed JEV_KEY_MISSING, as on the
+                # SDK path, so the frontend can key off the code.
+                jev_error = jev_error_response(exc)
+                if jev_error is not None:
+                    return jev_error
                 # Bring-your-own-key models: say which key to add, from a fixed
                 # template rather than the exception text.
                 return self._gm.bad_request(missing_provider_key_message(exc.provider))
@@ -8224,7 +8231,13 @@ class TestEvaluationTemplateAPIView(APIView):
             )
             return self._gm.bad_request(str(exc))
         except MissingProviderKeyError as exc:
-            # As in the eval playground: say which key to add.
+            from model_hub.utils.jev_templates import jev_error_response
+
+            # As in the eval playground: a missing TypeSafe key is typed, any
+            # other says which key to add.
+            jev_error = jev_error_response(exc)
+            if jev_error is not None:
+                return jev_error
             return self._gm.bad_request(missing_provider_key_message(exc.provider))
         except Exception as exc:
             from model_hub.utils.jev_templates import jev_error_response

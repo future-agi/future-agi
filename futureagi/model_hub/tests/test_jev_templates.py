@@ -936,6 +936,10 @@ def test_template_test_endpoint_says_what_went_wrong_with_typesafe(
     run.assert_called_once()
     assert response.status_code == 400
     assert response.data["message"] == message
+    # Typed like the SDK path, so the frontend can key off the code.
+    assert response.data["code"] == (
+        "JEV_KEY_MISSING" if error == "missing-key" else "JEV_TIMEOUT"
+    )
 
 
 @pytest.mark.django_db
