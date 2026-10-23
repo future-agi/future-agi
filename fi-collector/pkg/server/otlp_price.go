@@ -1,7 +1,7 @@
 package server
 
 // The price of a request is the heap it makes live, in two parts with
-// different lifetimes (see ingestBudget):
+// different lifetimes (see ingest_limits.go):
 //
 //   - handler: the decoded request (pdata), held from the work lease until
 //     the handler returns;
@@ -66,7 +66,8 @@ func (s otlpShape) price() ingestPrice {
 		s.keyValues*priceKeyValue +
 		s.arrayValues*priceArrayValue +
 		s.containers*priceContainer +
-		sizeClassBound(s.bytesValues, 0) // pdata's copy of bytes values
+		sizeClassBound(s.bytesValues, 0) + // pdata's copy of bytes values
+		sizeClassBound(s.transientBytes, 0)
 	rows := int64(priceRows) +
 		s.spans*priceRow +
 		s.keyValues*priceRowKeyValue +

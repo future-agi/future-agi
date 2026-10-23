@@ -109,6 +109,11 @@ type otlpShape struct {
 	// hot-column copy of an input.value or output.value that is not a
 	// string, and the span-events column.
 	hotCopyBytes int64
+	// transientBytes is what the JSON decoder allocates and drops while it
+	// decodes (jsonDropped): for every object member name, known or not, and
+	// every string with escapes. Priced in the handler part, as if it were
+	// held until the handler returns.
+	transientBytes int64
 }
 
 // addKeyValue and addArrayValue count one element against

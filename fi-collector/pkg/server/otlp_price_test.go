@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"runtime/metrics"
 	"strings"
 	"sync"
 	"testing"
@@ -495,5 +496,50 @@ func TestRowJSONOverheadCoversAnEmptySpan(t *testing.T) {
 	t.Logf("empty row: %d JSON bytes", len(b))
 	if len(b)+1 > rowFixedJSON {
 		t.Errorf("an empty row is %d JSON bytes, over rowFixedJSON %d", len(b)+1, rowFixedJSON)
+	}
+}
+
+// pdata's JSON decoder allocates and drops strings the decoded request does
+// not keep: every object member name, known or not, and for a string with
+// escapes the buffer it is unescaped into. The price (less the drain's
+// encode share) covers what decoding allocates in all, for bodies where
+// those dominate.
+func TestPriceCoversJSONDecodeAllocations(t *testing.T) {
+	long := strings.Repeat("n", 64<<10)
+	esc := strings.Repeat(`\u0041`, 16<<10) // 96 KiB escaped, 16 KiB decoded
+	cases := map[string]string{
+		"long unknown member names": `{"resourceSpans":[{"scopeSpans":[{"spans":[` +
+			strings.TrimSuffix(strings.Repeat(`{"name":"s","`+long+`":1},`, 64), ",") + `]}]}]}`,
+		"long names in a skipped object": `{"resourceSpans":[],"x":{` +
+			strings.TrimSuffix(strings.Repeat(`"`+long+`":[{"`+long+`":null}],`, 32), ",") + `}}`,
+		"escaped member names": `{"resourceSpans":[{"scopeSpans":[{"spans":[` +
+			strings.TrimSuffix(strings.Repeat(`{"name":"s","`+esc+`":1},`, 64), ",") + `]}]}]}`,
+		"escaped values": `{"resourceSpans":[{"scopeSpans":[{"spans":[` +
+			strings.TrimSuffix(strings.Repeat(`{"name":"`+esc+`","attributes":[{"key":"`+esc+`","value":{"stringValue":"`+esc+`"}}]},`, 32), ",") + `]}]}]}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			shape, err := scanOTLPJSON([]byte(body))
+			if err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			p := shape.price()
+			p.handler += p.rows - 2*shape.maxRowJSON - 2*shape.curatedJSONBytes // the strings pdata keeps are priced with the rows
+			allocs := []metrics.Sample{{Name: "/gc/heap/allocs:bytes"}}
+			runtime.GC()
+			metrics.Read(allocs)
+			before := allocs[0].Value.Uint64()
+			req := ptraceotlp.NewExportRequest()
+			if err := req.UnmarshalJSON([]byte(body)); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			metrics.Read(allocs)
+			allocated := int64(allocs[0].Value.Uint64() - before)
+			t.Logf("body %d B: decoding allocated %d, handler price %d (x%.2f)", len(body), allocated, p.handler, ratio(p.handler, allocated))
+			if allocated > p.handler {
+				t.Errorf("decoding allocated %d bytes, over the handler price %d", allocated, p.handler)
+			}
+			runtime.KeepAlive(req)
+		})
 	}
 }

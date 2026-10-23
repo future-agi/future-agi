@@ -114,7 +114,13 @@ func checkCovers(t *testing.T, body []byte, jsonBody bool) {
 		derr = req.UnmarshalProto(body)
 	}
 	if err != nil {
-		return // refusing is always safe
+		// Refusing is safe, but a JSON body pdata decodes must not be
+		// refused as malformed (a limit is another matter).
+		var se *scanError
+		if jsonBody && derr == nil && (!errors.As(err, &se) || se.reason == "malformed") {
+			t.Errorf("pdata decodes it, the scan refuses it: %v", err)
+		}
+		return
 	}
 	if derr != nil {
 		return // the decoder refuses it: nothing is held
@@ -299,6 +305,8 @@ func edgeCases() []edgeCase {
 		{"snake case", []byte(`{"resource_spans":[{"scope_spans":[{"spans":[{"name":"a","attributes":[{"key":"k","value":{"string_value":"v","kvlist_value":{"values":[{"key":"n","value":{"int_value":"5"}}]}}}]}]}]}]}`), true},
 		{"escaped keys", []byte(`{"resourceSpans":[{"scopeSpans":[{"spans":[{"name":"\u0001 😀\ud800x","attributes":[{"key":"input.value","value":{"stringValue":"\"<&>\""}}]}]}]}]}`), true},
 		{"value before key", []byte(`{"resourceSpans":[{"scopeSpans":[{"spans":[{"attributes":[{"value":{"arrayValue":{"values":[{"stringValue":"x"},null]}},"key":"output.value"}]}]}]}]}`), true},
+		// jsoniter reads null as "" wherever pdata reads a string.
+		{"null strings", []byte(`{"resourceSpans":[{"schemaUrl":null,"scopeSpans":[{"scope":{"name":null,"version":null},"schemaUrl":null,"spans":[{"traceId":null,"spanId":null,"parentSpanId":null,"traceState":null,"name":null,"status":{"message":null},"events":[{"name":null}],"links":[{"traceId":null,"spanId":null,"traceState":null}],"attributes":[{"key":null,"value":{"stringValue":null}}]}]}]}]}`), true},
 		{"resource after spans", []byte(`{"resourceSpans":[{"scopeSpans":[{"spans":[{},{},{}]}],"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"` + strings.Repeat("\\u0001", 100) + `"}}]}}]}`), true},
 	}
 }

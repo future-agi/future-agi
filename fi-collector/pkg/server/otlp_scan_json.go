@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"unicode/utf16"
 	"unicode/utf8"
 )
@@ -89,9 +90,11 @@ func (j *jsonScan) next(closing byte, first *bool) (more bool, err error) {
 // field reads the next key of an object and the colon after it. The key is
 // nil when it is longer than any key the scan matches.
 func (j *jsonScan) field() ([]byte, error) {
-	if _, err := j.str(true); err != nil {
+	info, err := j.str(true)
+	if err != nil {
 		return nil, err
 	}
+	j.s.transientBytes += jsonDropped * info.sent
 	if j.peek() != ':' {
 		return nil, errMalformed("json: expected ':' at offset %d", j.i)
 	}
@@ -105,19 +108,34 @@ func (j *jsonScan) field() ([]byte, error) {
 // strInfo is one string: its decoded length and its escaped JSON length.
 type strInfo struct {
 	decoded, plain, html int64
+	sent                 int64 // its length as sent, between the quotes
 	// noNonZero is true when the raw token has no escape and no digit other
 	// than 0: a span id that is empty or all zeros.
 	noNonZero bool
 }
 
+// jsonDropped bounds, per byte of a string as sent (between its quotes),
+// what pdata's JSON decoder allocates and drops for an object member name
+// (known or not, at any depth) and for a string with escapes (unescaped
+// through a buffer that grows by appending). TestPriceCoversJSONDecodeAllocations
+// measures it.
+const jsonDropped = 2
+
 func (j *jsonScan) str(capture bool) (strInfo, error) {
 	info := strInfo{noNonZero: true}
+	if j.peek() == 'n' && bytes.HasPrefix(j.b[j.i:], []byte("null")) {
+		// jsoniter's ReadString reads null as "", so pdata accepts null
+		// wherever it reads a string.
+		j.i += 4
+		j.keyN = 0
+		return info, nil
+	}
 	if j.peek() != '"' {
 		return info, errMalformed("json: expected a string at offset %d", j.i)
 	}
 	j.i++
 	j.keyN = 0
-	fits := capture
+	start, fits, escaped := j.i, capture, false
 	keep := func(p []byte) {
 		if fits && j.keyN+len(p) <= len(j.key) {
 			j.keyN += copy(j.key[j.keyN:], p)
@@ -136,9 +154,14 @@ func (j *jsonScan) str(capture bool) (strInfo, error) {
 			if !fits {
 				j.keyN = -1
 			}
+			info.sent = int64(j.i - 1 - start)
+			if escaped {
+				j.s.transientBytes += jsonDropped * info.sent
+			}
 			return info, nil
 		case c == '\\':
 			info.noNonZero = false
+			escaped = true
 			runes, err := j.escape()
 			if err != nil {
 				return info, err

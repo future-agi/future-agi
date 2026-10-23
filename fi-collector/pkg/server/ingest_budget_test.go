@@ -416,8 +416,8 @@ func emptySpans(t *testing.T, n int) []byte {
 // A body whose decoded price is more than the server can give one request is
 // refused permanently (413) before it is decoded, plain or gzip, with the
 // setting to raise in the message; a body that fits is decoded. (Before
-// the ingest budget, a plain body was decoded and converted whatever it cost: 120 KB of
-// empty spans held about 250 MiB.)
+// the ingest budget, a plain body was decoded and converted whatever it
+// cost.)
 func TestOTLPHTTPOverPricedBodyIs413BeforeDecoding(t *testing.T) {
 	s := budgetServer(96) // work pool 64 MiB
 	body := emptySpans(t, 60000)
