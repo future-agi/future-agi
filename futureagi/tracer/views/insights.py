@@ -60,6 +60,8 @@ ERROR_RESPONSES = {
 }
 
 RUNS_PER_HOUR = 30
+# A run older than this is no longer in flight: its workflow is started with
+# a limit no longer than this (tfc/temporal/insights/client.py RUN_TIMEOUT).
 ACTIVE_RUN_WINDOW = timedelta(hours=2)
 DRAFTS_PER_HOUR = 60
 MAX_POPULATION = 20000
@@ -178,8 +180,9 @@ class InsightRunCreateSerializer(serializers.Serializer):
     )
     sample_size = serializers.IntegerField(min_value=10, max_value=1000, required=False)
     # Forget the saved report's categories so this run discovers afresh.
-    # Applied only once the run is allowed to start, so a refused run (credits,
-    # rate limit, a bad range) leaves the saved categories as they were.
+    # Applied only once the run has started, so a refused run (credits, rate
+    # limit, a bad range) or one that couldn't start leaves the saved
+    # categories as they were.
     reset_taxonomy = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):
@@ -197,8 +200,18 @@ class InsightRunCreateSerializer(serializers.Serializer):
 class InsightEstimateRequestSerializer(serializers.Serializer):
     project_id = serializers.UUIDField()
     unit = serializers.ChoiceField(choices=InsightUnitType.choices)
-    scope = InsightScopeSerializer()
+    # A scope the server counts, or how many rows are handed over by id (a
+    # selection, or a run again on the same rows), which need no count.
+    scope = InsightScopeSerializer(required=False)
+    population_size = serializers.IntegerField(min_value=1, required=False)
     sample_size = serializers.IntegerField(min_value=10, max_value=1000, required=False)
+
+    def validate(self, attrs):
+        if ("scope" in attrs) == ("population_size" in attrs):
+            raise serializers.ValidationError(
+                "Provide either scope or population_size."
+            )
+        return attrs
 
 
 class InsightDraftSerializer(serializers.Serializer):
@@ -248,9 +261,9 @@ class InsightUnitsQuerySerializer(serializers.Serializer):
         max_length=64, required=False, allow_blank=True
     )
     unit_ids = serializers.CharField(max_length=4000, required=False, allow_blank=True)
-    # A report holds at most MAX_POPULATION units; no page starts past them.
+    # A run reads at most MAX_SAMPLE units; no page starts past them.
     offset = serializers.IntegerField(
-        min_value=0, max_value=MAX_POPULATION, required=False, default=0
+        min_value=0, max_value=MAX_SAMPLE, required=False, default=0
     )
     limit = serializers.IntegerField(
         min_value=1, max_value=200, required=False, default=UNITS_PAGE
@@ -402,8 +415,9 @@ class InsightEstimateResultSerializer(serializers.Serializer):
     population_is_lower_bound = serializers.BooleanField()
     # The units a run reads: the sample size, or every unit when fewer.
     sample_size = serializers.IntegerField()
-    # The absolute window the scope reads: {"from", "to"}.
-    window = serializers.JSONField()
+    # The absolute window the scope reads: {"from", "to"}; null for rows
+    # handed over by id.
+    window = serializers.JSONField(allow_null=True)
     # The first units a run reads, in its sample's order (up to 20), for
     # drafting and previewing the report.
     sample_ids = serializers.ListField(child=serializers.CharField())
@@ -608,8 +622,8 @@ def _pipeline():
 
 
 def _billing():
-    """Insights' billing, or None where reports aren't billed: off Cloud, or
-    on a Cloud without its billing config."""
+    """Insights' billing, or None where reports aren't billed: off Cloud. On
+    a Cloud whose billing config doesn't load, its credit checks refuse."""
     try:
         from ee.agenthub.insights import billing
     except ImportError:
@@ -762,7 +776,8 @@ def _credits_refused(gm, org, step: str, *, sample_size=None, unit=None):
         )
     except billing.CreditCheckUnavailable:
         # Fail closed: reports run on Future AGI's model keys, so an outage
-        # must not mean unchecked (and possibly unbilled) spend.
+        # (billing's Redis, or its config) must not mean unchecked (and
+        # unbilled) spend.
         return gm.custom_error_response(
             503, CREDIT_CHECK_UNAVAILABLE, code="credit_check_unavailable"
         )
@@ -1088,13 +1103,27 @@ class InsightEstimateView(InsightsLicenseRequired, APIView):
         },
     )
     def post(self, request):
-        """How many units a scope holds, and how many a report on it reads."""
+        """How many units a scope holds, and how many a report on it reads.
+        Rows handed over by id are only sized: they have no window to count."""
         data = request.validated_data
         project = _project(request, data["project_id"])
         if project is None:
             return self._gm.not_found("Project not found")
-        scope = normalize_scope(data["scope"])
         unit = data["unit"]
+        if "population_size" in data:
+            handed = data["population_size"]
+            reads = min(data.get("sample_size") or DEFAULT_SAMPLE, handed)
+            return self._gm.success_response(
+                {
+                    "population": handed,
+                    "population_is_lower_bound": False,
+                    "sample_size": reads,
+                    "window": None,
+                    "sample_ids": [],
+                    **_credit_estimate(_org(request), reads, unit),
+                }
+            )
+        scope = normalize_scope(data["scope"])
         try:
             population = _scope_population(request, project, unit, scope)
             # A users count still under way holds at least the 20 the pick
@@ -1103,9 +1132,11 @@ class InsightEstimateView(InsightsLicenseRequired, APIView):
                 str(project.id),
                 unit,
                 population.filters,
-                n=ESTIMATE_SAMPLE_IDS
-                if population.lower_bound
-                else min(ESTIMATE_SAMPLE_IDS, population.count),
+                n=(
+                    ESTIMATE_SAMPLE_IDS
+                    if population.lower_bound
+                    else min(ESTIMATE_SAMPLE_IDS, population.count)
+                ),
                 after=None,
                 search=(scope.get("search") or "").strip(),
                 budget_s=users_service.estimate_budget_s(),
@@ -1226,15 +1257,9 @@ class InsightRunCreateView(InsightsLicenseRequired, APIView):
         if not _spend("run", org.id, RUNS_PER_HOUR):
             return _rate_limited(self._gm)
         if config is not None:
-            fields = set()
             if scope:
                 config.scope = scope
-                fields.add("scope")
-            if data.get("reset_taxonomy") and (config.taxonomy or {}).get("subs"):
-                config.taxonomy = {}
-                fields.add("taxonomy")
-            if fields:
-                config.save(update_fields=sorted(fields | {"updated_at"}))
+                config.save(update_fields=["scope", "updated_at"])
         else:
             config = InsightConfig.objects.create(
                 project=project,
@@ -1251,6 +1276,9 @@ class InsightRunCreateView(InsightsLicenseRequired, APIView):
                 scope=scope,
                 sample_size=size,
             )
+        rediscover = bool(data.get("reset_taxonomy")) and bool(
+            (config.taxonomy or {}).get("subs")
+        )
         run = pipeline.create_run(
             config=config,
             scope=scope,
@@ -1258,8 +1286,13 @@ class InsightRunCreateView(InsightsLicenseRequired, APIView):
             sample_size=data.get("sample_size") or config.sample_size,
             user=request.user,
             population_size=resolved.count if resolved is not None else None,
+            discover=rediscover,
         )
         _start(run)
+        if rediscover and run.status != "failed":
+            # The discovery run is under way: its categories replace these.
+            config.taxonomy = {}
+            config.save(update_fields=["taxonomy", "updated_at"])
         return self._gm.success_response({"run_id": run.id, "config_id": config.id})
 
 

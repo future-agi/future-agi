@@ -28,6 +28,29 @@ def on_cloud(monkeypatch):
     monkeypatch.setattr(DeploymentMode, "is_cloud", staticmethod(lambda: True))
 
 
+@pytest.fixture(autouse=True)
+def credits_allow(monkeypatch):
+    """Billing lets every step run unless a test refuses it. The check fails
+    closed, so without this a test would read the billing Redis's counters
+    (or, with no Redis, be refused)."""
+    monkeypatch.setattr(
+        "ee.usage.services.metering.check_usage",
+        lambda org_id, event_type, amount=1: CheckResult(allowed=True),
+    )
+
+
+@pytest.fixture
+def config_missing(monkeypatch):
+    """billing.yaml doesn't load: on Cloud BillingConfig raises when it is
+    missing or fails validation."""
+    from ee.usage.services.config import BillingConfig
+
+    def missing():
+        raise RuntimeError("no billing config")
+
+    monkeypatch.setattr(BillingConfig, "get", staticmethod(missing))
+
+
 @pytest.fixture
 def started(request):
     """Runs the view handed to Temporal (the API tests' autouse stub)."""
@@ -153,8 +176,9 @@ class TestPricing:
         from ee.agenthub.insights import agent
 
         if content is None:
-            # Read in chunks and given up on past the cap, never held whole.
-            content = b"x" * (agent.MAX_RESPONSE_BYTES + 1)
+            # Read in chunks and given up on past the cap, never held whole:
+            # a well-formed object, so only the cap refuses it.
+            content = b'{"pad": "' + b"x" * agent.MAX_RESPONSE_BYTES + b'"}'
         _agent_replies(monkeypatch, agent, 200, content)
         with pytest.raises(llm.InsightModelError) as error:
             agent._post("/v1/ask", {}, llm.Spend())
@@ -292,6 +316,20 @@ class TestCreditCap:
         assert started == []
         assert not InsightRun.objects.filter(project=observe_project).exists()
 
+    @pytest.mark.django_db
+    def test_a_cloud_without_its_billing_config_refuses_the_report_with_503(
+        self, auth_client, observe_project, started, config_missing, refuse
+    ):
+        """A billing config that doesn't load is an outage too, not a
+        deployment that doesn't bill."""
+        checked = refuse(left=0.0)
+        response = auth_client.post(RUNS, new_run_body(observe_project), format="json")
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.json()["code"] == "credit_check_unavailable"
+        assert checked == []
+        assert started == []
+        assert not InsightRun.objects.filter(project=observe_project).exists()
+
 
 @pytest.mark.django_db
 def test_a_question_is_checked_then_charged_and_added_to_the_run(
@@ -339,6 +377,24 @@ class Org:
     id = "org-1"
 
 
+@pytest.mark.django_db
+def test_rows_handed_over_are_priced_like_a_scope(auth_client, observe_project):
+    """A selection or a run again on the same rows shows its credits too."""
+    response = auth_client.post(
+        "/tracer/insights/estimate/",
+        {
+            "project_id": str(observe_project.id),
+            "unit": "sessions",
+            "population_size": 37,
+        },
+        format="json",
+    )
+    assert response.status_code == status.HTTP_200_OK, response.json()
+    result = response.json()["result"]
+    assert result["credits_estimate"] == billing.credits(billing.run_cost(37)) > 0
+    assert result["credit_limited"] is False
+
+
 def test_a_billing_outage_limits_the_estimate(monkeypatch):
     def unavailable(*a, **k):
         raise RuntimeError("no billing redis here")
@@ -349,10 +405,15 @@ def test_a_billing_outage_limits_the_estimate(monkeypatch):
     assert "Credits can't be checked" in out["credit_message"]
 
 
-def test_off_cloud_nothing_is_estimated_or_checked_in_credits(monkeypatch, refuse):
+@pytest.mark.parametrize("config_loads", [True, False], ids=["config", "no-config"])
+def test_off_cloud_nothing_is_estimated_or_checked_in_credits(
+    monkeypatch, refuse, request, config_loads
+):
     from ee.usage.deployment import DeploymentMode
 
     monkeypatch.setattr(DeploymentMode, "is_cloud", staticmethod(lambda: False))
+    if not config_loads:
+        request.getfixturevalue("config_missing")
     checked = refuse(left=0.0)
     out = views._credit_estimate(Org(), 300, "sessions")
     assert out == {
@@ -366,15 +427,32 @@ def test_off_cloud_nothing_is_estimated_or_checked_in_credits(monkeypatch, refus
     assert checked == []
 
 
-def test_a_cloud_without_its_billing_config_estimates_nothing(monkeypatch, refuse):
-    from ee.usage.services.config import BillingConfig
-
-    def missing():
-        raise RuntimeError("no billing config")
-
-    monkeypatch.setattr(BillingConfig, "get", staticmethod(missing))
+def test_a_cloud_without_its_billing_config_limits_the_estimate(config_missing, refuse):
+    """Fail closed, as when billing's Redis is down: the report can't start
+    until billing answers."""
     checked = refuse(left=0.0)
-    assert views._credit_estimate(Org(), 300, "sessions")["credits_estimate"] is None
+    out = views._credit_estimate(Org(), 300, "sessions")
+    assert out["credit_limited"] is True
+    assert out["credit_message"] == views.CREDIT_CHECK_UNAVAILABLE
+    # Not null: a null estimate tells the page the report isn't billed.
+    assert out["credits_estimate"] is not None
+    assert checked == []
+
+
+@pytest.mark.parametrize("step", ["run", "ask", "draft", "preview"])
+def test_a_cloud_without_its_billing_config_refuses_every_step_with_503(
+    config_missing, refuse, step
+):
+    checked = refuse(left=0.0)
+    refused = views._credits_refused(
+        views.GeneralMethods(),
+        Org(),
+        step,
+        **({"sample_size": 300, "unit": "sessions"} if step == "run" else {}),
+    )
+    assert refused is not None
+    assert refused.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert refused.data["code"] == "credit_check_unavailable"
     assert checked == []
 
 

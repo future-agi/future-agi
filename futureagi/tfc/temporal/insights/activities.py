@@ -8,8 +8,11 @@ as a generic message, never as internals.
 Insights is Enterprise-only. Its views check the license on every request,
 and each stage checks it again for the run's organization, so a run on an
 install without it (the license lapsed, or the run predates the gate) fails
-with a clear error instead of reading.
+with a clear error instead of reading. An entitlement service that can't
+answer is retried, not taken for a refusal.
 """
+
+import asyncio
 
 import structlog
 from temporalio import activity
@@ -25,14 +28,20 @@ logger = structlog.get_logger(__name__)
 
 
 def require_license(run_id: str) -> None:
-    """Refuse a stage of a run whose organization may not use Insights, or
-    whose Turing models it may not call, with a non-retryable error."""
+    """Refuse a stage whose organization may not use Insights or its Turing
+    models. Retry entitlement outages rather than treating them as denials."""
     from tfc.ee_gates import (
         INSIGHTS_DENIED_MESSAGE,
         INSIGHTS_TURING_DENIED_MESSAGE,
         insights_turing_denied,
     )
-    from tfc.ee_gating import EEFeature, FeatureUnavailable, check_ee_feature
+    from tfc.ee_gating import (
+        ENTITLEMENT_CHECK_UNAVAILABLE_MESSAGE,
+        EEFeature,
+        FeatureUnavailable,
+        check_ee_feature,
+        entitlements_unavailable,
+    )
     from tracer.models.insights import InsightRun
 
     # Any workspace context: the run's own organization decides.
@@ -45,7 +54,15 @@ def require_license(run_id: str) -> None:
         return  # The stage reports the missing run itself.
     try:
         check_ee_feature(EEFeature.INSIGHTS, org_id=str(org_id))
-    except FeatureUnavailable:
+    except FeatureUnavailable as exc:
+        if entitlements_unavailable(exc):
+            # The entitlement service could not answer: retry the stage,
+            # don't end a paying organization's report on a denial it never
+            # made.
+            raise ApplicationError(
+                ENTITLEMENT_CHECK_UNAVAILABLE_MESSAGE,
+                type="CapabilityUnavailable",
+            ) from None
         raise ApplicationError(
             INSIGHTS_DENIED_MESSAGE, type="CapabilityDenied", non_retryable=True
         ) from None
@@ -88,19 +105,45 @@ def _model_error_class():
     return InsightModelError
 
 
+HEARTBEAT_EVERY = 30  # seconds
+
+
+async def _heartbeating(work):
+    """Await ``work``, heartbeating while it runs, so Temporal notices a lost
+    worker within the stage's heartbeat timeout instead of its whole
+    start-to-close bound."""
+    if not activity.in_activity():
+        return await work
+    task = asyncio.ensure_future(work)
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=HEARTBEAT_EVERY)
+            if done:
+                return task.result()
+            activity.heartbeat()
+    finally:
+        task.cancel()
+
+
 async def _run(stage: str, fn, *args, licensed: bool = True):
     from channels.db import database_sync_to_async
 
     model_error = _model_error_class()
     try:
-        return await database_sync_to_async(
-            _licensed(fn) if licensed else fn, thread_sensitive=False
-        )(*args)
+        return await _heartbeating(
+            database_sync_to_async(
+                _licensed(fn) if licensed else fn, thread_sensitive=False
+            )(*args)
+        )
     except ApplicationError:
         raise
     except Exception as exc:
         if model_error is not None and isinstance(exc, model_error):
-            raise ApplicationError(str(exc), non_retryable=not exc.unavailable) from exc
+            # Typed so the workflow shows its text: the model's errors are
+            # written for people.
+            raise ApplicationError(
+                str(exc), type="InsightModelError", non_retryable=not exc.unavailable
+            ) from exc
         logger.exception("insight_stage_failed", stage=stage)
         raise ApplicationError("The report could not be completed.") from exc
 

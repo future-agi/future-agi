@@ -16,6 +16,11 @@ with workflow.unsafe.imports_passed_through():
     )
 
 FAILED_MESSAGE = "The report could not be completed."
+# The failures whose text is written for people: the stages' refusals and
+# the model's own errors. Anything else, a timeout or an error the SDK raises
+# itself (an activity a worker hasn't registered lists the worker's
+# activities), shows FAILED_MESSAGE.
+SHOWN_ERRORS = {"CapabilityDenied", "CapabilityUnavailable", "InsightModelError"}
 
 BATCH = 24
 PARALLEL_BATCHES = 4
@@ -25,6 +30,19 @@ STAGE_RETRY = RetryPolicy(
     maximum_attempts=3,
     backoff_coefficient=2.0,
 )
+# A batch is BATCH units on the pipeline's 8 threads, 3 units in a row per
+# thread, and a unit makes up to 3 model attempts of up to 3 tries of 180 s
+# each when the provider hangs: about 27 minutes a unit, 81 a batch. The
+# bound is above that to avoid start-to-close retries during those calls.
+# Heartbeats detect a lost worker sooner; they do not stop in-flight threads
+# or make paid calls idempotent if an activity loses its heartbeat.
+EXTRACT_TIMEOUT = timedelta(minutes=90)
+# Grouping and writing make several thinking-model calls in a row, each up to
+# about 27 minutes when the provider hangs, and add their spend to the run on
+# every attempt; the same reasoning puts their bound above that. The
+# workflow's own limit (client.RUN_TIMEOUT) caps the whole report.
+STAGE_TIMEOUT = timedelta(minutes=90)
+HEARTBEAT_TIMEOUT = timedelta(minutes=2)
 
 
 @workflow.defn
@@ -37,7 +55,8 @@ class InsightReportWorkflow:
                     workflow.execute_activity(
                         "insight_extract",
                         InsightBatchInput(run_id=run_id, unit_pks=batch),
-                        start_to_close_timeout=timedelta(minutes=10),
+                        start_to_close_timeout=EXTRACT_TIMEOUT,
+                        heartbeat_timeout=HEARTBEAT_TIMEOUT,
                         retry_policy=STAGE_RETRY,
                     )
                     for batch in batches[start : start + parallel]
@@ -67,23 +86,21 @@ class InsightReportWorkflow:
             await workflow.execute_activity(
                 "insight_organise",
                 input,
-                start_to_close_timeout=timedelta(minutes=15),
+                start_to_close_timeout=STAGE_TIMEOUT,
+                heartbeat_timeout=HEARTBEAT_TIMEOUT,
                 retry_policy=STAGE_RETRY,
             )
             return await workflow.execute_activity(
                 "insight_finish",
                 input,
-                start_to_close_timeout=timedelta(minutes=10),
+                start_to_close_timeout=STAGE_TIMEOUT,
+                heartbeat_timeout=HEARTBEAT_TIMEOUT,
                 retry_policy=STAGE_RETRY,
             )
         except ActivityError as exc:
-            # Only an ApplicationError carries text written for people; a
-            # timeout or cancellation cause says "activity StartToClose
-            # timeout", which is not for the report page.
             cause = getattr(exc, "cause", None)
-            message = (
-                cause.message if isinstance(cause, ApplicationError) else ""
-            ) or FAILED_MESSAGE
+            shown = isinstance(cause, ApplicationError) and cause.type in SHOWN_ERRORS
+            message = (cause.message if shown else "") or FAILED_MESSAGE
             await workflow.execute_activity(
                 "insight_fail",
                 InsightFailInput(run_id=input.run_id, message=message),

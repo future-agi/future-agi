@@ -16,7 +16,12 @@ import re
 
 from ee.agenthub.insights import agent as insight_agent
 from ee.agenthub.insights.llm import Spend
-from ee.agenthub.insights.summary import allowed_numbers, verified, write_summary
+from ee.agenthub.insights.summary import (
+    allowed_numbers,
+    model_list,
+    verified,
+    write_summary,
+)
 
 MAX_FINDINGS = 6
 MAX_HIGHLIGHTS = 6
@@ -43,6 +48,13 @@ _STAT_KEYS = (
 
 def _clean(text, limit: int) -> str:
     return " ".join(str(text or "").split())[:limit]
+
+
+def _objects(value) -> list[dict]:
+    """The objects of a list the model wrote. A string or a number in their
+    place has no fields to read, so it is skipped rather than a crash (a 500
+    in Ask, a paid retry of the whole write in finish)."""
+    return [item for item in model_list(value) if isinstance(item, dict)]
 
 
 def agent_payload(
@@ -181,8 +193,8 @@ class _Refs:
 
 def _evidence(items, units_by_key, contents) -> list[dict]:
     kept = []
-    for item in items or []:
-        key = str((item or {}).get("unit_key", ""))
+    for item in _objects(items):
+        key = str(item.get("unit_key", ""))
         if key not in units_by_key:
             continue
         found, _ = insight_agent.verified_evidence([item], contents.get(key, ""), key)
@@ -206,9 +218,7 @@ def from_agent(
     numbers = checked_numbers(result, units)
     refs = _Refs(units_by_key)
     findings, dropped = [], int((reply.get("dropped") or {}).get("findings") or 0)
-    for raw in reply.get("findings") or []:
-        if not isinstance(raw, dict):
-            continue
+    for raw in _objects(reply.get("findings")):
         headline = _clean(raw.get("headline"), 200)
         detail = _clean(raw.get("detail"), 600)
         action = _clean(raw.get("action"), 200)
@@ -217,19 +227,23 @@ def from_agent(
         ):
             dropped += 1
             continue
-        keys = [str(k) for k in raw.get("unit_keys") or []]
-        keys += [str((e or {}).get("unit_key", "")) for e in raw.get("evidence") or []]
+        keys = [str(k) for k in model_list(raw.get("unit_keys"))]
+        keys += [str(e.get("unit_key", "")) for e in _objects(raw.get("evidence"))]
         cited = [refs.ref(k) for k in dict.fromkeys(keys)]
         findings.append(
             {
                 "headline": headline,
                 "detail": detail,
                 "action": action,
-                "severity": raw.get("severity")
-                if raw.get("severity") in ("high", "medium", "low")
-                else "medium",
+                "severity": (
+                    raw.get("severity")
+                    if raw.get("severity") in ("high", "medium", "low")
+                    else "medium"
+                ),
                 "category_ids": [
-                    c for c in raw.get("category_ids") or [] if c in categories
+                    str(c)
+                    for c in model_list(raw.get("category_ids"))
+                    if str(c) in categories
                 ],
                 "refs": [
                     {"ref": r, "unit_id": units_by_key[refs.order[r - 1]]["unit_id"]}
@@ -242,16 +256,14 @@ def from_agent(
         if len(findings) >= MAX_FINDINGS:
             break
     highlights = []
-    for raw in reply.get("highlights") or []:
-        key = str((raw or {}).get("unit_key", ""))
+    for raw in _objects(reply.get("highlights")):
+        key = str(raw.get("unit_key", ""))
         unit = units_by_key.get(key)
         if not unit:
             continue
-        category_id = (
-            raw.get("category_id")
-            if raw.get("category_id") in categories
-            else (unit["sub_category_id"] or unit["category_id"])
-        )
+        category_id = str(raw.get("category_id") or "")
+        if category_id not in categories:
+            category_id = unit["sub_category_id"] or unit["category_id"]
         quotes = _evidence(
             [{"unit_key": key, "quote": raw.get("quote")}], units_by_key, contents
         )
@@ -270,8 +282,8 @@ def from_agent(
         if len(highlights) >= MAX_HIGHLIGHTS:
             break
     insights = {}
-    for raw in reply.get("category_insights") or []:
-        cid = (raw or {}).get("category_id")
+    for raw in _objects(reply.get("category_insights")):
+        cid = str(raw.get("category_id") or "")
         if cid in categories and _clean(raw.get("root_cause"), 400):
             insights[cid] = {
                 "root_cause": _clean(raw.get("root_cause"), 400),
@@ -374,7 +386,7 @@ def _answer_payload(
     categories = {c["id"] for c in result["categories"]}
     numbers = checked_numbers(result, units)
     paragraphs, dropped = [], 0
-    for raw in reply.get("answer") or []:
+    for raw in model_list(reply.get("answer")):
         if not isinstance(raw, dict):
             # A model-written item that isn't an object ({"answer": ["text"]})
             # is dropped like any unverifiable paragraph, never a 500.
@@ -389,9 +401,11 @@ def _answer_payload(
             dropped += 1
             continue
         keys = [
-            str(k) for k in raw.get("unit_keys") or [] if str(k) in units_by_key
+            str(k) for k in model_list(raw.get("unit_keys")) if str(k) in units_by_key
         ] + cited
-        ids = [c for c in raw.get("category_ids") or [] if c in categories] + cited_ids
+        ids = [
+            str(c) for c in model_list(raw.get("category_ids")) if str(c) in categories
+        ] + cited_ids
         paragraphs.append(
             {
                 "text": text,
@@ -406,7 +420,9 @@ def _answer_payload(
     return {
         "answer": paragraphs,
         "follow_ups": [
-            _clean(q, 160) for q in (reply.get("follow_ups") or [])[:3] if q
+            _clean(q, 160)
+            for q in model_list(reply.get("follow_ups"))[:3]
+            if isinstance(q, str) and q.strip()
         ],
         "dropped": dropped,
     }

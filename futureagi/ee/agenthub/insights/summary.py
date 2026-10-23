@@ -33,6 +33,11 @@ def _pct(value: float) -> str:
     return f"{round(value * 100)}%"
 
 
+def model_list(value) -> list:
+    """A list the model wrote, or nothing when it wrote something else."""
+    return value if isinstance(value, list) else []
+
+
 def _notable_text(note: dict) -> str:
     if note["kind"] == "rate":
         return (
@@ -215,7 +220,7 @@ def write_summary(
     ids = {c["id"] for c in categories}
     points, findings, dropped = [], [], 0
     raw_points = (
-        (raw.get("findings") or raw.get("key_points") or [])
+        model_list(raw.get("findings") or raw.get("key_points"))
         if isinstance(raw, dict)
         else []
     )
@@ -243,16 +248,20 @@ def write_summary(
         ref_items = [
             {"ref": r, "unit_id": examples[r - 1]["unit"]["unit_id"]} for r in refs
         ]
-        category_ids = [c for c in point.get("category_ids", []) if c in ids]
+        category_ids = [
+            str(c) for c in model_list(point.get("category_ids")) if str(c) in ids
+        ]
         points.append({"text": text, "category_ids": category_ids, "refs": ref_items})
         findings.append(
             {
                 "headline": re.sub(r"\s*\(?#\d+(?:,\s*#\d+)*\)?", "", headline).strip(),
                 "detail": detail,
                 "action": action,
-                "severity": point.get("severity")
-                if point.get("severity") in ("high", "medium", "low")
-                else "medium",
+                "severity": (
+                    point.get("severity")
+                    if point.get("severity") in ("high", "medium", "low")
+                    else "medium"
+                ),
                 "category_ids": category_ids,
                 "refs": ref_items,
                 "evidence": [],
@@ -261,7 +270,7 @@ def write_summary(
         if len(points) >= MAX_POINTS:
             break
     highlights = []
-    for entry in raw.get("highlights", []) if isinstance(raw, dict) else []:
+    for entry in model_list(raw.get("highlights")) if isinstance(raw, dict) else []:
         try:
             ref = int(entry.get("ref"))
         except (TypeError, ValueError, AttributeError):
@@ -284,9 +293,11 @@ def write_summary(
         if len(highlights) >= MAX_HIGHLIGHTS:
             break
     return {
-        "title": " ".join(str(raw.get("title", "")).split())[:200]
-        if isinstance(raw, dict)
-        else "",
+        "title": (
+            " ".join(str(raw.get("title", "")).split())[:200]
+            if isinstance(raw, dict)
+            else ""
+        ),
         "key_points": points,
         "findings": findings,
         "highlights": highlights,

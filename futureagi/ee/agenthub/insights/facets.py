@@ -122,6 +122,11 @@ def _system(unit: str, agent_description: str) -> str:
     )
 
 
+# A <content> or </content> tag written in the unit's own text, which would
+# end the data block early and put what follows outside it.
+_CONTENT_TAG = re.compile(r"<(?=\s*/?\s*content\b)", re.IGNORECASE)
+
+
 def build_prompt(
     unit: str,
     content: str,
@@ -161,6 +166,7 @@ def build_prompt(
         if instructions.strip()
         else ""
     )
+    content = _CONTENT_TAG.sub("&lt;", content)
     return (
         f"<content>\n{content}\n</content>{guidance}\n\n"
         "Return a JSON object with these keys:\n- " + "\n- ".join(fields)

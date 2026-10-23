@@ -190,8 +190,12 @@ def _find(content: str, quote: str) -> tuple[int, int] | None:
 def verified_evidence(evidence, content: str, key: str) -> tuple[list[dict], int]:
     """Keep quotes that occur in the unit's text, with their real offsets."""
     kept, dropped = [], 0
-    for item in evidence or []:
-        quote = str((item or {}).get("quote", "")).strip()[:MAX_QUOTE]
+    for item in evidence if isinstance(evidence, list) else []:
+        if not isinstance(item, dict):
+            # A model-written quote that isn't an object backs nothing.
+            dropped += 1
+            continue
+        quote = str(item.get("quote", "")).strip()[:MAX_QUOTE]
         span = _find(content, quote)
         if span is None:
             dropped += 1
@@ -203,7 +207,7 @@ def verified_evidence(evidence, content: str, key: str) -> tuple[list[dict], int
                 "quote": content[start:end],
                 "start": start,
                 "end": end,
-                "supports": str((item or {}).get("supports", ""))[:60],
+                "supports": str(item.get("supports", ""))[:60],
             }
         )
     return kept[:3], dropped

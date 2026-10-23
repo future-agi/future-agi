@@ -20,6 +20,7 @@ import numpy as np
 import structlog
 
 from ee.agenthub.insights.llm import FAST, THINKING, Spend, chat_json
+from ee.agenthub.insights.summary import model_list
 
 logger = structlog.get_logger(__name__)
 
@@ -141,13 +142,20 @@ def name_cluster(
         'no clear theme, use the name "Mixed".'
     )
     raw = chat_json(_NAME_SYSTEM, prompt, tier=THINKING, max_tokens=300, spend=spend)
+    # A reply that isn't an object names nothing: the cluster is "Unnamed"
+    # rather than a crash that retries the whole discovery at model cost.
+    raw = raw if isinstance(raw, dict) else {}
     name = " ".join(str(raw.get("name", "")).split())[:80] or "Unnamed"
     description = " ".join(str(raw.get("description", "")).split())[:400]
     return name, description
 
 
 def _name_all(
-    groups: list[list[int]], items: list[Item], vectors: np.ndarray, context: str, spend: Spend
+    groups: list[list[int]],
+    items: list[Item],
+    vectors: np.ndarray,
+    context: str,
+    spend: Spend,
 ) -> list[tuple[str, str]]:
     rng = np.random.default_rng(SEED)
     centroids = [vectors[g].mean(axis=0) for g in groups]
@@ -198,15 +206,19 @@ def organise(subs: list[Node], context: str, spend: Spend) -> list[Node]:
         'children (no "X, Y and Z"). Return {"categories": [{"name": "...", "description": "one '
         'sentence", "children": ["<id>", ...]}]}.'
     )
-    raw = chat_json(_ORGANISE_SYSTEM, prompt, tier=THINKING, max_tokens=1500, spend=spend)
+    raw = chat_json(
+        _ORGANISE_SYSTEM, prompt, tier=THINKING, max_tokens=1500, spend=spend
+    )
     by_id = {s.id: s for s in subs}
     tops: list[Node] = []
     placed: set[str] = set()
-    for entry in raw.get("categories", []) if isinstance(raw, dict) else []:
+    for entry in model_list(raw.get("categories")) if isinstance(raw, dict) else []:
         if not isinstance(entry, dict):
             continue
         children = [
-            c for c in entry.get("children", []) if c in by_id and c not in placed
+            c
+            for c in map(str, model_list(entry.get("children")))
+            if c in by_id and c not in placed
         ]
         if not children:
             continue
@@ -235,7 +247,9 @@ def top_target(n_subs: int) -> int:
     return max(3 if n_subs >= 6 else 2, min(7, round(n_subs / 2.5)))
 
 
-def naming_payload(groups: list[list[int]], items: list[Item], vectors: np.ndarray) -> list[dict]:
+def naming_payload(
+    groups: list[list[int]], items: list[Item], vectors: np.ndarray
+) -> list[dict]:
     """Per cluster: a naming sample, held-out members for the namer's
     verifier, and the nearest items outside it (for contrastive names)."""
     rng = np.random.default_rng(SEED)
@@ -252,40 +266,62 @@ def naming_payload(groups: list[list[int]], items: list[Item], vectors: np.ndarr
         nearest = sorted(others, key=lambda i: -float(vectors[i] @ centroids[index]))[
             :NAMING_OUTSIDE
         ]
-        clusters.append({
-            "id": f"c{index}",
-            "size": len(members),
-            "sample": [{"key": items[i].key, "text": items[i].text} for i in sample],
-            "holdout": [{"key": items[i].key, "text": items[i].text} for i in holdout],
-            "nearest_outside": [{"key": items[i].key, "text": items[i].text} for i in nearest],
-        })
+        clusters.append(
+            {
+                "id": f"c{index}",
+                "size": len(members),
+                "sample": [
+                    {"key": items[i].key, "text": items[i].text} for i in sample
+                ],
+                "holdout": [
+                    {"key": items[i].key, "text": items[i].text} for i in holdout
+                ],
+                "nearest_outside": [
+                    {"key": items[i].key, "text": items[i].text} for i in nearest
+                ],
+            }
+        )
     return clusters
 
 
-def _named_by(namer, groups, items, vectors) -> tuple[list[tuple[str, str]], list[dict], list[dict]]:
+def _named_by(
+    namer, groups, items, vectors
+) -> tuple[list[tuple[str, str]], list[dict], list[dict]]:
     """Names from an external namer (the Insights agent), in group order,
     plus its proposed top-level grouping and audit."""
     clusters = naming_payload(groups, items, vectors)
     reply = namer(clusters, top_target(len(groups))) or {}
-    by_id = {str(s.get("id")): s for s in reply.get("subs") or [] if isinstance(s, dict)}
+    by_id = {
+        str(s.get("id")): s
+        for s in model_list(reply.get("subs"))
+        if isinstance(s, dict)
+    }
     names = []
     for index in range(len(groups)):
         sub = by_id.get(f"c{index}", {})
         name = " ".join(str(sub.get("name", "")).split())[:80] or f"Group {index + 1}"
         names.append((name, " ".join(str(sub.get("description", "")).split())[:400]))
     audit = [
-        {"cluster": sid, **(sub.get("audit") or {})} for sid, sub in by_id.items()
+        {"cluster": sid, **(sub.get("audit") or {})}
+        for sid, sub in by_id.items()
         if isinstance(sub.get("audit"), dict)
     ]
-    return names, [t for t in reply.get("tops") or [] if isinstance(t, dict)], audit
+    return (
+        names,
+        [t for t in model_list(reply.get("tops")) if isinstance(t, dict)],
+        audit,
+    )
 
 
-def _tops_from(proposal: list[dict], subs: list[Node], cluster_to_sub: dict[str, Node]) -> list[Node]:
+def _tops_from(
+    proposal: list[dict], subs: list[Node], cluster_to_sub: dict[str, Node]
+) -> list[Node]:
     tops: list[Node] = []
     placed: set[str] = set()
     for entry in proposal:
         children = [
-            cluster_to_sub[c] for c in entry.get("children", [])
+            cluster_to_sub[c]
+            for c in map(str, model_list(entry.get("children")))
             if c in cluster_to_sub and cluster_to_sub[c].id not in placed
         ]
         if not children:
@@ -333,25 +369,36 @@ def discover(
     subs: list[Node] = []
     by_name: dict[str, Node] = {}
     cluster_to_sub: dict[str, Node] = {}
-    for index, (group, (name, description)) in enumerate(zip(groups, names, strict=True)):
+    for index, (group, (name, description)) in enumerate(
+        zip(groups, names, strict=True)
+    ):
         members = [items[i].key for i in group]
         existing = by_name.get(name.lower())
         if existing:  # two clusters the model saw as one theme
             existing.members.extend(members)
             cluster_to_sub[f"c{index}"] = existing
             continue
-        node = Node(id=_new_id(), name=name, description=description, level=2, members=members)
+        node = Node(
+            id=_new_id(), name=name, description=description, level=2, members=members
+        )
         by_name[name.lower()] = node
         cluster_to_sub[f"c{index}"] = node
         subs.append(node)
-    info = {"method": method, "k": len(groups), "namer": "agent" if namer else "builtin"}
+    info = {
+        "method": method,
+        "k": len(groups),
+        "namer": "agent" if namer else "builtin",
+    }
     if audit:
         info["audit"] = audit
     if len(subs) <= 3:
         tops = []
         for sub in subs:
             top = Node(
-                id=_new_id(), name=sub.name, description=sub.description, level=1,
+                id=_new_id(),
+                name=sub.name,
+                description=sub.description,
+                level=1,
                 members=list(sub.members),
             )
             sub.parent_id = top.id
@@ -370,21 +417,31 @@ _CLASSIFY_SYSTEM = (
 )
 
 
-def classify(items: list[Item], subs: list[dict], *, context: str, spend: Spend) -> dict[str, str]:
+def classify(
+    items: list[Item], subs: list[dict], *, context: str, spend: Spend
+) -> dict[str, str]:
     """{item key: sub id or NONE} using the saved taxonomy (fast model)."""
     listing = "\n".join(f'- "{s["id"]}": {s["name"]}: {s["description"]}' for s in subs)
     valid = {s["id"] for s in subs}
-    batches = [items[i : i + CLASSIFY_BATCH] for i in range(0, len(items), CLASSIFY_BATCH)]
+    batches = [
+        items[i : i + CLASSIFY_BATCH] for i in range(0, len(items), CLASSIFY_BATCH)
+    ]
 
     def one(batch: list[Item]) -> dict[str, str]:
-        numbered = "\n".join(f"{i}. {item.text}" for i, item in enumerate(batch, start=1))
+        numbered = "\n".join(
+            f"{i}. {item.text}" for i, item in enumerate(batch, start=1)
+        )
         prompt = (
             f"{context}\n\nCategories:\n{listing}\n\nStatements:\n{numbered}\n\n"
             'Return {"assignments": {"<statement number>": "<category id or none>"}} '
             "covering every statement."
         )
-        raw = chat_json(_CLASSIFY_SYSTEM, prompt, tier=FAST, max_tokens=800, spend=spend)
-        assigned = raw.get("assignments", {}) if isinstance(raw, dict) else {}
+        raw = chat_json(
+            _CLASSIFY_SYSTEM, prompt, tier=FAST, max_tokens=800, spend=spend
+        )
+        assigned = raw.get("assignments") if isinstance(raw, dict) else None
+        # Anything but an object of answers leaves the batch unsorted ("none").
+        assigned = assigned if isinstance(assigned, dict) else {}
         out = {}
         for i, item in enumerate(batch, start=1):
             choice = str(assigned.get(str(i), NONE)).strip().strip('"')

@@ -669,7 +669,12 @@ def test_a_failed_report_shows_only_text_written_for_people():
             ),
             workflows.FAILED_MESSAGE,
         ),
-        (ApplicationError("Your credits ran out."), "Your credits ran out."),
+        (
+            ApplicationError("Your credits ran out.", type="InsightModelError"),
+            "Your credits ran out.",
+        ),
+        # An untyped error is not text written for people.
+        (ApplicationError("Activity failed: KeyError"), workflows.FAILED_MESSAGE),
     ):
         recorded.clear()
         current["cause"] = cause

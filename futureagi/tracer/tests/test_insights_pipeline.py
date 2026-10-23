@@ -509,3 +509,106 @@ def test_a_rediscovered_run_is_not_compared_with_the_last_one(
     )
     assert third.taxonomy_mode == "discover"
     assert "changes" not in third.result
+
+
+def start_run(config, user, unit_ids):
+    """Create a run over ``unit_ids`` and read it, up to organise."""
+    run = pipeline.create_run(
+        config=config,
+        scope={"window": WINDOW, "preset": "Custom"},
+        population=[{"id": unit_id} for unit_id in unit_ids],
+        sample_size=len(unit_ids),
+        user=user,
+    )
+    ready = pipeline.prepare(str(run.id))
+    pipeline.extract_batch(str(run.id), ready)
+    return run
+
+
+@pytest.mark.django_db
+def test_a_question_edited_mid_run_applies_from_the_next_run(
+    report, user, model, loaded
+):
+    """A run sorts into the categories it started with. A new question resets
+    the report's categories while the run is under way (as PATCH does): the
+    run still classifies into its own and is compared like for like, never
+    rediscovered and called all new; the next run discovers afresh."""
+    themes = ids(order=6, human=6, refund=6, stock=6)
+    first, _, _ = run_report(report, user, themes, model=model)
+    report.refresh_from_db()
+    frozen = report.taxonomy
+    run = start_run(report, user, themes)
+    InsightConfig.objects.filter(id=report.id).update(
+        question="Why do customers give up?", taxonomy={}
+    )
+    pipeline.organise(str(run.id))
+    pipeline.finish(str(run.id))
+    run.refresh_from_db()
+
+    assert run.taxonomy_mode == "classify"
+    assert run.result["clustering"]["mode"] == "classify"
+    assert {u.sub_category_id for u in units_of(run).values()} <= {
+        s["id"] for s in frozen["subs"]
+    }
+    changes = run.result["changes"]
+    assert changes["previous_run_id"] == str(first.id)
+    assert changes["new_category_ids"] == []
+    # The run's categories answer the old question: the report keeps none.
+    report.refresh_from_db()
+    assert report.taxonomy == {}
+    following, _, _ = run_report(report, user, themes, model=model)
+    assert following.taxonomy_mode == "discover"
+    assert "changes" not in following.result
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "edit",
+    [{"lens": "usage"}, {"question": "Why do customers give up?"}],
+    ids=["lens", "question"],
+)
+def test_a_discovery_run_keeps_its_categories_off_a_report_asking_something_else(
+    report, user, model, loaded, edit
+):
+    """The first run is under way when the lens or question changes. There
+    are no saved categories for PATCH to reset, and the run's own answer the
+    old question, so the report keeps none and the next run discovers."""
+    run = start_run(report, user, ids(order=6, human=6, refund=6, stock=6))
+    pipeline.organise(str(run.id))
+    InsightConfig.objects.filter(id=report.id).update(**edit)
+    pipeline.finish(str(run.id))
+    run.refresh_from_db()
+
+    assert (run.status, run.stage) == ("completed", "done")
+    report.refresh_from_db()
+    assert report.taxonomy == {}
+    following = pipeline.create_run(
+        config=report,
+        scope={"window": WINDOW, "preset": "Custom"},
+        population=[{"id": "order-0"}],
+        sample_size=1,
+        user=user,
+    )
+    assert following.taxonomy_mode == "discover"
+
+
+@pytest.mark.django_db
+def test_a_classify_run_without_categories_to_sort_into_discovers(
+    report, user, model, loaded
+):
+    """A run created before runs kept their categories finds none in its
+    settings: it discovers, and is marked so, so finish doesn't compare its
+    new ids with the last run's."""
+    themes = ids(order=6, human=6, refund=6, stock=6)
+    run_report(report, user, themes, model=model)
+    report.refresh_from_db()
+    run = start_run(report, user, themes)
+    settings = {k: v for k, v in run.settings.items() if k != "taxonomy"}
+    InsightRun.objects.filter(id=run.id).update(settings=settings)
+    pipeline.organise(str(run.id))
+    pipeline.finish(str(run.id))
+    run.refresh_from_db()
+
+    assert run.taxonomy_mode == "discover"
+    assert run.result["clustering"]["mode"] == "discover"
+    assert "changes" not in run.result

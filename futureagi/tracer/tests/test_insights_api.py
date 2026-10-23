@@ -14,6 +14,8 @@ from tracer.views import insights as views
 
 RUNS = "/tracer/insights/runs/"
 CONFIGS = "/tracer/insights/configs/"
+# The real start, which the autouse stub below replaces with a recorder.
+REAL_START = views._start
 
 
 @pytest.fixture(autouse=True)
@@ -197,8 +199,9 @@ def test_run_units_filter_by_category_and_skip_left_out_units(
     wanted = units[4].unit_id
     picked = auth_client.get(base, {"unit_ids": wanted}).json()["result"]
     assert [u["unit_id"] for u in picked["units"]] == [wanted]
-    # No page starts past the most units a report can hold.
-    assert auth_client.get(base, {"offset": 20001}).status_code == 400
+    # No page starts past the most units a run can read.
+    assert auth_client.get(base, {"offset": views.MAX_SAMPLE}).status_code == 200
+    assert auth_client.get(base, {"offset": views.MAX_SAMPLE + 1}).status_code == 400
 
 
 @pytest.mark.django_db
@@ -220,3 +223,113 @@ def test_saved_reports_list_their_latest_run(auth_client, observe_project):
     # Its runs are soft-deleted like any row: flagged and stamped.
     run = InsightRun.all_objects.get(id=created["run_id"])
     assert run.deleted and run.deleted_at is not None
+
+
+@pytest.mark.django_db
+def test_without_the_pipeline_edit_and_ask_answer_403_like_their_siblings(
+    auth_client, observe_project, monkeypatch
+):
+    """A build without the Insights pipeline refuses every model step with
+    the same 403, never an ImportError 500."""
+    import builtins
+
+    config = InsightConfig.objects.create(
+        project=observe_project,
+        organization=observe_project.organization,
+        workspace=observe_project.workspace,
+        name="Where is the agent failing?",
+        unit="sessions",
+        lens="failures",
+        question="Where is the agent failing?",
+    )
+    run = InsightRun.objects.create(
+        config=config,
+        project=observe_project,
+        organization=observe_project.organization,
+        workspace=observe_project.workspace,
+        unit="sessions",
+        status="completed",
+        result={"categories": [{"id": "a"}]},
+    )
+    real_import = builtins.__import__
+
+    def no_insights(name, *args, **kwargs):
+        if name.startswith("ee.agenthub.insights"):
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_insights)
+    edited = auth_client.patch(
+        f"{CONFIGS}{config.id}/", {"name": "Renamed"}, format="json"
+    )
+    asked = auth_client.post(
+        f"{RUNS}{run.id}/ask/", {"question": "Why?"}, format="json"
+    )
+    for response in (edited, asked):
+        assert response.status_code == status.HTTP_403_FORBIDDEN, response.content
+        assert response.json()["code"] == "feature_unavailable"
+    config.refresh_from_db()
+    assert config.name == "Where is the agent failing?"
+
+
+SAVED_TAXONOMY = {
+    "tops": [{"id": "t1", "name": "Order lookups"}],
+    "subs": [{"id": "s1", "parent_id": "t1", "name": "Re-asks the order number"}],
+}
+
+
+@pytest.mark.django_db
+def test_rediscover_forgets_the_saved_categories_only_once_its_run_starts(
+    auth_client, observe_project, insight_enabled, monkeypatch
+):
+    """A refused run, a run that can't be created and one that can't start
+    leave the saved categories as they were."""
+    from ee.agenthub.insights import pipeline
+
+    created = auth_client.post(
+        RUNS, new_run_body(observe_project), format="json"
+    ).json()["result"]
+    InsightRun.objects.filter(id=created["run_id"]).update(status="completed")
+    config = InsightConfig.objects.get(id=created["config_id"])
+    config.taxonomy = SAVED_TAXONOMY
+    config.save(update_fields=["taxonomy"])
+    again = {
+        "project_id": str(observe_project.id),
+        "config_id": created["config_id"],
+        "population": population(5),
+        "reset_taxonomy": True,
+    }
+
+    def saved():
+        config.refresh_from_db()
+        return config.taxonomy
+
+    with monkeypatch.context() as patch:
+        patch.setattr(views, "_spend", lambda *a: False)
+        refused = auth_client.post(RUNS, again, format="json")
+    assert refused.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+    assert saved() == SAVED_TAXONOMY
+
+    def no_run(**kwargs):
+        raise RuntimeError("the database went away")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(pipeline, "create_run", no_run)
+        with pytest.raises(RuntimeError):
+            auth_client.post(RUNS, again, format="json")
+    assert saved() == SAVED_TAXONOMY
+
+    def no_temporal(run_id, task_queue="tasks_xl"):
+        raise RuntimeError("Temporal is down")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(views, "_start", REAL_START)
+        patch.setattr("tfc.temporal.insights.client.start_insight_run", no_temporal)
+        unstarted = auth_client.post(RUNS, again, format="json").json()["result"]
+    assert InsightRun.objects.get(id=unstarted["run_id"]).status == "failed"
+    assert saved() == SAVED_TAXONOMY
+
+    started = auth_client.post(RUNS, again, format="json").json()["result"]
+    run = InsightRun.objects.get(id=started["run_id"])
+    assert run.taxonomy_mode == "discover"
+    assert saved() == {}

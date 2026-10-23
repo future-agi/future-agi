@@ -1,8 +1,18 @@
 """Start Insights report workflows."""
 
+from datetime import timedelta
+
 from tfc.temporal.common.client import start_workflow_sync
 from tfc.temporal.insights.types import InsightRunInput
 from tfc.temporal.insights.workflows import InsightReportWorkflow
+
+
+# The longest a report may run. A provider that hangs makes every model call
+# wait out its timeouts, so without a limit a report would keep running for
+# hours; Temporal closes it at this limit, and the report then reads as
+# stopped (settle_lost_runs). The views treat a run older than this as no
+# longer in flight (ACTIVE_RUN_WINDOW).
+RUN_TIMEOUT = timedelta(hours=2)
 
 
 def workflow_id_for(run_id) -> str:
@@ -17,6 +27,7 @@ def start_insight_run(run_id: str, task_queue: str = "tasks_xl") -> str:
         workflow_id=workflow_id,
         task_queue=task_queue,
         cancel_existing=False,
+        execution_timeout=RUN_TIMEOUT,
     )
     return workflow_id
 

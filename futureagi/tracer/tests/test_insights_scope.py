@@ -111,6 +111,53 @@ def test_the_estimate_counts_a_scope_on_the_server(
 
 
 @pytest.mark.django_db
+def test_rows_handed_over_are_sized_without_reading_a_scope(
+    auth_client, observe_project, scope_view
+):
+    """A selection, or a run again on the same rows, has no scope: the
+    estimate takes how many rows there are and reads nothing."""
+    body = {"project_id": str(observe_project.id), "unit": "sessions"}
+    response = auth_client.post(
+        ESTIMATE, {**body, "population_size": 37, "sample_size": 300}, format="json"
+    )
+    assert response.status_code == status.HTTP_200_OK, response.json()
+    result = response.json()["result"]
+    assert {
+        key: result[key]
+        for key in (
+            "population",
+            "population_is_lower_bound",
+            "sample_size",
+            "window",
+            "sample_ids",
+        )
+    } == {
+        "population": 37,
+        "population_is_lower_bound": False,
+        "sample_size": 37,
+        "window": None,
+        "sample_ids": [],
+    }
+    assert "credits_estimate" in result
+    assert scope_view["count"] == [] and scope_view["pick"] == []
+    # Without a sample size a report reads the default 300.
+    many = auth_client.post(ESTIMATE, {**body, "population_size": 5000}, format="json")
+    assert many.json()["result"]["sample_size"] == 300
+
+    # Exactly one of a scope and a size.
+    scope = {"filters": [], "window": WINDOW, "preset": "7D"}
+    for wrong in ({}, {"scope": scope, "population_size": 37}, {"population_size": 0}):
+        refused = auth_client.post(ESTIMATE, {**body, **wrong}, format="json")
+        assert refused.status_code == status.HTTP_400_BAD_REQUEST, wrong
+    # Another organization's project is still not found.
+    elsewhere = {**body, "project_id": str(uuid.uuid4()), "population_size": 37}
+    assert (
+        auth_client.post(ESTIMATE, elsewhere, format="json").status_code
+        == status.HTTP_404_NOT_FOUND
+    )
+
+
+@pytest.mark.django_db
 def test_a_report_over_a_scope_reads_a_sample_the_server_draws(
     auth_client, observe_project, scope_view, insight_enabled
 ):

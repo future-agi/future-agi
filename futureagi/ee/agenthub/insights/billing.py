@@ -81,33 +81,33 @@ def preview_cost() -> float:
 
 
 def applies() -> bool:
-    """Whether Insights is billed here: on Cloud, with a billing config that
-    loads. Elsewhere (OSS, a licensed self-host) nothing is estimated or
-    checked in credits, as with Instant eval."""
+    """Whether Insights is billed here: on Cloud. Elsewhere (OSS, a licensed
+    self-host) nothing is estimated or checked in credits, as with Instant
+    eval. A Cloud whose billing config doesn't load is still billed: its
+    credit checks can't answer, so they refuse (CreditCheckUnavailable)."""
     try:
         from ee.usage.deployment import DeploymentMode
-        from ee.usage.services.config import BillingConfig
     except ImportError:
         return False
-    if not DeploymentMode.is_cloud():
-        return False
-    try:
-        BillingConfig.get()
-    except Exception:
-        logger.warning("insight_billing_unavailable", exc_info=True)
-        return False
-    return True
+    return DeploymentMode.is_cloud()
+
+
+def _to_credits(cost_usd: float) -> float:
+    """AI credits for a model cost, by billing's conversion. Raises when the
+    billing config doesn't load."""
+    if not cost_usd or cost_usd <= 0:
+        return 0.0
+    from ee.usage.services.config import BillingConfig
+
+    return round(BillingConfig.get().calculate_ai_credits(cost_usd), 4)
 
 
 def credits(cost_usd: float) -> float:
     """AI credits for a model cost; 0 for nothing spent (billing's own
-    conversion charges 1 credit for an unknown cost)."""
-    if not cost_usd or cost_usd <= 0:
-        return 0.0
+    conversion charges 1 credit for an unknown cost), or when the billing
+    config doesn't load."""
     try:
-        from ee.usage.services.config import BillingConfig
-
-        return round(BillingConfig.get().calculate_ai_credits(cost_usd), 4)
+        return _to_credits(cost_usd)
     except Exception:
         logger.warning("insight_credit_conversion_unavailable", exc_info=True)
         return 0.0
@@ -123,9 +123,8 @@ def check(org, cost_usd: float):
     """The organization's credit cap against a step costing about
     ``cost_usd``: None when it may run (or this deployment has no billing),
     else billing's CheckResult. Read-only. Raises CreditCheckUnavailable when
-    billing can't answer."""
-    amount = credits(cost_usd)
-    if org is None or amount <= 0:
+    billing can't answer, its config included."""
+    if org is None:
         return None
     try:
         from ee.usage.services.metering import check_usage
@@ -133,6 +132,9 @@ def check(org, cost_usd: float):
         # No billing module: this deployment doesn't bill.
         return None
     try:
+        amount = _to_credits(cost_usd)
+        if amount <= 0:
+            return None
         result = check_usage(str(org.id), EVENT, amount=amount)
     except Exception as exc:
         logger.warning("insight_credit_check_unavailable", exc_info=True)

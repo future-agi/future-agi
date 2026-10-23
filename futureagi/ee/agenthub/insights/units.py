@@ -7,11 +7,13 @@ last ones are kept) so long conversations stay within the extraction budget.
 
 from __future__ import annotations
 
-import json
 import statistics
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
+
+# A span's text is read as Instant eval reads it: one parser for both.
+from tracer.services.instant_eval_rows import message_text as _message_text
 
 TURN_CHARS = 700
 SESSION_CHARS = 9000
@@ -36,34 +38,6 @@ class UnitText:
 def _clip(text: str, limit: int) -> str:
     text = " ".join(str(text or "").split())
     return text if len(text) <= limit else f"{text[: limit - 1]}…"
-
-
-def _message_text(value) -> str:
-    """Readable text from a span input/output, which may be a chat array."""
-    if value is None:
-        return ""
-    text = value if isinstance(value, str) else json.dumps(value)
-    stripped = text.strip()
-    if stripped[:1] in "[{":
-        try:
-            parsed = json.loads(stripped)
-        except ValueError:
-            return text
-        if isinstance(parsed, dict):
-            for key in ("content", "text", "message", "output", "input", "query"):
-                if isinstance(parsed.get(key), str):
-                    return parsed[key]
-            messages = parsed.get("messages")
-            parsed = messages if isinstance(messages, list) else parsed
-        if isinstance(parsed, list):
-            for message in reversed(parsed):
-                if isinstance(message, dict) and message.get("role") in (
-                    "user",
-                    "human",
-                ):
-                    content = message.get("content")
-                    return content if isinstance(content, str) else json.dumps(content)
-    return text
 
 
 def _io(span) -> tuple[str, str]:

@@ -3,7 +3,8 @@
 prepare  -> load each sampled unit's text and metrics
 extract  -> per-unit facets (fast model), in parallel batches
 organise -> discover categories, or classify into the config's saved taxonomy
-           (new themes in the leftovers become "emerging" categories)
+           as the run started with it (new themes in the leftovers become
+           "emerging" categories)
 finish   -> statistics, executive summary, freeze the taxonomy on first run
 """
 
@@ -112,13 +113,16 @@ def create_run(
     sample_size: int,
     user,
     population_size: int | None = None,
+    discover: bool = False,
 ):
     """Create a run with its sampled units; the workflow does the rest.
 
     ``population`` is every row handed over, or a sample the server already
     drew from the scope; then ``population_size`` is how many the scope held.
     The run reads each unit inside ``scope["window"]``. How the units were
-    chosen is kept in ``settings["sampling"]`` (see ``sampling_method``)."""
+    chosen is kept in ``settings["sampling"]`` (see ``sampling_method``).
+    ``discover`` finds new categories even though the report has saved ones
+    ("Rediscover categories")."""
     InsightRun, InsightUnit = _models()
     seen, unique = set(), []
     for entry in population:
@@ -130,6 +134,7 @@ def create_run(
     sampled = sample_evenly(unique, size)
     total = len(unique) if population_size is None else population_size
     taxonomy = config.taxonomy or {}
+    classify = bool(taxonomy.get("subs")) and not discover
     with transaction.atomic():
         run = InsightRun.objects.create(
             config=config,
@@ -149,10 +154,14 @@ def create_run(
                 "sampling": sampling_method(
                     unique, sampled, drawn=population_size is not None, total=total
                 ),
+                # The saved categories a classify run sorts into, as they were
+                # when it started: an edit that resets them (a new question or
+                # lens) applies from the next run, not halfway through this one.
+                **({"taxonomy": taxonomy} if classify else {}),
             },
             population_size=total,
             sample_size=len(sampled),
-            taxonomy_mode="classify" if taxonomy.get("subs") else "discover",
+            taxonomy_mode="classify" if classify else "discover",
             models_used={"fast": model_for(FAST), "thinking": model_for(THINKING)},
             progress={
                 "stage": "queued",
@@ -368,15 +377,17 @@ def organise(run_id: str) -> dict:
     done = InsightUnit.objects.filter(run=run, status="done").count()
     if done == 0:
         raise InsightModelError(
-            "Nothing could be read from these items."
-            if not failed
-            else "The analysis model could not read these items. Try again shortly.",
+            (
+                "Nothing could be read from these items."
+                if not failed
+                else "The analysis model could not read these items. Try again shortly."
+            ),
             unavailable=bool(failed),
         )
     items = [clustering.Item(key=str(u.pk), text=_item_text(u)) for u in units]
     context = _context(run)
     info: dict = {}
-    taxonomy = run.config.taxonomy or {}
+    taxonomy = (run.settings or {}).get("taxonomy") or {}
     if run.taxonomy_mode == "classify" and taxonomy.get("subs"):
         assigned = clustering.classify(
             items, taxonomy["subs"], context=context, spend=spend
@@ -432,6 +443,10 @@ def organise(run_id: str) -> dict:
                     sub_of[item.key] = "unmatched"
         info.update({"mode": "classify", "leftovers": len(leftovers)})
     else:
+        # A run with no categories to sort into (one from before runs kept
+        # theirs) discovers, and says so: finish compares only a run that
+        # classified with the last one.
+        run.taxonomy_mode = "discover"
         top_nodes, sub_nodes, info = clustering.discover(
             items, context=context, spend=spend, namer=_namer(run, spend)
         )
@@ -454,7 +469,15 @@ def organise(run_id: str) -> dict:
     run.result = result
     run.cost_usd = (run.cost_usd or 0) + spend.cost_usd
     run.analysed_count = len(units)
-    run.save(update_fields=["result", "cost_usd", "analysed_count", "updated_at"])
+    run.save(
+        update_fields=[
+            "result",
+            "cost_usd",
+            "analysed_count",
+            "taxonomy_mode",
+            "updated_at",
+        ]
+    )
     _log_spend(run_id, "organise", spend)
     return {"categories": len(tops), "subcategories": len(subs)}
 
@@ -497,13 +520,27 @@ def _previous_result(run) -> dict | None:
     }
 
 
+def _asks(lens: str, question: str) -> tuple[str, str]:
+    """What a report asks: its lens, and its question or the lens's own."""
+    return lens, question or lens_for(lens).title
+
+
 def _settle_written(run, taxonomy) -> None:
     """What follows a written report: charge it (idempotent per run), mark it
-    done and, for a discovery run, save its categories on the report."""
+    done and, for a discovery run, save its categories on the report. Not
+    when the report's question or lens changed while the run was under way:
+    its categories answer the old one, and the edit applies from the next
+    run."""
     billing.charge_run(run)
     set_progress(run, "done")
     config = run.config
-    if run.taxonomy_mode == "discover" and not (config.taxonomy or {}).get("subs"):
+    s = run.settings or {}
+    if (
+        run.taxonomy_mode == "discover"
+        and not (config.taxonomy or {}).get("subs")
+        and _asks(config.lens, config.question)
+        == _asks(s.get("lens", "usage"), s.get("question"))
+    ):
         config.taxonomy = {
             "tops": taxonomy["tops"],
             "subs": taxonomy["subs"],
