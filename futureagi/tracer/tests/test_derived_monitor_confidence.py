@@ -113,10 +113,10 @@ def test_seeded_fixed_window_alert_noise_and_shift(metric_ch):
     )
     counts = []
     for truth in (0.92, 0.75):
-        batch = Batch("mean", "unweighted")
+        batch = Batch("mean", "unweighted", rate=True)
         for rep in range(REPLICATES):
             batch.add(rep, rng.binomial(1, truth, 50), np.ones(50))
-        results = stage_and_rollup(metric_ch, _scope(), "mean(y)", batch)
+        results = stage_and_rollup(metric_ch, _scope(), "mean(y > 0)", batch)
         fired = {"point": [], "confident": []}
         # Only notification delivery is stubbed: estimator, gating and threshold
         # precedence are production code. No real email/Slack is sent.

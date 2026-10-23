@@ -572,7 +572,10 @@ def test_weighted_eval_formula_persists_and_drives_real_dashboard_and_monitor_ap
         expected = uncertainty_reference("ratio", "live", y=[1, 0], p=[0.5, 0.25])
         interval = detailed["uncertainty"]
         assert interval["status"] == "ok" and interval["reason"] == ""
-        assert (interval["method"], interval["interval"]) == ("poisson", "wilson")
+        # This formula needs a numeric implication (resolved == 1 => >= 0),
+        # outside the compiler's conservative identical/conjunct subset proof.
+        # Observed binary outcomes cannot substitute for that missing proof.
+        assert (interval["method"], interval["interval"]) == ("poisson", "wald_t")
         assert interval["confidence_level"] == 0.95
         assert interval["std_error"] == pytest.approx(math.sqrt(20 / 9) / 6)
         assert interval["std_error"] == pytest.approx(expected["std_error"])

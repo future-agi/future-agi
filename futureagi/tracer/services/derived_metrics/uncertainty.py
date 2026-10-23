@@ -38,11 +38,22 @@ from the underlying process (the delta method on unit-level sums)::
 An unweighted total of every unit in the window is an exact count, so it has no
 sampling interval (``unweighted_total``).
 
-Intervals use ``t(0.975, df)`` with ``df = units - strata`` (one stratum for the
-Poisson and iid designs):
+Intervals use ``t(0.975, df)``. For closed designs, ``df`` is the minimum
+``m_h - 1`` across non-certainty strata, where ``m_h`` is the number of valid
+observed units in this group. This conservative lower bound on the
+Welch-Satterthwaite effective df does not pool an unrelated stratum's degrees
+of freedom. Domain padding and certainty strata add none. Live designs use
+``sampled_units - 1`` (only p < 1); iid designs use ``valid_units - 1``.
+An all-census group has df = 0 and needs no estimated variance or t multiplier.
+These remain approximate intervals, not universal coverage guarantees.
 
-* ``wilson`` for rates (a ratio or mean whose numerator is 0/1 inside a 0/1
-  denominator): the Wilson score interval at the design-effective sample size
+* ``wilson`` for rates proven by the saved formula (an indicator numerator
+  inside an indicator denominator, e.g. ``mean(y > 0)`` or
+  ``ratio((y > 0) and (x > 0), x > 0)``). Arbitrary numeric inputs have no
+  population bound even when their observed sample is all zero/one. The
+  compiler re-derives this proof from immutable definition text, and the
+  observed-range check is only a defensive guard, never proof. The Wilson
+  score interval uses the design-effective sample size
   ``n* = p(1-p)/V`` (the Kish size of the denominator units when ``V`` is 0, i.e.
   every unit agrees). It stays inside [0, 1] and keeps its coverage near 0 and 1,
   where a symmetric interval does not.
@@ -183,7 +194,7 @@ def t_quantile_975_sql(df: str) -> str:
     )
 
 
-def uncertainty_array_sql(ratio_kind: bool) -> str:
+def uncertainty_array_sql(ratio_kind: bool, *, rate_eligible: bool = False) -> str:
     """One tuple per group, using lambda bindings rather than expanded SQL aliases.
 
     ClickHouse substitutes SELECT aliases recursively. Reusing intermediate CI
@@ -197,7 +208,7 @@ def uncertainty_array_sql(ratio_kind: bool) -> str:
             "r": "weighted_n / weighted_d" if ratio_kind else "0.0",
             "x": "weighted_d" if ratio_kind else "1.0",
             "v": "computed_value",
-            "rate": f"{int(ratio_kind)} AND non_binary = 0",
+            "rate": f"{int(ratio_kind and rate_eligible)} AND non_binary = 0",
             "kish": "sum_w * sum_w / nullIf(sum_w2, 0)",
         },
         {
@@ -209,7 +220,7 @@ def uncertainty_array_sql(ratio_kind: bool) -> str:
             "scale": """multiIf(design = 'unweighted', abs(b_yy)+abs(2*r*b_xy)+abs(r*r*b_xx),
                 design = 'closed', abs(d_yy)+abs(2*r*d_xy)+abs(r*r*d_xx)+abs(e_yy)+abs(2*r*e_xy)+abs(r*r*e_xx),
                 abs(c_yy)+abs(2*r*c_xy)+abs(r*r*c_xx))""",
-            "df": "if(design = 'closed', toInt64(valid_count)-toInt64(strata), toInt64(valid_count)-1)",
+            "df": "multiIf(design = 'closed', sampled_stratum_df, design = 'live', greatest(toInt64(sampled)-1, 0), toInt64(valid_count)-1)",
             "census": "design IN ('closed', 'live') AND sampled = 0",
         },
         {
@@ -235,11 +246,11 @@ def uncertainty_array_sql(ratio_kind: bool) -> str:
                 design = '', 'design_not_captured',
                 design NOT IN ('unweighted', 'closed', 'live'), 'mixed_design',
                 design = 'unweighted' AND {int(not ratio_kind)}, 'unweighted_total',
-                valid_count < 2, 'fewer_than_two_units',
+                NOT census AND valid_count < 2, 'fewer_than_two_units',
                 design = 'closed' AND population_missing > 0, 'population_size_missing',
                 design = 'closed' AND inconsistent_strata > 0, 'inconsistent_stratum_design',
                 design = 'closed' AND singleton_strata > 0, 'single_unit_stratum',
-                df < 1, 'no_degrees_of_freedom',
+                NOT census AND df < 1, 'no_degrees_of_freedom',
                 ifNull(NOT isFinite(se) OR NOT isFinite(lo) OR NOT isFinite(hi), 1), 'non_finite',
                 NOT census AND NOT rate AND variance <= 1e-12*scale, 'unstable_variance',
                 '')""",

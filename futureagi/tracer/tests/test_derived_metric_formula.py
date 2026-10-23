@@ -55,6 +55,45 @@ def test_formula_is_parameterized_and_null_aware():
     assert "isFinite(v_escalated)" in result.complete_sql
 
 
+@pytest.mark.parametrize(
+    "text,eligible",
+    [
+        ("mean(x)", False),
+        ("mean(x / 100)", False),
+        ("ratio(x, y)", False),
+        ("ratio(x, 1)", False),
+        ("mean(x == 1)", True),
+        ("mean(not x)", True),
+        ("mean(x and y)", True),
+        ("mean(x or y)", True),
+        ("mean(1 - (x > 0))", True),
+        ("mean(+(x > 0))", True),
+        ("mean(-(x > 0))", False),
+        ("mean((x > 0) + (y > 0))", False),
+        ("mean((x > 0) * (y > 0))", True),
+        ("mean(x * (y > 0))", False),
+        ("ratio(x > 0, 1.0)", True),
+        ("ratio(x > 0, True)", True),
+        ("ratio(x > 0, x > 0)", True),
+        ("ratio(x > 0 and y > 0, x > 0)", True),
+        ("ratio((x > 0) * (y > 0), x > 0)", True),
+        ("ratio(x > 0, y > 0)", False),
+        ("ratio(x > 0 or y > 0, x > 0)", False),
+        ("ratio(x and y, x)", False),
+        # Numeric multiplication may underflow even when both operands are true.
+        ("ratio(x and y, x * y and True)", False),
+        ("ratio(x > 0, 0)", False),
+        ("ratio(x > 0, 2)", False),
+        ("sum(x > 0)", False),
+        ("count_if(x > 0)", False),
+    ],
+)
+def test_rate_eligibility_requires_formula_proof(text, eligible):
+    # Numeric input bindings have no population bound, regardless of their sample.
+    # This proof is re-derived from immutable definition text, never a live input.
+    assert compile_formula(text, ["x", "y"]).rate_eligible is eligible
+
+
 def test_row_division_uses_nullif_not_infinity():
     assert "nullIf(v_y, 0)" in compile_formula("mean(x / y)", ["x", "y"]).numerator
 

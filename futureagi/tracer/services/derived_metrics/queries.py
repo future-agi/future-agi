@@ -524,6 +524,10 @@ def aggregate_select(source_sql: str, formula: Formula, *, rollup: str) -> str:
             ("xx", "a_x_h", "a_x_h"),
         )
     ]
+    # For closed designs use the smallest observed non-certainty stratum's
+    # (m_h - 1), a conservative lower bound on Welch-Satterthwaite effective df.
+    # Pooling m_h - 1 would let a large/census stratum manufacture precision for
+    # an unrelated small stratum. Domain-zero padding never manufactures df.
     ci_columns = ", ".join(
         f"tupleElement(ci, {i}) AS {name}"
         for i, name in enumerate(UNCERTAINTY_COLUMNS, 1)
@@ -541,7 +545,7 @@ def aggregate_select(source_sql: str, formula: Formula, *, rollup: str) -> str:
                 multiIf(unit_count = 0, 'no_data', invalid_probability_count > 0, 'invalid_probability',
                     valid_count = 0, 'missing_inputs', {zero}, 'zero_denominator',
                     NOT isFinite(weighted_n) OR NOT isFinite(weighted_d) OR NOT isFinite(computed_value), 'non_finite', 'ok') AS status,
-                arrayJoin({uncertainty_array_sql(ratio_kind)}) AS ci
+                arrayJoin({uncertainty_array_sql(ratio_kind, rate_eligible=formula.rate_eligible)}) AS ci
             FROM (
                 SELECT {group_output} AS group_key, sum(unit_count_h) AS unit_count, sum(valid_count_h) AS valid_count,
                     sum(missing_count_h) AS missing_count, sum(invalid_count_h) AS invalid_probability_count,
@@ -549,7 +553,7 @@ def aggregate_select(source_sql: str, formula: Formula, *, rollup: str) -> str:
                     {", ".join(group_moments)},
                     {", ".join(closed_terms)},
                     sum(sum_w_h) AS sum_w, sum(sum_w2_h) AS sum_w2,
-                    countIf(valid_count_h > 0) AS strata,
+                    minIf(toInt64(sampled_h) - 1, sampled_h > 0) AS sampled_stratum_df,
                     minIf(design_min_h, valid_count_h > 0) AS design_low,
                     maxIf(design_max_h, valid_count_h > 0) AS design_high,
                     sum(population_missing_h) AS population_missing,

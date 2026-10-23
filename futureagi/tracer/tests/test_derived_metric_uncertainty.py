@@ -58,7 +58,9 @@ CI_COLUMNS = (
 # --- Independent reference -------------------------------------------------------
 
 
-def reference(kind, design, y, p, x=None, stratum=None, population=None) -> dict:
+def reference(
+    kind, design, y, p, x=None, stratum=None, population=None, *, rate=False
+) -> dict:
     """The documented estimators, written with explicit centering.
 
     Arrays hold the VALID units of one group. Closed strata are zero-padded to
@@ -76,12 +78,14 @@ def reference(kind, design, y, p, x=None, stratum=None, population=None) -> dict
     if design == "closed":
         stratum, population = np.asarray(stratum), np.asarray(population)
         variance, labels = 0.0, np.unique(stratum)
+        uncertain_sizes = []
         for label in labels:
             members = np.flatnonzero(stratum == label)
             probability = float(p[members[0]])
             size = round(probability * float(population[members[0]]))
             if probability >= 1:
                 continue
+            uncertain_sizes.append(members.size)
             padded = np.zeros(size)
             padded[: members.size] = w[members] * u[members]
             variance += (
@@ -90,19 +94,23 @@ def reference(kind, design, y, p, x=None, stratum=None, population=None) -> dict
                 / (size - 1)
                 * float(np.sum((padded - padded.mean()) ** 2))
             )
-        degrees = y.size - labels.size
+        # Conservative stratum-specific df, not a pooled sample count. Known
+        # census units and domain-zero padding supply no variance observations.
+        degrees = min(uncertain_sizes) - 1 if uncertain_sizes else 0
     elif design == "live":
         variance = float(np.sum((1 - p) * (w * u) ** 2))
-        degrees = y.size - 1
+        degrees = max(int(np.count_nonzero(p < 1)) - 1, 0)
     else:
         variance = y.size / (y.size - 1) * float(np.sum((u - u.mean()) ** 2))
         degrees = y.size - 1
     error = math.sqrt(variance) / abs(divisor)
-    multiplier = float(stats.t.ppf(0.975, degrees))
-    rate = ratio and all(
-        a in (0, 1) and b in (0, 1) and a <= b for a, b in zip(y, x, strict=True)
-    )
     census = design in {"closed", "live"} and bool(np.all(p >= 1))
+    multiplier = 0.0 if census else float(stats.t.ppf(0.975, degrees))
+    # Rate semantics are supplied by the fixture, not inferred from its draws.
+    if rate:
+        assert ratio and all(
+            a in (0, 1) and b in (0, 1) and a <= b for a, b in zip(y, x, strict=True)
+        )
     if rate and not census:
         size = (
             value * (1 - value) / error**2
@@ -226,10 +234,11 @@ def test_reference_reproduces_the_hand_computed_vectors():
         p=[0.5, 0.5, 1, 1, 1],
         stratum=["a", "a", "b", "b", "b"],
         population=[4, 4, 3, 3, 3],
+        rate=True,
     )
     assert result["value"] == pytest.approx(4 / 7)
     assert result["std_error"] == pytest.approx(math.sqrt(2) / 7)
-    assert result["ci_df"] == 3 and result["effective_n"] == pytest.approx(49 / 11)
+    assert result["ci_df"] == 1 and result["effective_n"] == pytest.approx(49 / 11)
 
 
 # --- Hand-computed vectors through the production SQL --------------------------------
@@ -263,25 +272,28 @@ def test_closed_stratified_ratio_matches_hand_computation(metric_ch):
     # Y = 2*1 + 2*0 + 1 + 1 + 0 = 4, X = 2 + 2 + 3 = 7, R = 4/7.
     # Stratum a: w*u = 2*(1 - 4/7) = 6/7 and 2*(0 - 4/7) = -8/7, mean -1/7,
     # centered 1 and -1, sum of squares 2, scale (1 - 0.5) * 2/(2 - 1) = 1.
-    # V(R) = 2 / 7^2, SE = sqrt(2)/7. df = 5 units - 2 strata = 3.
+    # V(R) = 2 / 7^2, SE = sqrt(2)/7. Only stratum a estimates variance: df=2-1=1.
     # Kish n_eff = (2 + 2 + 1 + 1 + 1)^2 / (4 + 4 + 1 + 1 + 1) = 49/11.
-    # A 0/1 rate gets a Wilson interval at n* = p(1-p)/V = (12/49)/(2/49) = 6:
-    # t = 3.18244630528, k = t^2/6 = 1.687994081, centre (4/7 + k/2)/(1 + k)
-    # = 0.526573188, half-width t/(1 + k) * sqrt(p(1-p)/6 + k/24) = 0.394717484.
+    # An explicit predicate gets Wilson at n* = p(1-p)/V = (12/49)/(2/49) = 6.
+    # t = 12.7062047362; census units cannot change this multiplier.
     rows = [
         unit(1, 0.5, "a", population=4),
         unit(0, 0.5, "a", population=4),
         *[unit(y, 1.0, "b", population=3) for y in (1, 1, 0)],
     ]
-    row = one_group(metric_ch, rows, "mean(y)")
+    row = one_group(metric_ch, rows, "mean(y > 0)")
     se = math.sqrt(2) / 7
     assert row["status"] == "ok" and row["value"] == pytest.approx(4 / 7)
     assert row["ci_status"] == "ok" and row["ci_reason"] == ""
     assert row["ci_method"] == "stratified_wor_fpc" and row["ci_interval"] == "wilson"
     assert row["std_error"] == pytest.approx(se, rel=1e-12)
-    assert int(row["ci_df"]) == 3
-    assert row["ci_low"] == pytest.approx(0.526573188 - 0.394717484, rel=1e-8)
-    assert row["ci_high"] == pytest.approx(0.526573188 + 0.394717484, rel=1e-8)
+    assert int(row["ci_df"]) == 1
+    t = 12.7062047362
+    k = t * t / 6
+    center = (4 / 7 + k / 2) / (1 + k)
+    half = t / (1 + k) * math.sqrt((12 / 49) / 6 + k / 24)
+    assert row["ci_low"] == pytest.approx(center - half, rel=1e-10)
+    assert row["ci_high"] == pytest.approx(center + half, rel=1e-10)
     assert row["effective_n"] == pytest.approx(49 / 11, rel=1e-12)
 
 
@@ -335,8 +347,8 @@ def test_a_unanimous_sample_still_has_a_one_sided_interval(metric_ch):
     # Wilson interval uses the Kish size of the denominator units (4) and stays
     # below 1 instead of collapsing to the point.
     rows = [unit(1, 0.5, "a", population=8) for _ in range(4)]
-    row = one_group(metric_ch, rows, "mean(y)")
-    t = 3.18244630528  # df = 4 units - 1 stratum
+    row = one_group(metric_ch, rows, "mean(y > 0)")
+    t = 3.18244630528  # df = 4 sampled units - 1 stratum
     k = t * t / 4
     assert row["value"] == 1 and row["std_error"] == 0
     assert row["ci_interval"] == "wilson" and row["ci_high"] == pytest.approx(1)
@@ -400,12 +412,13 @@ def test_closed_domain_pads_unsampled_members_with_zero(metric_ch):
 def test_live_policy_uses_the_poisson_design(metric_ch):
     # Independent Bernoulli keeps with p = 0.5, 0.25 and 1 (certainty), y = 1 each.
     # Total = 2 + 4 + 1 = 7. V = (1-0.5)*2^2 + (1-0.25)*4^2 + 0 = 2 + 12 = 14.
-    # df = 3 - 1 = 2, t = 4.30265272975.
+    # Only two units have p < 1: df = 2 - 1 = 1, t = 12.7062047362.
     rows = [unit(1, p, "live", design="live") for p in (0.5, 0.25, 1.0)]
     row = one_group(metric_ch, rows, "count_if(y == 1)")
     assert row["value"] == pytest.approx(7) and row["ci_method"] == "poisson"
     assert row["std_error"] == pytest.approx(math.sqrt(14), rel=1e-12)
-    assert row["ci_low"] == pytest.approx(7 - 4.30265272975 * math.sqrt(14), rel=1e-10)
+    assert row["ci_df"] == 1
+    assert row["ci_low"] == pytest.approx(7 - 12.7062047362 * math.sqrt(14), rel=1e-10)
 
 
 def test_unweighted_mean_is_a_labelled_model_based_interval(metric_ch):
@@ -660,8 +673,8 @@ DESIGN_CODES = {"closed": 0, "live": 1, "unweighted": 2}
 class Batch:
     """Every replicate's valid units as numeric columns, plus its reference answer."""
 
-    def __init__(self, kind, design):
-        self.kind, self.design = kind, design
+    def __init__(self, kind, design, *, rate=False):
+        self.kind, self.design, self.rate = kind, design, rate
         self.parts = {
             name: [] for name in ("rep", "stratum", "y", "x", "p", "population")
         }
@@ -690,6 +703,7 @@ class Batch:
                 x=x,
                 stratum=stratum,
                 population=population,
+                rate=self.rate,
             )
         )
 
@@ -707,7 +721,7 @@ def closed_batch(rng, kind, sizes, samples, passes):
     population = [
         np.r_[np.ones(k), np.zeros(n - k)] for n, k in zip(sizes, passes, strict=True)
     ]
-    batch = Batch(kind, "closed")
+    batch = Batch(kind, "closed", rate=kind == "mean")
     probability = [n / size for n, size in zip(samples, sizes, strict=True)]
     for rep in range(REPLICATES):
         picks = [
@@ -852,7 +866,7 @@ def test_closed_stratified_rate_interval_coverage_and_bias(native_ch):
     )
     truth = 9265 / 10000
     unweighted = [float(np.mean(part)) for part in batch.parts["y"]]
-    rows = stage_and_rollup(native_ch, _scope(), "mean(y)", batch)
+    rows = stage_and_rollup(native_ch, _scope(), "mean(y > 0)", batch)
     report = coverage_report(rows, truth, batch.references)
     report["unweighted_bias"] = float(np.mean(unweighted) - truth)
     report["seconds"] = round(time.monotonic() - started, 1)
@@ -983,7 +997,7 @@ def test_extreme_rate_interval_stays_calibrated_near_the_boundary(native_ch):
     started = time.monotonic()
     rng = np.random.default_rng(SEED + 4)
     batch = closed_batch(rng, "mean", (2000, 500), (100, 50), (1960, 490))
-    rows = stage_and_rollup(native_ch, _scope(), "mean(y)", batch)
+    rows = stage_and_rollup(native_ch, _scope(), "mean(y > 0)", batch)
     report = coverage_report(rows, 0.98, batch.references)
     report["seconds"] = round(time.monotonic() - started, 1)
     assert_calibrated(report)

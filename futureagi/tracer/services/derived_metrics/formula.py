@@ -35,12 +35,59 @@ class Formula:
     denominator: str
     required: tuple[str, ...]
     parameters: dict[str, float]
+    # Proven from the immutable formula, never inferred from observed input values.
+    rate_eligible: bool = False
 
     @property
     def complete_sql(self) -> str:
         return " AND ".join(
             f"isNotNull(v_{name}) AND isFinite(v_{name})" for name in self.required
         )
+
+
+def _indicator(node: ast.AST) -> bool:
+    """Prove a validated expression is 0/1 on every complete unit.
+
+    Bindings are arbitrary numeric evaluations/attributes, even when all observed
+    values are zero or one. Only formula operations can establish a population
+    bound. Unsupported identities conservatively use generic numeric inference.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value in (0, 1)
+    if isinstance(node, ast.Compare | ast.BoolOp):
+        # SQL AND/OR produce booleans (not Python's operand-valued result).
+        return True
+    if isinstance(node, ast.UnaryOp):
+        return isinstance(node.op, ast.Not) or (
+            isinstance(node.op, ast.UAdd) and _indicator(node.operand)
+        )
+    if isinstance(node, ast.BinOp):
+        if isinstance(node.op, ast.Mult):
+            return _indicator(node.left) and _indicator(node.right)
+        if isinstance(node.op, ast.Sub):
+            return (
+                isinstance(node.left, ast.Constant)
+                and node.left.value == 1
+                and _indicator(node.right)
+            )
+    return False
+
+
+def _indicator_factors(node: ast.AST) -> set[str]:
+    """Conjuncts of a proven indicator, for a conservative subset proof."""
+    if isinstance(node, ast.Constant) and node.value == 1:
+        return set()
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd):
+        return _indicator_factors(node.operand)
+    if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And):
+        return set().union(*(_indicator_factors(value) for value in node.values))
+    if (
+        isinstance(node, ast.BinOp)
+        and isinstance(node.op, ast.Mult)
+        and _indicator(node)
+    ):
+        return _indicator_factors(node.left) | _indicator_factors(node.right)
+    return {ast.dump(node)}
 
 
 def compile_formula(text: str, aliases: list[str]) -> Formula:
@@ -102,7 +149,7 @@ def compile_formula(text: str, aliases: list[str]) -> Formula:
             and type(node.ops[0]) in COMPARE
         ):
             return f"({expression(node.left, depth + 1)} {COMPARE[type(node.ops[0])]} {expression(node.comparators[0], depth + 1)})"
-        if isinstance(node, ast.BoolOp) and isinstance(node.op, (ast.And, ast.Or)):
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And | ast.Or):
             operator = " AND " if isinstance(node.op, ast.And) else " OR "
             return (
                 "("
@@ -110,7 +157,7 @@ def compile_formula(text: str, aliases: list[str]) -> Formula:
                 + ")"
             )
         if isinstance(node, ast.UnaryOp) and isinstance(
-            node.op, (ast.Not, ast.USub, ast.UAdd)
+            node.op, ast.Not | ast.USub | ast.UAdd
         ):
             operator = {ast.Not: "NOT ", ast.USub: "-", ast.UAdd: "+"}[type(node.op)]
             return f"({operator}{expression(node.operand, depth + 1)})"
@@ -124,4 +171,15 @@ def compile_formula(text: str, aliases: list[str]) -> Formula:
         numerator = f"toFloat64(({numerator}) != 0)"
     if not required:
         raise FormulaError("Reference at least one input.")
-    return Formula(kind, numerator, denominator, tuple(sorted(required)), parameters)
+    # Ratios require more than two bounded operands: the numerator must be a
+    # subset of the denominator on EVERY possible unit, not just this sample.
+    rate_eligible = kind in {"mean", "ratio"} and _indicator(call.args[0])
+    if kind == "ratio":
+        rate_eligible = (
+            rate_eligible
+            and _indicator(call.args[1])
+            and _indicator_factors(call.args[1]) <= _indicator_factors(call.args[0])
+        )
+    return Formula(
+        kind, numerator, denominator, tuple(sorted(required)), parameters, rate_eligible
+    )
