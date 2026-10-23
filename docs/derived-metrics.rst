@@ -159,6 +159,22 @@ implications between distinct comparisons. Unproved cases retain generic numeric
 inference. The proof is derived from immutable definition text for previews and
 persisted rollups, not from live evaluator metadata or a sample's observed range.
 
+The Wilson fallback at zero or numerically negligible variance is deliberately
+limited. It requires a genuine boundary value (0 or 1) and either the explicit
+iid-unit model or **one valid sampled stratum with a single inclusion probability**.
+At zero variance its effective denominator size is that stratum's Kish size.
+Multiple valid strata, including strata with equal sampling fractions but different
+population sizes, and heterogeneous probabilities within a live stratum withhold
+degenerate inference as ``not_estimable / unstable_variance``. Equal observed
+rates do not prove a common underlying rate. This includes both zero-event and
+all-event samples and degenerate interior rates whose strata disagree. A known
+census stratum cannot manufacture evidence about unknown outcomes in another
+stratum. A design-aware mixed-stratum boundary interval is not implemented.
+Nondegenerate variance still uses the existing design-effective Wilson interval;
+an entirely census group still has an exact interval. Valid point estimates and
+the diagnostic ``effective_n`` remain available when an interval is withheld.
+Confident alerts abstain; default point alerts remain unchanged.
+
 Both interval families use ``t(0.975, df)``. For closed designs, ``df`` is the
 smallest ``m_h - 1`` among non-certainty strata, with ``m_h`` the number of valid
 observed units in the group. This is a conservative lower bound on
@@ -196,8 +212,8 @@ cards as text beside the value. Persisted rows from before this column existed
 report ``not_computed``. Previously committed intervals are not silently rewritten
 by estimator fixes: explicitly recompute affected runs before using their historic
 intervals for confidence-based decisions. In particular, earlier inferred-binary
-numeric intervals and pooled-degrees-of-freedom intervals are not corrected by
-merely reading an old result.
+numeric intervals, pooled-degrees-of-freedom intervals, and mixed-stratum
+zero-variance Wilson intervals are not corrected by merely reading an old result.
 
 Calibration is measured, not assumed. ``tracer/tests/test_derived_metric_uncertainty.py``
 draws 2,000 seeded replicates per design from known synthetic populations,
@@ -225,6 +241,26 @@ the former pooled-df multiplier to those same estimates and standard errors
 would cover 70.00%. Separate regressions verify unchanged endpoints when 1,000
 certainty-zero units are appended, and withhold an interval when only one
 non-certainty observation supplies variance information.
+
+``test_derived_metric_boundary.py`` exercises the production aggregation and
+persisted rollup SQL with synthetic unit-row fixtures on ClickHouse (not scalar
+summary-moment SQL and not raw telemetry/sampler acceptance). A separate fixture
+starts with the full finite population on ClickHouse and applies a fixed seeded
+without-replacement draw plus the census, rather than supplying group moments.
+It covers zero/one
+boundaries, unequal fractions with and without certainty, different stratum sizes,
+equal-fraction distinct strata, heterogeneous probabilities within a live stratum,
+single-uniform-stratum controls, all-census certainty and nondegenerate variance.
+An independent exact finite-population calculation shows why abstention is needed:
+with 100 events in a population of 10,000, a sample of 50 misses every event with
+probability 0.6042554224. Adding 100,000 known-zero census units formerly produced
+an upper bound of 0.0007003872 despite the true overall rate 0.0009090909. The
+corrected path withholds this interval and its complemented one-boundary case.
+A persisted-input regression reads the committed-only view and exercises real
+result reading and monitor delivery/ledger gating; only client routing and external
+notification transports are substituted. These deterministic checks are not a new
+coverage campaign or a universal calibration claim. No API fields, enums, defaults
+or schema columns change for this correction.
 
 Contributor evidence and version comparison
 -------------------------------------------

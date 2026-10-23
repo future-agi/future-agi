@@ -55,10 +55,17 @@ These remain approximate intervals, not universal coverage guarantees.
   population bound even when their observed sample is all zero/one. The
   compiler re-derives this proof from immutable definition text, and the
   observed-range check is only a defensive guard, never proof. The Wilson
-  score interval uses the design-effective sample size
-  ``n* = p(1-p)/V`` (the Kish size of the denominator units when ``V`` is 0, i.e.
-  every unit agrees). It stays inside [0, 1] and keeps its coverage near 0 and 1,
-  where a symmetric interval does not.
+  score interval uses the design-effective sample size ``n* = p(1-p)/V``.
+  At zero or numerically negligible variance, a boundary interval is supported
+  only at value 0 or 1 under the iid model, or for one valid weighted stratum
+  with a single inclusion probability. The zero-variance fallback uses the Kish
+  size of that stratum's denominator units, not a mixture of strata. Multiple
+  valid strata (even at equal sampling fractions) or heterogeneous probabilities
+  withhold degenerate inference as ``unstable_variance``. Observed unanimity
+  does not establish a common population rate across strata, and census units
+  cannot supply evidence about another stratum's unobserved outcomes. A
+  design-aware mixed-stratum boundary interval is not implemented. Wilson stays
+  inside [0, 1], but neither it nor the fallback guarantees universal coverage.
 * ``wald_t`` otherwise: ``value +/- t * SE``. Without census proof, zero or
   numerically negligible variance withholds this interval (``unstable_variance``).
   This includes an all-zero sample: no observed events do not establish that the
@@ -224,6 +231,9 @@ def uncertainty_array_sql(ratio_kind: bool, *, rate_eligible: bool = False) -> s
                 abs(c_yy)+abs(2*r*c_xy)+abs(r*r*c_xx))""",
             "df": "multiIf(design = 'closed', sampled_stratum_df, design = 'live', greatest(toInt64(sampled)-1, 0), toInt64(valid_count)-1)",
             "census": "design IN ('closed', 'live') AND sampled = 0",
+            # A pooled Kish size is not evidence about unobserved outcomes in
+            # another stratum. Even equal fractions do not prove a common rate.
+            "homogeneous_boundary": "v IN (0, 1) AND (design = 'unweighted' OR (strata = 1 AND probability_low = probability_high))",
         },
         {
             "se": "sqrt(greatest(variance, 0)) / abs(x)",
@@ -254,7 +264,7 @@ def uncertainty_array_sql(ratio_kind: bool, *, rate_eligible: bool = False) -> s
                 design = 'closed' AND singleton_strata > 0, 'single_unit_stratum',
                 NOT census AND df < 1, 'no_degrees_of_freedom',
                 ifNull(NOT isFinite(se) OR NOT isFinite(lo) OR NOT isFinite(hi), 1), 'non_finite',
-                NOT census AND NOT rate AND variance <= 1e-12*scale, 'unstable_variance',
+                NOT census AND variance <= 1e-12*scale AND NOT (rate AND homogeneous_boundary), 'unstable_variance',
                 '')""",
         },
     ]
