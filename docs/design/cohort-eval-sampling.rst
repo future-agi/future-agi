@@ -47,9 +47,12 @@ Implemented requirements
   units. Closed cohorts never rerank or evict existing members on later polls.
 * Queries aggregate units in ClickHouse and stream blocks of at most 1,000 rows.
   Closed expansion transfers only selected member batches, bounded by unit
-  count and parameter bytes. Evaluator fanout is also capped per insert batch.
-  Membership lookups/inserts and evaluation entries are batched; there is no
-  PostgreSQL query for each span.
+  count and parameter bytes, and pushes each batch's unit IDs (with their
+  remap aliases) into every physical ``spans`` read, so a batch replays only
+  the traces of its own members instead of rescanning the whole window.
+  Evaluator fanout is also capped per insert batch. Membership lookups/inserts
+  and evaluation entries are batched; there is no PostgreSQL query for each
+  span.
 
 Precise population contract
 ---------------------------
@@ -59,7 +62,17 @@ Closed ``window`` is an explicit, half-open **event-time eligibility** interval
 ``end: null`` and a continuous task: new contacts remain eligible indefinitely
 from ``start`` onward, including after the preview and across future event days.
 Task filters further restrict evaluation rows. The policy does not silently
-read activity before its start or outside a closed interval. Trace evaluations use root-span attributes; session
+read activity before its start or outside a closed interval.
+
+The policy window is the **only** event-time range of a policy task. The
+historical task form's ``date_range``/``date_preset`` are not sent with a
+policy, and the API removes them explicitly at create, edit (including older
+edit drawers) and preview, so they never intersect the policy window and an
+unchanged population is not reported as edited. Explicit ``start_time`` /
+``created_at`` time filters (and the legacy ``created_at`` key) are rejected
+for policy tasks rather than intersected. A stored policy task that still
+carries a task date range fails closed until it is saved again. Preview and
+execution therefore read the same interval. Trace evaluations use root-span attributes; session
 identity is represented by the earliest eligible root. Finer sampling units
 than the evaluation row are rejected (for example span-unit session evaluation).
 Voice-call policy sampling is not enabled by this change.
@@ -83,9 +96,21 @@ cell by the hexadecimal SHA-256 of ``policy_version + ':' + sampling_unit_id``
 
 Only selected closed members need durable rows. New units first arriving after
 that cohort's freeze are excluded even if their event times lie in the window.
-Late rows of already selected units keep the original stratum and k/N. A failed
-or incomplete stream rolls back cohort membership and entries together; no
-partially materialized first page can masquerade as an exact quota.
+Late rows of already selected units keep the original stratum and k/N. A cohort
+is certified (``complete``) only after its whole membership stream has been
+written; a failed or interrupted stream deletes the uncertified cohort, and a
+later attempt that finds an uncertified cohort whose lease has lapsed discards
+it before freezing again. No partially materialized first page can masquerade
+as an exact quota.
+
+``frozen_at`` carries a configurable **settle margin** ``S``
+(``EVAL_SAMPLING_CLOSED_SETTLE_SECONDS``, default 15, 0-3600): the freeze
+counts only rows whose physical arrival is before ``clock - S`` and waits
+(outside any transaction, at most ``2S``) until that cutoff is at least ``S``
+after the window end. In-window rows that arrive within ``S`` of the window's
+end are therefore counted, and a replica lagging by less than ``S`` reads the
+same population. A certified cohort never waits again. Previews do not apply
+the margin; they count what is visible now and are not reservations.
 
 Live mode uses the same stable SHA-256, compared with the exact integer
 threshold ``floor(rate / 100 * 2**256)``. The inclusion probability is rate/100.
@@ -97,6 +122,16 @@ Each live poll discovers changed event days from the project-scoped physical
 backdated span still triggers its old event day. Decisions and policy/cohort
 identity persist across those scans; daily scanning does not resample contacts.
 Catch-up touching more than 366 event days fails without advancing the cursor.
+A first-admission proof classifies each page of new units across their whole
+eligible history, but every physical seed scan is bounded to the eligibility
+hours ``[start, snapshot]`` (immutable key coordinates, so partitions outside
+are never read) and to arrivals before the snapshot. Two configured ceilings
+bound it further: ``EVAL_SAMPLING_LIVE_PROOF_MAX_DAYS`` (default 366) for the
+policy start's distance from the snapshot and
+``EVAL_SAMPLING_LIVE_PROOF_MAX_ROWS`` (default and maximum 20 million rows
+read). Exceeding either fails explicitly with a non-retryable error; that
+page's decisions are not written, earlier pages' complete decisions stay, and
+the cursor does not advance. Start a new live policy with a later start.
 Live row filters currently support span data; evaluation/annotation and mutable
 profile-dependent filters require a closed policy rather than silently missing
 non-span change triggers.
@@ -116,7 +151,21 @@ freeze timestamp and immutable selection context (organization, workspace,
 project, evaluation row type, task filters and algorithm). ``EvalSamplingMember``
 is unique by cohort and SHA-256 of the canonical/namespaced unit ID. Database
 checks require probabilities in [0,1] and strictly positive probabilities for
-selected members. Task/config locks serialize edits and pollers.
+selected members.
+
+Reconcile concurrency: no PostgreSQL transaction, and no task or evaluator row
+lock, spans a ClickHouse stream. A pass takes a cohort **lease** (token plus
+expiry, ``EVAL_SAMPLING_LEASE_SECONDS``, default 300) in a short transaction;
+a concurrent pass for the same cohort fails with a retryable "busy" error and
+writes nothing. Each bounded page (member block, live decision page, row
+block, pending-proof page, final cursor update) is then written in its own
+short transaction that locks the task and evaluator rows, proves the task
+revision the pass started from and renews the lease only while it still holds
+the token. An edited task or a lost lease stops the pass before its next write;
+an expired holder is fenced out. Pending-proof pages keep their row locks for
+one bounded point read, so the drain can never claim a row whose negative proof
+is in flight. Idempotent materialization and the forward-only cursor (updated
+last) make a retried pass safe.
 
 Every selected ``EvalLogger`` carries ``output_metadata._task_selection.sampling``::
 
@@ -144,6 +193,15 @@ probabilities or cohort IDs; all new visible entries have the new population's
 provenance. Re-running an unchanged closed policy reuses its frozen membership.
 Do not combine multiple cohort versions as if they were one randomized sample.
 
+Identity merges: a decision is keyed by the canonical unit ID at decision
+time and is never rewritten. If a later remap makes a different alias the
+canonical ID of the same contact, rows resolve to that new canonical ID, which
+is treated as a unit first seen after the decision: a closed cohort excludes it
+(pending entries of the moved rows are dropped, completed results keep their
+provenance) and a live policy records a new first-admission decision for it.
+Use an explicit fresh run after large identity merges if a single cohort must
+span them.
+
 For a contact-level pass rate, first aggregate evaluation rows to the chosen
 unit/cohort, then compute ``sum(pass / p) / sum(1 / p)``. Weighting duplicated spans
 before forming contact-level outcomes would give large contacts extra influence.
@@ -157,7 +215,16 @@ Security and scale
 ------------------
 
 The preview resolves its project through the same organization/workspace scoped
-queryset as task creation. No policy accepts another tenant's policy/project/
+queryset as task creation. Its statuses are precise: invalid policies,
+unsupported task filters, user-relative filter principals, explicit time
+filters, oversized identities, an over-budget compiled statement and read
+ceilings return 400 with the cause;
+time/memory pressure, a refused/reset/timed-out/dropped connection or a ClickHouse
+connection/concurrency exhaustion returns a sanitized 503; anything else,
+including any other ClickHouse server error, returns a sanitized 500. Each actor (organization and user) may
+have one preview in flight and 12 per minute (``EVAL_SAMPLING_PREVIEW_CONCURRENCY``
+and ``EVAL_SAMPLING_PREVIEW_PER_MINUTE``); excess requests get 429 with
+``Retry-After``, and the guard fails closed (503) if its cache is unavailable. No policy accepts another tenant's policy/project/
 workspace reference. Referenced evaluator configurations retain existing project
 checks. The planner receives the authorized project, uses fixed table names,
 and binds all external values. Remap expansion is restricted to IDs touched by
@@ -172,8 +239,11 @@ UTC DateTime64 text: native driver
 proof explicitly opts out of application mode that removes abort limits. Reads
 have 30-second wall/server budgets, 512 MiB query memory, spill thresholds,
 2 threads, 20-million rows/8 GiB read ceilings and 2-million rows/128 MiB result
-ceilings, with overflow set to throw. The preview rejects more than 1,000 cells;
-unit IDs and group values are bounded without lossy truncation. Policies are limited to 64 KiB and compiled statements to 2 MiB. Locked
+ceilings, with overflow set to throw; per-statement settings may only tighten
+them. The preview rejects more than 1,000 cells. Unit IDs (2,048 bytes) and
+group-by values (1,024 bytes) are bounded without lossy truncation, hashing or
+silent exclusion: an oversized value fails the read with an explicit error that
+names the contact attribute or group-by attribute (never the value). Policies are limited to 64 KiB and compiled statements to 2 MiB. Locked
 read-only server profiles must independently provide reviewed resource limits
 when they disallow per-query settings; the native wall timeout still applies.
 These are safety limits, not a claim that every permitted 31-day workload fits them. A failed
@@ -207,16 +277,42 @@ Documentation checked 2026-10-21:
   https://langfuse.com/changelog/2026-08-05-deterministic-evaluator-sampling
   https://langfuse.com/docs/observability/features/sampling
 
+Additional documentation checked 2026-10-22:
+
+* Arize AX applies a trace/session task's sampling rate per unit (10% of
+  sessions, not 10% of spans) and gathers a unit's spans from 24 hours before
+  the task window; its session evaluator judges the unit as a whole. That is
+  unit-level sampling for unit-level judgements, not frozen per-cell quotas
+  with stored inclusion probabilities on every span result.
+  https://www.arize.com/docs/ax/evaluate/trace-and-session-evals
+* Braintrust online scoring samples matching traces after they go idle; for
+  grouped scoring the rate decides whether a group is scored and, per its
+  docs, does not decide which traces of the group are included.
+  https://www.braintrust.dev/docs/evaluate/score-online
+* Datadog LLM Observability offers span, trace and session scopes with an
+  optional sampling rate; a session evaluation runs after 30 idle minutes and
+  spans arriving more than 30 minutes after the previous span are not
+  included. This implementation instead admits late eligible rows of an
+  already selected unit on later polls (tested in the real-ClickHouse suite).
+  https://docs.datadoghq.com/llm_observability/investigate/evaluations/llm_as_a_judge_evaluations/session_level_evaluations
+* Langfuse evaluation rules show the past seven days' matching volume and an
+  estimated cost before enabling a rule. This preview reports exact per-cell
+  eligible/selected units and rows and expected evaluation runs, but
+  deliberately no dollar estimate.
+  https://langfuse.com/docs/evaluation/get-started/online
+
 These sources support the distinctions above. They do not establish that no
-other product implements stratification or contact-consistent sampling.
+other product implements stratification or contact-consistent sampling, and
+no throughput or cost comparison with them has been measured.
 
 Verification and rollout
 ------------------------
 
-Apply ``tracer/0117_cohort_sampling`` and
-``tracer/0117_sampling_project_db_default`` before deploying writers. They are
+Apply ``tracer/0117_cohort_sampling``,
+``tracer/0117_sampling_project_db_default`` and the nullable lease columns of
+``tracer/0120_sampling_cohort_lease`` before deploying writers. They are
 additive, contain no backfill of guessed probabilities, and have no enterprise
-dependency. Pause/drain ingestion while applying both migrations, then resume
+dependency. Pause/drain ingestion while applying the two 0117 migrations, then resume
 collectors: do not leave writers running between the original field addition
 and the default repair. The project contact-attribute field retains an
 empty-string database default as well as its Django default, so existing Go
@@ -243,6 +339,16 @@ Reproducible commands, using the project's backend environment and Node 22.18::
     npx vitest run src/sections/tasks/components/SamplingPolicyEditor.test.jsx \
       src/sections/tasks/__tests__/TaskCreatePage.mixed-filters.test.jsx \
       src/sections/common/EvalsTasks/__tests__/getDefaultTaskValues.test.js
+
+The real-ClickHouse suite also proves, through ``system.query_log``, that
+adding 24 non-member contacts (one part each) grows the full-window read by at
+least their 96 spans while a closed member page returns identical rows and its
+own read grows by less than an eighth of that, and that a live proof never
+reads a 3,000-span history 40 days before the policy start; it covers min/max/
+census/shortage quotas compiled to SQL, remapped sessions expanded for trace and
+session rows, the settle margin, explicit oversized-identity errors, explicit
+proof bounds and identity merges after a decision. These are correctness and
+read-scope fixtures, not throughput benchmarks.
 
 The native script executes the production query compiler on real ClickHouse
 25.8+ with bounded synthetic fixtures (at most 220 spans per case), including a
