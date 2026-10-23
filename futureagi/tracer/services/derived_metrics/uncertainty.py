@@ -44,7 +44,9 @@ observed units in this group. This conservative lower bound on the
 Welch-Satterthwaite effective df does not pool an unrelated stratum's degrees
 of freedom. Domain padding and certainty strata add none. Live designs use
 ``sampled_units - 1`` (only p < 1); iid designs use ``valid_units - 1``.
-An all-census group has df = 0 and needs no estimated variance or t multiplier.
+An all-census group needs no estimated variance or t multiplier. Its internal df
+is 0; the persisted/API df is null (not applicable), preserving the public
+contract of null or a positive number of degrees.
 These remain approximate intervals, not universal coverage guarantees.
 
 * ``wilson`` for rates proven by the saved formula (an indicator numerator
@@ -257,7 +259,7 @@ def uncertainty_array_sql(ratio_kind: bool, *, rate_eligible: bool = False) -> s
         },
     ]
     result = """tuple(if(reason = '', se, NULL), if(reason = '', lo, NULL), if(reason = '', hi, NULL),
-        if(valid_count > 0 AND isFinite(kish), kish, NULL), if(reason = '', toUInt64(greatest(df, 0)), NULL),
+        if(valid_count > 0 AND isFinite(kish), kish, NULL), if(reason = '' AND NOT census, toUInt64(greatest(df, 0)), NULL),
         multiIf(design = 'unweighted', 'iid_units', design = 'closed', 'stratified_wor_fpc', design = 'live', 'poisson', ''),
         if(reason = '', 'ok', 'not_estimable'), reason, if(reason = '', if(wilson, 'wilson', 'wald_t'), ''))"""
     for bindings in reversed(stages):

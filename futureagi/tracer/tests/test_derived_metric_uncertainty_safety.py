@@ -202,7 +202,7 @@ def test_all_census_strata_have_exact_intervals_without_sample_degrees(
         for i, y in enumerate((1, 2, 3))
     ]
     row = one_group(metric_ch, rows, "sum(y)")
-    assert row["ci_status"] == "ok" and row["ci_df"] == 0
+    assert row["ci_status"] == "ok" and row["ci_df"] is None
     assert row["value"] == row["ci_low"] == row["ci_high"] == 6
     assert row["std_error"] == 0
 
@@ -210,9 +210,30 @@ def test_all_census_strata_have_exact_intervals_without_sample_degrees(
 @pytest.mark.parametrize("design", ["closed", "live"])
 def test_one_certainty_unit_is_exact(metric_ch, design):
     row = one_group(metric_ch, [unit(7, 1.0, design=design, population=1)], "mean(y)")
-    assert row["ci_status"] == "ok" and row["ci_df"] == 0
+    assert row["ci_status"] == "ok" and row["ci_df"] is None
     assert row["value"] == row["ci_low"] == row["ci_high"] == 7
     assert row["std_error"] == 0
+
+
+@pytest.mark.parametrize("design", ["closed", "live"])
+def test_census_interval_matches_the_published_api_contract(metric_ch, design):
+    from tracer.serializers.derived_metric import DerivedMetricUncertaintySerializer
+
+    row = one_group(
+        metric_ch,
+        [unit(y, 1.0, design=design, population=3) for y in (1, 2, 3)],
+        "mean(y)",
+    )
+    serializer = DerivedMetricUncertaintySerializer(
+        data=shape_result(row, include_uncertainty=True)["uncertainty"]
+    )
+    assert serializer.is_valid(), serializer.errors
+    # There is no estimated sampling variance in a census, hence no estimated df.
+    # Keep the existing public contract: null, or a positive number of degrees.
+    assert serializer.validated_data["degrees_of_freedom"] is None
+    assert (
+        serializer.validated_data["ci_low"] == serializer.validated_data["ci_high"] == 2
+    )
 
 
 def test_rare_large_numeric_mean_abstains_on_unseen_tail(native_ch):

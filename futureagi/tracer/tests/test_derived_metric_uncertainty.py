@@ -135,7 +135,7 @@ def reference(
         "ci_high": high,
         "interval": interval,
         "effective_n": float(np.sum(w) ** 2 / np.sum(w**2)),
-        "ci_df": degrees,
+        "ci_df": None if census else degrees,
     }
 
 

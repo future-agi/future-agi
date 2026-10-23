@@ -166,7 +166,8 @@ Welch-Satterthwaite effective degrees of freedom, not a pooled count. A large
 unrelated stratum, domain-zero padding, or known census values cannot add precision
 to a small stratum's estimated variance. Live designs use the number of units with
 ``p < 1`` minus one; iid designs use valid units minus one. All-census groups have
-``df = 0`` and an exact zero-width interval, including a single certainty unit.
+``ci_df = null`` (not applicable) and an exact zero-width interval, including a
+single certainty unit. This preserves the API contract of null or positive degrees.
 These changes leave point estimates and the default point-alert mode unchanged;
 unsupported intervals are withheld, and small-stratum intervals can be wider.
 
