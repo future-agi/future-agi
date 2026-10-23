@@ -29,8 +29,7 @@ import { paths } from "src/routes/paths";
 
 import { errorMessage } from "./harnessShared";
 
-const DOCUMENT_TYPES =
-  ".pdf,.docx,.xlsx,.csv,.tsv,.json,.jsonl,.txt,.md";
+const DOCUMENT_TYPES = ".pdf,.docx,.xlsx,.csv,.tsv,.json,.jsonl,.txt,.md";
 const DOCUMENT_MAX_BYTES = 25 * 1024 * 1024;
 
 const MODALITIES = [
@@ -208,6 +207,7 @@ export default function DesignForm({ template = null, onCancel = null }) {
             color="inherit"
             startIcon={<Iconify icon="solar:paperclip-linear" width={16} />}
             onClick={() => fileInput.current?.click()}
+            sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
           >
             Add documents
           </Button>
@@ -240,14 +240,17 @@ export default function DesignForm({ template = null, onCancel = null }) {
               <Chip
                 key={one.key}
                 size="small"
+                variant="outlined"
                 color={one.state === "error" ? "error" : "default"}
-                variant={one.state === "uploaded" ? "filled" : "outlined"}
+                data-state={one.state}
                 label={
                   one.state === "error" ? `${one.name}: ${one.error}` : one.name
                 }
                 icon={
                   one.state === "uploading" ? (
                     <CircularProgress size={12} />
+                  ) : one.state === "uploaded" ? (
+                    <Iconify icon="solar:check-circle-linear" width={14} />
                   ) : undefined
                 }
                 onDelete={() =>
