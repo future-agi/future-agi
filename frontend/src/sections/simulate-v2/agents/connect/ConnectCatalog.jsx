@@ -5,22 +5,20 @@ import { Box, Button, ButtonBase, InputBase, Stack, Typography } from "@mui/mate
 import Iconify from "src/components/iconify";
 import { LogoTile } from "../../environments/LandingBits";
 import { PANEL_SX, focusRing } from "../../environments/landingStyles";
-import { Detection } from "../../environments/ConnectDirectory";
 import ChipCard from "../../environments/ChipCard";
 import { highlightOf, searchCatalog } from "./catalogSearch";
 
 /**
  * Every way to connect an agent, as one searchable list.
  *
- * One box does both jobs: type a name and the list narrows; paste a repo,
- * an ID, a URL or a prompt and it says what that is and opens the right
- * setup — with the full list still below, in case it read the paste wrong.
- * Chips narrow by where the agent lives. Nothing is folded behind
+ * The box searches the ways in only — type a name (GitHub, Vapi,
+ * LangGraph, endpoint…) and the list narrows. Chips narrow by where the
+ * agent lives. Nothing is folded behind
  * "N more" — the whole list scrolls, and every row says what it is and the
  * step it starts, with Connect beside it; how a fix comes back is said once
  * per group.
  */
-export default function ConnectCatalog({ groups, pickedId, onPick, detect, onPaste, emptyHint, onFallback, compact = false, showAll = true, pasteHint = "a repo, an ID, a URL or a prompt", ready = {}, onBuild = null }) {
+export default function ConnectCatalog({ groups, pickedId, onPick, emptyHint, onFallback, compact = false, showAll = true, ready = {}, onBuild = null }) {
   const [query, setQuery] = useState("");
   /* Without an All chip, it opens on the first group. */
   const [filter, setFilter] = useState(showAll ? "all" : groups[0]?.id);
@@ -28,20 +26,7 @@ export default function ConnectCatalog({ groups, pickedId, onPick, detect, onPas
 
   const items = useMemo(() => groups.flatMap((g) => g.items.map((it) => ({ ...it, group: g }))), [groups]);
   const total = items.length;
-  /* A paste is recognised; a name being typed is just a search. */
-  const found = useMemo(() => {
-    const hit = detect && query.trim() ? detect(query) : null;
-    return hit && hit.kind !== "unknown" ? hit : null;
-  }, [detect, query]);
-  const canPaste = !!found && !found.blocked && !!found.choice;
-  const meta = found && { name: found.label, detail: found.detail, logo: found.logo, icon: found.icon };
-  const paste = (way = found) => {
-    if (canPaste) onPaste(way.choice, way.prefill, meta);
-  };
-
-  const q = query.trim().toLowerCase();
-  /* A recognised paste isn't a search — the list stays whole under it. */
-  const searching = !!q && !found;
+  const searching = !!query.trim();
   /* Forgiving: case, spaces and punctuation don't matter, and keywords count
      (LangChain finds LangGraph) — best matches first (catalogSearch). */
   const matches = useMemo(() => (searching ? searchCatalog(items, query) : []), [items, query, searching]);
@@ -82,9 +67,7 @@ export default function ConnectCatalog({ groups, pickedId, onPick, detect, onPas
       setActive((i) => (e.key === "ArrowDown" ? Math.min(i + 1, ordered.length - 1) : Math.max(i - 1, 0)));
       return;
     }
-    if (e.key !== "Enter") return;
-    if (canPaste) paste();
-    else if (ordered[active]) onPick(ordered[active]);
+    if (e.key === "Enter" && ordered[active]) onPick(ordered[active]);
   };
 
   return (
@@ -93,11 +76,10 @@ export default function ConnectCatalog({ groups, pickedId, onPick, detect, onPas
       <Box
         sx={{
           display: "flex", alignItems: "center", gap: 1, px: 1.5, height: 44,
-          border: "1px solid", borderRadius: 1,
-          borderColor: (t) => (found?.warn ? alpha(t.palette.error.main, 0.55) : t.palette.divider),
+          border: "1px solid", borderRadius: 1, borderColor: "divider",
           bgcolor: "background.paper",
           transition: "border-color .12s ease",
-          "&:focus-within": { borderColor: (t) => (found?.warn ? t.palette.error.main : alpha(t.palette.text.primary, 0.45)) },
+          "&:focus-within": { borderColor: (t) => alpha(t.palette.text.primary, 0.45) },
         }}
       >
         <Iconify icon="solar:magnifer-linear" width={16} sx={{ color: "text.disabled", flexShrink: 0 }} />
@@ -107,14 +89,10 @@ export default function ConnectCatalog({ groups, pickedId, onPick, detect, onPas
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKey}
-          placeholder={detect ? `Search ${total} ways to connect — or paste ${pasteHint}` : `Search ${total} ways to connect`}
+          placeholder="Search ways to connect — GitHub, Vapi, LangGraph, endpoint…"
           endAdornment={!query ? <Box component="kbd" sx={{ px: 0.75, py: 0.125, mr: 0.5, borderRadius: 0.5, border: "1px solid", borderColor: "divider", typography: "s3", color: "text.disabled", fontFamily: "inherit" }}>/</Box> : null}
-          inputProps={{ "aria-label": detect ? "Search ways to connect, or paste a repository, ID, URL or prompt" : "Search ways to connect", spellCheck: false }}
-          sx={{
-            typography: "s1",
-            fontFamily: found && found.kind !== "describe" ? "ui-monospace, SFMono-Regular, Menlo, monospace" : undefined,
-            "& input::placeholder": { color: "text.disabled", opacity: 1 },
-          }}
+          inputProps={{ "aria-label": "Search ways to connect", spellCheck: false }}
+          sx={{ typography: "s1", "& input::placeholder": { color: "text.disabled", opacity: 1 } }}
         />
         {query && (
           <ButtonBase onClick={() => { setQuery(""); inputRef.current?.focus(); }} aria-label="Clear" sx={{ borderRadius: 0.75, p: 0.25, color: "text.disabled", "&:hover": { color: "text.primary" }, "&.Mui-focusVisible": focusRing }}>
@@ -123,43 +101,9 @@ export default function ConnectCatalog({ groups, pickedId, onPick, detect, onPas
         )}
       </Box>
 
-      {/* ── what a paste was read as ── */}
-      {found && (
-        <Stack
-          direction={{ xs: "column", sm: "row" }} alignItems={{ sm: "center" }} spacing={1.5}
-          sx={{ ...PANEL_SX, px: 2, py: 1.5 }}
-        >
-          <Box flex={1} minWidth={0}><Detection found={found} /></Box>
-          {canPaste && (
-            <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
-              {(found.alternatives || []).map((alt) => (
-                <Button
-                  key={alt.label} variant="outlined" onClick={() => paste(alt)}
-                  sx={{ typography: "s2", fontWeight: 600, color: "text.primary", borderColor: "divider" }}
-                >
-                  {alt.label}
-                </Button>
-              ))}
-              <Button
-                variant="contained" color="primary" onClick={() => paste()}
-                endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
-                sx={{ typography: "s2", fontWeight: 700 }}
-              >
-                {found.action || "Continue"}
-              </Button>
-            </Stack>
-          )}
-        </Stack>
-      )}
-
-      {/* ── the chips — under a paste, the way out if it was read wrong ── */}
+      {/* ── the chips ── */}
       {!searching && (
         <Stack spacing={0.75}>
-          {found && (
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {found.blocked ? "Pick where the agent runs:" : "Not what you meant? Pick where it runs:"}
-            </Typography>
-          )}
           <Stack direction={{ xs: "column", md: "row" }} alignItems={{ md: "center" }} spacing={{ xs: 1, md: 2 }}>
             <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, flex: 1, minWidth: 0 }}>
               {showAll && <ChipCard label={<Count label="All" n={total} />} on={filter === "all"} onClick={() => setFilter("all")} />}
@@ -168,7 +112,7 @@ export default function ConnectCatalog({ groups, pickedId, onPick, detect, onPas
               ))}
             </Box>
             {/* Nothing to connect: the agent can start here instead. */}
-            {onBuild && !found && (
+            {onBuild && (
               <Typography sx={{ typography: "s2", color: "text.secondary", flexShrink: 0 }}>
                 {"No agent yet? "}
                 <ButtonBase
@@ -257,9 +201,6 @@ ConnectCatalog.propTypes = {
   groups: PropTypes.array.isRequired,
   pickedId: PropTypes.string,
   onPick: PropTypes.func.isRequired,
-  /* Reads a paste (repo, ID, URL, prompt) — `onPaste(choice, prefill, meta)` opens its setup. */
-  detect: PropTypes.func,
-  onPaste: PropTypes.func,
   emptyHint: PropTypes.node,
   /* Offered when a search finds nothing. */
   onFallback: PropTypes.func,
@@ -267,8 +208,6 @@ ConnectCatalog.propTypes = {
   compact: PropTypes.bool,
   /* An All chip listing every group at once — off where the list shares a drawer with other ways in. */
   showAll: PropTypes.bool,
-  /* What can be pasted, as the placeholder says it. */
-  pasteHint: PropTypes.string,
 };
 
 function Count({ label, n }) {

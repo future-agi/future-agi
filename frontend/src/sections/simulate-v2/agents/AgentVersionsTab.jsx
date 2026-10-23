@@ -46,14 +46,15 @@ export default function AgentVersionsTab({ agent, source, filesOf, toolsOf, stat
   const pins = useMemo(() => versionPinsOf({ agent, source, toolsOf }), [agent, source, toolsOf]);
   const labels = agent.versions.map((v) => v.label);
   const latest = labels[labels.length - 1];
-  /* A code agent's versions are commits: "main @ 3f9a2c1"; buttons say the short hash. */
+  /* Every version reads vN; a code agent's carries its commit — "v5 · main @ 3f9a2c1",
+     buttons "v5 · 3f9a2c1". */
   const git = isGitAgent(agent);
   const nameOf = (l) => versionNameOf(agent, l).main;
-  const shortOf = (l) => (git ? versionNameOf(agent, l).ref?.sha || l : l);
-  /* In Compare's pickers: the hash and its message — branch names are long. */
+  const shortOf = (l) => versionNameOf(agent, l).short || l;
+  /* In Compare's pickers: the version, its hash and message — branch names are long. */
   const pickNameOf = (l) => {
-    const r = git ? versionNameOf(agent, l).ref : null;
-    return r ? `${r.sha} · ${r.message}` : l;
+    const n = versionNameOf(agent, l);
+    return n.ref ? `${n.short} · ${n.ref.message}` : l;
   };
   /* Starts on the newest version — a code agent's production commit, not a fix waiting on its branch. */
   const start = isGitAgent(agent) ? agent.production || latest : latest;
@@ -430,7 +431,7 @@ function collapse(lines) {
   return out;
 }
 
-/* `nameOf` says how a version reads — "main @ 3f9a2c1" for a code agent. */
+/* `nameOf` says how a version reads — "v5 · main @ 3f9a2c1" for a code agent. */
 function VersionSelect({ value, onChange, labels, nameOf = (l) => l }) {
   return (
     <Select
@@ -581,7 +582,10 @@ function CommitLog({ agent, selected, onSelect, statsOf, scopeName, running, onV
                   }}
                 >
                   <Stack direction="row" alignItems="baseline" spacing={1} sx={{ minWidth: 0 }}>
-                    <Typography sx={{ typography: "s2", fontFamily: MONO, fontWeight: 700, flexShrink: 0 }}>{c.sha}</Typography>
+                    <Typography sx={{ typography: "s2", fontFamily: MONO, fontWeight: 700, flexShrink: 0 }}>
+                      {c.label}
+                      <Box component="span" sx={{ fontWeight: 400, color: "text.secondary" }}>{` · ${c.sha}`}</Box>
+                    </Typography>
                     <Typography noWrap title={c.message} sx={{ typography: "s2", flex: 1, minWidth: 0 }}>{c.message}</Typography>
                   </Stack>
                   <Stack direction="row" alignItems="center" spacing={0.75} flexWrap="wrap" rowGap={0.5} sx={{ mt: 0.375 }}>
@@ -605,7 +609,7 @@ function CommitLog({ agent, selected, onSelect, statsOf, scopeName, running, onV
                         )}
                         {!c.draft && c.label !== headOfMain && (
                           <Button size="small" onClick={() => onRevert(c.label)} variant="outlined" sx={VERSION_ACTION}>
-                            {`Revert to ${c.sha}`}
+                            {`Revert to ${c.label} · ${c.sha}`}
                           </Button>
                         )}
                       </Stack>

@@ -6,7 +6,7 @@ import Iconify from "src/components/iconify";
 import { clickable, focusRing } from "../../components/clickable";
 import { RunTraceLog } from "../../components/RunTrace";
 import ImprovementProgress from "./ImprovementProgress";
-import { searchTrace, blockingVerdict, KIND_SURFACE, rejectedFor, compatFailed, staticFailed, diagnosisSummaryOf, paretoPool, goalWords, triedLabelOf } from "../../_mock/optimizer";
+import { searchTrace, blockingVerdict, KIND_SURFACE, rejectedFor, compatFailed, staticFailed, diagnosisSummaryOf, paretoPool, goalWords, triedLabelOf, noGainRunsOf } from "../../_mock/optimizer";
 import { heldSplitText, improverModelsText, staleSince, optimizationVerdict, OPTIMIZER_MODELS, OPT_STATUS, DEFAULT_LIMITS, improvementOutcome, improvementTotalSpend, issueLine, limitRows, searchSpend, judgeFor, ladderOf, improvementPhaseOf, TRACE_STEP_MS, statusOf, settlePending, reproduceStepsOf, reproduceMsOf } from "../../_mock/optimizationRuns";
 import { proofKindOf, fixDepthOf } from "../../_mock/rsiModel";
 import { membersChanged, proposalMembers, uncheckedChannelNotes } from "../../_mock/improvementPolicy";
@@ -126,7 +126,7 @@ export default function OptimizationRunView({
   /* One reading of the run: its ending, the plain-language verdict, the limits. */
   const outcome = improvementOutcome(record, { model: agentModel });
   const ending = outcome.ending.key;
-  const shippable = ending === "ready" || ending === "budget";
+  const shippable = ending === "ready" || ending === "stopped-early" || ending === "budget";
   /* Cautions the verdict sentence doesn't already carry (a large overfit gap,
      a held-out set that couldn't show a gain). */
   /* A fix that fixed its issue isn't cautioned for the rest of the suite
@@ -378,7 +378,7 @@ export default function OptimizationRunView({
               ? "stopped before searching"
               : suggestion
                 ? `${record.reproduce?.total ? `Reproduced on ${record.reproduce.reproduced || 0} of ${record.reproduce.total} scenarios` : `${result.trainMeasured + result.heldMeasured} scenarios measured`} · no change tried`
-                : `${record.stoppedAtBudget ? `${result.trials.length} of ${record.stoppedAtBudget.of}` : result.trials.length} runs × ${result.trainMeasured} target ${result.trainMeasured === 1 ? "scenario" : "scenarios"}${result.stoppedEarly && !running ? ` · stopped early, no gain in the last four` : ""}`}
+                : `${record.stoppedAtBudget ? `${result.trials.length} of ${record.stoppedAtBudget.of}` : result.stoppedEarly && !running ? `${result.trials.length} of up to ${result.stoppedEarly.of}` : result.trials.length} runs × ${result.trainMeasured} target ${result.trainMeasured === 1 ? "scenario" : "scenarios"}${result.stoppedEarly && !running ? (result.stoppedEarly.complete ? " · stopped once every failing target was fixed" : ` · stopped early, no gain in the last ${noGainRunsOf(result.stoppedEarly)}`) : ""}`}
           </Typography>
         </Box>
         {!running && result && <ReceiptButton record={record} outcome={outcome} attempts={attemptsNow} identity={identity} envSnapshot={frozenOn} />}
@@ -511,7 +511,7 @@ export default function OptimizationRunView({
             <Stack direction="row" alignItems="flex-start" spacing={1.25}>
               {/* A run someone chose is unproven until it's verified — no green check yet. */}
               <Iconify
-                icon={ending === "ready" && !(outcome.chosen && !outcome.chosen.verified) ? "solar:check-circle-bold" : ending === "budget" ? "solar:pause-circle-linear" : ending === "ready" ? "solar:clock-circle-linear" : "solar:close-circle-linear"}
+                icon={ending === "ready" && !(outcome.chosen && !outcome.chosen.verified) ? "solar:check-circle-bold" : ending === "budget" || ending === "stopped-early" ? "solar:pause-circle-linear" : ending === "ready" ? "solar:clock-circle-linear" : "solar:close-circle-linear"}
                 width={20}
                 sx={{ color: ending === "ready" && !(outcome.chosen && !outcome.chosen.verified) ? "#16A34A" : "text.secondary", flexShrink: 0, mt: "2px" }}
               />
@@ -728,6 +728,8 @@ export default function OptimizationRunView({
                           ? `You chose Run ${shipped?.n} over the search's pick. Only a passing verdict can mark a change verified, so it runs on the full suite — held-back and must-pass scenarios included — before it can be handed over.`
                           : ending === "budget"
                           ? `The best of a partial search — it stopped at the budget after ${record.stoppedAtBudget.trials} of ${record.stoppedAtBudget.of} runs. It passed every check; a bigger budget might find a better change. Nothing has been applied yet — it ships as a draft for someone to approve.`
+                          : ending === "stopped-early"
+                          ? `The best run, verified — the search stopped early after ${result.stoppedEarly.after} of up to ${result.stoppedEarly.of} runs, once ${noGainRunsOf(result.stoppedEarly)} in a row didn't beat it. It passed every check. Nothing has been applied yet — it ships as a draft for someone to approve.`
                           : "Nothing has been applied yet — it ships as a draft for someone to approve."}
               </Typography>
               {!verified && !lifecycle ? (
@@ -1277,7 +1279,7 @@ function ImprovementSteps({ record, fromRun, versionName = (l) => l, running, ph
   /* Stopped before searching: not reproduced, failed, nothing to improve, or over the budget. */
   const beforeSearch = !!outcome.beforeSearch;
   const stopped = notReproduced || ending === "failed" || ending === "nothing" || beforeSearch;
-  const finalIcon = { ready: "solar:check-circle-linear", budget: "solar:pause-circle-linear", "no-fix": "solar:close-circle-linear", failed: "solar:close-circle-linear", suggestion: "solar:lightbulb-linear", nothing: "solar:check-circle-linear" }[ending];
+  const finalIcon = { ready: "solar:check-circle-linear", budget: "solar:pause-circle-linear", "stopped-early": "solar:pause-circle-linear", "no-fix": "solar:close-circle-linear", failed: "solar:close-circle-linear", suggestion: "solar:lightbulb-linear", nothing: "solar:check-circle-linear" }[ending];
   /* While it runs, each step reads done, now or to do from the phase the
      trace has reached. */
   const ORDER = ["reproducing", "searching", "verifying"];
@@ -1306,6 +1308,7 @@ function ImprovementSteps({ record, fromRun, versionName = (l) => l, running, ph
     diag?.code ? `started from ${diag.code.edited ? "your edited diagnosis" : "the diagnosis"}` : null,
     diag?.surface ? `${diag?.code ? "" : "started from "}the smallest change that fits: ${diag.surface.label}` : null,
     record.stoppedAtBudget ? `${record.stoppedAtBudget.trials} of ${record.stoppedAtBudget.of} runs` : null,
+    !running && record.result?.stoppedEarly?.window && !record.result.stoppedEarly.complete ? `${record.result.stoppedEarly.after} of up to ${record.result.stoppedEarly.of} runs · no gain in the last ${noGainRunsOf(record.result.stoppedEarly)}` : null,
   ].filter(Boolean).join(" · ") || null;
   const suggestion = ending === "suggestion" || (running && record.fixDepth === "suggestion");
   const steps = suggestion ? [
@@ -1316,7 +1319,7 @@ function ImprovementSteps({ record, fromRun, versionName = (l) => l, running, ph
     { ...reproduced, state: notReproduced ? "fail" : running ? live("reproducing", "done") : "done" },
     { label: "Search", sub: searchSub, state: stopped ? "todo" : running ? live("searching", "now") : "done" },
     { label: "Verify", sub: !stopped && !running ? `${record.result?.finalists?.length || 1} ${record.result?.finalists?.length === 1 ? "finalist" : "finalists"} on held-back${record.result?.mustPassMeasured != null ? " and must-pass" : ""} + limits` : null, state: stopped || running ? (running ? live("verifying", "todo") : "todo") : "done" },
-    { label: running || (stopped && ending !== "nothing" && !beforeSearch) ? "Ready for review" : outcome.ending.label, state: running || (stopped && ending !== "nothing" && !beforeSearch) ? "todo" : ending === "ready" || ending === "nothing" ? "done" : ending === "budget" ? "partial" : "fail", icon: finalIcon },
+    { label: running || (stopped && ending !== "nothing" && !beforeSearch) ? "Ready for review" : outcome.ending.label, state: running || (stopped && ending !== "nothing" && !beforeSearch) ? "todo" : ending === "ready" || ending === "nothing" ? "done" : ending === "budget" || ending === "stopped-early" ? "partial" : "fail", icon: finalIcon },
     /* After review: where the shipped change is now. */
     ...(shipped ? [{ label: shipped.label, sub: shipped.detail || null, state: shipped.key === "reopened" ? "fail" : "done" }] : []),
   ].filter(Boolean);

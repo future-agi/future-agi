@@ -6,6 +6,7 @@
 */
 import { definitionOf, sourceKindOf } from "../_mock/agentRegistry";
 import { codeRefOf } from "../_mock/codeRefs";
+import { uploadDateOf, uploadNoteOf } from "../_mock/agentUpload";
 import { CHANNEL_LABELS, agentChannelsOf } from "../_mock/agentLifecycle";
 import { githubAccessLabel, githubAccessOf } from "../_mock/integrations";
 import { DIRECTIONS, codeRepoOf, contactNumbersOf, fagiPromptsOf, identityOf, languagesLabel, phoneLabelOf, reachOf, turnLimitLabel } from "./agentProfile";
@@ -14,6 +15,15 @@ import { configAreasFor } from "./configAreas";
 
 const CODE_KINDS = ["repo", "upload", "framework"];
 export const isCodeAgent = (agent) => CODE_KINDS.includes(sourceKindOf(agent));
+
+/**
+ * What kind of agent it is, as the Agents list's Type column says it: Code
+ * for an agent read from code (a repository, an upload or an SDK adapter),
+ * else the channels it serves — "Voice", "Chat", or "Voice · Chat".
+ */
+export const agentTypeLabelOf = (agent) => (isCodeAgent(agent)
+  ? "Code"
+  : agentChannelsOf(agent).map((c) => CHANNEL_LABELS[c] || c).join(" · "));
 
 /** Identity rows: name, owner, type, channels, languages, description. */
 export const identityRowsOf = (agent) => {
@@ -48,20 +58,33 @@ export const sourceRowsOf = ({ agent, source, definition, version }) => {
   if (CODE_KINDS.includes(kind)) {
     const repo = codeRepoOf(agent);
     if (kind === "upload") {
-      rows.push({ label: "Upload", value: d.bundle || agent.location || "Folder or archive", mono: true });
+      /* The bundle this version was read from — the newest upload at or before it. */
+      const at = (agent.versions || []).findIndex((x) => x.label === version?.label);
+      const own = [...(agent.versions || []).slice(0, at < 0 ? undefined : at + 1)].reverse().find((x) => x.bundle);
+      rows.push({ label: "Upload", value: own?.bundle || d.bundle || agent.location || "Folder or archive", mono: true });
     } else if (repo) {
       rows.push({ label: "Repository", value: repo.replace(/^https?:\/\//, ""), mono: true });
       rows.push({ label: "Branch", value: d.ref || definition?.ref || "main", mono: true });
       rows.push({ label: "Folder", value: agent.definition?.folder || v.folder || "Repository root", mono: true });
     }
     if (kind === "framework" && d.entry) rows.push({ label: "Entry point", value: d.entry, mono: true });
-    const c = commitPointerOf(agent, version);
-    rows.push({
-      label: "Commit",
-      value: c.message ? `${c.sha} · ${c.message}` : c.sha,
-      mono: true,
-      hint: "Git stays the source of truth — we keep a pointer to the commit and a snapshot of what we found, not a copy of the repository.",
-    });
+    /* An upload has no commit — its version is the upload it was read from. */
+    if (kind === "upload") {
+      rows.push({
+        label: "Version",
+        value: version ? `${version.label} · ${version.origin === "upload" ? uploadNoteOf(version) : `Uploaded ${uploadDateOf(version.createdAt || version.connectedAt)}`}` : "—",
+        mono: true,
+        hint: "Each new folder or .zip is saved as the next version — upload one from the top of this page.",
+      });
+    } else {
+      const c = commitPointerOf(agent, version);
+      rows.push({
+        label: "Commit",
+        value: c.message ? `${c.sha} · ${c.message}` : c.sha,
+        mono: true,
+        hint: "Git stays the source of truth — we keep a pointer to the commit and a snapshot of what we found, not a copy of the repository.",
+      });
+    }
     if (repo) {
       const access = githubAccessOf(repo);
       rows.push({ label: "Write access", value: access ? githubAccessLabel(access) : "None — the GitHub App can't see this repository" });

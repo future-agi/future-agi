@@ -3,6 +3,7 @@
   Written by Future AGI, never by the model proposing the changes.
 */
 import { heldSplitText, improverModelsText, judgeFor, markedNotCountedText, REPEATS } from "../../_mock/optimizationRuns";
+import { noGainRunsOf } from "../../_mock/optimizer";
 import { TIERS } from "../../_mock/improverAttempts";
 import { proofDisplay } from "./proofBlock";
 
@@ -25,7 +26,7 @@ export const receiptOf = (record, outcome, { attempts = [], identity = null, env
     ["Baseline measured", `${r.base}% on the target scenarios, ${r.heldBase}% held back · run-to-run noise ±${r.noise || 0} pts`],
     ...(stamped && r.calibration ? [["Run-to-run noise · baseline run twice", `Ran ${r.calibration.version || record.baseAgentVersion || "the current version"} twice: ${r.calibration.disagreed} of ${r.calibration.scenarios} scenarios disagreed, so a change on one of those counts only when it shows up on more than one repeat · noise ±${r.noise} pts`]] : []),
     ...(stamped && r.goal ? [["Targets", `${r.goalTargets} ${r.goalTargets === 1 ? "scenario falls" : "scenarios fall"} short of ${r.goal.id === "pass-rate" ? "the pass rate" : r.goal.label}${r.split?.kind === "goal" ? ` · ${r.split.thin ? "none held back — thin" : `${heldSplitText(r.split)} held back`}` : ""}`]] : []),
-    ["Runs proposed", `${r.trials.length} ${record.writerModel ? improverModelsText(record.model, record.writerModel) : `by ${proposer}`}${r.stoppedEarly ? ` · stopped after ${r.stoppedEarly.after} with no gain` : ""}`],
+    ["Runs proposed", `${r.trials.length} ${record.writerModel ? improverModelsText(record.model, record.writerModel) : `by ${proposer}`}${r.stoppedEarly ? ` · stopped ${r.stoppedEarly.complete ? "" : "early "}after ${r.stoppedEarly.after} of up to ${r.stoppedEarly.of} — ${r.stoppedEarly.complete ? "every failing target already fixed" : `no gain in the last ${noGainRunsOf(r.stoppedEarly)}`}` : ""}`],
     ["Runs judged", `by ${judgeFor(record.model)} — a different model family`],
     stamped
       ? ["Static checks", `model, protected parts, areas, settings in range, judges untouched${r.repoTests ? `, ${r.repoTests} on code changes` : ""} — every run · ${(() => { const n = r.trials.filter((t) => t.static && t.static.pass === false).length; return n ? `${n} stopped there` : "all passed"; })()}`]

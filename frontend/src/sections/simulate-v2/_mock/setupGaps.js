@@ -261,7 +261,7 @@ export const setupGaps = (env, envState) => {
       severity: "blocking",
       fixedBy: "action",
       area: "Agent",
-      title: "Allow test calls to your live agent",
+      title: "Let us call your live agent for tests",
       why: "We only have a URL for this agent, so it can't be copied. Simulator traffic drives your real agent and its real tools run — someone has to agree to that before the first run. Acknowledge it on the agent's connection; adding the webhook also lets us see its tool calls.",
       suggested: null,
       ask: href ? { type: "link", label: "Open the agent's connection", href } : { type: "link", label: "Open the Overview tab", to: "overview" },
@@ -276,7 +276,7 @@ export const setupGaps = (env, envState) => {
       severity: "blocking",
       fixedBy: "action",
       area: "Agent",
-      title: "Allow test calls",
+      title: "Let us call your agent for tests",
       why: "Tests call your real agent, so anything it does — like issuing a refund — really happens. Approve this once before the first run, and say whether its tools are safe to call or stubbed in tests.",
       suggested: null,
       ask: href ? { type: "link", label: "Open the agent's connections", href } : { type: "link", label: "Open the Overview tab", to: "overview" },
@@ -571,10 +571,10 @@ export const runReadiness = (envState, env = null) => {
   /* A disconnected or archived agent can't be run — the agent page says why. */
   const status = typeof agentStatusOf === "function" ? agentStatusOf(envState.agent) : null;
   if (status && status.status !== "connected") return { ready: false, step: "overview", href: agentHref, gap: "gap_agent_status", reason: `${status.label || "Not connected"}${status.reason ? ` — ${status.reason}` : ""}. Open the agent's Connections tab.` };
-  if (replicationOf(envState.agent)?.needsConsent) return { ready: false, step: "overview", href: agentHref, gap: "gap_endpoint_consent", reason: "Allow test calls to your live agent first — it's reached at a URL we can't copy, so a run drives the real one" };
+  if (replicationOf(envState.agent)?.needsConsent) return { ready: false, step: "overview", href: agentHref, gap: "gap_endpoint_consent", reason: "Let us call your live agent for tests first — it's reached at a URL we can't copy, so a run drives the real one" };
   /* A Live agent runs in the customer's account with real tools — every way
      to start a run (header, table row, Runs tab, run page) waits for consent. */
-  if (needsLiveConsent(envState.agent)) return { ready: false, step: "overview", href: agentHref, gap: "gap_live_consent", reason: "Allow test calls first — on the agent's Connections tab" };
+  if (needsLiveConsent(envState.agent)) return { ready: false, step: "overview", href: agentHref, gap: "gap_live_consent", reason: "Let us call your agent for tests first — on the agent's Connections tab" };
   const unsafe = unsafeLiveToolNames(envState);
   if (unsafe.length) return { ready: false, step: "world", gap: "gap_prod_risk", reason: `${unsafe[0]} is set to Live with no safe target — confirm one or lower its tier on the World tab` };
   if (!(envState.scenarios || []).length) return { ready: false, step: "scenarios", reason: "Add scenarios on the Scenarios tab" };

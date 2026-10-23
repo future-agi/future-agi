@@ -8,8 +8,9 @@ import { MONO, ago } from "./agentViewUtils";
 import { clickable, focusRing } from "../components/clickable";
 
 /**
- * Which state of a code agent you're looking at, picked the way Git names
- * it: a branch, then a commit on it. "main @ 3f9a2c1 · in production".
+ * Which version of a code agent you're looking at, picked the way Git names
+ * it: a branch, then a commit on it — each commit titled with its version
+ * number, like every agent's. "v5 · main @ 3f9a2c1 · in production".
  *
  * The release branch comes first; a fix waiting as a draft pull request is
  * its own branch (future-agi/fix-…) until it's merged. Commits list newest
@@ -25,7 +26,7 @@ export default function CommitPicker({ agent, value, production, onChange }) {
   const [query, setQuery] = useState("");
   const commits = useMemo(() => commitsOn(agent, branch), [agent, branch]);
   const q = query.trim().toLowerCase();
-  const shown = q ? commits.filter((c) => `${c.sha} ${c.message} ${c.author}`.toLowerCase().includes(q)) : commits;
+  const shown = q ? commits.filter((c) => `${c.label} ${c.sha} ${c.message} ${c.author}`.toLowerCase().includes(q)) : commits;
   const head = commits[0]?.label;
 
   const open = (e) => { setBranch(current?.branch || branches[0]?.name); setQuery(""); setAnchor(e.currentTarget); };
@@ -43,7 +44,7 @@ export default function CommitPicker({ agent, value, production, onChange }) {
         }}
       >
         <Iconify icon="solar:branching-paths-up-linear" width={14} sx={{ color: "text.secondary" }} />
-        <Box component="span" sx={{ fontFamily: MONO, fontWeight: 600 }}>{current ? `${current.branch} @ ${current.sha}` : value}</Box>
+        <Box component="span" sx={{ fontFamily: MONO, fontWeight: 600 }}>{current ? `${value} · ${current.branch} @ ${current.sha}` : value}</Box>
         {tagOf(value) && <Box component="span" sx={{ color: "text.subtitle" }}>{`· ${tagOf(value)}`}</Box>}
         {current?.draft && <Box component="span" sx={{ color: "text.subtitle" }}>· draft</Box>}
         <Iconify icon="solar:alt-arrow-down-linear" width={14} sx={{ color: "text.secondary" }} />
@@ -85,7 +86,7 @@ export default function CommitPicker({ agent, value, production, onChange }) {
               autoFocus fullWidth value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && shown.length === 1) pick(shown[0].label); }}
-              placeholder="Search commit message, hash or author"
+              placeholder="Search version, commit message, hash or author"
               inputProps={{ "aria-label": "Search commits", spellCheck: false }}
               sx={{ typography: "s2", "& input::placeholder": { color: "text.disabled", opacity: 1 } }}
             />
@@ -111,7 +112,10 @@ export default function CommitPicker({ agent, value, production, onChange }) {
                 <Iconify icon={on ? "solar:check-circle-bold" : "solar:circle-linear"} width={14} sx={{ mt: 0.375, color: on ? "text.primary" : "text.disabled", flexShrink: 0 }} />
                 <Box flex={1} minWidth={0}>
                   <Stack direction="row" alignItems="baseline" spacing={1}>
-                    <Typography sx={{ typography: "s2", fontFamily: MONO, fontWeight: 600, flexShrink: 0 }}>{c.sha}</Typography>
+                    <Typography sx={{ typography: "s2", fontFamily: MONO, fontWeight: 600, flexShrink: 0 }}>
+                      {c.label}
+                      <Box component="span" sx={{ fontWeight: 400, color: "text.secondary" }}>{` · ${c.sha}`}</Box>
+                    </Typography>
                     <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0 }}>{c.message}</Typography>
                   </Stack>
                   <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>

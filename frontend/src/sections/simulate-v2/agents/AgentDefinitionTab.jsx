@@ -26,9 +26,9 @@ export default function AgentDefinitionTab({
   const version = agent.versions.find((v) => v.label === label);
   const code = isCodeAgent(agent);
   const mcpServers = mcpServersOfAgent(agent);
-  /* A code agent's version reads as its commit: "main @ 3f9a2c1" here, the hash in the file tree. */
+  /* Every version reads vN; a code agent's carries its commit: "v5 · main @ 3f9a2c1" here, "v5 · 3f9a2c1" in the file tree. */
   const nameOf = (l) => versionNameOf(agent, l).main;
-  const shortOf = (l) => versionNameOf(agent, l).ref?.sha || l;
+  const shortOf = (l) => versionNameOf(agent, l).short || l;
   const config = configRowsOf({ agent, definition, source });
   /* "v12 · in production", "v13 · latest draft" — what each version is, in the picker. */
   const versionTagOf = (l) => {
@@ -69,7 +69,7 @@ export default function AgentDefinitionTab({
         <Rows
           rows={[
             ...sourceRowsOf({ agent, source, definition, version }),
-            ...(code ? [{ label: "Snapshot", value: snapshotLineOf({ definition, files }), hint: "The prompts, tools and models we found at that commit, kept with the version." }] : []),
+            ...(code ? [{ label: "Snapshot", value: snapshotLineOf({ definition, files }), hint: `The prompts, tools and models we found ${source.kind === "upload" ? "in that upload" : "at that commit"}, kept with the version.` }] : []),
           ]}
         />
       </Section>

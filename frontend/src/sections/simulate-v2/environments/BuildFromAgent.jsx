@@ -534,6 +534,14 @@ export default function BuildFromAgent() {
     const patch = {};
     if (scenarios?.length) patch.scenarios = scenarios;
     if (evalIds?.length) patch.evals = evalIds;
+    /* Parallel worlds picked in the Build dialog become the environment's
+       run setting — once; a later change in Settings isn't undone here. */
+    const worlds = Math.round(Number(source?.parallelWorlds));
+    const prevState = storeState.byEnv?.[confirmed.id];
+    if (worlds >= 1 && prevState?.parallelRuns === undefined && prevState?.runDefaults?.conversationsAtOnce == null) {
+      patch.parallelRuns = worlds > 1;
+      patch.runDefaults = { ...(prevState?.runDefaults || {}), conversationsAtOnce: worlds > 1 ? worlds : 1 };
+    }
     if (Object.keys(patch).length) {
       dispatch({ type: "patchEnvState", envId: confirmed.id, patch });
     }

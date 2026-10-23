@@ -196,7 +196,7 @@ export function LiveConsentCard({ agent, env, onSave, bare = false, oneLine = fa
       <>
         <Stack direction="row" alignItems="flex-start" spacing={2} sx={{ px: 2.5, pt: 2, pb: 1.5 }}>
           <Box flex={1} minWidth={0}>
-            <Typography sx={{ typography: "m2", fontWeight: 700 }}>Allow test calls</Typography>
+            <Typography sx={{ typography: "m2", fontWeight: 700 }}>Let us call your agent for tests</Typography>
             <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.5 }}>
               {lead}
               <InfoTip text={`${proof.label} proof — ${proof.note}`} />

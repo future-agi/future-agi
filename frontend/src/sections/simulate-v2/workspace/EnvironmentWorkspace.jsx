@@ -1057,7 +1057,8 @@ export default function EnvironmentWorkspace() {
             : groupWith.length
               ? `Run in ${groupWith.length + 1} environments`
               : partial
-                ? (wide ? `Run anyway · ${sitOut} scenario${sitOut === 1 ? " sits" : "s sit"} out` : "Run anyway")
+                /* The action, with the real count; who sits out is the caption beside it. */
+                ? (wide ? `Run ${meteredScenarios} scenario${meteredScenarios === 1 ? "" : "s"}` : `Run ${meteredScenarios}`)
                 : "Run simulation";
           const gapTip = !runEnabled
             ? runBlockedReason
@@ -1131,6 +1132,17 @@ export default function EnvironmentWorkspace() {
                 scenarioCount={meteredScenarios}
                 unit={env.surface === "voice" ? "call" : "conversation"}
               />
+              {/* Who the run leaves out — secondary to the action, and the way to them. */}
+              {partial && !selectedCount && !groupWith.length && !usageRefusal && (
+                <Tooltip arrow title={gapTip}>
+                  <Typography
+                    {...clickable(() => setInbox({ open: true, focus: null }), { role: "link" })}
+                    sx={{ ...focusRing, typography: "s3", color: "text.subtitle", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums", cursor: "pointer", "&:hover": { color: "text.primary", textDecoration: "underline" } }}
+                  >
+                    {`${sitOut} sit${sitOut === 1 ? "s" : ""} out`}
+                  </Typography>
+                </Tooltip>
+              )}
               {/* Refused at the pre-check: the standard limit message, at the button. */}
               {runEnabled && usageRefusal && (
                 <Typography sx={{ typography: "s3", color: "#DC2626", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>

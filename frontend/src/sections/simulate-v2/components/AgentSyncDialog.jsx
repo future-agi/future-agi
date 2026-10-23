@@ -1,10 +1,11 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Box, Button, CircularProgress, Dialog, IconButton, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { agentSourceOf, envAgentKey, syncCheck, syncedVersion } from "../_mock/agentRegistry";
+import { bundleNameOf, uploadCheck, uploadedVersion } from "../_mock/agentUpload";
 import { getEnvironment } from "../_mock/environments";
 import { worldTouchOf } from "../_mock/specChange";
 import { worldToolsFor } from "../_mock/toolFit";
@@ -30,12 +31,21 @@ const CHANGE_ICON = {
  *
  *   checking → up to date
  *            → changes found → save → saved: "2 nudges waiting in …"
+ *
+ * An agent connected by upload has nothing to re-read, so the same flow
+ * starts by taking the new folder or .zip ("Upload new version"):
+ *
+ *   pick → reading the code → what changed since the last upload → Save as vN
  */
 export default function AgentSyncDialog({
   open, onClose, agent, versions, env, baseTools, onSave, runningLabel, onRunHere, usedInCount = 0, onOpenEnvironments,
 }) {
   const source = useMemo(() => agentSourceOf(agent), [agent]);
-  const [phase, setPhase] = useState("checking");
+  const upload = source.kind === "upload";
+  const [phase, setPhase] = useState(upload ? "pick" : "checking");
+  const [files, setFiles] = useState([]);
+  const bundle = bundleNameOf(files);
+  const timers = useRef([]);
   const [step, setStep] = useState(0);
   const [result, setResult] = useState(null);
   const [saved, setSaved] = useState(null);
@@ -53,28 +63,45 @@ export default function AgentSyncDialog({
       : [env].filter(Boolean);
   }, [agent, env, state.myEnvironments, state.byEnv]);
 
-  const steps = [
+  const last = versions[versions.length - 1]?.label || "v1";
+  const steps = upload ? [
+    `Unpacking ${bundle || "the upload"}`,
+    "Reading the code — prompts, tools and model",
+    `Comparing with ${last}`,
+  ] : [
     source.kind === "framework" ? `Connecting to the ${source.label} adapter` : `Connecting to ${source.label}`,
     source.kind === "repo" ? "Reading the latest commit" : source.kind === "mcp" ? "Reading the tool manifest"
       : source.kind === "framework" ? "Asking the adapter to describe the agent" : "Reading the agent's config",
-    `Comparing with ${versions[versions.length - 1]?.label || "v1"}`,
+    `Comparing with ${last}`,
   ];
 
-  useEffect(() => {
-    if (!open) return undefined;
+  const clearTimers = () => { timers.current.forEach(clearTimeout); timers.current = []; };
+  /* Read the source — or, for an upload, the folder or .zip just picked. */
+  const read = () => {
+    clearTimers();
     setPhase("checking");
     setStep(0);
     setSaved(null);
-    const timers = [
+    timers.current = [
       setTimeout(() => setStep(1), 450),
       setTimeout(() => setStep(2), 900),
       setTimeout(() => {
-        const r = syncCheck({ agent, versions, env });
+        const r = upload ? uploadCheck({ agent, versions, env, bundle }) : syncCheck({ agent, versions, env });
         setResult(r);
         setPhase(r.upToDate ? "upToDate" : "changes");
       }, 1350),
     ];
-    return () => timers.forEach(clearTimeout);
+  };
+
+  useEffect(() => {
+    if (!open) return undefined;
+    if (upload) {
+      clearTimers();
+      setFiles([]);
+      setSaved(null);
+      setPhase("pick");
+    } else read();
+    return clearTimers;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -87,7 +114,7 @@ export default function AgentSyncDialog({
   const world = phase === "changes" ? worldTouchOf(result, source) : null;
 
   const save = (switchHere = inEnvironment) => {
-    const version = syncedVersion({ result, baseTools });
+    const version = upload ? uploadedVersion({ result, baseTools }) : syncedVersion({ result, baseTools });
     onSave?.(version);
     /* After the save lands: the new version follows production here; staying
        pins the version it tests now. */
@@ -130,15 +157,17 @@ export default function AgentSyncDialog({
           </Box>
           <Box flex={1} minWidth={0}>
             <Typography sx={{ typography: "m3", fontWeight: 700 }}>
-              {phase === "checking" && `Syncing from ${source.label}`}
+              {phase === "pick" && "Upload new version"}
+              {phase === "checking" && (upload ? `Reading ${bundle}` : `Syncing from ${source.label}`)}
               {phase === "upToDate" && `Up to date with ${result?.latest}`}
-              {phase === "changes" && `${result.changes.length} change${result.changes.length === 1 ? "" : "s"} since ${result.basedOn}`}
+              {phase === "changes" && `${result.changes.length} change${result.changes.length === 1 ? "" : "s"} since ${upload ? `the last upload (${result.basedOn})` : result.basedOn}`}
               {phase === "saved" && `Saved agent ${saved.version.label}`}
             </Typography>
             <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 0.25 }}>
-              {phase === "checking" && "Checking the source for anything that changed since the last version."}
+              {phase === "pick" && `Drop the agent's new folder or .zip. We read it the way we read the first upload and show what changed since ${last}.`}
+              {phase === "checking" && (upload ? `Reading the code and comparing it with ${last}.` : "Checking the source for anything that changed since the last version.")}
               {phase === "upToDate" && `Nothing changed in ${source.label} since ${result?.latest} was saved.`}
-              {phase === "changes" && `Saving creates agent ${result.label} only; ${result.basedOn} stays as it was. The environment and its scenarios stay as they are — we'll list anything that no longer fits.`}
+              {phase === "changes" && `${upload ? `Read from ${result.bundle}. ` : ""}Saving creates agent ${result.label} only; ${result.basedOn} stays as it was. The environment and its scenarios stay as they are — we'll list anything that no longer fits.`}
               {phase === "saved" && (saved.switched
                 ? `This environment's default is production, so it tests ${saved.version.label} from the next run. The environment and scenarios didn't change.`
                 : inEnvironment
@@ -154,6 +183,36 @@ export default function AgentSyncDialog({
             </IconButton>
           )}
         </Stack>
+
+        {phase === "pick" && (
+          <Box
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => { e.preventDefault(); if (e.dataTransfer?.files?.length) setFiles([...e.dataTransfer.files]); }}
+            sx={{
+              border: "1px dashed",
+              borderColor: (th) => (th.palette.mode === "dark" ? alpha(th.palette.text.primary, 0.25) : th.palette.divider),
+              borderRadius: 1.25, bgcolor: (th) => alpha(th.palette.text.primary, 0.02), p: 2.5, textAlign: "center",
+            }}
+          >
+            <Iconify icon="solar:cloud-upload-linear" width={24} sx={{ color: "text.subtitle" }} />
+            <Typography sx={{ typography: "s2", fontWeight: 600, mt: 0.75, fontFamily: bundle ? "ui-monospace, Menlo, monospace" : undefined }}>
+              {bundle || "Drop a folder or .zip"}
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
+              {bundle ? `${files.length} file${files.length === 1 ? "" : "s"} · replaces ${source.where}` : `Up to 200 MB · replaces ${source.where}`}
+            </Typography>
+            <Stack direction="row" spacing={1} justifyContent="center" sx={{ mt: 1.25 }}>
+              <Button component="label" size="small" variant="outlined" sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}>
+                Choose folder
+                <input hidden type="file" webkitdirectory="" onChange={(e) => { if (e.target.files?.length) setFiles([...e.target.files]); e.target.value = ""; }} />
+              </Button>
+              <Button component="label" size="small" variant="outlined" sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}>
+                Choose .zip
+                <input hidden type="file" accept=".zip,application/zip" onChange={(e) => { if (e.target.files?.length) setFiles([...e.target.files]); e.target.value = ""; }} />
+              </Button>
+            </Stack>
+          </Box>
+        )}
 
         {phase === "checking" && (
           <Stack spacing={1} sx={{ p: 2, borderRadius: 1.25, border: "1px solid", borderColor: "divider", bgcolor: "background.neutral" }}>
@@ -235,6 +294,14 @@ export default function AgentSyncDialog({
 
         {phase !== "checking" && (
           <Stack direction="row" justifyContent="flex-end" spacing={1} sx={{ mt: 2.5 }}>
+            {phase === "pick" && (
+              <>
+                <Button size="small" onClick={onClose} sx={{ typography: "s2", fontWeight: 700, color: "text.secondary" }}>Cancel</Button>
+                <Button variant="contained" color="primary" size="small" disabled={!files.length} onClick={read} sx={{ typography: "s2", fontWeight: 700 }}>
+                  Read the code
+                </Button>
+              </>
+            )}
             {/* Saved from the agent page: following environments already test
                 it — this is where to see which, and move a pinned one. */}
             {phase === "saved" && !inEnvironment && usedInCount > 0 && onOpenEnvironments && (

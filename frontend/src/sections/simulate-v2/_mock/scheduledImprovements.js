@@ -173,7 +173,8 @@ export const runScheduler = (state, commit, now = Date.now()) => {
     (es.optimizations || []).forEach((record) => {
       /* Only runs the scheduler itself started (`scheduledFor`) draft on their own. */
       if (record.trigger?.kind !== "schedule" || !record.trigger.scheduledFor || record.trigger.autonomy !== "drafts" || record.autoDraft) return;
-      if (record.status !== OPT_STATUS.COMPLETED || improvementOutcome(record).ending.key !== "ready") return;
+      /* A verified winner drafts whether the search used every run or stopped early. */
+      if (record.status !== OPT_STATUS.COMPLETED || !["ready", "stopped-early"].includes(improvementOutcome(record).ending.key)) return;
       const shipped = cur.handoffDrafts?.[record.id] || cur.handoffLandings?.[record.id]
         || prs.some((p) => (p.handoffKey || p.meta?.handoffKey) === record.id && p.status !== "closed");
       if (shipped) return;

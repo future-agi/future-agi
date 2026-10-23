@@ -20,7 +20,7 @@ import { agentVersions, currentAgentVersion, productionAgentVersion } from "../.
 import { improverModelsText, limitRows, optimizationId, OPTIMIZER_MODELS, SAME_AS_PLANNER } from "../../_mock/optimizationRuns";
 import { OPTIMIZERS, goalWords, improvementRunName } from "../../_mock/optimizer";
 import {
-  baseRunOf, budgetsWithin, envMustPassOf, envStateOnVersion, improvementEstimate, outcomeMetricsOf, planSearch, runBaseOf, todayConversations,
+  baseRunOf, budgetsWithin, envMustPassOf, envStateOnVersion, improvementEstimate, outcomeMetricsOf, planSearch, runBaseOf, stopEarlyNote, todayConversations,
 } from "../../_mock/improvementStart";
 import { markedNotCountedLine } from "../../_mock/mustPass";
 import { envVersionNameOf } from "../../_mock/codeRefs";
@@ -31,7 +31,7 @@ import { DEFAULT_METHOD, methodLabelOf } from "./improvementView";
 import { limitsOf } from "../../agents/agentLimits";
 import { rereadFor, textSearchDefault } from "../../_mock/improvementPolicy";
 import { recordOutsideChange } from "../../_mock/nudgeEffects";
-import { creditsForUsd, creditsLabel } from "../../_mock/metering";
+import { creditsLabel } from "../../_mock/metering";
 
 /* Selected reads in white, as the product's other choices do — purple is for actions, not state. */
 const selectedBg = (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05);
@@ -277,7 +277,8 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
   /* Every constraint the search is held to, the time cap and must-pass
      included; the budget has its own picker above. */
   const constraints = limitRows(limits, agentModel, { mustPass: mustPassAll }).filter((c) => c.id !== "budget").map((c) => `${c.label}: ${c.value}`).join(" · ");
-  const trials = preview?.trials?.length || 0;
+  /* The most runs it can use — it stops early once runs stop gaining. */
+  const trials = estimate.runs || 0;
   const ready = !!(agent && main && searchTasks && !blocked && !nothing && name.trim());
 
   const start = () => {
@@ -480,7 +481,7 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
             <Typography sx={{ typography: "s3", color: nothing || overBudget ? "text.primary" : "text.subtitle", mt: 0.75 }}>
               {nothing
                 ? `Nothing to improve — every scenario already meets ${goalWords(goalOf)}. Pick another goal.`
-                : `${preview?.goal ? `Targets the ${preview.goalTargets} ${preview.goalTargets === 1 ? "scenario" : "scenarios"} short of it. ` : ""}${overBudget ? "Likely to stop at the budget — you'll get the best it found by then." : "If it runs over, it stops at the budget with the best it found."}`}
+                : `${preview?.goal ? `Targets the ${preview.goalTargets} ${preview.goalTargets === 1 ? "scenario" : "scenarios"} short of it. ` : ""}${overBudget ? `May reach the budget before all ${trials} runs — you'll get the best it found by then.` : "If it runs over, it stops at the budget with the best it found."}`}
             </Typography>
           </Box>
         )}
@@ -544,8 +545,8 @@ export default function ImprovementSetup({ open, onClose, preset, tasks, include
               />
               <Row
                 label="Cost"
-                value={`Likely ${creditsLabel(estimate.likely)} · between ${creditsForUsd(estimate.low).toLocaleString()} and ${creditsForUsd(estimate.high).toLocaleString()} · about ${estimate.minutes} min`}
-                note={`${trials} runs × ${train} target scenarios, then the finalists on held-back and must-pass. ${inText ? "Runs as text conversations; only the finalists are confirmed as real calls." : "A run is a full pass through the real tools, not a dataset lookup."}`}
+                value={`Up to ${creditsLabel(estimate.likely)} · ${estimate.minutes} min`}
+                note={`Up to ${trials} runs × ${train} target scenarios, then the finalists on held-back and must-pass. ${stopEarlyNote()} ${inText ? "Runs as text conversations; only the finalists are confirmed as real calls." : "A run is a full pass through the real tools, not a dataset lookup."}`}
               />
               <Row
                 label="Limits"

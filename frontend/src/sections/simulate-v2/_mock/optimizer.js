@@ -714,6 +714,33 @@ const unsettled = (key) => {
 export const FINALISTS = 3;
 
 /*
+  Stopping early (new improvements): once this many runs in a row don't beat
+  the best so far on the target scenarios, the search stops and the best
+  goes straight to verifying. The planned run count is a maximum. Older
+  records keep the rule they were searched with — four in a row, after six.
+*/
+export const NO_GAIN_RUNS = 2;
+/*
+  Most searches keep finding gains — a directed search builds on the best
+  so far, so a run that follows one with no gain usually lands. About one in
+  five plateaus instead (fixed per improvement, by its seed), and the stop
+  rule fires there. The Clinic line's agent is already near its ceiling: its
+  searches always plateau.
+*/
+const PLATEAU_SHARE = 5;
+const PLATEAU_ENVS = new Set(["env-clinic-line"]);
+export const plateausFor = (seed, envId) => PLATEAU_ENVS.has(envId) || hashSeed(`${seed}:plateau`) % PLATEAU_SHARE === 0;
+const LEGACY_NO_GAIN = { runs: 4, after: 6 };
+/* How many runs a search could have used — the planned count, before any early stop. */
+export const maxRunsOf = (result) => result?.stoppedEarly?.of || (result?.trials || []).length;
+/* A stop on runs that stopped gaining while there was still something to
+   gain — the "Stopped early" ending. Null for older records and for a
+   search that stopped because every failing target was already fixed. */
+export const plateauStopOf = (result) => (result?.stoppedEarly?.window && !result.stoppedEarly.complete ? result.stoppedEarly : null);
+/* The rule a stop was made under — its own window, or the older four. */
+export const noGainRunsOf = (stoppedEarly) => stoppedEarly?.window || LEGACY_NO_GAIN.runs;
+
+/*
   A must-pass failure counts only when it repeats on a re-run — one bad run
   isn't a regression. Decided by hash on the trial and the scenario, never
   from the search's stream.
@@ -960,8 +987,10 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
   const noisyIds = new Set(calibration?.noisyIds || []);
 
   const trials = [];
-  let best = { score: base, picks: [], issueFixed: 0 };
+  let best = { score: base, picks: [], issueFixed: 0, per: null };
   let stoppedEarly = null;
+  /* New improvements only: does this search plateau (see plateausFor)? */
+  const plateau = rsi ? plateausFor(seed, env?.id) : true;
 
   for (let n = 1; n <= count; n += 1) {
     /*
@@ -1072,7 +1101,7 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       mustPassFails.length = 0;
     }
     /* Disqualified only when a must-pass failure repeats on a re-run. */
-    const brokeBlocker = mustPassFails.some((f) => f.repeated);
+    let brokeBlocker = mustPassFails.some((f) => f.repeated);
     /* Held to the agent's cost and latency ceilings as it runs (new
        improvements): a candidate over one is dropped, not crowned. */
     /* A fix that turns failing conversations into passing ones also makes
@@ -1083,11 +1112,50 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     const costSavings = failingBefore ? Math.round((COST_SAVED_IF_ALL_FIXED * fixedNow) / failingBefore * 10) / 10 : 0;
     const overLimit = limitGate && fits && candidate.length ? limitGate(candidate, costSavings) : null;
 
-    const score = fits ? scoreOf(trainMeasured, perScenario) : base;
-    const issueFixed = issueTargets.filter((t) => perScenario[t.id] === "fixed").length;
-    const improved = fits && !overLimit && (cfg.issue
-      ? !brokeBlocker && (issueFixed > best.issueFixed || (issueFixed === best.issueFixed && score > best.score))
+    /* A search that plateaus never fixes every failing target — something
+       is always left that no run can reach. */
+    if (rsi && plateau && fits) {
+      const failing = trainMeasured.filter((t) => passShareOf(t) < 1 && perScenario[t.id] !== "off-script");
+      if (failing.length && failing.every((t) => perScenario[t.id] === "fixed")) perScenario[failing[failing.length - 1].id] = "still-failing";
+    }
+    let score = fits ? scoreOf(trainMeasured, perScenario) : base;
+    let issueFixed = issueTargets.filter((t) => perScenario[t.id] === "fixed").length;
+    const beatsBest = () => fits && !overLimit && (cfg.issue
+      ? !mustPassFails.some((f) => f.repeated) && (issueFixed > best.issueFixed || (issueFixed === best.issueFixed && score > best.score))
       : score > best.score);
+    let improved = beatsBest();
+    /*
+      A search that doesn't plateau builds on the best so far after a run
+      with no gain: what the best fixed stays fixed, nothing it adds breaks,
+      and one more failing scenario — the focus first — is fixed. Applied
+      only where the run could count (it fits and is within the limits).
+    */
+    const prev = trials[trials.length - 1];
+    if (!plateau && !improved && prev && !prev.improved && fits && !overLimit) {
+      const was = best.per || {};
+      trainMeasured.forEach((t) => {
+        if (was[t.id] === "fixed") perScenario[t.id] = "fixed";
+        else if (perScenario[t.id] === "broke") perScenario[t.id] = "same";
+      });
+      const open = (t) => passShareOf(t) < 1 && perScenario[t.id] !== "fixed" && perScenario[t.id] !== "off-script";
+      const next = trainMeasured.find((t) => open(t) && (cfg.issue ? issueTargets.includes(t) : focus.has(t.id))) || trainMeasured.find(open);
+      if (next) perScenario[next.id] = "fixed";
+      mustPassFails.length = 0;
+      brokeBlocker = false;
+      score = scoreOf(trainMeasured, perScenario);
+      issueFixed = issueTargets.filter((t) => perScenario[t.id] === "fixed").length;
+      improved = beatsBest();
+    }
+    /* A search that plateaus keeps its first gain and finds nothing past
+       it: what a later run fixes beyond the best doesn't hold. */
+    if (rsi && plateau && improved && best.per) {
+      trainMeasured.forEach((t) => {
+        if (perScenario[t.id] === "fixed" && best.per[t.id] !== "fixed") perScenario[t.id] = "still-failing";
+      });
+      score = scoreOf(trainMeasured, perScenario);
+      issueFixed = issueTargets.filter((t) => perScenario[t.id] === "fixed").length;
+      improved = beatsBest();
+    }
     const added = candidate.filter((p) => !best.picks.includes(p.id))[0];
     const revised = added?.feedback ? added : null;
     /* The repository's tests, on any candidate that changes code. */
@@ -1127,12 +1195,17 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       /* An Error Feed fix is judged on its issue too — shown, not searched on. */
       ...(!cfg.issue && issueFix && feedTargets.length ? { issueFixed: feedTargets.filter((t) => perScenario[t.id] === "fixed").length, issueTargets: feedTargets.length } : {}),
     });
-    if (improved) best = { score, picks, issueFixed };
-    /* Stop after rounds with no gain — four trials in a row that don't beat
-       the incumbent, once the search has had six to find its footing. */
+    if (improved) best = { score, picks, issueFixed, per: { ...perScenario } };
+    /* Stop after runs with no gain: two in a row that don't beat the best so
+       far on the target scenarios (new improvements); older records, four in
+       a row once the search has had six to find its footing. */
     const sinceGain = trials.length - 1 - trials.map((t) => t.improved).lastIndexOf(true);
-    if (n >= 6 && n < count && sinceGain >= 4) {
-      stoppedEarly = { after: n, of: count };
+    const noGain = rsi ? NO_GAIN_RUNS : LEGACY_NO_GAIN.runs;
+    if (n >= (rsi ? NO_GAIN_RUNS : LEGACY_NO_GAIN.after) && n < count && sinceGain >= noGain) {
+      /* With every failing target already fixed there was nothing left to
+         gain: the search is done, not stalled (`complete`). */
+      const headroom = trainMeasured.some((t) => passShareOf(t) < 1 && best.per?.[t.id] !== "fixed" && best.per?.[t.id] !== "off-script");
+      stoppedEarly = { after: n, of: count, ...(rsi && { window: noGain }), ...(rsi && !headroom && { complete: true }) };
       break;
     }
   }
@@ -1688,6 +1761,9 @@ export const searchTrace = (result, record = null) => {
         ...trials.map(
           (t) => `run ${t.n} — ${staticFailed(t) ? "not run" : `${t.score}%`} ${t.improved ? "· new best" : "· no better"} · ${triedLabelOf(t, trials)}${rejectedFor(t) ? ` · rejected, ${rejectedFor(t)}` : ""}${t.repoTests?.pass ? ` · ${t.repoTests.command} passed` : ""}`,
         ),
+        ...(result.stoppedEarly?.window ? [result.stoppedEarly.complete
+          ? `stopped after ${result.stoppedEarly.after} of up to ${result.stoppedEarly.of} runs — the best already fixes every failing target, nothing left to gain`
+          : `stopped early after ${result.stoppedEarly.after} of up to ${result.stoppedEarly.of} runs — no gain in the last ${result.stoppedEarly.window}, so the best goes straight to verifying`] : []),
       ],
     },
     {

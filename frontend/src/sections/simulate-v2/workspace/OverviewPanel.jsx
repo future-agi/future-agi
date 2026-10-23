@@ -487,7 +487,7 @@ Fact.propTypes = { label: PropTypes.string, value: PropTypes.node, color: PropTy
    new agent version against the existing world as-is (scenarios are shared
    across agent versions, so nothing forces a refresh). */
 function AgentRefreshBanner({ env, envState, patch }) {
-  return <ToolFitBanner env={env} envState={envState} patch={patch} sx={{ mt: -0.5, mb: 2 }} />;
+  return <ToolFitBanner env={env} envState={envState} patch={patch} sx={{ mt: -0.5, mb: 2 }} deferToCard />;
 }
 AgentRefreshBanner.propTypes = { env: PropTypes.object, envState: PropTypes.object, patch: PropTypes.func };
 

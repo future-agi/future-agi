@@ -388,8 +388,14 @@ export const agentRecordFromSource = (source, now = new Date().toISOString()) =>
       values: {
         phoneNumber: number,
         ...(source.countryCode && { countryCode: source.countryCode }),
-        callDirection: "inbound",
-        contact: { mode: "phone-only", number, ...(source.countryCode && { countryCode: source.countryCode }) },
+        /* Inbound: we call its number. Outbound: it calls our test number. */
+        callDirection: source.callDirection === "outbound" ? "outbound" : "inbound",
+        contact: {
+          mode: "phone-only", number, ...(source.countryCode && { countryCode: source.countryCode }),
+          inboundCalls: source.callDirection !== "outbound",
+          ...(typeof source.agentSpeaksFirst === "boolean" && { agentSpeaksFirst: source.agentSpeaksFirst }),
+          ...(source.testNumber && { testNumber: source.testNumber }),
+        },
         ...(source.closedPlatform && { closedPlatform: source.closedPlatform }),
       },
       definition: source.systemPrompt ? { kind: "prompt", prompt: source.systemPrompt } : { kind: "none" },
@@ -528,6 +534,8 @@ export const agentRecordFromSource = (source, now = new Date().toISOString()) =>
     ...(source?.envValues?.length && { envValues: source.envValues.map((e) => (e.secret ? { name: e.name, secret: true, ref: e.ref } : { name: e.name, value: e.value })) }),
     /* A repository given by its link: who can read it, and how. */
     ...(source?.repoVisibility && { repoVisibility: source.repoVisibility }),
+    /* A private repository read without the GitHub App: the access token or deploy key, by reference. */
+    ...(source?.repoAccess?.ref && { repoAccess: { kind: source.repoAccess.kind || "token", ref: source.repoAccess.ref } }),
     ...(source?.credentialFiles?.length && { credentialFiles: source.credentialFiles.map((f) => ({ name: f.name, ref: f.ref })) }),
     /* Public hosts the sandbox may reach while it runs; everything else is firewalled. */
     ...(source?.allowedEgressDomains?.length && { allowedEgressDomains: source.allowedEgressDomains }),
@@ -1067,7 +1075,7 @@ export const syncCheck = ({ agent, versions, env }) => {
    the source yet, so a sync never inherits its unmerged change. */
 const readBaseOf = (versions) => [...versions].reverse().find((v) => v.status !== "draft" && !v.pendingDraft) || versions[versions.length - 1];
 
-const changesSince = ({ agent, versions, env, source }) => {
+export const changesSince = ({ agent, versions, env, source }) => {
   const latest = readBaseOf(versions);
   const n = Math.max(0, ...versions.map((v) => majorOf(v.label))) + 1;
   const seed = hash(`${agentKeyOf(agent)}:${n}`);

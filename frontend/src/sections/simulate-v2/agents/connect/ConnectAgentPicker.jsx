@@ -13,13 +13,14 @@ import { ConnectModeContext, InDrawerContext } from "../../environments/connectM
 import { FlowPanel } from "../../environments/StartEnvironment";
 import ConnectCatalog from "./ConnectCatalog";
 import SetupDrawer from "../../environments/SetupDrawer";
-import { detectAgentPaste, newAgentChoicesFor } from "./agentConnectData";
+import { newAgentChoicesFor } from "./agentConnectData";
 import HostedAgentFlow from "./HostedAgentFlow";
 import RepoAgentFlow from "./RepoAgentFlow";
 import BuiltinAgentFlow from "./BuiltinAgentFlow";
 import FrameworkAgentFlow from "./FrameworkAgentFlow";
 import ClosedPlatformFlow from "./ClosedPlatformFlow";
-import TracesAgentFlow from "./TracesAgentFlow";
+import PhoneAgentFlow from "./PhoneAgentFlow";
+import UploadAgentFlow from "./UploadAgentFlow";
 import { CLOSED_WAY, CONNECT_KINDS, MORE_WAYS } from "./connectKinds";
 import { CONNECT_LABEL, ConnectBuildContext, DEFAULT_BUILD_SCENARIOS, useConnectSubmitLabel } from "./connectSubmit";
 
@@ -53,9 +54,8 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
   /* Which framework the adapter flow opens on — picked on the Framework row. */
   const [framework, setFramework] = useState("langgraph");
   const [limits, setLimits] = useState(DEFAULT_LIMITS);
-  /* An endpoint or an upload uses the environment builder's own panel; its
-     Connect saves the agent straight away. An upload is built in our hosted
-     sandbox — your own machine is Coming soon. */
+  /* An agent endpoint uses the environment builder's own panel; its
+     Connect saves the agent straight away. */
   const [name, setName] = useState("");
   const [runtime, setRuntime] = useState({ endpoint: "", tokenRef: "", location: "hosted" });
   const panelRef = useRef(null);
@@ -81,22 +81,23 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
   const save = useCallback((raw) => {
     const { flowReach, ...source } = raw;
     const agentName = agentRecordFromSource(source).name;
-    /* Vapi, Retell and Bland agents are linked through their key (call
-       logs); an issue's project comes with any agent. Anything else is
-       chosen on the agent's page, in Finish setting up — never guessed here. */
-    /* Read from traces: the project they land in is the one — settled. */
-    const observeProject = (source.kind === "traces" && source.observeProject)
-      || (source.kind === "platform" && observeChoiceOf({ ...source, name: agentName }, prefill?.project))
+    /* A hosted agent with observability on brings its project (its calls are
+       pulled with the same key); an issue's project comes with any agent.
+       Anything else is chosen on the agent's page, in Next steps — never
+       guessed here. */
+    const observeProject = (source.kind === "platform" && observeChoiceOf({ ...source, name: agentName }, prefill?.project))
       || (observe || prefill?.project ? resolveObserve(observe, prefill?.project, agentName) : null);
+    /* Pulled with the platform key: nothing to wait for, so it's settled now. */
+    const pulled = source.kind === "platform" && !!source.observability && !!observeProject;
     const full = {
       ...source,
       ...profileSourceOf(profile, { defaultChannel: source.agentType === "voice" ? "voice" : "chat", owner: currentUser().name, flowReach }),
       ...(observeProject && { observeProject }),
       ...(buildMode && { scenarioCount: Number(source.scenarioCount || scenarioCount) || DEFAULT_BUILD_SCENARIOS }),
       /* Connected from an issue: its project is the one — settled, not a suggestion. */
-      ...(((prefill?.project && observeProject?.id === prefill.project) || source.kind === "traces") && { observeChosenAt: new Date().toISOString() }),
-      /* A project created here has no traces yet — it settles with the first one. */
-      ...(observeProject?.mode === "create" && source.kind !== "traces" && !(prefill?.project && observeProject.id === prefill.project)
+      ...(((prefill?.project && observeProject?.id === prefill.project) || pulled) && { observeChosenAt: new Date().toISOString() }),
+      /* A project created here for code has no traces yet — it settles with the first one. */
+      ...(observeProject?.mode === "create" && !pulled && !(prefill?.project && observeProject.id === prefill.project)
         && { observePending: { project: observeProject.id, since: new Date().toISOString(), via: "manual" } }),
     };
     const agentKey = agentRecordFromSource(full).key;
@@ -126,41 +127,31 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
     onConnect(full);
   }, [buildMode, commit, enqueueSnackbar, limits, onConnect, observe, prefill?.project, profile, scenarioCount, state]);
 
-  const needsRuntime = choice === "upload";
   /* The panels' context is memoised; save is read through a ref so it's current. */
   const saveRef = useRef(save);
   saveRef.current = save;
   const ctx = useMemo(
     () => ({
-      /* Hosted sandbox: we build it, so an address typed before switching is dropped. */
       /* Saved straight from the panel — the Observe project and the details
          start at the defaults and are set on the agent's page. */
-      onConnect: (source) => saveRef.current({
-        ...source, name,
-        /* An upload is built in the hosted sandbox — nothing to reach. */
-        ...(needsRuntime && { runtime: { endpoint: "", location: "hosted" }, runLocation: "hosted" }),
-      }),
+      onConnect: (source) => saveRef.current({ ...source, name }),
       name, setName, preset: null,
       runtime, setRuntime,
-      needsRuntime,
+      needsRuntime: false,
       blocked: false,
       submitLabel,
     }),
-    [name, runtime, needsRuntime, submitLabel],
+    [name, runtime, submitLabel],
   );
-  /* Code first, then the platforms. Built in Future AGI is one line under the
-     tabs — or a prompt pasted into the search. */
+  /* Code first, then the platforms. Built in Future AGI is one line under the tabs. */
   const { builtin, groups } = useMemo(() => newAgentChoicesFor(channel), [channel]);
   /* Rows whose account is already connected: they say what's waiting there,
      and open with the key or the app's access in place. */
   const { agents: connectedAgents } = useConnectedAgents();
   const integrations = useIntegrations();
   const ready = useMemo(() => readyRowsOf(connectedAgents, integrations, groups), [connectedAgents, integrations, groups]);
-  /* The traces flow switches between its two ways in, so its drawer is named for both. */
-  const pickItem = (item) => open(item.kind, ready[item.id]?.initial ? { ...(item.initial || {}), ...ready[item.id].initial } : item.initial, item.id, item.kind === "traces"
-    ? { name: "An agent from its traces", icon: "solar:pulse-2-linear" }
-    : { name: item.name, logo: item.logo, icon: item.icon });
-  const legacy = MORE_WAYS.find((o) => o.id === choice);
+  const pickItem = (item) => open(item.kind, ready[item.id]?.initial ? { ...(item.initial || {}), ...ready[item.id].initial } : item.initial, item.id, { name: item.name, logo: item.logo, icon: item.icon });
+  const legacy = MORE_WAYS.find((o) => o.id === choice && o.id === "running");
   const kind = CONNECT_KINDS.find((o) => o.id === choice);
   const flowProps = {
     title: kind?.title, limits, onLimits: setLimits, onSave: save, initial: picked?.initial || null,
@@ -175,7 +166,8 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
           {choice === "repo" && <RepoAgentFlow {...flowProps} preset={preset} />}
           {choice === "builtin" && <BuiltinAgentFlow {...flowProps} />}
           {choice === CLOSED_WAY.id && <ClosedPlatformFlow {...flowProps} title={CLOSED_WAY.title} />}
-          {choice === "traces" && <TracesAgentFlow {...flowProps} title="From traces" onOpen={(r) => r && open(r.kind, r.initial, r.id, r.meta)} />}
+          {choice === "phone" && <PhoneAgentFlow {...flowProps} title="Phone number" />}
+          {choice === "upload" && <UploadAgentFlow {...flowProps} title="Code upload" />}
           {choice === "framework" && (
             <FrameworkAgentFlow
               {...flowProps}
@@ -206,8 +198,6 @@ export default function ConnectAgentPicker({ onConnect, preset, prefill, flowsIn
         compact={flowsIn === "inline"}
         pickedId={choice ? picked?.id : null}
         onPick={pickItem}
-        detect={detectAgentPaste}
-        onPaste={(kind, initial, meta) => open(kind, initial, "paste", meta)}
         emptyHint="If it runs somewhere we can call, connect it as an agent endpoint."
         onFallback={() => pickItem(groups.flatMap((g) => g.items).find((it) => it.id === "running"))}
         onBuild={builtin ? () => pickItem(builtin) : null}
@@ -231,7 +221,7 @@ ConnectAgentPicker.propTypes = {
   preset: PropTypes.object,
   /* { kind, initial, id, meta, at } — open that flow now. */
   request: PropTypes.object,
-  /* The paste bar and directory; off when the page already knows the source. */
+  /* The search and directory; off when the page already knows the source. */
   catalogue: PropTypes.bool,
   /* { project, issue } — from Error Feed's Fix → "Connect a new agent": the
      Observe step opens on that project. */

@@ -1,11 +1,9 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
-import { alpha } from "@mui/material/styles";
-import { Box, Button, CircularProgress, IconButton, Stack, Typography } from "@mui/material";
-import Iconify from "src/components/iconify";
-import { CALL_LOG_PROVIDERS, SANDBOX_IMPORT_PROVIDERS, assistantsFor, importedStructureOf, observeSlugOf, phoneParts } from "../../_mock/connectAgent";
+import { Box, CircularProgress, Stack, Typography } from "@mui/material";
+import { assistantsFor, importedStructureOf, observeSlugOf, phoneParts } from "../../_mock/connectAgent";
 import { AGENT_TYPES, COUNTRY_BY_ISO, HOSTED_PLATFORMS_BY_TYPE, PLATFORM_KEY_HELPER, PLATFORM_LOGOS, firstLive, isLivePlatform } from "../../environments/connectOptions";
-import { ChipCard, ContactInformation, Field, Label, NoteLine, PlatformLogo } from "../../environments/StartEnvironment";
+import { ChipCard, ContactInformation, Field, Label, NoteLine, PlatformLogo, ToggleRow } from "../../environments/StartEnvironment";
 import { credentialCheck, e164Of, factCheck, phoneNumberError, usePreflight } from "./preflight";
 import { PLATFORM_TESTING } from "../../_mock/rsiModel";
 import ConnectSteps from "./ConnectSteps";
@@ -24,10 +22,10 @@ import LiveKitAgentFlow from "./LiveKitAgentFlow";
 
 const MONO = "ui-monospace, Menlo, monospace";
 /* One screen: the platform, the key, the assistant, how test calls reach a
-   voice agent (web or a phone number) — then Connect. The rest (a linked
-   repository, constraints, ElevenLabs versioning) has working defaults and is
-   set on the agent's page, in Finish setting up. A sealed copy (Vapi, Retell)
-   is an optional choice here. */
+   voice agent (web or a phone number), observability — then Connect. The
+   rest (a linked repository, constraints, ElevenLabs versioning, a sealed
+   copy for Vapi and Retell) has working defaults and is set on the agent's
+   page — never something Connect waits for. */
 const STEPS = ["Connect"];
 
 /**
@@ -79,9 +77,14 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
   const channels = agentType === "chat" ? platform?.chatChannels || [] : [];
   const [chatChannel, setChatChannel] = useState(initial?.chatChannel || null);
   const channel = channels.find((c) => c.id === chatChannel) || channels[0] || null;
-  const [pickedId, setPickedId] = useState(null);
-  /* A pasted ID comes in typed — no need to list the account to find it. */
-  const [typing, setTyping] = useState(!!initial?.agentId);
+  /* The key lists every assistant on the account, so the agent is always
+     picked from the list. An ID that came with the page (an account's row,
+     an issue's call logs) is picked there when it's listed; one that isn't
+     listed is shown as given, to check against the key. */
+  const startAssistant = initial?.agentId ? assistantsFor(initial?.platform, initial?.agentType || agentType).find((a) => a.id === initial.agentId) || null : null;
+  const listedAtStart = !!startAssistant;
+  const [pickedId, setPickedId] = useState(listedAtStart ? initial.agentId : null);
+  const [typing, setTyping] = useState(!!initial?.agentId && !listedAtStart);
   const [typedId, setTypedId] = useState(initial?.agentId || "");
   const picked = typing ? null : assistants.find((a) => a.id === pickedId) || null;
   const agentId = typing ? typedId.trim() : picked?.id || "";
@@ -89,28 +92,21 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
      Retell whether it's a single prompt or a conversation flow. A typed ID
      reads as a single prompt unless it names a flow. */
   const imported = importedStructureOf(platform?.id, picked || (agentId ? { id: agentId, retellKind: /flow/i.test(agentId) ? "conversation_flow" : "single_prompt" } : null));
-  /* Optional (Vapi, Retell): import a copy into our sandbox with the code
-     behind its tools, so it's tested sealed rather than live. */
-  const canImport = SANDBOX_IMPORT_PROVIDERS.includes(platform?.id);
-  const [importCopy, setImportCopy] = useState(false);
-  /* Collapsed until asked for — the main flow tests the live assistant. */
-  const [sealedOpen, setSealedOpen] = useState(false);
-  const [toolFiles, setToolFiles] = useState([]);
-  const sealed = canImport && importCopy && toolFiles.length > 0;
-
   /* A typed ID's name, when the call logs that gave the ID carried it too. */
-  const [name, setName] = useState(initial?.name || "");
+  const [name, setName] = useState(initial?.name || startAssistant?.name || "");
   /* How test calls reach a voice agent: a web call (no telephony), or a
      phone number dialled over PSTN — the agent's own number by default.
      Inbound, and who speaks first, can be changed later on the agent's page
-     too. Vapi, Retell and Bland call logs are read with the same key, so
-     those agents are linked to an Observe project straight away; any other
-     platform picks its project in Finish setting up. */
+     too. */
   const linkedRepo = "";
-  const watch = CALL_LOG_PROVIDERS.includes(platform?.id);
+  /* Observability: on by default — its production calls are pulled with the
+     same key into an Observe project named after it (or the issue's project
+     when connecting from one). No tracing to add, nothing to wait for. */
+  const [watch, setWatch] = useState(true);
   const [simMode, setSimMode] = useState("web");
-  const [countryIso, setCountryIso] = useState("US");
-  const [contactNumber, setContactNumber] = useState("");
+  /* Picked from the start: the number it answers on is the one a phone simulation dials. */
+  const [countryIso, setCountryIso] = useState(() => (startAssistant?.phone ? phoneParts(startAssistant.phone).countryIso : "US"));
+  const [contactNumber, setContactNumber] = useState(() => (startAssistant?.phone ? phoneParts(startAssistant.phone).number : ""));
   const [inboundCalls, setInboundCalls] = useState(true);
   const [agentSpeaksFirst, setAgentSpeaksFirst] = useState(false);
   const voice = agentType === "voice";
@@ -125,9 +121,6 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
     if (!platformLocked) { setKeyRef(""); setScopeChoice(null); }
     setPickedId(null);
     setChatChannel(null);
-    setImportCopy(false);
-    setSealedOpen(false);
-    setToolFiles([]);
   };
   const pickAssistant = (a) => {
     setPickedId(a.id);
@@ -138,6 +131,7 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
     setContactNumber(parts.number);
   };
 
+  const observeProject = prefill?.project || observeSlugOf(name.trim() || agentId);
   const source = {
     kind: "platform",
     agentType,
@@ -148,13 +142,13 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
     /* Recorded as it reads on the agent's Connections — "WhatsApp". */
     ...(channel && { chatChannel: channel.label }),
     observability: watch,
+    ...(watch && { observeProject: { mode: prefill?.project ? "existing" : "create", id: observeProject } }),
     ...(linkedRepo.trim() && { linkedRepo: linkedRepo.trim() }),
     name: name.trim(),
     versionNote: `Imported from ${platform?.name || "the platform"}.`,
     ...(lacksScope && scopeChoice === "mocked" && { replicationMode: "exported_mocked" }),
     ...(imported.retellKind && { retellKind: imported.retellKind }),
     ...(imported.members.length && { members: imported.members }),
-    ...(sealed && { importedCopy: true, toolCodeUploaded: true, toolCodeFiles: toolFiles.map((f) => f.name) }),
     ...(voice ? {
       callDirection: inboundCalls ? "inbound" : "outbound",
       contact: {
@@ -165,7 +159,6 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
       flowReach: { direction: inboundCalls ? "inbound" : "outbound", whoSpeaksFirst: agentSpeaksFirst ? "agent" : "caller" },
     } : {}),
   };
-  const observeProject = prefill?.project || observeSlugOf(name.trim() || agentId);
 
   /* With a usable key, the account's assistants are listed right below. */
   useEffect(() => {
@@ -185,10 +178,10 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
   const next = {
     label: submitLabel,
     icon: "solar:link-circle-linear",
-    disabled: !platform || !refOk || (lacksScope && !scopeChoice) || !agentId || !!phoneError || (canImport && importCopy && !toolFiles.length),
+    disabled: !platform || !refOk || (lacksScope && !scopeChoice) || !agentId || !!phoneError,
     hint: !platform ? "No platform for this agent type yet" : !refOk ? "Add the key"
       : lacksScope && !scopeChoice ? "Choose how to go on without create scope" : !agentId ? "Pick the agent"
-        : phoneError || "Upload the code behind its tools, or don't import a copy",
+        : phoneError || "",
     onClick: () => onSave({ ...source, name: (name || picked?.name || "").trim() }),
   };
 
@@ -230,7 +223,7 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
                 label={PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name}
                 comingSoon={p.comingSoon}
                 on={platform?.id === p.id}
-                onClick={() => { setPlatformId(p.id); setPickedId(null); setChatChannel(null); setImportCopy(false); setSealedOpen(false); setToolFiles([]); }}
+                onClick={() => { setPlatformId(p.id); setPickedId(null); setChatChannel(null); }}
               />
             ))}
           </Box>}
@@ -296,6 +289,14 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
                 />
                 <TextLink onClick={() => setTyping(false)} sx={{ mt: 0.75 }}>Pick from the list instead</TextLink>
               </Box>
+            ) : !assistants.length ? (
+              /* Nothing on the account: the key is the thing to check, not the ID. */
+              <Box sx={{ px: 1.5, py: 1.25, borderRadius: 1, bgcolor: "background.neutral" }}>
+                <Typography sx={{ typography: "s2", fontWeight: 600 }}>{`No ${voice ? "voice" : "chat"} agents on this ${platform?.name} account`}</Typography>
+                <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>
+                  {`The key lists every agent its account can see. If yours isn't here, the key belongs to another ${platform?.name} account or workspace — paste the key from the one your agent is in.`}
+                </Typography>
+              </Box>
             ) : (
               <Box>
                 {/* The same list as a repository's agents: search, radio rows,
@@ -318,7 +319,9 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
                   connectedOf={(a) => connectedAgents.find((x) => x.values?.provider === platform?.id && x.values?.agentId === a.id) || null}
                   onOpenConnected={(rec) => navigate(`${paths.dashboard.agents}/connected/${agentIdOf(rec.key)}`)}
                 />
-                <TextLink onClick={() => setTyping(true)} sx={{ mt: 0.75 }}>Not listed? Enter an ID instead</TextLink>
+                <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}>
+                  {`Every agent this key can see is listed. Missing one? The key is from another ${platform?.name} account or workspace.`}
+                </Typography>
               </Box>
             )}
             {agentId && imported.structure && (
@@ -345,30 +348,19 @@ export default function HostedAgentFlow({ title, onSave, prefill, initial = null
             {voice && agentId && phoneError && simMode === "phone" && contactNumber.trim() && (
               <Typography sx={{ typography: "s3", color: "error.main", mt: -1 }}>{phoneError}</Typography>
             )}
-            {/* Optional (Vapi, Retell): a sealed copy instead of the live assistant. */}
-            {agentId && canImport && (sealedOpen ? (
-              <SandboxImport
-                providerName={platform?.name}
-                on={importCopy}
-                onToggle={(on) => { setImportCopy(on); if (!on) { setToolFiles([]); setSealedOpen(false); } }}
-                files={toolFiles}
-                onFiles={setToolFiles}
-              />
-            ) : (
-              <TextLink onClick={() => { setSealedOpen(true); setImportCopy(true); }}>Test a sealed copy instead</TextLink>
-            ))}
+            {/* Observability: its production calls, pulled with the same key. */}
             {agentId && (
-              <Typography component="div" sx={{ typography: "s3", color: "text.subtitle" }}>
-                {watch || prefill?.project ? (
-                  <HintLine hint={watch ? `We pull its real traffic from ${platform?.name} with the same key, so failures show up in the Error Feed.` : "The project this issue came from — Fix finds this agent through it."}>
-                    {`Its production ${voice ? "calls" : "conversations"} land in Observe project ${observeProject} — change it, and how simulations reach it, on the agent's page.`}
-                  </HintLine>
-                ) : (
-                  <HintLine hint="Its Observe project is what lets Fix find this agent behind an Error Feed issue.">
-                    {`Choose the Observe project its production ${voice ? "calls" : "conversations"} land in from Finish setting up, on the agent's page.`}
-                  </HintLine>
-                )}
-              </Typography>
+              <ToggleRow
+                checked={watch}
+                onChange={setWatch}
+                title="Enable observability"
+                body={watch
+                  ? <>{`Pull its production ${voice ? "calls" : "conversations"} into Observe project `}<Box component="span" sx={{ fontFamily: MONO, color: "text.primary" }}>{observeProject}</Box>{prefill?.project ? "" : " — created when you connect"}</>
+                  : `Off — its production ${voice ? "calls" : "conversations"} stay out of Observe. Turn it on later from the agent's Next steps.`}
+                hint={watch
+                  ? `We read its ${voice ? "call" : "conversation"} logs from ${platform?.name} with the same key — nothing to install — so failures in real ${voice ? "calls" : "conversations"} show up in the Error Feed. Change the project on the agent's page.`
+                  : null}
+              />
             )}
             {testing?.needsVersioning && agentId && (
               <Typography component="div" sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -399,64 +391,3 @@ HostedAgentFlow.propTypes = {
   onProfile: PropTypes.func.isRequired,
   prefill: PropTypes.object,
 };
-
-/*
-  The optional sealed path for Vapi and Retell: import a copy of the
-  assistant into our sandbox and upload the code behind its tools, so the
-  tools answer from the seeded world instead of your real systems. Built-in
-  platform actions aren't tool code, so they still run for real.
-*/
-function SandboxImport({ providerName, on, onToggle, files, onFiles }) {
-  const add = (list) => {
-    const added = Array.from(list || []).map((f) => ({ name: f.name, size: f.size }));
-    onFiles([...files, ...added.filter((a) => !files.some((f) => f.name === a.name))]);
-  };
-  return (
-    <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
-      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 1.75, py: 1.25 }}>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography sx={{ typography: "s2", fontWeight: 700 }}>Test a sealed copy instead</Typography>
-          <Typography component="div" sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
-            <HintLine hint={`We import a copy of the ${providerName || "platform"} assistant into our sandbox and run your tool code against the seeded world. Results carry the stronger Sealed proof.`}>
-              Optional · import a copy and upload the code behind its tools — they answer from the seeded world
-            </HintLine>
-          </Typography>
-        </Box>
-        <Button
-          size="small" variant={on ? "outlined" : "text"}
-          onClick={() => onToggle(!on)}
-          sx={{ typography: "s2", fontWeight: 700, flexShrink: 0, color: on ? "text.primary" : "text.secondary" }}
-        >
-          {on ? "Don't import" : "Import a copy"}
-        </Button>
-      </Stack>
-      {on && (
-        <Stack spacing={1} sx={{ px: 1.75, py: 1.25, borderTop: "1px solid", borderColor: "divider" }}>
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <Button component="label" size="small" variant="outlined" startIcon={<Iconify icon="solar:cloud-upload-linear" width={14} />} sx={{ typography: "s2", fontWeight: 700 }}>
-              Choose tool code
-              <input hidden multiple type="file" onChange={(e) => add(e.target.files)} />
-            </Button>
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>The handlers your tools&apos; server URLs call · .py .ts .js .zip</Typography>
-          </Stack>
-          {files.map((f) => (
-            <Stack key={f.name} direction="row" alignItems="center" spacing={1} sx={{ px: 1, py: 0.5, borderRadius: 1, bgcolor: (t) => alpha(t.palette.text.primary, 0.04) }}>
-              <Iconify icon="solar:document-linear" width={13} sx={{ color: "text.subtitle" }} />
-              <Typography noWrap sx={{ typography: "s2", fontFamily: MONO, flex: 1, minWidth: 0 }}>{f.name}</Typography>
-              <IconButton size="small" onClick={() => onFiles(files.filter((x) => x.name !== f.name))}>
-                <Iconify icon="solar:trash-bin-minimalistic-linear" width={13} sx={{ color: "text.subtitle" }} />
-              </IconButton>
-            </Stack>
-          ))}
-          <Typography component="div" sx={{ typography: "s3", color: "text.secondary" }}>
-            <HintLine hint="Transfers, end call and voicemail aren't your code, so they still run for real in an imported copy. Scenarios that transfer place a real transfer.">
-              Built-in platform actions still run for real.
-            </HintLine>
-          </Typography>
-        </Stack>
-      )}
-    </Box>
-  );
-}
-SandboxImport.propTypes = { providerName: PropTypes.string, on: PropTypes.bool, onToggle: PropTypes.func, files: PropTypes.array, onFiles: PropTypes.func };
-

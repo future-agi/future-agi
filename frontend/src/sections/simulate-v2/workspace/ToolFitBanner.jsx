@@ -6,6 +6,7 @@ import { latestEnvVersion, toolFit } from "../_mock/toolFit";
 import { ToolList } from "./toolFitParts";
 import { useRebuildForAgent } from "./useRebuildForAgent";
 import { envLabelOf } from "../_mock/envVersionKinds";
+import { versionCardOf } from "../_mock/versionCard";
 
 /**
  * "Can the agent you are about to test actually be tested here?"
@@ -21,7 +22,7 @@ import { envLabelOf } from "../_mock/envVersionKinds";
  */
 
 
-export default function ToolFitBanner({ env, envState, patch, sx, locked = false }) {
+export default function ToolFitBanner({ env, envState, patch, sx, locked = false, deferToCard = false }) {
   const rebuild = useRebuildForAgent(env, envState, patch);
   const agentV = currentAgentVersion(envState);
   if (!agentV) return null;
@@ -31,6 +32,11 @@ export default function ToolFitBanner({ env, envState, patch, sx, locked = false
   const latestFits = latest && latest.label !== fit.envVersion
     && toolFit(env, envState, { envVersion: latest.label }).fits;
   if (fit.fits) return null;
+  /* `deferToCard`: where the agent's change card shows (Overview), a card
+     that already adds every missing tool is the one place to rebuild. */
+  const card = deferToCard ? versionCardOf(envState) : null;
+  const covered = new Set((card?.status === "open" ? card.capabilities : []).filter((c) => c.kind === "add").map((c) => c.capability));
+  if (covered.size && fit.missing.every((t) => covered.has(t.name))) return null;
 
   const n = fit.missing.length;
 
@@ -94,4 +100,5 @@ ToolFitBanner.propTypes = {
   patch: PropTypes.func,
   sx: PropTypes.object,
   locked: PropTypes.bool,
+  deferToCard: PropTypes.bool,
 };

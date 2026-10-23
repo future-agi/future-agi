@@ -3,7 +3,7 @@ import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { diagnosisSummaryOf, goalWords, rejectedFor } from "../_mock/optimizer";
 import { plural } from "../_mock/nudgeEffects";
-import { repeatsOf, limitRows, DEFAULT_LIMITS } from "../_mock/optimizationRuns";
+import { repeatsOf, limitRows, runsCountOf, DEFAULT_LIMITS } from "../_mock/optimizationRuns";
 import { creditsLabel } from "../_mock/metering";
 import { envVersionNameOf } from "../_mock/codeRefs";
 
@@ -63,6 +63,8 @@ export default function ImprovementStages({ record, envState, progress, model = 
   const shown = (r.trials || []).slice(0, progress?.runsDone || 0);
   const scored = shown.filter((t) => !rejectedFor(t));
   const best = scored.length ? Math.max(...scored.map((t) => t.score)) : null;
+  /* "2 of up to 8 runs" while searching; an early stop is said once played. */
+  const count = runsCountOf(progress, r) || { done: 0, max: 0, upTo: true, stopped: null };
   const order = ["reproduce", "search", "verify"];
   const stateOf = (key) => {
     if (done) return "done";
@@ -104,8 +106,10 @@ export default function ImprovementStages({ record, envState, progress, model = 
       text: suggestion
         ? "No change is tried — this agent can only be called. You get a suggested change to apply yourself."
         : stateOf("search") === "todo"
-          ? "Tries changes one at a time, each as a full run on this environment"
-          : `${progress?.runsDone ?? 0} of ${plural(progress?.runsTotal ?? 0, "run")}${best != null ? ` · best so far ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`,
+          ? "Tries changes one at a time, each as a full run on this environment — it stops early once runs stop beating the best"
+          : count.stopped
+            ? `${plural(count.done, "run")} of up to ${count.max} · ${count.stopped}${best != null ? ` · best ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`
+            : `${count.done} of ${count.upTo ? "up to " : ""}${plural(count.max, "run")}${best != null ? ` · best so far ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`,
       sub: [
         /* A goal aims at the scenarios short of it; an issue or a run's
            Debug failures, at the cause they found. */

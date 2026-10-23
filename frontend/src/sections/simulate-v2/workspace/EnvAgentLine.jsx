@@ -18,7 +18,8 @@ import { agentToolsFor, worldToolsFor } from "../_mock/toolFit";
 import { applyAgentSwitch, firstAgentReadPlan, fitsEnvChannel } from "../_mock/agentSwitch";
 import { channelLabel } from "../_mock/nudgeEffects";
 import { scenarioStepOf, versionCardOf } from "../_mock/versionCard";
-import { openGapsInbox } from "../_mock/gapsInboxBus";
+import AgentVersionCard, { ScenarioStepCard } from "./AgentVersionCard";
+import NudgeCard from "./NudgeCard";
 import ChangeAgentDrawer from "./agents/ChangeAgentDrawer";
 import ConnectNewAgentDrawer from "./agents/ConnectNewAgentDrawer";
 
@@ -167,11 +168,11 @@ export default function EnvAgentLine({ env, envState, patch, locked = false, onF
   const rep = replicationOf(agent, env);
   const card = versionCardOf(envState);
   const step = scenarioStepOf(envState);
-  const changeLine = card?.status === "open"
-    ? { title: `Agent ${card.newest} changed`, line: "the environment and scenarios stay as they are until you review it" }
-    : step?.status === "open"
-      ? { title: "Scenarios to update", line: "the environment was rebuilt for the agent's change" }
-      : null;
+  /* The agent's change, said where the agent is — the same rows as Needs
+     input (AgentVersionCard), so it reads and is answered the same way. */
+  const changePatch = locked ? null : patch;
+  const showCard = card?.status === "open";
+  const showStep = step?.status === "open";
   return (
     <Box sx={{ my: 2, border: "1px solid", borderColor: "divider", borderRadius: 1.5 }}>
       <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2, py: 1.25 }}>
@@ -203,18 +204,19 @@ export default function EnvAgentLine({ env, envState, patch, locked = false, onF
       {agentNeedsRuntime(agent) && !locked && (
         <Box sx={{ px: 2, pb: 1.5 }}><AgentRuntimeEditor agent={{ ...agent, key }} variant="embedded" /></Box>
       )}
-      {/* The agent's change, said where the agent is: one line, one way in. */}
-      {changeLine && (
-        <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2, py: 1, borderTop: "1px solid", borderColor: "divider" }}>
-          <Iconify icon="solar:branching-paths-up-linear" width={14} sx={{ color: "text.secondary", flexShrink: 0 }} />
-          <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0, color: "text.secondary" }}>
-            <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>{changeLine.title}</Box>
-            {` · ${changeLine.line}`}
-          </Typography>
-          <Button size="small" onClick={() => openGapsInbox("nudges")} endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />} sx={{ typography: "s2", fontWeight: 700, color: "text.primary", flexShrink: 0 }}>
-            Review
-          </Button>
-        </Stack>
+      {/* The agent's change, said where the agent is — answered right here. */}
+      {showCard && (
+        <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+          <AgentVersionCard
+            env={env} envState={envState} patch={changePatch} px={2}
+            renderNudge={(n) => <NudgeCard nudge={n} env={env} envState={envState} patch={changePatch} />}
+          />
+        </Box>
+      )}
+      {showStep && (
+        <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+          <ScenarioStepCard env={env} envState={envState} patch={changePatch} px={2} />
+        </Box>
       )}
 
       <Menu

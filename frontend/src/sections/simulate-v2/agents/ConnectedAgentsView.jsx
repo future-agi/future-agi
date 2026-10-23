@@ -21,7 +21,8 @@ import { deleteBlockOf } from "./agentDelete";
 import AgentStateTags from "./AgentStateTags";
 import BuildEnvironmentDialog from "./BuildEnvironmentDialog";
 import { MONO, ago, buildPresetFor } from "./agentViewUtils";
-import { MOVED_FROM_SIMULATE, identityOf, languagesLabel } from "./agentProfile";
+import { MOVED_FROM_SIMULATE, identityOf } from "./agentProfile";
+import { agentTypeLabelOf } from "./agentRecord";
 import useMoveLegacyDefinitions from "./useMoveLegacyDefinitions";
 
 /**
@@ -36,7 +37,7 @@ export default function ConnectedAgentsView({ onConnect }) {
   /* Old Simulate agent definitions join this list on their own. */
   useMoveLegacyDefinitions();
   const [query, setQuery] = useState("");
-  /* Filters like the Improvements list: source, owner, whether it's tested, its Observe project. */
+  /* Filters like the Improvements list: type, source, whether it's tested, its Observe project. */
   const [filters, setFilters] = useState({});
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [params, setParams] = useSearchParams();
@@ -54,14 +55,14 @@ export default function ConnectedAgentsView({ onConnect }) {
   const all = useMemo(() => agents
     .filter((a) => !a.placeholder)
     .map((a) => ({
-      ...a, source: agentSourceOf(a), identity: identityOf(a), project: observeProjectOf(a, state, agents), projectPending: !!pendingProjectOf(a, state, agents),
+      ...a, source: agentSourceOf(a), identity: identityOf(a), type: agentTypeLabelOf(a), project: observeProjectOf(a, state, agents), projectPending: !!pendingProjectOf(a, state, agents),
       tested: (a.usedIn || []).length ? "In an environment" : "No environment yet",
     })), [agents, state]);
   const filterFields = useMemo(() => {
     const choicesOf = (pick) => [...new Set(all.map(pick).filter(Boolean))].sort();
     return [
+      { value: "type", label: "Type", type: "enum", choices: choicesOf((a) => a.type) },
       { value: "source", label: "Source", type: "enum", choices: choicesOf((a) => a.source.label) },
-      { value: "owner", label: "Owner", type: "enum", choices: choicesOf((a) => a.identity.owner) },
       { value: "tested", label: "Environments", type: "enum", choices: choicesOf((a) => a.tested) },
       { value: "observe", label: "Observe project", type: "enum", choices: ["Linked", "Waiting for first trace", "Not linked"] },
     ];
@@ -70,9 +71,9 @@ export default function ConnectedAgentsView({ onConnect }) {
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return all.filter((a) => {
-      if (q && !`${a.name} ${a.source.label} ${a.source.where} ${a.identity.owner} ${a.identity.description}`.toLowerCase().includes(q)) return false;
+      if (q && !`${a.name} ${a.type} ${a.source.label} ${a.source.where} ${a.identity.owner} ${a.identity.description}`.toLowerCase().includes(q)) return false;
+      if (filters.type?.length && !filters.type.includes(a.type)) return false;
       if (filters.source?.length && !filters.source.includes(a.source.label)) return false;
-      if (filters.owner?.length && !filters.owner.includes(a.identity.owner)) return false;
       if (filters.tested?.length && !filters.tested.includes(a.tested)) return false;
       if (filters.observe?.length && !filters.observe.includes(a.project ? (a.projectPending ? "Waiting for first trace" : "Linked") : "Not linked")) return false;
       return true;
@@ -163,34 +164,27 @@ export default function ConnectedAgentsView({ onConnect }) {
       },
     },
     {
-      id: "owner", accessorKey: "owner", header: "Owner", size: 170, enableSorting: false,
-      cell: ({ row }) => {
-        const id = row.original.identity;
-        return (
-          <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
-            {id.owner}
-            <Box component="span" sx={{ color: "text.secondary" }}>{` · ${languagesLabel(id.languages, 2)}`}</Box>
-          </Typography>
-        );
-      },
+      /* Voice, Chat or Code — what kind of agent, before where it's read from. */
+      id: "type", accessorKey: "type", header: "Type", size: 120, enableSorting: false,
+      cell: ({ row }) => <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>{row.original.type}</Typography>,
     },
     {
       id: "source", accessorKey: "source", header: "Source", size: 170, enableSorting: false,
       cell: ({ row }) => <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>{row.original.source.label}</Typography>,
     },
     {
-      id: "latest", accessorKey: "latest", header: "Versions", size: 140, enableSorting: false,
+      id: "latest", accessorKey: "latest", header: "Versions", size: 210, enableSorting: false,
       cell: ({ row }) => {
         const a = row.original;
-        /* A code agent reads as Git does: what's in production on main, how
-           many commits, and fixes waiting on their own branches. */
+        /* A code agent: the version in production with its commit on main,
+           how many versions, and fixes waiting on their own branches. */
         if (isGitAgent(a)) {
           const fixes = branchesOf(a).filter((x) => !x.release && x.count && commitsOn(a, x.name).some((c) => c.draft)).length;
           return (
             <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
               <Box component="span" sx={{ fontFamily: MONO, fontWeight: 600 }}>{versionNameOf(a, a.production).main}</Box>
               <Box component="span" sx={{ color: "text.secondary" }}>
-                {` · ${a.versions.length} commit${a.versions.length === 1 ? "" : "s"}${fixes ? ` · ${fixes} open PR${fixes === 1 ? "" : "s"}` : ""}`}
+                {` · ${a.versions.length} total${fixes ? ` · ${fixes} open PR${fixes === 1 ? "" : "s"}` : ""}`}
               </Box>
             </Typography>
           );

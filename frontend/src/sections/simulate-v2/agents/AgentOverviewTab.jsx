@@ -194,8 +194,8 @@ export function PassRateCard({ agent, statsOf, scopeEnv, scopeEnvVersion, scopes
       else groups.push({ v, labels: [v.label] });
       return groups;
     }, [])
-    /* A code agent's bars are named by commit hash. */
-    .map((g) => ({ labels: g.labels, v: { ...g.v, label: g.labels.map((l) => (isGitAgent(agent) ? versionNameOf(agent, l).ref?.sha || l : l)).join(" · ") }, s: statsOf(g.labels.length === 1 ? g.labels[0] : g.labels) }));
+    /* Bars are named by version number, every agent alike — the commit is on the Commits tab. */
+    .map((g) => ({ labels: g.labels, v: { ...g.v, label: g.labels.join(" · ") }, s: statsOf(g.labels.length === 1 ? g.labels[0] : g.labels) }));
   /* Bars for what ran, and the newest — for a code agent, its production
      commit (a fix on its own branch isn't the agent yet). */
   const series = all.filter((x, i) => x.s || (isGitAgent(agent) ? x.labels.includes(agent.production) : i === all.length - 1));
@@ -203,7 +203,7 @@ export function PassRateCard({ agent, statsOf, scopeEnv, scopeEnvVersion, scopes
   const head = [...series].reverse().find((x) => x.s);
   return (
     <Panel
-      title={isGitAgent(agent) ? "Pass rate by commit" : "Pass rate by version"}
+      title="Pass rate by version"
       sx={{ display: "flex", flexDirection: "column", height: "100%" }}
       action={scopes.length > 1 ? (
         <Select
@@ -266,7 +266,7 @@ export function PassRateCard({ agent, statsOf, scopeEnv, scopeEnvVersion, scopes
       )}
       {head && skipped > 0 && (
         <Typography sx={{ px: 2, pb: 1.25, typography: "s3", color: "text.subtitle" }}>
-          {`${plural(skipped, isGitAgent(agent) ? "commit" : "version")} in between ${skipped === 1 ? "wasn't" : "weren't"} run here.`}
+          {`${plural(skipped, "version")} in between ${skipped === 1 ? "wasn't" : "weren't"} run here.`}
         </Typography>
       )}
     </Panel>

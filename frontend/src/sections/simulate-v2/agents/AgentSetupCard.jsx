@@ -80,8 +80,12 @@ export default function AgentSetupCard({ agent, env, onTab, onBuild, onSaveValue
      first trace arrives (dev creates projects from incoming spans), so until
      then it's pending. */
   const tracesDone = !!project && (!!v.observeChosenAt || (source.kind === "platform" && !!v.observability?.on));
+  /* A hosted agent's calls are pulled with its key — there's no first trace
+     to wait for, so it's never pending. */
+  const pulls = kind === "platform";
   /* Only while the project is still this agent's — another agent may have taken it. */
-  const pending = !tracesDone ? pendingProjectOf(agent, state, agents) : null;
+  const pending = !tracesDone && !pulls ? pendingProjectOf(agent, state, agents) : null;
+  const provider = PROVIDER_LABELS[v.provider] || source.label;
   /* What the repository scan says about tracing — evidence, not a name match. */
   const scan = source.kind === "repo" ? scannedTracingOf(agent) : null;
   const envDone = (agent.usedIn || []).length > 0;
@@ -109,7 +113,7 @@ export default function AgentSetupCard({ agent, env, onTab, onBuild, onSaveValue
   const saveObserve = (choice = observeChoice, { firstTrace = false, pendingVia: via = null, pr = null } = {}) => {
     const chosen = resolveObserve(choice, null, agent.name);
     /* Re-picking its own pending project keeps waiting — it still has no trace. */
-    const pendingVia = via || (!firstTrace && pending && chosen.id === pending.project ? pending.via || "manual" : null);
+    const pendingVia = pulls ? null : via || (!firstTrace && pending && chosen.id === pending.project ? pending.via || "manual" : null);
     Object.entries(state?.projectLinks || {})
       .filter(([p, k]) => k === agent.key && p !== chosen.id)
       .forEach(([p]) => dispatch({ type: "linkProjectAgent", project: p, agentKey: null }));
@@ -126,6 +130,14 @@ export default function AgentSetupCard({ agent, env, onTab, onBuild, onSaveValue
     const at = new Date().toISOString();
     /* The first trace means tracing is on — Fix and improvements read it from here. */
     if (firstTrace && source.viaApp) setTracing(agent.key, { on: true, since: at, project: chosen.id, ...(v.tracingPr && { prNumber: v.tracingPr.number, repo: v.tracingPr.repo }) });
+    /* A hosted agent: observability on — its calls come in with the key it already has. */
+    if (pulls) {
+      onSaveValues(
+        { observeChosenAt: at, observePending: null, observability: { ...(v.observability || {}), on: true, since: at, project: chosen.id } },
+        `Observability on — ${provider} calls are pulled into ${chosen.id}, and Error Feed watches them.`,
+      );
+      return;
+    }
     onSaveValues(
       { observeChosenAt: at, observePending: null, ...(firstTrace && !source.viaApp && { observability: { ...(v.observability || {}), on: true, since: at, project: chosen.id } }) },
       firstTrace ? `First trace in ${chosen.id} — Error Feed watches its traces now.` : `Linked to ${chosen.id} — Error Feed watches its traces.`,
@@ -135,10 +147,9 @@ export default function AgentSetupCard({ agent, env, onTab, onBuild, onSaveValue
   const consent = needsLiveConsent(agent) && !replicationOf(agent, env).needsConsent;
 
   /* How its traces reach Observe, by where it lives. */
-  const provider = PROVIDER_LABELS[v.provider] || source.label;
   const sendsCode = ["repo", "framework", "upload", "endpoint"].includes(kind);
   const tracesHow = kind === "platform"
-    ? `${provider} call logs come in on their own — choose the Observe project they land in.`
+    ? `Enable observability: its ${provider} calls are pulled with the key it already has — nothing to install. Choose the Observe project they land in.`
     : kind === "builtin"
       ? "Choose the Observe project its production calls land in."
       : scan && !scan.project
@@ -177,8 +188,8 @@ export default function AgentSetupCard({ agent, env, onTab, onBuild, onSaveValue
     consent && {
       id: "consent",
       done: false,
-      title: "Allow test calls",
-      body: `Tests call your real ${PROVIDER_LABELS[v.provider] ? `${PROVIDER_LABELS[v.provider]} ` : ""}agent, so anything it does — like issuing a refund — really happens. Approve this once before the first run.`,
+      title: "Let us call your agent for tests",
+      body: `We place simulated calls to your ${PROVIDER_LABELS[v.provider] ? `${PROVIDER_LABELS[v.provider]} ` : ""}agent; nothing is changed in your account. What it does on a call — like issuing a refund — really happens, so approve this once before the first run.`,
       action: { label: "Review", onClick: () => onTab("connections") },
     },
     platformTestingOf(agent)?.needsVersioning && {
@@ -237,9 +248,9 @@ export default function AgentSetupCard({ agent, env, onTab, onBuild, onSaveValue
       id: "traces",
       eyebrow: "In production",
       /* Done: the project is the answer — "Traces" only names the step. */
-      title: tracesDone ? project.name : pending ? "Waiting for its first trace" : suggested ? "Confirm its traces" : "Get its traces",
+      title: tracesDone ? project.name : pending ? "Waiting for its first trace" : suggested ? "Confirm its traces" : pulls ? "Enable observability" : "Get its traces",
       body: tracesDone
-        ? "Observe project · Error Feed watches its real calls"
+        ? (pulls ? `Observe project · its ${provider} calls are pulled in, and Error Feed watches them` : "Observe project · Error Feed watches its real calls")
         : pending
           ? prOpen
             ? `Draft PR #${pr.number} on ${pr.repo} adds traceAI. Merge and deploy it — the first trace settles ${pending.project}.`
@@ -377,6 +388,10 @@ export default function AgentSetupCard({ agent, env, onTab, onBuild, onSaveValue
             {pickingExisting ? (
               <Button size="small" variant="contained" color="primary" disabled sx={{ typography: "s3", fontWeight: 700 }}>
                 Pick a project
+              </Button>
+            ) : pulls ? (
+              <Button size="small" variant="contained" color="primary" onClick={() => saveObserve(chosen.mode === "create" ? { mode: "existing", id: chosen.id } : observeChoice)} sx={{ typography: "s3", fontWeight: 700 }}>
+                {takenFrom ? `Move ${chosen.id} here` : `Pull calls into ${chosen.id}`}
               </Button>
             ) : chosen.mode === "create" && traceWait !== "received" ? (
               <Button size="small" variant="contained" color="primary" onClick={() => saveObserve(observeChoice, { pendingVia: "manual" })} sx={{ typography: "s3", fontWeight: 700 }}>

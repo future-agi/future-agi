@@ -11,7 +11,7 @@ import { DEFAULT_LIMITS, limitRows } from "../_mock/optimizationRuns";
 import { useAgentImprovementFlag } from "../_mock/featureFlags";
 import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
 import { buildPresetFor } from "../agents/agentViewUtils";
-import { budgetsWithin, envMustPassOf } from "../_mock/improvementStart";
+import { budgetsWithin, envMustPassOf, stopEarlyNote } from "../_mock/improvementStart";
 import { limitsOf } from "../agents/agentLimits";
 import { projectLinkOf } from "../_mock/projectLinks";
 import { targetableMembers, membersOf, isProtectedMember, textSearchDefault } from "../_mock/improvementPolicy";
@@ -21,7 +21,7 @@ import { clickable, focusRing } from "../components/clickable";
 import {
   FIX_IN_FLIGHT, envsForAgent, fixEstimate, fixPreview, issueFixNav, issueProjectLinkOf, issueScenarioDrafts, productionVersionOf, useIssueFix,
 } from "./issueFix";
-import { creditsForUsd, creditsLabel } from "../_mock/metering";
+import { creditsLabel } from "../_mock/metering";
 import { useSimStore, useConnectedAgents } from "../store";
 import { LiveConsentCard } from "../agents/AgentLiveConsent";
 
@@ -538,7 +538,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                     <SettingRow
                       title="Search in text, confirm finalists as real calls"
                       body={estimate.allCalls
-                        ? `About ${estimate.minutes} min and ${creditsLabel(estimate.likely)} as text, against ${estimate.allCalls.minutes} min and ${creditsLabel(estimate.allCalls.likely)} as real calls. Only the finalists are called.`
+                        ? `Up to ${estimate.minutes} min and ${creditsLabel(estimate.likely)} as text, against ${estimate.allCalls.minutes} min and ${creditsLabel(estimate.allCalls.likely)} as real calls. Only the finalists are called.`
                         : "Every run is a real call — slower and dearer, and closest to production."}
                     >
                       <Switch size="small" checked={inText} onChange={(e) => setTextSearch(e.target.checked)} />
@@ -622,12 +622,12 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                           </Select>
                         </Stack>
                         <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.75, fontVariantNumeric: "tabular-nums" }}>
-                          {`Likely ${creditsLabel(estimate.likely)} · ${creditsForUsd(estimate.low).toLocaleString()}–${creditsForUsd(estimate.high).toLocaleString()} · about ${estimate.minutes} min`}
+                          {`Up to ${estimate.runs} runs · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min`}
                         </Typography>
                         <Typography sx={{ typography: "s3", color: overBudget || overTime ? "text.primary" : "text.subtitle", mt: 0.25 }}>
                           {overBudget || overTime
-                            ? `Likely to stop at the ${overBudget ? "credit" : "time"} budget before the search finishes — you'll get the best it found. Raise it to search fully.`
-                            : `About ${estimate.conversations.toLocaleString()} simulated conversations. If it runs over, it stops with the best it found.`}
+                            ? `May reach the ${overBudget ? "credit" : "time"} budget before all ${estimate.runs} runs — you'll get the best it found. ${stopEarlyNote()}`
+                            : `Up to ${estimate.conversations.toLocaleString()} simulated conversations. ${stopEarlyNote()}`}
                         </Typography>
                       </>
                     ) : (

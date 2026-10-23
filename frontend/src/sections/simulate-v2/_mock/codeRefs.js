@@ -1,10 +1,11 @@
 /*
-  A code agent's versions, named the way its repository names them.
+  A code agent's versions, with the commit each one is.
 
-  An agent read from a repository (GitHub, GitLab, Bitbucket, or an SDK
-  adapter in a repo) already has an identity for every state of its code:
-  a commit on a branch. So it's shown as "main @ 3f9a2c1", not "v3" — the
-  label people use in their own tools (team feedback, Oct 2026; the way
+  Every agent reads by one scheme: its version number (team feedback, Oct
+  2026 — "one version scheme for every agent"). An agent read from a
+  repository (GitHub, GitLab, Bitbucket, or an SDK adapter in a repo) also
+  has a commit on a branch for every version, so that rides alongside:
+  "v5 · main @ 3f9a2c1" — the label people use in their own tools (the way
   Braintrust and Vercel tie runs and deployments to commits).
 
   Underneath nothing moves: each version keeps its stored label, runs still
@@ -12,7 +13,7 @@
   says which branch and commit a version is, and how to show it.
 
   Platform agents (Vapi, Retell, ElevenLabs …), uploads and agents built in
-  Future AGI keep their version numbers — they have no commits.
+  Future AGI read as the version number alone — they have no commits.
 */
 import { definitionOf, envAgentKey, sourceKindOf } from "./agentRegistry";
 import { agentVersions } from "./versions";
@@ -85,14 +86,6 @@ export const codeRefOf = (agent, v) => {
   };
 };
 
-/** "main @ 3f9a2c1" for a git agent's version; its stored label for any other agent. */
-export const refLabelOf = (agent, label) => {
-  if (!isGitAgent(agent)) return label;
-  const v = (agent?.versions || []).find((x) => x.label === label);
-  const r = codeRefOf(agent, v);
-  return r ? `${r.branch} @ ${r.sha}` : label;
-};
-
 /** Branches with versions on them, the release branch first: [{ name, count, release }]. */
 export const branchesOf = (agent) => {
   const counts = new Map();
@@ -115,16 +108,23 @@ export const commitsOn = (agent, branch) => [...(agent?.versions || [])]
 
 /**
  * How a version reads anywhere a version is named — for a git agent
- * `{ main: "main @ 3f9a2c1", sub: "Add order lookup by email" }`, else
- * `{ main: "v3" }`. `agent` may be a registry agent or an environment's
- * copy with `versions` set.
+ * `{ main: "v5 · main @ 3f9a2c1", short: "v5 · 3f9a2c1", commit: "main @ 3f9a2c1",
+ *    sub: "Add order lookup by email", ref }`, else `{ main: "v3", short: "v3" }`.
+ * `short` is for tight spots (buttons, chart bars). `agent` may be a
+ * registry agent or an environment's copy with `versions` set.
  */
 export const versionNameOf = (agent, label) => {
-  if (!isGitAgent(agent)) return { main: label, sub: null };
+  const plain = { main: label, short: label, commit: null, sub: null };
+  if (!isGitAgent(agent) || !label) return plain;
   const v = (agent?.versions || []).find((x) => x.label === label);
   const r = codeRefOf(agent, v);
-  return r ? { main: `${r.branch} @ ${r.sha}`, sub: r.message, ref: r } : { main: label, sub: null };
+  if (!r) return plain;
+  const commit = `${r.branch} @ ${r.sha}`;
+  return { main: `${label} · ${commit}`, short: `${label} · ${r.sha}`, commit, sub: r.message, ref: r };
 };
+
+/** "v5 · main @ 3f9a2c1" for a git agent's version; its stored label for any other agent. */
+export const refLabelOf = (agent, label) => versionNameOf(agent, label).main;
 
 /**
  * The same, read from an environment: its copy of the agent and the versions

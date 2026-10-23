@@ -5,7 +5,6 @@ import Iconify from "src/components/iconify";
 import { GIT_HOST_META, connectGitHost, gitHostAccountOf, gitHostAccountsLabel, gitHostConnection, gitHostRepos, reviewNounOf, useIntegrations } from "../../_mock/integrations";
 import { keyRefOf } from "../../_mock/secretRefs";
 import SecretRefField from "./SecretRefField";
-import FoundAgentsList from "./FoundAgentsList";
 import { TextLink } from "./connectBits";
 import { HintLine } from "./replicationBits";
 
@@ -13,26 +12,18 @@ const MONO = "ui-monospace, Menlo, monospace";
 
 /**
  * GitLab or Bitbucket, the same way as GitHub: connect the host once for the
- * workspace, pick a repository, and say which agent the scan found you mean.
- * The git host is a setting on the agent — a connection, not a new kind of
- * agent — so everything after the pick is the GitHub flow as it is.
+ * workspace and pick a repository — the form then reads that repository for
+ * agents (RepoAgentScan), the same as GitHub's. The git host is a setting on
+ * the agent — a connection, not a new kind of agent.
  */
-export default function GitHostRepoPicker({ host, repo, agentId, onPick, onManual }) {
+export default function GitHostRepoPicker({ host, repo, onPick, onManual }) {
   const integrations = useIntegrations();
   const meta = GIT_HOST_META[host];
   const connection = gitHostConnection(host, integrations);
   const repos = gitHostRepos(host, integrations);
   const current = repos.find((r) => r.name === repo) || null;
-  const [scanning, setScanning] = useState(false);
   /* Connecting another group or workspace: the current one stays until the new one is in. */
   const [adding, setAdding] = useState(false);
-
-  useEffect(() => {
-    if (!repo) return undefined;
-    setScanning(true);
-    const t = setTimeout(() => setScanning(false), 800);
-    return () => clearTimeout(t);
-  }, [repo]);
 
   if (!connection || adding) {
     return (
@@ -77,19 +68,6 @@ export default function GitHostRepoPicker({ host, repo, agentId, onPick, onManua
         </Select>
       </Box>
 
-      {current && (scanning ? (
-        <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.5, py: 1.25, borderRadius: 1, bgcolor: "background.neutral" }}>
-          <CircularProgress size={13} thickness={5} sx={{ color: "text.subtitle" }} />
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>{`Scanning ${current.name} for agents…`}</Typography>
-        </Stack>
-      ) : current.agents.length === 0 ? (
-        <Box sx={{ px: 1.5, py: 1.25, borderRadius: 1, bgcolor: "background.neutral" }}>
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>We didn&apos;t find an agent in this repository.</Typography>
-          {onManual && <TextLink onClick={() => onManual({ repo: current.name })} sx={{ mt: 0.5 }}>Point us at the entry file instead</TextLink>}
-        </Box>
-      ) : (
-        <FoundAgentsList agents={current.agents} agentId={agentId} onPick={(a) => onPick({ repo: current.name, agent: a })} />
-      ))}
     </Stack>
   );
 }
@@ -97,7 +75,6 @@ export default function GitHostRepoPicker({ host, repo, agentId, onPick, onManua
 GitHostRepoPicker.propTypes = {
   host: PropTypes.oneOf(["gitlab", "bitbucket"]).isRequired,
   repo: PropTypes.string,
-  agentId: PropTypes.string,
   onPick: PropTypes.func.isRequired,
   onManual: PropTypes.func,
 };

@@ -6,7 +6,7 @@
   part it protects. The budget caps it: when the search would cost more, it
   runs the trials the budget pays for and says it stopped there.
 */
-import { runSearch, searchScope } from "./optimizer";
+import { runSearch, searchScope, maxRunsOf, NO_GAIN_RUNS } from "./optimizer";
 import { fixDepthOf, proofKindOf, runDefaultsOf, CONFIG_AREAS } from "./rsiModel";
 import { areaStatesOf } from "../agents/configAreas";
 import { getEval } from "./evals";
@@ -218,25 +218,36 @@ export const planSearch = ({
   });
 };
 
+/*
+  What the search can stop early on, said once for every estimate: the
+  planned run count is a maximum.
+*/
+export const stopEarlyNote = () => `Stops early if ${NO_GAIN_RUNS} runs in a row don't beat the best so far on the target scenarios, and verifies the best — so it often spends less.`;
+
 /**
  * What an improvement will spend, as a range: the search on the main
  * environment, plus any other environments' scenarios run for the finalists,
  * plus anything run first (reproducing an issue). For a voice agent searched
  * in text, also what it would cost and take with every trial a real call.
+ *
+ * Priced at the most runs the search can use (`runs`) — it stops early when
+ * runs stop gaining, so this is a ceiling, not a forecast.
  */
 export const improvementEstimate = ({ preview, surface, extraScenarios = 0, firstConversations = 0 }) => {
   const kind = surface === "voice" ? "voice" : "chat";
   const per = PER_CONVERSATION[kind];
   const reps = preview?.repeats || REPEATS;
+  const runs = preview ? maxRunsOf(preview) : 0;
   /* A new improvement prices its other environments inside the search. */
   const extraN = preview?.otherEnvs ? 0 : extraScenarios;
   const extra = (extraN * reps * 2 + firstConversations) * per;
-  const likely = searchSpend(preview, surface) + extra;
+  const likely = searchSpend(preview, surface, { trials: runs }) + extra;
   const conversations = preview
-    ? searchConversations(preview) + extraN * reps * 2 + firstConversations
+    ? searchConversations(preview, { trials: runs }) + extraN * reps * 2 + firstConversations
     : Math.round(likely / per);
-  const minutes = preview ? searchMinutes(preview, surface, { firstConversations: firstConversations + extraN * reps * 2 }) : Math.round(8 + conversations / RATE[kind]);
+  const minutes = preview ? searchMinutes(preview, surface, { trials: runs, firstConversations: firstConversations + extraN * reps * 2 }) : Math.round(8 + conversations / RATE[kind]);
   const out = {
+    runs,
     conversations,
     low: Math.round(likely * 0.8),
     likely: Math.round(likely),
@@ -244,10 +255,10 @@ export const improvementEstimate = ({ preview, surface, extraScenarios = 0, firs
     minutes,
   };
   if (preview?.textSearch && surface === "voice") {
-    const allCalls = searchSpend({ ...preview, textSearch: false }, surface) + extra;
+    const allCalls = searchSpend({ ...preview, textSearch: false }, surface, { trials: runs }) + extra;
     out.allCalls = {
       likely: Math.round(allCalls),
-      minutes: searchMinutes(preview, surface, { allCalls: true, firstConversations: firstConversations + extraN * reps * 2 }),
+      minutes: searchMinutes(preview, surface, { trials: runs, allCalls: true, firstConversations: firstConversations + extraN * reps * 2 }),
     };
   }
   return out;

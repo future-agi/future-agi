@@ -16,7 +16,7 @@ import BrandMark from "../integrations/BrandMark";
  * The brief is built on click, not on render: it reads the whole diagnosis,
  * and nobody should pay for that on every re-render of a drawer.
  *
- * With your coding agent connected (Settings → Integrations → Coding agents) it
+ * With your coding agent connected (Settings → Integrations → IDE) it
  * reads "Open in Claude Code" instead: the click parks the brief for your
  * agent, which pulls it with get_brief the next time you ask — nothing opens
  * on its own, and nothing is copied. Copying stays one click
@@ -178,7 +178,7 @@ export default function CopyBriefButton({ getBrief, label = "Copy for coding age
         <Divider sx={{ my: 0.5 }} />
         <MenuItem onClick={() => { setMenu(null); navigate(`${paths.dashboard.settings.integrations}/coding-agents`); }} sx={{ typography: "s2", color: "text.secondary" }}>
           <Iconify icon="solar:settings-linear" width={15} sx={{ mr: 1 }} />
-          Coding agent settings
+          IDE settings
         </MenuItem>
       </Menu>
 

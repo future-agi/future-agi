@@ -20,7 +20,7 @@ import { candidatesOf, chosenVerified, shippedCandidate } from "../run/fixmyagen
 import WinnerChanges from "../run/fixmyagent/WinnerChanges";
 import ScenarioOutcomes from "../run/fixmyagent/ScenarioOutcomes";
 import { membersChanged, proposalMembers } from "../_mock/improvementPolicy";
-import { improvementOutcome, IMPROVEMENT_PHASES, searchSpend } from "../_mock/optimizationRuns";
+import { improvementOutcome, IMPROVEMENT_PHASES, runsCountOf, searchSpend } from "../_mock/optimizationRuns";
 import RunsOverview from "../run/RunsOverview";
 import WinnerDrawer from "../run/WinnerDrawer";
 import { improvementRowsOf } from "./improvementRows";
@@ -92,7 +92,7 @@ export default function ImprovementRunsView({ env, envState, record, patch, onBa
   const needsVerify = !!kept && !chosenVerified(record);
   /* The verdict leads: what it found, the held-back figure, the constraints. */
   const outcome = useMemo(() => improvementOutcome(record, { model: agentModel }), [record, agentModel]);
-  const shippable = ["ready", "budget"].includes(outcome.ending.key) && !!record.result?.winner;
+  const shippable = ["ready", "stopped-early", "budget"].includes(outcome.ending.key) && !!record.result?.winner;
   const result = record.result;
   /* What ships — the search's pick or the run someone chose — and which
      members of a multi-agent its changes touch. */
@@ -349,7 +349,16 @@ export default function ImprovementRunsView({ env, envState, record, patch, onBa
       <>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.25, flexShrink: 0 }}>
         {/* Finished, the Runs tab names them; running, the heading does. */}
-        {running && <Typography sx={{ typography: "s1", fontWeight: 700 }}>{`Runs (${runs.length} of ${progress.runsTotal})`}</Typography>}
+        {/* The run count is a maximum: "of up to 8" while it searches, and
+            an early stop said once the runs have played. */}
+        {running && (() => {
+          const c = runsCountOf(progress, record.result);
+          return (
+            <Typography sx={{ typography: "s1", fontWeight: 700 }}>
+              {c.stopped ? `Runs (${runs.length}) · ${c.stopped}` : `Runs (${runs.length} of ${c.upTo ? "up to " : ""}${c.max})`}
+            </Typography>
+          );
+        })()}
         <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
           {running && progress.stage === "reproduce" ? "Each run is a full simulation on this environment — open one to see its conversations" : selected.length ? `${selected.length} selected` : baselineRow ? (
             <>

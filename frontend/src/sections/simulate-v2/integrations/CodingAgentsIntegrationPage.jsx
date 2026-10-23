@@ -25,7 +25,7 @@ const UNDER_NAME = "calc(24px + 30px + 12px)";
 
 const createdLabel = (iso) => (new Date(iso).toDateString() === new Date().toDateString() ? "created today" : `created ${ago(iso)}`);
 
-/** Settings → Integrations → Coding agents. */
+/** Settings → Integrations → IDE — named as the product names it ("Connect your IDE" on MCP Server). */
 export default function CodingAgentsIntegrationPage() {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
@@ -57,7 +57,7 @@ export default function CodingAgentsIntegrationPage() {
           <BrandMark brand={primary ? primary.id : "coding-agents"} size={48} />
           <Box flex={1} minWidth={0}>
             <Stack direction="row" alignItems="center" spacing={1}>
-              <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>Coding agents</Typography>
+              <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>IDE</Typography>
             </Stack>
             <Typography sx={{ typography: "s1", color: "text.secondary" }}>
               {primary
@@ -80,7 +80,7 @@ export default function CodingAgentsIntegrationPage() {
         {/* Editor agents run on one person's machine — connected per person. */}
         <Card>
           <SectionHead
-            title="Your coding agent"
+            title="Your IDE"
             sub={primary
               ? `Connected for you. Copy for coding agent reads Open in ${primary.label} for you — teammates connect their own.`
               : "For you only — the one you code with. Copy for coding agent then reads Open in it for you; teammates connect their own."}

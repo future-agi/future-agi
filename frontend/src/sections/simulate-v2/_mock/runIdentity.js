@@ -73,7 +73,7 @@ export const runIdentityOf = (run, envState, env) => {
   const snapshot = (envStored || run?.envSnapshot) && run ? snapshotOfRun(run, env, envState) : null;
   const envLabel = snapshot?.label || run?.envSnapshot || null;
   const who = run?.agentName || "agent";
-  /* A code agent's version reads as its commit — "agent main @ 3f9a2c1".
+  /* A code agent's version carries its commit — "agent v5 · main @ 3f9a2c1".
      Only for the agent the environment tests now: a run of one it has
      since swapped out keeps that agent's own label. */
   const shown = base && !run?.agentName ? `${envVersionNameOf(envState, base, env?.id || run?.envId).main}${suffix}` : agent;

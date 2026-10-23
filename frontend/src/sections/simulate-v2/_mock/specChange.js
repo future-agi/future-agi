@@ -72,6 +72,7 @@ export const versionOriginOf = (version, source) => {
   if (version?.origin === "sync" && source?.kind === "platform") return `Someone edited the assistant on ${source.label}`;
   if (version?.origin === "sync" && (source?.kind === "repo" || source?.kind === "framework")) return `A new commit on ${source.label}`;
   if (version?.origin === "sync") return `Re-read from ${source?.label || "the source"}`;
+  if (version?.origin === "upload") return `A new upload${version.bundle ? ` — ${version.bundle}` : ""}`;
   if (version?.origin === "switch") return "The environment was pointed at another agent";
   if (version?.fromRunId || version?.applied?.length) return "Applied from an improvement";
   if (version?.origin === "manual") return "Recorded by hand";

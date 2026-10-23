@@ -68,8 +68,8 @@ export function NudgesSection({ env, envState, patch, focusId = null, onNavigate
         {card && (
           <AgentVersionCard
             env={env} envState={envState} patch={patch}
-            renderNudge={(n, first) => (
-              <NudgeCard nudge={n} {...cardProps} focused={n.id === focusNudge} defaultOpen={n.id === focusNudge || (!focusNudge && first)} />
+            renderNudge={(n) => (
+              <NudgeCard nudge={n} {...cardProps} focused={n.id === focusNudge} defaultOpen={n.id === focusNudge} />
             )}
           />
         )}

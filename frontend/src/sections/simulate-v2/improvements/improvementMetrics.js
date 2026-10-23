@@ -17,7 +17,7 @@ const median = (xs) => {
   return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
 };
 
-const PROPOSAL_ENDINGS = new Set(["ready", "budget", "suggestion"]);
+const PROPOSAL_ENDINGS = new Set(["ready", "stopped-early", "budget", "suggestion"]);
 
 export const improvementMetricsOf = (rows = []) => {
   /* A run that failed for infrastructure reasons says nothing about the

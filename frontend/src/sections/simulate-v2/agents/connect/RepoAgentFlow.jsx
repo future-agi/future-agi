@@ -2,11 +2,14 @@ import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import { Box, MenuItem, Select, Stack, Typography } from "@mui/material";
+import { useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
-import { FRAMEWORK_META } from "../../_mock/agentRegistry";
-import { GIT_HOST_META, gitHostOfUrl, gitHostRepos, hostRepoNameOf, hostRepoUrlOf, installedRepos, reviewNounOf, useIntegrations } from "../../_mock/integrations";
+import { paths } from "src/routes/paths";
+import { FRAMEWORK_META, agentIdOf, agentRecordFromSource } from "../../_mock/agentRegistry";
+import { GIT_HOST_META, gitHostOfUrl, gitHostRepos, hostRepoNameOf, hostRepoUrlOf, installedRepos, reviewNounOf, scannedAgentSource, useIntegrations } from "../../_mock/integrations";
+import { useConnectedAgents } from "../../store";
 import { entryForTraces, folderForTraces, frameworkTuningOf, observeProjectById, readAgentFolder, repoBranches, repoChecksOf, repoDetectionOf, repoFolders, repoForTraces, traceMatchOf } from "../../_mock/connectAgent";
-import { isSecretRef } from "../../_mock/secretRefs";
+import { isSecretRef, keyRefOf } from "../../_mock/secretRefs";
 import GithubRepoPicker from "../../integrations/GithubRepoPicker";
 import { ChipCard, Field, Label } from "../../environments/StartEnvironment";
 import ConnectSteps from "./ConnectSteps";
@@ -14,6 +17,9 @@ import EnvironmentValues from "./EnvironmentValues";
 import { envValuesSourceOf } from "../../_mock/envValues";
 import { FrameworkTuning, TextLink, WhereOption } from "./connectBits";
 import GitHostRepoPicker from "./GitHostRepoPicker";
+import RepoAgentScan from "./RepoAgentScan";
+import SecretRefField from "./SecretRefField";
+import { envValuesFromRepo, prefillFor } from "./repoScan";
 import { HintLine } from "./replicationBits";
 import { recommendedRunLocation } from "../../_mock/replication";
 import { useConnectSubmitLabel } from "./connectSubmit";
@@ -39,15 +45,19 @@ const ENTRY_EXAMPLE = "app/chat.py:handle_message";
 
 /**
  * A repository, in one step: the git host (GitHub through its App, GitLab or
- * Bitbucket through the workspace's connection), the repository and the
- * agent the scan found in it — or, typed by hand, the folder its entry file
- * lives in. Connect reads that folder at the branch and saves the agent with
+ * Bitbucket through the workspace's connection), the repository — read for
+ * agents when it's picked — and the agent found in it, or the entry file
+ * when none is; or, typed by hand, the folder its entry file lives in. The
+ * environment values that agent's code reads are asked for on the same
+ * screen — prefilled from any agent already connected from the repository. Connect reads that folder at the branch and saves the agent with
  * what it found; side-effect tools start stubbed, constraints start at the
  * defaults, and everything is reviewed afterwards on the agent's page.
  */
 export default function RepoAgentFlow({ title, preset, onSave, prefill, initial = null }) {
   const submitLabel = useConnectSubmitLabel();
   const integrations = useIntegrations();
+  const navigate = useNavigate();
+  const { agents: connectedAgents } = useConnectedAgents();
   /*
     Opened from an Error Feed issue whose Observe project is traced with
     traceAI: the traces already say which code this is — the service, the
@@ -112,6 +122,13 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
   /* A pasted link reads a public repository; a private one is read
      through the GitHub App. */
   const [visibility, setVisibility] = useState("public");
+  /* A private repository without the GitHub App: read with an access token
+     or deploy key instead, by reference. */
+  const [privateVia, setPrivateVia] = useState("app");
+  const [accessRef, setAccessRef] = useState("");
+  const savedAccessRef = keyRefOf(accessRef, "vault://acme/sim/github_repo_token");
+  /* Reading the picked repository for agents: scanning | error | timeout | found | none. */
+  const [scanStatus, setScanStatus] = useState(null);
   const [envValues, setEnvValues] = useState([]);
   const [credFiles, setCredFiles] = useState([]);
   /* Public hostnames the sandbox may reach while the agent runs — hardcoded
@@ -124,7 +141,8 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
   const viaGithub = mode === "github";
   /* A pasted GitHub link — it can start at the repository root. */
   const pastedLink = host === "github" && mode === "manual";
-  const privatePasted = pastedLink && visibility === "private";
+  /* Private and not readable yet: the app, or a token not given. */
+  const privatePasted = pastedLink && visibility === "private" && (privateVia !== "token" || !savedAccessRef);
   const hostLabel = HOST_LABEL[host];
   const review = reviewNounOf(host);
   const repo = viaGithub
@@ -161,8 +179,12 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
   const livekit = /livekit|pipecat/i.test(found?.framework || "");
   /* The agent the scan found and the person picked, before anything is read. */
   const pickedAgent = viaGithub ? (repo?.agents || []).find((a) => a.id === entryId) || null : null;
-  /* Opened as "no framework", or typed by hand: ask where it starts. */
-  const direct = pickedAgent ? pickedAgent.framework === DIRECT : !!repo && (!viaGithub || !!initial?.direct);
+  /* Opened as "no framework", typed by hand, or named after a read found nothing: ask where it starts. */
+  const direct = pickedAgent ? pickedAgent.framework === DIRECT : !!repo && (!viaGithub || !!initial?.direct || !!entryPoint.trim());
+  /* The read of the picked repository is what a connection waits on. */
+  const scanBusy = viaGithub && !!repo && (!scanStatus || scanStatus === "scanning");
+  /* A failed read blocks — unless a timed-out one was given the entry file to read instead. */
+  const scanFailed = viaGithub && !!repo && (scanStatus === "error" || (scanStatus === "timeout" && !entryPoint.trim()));
   const typedUrl = manualRepo.trim();
   const manualUrl = !typedUrl || host === "github" || gitHostOfUrl(typedUrl) ? typedUrl : hostRepoUrlOf(host, hostRepoNameOf(typedUrl));
   const source = {
@@ -208,7 +230,8 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
     }),
     ...envValuesSourceOf({ values: envValues, files: credFiles }),
     ...(egress.length && { allowedEgressDomains: egress }),
-    ...(pastedLink && { repoVisibility: "public" }),
+    ...(pastedLink && { repoVisibility: visibility }),
+    ...(pastedLink && visibility === "private" && privateVia === "token" && savedAccessRef && { repoAccess: { kind: "token", ref: savedAccessRef } }),
     versionNote: `Read from ${repo?.name || "the repository"} @ ${branch.trim() || "main"}.`,
   };
 
@@ -236,7 +259,7 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
     onSave(source);
   }, [saveWanted, found]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const ready = !!repo && (!!folder.trim() || pastedLink) && !!branch.trim() && !privatePasted;
+  const ready = !!repo && (!!folder.trim() || pastedLink) && !!branch.trim() && !privatePasted && !scanBusy && !scanFailed;
 
   /* Preflight reads the folder at the branch — files scanned, the services it
      talks to — and checks each credential the code reads is set and accepted. */
@@ -252,15 +275,29 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
   }, [ready, repo?.name, folder, branch, entryId]); // eslint-disable-line react-hooks/exhaustive-deps
   const secretKeys = (scan?.keys || []).filter((k) => /KEY|TOKEN|SECRET|PASSWORD|DSN|_URL$/i.test(k));
   const preflight = usePreflight([
-    factCheck({ id: "repo", label: "Repository", ok: ready, okText: `${repo?.name || ""} @ ${branch.trim() || "main"} — ${scan?.files || 0} source files scanned.`, failText: privatePasted ? "Private repositories need the GitHub App." : "Pick the repository and the agent." }),
+    factCheck({ id: "repo", label: "Repository", ok: ready, okText: `${repo?.name || ""} @ ${branch.trim() || "main"} — ${scan?.files || 0} source files scanned.`, failText: privatePasted ? "Private repositories need the GitHub App or an access token." : "Pick the repository and the agent." }),
+    ...(pastedLink && visibility === "private" && privateVia === "token" ? [credentialCheck({ id: "access", label: "Access token", ref: savedAccessRef, provider: "GitHub" })] : []),
     ...secretKeys.map((k) => credentialCheck({ id: `env:${k}`, label: k, ref: envRefOf(k) || envValues.find((v) => v.name === k)?.value || "", provider: connectorOfKey(k) })),
     ...(egress.length ? [egressCheck(egress)] : []),
-  ], [repo?.name, folder, branch, entryId, envValues, egressText, visibility]);
+  ], [repo?.name, folder, branch, entryId, envValues, egressText, visibility, privateVia, savedAccessRef]);
+
+  /* The agent is chosen: its environment values are asked for — prefilled
+     from what agents already connected from the same repository were given. */
+  const agentChosen = !!repo && (pastedLink || (!!folder.trim() && !scanBusy && !scanFailed));
+  const remembered = useMemo(() => envValuesFromRepo(connectedAgents, repo?.name), [connectedAgents, repo?.name]);
+  const agentKeys = detected?.credentialKeys.value || scan?.keys || [];
+  useEffect(() => {
+    if (!agentChosen || !remembered.values.length) return;
+    const want = prefillFor(remembered.values, agentKeys);
+    setEnvValues((cur) => [...cur, ...want.filter((w) => !cur.some((c) => c.name === w.name))]);
+  }, [agentChosen, repo?.name, folder]); // eslint-disable-line react-hooks/exhaustive-deps
   const next = {
     label: submitLabel,
     icon: "solar:link-circle-linear",
     disabled: !ready || mismatch,
-    hint: mismatch ? `Doesn't match ${project.name}'s traces` : !repo ? (viaGithub ? "Choose a repository" : pastedLink ? "Paste the repository link" : "Add a repository") : privatePasted ? "Private repositories need the GitHub App" : "Choose the agent",
+    hint: mismatch ? `Doesn't match ${project.name}'s traces` : !repo ? (viaGithub ? "Choose a repository" : pastedLink ? "Paste the repository link" : "Add a repository")
+      : privatePasted ? (privateVia === "token" ? "Add the access token" : "Private repositories need the GitHub App or an access token")
+        : scanBusy ? `Reading ${repo.name}…` : scanFailed ? "Retry reading the repository" : scanStatus === "none" && !folder.trim() ? "Name the entry file" : "Choose the agent",
     busy: reading ? `Reading ${folder || "the agent"} at ${branch}…` : null,
     onClick: connect,
   };
@@ -329,14 +366,7 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
           <GitHostRepoPicker
             host={host}
             repo={ghRepo}
-            agentId={entryId}
-            onPick={({ repo: r, agent: a }) => {
-              setGhRepo(r);
-              const picked = gitHostRepos(host, integrations).find((x) => x.name === r);
-              if (a) { setEntryId(a.id); setFolder(folderOfAgent(picked, a.id)); setEntryPoint(a.framework === DIRECT ? a.entry : ""); }
-              else { setEntryId(null); setFolder(""); setEntryPoint(""); }
-              setFound(null);
-            }}
+            onPick={({ repo: r }) => { setGhRepo(r); setEntryId(null); setFolder(""); setEntryPoint(""); setFound(null); }}
             onManual={(pre) => { setMode("manual"); if (pre?.repo) setManualRepo(pre.repo); }}
           />
         ) : null}
@@ -347,19 +377,27 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
           </Box>
         )}
         {viaGithub && host !== "github" ? null : viaGithub ? (
-          <GithubRepoPicker
-            manualLinks={false}
-            repo={ghRepo}
-            agentId={entryId}
-            onPick={({ repo: r, agent: a }) => {
-              setGhRepo(r);
-              const picked = installedRepos(integrations).find((x) => x.name === r);
-              if (a) { setEntryId(a.id); setFolder(folderOfAgent(picked, a.id)); setEntryPoint(a.framework === DIRECT ? a.entry : ""); }
-              else { setEntryId(null); setFolder((tracedCode && folderForTraces(tracedCode, picked)) || ""); setEntryPoint(""); }
-              setFound(null);
-            }}
-            onManual={(pre) => { setMode("manual"); if (pre?.repo) setManualRepo(pre.repo); }}
-          />
+          <Box>
+            {/* The repository only — it's read for agents below, once picked. */}
+            <GithubRepoPicker
+              manualLinks={false}
+              showAgents={false}
+              repo={ghRepo}
+              agentId={entryId}
+              onPick={({ repo: r }) => {
+                setGhRepo(r);
+                const picked = installedRepos(integrations).find((x) => x.name === r);
+                setEntryId(null); setFolder((tracedCode && folderForTraces(tracedCode, picked)) || ""); setEntryPoint("");
+                setFound(null);
+              }}
+              onManual={(pre) => { setMode("manual"); if (pre?.repo) setManualRepo(pre.repo); }}
+            />
+            {!integrations.github && (
+              <TextLink onClick={() => { setMode("manual"); setVisibility("private"); setPrivateVia("token"); }} sx={{ mt: 0.75 }}>
+                Can&apos;t install the app? Paste the repository link and use an access token
+              </TextLink>
+            )}
+          </Box>
         ) : (
           <Stack spacing={1.5}>
             <Field
@@ -389,12 +427,35 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
                   </Box>
                 </Box>
                 {visibility === "private" && (
-                  <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 1.5, py: 1.25, borderRadius: 1, border: "1px solid", borderColor: "divider" }}>
-                    <Iconify icon="solar:lock-keyhole-minimalistic-linear" width={16} sx={{ color: "text.secondary", flexShrink: 0 }} />
-                    <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
-                      Private repositories are read through the GitHub App — install it once and pick this repository from the list.
-                    </Typography>
-                    <TextLink onClick={() => { setMode("github"); setVisibility("public"); }}>Connect GitHub</TextLink>
+                  <Stack spacing={1}>
+                    <Box sx={{ display: "grid", gap: 1, gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" } }}>
+                      <WhereOption
+                        icon="mdi:github" label="Install the GitHub App" on={privateVia === "app"} onClick={() => setPrivateVia("app")}
+                        short="Pick from a list · fixes as pull requests"
+                        hint="Install it once for the account; this repository is then picked from the list, a merge is seen at once, and fixes come back as pull requests."
+                      />
+                      <WhereOption
+                        icon="solar:key-minimalistic-linear" label="Use an access token" on={privateVia === "token"} onClick={() => setPrivateVia("token")}
+                        short="A personal access token or deploy key · read only"
+                        hint="For when the app can't be installed. We read the code with it and check the branch once a day; without the app, fixes come back as a patch."
+                      />
+                    </Box>
+                    {privateVia === "app" ? (
+                      <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 1.5, py: 1.25, borderRadius: 1, border: "1px solid", borderColor: "divider" }}>
+                        <Iconify icon="solar:lock-keyhole-minimalistic-linear" width={16} sx={{ color: "text.secondary", flexShrink: 0 }} />
+                        <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+                          Install the app once, then pick this repository from the list.
+                        </Typography>
+                        <TextLink onClick={() => { setMode("github"); setVisibility("public"); }}>Connect GitHub</TextLink>
+                      </Stack>
+                    ) : (
+                      <SecretRefField
+                        label="Access token or deploy key" required
+                        placeholder="vault://acme/sim/github_repo_token"
+                        value={accessRef} onChange={setAccessRef}
+                        helper="A fine-grained personal access token with Contents: read on this repository, or a read-only deploy key. Stored as a reference — never shown again, never sent to the improver."
+                      />
+                    )}
                   </Stack>
                 )}
               </>
@@ -410,29 +471,14 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
           </Stack>
         )}
 
-        {/* What improvements can change in the agent picked, before it's read. */}
-        {pickedAgent && <FrameworkTuning tuning={frameworkTuningOf(pickedAgent.framework)} />}
-        {direct && !pastedLink && (
-          <Field
-            label={pickedAgent ? "Where the agent starts" : "Where the agent starts (when it uses no framework)"} mono
-            placeholder={ENTRY_EXAMPLE}
-            value={entryPoint} onChange={setEntryPoint}
-            helper={(
-              <HintLine hint="Code that calls the OpenAI, Anthropic or Gemini API itself has no framework to find the agent by. Name the file and function a conversation starts in — we read the prompts and tools it reaches from there.">
-                {pickedAgent ? `${pickedAgent.sdk || "Model API"} calls, no framework — check the function each conversation starts in.` : "File and function each conversation starts in."}
-              </HintLine>
-            )}
-          />
-        )}
-
-        {/* The branch is the one choice with a default worth stating. */}
+        {/* The branch is the one choice with a default worth stating — changing it reads the repository again. */}
         {repo && !pastedLink && (
           changingBranch ? (
             <Box sx={{ maxWidth: 320 }}>
               {viaGithub ? (
                 <Select
                   size="small" fullWidth value={branch}
-                  onChange={(e) => { setBranch(e.target.value); setChangingBranch(false); }}
+                  onChange={(e) => { setBranch(e.target.value); setChangingBranch(false); setFound(null); }}
                   renderValue={(v) => <Box component="span" sx={{ fontFamily: MONO }}>{v}</Box>}
                   sx={{ typography: "s2" }}
                 >
@@ -457,11 +503,44 @@ export default function RepoAgentFlow({ title, preset, onSave, prefill, initial 
           )
         )}
 
-        {(repo || pastedLink) && (
+        {/* The picked repository, read for agents now — never ahead of time. */}
+        {viaGithub && repo && (
+          <RepoAgentScan
+            repo={repo}
+            branch={branch}
+            hostLabel={hostLabel}
+            agentId={entryId}
+            onPick={(a) => { setEntryId(a.id); setFolder(folderOfAgent(repo, a.id)); setEntryPoint(a.framework === DIRECT ? a.entry : ""); setFound(null); }}
+            entryFile={entryPoint}
+            onEntryFile={(v) => { setEntryPoint(v); setEntryId(null); setFolder(v.trim() ? (v.split(":")[0].includes("/") ? v.split(":")[0].replace(/\/[^/]*$/, "") : ".") : ""); setFound(null); }}
+            onStatus={setScanStatus}
+            /* One already in Agents opens there — never connected twice. */
+            connectedOf={host === "github" ? (a) => connectedAgents.find((x) => x.key === agentRecordFromSource(scannedAgentSource(repo, a)).key) || null : undefined}
+            onOpenConnected={(rec) => navigate(`${paths.dashboard.agents}/connected/${agentIdOf(rec.key)}`)}
+          />
+        )}
+
+        {/* What improvements can change in the agent picked, before it's read. */}
+        {pickedAgent && <FrameworkTuning tuning={frameworkTuningOf(pickedAgent.framework)} />}
+        {direct && !pastedLink && (!viaGithub || !!pickedAgent) && (
+          <Field
+            label={pickedAgent ? "Where the agent starts" : "Where the agent starts (when it uses no framework)"} mono
+            placeholder={ENTRY_EXAMPLE}
+            value={entryPoint} onChange={setEntryPoint}
+            helper={(
+              <HintLine hint="Code that calls the OpenAI, Anthropic or Gemini API itself has no framework to find the agent by. Name the file and function a conversation starts in — we read the prompts and tools it reaches from there.">
+                {pickedAgent ? `${pickedAgent.sdk || "Model API"} calls, no framework — check the function each conversation starts in.` : "File and function each conversation starts in."}
+              </HintLine>
+            )}
+          />
+        )}
+
+        {/* The agent is chosen: what its code reads, to fill. */}
+        {agentChosen && (
           <EnvironmentValues
             values={envValues} onValues={setEnvValues}
             files={credFiles} onFiles={setCredFiles}
-            expectedNames={detected?.credentialKeys.value || scan?.keys || []}
+            expectedNames={agentKeys}
             egress={egressText} onEgress={setEgressText}
           />
         )}

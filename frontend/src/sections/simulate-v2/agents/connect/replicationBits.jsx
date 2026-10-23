@@ -79,6 +79,8 @@ FactLine.propTypes = { label: PropTypes.string, children: PropTypes.node, first:
  */
 export function HowWeCopyIt({ agent, env, title = "How we'll test it", aside }) {
   const r = replicationOf(agent, env);
+  /* A phone number is only called — nothing is copied, so nothing to agree to. */
+  const phone = !!agent?.values?.phoneNumber;
   return (
     <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
       <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.75, py: 0.875, bgcolor: "background.neutral", borderBottom: "1px solid", borderColor: "divider" }}>
@@ -101,7 +103,7 @@ export function HowWeCopyIt({ agent, env, title = "How we'll test it", aside }) 
           <Hint text={r.proofNote} />
         </Stack>
       </FactLine>
-      {r.proofKind === "live" && (
+      {r.proofKind === "live" && !phone && (
         <FactLine label="Before the first run">
           <Stack direction="row" alignItems="center" spacing={0.75}>
             <Typography sx={{ typography: "s2" }}>

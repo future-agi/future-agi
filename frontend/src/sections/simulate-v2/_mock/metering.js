@@ -175,9 +175,14 @@ export const budgetNotice = (check, estimate, usage = ORG_USAGE) => {
   const d = DIMENSIONS[w.dimension];
   const need = (estimate?.lines || []).find((l) => l.dimension === w.dimension)?.amount || 0;
   const after = w.current + need;
+  /* Said so it needs no context: whose usage (the org's), which meter, this
+     month's numbers, and why it shows (this run crosses the budget line). */
+  const big = w.dimension === "text_sim_tokens" && w.limit >= 1e5;
+  const num = (n) => (big ? `${(n / 1e6).toFixed(1)}M` : Math.round(n).toLocaleString());
+  const noun = w.dimension === "ai_credits" ? "AI credits" : `${d.label.toLowerCase().replace(/\s+/g, "-")} ${d.unit}`;
   return {
     dimension: w.dimension,
-    line: `${d.label} is at ${Math.round((w.current / w.limit) * 100)}% of this ${usage.period}'s limit — this run takes it to ${Math.round((after / w.limit) * 100)}% (${Math.round(after).toLocaleString()} of ${amountOf(w.dimension, w.limit)}). It will still run.`,
+    line: `Your org has used ${num(w.current)} of ${num(w.limit)} ${noun} this month (${usage.period}). This run adds about ${num(need)}, taking it to ${Math.round((after / w.limit) * 100)}% — past your ${Math.round(w.budget.at * 100)}% budget line. It still runs.`,
   };
 };
 

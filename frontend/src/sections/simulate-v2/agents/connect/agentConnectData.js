@@ -1,10 +1,11 @@
 /*
-  New agent's ways in — the same directory and paste bar as the Environments
-  landing, mapped onto the agent flows. Each item names the flow (`kind`) and
-  what it starts with (`initial`): a platform, a framework, a pasted ID.
+  New agent's ways in — the same directory as the Environments landing,
+  mapped onto the agent flows. Each item names the flow (`kind`) and what it
+  starts with (`initial`): a platform, a framework, a connected account's
+  agent. Traces aren't a way in: an Observe project is linked after
+  connecting, from the agent's Next steps.
 */
 import { FRAMEWORK_META } from "../../_mock/agentRegistry";
-import { detectPaste } from "../../environments/landingData";
 import { CLOSED_PLATFORM_REACH } from "../../environments/connectOptions";
 import { CLOSED_PLATFORMS } from "../../_mock/rsiModel";
 
@@ -69,15 +70,6 @@ export const AGENT_CONNECT_GROUPS = [
       /* No framework: code that calls the model APIs itself. */
       { id: "direct-api", name: "OpenAI, Anthropic or Gemini calls", fix: "Pull request", icon: "solar:code-square-linear", need: "No framework · name where it starts", kind: "repo", initial: { host: "github", direct: true } },
       ...frameworkItems,
-    ],
-  },
-  {
-    id: "traces",
-    title: "Traces",
-    reach: "Already sending traces, or add traceAI now — we read the agent from its spans: prompt, model and tools.",
-    items: [
-      { id: "traces-project", name: "Traces in an Observe project", icon: "solar:pulse-2-linear", need: "Pick the project they land in", kind: "traces", fix: "Suggested change", initial: { mode: "project" } },
-      { id: "traces-new", name: "Send traces with traceAI", icon: "solar:code-scan-linear", need: "A few lines in your agent's code", kind: "traces", fix: "Suggested change", initial: { mode: "send" } },
     ],
   },
   {
@@ -164,10 +156,8 @@ const NEXT_BY_ID = {
   bitbucket: "Add a workspace token, then pick the repository",
   upload: "Drop a folder or a .zip",
   "direct-api": "Connect the repository, then name where the agent starts",
-  "traces-project": "Pick the Observe project its traces land in",
-  "traces-new": "Add traceAI to your agent, then send a trace",
   running: "Paste the URL we should call",
-  phone: "Enter the number to call",
+  phone: "Enter its number — we call it, or it calls our test number",
   livekit: "Add the server URL and the agent's name",
 };
 const nextStepOf = (it) => {
@@ -223,8 +213,6 @@ const KEYWORDS = {
   voiceflow: "no code",
   agentforce: "salesforce crm",
   copilot_studio: "microsoft power virtual agents teams",
-  "traces-project": "observability tracing traces spans otel opentelemetry logs",
-  "traces-new": "traceai instrument tracing otel opentelemetry sdk",
   running: "http https api url websocket webhook endpoint rest",
   phone: "call calls number twilio sip pstn",
   livekit: "voice webrtc room",
@@ -243,41 +231,4 @@ const CODE_SECTIONS = {
   sdk: { title: "Through our SDK", reach: "Add a few lines where the agent runs — no repository access needed." },
   /* Code that isn't in a repository: read once, fixed by a patch — the fallback, so last. */
   upload: { title: "Without a repository", reach: "We read it once, and fixes come back as a patch to apply.", dropzone: true },
-};
-
-export const pasteExamplesFor = (channel) => (!channel ? AGENT_PASTE_EXAMPLES : AGENT_PASTE_EXAMPLES.filter((e) => !e.channels || e.channels.includes(channel)));
-
-/* Examples that make sense for an agent (no MCP — that's tools, not an agent). */
-export const AGENT_PASTE_EXAMPLES = [
-  { id: "github", label: "GitHub repo", logo: "github", value: "https://github.com/skyline-air/rebooking-agent" },
-  { id: "vapi", label: "Vapi assistant ID", logo: "vapi", channels: ["voice"], value: "3f9c2ab1-4d7e-4c1a-9b2f-8e61d0a5c7e4" },
-  { id: "retell", label: "Retell agent ID", logo: "retell", channels: ["voice"], value: "agent_9f2c41d8e7" },
-  { id: "gitlab", label: "GitLab repo", logo: "gitlab", value: "https://gitlab.com/acme-inc/claims-voice" },
-  { id: "endpoint", label: "Endpoint", icon: "solar:global-linear", channels: ["chat"], value: "https://api.acme.com/agent/chat" },
-  { id: "prompt", label: "A prompt", icon: "solar:document-text-linear", channels: ["chat"], value: "You are a friendly refill assistant for Acme Pharmacy. Check insurance before booking a pickup slot." },
-];
-
-/* What a pasted string opens on New agent: the environment detector's
-   reading, mapped onto the agent flows. `choice` is the flow kind. */
-const KIND_OF_CHOICE = { hosted: "hosted", source: "repo", running: "running", phone: "phone", scratch: "builtin" };
-
-export const detectAgentPaste = (raw) => {
-  const found = detectPaste(raw);
-  if (!found) return null;
-  if (found.kind === "mcp") {
-    return { ...found, blocked: true, choice: null, note: "That's tools, not an agent — build an environment from it instead." };
-  }
-  if (found.kind === "describe") {
-    return { ...found, label: "A prompt", note: "We'll start an agent built in Future AGI with it.", choice: "builtin", prefill: { prompt: found.prefill.flowText } };
-  }
-  const kind = found.choice ? KIND_OF_CHOICE[found.choice] : null;
-  if (!kind) return { ...found, choice: null, blocked: true };
-  const alternatives = (found.alternatives || [])
-    .map((alt) => ({
-      ...alt,
-      choice: KIND_OF_CHOICE[alt.choice],
-      prefill: alt.choice === "scratch" ? { prompt: alt.prefill?.flowText || "" } : alt.prefill,
-    }))
-    .filter((alt) => alt.choice);
-  return { ...found, choice: kind, alternatives };
 };

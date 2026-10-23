@@ -103,7 +103,7 @@ export default function ConnectAgentPage() {
         <Box>
           <Typography typography="m2" fontWeight="fontWeightMedium">New agent</Typography>
           <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-            Connect it from where it runs today, or from its traces.
+            Connect it from where it runs today, or build one here.
           </Typography>
         </Box>
       </Stack>

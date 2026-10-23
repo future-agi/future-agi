@@ -1,6 +1,7 @@
 import { versionNumber } from "../_mock/versions";
 import { needsFoundCheck, sourceFromAgentRecord } from "../_mock/agentRegistry";
 import { fixDepthOf } from "../_mock/rsiModel";
+import { uploadNoteOf } from "../_mock/agentUpload";
 
 export const MONO = "ui-monospace, Menlo, monospace";
 
@@ -27,6 +28,8 @@ export const ago = (iso) => {
 
 export const ORIGIN_LABEL = (v, source) => {
   if (v.origin === "sync") return `Synced from ${source.label}`;
+  /* A new folder or .zip for an uploaded agent — "Upload Oct 24". */
+  if (v.origin === "upload") return uploadNoteOf(v);
   if (v.origin === "manual") return "Recorded by hand";
   if (v.origin === "pre-versioning") return "Recorded";
   if (v.origin === "rollback") return "Roll back";
@@ -82,12 +85,14 @@ export const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many
 export const isFinishedRun = (r) => r.status !== "running" && r.status !== "queued" && !!(r.finishedAt || r.status === "done" || r.status === "completed");
 
 /* What the builder starts from when an environment is built from an agent —
-   the name, version and size picked in BuildEnvironmentDialog. */
-export const buildPresetFor = (agent, { name, version, count, channel = null }) => ({
+   the name, version, size and parallel worlds picked in BuildEnvironmentDialog. */
+export const buildPresetFor = (agent, { name, version, count, parallel = null, channel = null }) => ({
   ...sourceFromAgentRecord(agent),
   /* Built for one of its channels — the world is that channel's. */
   ...(channel && { channel, agentType: channel }),
   scenarioCount: count,
+  /* How many scenarios run at once — the new environment's run setting. */
+  ...(parallel && { parallelWorlds: parallel }),
   connectedAgent: agent,
   agentVersion: version || agent.latest,
   envName: name,

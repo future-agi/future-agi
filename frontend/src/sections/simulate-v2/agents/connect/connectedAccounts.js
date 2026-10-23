@@ -3,13 +3,15 @@
   LangSmith, Hamming): the GitHub app's repositories and the hosted-platform
   accounts whose key an agent in Agents already uses, each with the agents
   it can see that aren't in Agents yet. New agent says so on the row it
-  belongs to ("Connected · 3 agents ready to add") and opens that row's setup
-  with the key or the app's access in place — no extra section to read.
+  belongs to ("Connected · 3 agents ready to add" for a platform key, which
+  lists its agents; "Connected: acme-inc · 14 repositories" for a git host,
+  whose repositories are read for agents only once one is picked) and opens
+  that row's setup with the key or the app's access in place.
 */
 import { agentRecordFromSource } from "../../_mock/agentRegistry";
 import { assistantsFor } from "../../_mock/connectAgent";
 import {
-  gitHostAccountsLabel, gitHostOfUrl, gitHostRepos, githubAccountsLabel, githubInstalls, hostRepoNameOf, installedRepos, scannedAgentSource,
+  gitHostAccountsLabel, gitHostRepos, githubAccountsLabel, githubInstalls, installedRepos, scannedAgentSource,
 } from "../../_mock/integrations";
 import { HOSTED_PLATFORMS_BY_TYPE } from "../../environments/connectOptions";
 
@@ -100,22 +102,19 @@ export const readyRowsOf = (agents = [], integrations, groups = []) => {
   const out = {};
   /* Everything it holds already in Agents: say so, rather than asking to connect again. */
   const plural = (n, found) => (!n && found ? "All agents added" : `${n} ${n === 1 ? "agent" : "agents"} ready to add`);
+  /* A git host's repositories aren't read until one is picked, so its row
+     counts repositories — never agents it hasn't looked for yet. */
+  const repoCount = (n) => `${n} ${n === 1 ? "repository" : "repositories"}`;
   const gh = accounts.find((a) => a.id === "github");
   if (gh) {
-    const n = gh.items.reduce((sum, it) => sum + it.fresh, 0);
     /* Installed already: the row adds an agent from it, not a connection. */
-    out.github = { line: `Connected: ${gh.label} · ${plural(n, gh.found)}`, action: "Add agent" };
+    out.github = { line: `Connected: ${gh.label} · ${repoCount(installedRepos(integrations).length)}`, action: "Add agent" };
   }
   /* GitLab and Bitbucket: connected groups or workspaces read the same way as GitHub. */
   ["gitlab", "bitbucket"].forEach((host) => {
     const label = gitHostAccountsLabel(host, integrations);
     if (!label) return;
-    const have = new Set(agents.map((a) => {
-      const url = a.definition?.repoUrl || a.values?.repoUrl || "";
-      return gitHostOfUrl(url) === host ? `${hostRepoNameOf(url).toLowerCase()}#${String(a.definition?.entry || a.values?.entry || "").split(":")[0]}` : null;
-    }).filter(Boolean));
-    const found = gitHostRepos(host, integrations).flatMap((r) => (r.agents || []).map((x) => `${r.name.toLowerCase()}#${x.entry.split(":")[0]}`));
-    out[host] = { line: `Connected: ${label} · ${plural(found.filter((k) => !have.has(k)).length, found.length)}`, action: "Add agent" };
+    out[host] = { line: `Connected: ${label} · ${repoCount(gitHostRepos(host, integrations).length)}`, action: "Add agent" };
   });
   accounts.filter((a) => a.id !== "github").forEach((acc) => {
     rows.filter((r) => r.kind === "hosted" && r.initial?.platform === acc.id).forEach((r) => {

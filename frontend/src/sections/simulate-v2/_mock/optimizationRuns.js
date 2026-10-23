@@ -13,7 +13,7 @@
  * we try that" is answerable only if the evidence travelled with the attempt.
  */
 
-import { OPTIMIZERS, optimizerById, KIND_SURFACE, blockingVerdict, protectedHit, depthOf, areaOfProposal, searchTrace, goalWords } from "./optimizer";
+import { OPTIMIZERS, optimizerById, KIND_SURFACE, blockingVerdict, protectedHit, depthOf, areaOfProposal, searchTrace, goalWords, noGainRunsOf, plateauStopOf } from "./optimizer";
 import { CONFIG_AREAS } from "./rsiModel";
 import { creditsLabel } from "./metering";
 
@@ -315,18 +315,18 @@ const extraFinalConversations = (result) => {
   return calib + mustPass + deeper + envs;
 };
 
-/** Every conversation a search runs. */
-export const searchConversations = (result) => {
+/** Every conversation a search runs — `trials` prices another run count (an estimate's maximum). */
+export const searchConversations = (result, { trials } = {}) => {
   if (!result) return 0;
   const reps = result.repeats || REPEATS;
-  return (result.trials.length * result.trainMeasured + finalistCount(result) * result.heldMeasured) * reps + extraFinalConversations(result);
+  return ((trials ?? result.trials.length) * result.trainMeasured + finalistCount(result) * result.heldMeasured) * reps + extraFinalConversations(result);
 };
 
 /** What a search spends: every trial runs the target scenarios, each finalist the held-back and must-pass sets. */
-export const searchSpend = (result, surface) => {
+export const searchSpend = (result, surface, { trials } = {}) => {
   if (!result) return 0;
   const reps = result.repeats || REPEATS;
-  return result.trials.length * result.trainMeasured * reps * PER_CONVERSATION[trialKind(result, surface)]
+  return (trials ?? result.trials.length) * result.trainMeasured * reps * PER_CONVERSATION[trialKind(result, surface)]
     + finalistCount(result) * result.heldMeasured * reps * PER_CONVERSATION[finalKind(surface)]
     + extraFinalConversations(result) * PER_CONVERSATION[finalKind(surface)];
 };
@@ -452,7 +452,8 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /**
  * Everything an improvement run concluded, said once so the page, the Error
- * Feed chip and the lists agree. Six endings: Ready for review, No safe
+ * Feed chip and the lists agree. Seven endings: Ready for review, Stopped
+ * early (no gain in the last two runs — the best was verified), No safe
  * improvement, Could not reproduce, Stopped at budget, Failed for
  * infrastructure reasons, and Suggestion only — for agents we can only call.
  */
@@ -790,6 +791,12 @@ const outcomeOf = (rec, { model } = {}) => {
   const said = chosen
     ? `Run ${chosen.n}, your pick: ${base.chosen.projected ? "projected " : ""}${heldNow}% on the held-back set (from ${r.heldBase}%), ${costText}${verified ? "" : " — verify it before it can ship"}`
     : searchSaid;
+  /* The search stopped once runs in a row stopped beating the best so far;
+     the best was verified like any other winner, and ships the same way. */
+  if (plateauStopOf(r)) {
+    const s = r.stoppedEarly;
+    return { ...base, ending: { key: "stopped-early", label: "Stopped early" }, headline: `Stopped early — no gain in the last ${noGainRunsOf(s)} runs, after ${s.after} of up to ${s.of}. Best: ${said.charAt(0).toLowerCase()}${said.slice(1)}.` };
+  }
   if (record.stoppedAtBudget) {
     const s = record.stoppedAtBudget;
     const limit = s.by === "time" ? `${s.minutes}-minute time cap` : `${creditsLabel(s.budget || 0)} budget`;
@@ -1127,6 +1134,10 @@ export const improvementProgressOf = (record, now = Date.now()) => {
   if (!record.result) return null;
   const steps = searchTrace(record.result, record);
   const total = record.fixDepth === "suggestion" ? 0 : (record.result.trials || []).length;
+  /* The most it could run, and whether it stopped short: while searching it
+     reads "2 of up to 8"; once the runs have played, an early stop is said. */
+  const early = record.fixDepth !== "suggestion" ? plateauStopOf(record.result) : null;
+  const runsMax = early ? early.of : total;
   const elapsed = Math.max(0, now - (Date.parse(record.startedAt || record.createdAt || 0) || now));
   let t = 0;
   let runsDone = 0;
@@ -1134,12 +1145,26 @@ export const improvementProgressOf = (record, now = Date.now()) => {
     const d = stepDuration(s);
     if (elapsed < t + d) {
       if (s.id === "trials") runsDone = Math.min(total, Math.floor((elapsed - t) / RUN_MS));
-      return { stage: STEP_STAGE[s.id] || "search", step: s.id, runsDone, runsTotal: total, done: false };
+      const stage = STEP_STAGE[s.id] || "search";
+      return { stage, step: s.id, runsDone, runsTotal: total, runsMax, stoppedEarly: !!early && stage === "verify", done: false };
     }
     if (s.id === "trials") runsDone = total;
     t += d;
   }
-  return { stage: "verify", step: steps[steps.length - 1]?.id, runsDone: total, runsTotal: total, done: true };
+  return { stage: "verify", step: steps[steps.length - 1]?.id, runsDone: total, runsTotal: total, runsMax, stoppedEarly: !!early, done: true };
+};
+
+/*
+  A running improvement's run count, said the same everywhere. The planned
+  count is a maximum: "2 of up to 8" while it searches; once the runs have
+  played, the count it used, and — if it stopped short — why.
+    → { done, max, upTo, stopped } (stopped: "stopped early, no gain in the last 2" or null)
+*/
+export const runsCountOf = (progress, result) => {
+  if (!progress) return null;
+  const max = progress.runsMax ?? progress.runsTotal;
+  const stopped = progress.stoppedEarly ? `stopped early, no gain in the last ${noGainRunsOf(result?.stoppedEarly)}` : null;
+  return { done: progress.runsDone, max, upTo: !stopped && progress.stage !== "verify", stopped };
 };
 
 /**

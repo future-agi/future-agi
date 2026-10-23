@@ -1,6 +1,8 @@
 import { staleSince } from "../_mock/optimizationRuns";
 import PropTypes from "prop-types";
 import { useCallback, useMemo, useState } from "react";
+import SandboxImport from "./connect/SandboxImport";
+import { SANDBOX_IMPORT_PROVIDERS } from "../_mock/connectAgent";
 import { Helmet } from "react-helmet-async";
 import { useSnackbar } from "notistack";
 import {
@@ -667,11 +669,14 @@ export default function AgentViewPage() {
           ))}
         </Select>
         )}
-        {/* Re-read the source when we can; otherwise record the change by hand. */}
+        {/* Re-read the source when we can; an upload takes its new folder or
+            .zip; otherwise record the change by hand. */}
         <Tooltip
           arrow
           title={
-            status.status !== "connected" && source.syncable
+            source.kind === "upload"
+              ? "Upload the new folder or .zip — we read it, show what changed since the last upload and save it as the next version"
+              : status.status !== "connected" && source.syncable
               ? `${status.label} — ${status.reason}`
               : source.syncable
               ? `Sync from ${source.label} and save any changes as a new version`
@@ -688,7 +693,7 @@ export default function AgentViewPage() {
             size="small"
             disabled={deleted || (source.syncable && status.status !== "connected")}
             onClick={() =>
-              source.syncable
+              source.syncable || source.kind === "upload"
                 ? setSyncOpen(true)
                 : source.idMissing
                   ? setQuery({ tab: "connections", edit: "id" })
@@ -697,7 +702,9 @@ export default function AgentViewPage() {
             startIcon={
               <Iconify
                 icon={
-                  source.syncable
+                  source.kind === "upload"
+                    ? "solar:cloud-upload-linear"
+                    : source.syncable
                     ? "solar:refresh-linear"
                     : source.idMissing
                       ? "solar:link-round-linear"
@@ -714,7 +721,9 @@ export default function AgentViewPage() {
               borderColor: "divider",
             }}
           >
-            {source.syncable
+            {source.kind === "upload"
+              ? "Upload new version"
+              : source.syncable
               ? "Sync"
               : source.idMissing
                 ? "Reconnect"
@@ -1046,7 +1055,7 @@ export default function AgentViewPage() {
         onOpenEnvironments={() => setQuery({ tab: "environments", v: null })}
         onSave={(v) => {
           recordAgentVersion(agent.key, v);
-          announce(v, "a sync");
+          announce(v, v.origin === "upload" ? "an upload" : "a sync");
           setQuery({ v: null });
         }}
       />
@@ -1072,7 +1081,7 @@ export default function AgentViewPage() {
 function EnvironmentsTab({ agent, runs, onBuild, onRun, onOpen, mainEnvId, mainPicked, onMakeMain, focusEnvId = null }) {
   const { state: simState } = useSimStore();
   /* "agent vN × environment vM" — what the last run there held fixed, as every run reads. */
-  /* A code agent's versions read as commits — "main @ 3f9a2c1". */
+  /* Every version reads vN; a code agent's carries its commit — "v5 · main @ 3f9a2c1". */
   const nm = (l) => versionNameOf(agent, l).main;
   const pairOfLast = (last, envId) => {
     const env = simState.myEnvironments.find((e) => e.id === envId);
@@ -1375,8 +1384,10 @@ function ConnectionTab({
     source.kind !== "platform" &&
     ["endpoint", "none"].includes(source.runtime.kind);
   const syncs = agent.versions
-    .filter((v) => ["sync", "push", "pr"].includes(v.origin))
+    .filter((v) => ["sync", "push", "pr", "upload"].includes(v.origin))
     .reverse();
+  /* An upload has nothing to re-read — a new version is a new folder or .zip. */
+  const uploaded = source.kind === "upload";
   const rows = [
     {
       label: "Reached at",
@@ -1424,11 +1435,13 @@ function ConnectionTab({
     },
     /* The last sync, beside the connection it reads — not only under Source and sync. */
     {
-      label: "Last synced",
+      label: uploaded ? "Last upload" : "Last synced",
       value: syncs.length
         ? `${ago(syncs[0].createdAt || syncs[0].connectedAt)} · saved as ${syncs[0].label}`
-        : source.syncable ? "Never synced" : "Can't be synced — use Add version when it changes",
+        : uploaded ? `Only the first — ${source.where}`
+          : source.syncable ? "Never synced" : "Can't be synced — use Add version when it changes",
       ...(source.syncable && onSync && { action: { label: "Sync now", onClick: onSync } }),
+      ...(uploaded && onSync && { action: { label: "Upload new version", onClick: onSync } }),
     },
   ];
   const lastReadAt = agent.lastSyncedAt || syncs[0]?.createdAt || null;
@@ -1609,6 +1622,10 @@ function ConnectionTab({
         {replication.mode !== "wrapped_endpoint" && <LiveConsentCard agent={agent} env={env} onSave={onSaveValues} />}
         <RetellPinCard agent={agent} onSave={onSaveValues} />
         <AgentReplicationCard agent={agent} env={env} clones={clones} onSaveValues={onSaveValues} />
+        {/* Vapi, Retell: test a sealed copy instead of the live assistant — offered here, never at connect. */}
+        {SANDBOX_IMPORT_PROVIDERS.includes(agent.values?.provider) && !agent.values?.importedCopy && (
+          <SealedCopyOffer providerName={source.label} onSave={onSaveValues} />
+        )}
       </SettingsSection>
 
       <SettingsSection title="Calls" sub="How simulations reach it, per channel.">
@@ -1640,16 +1657,18 @@ function ConnectionTab({
         <Card
           title={(
             <>
-              Sync
+              {uploaded ? "Upload" : "Sync"}
               {source.syncable && (
                 <InfoTip text={`Starting an improvement syncs it too. A change found there is marked "${OUTSIDE_CHANGE_LABEL}" and the improvement starts from it.`} />
               )}
             </>
           )}
           action={
-            source.syncable && (
+            source.syncable ? (
               <ActionText onClick={onSync}>Sync now</ActionText>
-            )
+            ) : uploaded && onSync ? (
+              <ActionText onClick={onSync}>Upload new version</ActionText>
+            ) : null
           }
         >
           {/* Staging only (?demo=1): the release branch moving, on demand. */}
@@ -1680,6 +1699,7 @@ function ConnectionTab({
           >
             {source.syncable
               ? `Syncs from ${syncWhat} — a change is saved as a new version`
+              : uploaded ? "Read once from the upload — upload a new folder or .zip to save the next version"
               : source.idMissing ? "Needs the assistant ID — add it under How we reach it"
                 : source.appLost ? "The GitHub app lost access to the repository"
                   : "Can't be synced — use Add version when it changes"}
@@ -1697,7 +1717,7 @@ function ConnectionTab({
           {syncs.length > 0 && (
             <Stack direction="row" alignItems="center" spacing={0.75} sx={{ px: 2, pb: 1.5 }}>
               <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                {`Last synced ${ago(syncs[0].createdAt || syncs[0].connectedAt)} · saved as `}
+                {`${uploaded ? "Last upload" : "Last synced"} ${ago(syncs[0].createdAt || syncs[0].connectedAt)} · saved as `}
                 <Box component="span" sx={{ fontFamily: MONO, color: "text.primary" }}>{syncs[0].label}</Box>
                 {isOutsideChange(syncs[0]) ? ` · ${OUTSIDE_CHANGE_LABEL}` : ""}
               </Typography>
@@ -1954,3 +1974,31 @@ function Pill({ children, dot }) {
   );
 }
 Pill.propTypes = { children: PropTypes.node, dot: PropTypes.string };
+
+/* A sealed copy for a live Vapi or Retell assistant: import it with the code
+   behind its tools, so they answer from the seeded world. */
+function SealedCopyOffer({ providerName, onSave }) {
+  const [on, setOn] = useState(false);
+  const [files, setFiles] = useState([]);
+  return (
+    <Stack spacing={1}>
+      <SandboxImport providerName={providerName} on={on} onToggle={(v) => { setOn(v); if (!v) setFiles([]); }} files={files} onFiles={setFiles} />
+      {on && (
+        <Box>
+          <Button
+            size="small" variant="contained" disabled={!files.length}
+            onClick={() => onSave({ importedCopy: true, toolCodeUploaded: true, toolCodeFiles: files.map((f) => f.name) }, "Testing a sealed copy — its tools answer from the seeded world.")}
+            sx={{ typography: "s2", fontWeight: 700 }}
+          >
+            Use the sealed copy
+          </Button>
+        </Box>
+      )}
+    </Stack>
+  );
+}
+
+SealedCopyOffer.propTypes = {
+  providerName: PropTypes.string,
+  onSave: PropTypes.func.isRequired,
+};

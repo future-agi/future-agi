@@ -680,6 +680,8 @@ export const fixStatusOf = (issue, state, prs = [], now = Date.now(), agents = a
   const shipped = shippedStateOf(record, es, prs, { now, envId: env.id, ...(issue?.recurs_after_fix === true && { recurs: true }) });
   if (shipped) return { ...at, ...shipped };
   if (ending.key === "budget") return { ...at, key: "ready", label: "Stopped at budget" };
+  /* Stopped once two runs in a row didn't beat the best; the best was verified. */
+  if (ending.key === "stopped-early") return { ...at, key: "ready", label: "Stopped early" };
   if (ending.key === "suggestion") return { ...at, key: "ready", label: "Suggestion only" };
   /* The PRD's name. It sits in its own Fix column on the Error Feed, apart
      from the issue's own triage status ("For review"). */
