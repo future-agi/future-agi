@@ -6,3 +6,5 @@ FROM futureagi/future-agi:${BASE_TAG}
 COPY e2e/stack/backend/settings_e2e.py /app/backend/tfc/settings/e2e.py
 COPY e2e/stack/backend/urls_e2e.py /app/backend/tfc/urls_e2e.py
 COPY e2e/stack/backend/e2e_feed_issue.py /app/backend/tracer/views/e2e_feed_issue.py
+
+COPY e2e/stack/backend/bootstrap_sql.py /app/backend/bootstrap_sql.py

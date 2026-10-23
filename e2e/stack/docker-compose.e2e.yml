@@ -36,6 +36,11 @@ services:
       SLACK_API_URL: http://mock-slack:8080/api
       # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
+      SQL_WORKBENCH_CH_USER: e2e_sql_service
+      SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
+    depends_on:
+      sql-workbench-bootstrap:
+        condition: service_completed_successfully
   worker:
     restart: "no"
     # Keep the worker mount-free for the managed-mock attestation as well.
@@ -46,6 +51,36 @@ services:
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       SLACK_API_URL: http://mock-slack:8080/api
+  worker-exact-aggregation:
+    restart: "no"
+    volumes: !reset []
+    environment:
+      DJANGO_SETTINGS_MODULE: tfc.settings.e2e
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      SQL_WORKBENCH_CH_USER: e2e_sql_service
+      SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
+    depends_on:
+      sql-workbench-bootstrap:
+        condition: service_completed_successfully
+  sql-workbench-bootstrap:
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
+    entrypoint: ["python", "/app/backend/bootstrap_sql.py"]
+    restart: "no"
+    mem_limit: 256m
+    cpus: 0.5
+    environment:
+      FUTURE_AGI_E2E_FIXTURE: sql-workbench
+      SQL_WORKBENCH_CH_USER: e2e_sql_service
+      SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
+      CH_HOST: clickhouse
+      CH_PORT: "9000"
+      CH_DATABASE: ${CH25_DATABASE:-${CH_DATABASE:-default}}
+      CH_USERNAME: ${CH_USERNAME:-default}
+      CH_PASSWORD: ${CH_PASSWORD:-e2e-clickhouse-password}
+      CH25_EVAL_LOGGER_TABLE: ${CH25_EVAL_LOGGER_TABLE:-tracer_eval_logger}
+    depends_on:
+      clickhouse-cdc-bootstrap:
+        condition: service_completed_successfully
   fi-collector:
     # Collector and consumer must run the same checked-out transport protocol.
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}

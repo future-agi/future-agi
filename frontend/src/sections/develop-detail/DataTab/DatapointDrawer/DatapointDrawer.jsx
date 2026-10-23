@@ -232,7 +232,8 @@ const DatapointDrawerChild = ({
 
   useEffect(() => {
     setLoading(true);
-    setTimeout(() => setLoading(false), 300);
+    const timeout = setTimeout(() => setLoading(false), 300);
+    return () => clearTimeout(timeout);
   }, [datapoint]);
 
   const audioColumnIds = allColumns
