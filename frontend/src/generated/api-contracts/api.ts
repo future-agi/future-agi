@@ -585,7 +585,6 @@ import type {
   GroupingOutboxResponseApi,
   HarnessAcceptedResponseApi,
   HarnessArtifactUploadResponseApi,
-  HarnessCompositionCreateResponseApi,
   HarnessConversationAdjustmentApi,
   HarnessConversationAdjustmentResponseApi,
   HarnessConversationEventAckApi,
@@ -615,6 +614,8 @@ import type {
   HarnessEnvironmentToolCallEvaluationApi,
   HarnessEventBatchApi,
   HarnessEventBatchResponseApi,
+  HarnessHostedAgentRequestApi,
+  HarnessHostedAgentResponseApi,
   HarnessIngressProxyRequestApi,
   HarnessIngressRequestApi,
   HarnessIngressResponseApi,
@@ -58822,58 +58823,6 @@ export const simulateApiHarnessAdaptationsCreate = async (
   );
 };
 
-export type simulateApiHarnessCompositionsCreateResponse201 = {
-  data: HarnessCompositionCreateResponseApi;
-  status: 201;
-};
-
-export type simulateApiHarnessCompositionsCreateResponse404 = {
-  data: ApiTextErrorResponseApi;
-  status: 404;
-};
-
-export type simulateApiHarnessCompositionsCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 404>;
-};
-
-export type simulateApiHarnessCompositionsCreateResponseSuccess =
-  simulateApiHarnessCompositionsCreateResponse201 & {
-    headers: Headers;
-  };
-export type simulateApiHarnessCompositionsCreateResponseError = (
-  | simulateApiHarnessCompositionsCreateResponse404
-  | simulateApiHarnessCompositionsCreateResponseDefault
-) & {
-  headers: Headers;
-};
-
-export type simulateApiHarnessCompositionsCreateResponse =
-  | simulateApiHarnessCompositionsCreateResponseSuccess
-  | simulateApiHarnessCompositionsCreateResponseError;
-
-export const getSimulateApiHarnessCompositionsCreateUrl = () => {
-  return `/simulate/api/harness-compositions/`;
-};
-
-/**
- * Compose a release suite with an agent through a canonical binding, no adaptation.
- */
-export const simulateApiHarnessCompositionsCreate = async (
-  harnessReleaseAgentRequestApi: HarnessReleaseAgentRequestApi,
-  options?: RequestInit,
-): Promise<simulateApiHarnessCompositionsCreateResponse> => {
-  return apiMutator<simulateApiHarnessCompositionsCreateResponse>(
-    getSimulateApiHarnessCompositionsCreateUrl(),
-    {
-      ...options,
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(harnessReleaseAgentRequestApi),
-    },
-  );
-};
-
 export type simulateApiHarnessEnvironmentsListResponse200 = {
   data: HarnessEnvironmentListResponseApi;
   status: 200;
@@ -59559,6 +59508,64 @@ export const simulateApiHarnessEnvironmentsRunsRunReport = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponse201 = {
+  data: HarnessHostedAgentResponseApi;
+  status: 201;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponse409 = {
+  data: ApiTextErrorResponseApi;
+  status: 409;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201 | 404 | 409>;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponseSuccess =
+  simulateApiHarnessHostedAgentsCreateResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessHostedAgentsCreateResponseError = (
+  | simulateApiHarnessHostedAgentsCreateResponse404
+  | simulateApiHarnessHostedAgentsCreateResponse409
+  | simulateApiHarnessHostedAgentsCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponse =
+  | simulateApiHarnessHostedAgentsCreateResponseSuccess
+  | simulateApiHarnessHostedAgentsCreateResponseError;
+
+export const getSimulateApiHarnessHostedAgentsCreateUrl = () => {
+  return `/simulate/api/harness-hosted-agents/`;
+};
+
+/**
+ * Compose our own agent with a release suite; it answers the composed environment.
+ */
+export const simulateApiHarnessHostedAgentsCreate = async (
+  harnessHostedAgentRequestApi: HarnessHostedAgentRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessHostedAgentsCreateResponse> => {
+  return apiMutator<simulateApiHarnessHostedAgentsCreateResponse>(
+    getSimulateApiHarnessHostedAgentsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessHostedAgentRequestApi),
     },
   );
 };
