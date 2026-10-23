@@ -1,0 +1,33 @@
+{
+  "auth_key_id": "key_log_batch_b",
+  "cache_hit": false,
+  "completion_tokens": 0,
+  "content_mode": "full",
+  "cost": 0,
+  "error_code": "org_budget_exceeded",
+  "error_message": "budget exceeded for key 'log-batch-key-b': spent $0.000005 of $0.000001 monthly limit",
+  "fallback_used": false,
+  "generation_id": "req_log_batch_budget_block",
+  "guardrail_triggered": false,
+  "is_error": true,
+  "is_stream": false,
+  "latency_ms": 3,
+  "metadata": {
+    "auth_key_id": "key_log_batch_b",
+    "auth_key_name": "log-batch-key-b",
+    "budget_action": "block",
+    "budget_exceeded_level": "key:log-batch-key-b",
+    "budget_period": "monthly",
+    "budget_period_start": "2026-10-01T00:00:00Z",
+    "key_org_id": "org_log_batch",
+    "org_budget_blocked": "true",
+    "org_id": "org_log_batch"
+  },
+  "model": "gpt-4o-mini",
+  "prompt_tokens": 0,
+  "provider": "",
+  "request_id": "req_log_batch_budget_block",
+  "status_code": 429,
+  "timestamp": "2026-10-22T23:50:44Z",
+  "total_tokens": 0
+}

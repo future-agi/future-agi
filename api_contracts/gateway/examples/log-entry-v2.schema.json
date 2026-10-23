@@ -36,6 +36,10 @@
     "is_stream": { "type": "boolean" },
     "is_error": { "type": "boolean" },
     "error_message": { "type": "string" },
+    "error_code": {
+      "type": "string",
+      "description": "The code of the gateway's error answer (its APIError code; never caller metadata). Django raises budget.exceeded from budget_exceeded, org_budget_exceeded and budget_throttled."
+    },
     "cache_hit": { "type": "boolean" },
     "fallback_used": { "type": "boolean" },
     "guardrail_triggered": { "type": "boolean" },
@@ -46,6 +50,10 @@
     "session_id": {
       "type": "string",
       "description": "The session stays top-level; agent{} has no session_id."
+    },
+    "routing_strategy": {
+      "type": "string",
+      "description": "The strategy the router picked the provider with (the routing_strategy metadata key, promoted)."
     },
     "metadata": {
       "type": "object",
