@@ -8,9 +8,12 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING
 
 from tracer.services.eval_tasks.sampling.policy import (
+    HASH_SPACE,
     RATE_DENOMINATOR,
     parse_time,
+    prn_start_offset,
     rate_units,
+    selection_seed,
     threshold,
 )
 
@@ -74,6 +77,11 @@ class SamplingQuery:
         self.params = SamplingParams(
             sp_project=str(task.project_id),
             sp_version=version,
+            # Independent policies hash with their own version; coordinated
+            # policies share one permanent seed per project and panel.
+            sp_seed=selection_seed(
+                policy, version=version, project_id=str(task.project_id)
+            ),
             sp_start=parse_time(self.scan_window["start"]),
             sp_end=parse_time(self.scan_window["end"]),
             sp_snapshot=snapshot,
@@ -129,6 +137,40 @@ class SamplingQuery:
         for index, value in enumerate(values[:-1]):
             args.extend([f"rule_index = {index}", value])
         return f"multiIf({', '.join([*args, values[-1]])})" if args else values[-1]
+
+    def _live_selected(self, rules: list[dict]) -> str:
+        """Bernoulli selection per rule on fixed-width uppercase hash text.
+
+        Without a start point a unit is selected when its hash is below the
+        rate threshold (the historical statement, parameter for parameter).
+        With a start point S and width T it is selected when
+        ``(hash - S) mod 2**256 < T``: the interval [S, S + T) on the circle,
+        split in two when it wraps past the top.
+        """
+
+        start = self.policy.get("prn_start", 0)
+        if not start:
+            thresholds = self._rule_case(
+                [self.bind(threshold(rule.get("rate", 100))) for rule in rules]
+            )
+            return f"concat('0', unit_hash) < {thresholds}"
+        key = "concat('0', unit_hash)"
+        offset = prn_start_offset(start)
+        begin = self.bind(f"{offset:065X}")
+        cases = []
+        for rule in rules:
+            width = int(threshold(rule.get("rate", 100)), 16)
+            end = offset + width
+            if width >= HASH_SPACE:
+                cases.append("1")
+            elif end <= HASH_SPACE:
+                cases.append(
+                    f"({key} >= {begin} AND {key} < {self.bind(f'{end:065X}')})"
+                )
+            else:
+                wrapped = self.bind(f"{end - HASH_SPACE:065X}")
+                cases.append(f"({key} >= {begin} OR {key} < {wrapped})")
+        return self._rule_case(cases)
 
     def _source(self) -> str:
         from tracer.selectors.eval_tasks.row_resolver import _build_sample_query
@@ -406,9 +448,7 @@ class SamplingQuery:
         rates = self._rule_case(
             [self.bind(rule.get("rate", 100) / 100) for rule in rules]
         )
-        thresholds = self._rule_case(
-            [self.bind(threshold(rule.get("rate", 100))) for rule in rules]
-        )
+        live_selected = self._live_selected(rules)
         target = []
         for rule in rules:
             count = (
@@ -433,19 +473,27 @@ class SamplingQuery:
                 "ordinal <= sample_size",
             )
         else:
-            probability, selected = rates, f"concat('0', unit_hash) < {thresholds}"
+            probability, selected = rates, live_selected
         labelled = f"""{source}, labelled AS (
             SELECT *, toJSONString(tuple({rule_name}, groups)) AS stratum,
-                   hex(SHA256(concat(%(sp_version)s, ':', unit_id))) AS unit_hash FROM units
+                   hex(SHA256(concat(%(sp_seed)s, ':', unit_id))) AS unit_hash FROM units
         )"""
         if self.policy["mode"] == "live":
             return (
                 labelled
                 + f", classified AS (SELECT *, {probability} AS inclusion_probability, {selected} AS selected FROM labelled)"
             )
+        order = "unit_hash, unit_id"
+        start = self.policy.get("prn_start", 0)
+        if start:
+            # Read the hash circle from the start point: hashes at or after it
+            # first (ascending), then the wrapped ones. Equal to ordering by
+            # (hash - start) mod 2**256, the portable reference.
+            begin = self.bind(f"{prn_start_offset(start):065X}")
+            order = f"concat('0', unit_hash) < {begin}, unit_hash, unit_id"
         return f"""{labelled}, ranked AS (
             SELECT *, count() OVER (PARTITION BY stratum) AS population_size,
-                   row_number() OVER (PARTITION BY stratum ORDER BY unit_hash, unit_id) AS ordinal
+                   row_number() OVER (PARTITION BY stratum ORDER BY {order}) AS ordinal
             FROM labelled
         ), sized AS (SELECT *, {k} AS sample_size FROM ranked), classified AS (
             SELECT *, {probability} AS inclusion_probability, {selected} AS selected FROM sized

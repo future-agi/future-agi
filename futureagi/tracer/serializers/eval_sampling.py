@@ -26,7 +26,12 @@ class SamplingPredicateSerializer(SamplingAttributeSerializer):
 class SamplingRuleSerializer(StrictInputSerializer):
     name = serializers.CharField(max_length=80, required=False)
     filters = SamplingPredicateSerializer(many=True, required=False)
-    rate = serializers.FloatField(min_value=0, max_value=100, required=False, help_text="Percentage with at most six decimal places; closed quotas use exact integer arithmetic.")
+    rate = serializers.FloatField(
+        min_value=0,
+        max_value=100,
+        required=False,
+        help_text="Percentage with at most six decimal places; closed quotas use exact integer arithmetic.",
+    )
     target_n = serializers.IntegerField(min_value=0, max_value=1000000, required=False)
     min_n = serializers.IntegerField(min_value=0, max_value=1000000, required=False)
     max_n = serializers.IntegerField(min_value=0, max_value=1000000, required=False)
@@ -56,6 +61,25 @@ class SamplingPolicySerializer(StrictInputSerializer):
     strata = SamplingRuleSerializer(many=True, required=False)
     group_by = SamplingAttributeSerializer(many=True, required=False)
     default = SamplingRuleSerializer(required=False)
+    # No defaults: an omitted key is the historical independent policy, and
+    # unchanged policies must round-trip byte for byte on edit.
+    coordination = serializers.ChoiceField(
+        choices=("independent", "project"),
+        required=False,
+        help_text="independent (default): this policy draws its own sample. project: every coordinated policy of the project (and panel) shares one permanent random number per unit, so samples nest as rates or quotas grow and overlap across tasks.",
+    )
+    panel = serializers.CharField(
+        max_length=64,
+        required=False,
+        allow_blank=True,
+        help_text="Project coordination only: a named PRN panel; different panels draw independent numbers.",
+    )
+    prn_start = serializers.FloatField(
+        min_value=0,
+        max_value=100,
+        required=False,
+        help_text="Project coordination only: start point (percent of the hash circle, below 100, at most six decimals). Disjoint start intervals give disjoint live samples.",
+    )
 
 
 class SamplingPreviewRequestSerializer(StrictInputSerializer):

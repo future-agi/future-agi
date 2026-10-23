@@ -1311,3 +1311,111 @@ def test_preview_and_execution_ignore_a_hidden_task_date_range(
             "unit_id", flat=True
         )
     ) == {f"session:{early.id}", f"session:{late.id}"}
+
+
+@pytest.mark.parametrize("start", [0, 87.5])
+def test_coordinated_prn_sql_matches_reference_nests_and_persists(
+    project, custom_eval_config, ch_seed, start
+):
+    """Y1: ClickHouse's coordinated selection equals the portable PRN reference.
+
+    Closed bottom-k and live Bernoulli (two rules; at start 87.5% the 25%
+    interval wraps past the top of the hash circle) agree unit for unit with
+    ``prn_order_key``/``prn_selects``; quotas nest; a reconcile persists the
+    shared seed and marks every result as coordinated.
+    """
+    from tracer.models.eval_sampling import EvalSamplingCohort
+    from tracer.services.eval_tasks.sampling.policy import prn_order_key, prn_selects
+
+    units, spans, gold = [], [], set()
+    for index in range(40):
+        session = TraceSession.objects.create(project=project, name=f"prn-{index}")
+        tier = "gold" if index % 4 == 0 else "std"
+        spans += seed_contact(project, session, {"tier": tier}, traces=1, seed=False)
+        units.append(f"session:{session.id}")
+        if tier == "gold":
+            gold.add(units[-1])
+    seed_ch_spans(spans)
+    coordination = {"coordination": "project"}
+    if start:
+        coordination["prn_start"] = start
+    seed = f"prn-sha256-v1:{project.id}:"
+    reference = sorted(units, key=lambda unit: (prn_order_key(seed, unit, start), unit))
+
+    def closed_members(target):
+        task = EvalTask(
+            project=project,
+            row_type="spans",
+            filters={},
+            sampling_policy=make_policy(default={"target_n": target}, **coordination),
+        )
+        policy, version = task_policy(task, now=timezone.now())
+        statement = SamplingQuery(task, policy, version, sampling_clock()).members()
+        rows = [row for block in stream_query(*statement) for row in block]
+        assert {row[2] for row in rows} == {target / 40}  # p = k / N
+        return version, {row[0] for row in rows}
+
+    small_version, small = closed_members(5)
+    large_version, large = closed_members(12)
+    assert small_version != large_version  # each edit is its own cohort ...
+    assert small == set(reference[:5])  # ... drawn from the same numbers
+    assert large == set(reference[:12])
+    assert small < large
+
+    now = sampling_clock()
+    live_task = EvalTask(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy={
+            "version": 1,
+            "sampling_unit": "session",
+            "mode": "live",
+            "window": {"start": (now - timedelta(days=1)).isoformat(), "end": None},
+            "strata": [
+                {
+                    "name": "gold",
+                    "filters": [{"key": "tier", "op": "in", "values": ["gold"]}],
+                    "rate": 50,
+                }
+            ],
+            "default": {"rate": 25},
+            **coordination,
+        },
+    )
+    policy, version = task_policy(live_task, now=now)
+    decided = {}
+    for block in stream_query(*SamplingQuery(live_task, policy, version, now).rows()):
+        for _row, unit, _stratum, probability, selected in block:
+            assert probability == (0.5 if unit in gold else 0.25)
+            assert decided.setdefault(str(unit), bool(selected)) == bool(selected)
+    assert set(decided) == set(units)
+    assert decided == {
+        unit: prn_selects(seed, unit, 50 if unit in gold else 25, start)
+        for unit in units
+    }
+
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy=make_policy(default={"target_n": 5}, **coordination),
+    )
+    task.evals.add(custom_eval_config)
+    reconcile(task)
+    cohort = EvalSamplingCohort.objects.get(task=task)
+    assert cohort.selection_context["coordination"] == {
+        "mode": "project",
+        "panel": "",
+        "prn_start": start,
+        "seed": seed,
+    }
+    assert {m.unit_id for m in cohort.members.all()} == set(reference[:5])
+    entries = list(EvalLogger.objects.filter(eval_task_id=str(task.id)))
+    assert len(entries) == 10  # 5 contacts x 1 trace x 2 spans
+    assert {
+        entry.output_metadata["_task_selection"]["sampling"]["coordination"]
+        for entry in entries
+    } == {"project"}

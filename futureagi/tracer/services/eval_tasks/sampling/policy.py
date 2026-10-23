@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -23,6 +24,14 @@ MAX_STRATA = 100
 MAX_WINDOW = timedelta(days=31)
 UNITS = ("span", "trace", "session", "user", "attribute")
 SOURCES = ("span", "resource", "metadata")
+# ``independent`` (the default) seeds every unit hash with the policy version,
+# so each policy draws its own sample. ``project`` seeds it with a permanent
+# random number (PRN) shared by every coordinated policy of the project (and
+# panel): samples nest as rates or quotas grow and overlap across tasks.
+COORDINATION = ("independent", "project")
+PRN_SEED_PREFIX = "prn-sha256-v1"
+_PANEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")
+HASH_SPACE = 1 << 256
 
 
 class InvalidSamplingPolicy(ValueError):
@@ -162,6 +171,9 @@ def validate_policy(
             "strata",
             "group_by",
             "default",
+            "coordination",
+            "panel",
+            "prn_start",
         },
         "policy",
     )
@@ -239,7 +251,84 @@ def validate_policy(
         raise InvalidSamplingPolicy(
             "The default stratum cannot have filters or a name."
         )
+    _coordination(policy)
     return policy
+
+
+def _coordination(policy: dict) -> None:
+    """Validate and normalize the hash-seed coordination fields in place.
+
+    The default (independent) form is stored without these keys, so every
+    policy that existed before coordination keeps its exact policy version.
+    """
+
+    mode = policy.get("coordination", "independent")
+    if mode not in COORDINATION:
+        raise InvalidSamplingPolicy("coordination must be independent or project.")
+    if mode == "independent":
+        if "panel" in policy or "prn_start" in policy:
+            raise InvalidSamplingPolicy(
+                "panel and prn_start require project coordination."
+            )
+        policy.pop("coordination", None)
+        return
+    panel = policy.get("panel", "")
+    if not isinstance(panel, str) or (panel and not _PANEL.fullmatch(panel)):
+        raise InvalidSamplingPolicy(
+            "panel must be 1-64 letters, digits, '_', '.', ':' or '-', "
+            "starting with a letter or digit."
+        )
+    if not panel:
+        policy.pop("panel", None)
+    start = policy.get("prn_start", 0)
+    if (
+        isinstance(start, bool)
+        or not isinstance(start, (int, float))
+        or not math.isfinite(start)
+        or not 0 <= start < 100
+    ):
+        raise InvalidSamplingPolicy(
+            "prn_start must be a finite percentage from 0 up to (not including) 100."
+        )
+    rate_units(start)
+    if start == 0:
+        policy.pop("prn_start", None)
+
+
+def selection_seed(policy: dict, *, version: str, project_id: str) -> str:
+    """The string every unit hash of this policy is seeded with.
+
+    Independent policies keep the historical seed (their policy version).
+    Coordinated policies share one permanent seed per project and panel, which
+    deliberately omits rates, quotas, strata, filters and the window: changing
+    those never re-draws a unit's random number.
+    """
+
+    if policy.get("coordination", "independent") == "independent":
+        return version
+    return f"{PRN_SEED_PREFIX}:{project_id}:{policy.get('panel', '')}"
+
+
+def prn_start_offset(start: float) -> int:
+    """The start point of the hash circle, ``floor(start% * 2**256)``."""
+
+    numerator, denominator = Decimal(str(start)).as_integer_ratio()
+    return (numerator * HASH_SPACE) // (denominator * 100)
+
+
+def prn_order_key(seed: str, unit_id: str, start: float = 0) -> int:
+    """Position of a unit on the hash circle read from the start point.
+
+    Closed samples take the ``k`` smallest keys per stratum; live samples take
+    every key below the rate threshold. For a fixed seed and start both are
+    nested: a smaller rate or ``k`` always selects a subset.
+    """
+
+    return (int(unit_hash(seed, unit_id), 16) - prn_start_offset(start)) % HASH_SPACE
+
+
+def prn_selects(seed: str, unit_id: str, rate: float, start: float = 0) -> bool:
+    return prn_order_key(seed, unit_id, start) < int(threshold(rate), 16)
 
 
 def policy_version(

@@ -39,6 +39,7 @@ from tracer.services.eval_tasks.sampling.policy import (
     parse_time,
     policy_version,
     require_policy_time_authority,
+    selection_seed,
     validate_live_filter_sources,
     validate_policy,
 )
@@ -120,7 +121,31 @@ def task_policy(task: EvalTask, *, now: datetime) -> tuple[dict, str]:
     return policy, version
 
 
+def coordination_context(policy: dict, *, project_id: str) -> dict | None:
+    """Provenance of a coordinated (shared-PRN) hash seed; None if independent."""
+
+    if policy.get("coordination", "independent") == "independent":
+        return None
+    return {
+        "mode": policy["coordination"],
+        "panel": policy.get("panel", ""),
+        "prn_start": policy.get("prn_start", 0),
+        "seed": selection_seed(policy, version="", project_id=project_id),
+    }
+
+
 def member_metadata(
+    member: EvalSamplingMember, policy: dict, version: str, *, frozen_at: datetime
+) -> dict:
+    metadata = _member_metadata(member, policy, version, frozen_at=frozen_at)
+    if policy.get("coordination", "independent") != "independent":
+        # Results of coordinated policies share one random number per unit,
+        # so their inclusion events are dependent across tasks: say so.
+        metadata["coordination"] = policy["coordination"]
+    return metadata
+
+
+def _member_metadata(
     member: EvalSamplingMember, policy: dict, version: str, *, frozen_at: datetime
 ) -> dict:
     return {
@@ -425,24 +450,28 @@ def _acquire(
         task = _locked_task(task_id)
         policy, version = task_policy(task, now=now)
         margin = closed_settle_margin() if policy["mode"] == "closed" else timedelta(0)
+        context = {
+            "project_id": str(task.project_id),
+            "organization_id": str(task.project.organization_id),
+            "workspace_id": str(task.project.workspace_id)
+            if task.project.workspace_id
+            else None,
+            "row_type": task.row_type,
+            "filters": task.filters or {},
+            "algorithm": "sha256-bottom-k-v1"
+            if policy["mode"] == "closed"
+            else "sha256-bernoulli-v1",
+        }
+        coordination = coordination_context(policy, project_id=str(task.project_id))
+        if coordination is not None:
+            context["coordination"] = coordination
         cohort, created = EvalSamplingCohort.objects.get_or_create(
             task=task,
             policy_version=version,
             defaults={
                 "policy": policy,
                 "frozen_at": now - margin,
-                "selection_context": {
-                    "project_id": str(task.project_id),
-                    "organization_id": str(task.project.organization_id),
-                    "workspace_id": str(task.project.workspace_id)
-                    if task.project.workspace_id
-                    else None,
-                    "row_type": task.row_type,
-                    "filters": task.filters or {},
-                    "algorithm": "sha256-bottom-k-v1"
-                    if policy["mode"] == "closed"
-                    else "sha256-bernoulli-v1",
-                },
+                "selection_context": context,
             },
         )
         acquired = (
