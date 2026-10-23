@@ -111,7 +111,7 @@ ORDER BY e.config_id, s.locale""",
   count() AS spans_compared,
   round(count() / sum(count()) OVER (), 4) AS share
 FROM annotations AS a
-INNER JOIN eval_results AS e ON a.span_id = e.span_id
+INNER JOIN eval_results AS e ON a.span_id = e.span_id AND a.trace_id = e.trace_id
 GROUP BY a.value, e.passed
 ORDER BY human_label, eval_passed""",
     ),
@@ -168,20 +168,23 @@ LIMIT 50""",
     Example(
         "sampled-vs-all-by-model",
         "Sampled vs. all spans by model",
-        "Every span against the sampled, evaluated spans and their "
-        "inverse-probability (Horvitz-Thompson) count. Results without a "
-        "recorded inclusion probability are left out of the count.",
+        "All spans against distinct evaluated spans with known inclusion probabilities. "
+        "The weighted count uses each span's latest known probability; interpret "
+        "it only within one sampling design, not as an unbiased pooled estimate "
+        "across runs. Unknown probabilities are excluded.",
         """WITH sampled AS (
-  SELECT span_id, inclusion_probability
+  SELECT span_id, toString(trace_id) AS target_trace_id,
+    argMax(inclusion_probability, (created_at, id)) AS inclusion_probability
   FROM eval_results
   WHERE target_type = 'span' AND inclusion_probability IS NOT NULL
+  GROUP BY span_id, target_trace_id
 )
 SELECT s.model AS model,
   count() AS all_spans,
   count(x.span_id) AS sampled_spans,
   round(sum(if(x.span_id IS NULL, 0, 1 / x.inclusion_probability)), 4) AS estimated_spans
 FROM spans AS s
-LEFT JOIN sampled AS x ON s.id = x.span_id
+LEFT JOIN sampled AS x ON s.id = x.span_id AND s.trace_id = x.target_trace_id
 GROUP BY s.model
 ORDER BY s.model""",
     ),

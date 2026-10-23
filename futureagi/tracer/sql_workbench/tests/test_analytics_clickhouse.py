@@ -1202,6 +1202,34 @@ def test_every_gallery_example_returns_the_expected_rows(live):
         assert "foreign" not in repr(result["rows"]), example.id
 
 
+def test_sample_gallery_does_not_multiply_spans_for_repeated_evaluations():
+    from tracer.sql_workbench.examples import EXAMPLES
+
+    query = next(e.sql for e in EXAMPLES if e.id == "sampled-vs-all-by-model")
+    with provisioned(label="sample_dedup") as (live, admin):
+        before = live.rows(query)
+        table = f"{live.scope.database}.{live.scope.eval_table}"
+        columns = (
+            "trace_id,observation_span_id,trace_session_id,custom_eval_config_id,"
+            "target_type,output_float,output_bool,output_str,error,created_at,"
+            "eval_task_id,output_metadata,is_deleted,_version"
+        )
+        admin.execute(
+            f"INSERT INTO {table} (id,{columns}) SELECT generateUUIDv4(),{columns} "
+            f"FROM {table} WHERE custom_eval_config_id IN %(configs)s "
+            "AND target_type = 'span'",
+            {"configs": tuple(live.scope.eval_config_ids)},
+        )
+        assert admin.execute(
+            f"SELECT count() FROM {table} WHERE custom_eval_config_id IN %(configs)s "
+            "AND target_type = 'span'",
+            {"configs": tuple(live.scope.eval_config_ids)},
+        )[0][0] == 2 * sum(e["target"] == "span" for e in live.owned.evals)
+        assert live.rows(query) == before
+        assert sum(row[1] for row in before) == len(live.owned.spans)
+        assert sum(row[2] for row in before) > 0
+
+
 # ---------------------------------------------------------------------------
 # Analytical function set: every approved function's probe (test_compiler's
 # FUNCTION_PROBES) runs through the production path; values come from Python.
