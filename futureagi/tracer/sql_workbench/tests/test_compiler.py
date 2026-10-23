@@ -844,3 +844,291 @@ def test_every_gallery_example_compiles_fully_scoped(example):
     # No catalog name survives as a table: each became a scoped subquery.
     assert not any(t.name in COLUMNS for t in tree.find_all(exp.Table) if not t.db)
     assert f"toUUID('{scope.project_id}')" in compiled
+
+
+# ---------------------------------------------------------------------------
+# Analytical function set. One probe per approved user-facing name: each must
+# compile fully scoped here and is executed on live ClickHouse, with its value
+# checked, by test_analytics_clickhouse. A name added to FUNCTIONS without a
+# probe fails this file, so no approved function can be dead in practice.
+
+FUNCTION_PROBES = {
+    # Aggregates and combinators
+    "count": "SELECT count() FROM spans",
+    "countif": "SELECT countIf(status = 'ERROR') FROM spans",
+    "sum": "SELECT sum(total_tokens) FROM spans",
+    "sumif": "SELECT sumIf(total_tokens, status = 'OK') FROM spans",
+    "avg": "SELECT avg(latency_ms) FROM spans",
+    "avgif": "SELECT avgIf(latency_ms, status = 'OK') FROM spans",
+    "min": "SELECT min(latency_ms) FROM spans",
+    "minif": "SELECT minIf(latency_ms, status = 'ERROR') FROM spans",
+    "max": "SELECT max(latency_ms) FROM spans",
+    "maxif": "SELECT maxIf(latency_ms, status = 'ERROR') FROM spans",
+    "any": "SELECT any(provider) FROM spans WHERE model = 'm-a'",
+    "anylast": "SELECT anyLast(provider) FROM spans WHERE model = 'm-c'",
+    "argmin": "SELECT argMin(model, latency_ms) FROM spans",
+    "argmax": "SELECT argMax(model, latency_ms) FROM spans",
+    "uniq": "SELECT uniq(model) FROM spans",
+    "uniqif": "SELECT uniqIf(model, status = 'ERROR') FROM spans",
+    "uniqexact": "SELECT uniqExact(trace_id) FROM spans",
+    "uniqexactif": "SELECT uniqExactIf(trace_id, status = 'ERROR') FROM spans",
+    "uniqcombined": "SELECT uniqCombined(session_id) FROM spans",
+    "median": "SELECT median(latency_ms) FROM spans",
+    "quantile": "SELECT quantile(0.9)(latency_ms) FROM spans",
+    "quantiles": "SELECT quantiles(0.5, 0.9)(latency_ms) FROM spans",
+    "quantileexact": "SELECT quantileExact(0.5)(latency_ms) FROM spans",
+    "quantiletdigest": "SELECT quantileTDigest(0.5)(latency_ms) FROM spans",
+    "stddevpop": "SELECT stddevPop(latency_ms) FROM spans",
+    "stddevsamp": "SELECT stddevSamp(latency_ms) FROM spans",
+    "varpop": "SELECT varPop(latency_ms) FROM spans",
+    "varsamp": "SELECT varSamp(latency_ms) FROM spans",
+    "corr": "SELECT corr(latency_ms, total_tokens) FROM spans",
+    "avgweighted": "SELECT avgWeighted(latency_ms, total_tokens) FROM spans",
+    "grouparray": (
+        "SELECT groupArray(3)(model) FROM "
+        "(SELECT model FROM spans ORDER BY latency_ms DESC LIMIT 3)"
+    ),
+    "groupuniqarray": "SELECT groupUniqArray(10)(provider) FROM spans",
+    "topk": "SELECT topK(1)(model) FROM spans",
+    # Math
+    "abs": "SELECT abs(min(latency_ms) - max(latency_ms)) FROM spans",
+    "round": "SELECT round(sum(cost), 2) FROM spans",
+    "floor": "SELECT floor(avg(latency_ms)) FROM spans",
+    "ceil": "SELECT ceil(avg(latency_ms)) FROM spans",
+    "ceiling": "SELECT ceiling(avg(latency_ms)) FROM spans",
+    "sqrt": "SELECT sqrt(max(latency_ms)) FROM spans",
+    "pow": "SELECT pow(max(latency_ms), 2) FROM spans",
+    "power": "SELECT power(min(latency_ms), 2) FROM spans",
+    "log": "SELECT log(max(latency_ms)) FROM spans",
+    "ln": "SELECT ln(min(latency_ms)) FROM spans",
+    "exp": "SELECT exp(min(total_tokens) / 100) FROM spans",
+    "greatest": "SELECT greatest(max(latency_ms), 2000) FROM spans",
+    "least": "SELECT least(max(latency_ms), 2000) FROM spans",
+    "intdiv": "SELECT intDiv(max(latency_ms), 7) FROM spans",
+    "modulo": "SELECT modulo(max(latency_ms), 7) FROM spans",
+    # Conditionals
+    "coalesce": "SELECT countIf(coalesce(label, 'none') = 'none') FROM eval_results",
+    "ifnull": "SELECT countIf(ifNull(label, 'none') = 'none') FROM eval_results",
+    "nullif": "SELECT countIf(nullIf(status, 'OK') IS NULL) FROM spans",
+    "if": "SELECT sum(if(status = 'ERROR', 1, 0)) FROM spans",
+    "multiif": (
+        "SELECT countIf(multiIf(latency_ms < 150, 'fast', latency_ms < 500, 'ok', "
+        "'slow') = 'slow') FROM spans"
+    ),
+    # Strings
+    "lower": "SELECT countIf(lower(status) = 'error') FROM spans",
+    "upper": "SELECT upper(min(model)) FROM spans",
+    "length": "SELECT max(length(name)) FROM spans",
+    "lengthutf8": "SELECT max(lengthUTF8(provider)) FROM spans",
+    "substring": "SELECT substring(min(model), 3, 1) FROM spans",
+    "concat": "SELECT concat(min(model), '/', min(provider)) FROM spans",
+    "trim": "SELECT max(trim(concat(' ', model, ' '))) FROM spans",
+    "ltrim": "SELECT max(ltrim(concat(' ', model))) FROM spans",
+    "rtrim": "SELECT max(rtrim(concat(model, ' '))) FROM spans",
+    "replace": "SELECT max(replace(model, 'm-', 'model-')) FROM spans",
+    "replaceall": "SELECT max(replaceAll(model, '-', '_')) FROM spans",
+    "position": "SELECT max(position(provider, 'o')) FROM spans",
+    "positioncaseinsensitive": (
+        "SELECT max(positionCaseInsensitive(provider, 'O')) FROM spans"
+    ),
+    "startswith": "SELECT countIf(startsWith(provider, 'open')) FROM spans",
+    "endswith": "SELECT countIf(endsWith(provider, 'ic')) FROM spans",
+    "match": "SELECT countIf(match(model, '^m-[bc]$')) FROM spans",
+    "splitbychar": "SELECT max(splitByChar('-', model)[2]) FROM spans",
+    "splitbystring": "SELECT max(splitByString('m-', model)[2]) FROM spans",
+    "arrayelement": "SELECT max(arrayElement(splitByChar('-', model), 1)) FROM spans",
+    # Maps
+    "has": "SELECT countIf(has(mapKeys(attrs_string), 'tool_args')) FROM spans",
+    "mapkeys": "SELECT max(length(mapKeys(attrs_string))) FROM spans",
+    "mapvalues": "SELECT countIf(has(mapValues(attrs_string), 'de')) FROM spans",
+    "mapcontains": "SELECT countIf(mapContains(attrs_number, 'ttft_ms')) FROM spans",
+    # JSON in span attributes
+    "jsonextract": (
+        "SELECT sum(JSONExtract(attrs_string['tool_args'], 'k', 'Nullable(Int64)')) "
+        "FROM spans"
+    ),
+    "jsonextractstring": (
+        "SELECT countIf(JSONExtractString(attrs_string['tool_args'], 'tool') = "
+        "'search') FROM spans"
+    ),
+    "jsonextractint": (
+        "SELECT sum(JSONExtractInt(attrs_string['tool_args'], 'k')) FROM spans"
+    ),
+    "jsonextractuint": (
+        "SELECT sum(JSONExtractUInt(attrs_string['tool_args'], 'k')) FROM spans"
+    ),
+    "jsonextractfloat": (
+        "SELECT sum(JSONExtractFloat(attrs_string['tool_args'], 'k')) FROM spans"
+    ),
+    "jsonextractbool": (
+        "SELECT sum(JSONExtractBool(attrs_string['tool_args'], 'tool')) FROM spans"
+    ),
+    "jsonextractraw": (
+        "SELECT max(JSONExtractRaw(attrs_string['tool_args'], 'tool')) FROM spans"
+    ),
+    "jsonextractkeys": (
+        "SELECT max(length(JSONExtractKeys(attrs_string['tool_args']))) FROM spans"
+    ),
+    "jsonhas": "SELECT countIf(JSONHas(attrs_string['tool_args'], 'k')) FROM spans",
+    "jsonlength": "SELECT max(JSONLength(attrs_string['tool_args'])) FROM spans",
+    "jsontype": (
+        "SELECT countIf(JSONType(attrs_string['tool_args'], 'k') = 'Int64') FROM spans"
+    ),
+    # Conversions
+    "tostring": "SELECT max(toString(latency_ms)) FROM spans",
+    "touuid": "SELECT countIf(toString(toUUID(trace_id)) = trace_id) FROM spans",
+    "touuidornull": "SELECT countIf(toUUIDOrNull(id) IS NULL) FROM spans",
+    "toint64": "SELECT sum(toInt64(latency_ms)) FROM spans",
+    "tofloat64": "SELECT sum(toFloat64(total_tokens)) FROM spans",
+    "todate": "SELECT uniqExact(toDate(start_time)) FROM spans",
+    "todatetime": "SELECT min(toDateTime(start_time)) FROM spans",
+    "todatetime64": "SELECT min(toDateTime64(start_time, 3)) FROM spans",
+    # Time buckets and parts
+    "tostartofminute": "SELECT uniqExact(toStartOfMinute(start_time)) FROM spans",
+    "tostartoffiveminutes": (
+        "SELECT uniqExact(toStartOfFiveMinutes(start_time)) FROM spans"
+    ),
+    "tostartoffifteenminutes": (
+        "SELECT uniqExact(toStartOfFifteenMinutes(start_time)) FROM spans"
+    ),
+    "tostartofinterval": (
+        "SELECT uniqExact(toStartOfInterval(start_time, INTERVAL 30 MINUTE)) FROM spans"
+    ),
+    "tostartofhour": "SELECT uniqExact(toStartOfHour(start_time)) FROM spans",
+    "tostartofday": "SELECT uniqExact(toStartOfDay(start_time)) FROM spans",
+    "tostartofweek": "SELECT uniqExact(toStartOfWeek(start_time)) FROM spans",
+    "tostartofmonth": "SELECT uniqExact(toStartOfMonth(start_time)) FROM spans",
+    "toyear": "SELECT min(toYear(start_time)) FROM spans",
+    "tomonth": "SELECT min(toMonth(start_time)) FROM spans",
+    "todayofmonth": "SELECT min(toDayOfMonth(start_time)) FROM spans",
+    "todayofweek": "SELECT min(toDayOfWeek(start_time)) FROM spans",
+    "tohour": "SELECT min(toHour(start_time)) FROM spans",
+    "tominute": "SELECT max(toMinute(start_time)) FROM spans",
+    "formatdatetime": (
+        "SELECT min(formatDateTime(start_time, '%Y-%m-%d %H:%i')) FROM spans"
+    ),
+    "datediff": (
+        "SELECT max(dateDiff('millisecond', start_time, end_time)) FROM spans"
+    ),
+    "dateadd": (
+        "SELECT countIf(dateAdd(MILLISECOND, latency_ms, start_time) = end_time) "
+        "FROM spans"
+    ),
+    "now": "SELECT countIf(start_time < now()) FROM spans",
+    # Window functions
+    "rownumber": (
+        "SELECT max(r) FROM (SELECT row_number() OVER (ORDER BY latency_ms) AS r "
+        "FROM spans)"
+    ),
+    "rank": (
+        "SELECT max(r) FROM (SELECT rank() OVER (ORDER BY latency_ms) AS r FROM spans)"
+    ),
+    "denserank": (
+        "SELECT max(r) FROM (SELECT dense_rank() OVER (ORDER BY latency_ms) AS r "
+        "FROM spans)"
+    ),
+    "lag": (
+        "SELECT countIf(p IS NULL) FROM (SELECT lag(latency_ms) OVER "
+        "(ORDER BY start_time) AS p FROM spans)"
+    ),
+    "lead": (
+        "SELECT countIf(n IS NULL) FROM (SELECT lead(latency_ms) OVER "
+        "(ORDER BY start_time) AS n FROM spans)"
+    ),
+    "firstvalue": (
+        "SELECT max(f) FROM (SELECT first_value(latency_ms) OVER "
+        "(ORDER BY start_time) AS f FROM spans)"
+    ),
+    "lastvalue": (
+        "SELECT max(v) FROM (SELECT last_value(latency_ms) OVER (ORDER BY "
+        "start_time ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS v "
+        "FROM spans)"
+    ),
+}
+
+
+def test_every_approved_function_has_a_probe():
+    from tracer.sql_workbench.compiler import FUNCTIONS
+
+    assert set(FUNCTION_PROBES) == set(FUNCTIONS)
+
+
+@pytest.mark.parametrize("name", sorted(FUNCTION_PROBES))
+def test_every_approved_function_compiles_fully_scoped(name):
+    scope = _gallery_scope()
+    compiled = compile_query(FUNCTION_PROBES[name], scope)
+    tree = sqlglot.parse_one(compiled, read="clickhouse")
+    physical = [t for t in tree.find_all(exp.Table) if t.db]
+    assert physical and all(t.db == "analytics" for t in physical)
+    assert f"toUUID('{scope.project_id}')" in compiled
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        # Unbounded or oversized collections, non-literal parameters.
+        "SELECT groupArray(model) FROM spans",
+        "SELECT groupUniqArray(model) FROM spans",
+        "SELECT groupArray(1001)(model) FROM spans",
+        "SELECT topK(5000)(model) FROM spans",
+        "SELECT topK(latency_ms)(model) FROM spans",
+        "SELECT groupArray(0)(model) FROM spans",
+        "SELECT quantiles(2)(latency_ms) FROM spans",
+        "SELECT quantile(latency_ms)(cost) FROM spans",
+        "SELECT quantile(-0.1)(latency_ms) FROM spans",
+        "SELECT quantileExact('0.5')(latency_ms) FROM spans",
+        "SELECT quantiles(" + ", ".join(["0.5"] * 33) + ")(latency_ms) FROM spans",
+        # Unreviewed combinators and parametric forms.
+        "SELECT groupArrayIf(model, status = 'OK') FROM spans",
+        "SELECT quantileTiming(0.9)(latency_ms) FROM spans",
+        "SELECT quantileIf(0.9)(latency_ms, status = 'OK') FROM spans",
+        # Side effects, server introspection, dictionaries, tables and files.
+        "SELECT sleep(3) FROM spans",
+        "SELECT sleepEachRow(1) FROM spans",
+        "SELECT throwIf(1) FROM spans",
+        "SELECT hostName() FROM spans",
+        "SELECT version() FROM spans",
+        "SELECT uptime() FROM spans",
+        "SELECT currentUser() FROM spans",
+        "SELECT currentDatabase() FROM spans",
+        "SELECT getSetting('readonly') FROM spans",
+        "SELECT getMacro('replica') FROM spans",
+        "SELECT getServerPort('tcp_port') FROM spans",
+        "SELECT serverUUID() FROM spans",
+        "SELECT queryID() FROM spans",
+        "SELECT transactionID() FROM spans",
+        "SELECT filesystemAvailable() FROM spans",
+        "SELECT globalVariable('x') FROM spans",
+        "SELECT initializeAggregation('sum', 1) FROM spans",
+        "SELECT runningAccumulate(sum(cost)) FROM spans",
+        "SELECT dictGet('d', 'a', toUInt64(1)) FROM spans",
+        "SELECT joinGet('t', 'c', 1) FROM spans",
+        "SELECT hasColumnInTable('system', 'users', 'name') FROM spans",
+        "SELECT file('/etc/passwd') FROM spans",
+        "SELECT url('http://example.invalid') FROM spans",
+        "SELECT arrayJoin([1, 2]) FROM spans",
+        "SELECT repeat(model, 1000000) FROM spans",
+        "SELECT range(1000000) FROM spans",
+        "SELECT replaceRegexpAll(model, 'a', 'b') FROM spans",
+        "SELECT generateUUIDv4() FROM spans",
+        "SELECT JSONExtractString(attrs_string['tool_args'], '*') FROM system.users",
+    ],
+)
+def test_functions_outside_the_analytical_set_are_rejected(query):
+    with pytest.raises(UnsafeQuery):
+        compile_query(query, _gallery_scope())
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT groupArray(1000)(model) FROM spans",
+        "SELECT groupUniqArray(1)(model) FROM spans",
+        "SELECT topK(1000)(model) FROM spans",
+        "SELECT topK(model) FROM spans",
+        "SELECT quantiles(" + ", ".join(["0.5"] * 32) + ")(latency_ms) FROM spans",
+        "SELECT quantile(0)(latency_ms), quantile(1)(latency_ms) FROM spans",
+    ],
+)
+def test_parametric_aggregates_accept_their_bounds(query):
+    compile_query(query, _gallery_scope())

@@ -1102,3 +1102,206 @@ def test_every_gallery_example_returns_the_expected_rows(live):
         assert actual == wanted, (example.id, actual, wanted)
         # No foreign identifier or foreign-scale value leaks into any example.
         assert "foreign" not in repr(result["rows"]), example.id
+
+
+# ---------------------------------------------------------------------------
+# Analytical function set: every approved function's probe (test_compiler's
+# FUNCTION_PROBES) runs through the production path; values come from Python.
+
+
+def _function_expectations(tenant):
+    """Expected value, or a predicate, per approved function name."""
+    import math
+    import statistics
+
+    spans = tenant.spans
+    latency = [s.latency for s in spans]
+    tokens = [s.tokens for s in spans]
+    errors = [s for s in spans if s.status == "ERROR"]
+    ok = [s for s in spans if s.status == "OK"]
+    tool_args = [
+        s.attrs_string["tool_args"] for s in spans if "tool_args" in s.attrs_string
+    ]
+    tool_k = [int(value.split('"k":')[1].rstrip("}")) for value in tool_args]
+    starts = [s.start for s in spans]
+    ordered = sorted(spans, key=lambda s: s.start)
+    models = [s.model for s in spans]
+    by_count = sorted(set(models), key=lambda m: -models.count(m))
+
+    def week(moment):  # ClickHouse toStartOfWeek mode 0: weeks start on Sunday
+        day = moment.date()
+        return day - timedelta(days=(day.weekday() + 1) % 7)
+
+    def buckets(minutes):
+        return len(
+            {
+                s.start.replace(minute=s.start.minute // minutes * minutes, second=0)
+                for s in spans
+            }
+        )
+
+    mean_latency = sum(latency) / len(latency)
+    expected = {
+        "count": len(spans),
+        "countif": len(errors),
+        "sum": sum(tokens),
+        "sumif": sum(s.tokens for s in ok),
+        "avg": mean_latency,
+        "avgif": sum(s.latency for s in ok) / len(ok),
+        "min": min(latency),
+        "minif": min(s.latency for s in errors),
+        "max": max(latency),
+        "maxif": max(s.latency for s in errors),
+        "any": "openai",
+        "anylast": "google",
+        "argmin": min(spans, key=lambda s: s.latency).model,
+        "argmax": max(spans, key=lambda s: s.latency).model,
+        "uniq": len(set(models)),
+        "uniqif": len({s.model for s in errors}),
+        "uniqexact": len({s.trace for s in spans}),
+        "uniqexactif": len({s.trace for s in errors}),
+        "uniqcombined": len({s.session for s in spans}),
+        "median": _quantile(latency, 0.5),
+        "quantile": _quantile(latency, 0.9),
+        "quantiles": [_quantile(latency, 0.5), _quantile(latency, 0.9)],
+        "quantileexact": float(sorted(latency)[int(0.5 * len(latency))]),
+        "quantiletdigest": lambda v: min(latency) <= v <= max(latency),
+        "stddevpop": statistics.pstdev(latency),
+        "stddevsamp": statistics.stdev(latency),
+        "varpop": statistics.pvariance(latency),
+        "varsamp": statistics.variance(latency),
+        "corr": statistics.correlation(latency, tokens),
+        "avgweighted": sum(lat * tok for lat, tok in zip(latency, tokens, strict=True))
+        / sum(tokens),
+        "grouparray": sorted(
+            s.model for s in sorted(spans, key=lambda s: -s.latency)[:3]
+        ),
+        "groupuniqarray": sorted({s.provider for s in spans}),
+        "topk": by_count[:1],
+        "abs": max(latency) - min(latency),
+        "round": round(sum(s.cost for s in spans), 2),
+        "floor": float(math.floor(mean_latency)),
+        "ceil": float(math.ceil(mean_latency)),
+        "ceiling": float(math.ceil(mean_latency)),
+        "sqrt": math.sqrt(max(latency)),
+        "pow": float(max(latency) ** 2),
+        "power": float(min(latency) ** 2),
+        "log": math.log(max(latency)),
+        "ln": math.log(min(latency)),
+        "exp": math.exp(min(tokens) / 100),
+        "greatest": max(max(latency), 2000),
+        "least": min(max(latency), 2000),
+        "intdiv": max(latency) // 7,
+        "modulo": max(latency) % 7,
+        "coalesce": len(tenant.evals),
+        "ifnull": len(tenant.evals),
+        "nullif": len(ok),
+        "if": len(errors),
+        "multiif": sum(value >= 500 for value in latency),
+        "lower": len(errors),
+        "upper": min(models).upper(),
+        "length": max(len(f"llm-{m}") for m in models),
+        "lengthutf8": max(len(s.provider) for s in spans),
+        "substring": min(models)[2:3],
+        "concat": f"{min(models)}/{min(s.provider for s in spans)}",
+        "trim": max(models),
+        "ltrim": max(models),
+        "rtrim": max(models),
+        "replace": max(m.replace("m-", "model-") for m in models),
+        "replaceall": max(m.replace("-", "_") for m in models),
+        "position": max(s.provider.find("o") + 1 for s in spans),
+        "positioncaseinsensitive": max(s.provider.lower().find("o") + 1 for s in spans),
+        "startswith": sum(s.provider.startswith("open") for s in spans),
+        "endswith": sum(s.provider.endswith("ic") for s in spans),
+        "match": sum(m in ("m-b", "m-c") for m in models),
+        "splitbychar": max(m.split("-")[1] for m in models),
+        "splitbystring": max(m.split("m-")[1] for m in models),
+        "arrayelement": max(m.split("-")[0] for m in models),
+        "has": len(tool_args),
+        "mapkeys": max(len(s.attrs_string) for s in spans),
+        "mapvalues": sum("de" in s.attrs_string.values() for s in spans),
+        "mapcontains": sum("ttft_ms" in s.attrs_number for s in spans),
+        "jsonextract": sum(tool_k),
+        "jsonextractstring": sum('"tool":"search"' in value for value in tool_args),
+        "jsonextractint": sum(tool_k),
+        "jsonextractuint": sum(tool_k),
+        "jsonextractfloat": float(sum(tool_k)),
+        "jsonextractbool": 0,
+        "jsonextractraw": '"search"',
+        "jsonextractkeys": 2,
+        "jsonhas": len(tool_args),
+        "jsonlength": 2,
+        "jsontype": len(tool_args),
+        "tostring": max(str(value) for value in latency),
+        "touuid": len(spans),
+        "touuidornull": len(spans),
+        "toint64": sum(latency),
+        "tofloat64": float(sum(tokens)),
+        "todate": len({s.start.date() for s in spans}),
+        "todatetime": min(starts),
+        "todatetime64": min(starts),
+        "tostartofminute": buckets(1),
+        "tostartoffiveminutes": buckets(5),
+        "tostartoffifteenminutes": buckets(15),
+        "tostartofinterval": buckets(30),
+        "tostartofhour": buckets(60),
+        "tostartofday": len({s.start.date() for s in spans}),
+        "tostartofweek": len({week(s.start) for s in spans}),
+        "tostartofmonth": len({(s.start.year, s.start.month) for s in spans}),
+        "toyear": min(s.start.year for s in spans),
+        "tomonth": min(s.start.month for s in spans),
+        "todayofmonth": min(s.start.day for s in spans),
+        "todayofweek": min(s.start.isoweekday() for s in spans),
+        "tohour": min(s.start.hour for s in spans),
+        "tominute": max(s.start.minute for s in spans),
+        "formatdatetime": min(starts).strftime("%Y-%m-%d %H:%M"),
+        "datediff": max(latency),
+        "dateadd": len(spans),
+        "now": len(spans),
+        "rownumber": len(spans),
+        "rank": len(spans),
+        "denserank": len(set(latency)),
+        "lag": 1,
+        "lead": 1,
+        "firstvalue": ordered[0].latency,
+        "lastvalue": ordered[-1].latency,
+    }
+    return expected
+
+
+def _matches(actual, wanted):
+    import json
+    import math
+
+    if callable(wanted):
+        return wanted(actual)
+    if isinstance(wanted, list):
+        values = json.loads(actual) if isinstance(actual, str) else actual
+        if all(isinstance(item, str) for item in wanted):
+            return sorted(values) == wanted
+        return len(values) == len(wanted) and all(
+            math.isclose(a, b, rel_tol=1e-9)
+            for a, b in zip(values, wanted, strict=True)
+        )
+    if isinstance(wanted, datetime):
+        return _normalized(actual) == _normalized(wanted)
+    if isinstance(wanted, float):
+        return isinstance(actual, (int, float)) and math.isclose(
+            actual, wanted, rel_tol=1e-9, abs_tol=1e-9
+        )
+    return actual == wanted
+
+
+def test_every_approved_function_runs_with_the_expected_value(live):
+    from tracer.sql_workbench.compiler import FUNCTIONS
+
+    probes = _sibling("test_compiler").FUNCTION_PROBES
+    expected = _function_expectations(live.owned)
+    assert set(probes) == set(expected) == set(FUNCTIONS)
+    wrong = {}
+    for name in sorted(probes):
+        rows = live.rows(probes[name])
+        assert len(rows) == 1 and len(rows[0]) == 1, (name, rows)
+        if not _matches(rows[0][0], expected[name]):
+            wrong[name] = (rows[0][0], expected[name])
+    assert wrong == {}

@@ -81,23 +81,35 @@ Alias Literal Null Boolean Paren Tuple Bracket Array Map
 And Or Not EQ NEQ GT GTE LT LTE Is In Between Like ILike
 Add Sub Mul Div Mod Neg Case If When Cast TryCast DataType DataTypeParam
 Interval Window WindowSpec Filter WithinGroup
+JSONPath JSONPathRoot JSONPathKey JSONPathSubscript
 """.split()
 )
 FUNCTIONS = frozenset(
     """
-count countif sum sumif avg avgif min max any argmin argmax uniq uniqexact
-quantile quantileexact median stddevpop stddevsamp varpop varsamp
-abs round floor ceil ceiling sqrt pow power log ln exp greatest least
-coalesce ifnull nullif if multiif lower upper length lengthutf8 substring
-concat trim ltrim rtrim replace splitbychar splitbystring arrayelement
-has mapkeys mapvalues jsonextractstring jsonextractfloat jsonextractint
-jsonextractbool tostring touuid touuidornull toint64 tofloat64 todate
-todatetime todatetime64 tostartofhour tostartofday tostartofweek
-tostartofmonth toyear tomonth todayofweek formatdatetime datediff
-dateadd now rownumber rank denserank lag lead firstvalue lastvalue
+count countif sum sumif avg avgif min minif max maxif any anylast argmin argmax
+uniq uniqif uniqexact uniqexactif uniqcombined median quantile quantiles
+quantileexact quantiletdigest stddevpop stddevsamp varpop varsamp corr
+avgweighted grouparray groupuniqarray topk
+abs round floor ceil ceiling sqrt pow power log ln exp greatest least intdiv
+modulo
+coalesce ifnull nullif if multiif
+lower upper length lengthutf8 substring concat trim ltrim rtrim replace
+replaceall position positioncaseinsensitive startswith endswith match
+splitbychar splitbystring arrayelement has mapkeys mapvalues mapcontains
+jsonextract jsonextractstring jsonextractfloat jsonextractint jsonextractuint
+jsonextractbool jsonextractraw jsonextractkeys jsonhas jsonlength jsontype
+tostring touuid touuidornull toint64 tofloat64 todate todatetime todatetime64
+tostartofminute tostartoffiveminutes tostartoffifteenminutes tostartofinterval
+tostartofhour tostartofday tostartofweek tostartofmonth toyear tomonth
+todayofmonth todayofweek tohour tominute formatdatetime datediff dateadd now
+rownumber rank denserank lag lead firstvalue lastvalue
 """.split()
 )
-# SQLGlot uses standard function names internally for several CH functions.
+# SQLGlot parses several ClickHouse functions into typed nodes and reports
+# them by a normalized name (``uniq`` is APPROX_DISTINCT, ``has`` is
+# ARRAY_CONTAINS). Each name here was reviewed with its ClickHouse rendering
+# under the pinned SQLGlot, and every user-facing name in FUNCTIONS is
+# executed on live ClickHouse by test_analytics_clickhouse.
 FUNCTION_ALIASES = frozenset(
     """
 count_if sum_if avg_if arg_min arg_max stddev_pop stddev_samp variance_pop
@@ -105,8 +117,20 @@ variance_samp array_size length lower upper substring time_to_str
 str_to_time time_to_unix date_diff date_add timestamp_trunc date_trunc
 row_number dense_rank first_value last_value nullif coalesce
 ntile percent_rank cume_dist
+approx_distinct any_value split array_contains json_extract_scalar
+str_position starts_with ends_with regexp_like
 """.split()
 )
+# Aggregates that build a collection per group need an explicit size bound
+# (``groupArray(100)(x)``) so one group cannot grow without limit; quantile
+# levels are numeric literals in [0, 1].
+MAX_COLLECTION_SIZE = 1000
+BOUNDED_COLLECTION_AGGREGATES = frozenset({"grouparray", "groupuniqarray", "topk"})
+UNBOUNDED_WITHOUT_SIZE = frozenset({"grouparray", "groupuniqarray"})
+LEVEL_AGGREGATES = frozenset(
+    {"quantile", "quantiles", "quantileexact", "quantiletdigest"}
+)
+MAX_QUANTILE_LEVELS = 32
 
 
 # Window functions. A window is accepted only inline (``OVER (...)``) and only
@@ -176,11 +200,65 @@ def _identifier(value):
 
 
 def _function_name(node):
+    """The name to authorize: the user's spelling where SQLGlot keeps it
+    (anonymous and ClickHouse-specific aggregate nodes), otherwise SQLGlot's
+    normalized name for a typed node."""
     return (
         node.name
-        if isinstance(node, (exp.Anonymous, exp.CombinedAggFunc, exp.ParameterizedAgg))
+        if isinstance(
+            node,
+            (
+                exp.Anonymous,
+                exp.AnonymousAggFunc,
+                exp.CombinedAggFunc,
+                exp.ParameterizedAgg,
+            ),
+        )
         else node.sql_name()
     )
+
+
+def _level(value):
+    """A numeric literal quantile level in [0, 1]."""
+    if not isinstance(value, exp.Literal) or value.is_string:
+        return False
+    try:
+        return 0 <= float(value.this) <= 1
+    except ValueError:
+        return False
+
+
+def _check_aggregate_parameters(node):
+    """Bounds for parametric aggregates; parameters are literals only."""
+    name = _function_name(node).lower()
+    if isinstance(node, exp.AnonymousAggFunc) and name in UNBOUNDED_WITHOUT_SIZE:
+        raise UnsafeQuery(
+            f"{node.name} needs a size bound: write {node.name}(N)(value) with N "
+            f"at most {MAX_COLLECTION_SIZE:,}."
+        )
+    if isinstance(node, exp.Quantile) and not _level(node.args.get("quantile")):
+        raise UnsafeQuery("Quantile levels are numeric literals between 0 and 1.")
+    if not isinstance(node, exp.ParameterizedAgg):
+        return
+    # SQLGlot keeps a parametric aggregate's parameters in ``expressions``.
+    parameters = node.expressions
+    if name in BOUNDED_COLLECTION_AGGREGATES:
+        if not (
+            len(parameters) == 1
+            and _small_integer(parameters[0])
+            and 1 <= int(parameters[0].this) <= MAX_COLLECTION_SIZE
+        ):
+            raise UnsafeQuery(
+                f"{node.name} takes one size bound from 1 to {MAX_COLLECTION_SIZE:,}."
+            )
+    elif name in LEVEL_AGGREGATES:
+        if not (
+            1 <= len(parameters) <= MAX_QUANTILE_LEVELS
+            and all(_level(value) for value in parameters)
+        ):
+            raise UnsafeQuery("Quantile levels are numeric literals between 0 and 1.")
+    else:
+        raise UnsafeQuery(f"Function {node.name} does not take parameters here.")
 
 
 def _constant(expression):
@@ -266,9 +344,7 @@ def _check_window(node):
         raise UnsafeQuery(WINDOW_MESSAGE)
     if any(isinstance(child, exp.Distinct) for child in function.iter_expressions()):
         raise UnsafeQuery("DISTINCT is not supported inside a window aggregate.")
-    if any(
-        isinstance(child, exp.Window) for child in node.walk() if child is not node
-    ):
+    if any(isinstance(child, exp.Window) for child in node.walk() if child is not node):
         raise UnsafeQuery("A window cannot contain another window function.")
     if isinstance(function, (exp.PercentRank, exp.CumeDist)) and function.expressions:
         raise UnsafeQuery("percent_rank() and cume_dist() take no arguments.")
@@ -331,6 +407,8 @@ def _check_node(node, *, approved_functions=True):
     if approved_functions:
         # Input rules only: verification re-parses SQLGlot's own rendering,
         # which spells lag/lead as lagInFrame/leadInFrame with a frame.
+        if isinstance(node, (exp.AggFunc, exp.ParameterizedAgg)):
+            _check_aggregate_parameters(node)
         if isinstance(node, exp.Window):
             _check_window(node)
         elif isinstance(node, WINDOW_ONLY_FUNCTIONS) and not (
