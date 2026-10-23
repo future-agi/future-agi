@@ -398,6 +398,9 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 InviteStatus,
                 OrganizationInvite,
             )
+            from accounts.services.token_service import accept_pending_invites
+
+            accept_pending_invites(user)
 
             OrganizationInvite.objects.filter(
                 target_email__iexact=user.email,
