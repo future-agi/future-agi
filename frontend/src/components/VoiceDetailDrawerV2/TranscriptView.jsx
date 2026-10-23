@@ -20,7 +20,12 @@ import { enqueueSnackbar } from "notistack";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import { ShowComponent } from "src/components/show";
 import useVoiceAudioStore from "./voiceAudioStore";
-import { computeTotals, enrichTurns, formatClock } from "./transcriptUtils";
+import {
+  computeTotals,
+  enrichTurns,
+  formatClock,
+  subActorLabel,
+} from "./transcriptUtils";
 import { DEFAULT_ROLE_LABELS } from "./constants";
 import FunctionCallContent from "./FunctionCallContent";
 
@@ -357,6 +362,14 @@ const TurnRow = React.forwardRef(
               }}
             >
               {formatClock(turn.start)}
+            </Typography>
+          )}
+
+          {turn.role === "sub_actor" && (
+            <Typography
+              sx={{ fontSize: 10, color: "text.secondary", fontWeight: 500 }}
+            >
+              {subActorLabel(turn.speakerName)}
             </Typography>
           )}
 

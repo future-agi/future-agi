@@ -19,6 +19,10 @@ export const normalizeRole = (role) => {
   return r || "unknown";
 };
 
+// A sub-actor is someone on the person's side who is not the person.
+export const subActorLabel = (name) =>
+  `${name || "Someone else"} (not the customer)`;
+
 export const getContent = (item) => {
   const raw = item?.content ?? item?.message ?? item?.text ?? "";
   if (typeof raw === "string") return raw;
@@ -114,6 +118,7 @@ export const enrichTurns = (
       id: item.id ?? `turn-${i}`,
       role,
       rawRole: item.speaker_role || item.role,
+      speakerName: item.speaker_name || item.speakerName || "",
       content: getContent(item),
       toolCalls: Array.isArray(item.tool_calls) ? item.tool_calls : [],
       start,

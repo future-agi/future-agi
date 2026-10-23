@@ -833,3 +833,28 @@ describe("TraceTable — persona cell", () => {
     expect(screen.getByText("Anxious")).toBeInTheDocument();
   });
 });
+
+describe("TraceTable skipped scenarios", () => {
+  it("reads Skipped with the reason in view, never Error", () => {
+    render(
+      table({
+        rows: [
+          {
+            ...row("off"),
+            status: "skipped",
+            durationMs: null,
+            skipReason: "sub-actors are switched off",
+            subGoalResults: [{ name: "noticed", passed: null }],
+          },
+        ],
+        columns: new Set(["callDetails"]),
+      }),
+    );
+    expect(screen.getByText("Skipped")).toBeInTheDocument();
+    expect(screen.getByText("sub-actors are switched off")).toBeInTheDocument();
+    expect(screen.queryByText("Error")).not.toBeInTheDocument();
+    // Nothing was run, so the sub-goal has no verdict at all.
+    expect(screen.getByText("noticed")).toBeInTheDocument();
+    expect(screen.queryByText("Inconclusive")).not.toBeInTheDocument();
+  });
+});

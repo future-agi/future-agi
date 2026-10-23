@@ -133,3 +133,31 @@ describe("RlContractPanel", () => {
     });
   });
 });
+
+describe("RlContractPanel sub-actors", () => {
+  it("lists the environment's sub-actors with how they take part and how many scenarios include them", () => {
+    renderPanel({
+      env: {
+        ...voiceEnv,
+        subActors: [
+          {
+            id: "friend",
+            name: "Rowan",
+            role: "a friend with the caller",
+            channel: "audio_mix",
+            persona: { gender: "female", age_group: "25-32" },
+            scenarios_count: 2,
+          },
+        ],
+      },
+    });
+    expect(screen.getByText("Sub-actors (1)")).toBeInTheDocument();
+    expect(screen.getByText(/a friend with the caller/)).toBeInTheDocument();
+    expect(screen.getByText("Heard nearby · Female · 25-32 · In 2 scenarios")).toBeInTheDocument();
+  });
+
+  it("shows no sub-actors section for an environment without any", () => {
+    renderPanel();
+    expect(screen.queryByText(/^Sub-actors/)).toBeNull();
+  });
+});

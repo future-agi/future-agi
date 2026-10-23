@@ -7,6 +7,7 @@ import SectionCard from "../../components/SectionCard";
 // the fixture ACTOR_LIBRARY, not backed by §6. To be picked up later.
 // import ActorsPanel from "./ActorsPanel";
 import CapabilityGraph from "../overview/CapabilityGraph";
+import SubActorsPanel from "./SubActorsPanel";
 import WorldInternalsSection from "./WorldInternalsSection";
 import { CONTRACT_COPY } from "./contract.constants";
 
@@ -146,6 +147,8 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
         )}
       </SectionCard>
 
+      {env.subActors?.length > 0 && <SubActorsPanel subActors={env.subActors} />}
+
       {/*
         Actors section removed — it was a dummy cast from the fixture
         ACTOR_LIBRARY (not backed by §6), and actors were also dropped from the
@@ -162,6 +165,7 @@ const ENV_SHAPE = PropTypes.shape({
   tools: PropTypes.arrayOf(PropTypes.shape({ name: PropTypes.string, desc: PropTypes.string })),
   rules: PropTypes.arrayOf(PropTypes.string),
   seed: PropTypes.shape({ tables: PropTypes.arrayOf(PropTypes.shape({ name: PropTypes.string })) }),
+  subActors: PropTypes.array,
 });
 
 const ENV_STATE_SHAPE = PropTypes.shape({

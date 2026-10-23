@@ -690,3 +690,13 @@ describe("sub-goal verdicts", () => {
     expect(mapCallRow({}).subGoalResults).toEqual([]);
   });
 });
+
+describe("mapCallRow skip reason", () => {
+  it("carries why a scenario was skipped, and nothing when it was not", () => {
+    expect(
+      mapCallRow({ id: "a", skip_reason: "sub-actors are switched off" })
+        .skipReason,
+    ).toBe("sub-actors are switched off");
+    expect(mapCallRow({ id: "b" }).skipReason).toBeNull();
+  });
+});

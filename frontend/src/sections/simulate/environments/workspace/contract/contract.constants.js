@@ -81,6 +81,19 @@ export const CONTRACT_COPY = {
   gapsFixGrading: "Fix in Evaluations",
   gapsReviewHere: "Review below",
 
+  subActors: {
+    title: (n) => `Sub-actors (${n})`,
+    subtitle:
+      "People on the person's side who are not the person. Change them in the builder chat.",
+    channels: {
+      audio_mix: "Heard nearby",
+      audio_handoff: "Takes the phone",
+      ivr: "Phone menu",
+      thread_message: "Writes in the chat",
+    },
+    scenarios: (n) => `In ${n} scenario${n === 1 ? "" : "s"}`,
+  },
+
   actors: {
     heading: "Actors",
     headingBlurb:

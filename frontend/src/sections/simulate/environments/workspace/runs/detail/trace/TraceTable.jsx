@@ -330,6 +330,11 @@ export default function TraceTable({
                     </Typography>
                   </>
                 )}
+                {t.skipReason && (
+                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                    {t.skipReason}
+                  </Typography>
+                )}
               </Stack>
               {t.subGoalResults?.length > 0 && (
                 <Stack spacing={0.5} sx={{ mt: 1 }}>
@@ -356,7 +361,7 @@ export default function TraceTable({
                         >
                           {goal.name}
                         </Typography>
-                        {goal.passed == null ? (
+                        {t.status === "skipped" ? null : goal.passed == null ? (
                           <Typography
                             title={goal.reason || undefined}
                             sx={{ typography: "s3", color: verdict.color }}
