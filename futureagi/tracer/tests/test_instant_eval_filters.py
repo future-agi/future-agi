@@ -556,8 +556,14 @@ def test_reading_more_of_a_run_still_answering_is_refused_before_any_work(
     assert response.json()["code"] == "instant_eval_still_answering"
     run = InstantEvalRun.objects.get(eval_task=task)
     assert run.rows_requested == 7 and len(started) == starts
-    # Once it is done, it reads more.
+    # Done answering but paused with rows never read: restarting would read
+    # all of them, past the 7 rows "read more" checks, so it resumes first.
     EvalLogger.objects.filter(id=entry.id).update(status=EvalEntryStatus.COMPLETED)
+    response = _control(auth_client, observe_project, task.id, "read_more", more=7)
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert response.json()["code"] == "instant_eval_paused"
+    # Once it is done, it reads more.
+    EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.COMPLETED)
     response = _control(auth_client, observe_project, task.id, "read_more", more=7)
     assert response.status_code == status.HTTP_200_OK, response.json()
     assert response.json()["result"]["status"] == "pending"

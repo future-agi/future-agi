@@ -1955,6 +1955,7 @@ def test_the_summary_reads_with_a_legacy_browser_time_zone(
     assert InstantEvalRun.objects.get(eval_task=task).last_tz == "Asia/Kolkata"
 
 
+@pytest.mark.django_db
 def test_a_landed_entry_of_another_eval_task_costs_no_instant_eval_sql(monkeypatch):
     from tracer.services import instant_eval_answers
     from tracer.services.eval_tasks import entries

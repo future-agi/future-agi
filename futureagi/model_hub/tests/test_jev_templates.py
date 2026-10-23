@@ -518,10 +518,12 @@ def _jev_playground(auth_client, model="jev-latest"):
         "template_id": created.data["result"]["id"],
         "mapping": {"input": "Agent: I issued a full refund."},
         "config": {"params": {}},
+        "model": model,
     }
-    # The page sends null for a saved template's own model; an absent model
-    # would default to turing_large.
-    body["model"] = model
+    if model is None:
+        # The request names no model (null; an absent one defaults to
+        # turing_large); the run's binding config carries the Jev model.
+        body["config"]["model"] = "jev-latest"
     return lambda: auth_client.post("/model-hub/eval-playground/", body, format="json")
 
 
