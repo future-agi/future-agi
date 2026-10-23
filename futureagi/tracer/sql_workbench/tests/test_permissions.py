@@ -805,7 +805,7 @@ def test_list_level_actions_are_never_routed_as_an_id():
 def test_malformed_route_ids_are_not_found_on_every_id_endpoint(
     tenants, bad_id, method, path, data
 ):
-    """The router admits any 36 hex/dash characters; a non-UUID must be a 404."""
+    """The router admits any single path segment; a non-UUID must be a 404."""
     from django.urls import resolve
 
     actor, project, user = tenants[0]
