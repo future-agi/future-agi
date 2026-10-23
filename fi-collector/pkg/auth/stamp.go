@@ -18,8 +18,10 @@ const MaxNewProjectsPerRequest = 16
 
 // ErrTooManyNewProjects reports a request that names more projects new to its
 // key than MaxNewProjectsPerRequest. The first of them (in name order) were
-// resolved, and created where needed, before it was returned, so the same
-// request sent again makes progress: callers answer it as retryable.
+// resolved, and created where needed, before it was returned; a name that
+// could not be created is not tried again for a while, and its spans are
+// dropped as unresolvable then. So the same request sent again makes
+// progress: callers answer it as retryable.
 var ErrTooManyNewProjects = errors.New("stamp: too many new project names in one request; retry")
 
 // StampResourceAttrs walks all ResourceSpans in the traces, resolves
@@ -64,6 +66,9 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 	}
 	if a != nil {
 		if missing, ok := result.MissingProjectsInWorkspace(result.WorkspaceID, names); ok && len(missing) > MaxNewProjectsPerRequest {
+			// The first names, in order, are added; names that cannot be
+			// created are not tried again for a while, so each retry
+			// gets further either way.
 			sort.Strings(missing)
 			if err := a.ResolveProjectsForKey(ctx, cacheKey, result, missing[:MaxNewProjectsPerRequest]); err != nil {
 				return 0, fmt.Errorf("stamp: resolve projects: %w", err)

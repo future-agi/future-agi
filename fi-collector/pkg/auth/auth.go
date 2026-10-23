@@ -212,6 +212,7 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 		})
 		if err != nil {
 			a.log.Warn("project auto-create failed", "name", name, "org", result.OrgID, "err", err)
+			result.markFailed(name, time.Now())
 			continue
 		}
 		id := val.(string)

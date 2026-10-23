@@ -105,10 +105,10 @@ var (
 	rejectReadTimeout = &rejection{reason: "read_timeout", kind: rejectTimeout,
 		msg: "request body not received in time, retry"}
 	// rejectNewProjects: the request names more projects new to its key than
-	// one request may add (auth.MaxNewProjectsPerRequest). Some of them were
-	// added, so a retry makes progress.
+	// one request may add (auth.MaxNewProjectsPerRequest). The first of them
+	// were tried, so a retry makes progress (auth.ErrTooManyNewProjects).
 	rejectNewProjects = &rejection{reason: "new_projects", kind: rejectBusy,
-		msg: fmt.Sprintf("more than %d new project names in one request; some were added, retry", auth.MaxNewProjectsPerRequest)}
+		msg: fmt.Sprintf("more than %d new project names in one request; up to %d are added per request, retry", auth.MaxNewProjectsPerRequest, auth.MaxNewProjectsPerRequest)}
 )
 
 // quotaRejection is a request over its key's usage quota: retryable, once

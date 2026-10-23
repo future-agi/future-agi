@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -19,6 +20,34 @@ type ResolveResult struct {
 	KeyType     string // "system", "user", "mcp"
 	mu          sync.RWMutex
 	Projects    map[string]string // project_name → project_id
+	// failed holds names whose auto-create failed, until when they are not
+	// tried again (failedProjectRetry).
+	failed map[string]time.Time
+}
+
+// failedProjectRetry is how long a project name whose auto-create failed is
+// not tried again for the same key: its spans are dropped as unresolvable
+// meanwhile. maxFailedProjects bounds how many such names a key keeps.
+const (
+	failedProjectRetry = time.Minute
+	maxFailedProjects  = 4096
+)
+
+// markFailed records that creating name failed.
+func (r *ResolveResult) markFailed(name string, now time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failed == nil || len(r.failed) >= maxFailedProjects {
+		for n, until := range r.failed {
+			if !now.Before(until) {
+				delete(r.failed, n)
+			}
+		}
+		if r.failed == nil || len(r.failed) >= maxFailedProjects {
+			r.failed = map[string]time.Time{}
+		}
+	}
+	r.failed[name] = now.Add(failedProjectRetry)
 }
 
 // GetProject returns the project ID for a given name, thread-safe.
@@ -98,15 +127,22 @@ func (r *ResolveResult) ProjectIDsInWorkspace(workspaceID string) (map[string]st
 	return result, true
 }
 
-// MissingProjects returns project names not yet in the map, thread-safe.
+// MissingProjects returns project names not yet in the map, thread-safe,
+// leaving out names whose auto-create failed less than failedProjectRetry
+// ago.
 func (r *ResolveResult) MissingProjects(names []string) []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	now := time.Now()
 	var missing []string
 	for _, name := range names {
-		if _, ok := r.Projects[name]; !ok {
-			missing = append(missing, name)
+		if _, ok := r.Projects[name]; ok {
+			continue
 		}
+		if until, failed := r.failed[name]; failed && now.Before(until) {
+			continue
+		}
+		missing = append(missing, name)
 	}
 	return missing
 }
