@@ -240,7 +240,9 @@ func (p *pausingProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func TestCoordinatedOmissionIsCorrectedFromTheScheduledSend(t *testing.T) {
 	c := mockRunConfig()
 	c.Rate, c.Duration, c.BatchSize, c.Concurrency, c.VerifyChunk, c.Payload = 1000, 3*time.Second, 10, 2, 1000, "small"
-	c.DirectProbes.Enabled = false
+	// The mock answers sentinel polls by scanning every row; under the race
+	// detector that is slow, so give the polls time to see the sentinels.
+	c.DirectProbes.Enabled, c.Settle = false, 2*time.Second
 	store := &mockStorage{cfg: c}
 	ch := httptest.NewServer(http.HandlerFunc(store.serve))
 	defer ch.Close()
@@ -272,9 +274,10 @@ func TestCoordinatedOmissionIsCorrectedFromTheScheduledSend(t *testing.T) {
 	if s := r.Schedule; s.LateStartRequests < 50 || s.StartDelay.Max < 1300 || s.LateStartRequestsOver1s < 1 {
 		t.Fatalf("schedule: %+v", s)
 	}
-	// Read-visible lag is also timed from the scheduled send.
-	if l := r.Lag; l.FromScheduled.Count < 200 || l.FromScheduled.P99 < 1300 {
-		t.Fatalf("sentinel lag from scheduled: %+v", l.FromScheduled)
+	// Read-visible lag is also timed from the scheduled send: the stalled
+	// request's sentinel (polled first, being the oldest) shows the stall.
+	if l := r.Lag; l.Sampled < 200 || l.FromScheduled.Count == 0 || l.FromScheduled.Max < 1400 || l.FromScheduled.P99 < 1300 {
+		t.Fatalf("sentinel lag from scheduled: %d acknowledged sentinels, %+v", l.Sampled, l.FromScheduled)
 	}
 	if !r.Verification.Complete || r.Verification.Missing != 0 || r.Verification.MissingBy.AcknowledgedMissing != 0 {
 		t.Fatalf("verification: %+v", r.Verification)
