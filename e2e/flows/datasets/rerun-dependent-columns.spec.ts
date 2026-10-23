@@ -127,7 +127,7 @@ test(
       return columnIds.map((columnId) => {
         const cell = row?.[columnId];
         return cell && typeof cell === "object"
-          ? (cell.cell_value ?? null)
+          ? cell.cell_value ?? null
           : null;
       });
     };
