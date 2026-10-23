@@ -105,9 +105,23 @@ def test_snapshot_preaggregates_each_eval_and_session_before_join(settings):
         [{"field": "model", "value": "'; DROP TABLE spans;--"}],
         "",
     )
-    assert "session_members AS" in sql
-    assert "HAVING uniqExact(m.unit_id) = 1" in sql
-    assert "INNER JOIN session_members m ON e.target_id = m.session_id" in sql
+    compact = " ".join(sql.split())
+    # Session evaluations join a distinct keyed membership: one row per canonical
+    # session, kept only when that session belongs to exactly one unit. Span and
+    # session targets share one keyed map, so the evaluation rows are referenced
+    # (and, once ClickHouse inlines the WITH clause, read) exactly once.
+    assert "eval_targets AS" in sql
+    assert "ARRAY JOIN [(0, m.span_id), (1, m.session_id)] AS target" in compact
+    assert "GROUP BY session_target, target_key" in compact
+    assert (
+        "HAVING session_target = 0 OR (notEmpty(target_key) AND min(m.unit_id) = max(m.unit_id))"
+        in compact
+    )
+    assert (
+        "INNER JOIN eval_targets t ON e.target_id = t.target_key"
+        " AND toUInt8(e.target_type = 'session') = t.session_target" in compact
+    )
+    assert compact.count("FROM eval_rows") == 1
     assert "evaluation_values AS" in sql
     assert "AS v_resolved" in sql and "AS v_escalated" in sql
     assert sql.count("GROUP BY unit_id") == 1
@@ -137,8 +151,12 @@ def test_span_units_do_not_duplicate_session_target_evaluations(settings):
         [],
         "",
     )
-    assert "session_members AS" not in sql
-    assert "WHERE e.target_type != 'session'" in sql
+    compact = " ".join(sql.split())
+    # Span units key evaluation targets by span identity only, and a session-target
+    # evaluation can only match a session key, so it never attaches to a span unit.
+    assert "(1, m.session_id)" not in sql
+    assert "ARRAY JOIN [(0, m.span_id)] AS target" in compact
+    assert "toUInt8(e.target_type = 'session') = t.session_target" in compact
 
 
 def test_rollups_are_weighted_sums_not_means_of_ratios():
