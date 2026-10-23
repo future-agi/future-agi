@@ -29,6 +29,7 @@ import {
 import { ShowComponent } from "src/components/show";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { transformDynamicColumnConfig } from "../common";
+import useRerunDependentColumns from "../../DataTab/useRerunDependentColumns";
 
 const getDefaultValue = () => {
   return {
@@ -73,6 +74,7 @@ export const AddColumnApiCallChild = ({
 
   const allColumns = useDatasetColumnConfig(dataset);
   const { data: jsonSchemas = {} } = useGetJsonColumnSchema(dataset);
+  const promptToRerunDependents = useRerunDependentColumns(dataset);
 
   const { control, handleSubmit, reset, setError, getValues } = useForm({
     defaultValues: getDefaultValue(),
@@ -119,6 +121,7 @@ export const AddColumnApiCallChild = ({
         queryKey: ["dynamic-column-config", editId],
       });
       loadedEditIdRef.current = null;
+      promptToRerunDependents(editId);
       refreshGrid();
       onClose();
     },
