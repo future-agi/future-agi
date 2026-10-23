@@ -290,4 +290,69 @@ describe("RequestTable", () => {
       },
     );
   });
+
+  describe("unpriced cost display", () => {
+    const savedData = mockState.data;
+
+    afterEach(() => {
+      mockState.data = savedData;
+    });
+
+    const unpricedRow = (extra = {}) => ({
+      id: "log-unpriced",
+      request_id: "req-unpriced",
+      model: "ollama/llama3",
+      provider: "ollama",
+      status_code: 200,
+      latency_ms: 10,
+      cost: "0",
+      input_tokens: 1,
+      output_tokens: 1,
+      total_tokens: 2,
+      session_id: "session-u",
+      started_at: "2026-05-21T10:03:00Z",
+      metadata: { cost_source: "unpriced" },
+      ...extra,
+    });
+
+    const renderRows = async (rows) => {
+      mockState.data = { results: rows, count: rows.length };
+      render(<RequestTable {...baseProps} />);
+      return within(screen.getByRole("table")).getAllByRole("row").slice(1);
+    };
+
+    it("shows the Unpriced chip with tooltip when cost_source is unpriced and cost is zero", async () => {
+      const user = userEvent.setup();
+      const rows = await renderRows([unpricedRow()]);
+      const chip = within(rows[0]).getByText("Unpriced");
+      expect(chip).toBeInTheDocument();
+      expect(within(rows[0]).queryByText("$0.00")).not.toBeInTheDocument();
+      await user.hover(chip);
+      expect(
+        await screen.findByText(/No price is set for this model/),
+      ).toBeInTheDocument();
+    });
+
+    it("shows $0.00 for a normal zero-cost row without the tag", async () => {
+      const rows = await renderRows([
+        { ...unpricedRow(), metadata: null },
+      ]);
+      expect(within(rows[0]).getByText("$0.00")).toBeInTheDocument();
+      expect(within(rows[0]).queryByText("Unpriced")).not.toBeInTheDocument();
+    });
+
+    it("shows the formatted cost for other cost_source values", async () => {
+      const rows = await renderRows([
+        unpricedRow({ metadata: { cost_source: "org_custom" } }),
+      ]);
+      expect(within(rows[0]).getByText("$0.00")).toBeInTheDocument();
+      expect(within(rows[0]).queryByText("Unpriced")).not.toBeInTheDocument();
+    });
+
+    it("shows the cost when an unpriced-tagged row has a positive cost", async () => {
+      const rows = await renderRows([unpricedRow({ cost: "0.0042" })]);
+      expect(within(rows[0]).queryByText("Unpriced")).not.toBeInTheDocument();
+      expect(within(rows[0]).getByText("$0.00420")).toBeInTheDocument();
+    });
+  });
 });

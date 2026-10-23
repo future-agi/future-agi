@@ -28,7 +28,7 @@ import { LoadingScreen } from "src/components/loading-screen";
 import Iconify from "src/components/iconify";
 import useRequestDetail from "./hooks/useRequestDetail";
 import FeedbackWidget from "../guardrails/FeedbackWidget";
-import { formatCost } from "../utils/formatters";
+import { formatCost, isUnpricedRequest } from "../utils/formatters";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -599,7 +599,17 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
               Cost
             </Typography>
             <Typography variant="body2" fontWeight={600}>
-              {formatCost(log.cost)}
+              {isUnpricedRequest(log) ? (
+                <Tooltip
+                  title="No price is set for this model, so this request was recorded without a cost and isn't counted against budgets. Add a price for the model to track it."
+                  placement="top"
+                  arrow
+                >
+                  <Chip label="Unpriced" size="small" variant="outlined" />
+                </Tooltip>
+              ) : (
+                formatCost(log.cost)
+              )}
             </Typography>
           </Box>
           <Box>
