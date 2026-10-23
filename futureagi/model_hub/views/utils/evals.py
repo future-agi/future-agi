@@ -5,10 +5,9 @@ import uuid
 from decimal import Decimal
 
 import structlog
-from accounts.models.organization import Organization
 from django.db import close_old_connections
 
-logger = structlog.get_logger(__name__)
+from accounts.models.organization import Organization
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
@@ -29,6 +28,8 @@ from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_specific_error_message
+
+logger = structlog.get_logger(__name__)
 
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
@@ -287,7 +288,7 @@ def run_eval_func(
         api_call_type = (
             BillingEventType.CODE_EVALUATOR.value
             if _is_code_eval and BillingEventType is not None
-            else _get_api_call_type(model)
+            else _get_api_call_type(model, template=template, runtime_config=config)
         )
 
         # Pre-check: enforce free tier limits before running eval
@@ -457,7 +458,9 @@ def run_eval_func(
             try:
                 from ee.usage.utils.event_properties import token_usage_properties
             except ImportError:
-                token_usage_properties = lambda token_usage: {}
+
+                def token_usage_properties(token_usage):
+                    return {}
 
             billing_config = None
             if BillingConfig is not None:
@@ -533,7 +536,6 @@ def run_eval_func(
                     run_id=str(api_call_log_row.log_id),
                 )
             ):
-
                 emit(
                     UsageEvent(
                         org_id=str(org.id),

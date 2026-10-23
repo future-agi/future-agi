@@ -464,22 +464,20 @@ JEV_OK = {
 }
 
 
-def _jev_playground(auth_client):
+def _jev_playground(auth_client, model="jev-latest"):
     with patch("tfc.ee_gates._jev_denied_off_cloud", return_value=False):
         created = auth_client.post(
             "/model-hub/eval-templates/create-v2/", payload(), format="json"
         )
     assert created.status_code == 200, created.data
-    return lambda: auth_client.post(
-        "/model-hub/eval-playground/",
-        {
-            "template_id": created.data["result"]["id"],
-            "model": "jev-latest",
-            "mapping": {"input": "Agent: I issued a full refund."},
-            "config": {"params": {}},
-        },
-        format="json",
-    )
+    body = {
+        "template_id": created.data["result"]["id"],
+        "mapping": {"input": "Agent: I issued a full refund."},
+        "config": {"params": {}},
+    }
+    if model is not None:
+        body["model"] = model
+    return lambda: auth_client.post("/model-hub/eval-playground/", body, format="json")
 
 
 @pytest.fixture
@@ -644,6 +642,43 @@ def test_playground_bills_jev_with_the_metering_events(auth_client, user, jev_ga
     assert event.properties["actual_model"] == "jev-1.13.0"
     assert event.properties["mapping_revision"].startswith("jev-map-v1:")
     assert event.properties["attempt"] == 1
+
+
+# The eval path calls close_old_connections(), so these need real transactions.
+@pytest.mark.django_db(transaction=True)
+def test_playground_without_a_model_logs_and_limits_a_saved_jev_template_as_jev(
+    auth_client, user, jev_gateway
+):
+    """The playground sends no model for a saved Jev template: the credit
+    check and the API call log still go by the template, never Turing Large
+    (whose 50/min cap Jev does not have)."""
+    import httpx
+
+    from ee.usage.services import metering
+    from model_hub.models.api_key import ApiKey
+    from model_hub.views.utils import evals as eval_utils
+
+    run = _jev_playground(auth_client, model=None)
+    ApiKey.objects.create(
+        provider="typesafe", organization=user.organization, key="org-typesafe-key"
+    )
+    with (
+        patch("tfc.ee_gates._jev_denied_off_cloud", return_value=False),
+        patch("tfc.capabilities.service.check_or_raise"),
+        patch("httpx.post", return_value=httpx.Response(200, json=JEV_OK)),
+        patch(
+            "ee.usage.services.metering.check_usage", wraps=metering.check_usage
+        ) as check_usage,
+        patch.object(
+            eval_utils,
+            "log_and_deduct_cost_for_api_request",
+            wraps=eval_utils.log_and_deduct_cost_for_api_request,
+        ) as log_row,
+    ):
+        response = run()
+    assert response.status_code == 200, response.data
+    assert check_usage.call_args.args[1] == "jev_evaluator"
+    assert log_row.call_args.kwargs["api_call_type"] == "jev_evaluator"
 
 
 # The eval path calls close_old_connections(), so these need real transactions.
