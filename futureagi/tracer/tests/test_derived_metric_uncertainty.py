@@ -239,8 +239,12 @@ def test_uncertainty_expression_tree_does_not_expand_recursively(metric_ch):
     formula = compile_formula("mean(y)", ["y"])
     source = "SELECT * FROM derived_metric_inputs"
     query = aggregate_select(source, formula, rollup="overall")
+    # EXPLAIN emits plan metadata, not result rows. Its output budget is the
+    # structural bound below; the production query still has its 101-row cap.
     tree = metric_ch.execute(
-        "EXPLAIN QUERY TREE " + query, formula.parameters, settings=QUERY_SETTINGS
+        "EXPLAIN QUERY TREE " + query,
+        formula.parameters,
+        settings={**QUERY_SETTINGS, "max_result_rows": 10_000},
     )
     plan = metric_ch.execute(
         "EXPLAIN PLAN " + query, formula.parameters, settings=QUERY_SETTINGS
@@ -248,7 +252,7 @@ def test_uncertainty_expression_tree_does_not_expand_recursively(metric_ch):
     print("uncertainty-plan", {"query_tree_lines": len(tree), "plan_steps": len(plan)})
     # The interrupted SELECT-alias version expanded to 34,955 tree lines and
     # timed out while planning even an empty input table. Bound structure, not
-    # wall time on a shared host. No resource ceiling is increased.
+    # wall time on a shared host. No production resource ceiling is increased.
     assert len(tree) < 10_000
     assert len(plan) < 100
 
