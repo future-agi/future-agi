@@ -10,7 +10,9 @@ beforeAll(() => {
   process.env.TZ = ZONE;
 });
 afterAll(() => {
-  process.env.TZ = previous;
+  // Assigning undefined would set the zone to the string "undefined".
+  if (previous === undefined) delete process.env.TZ;
+  else process.env.TZ = previous;
 });
 
 const QUESTION = {
@@ -21,6 +23,12 @@ const QUESTION = {
 };
 
 describe("day columns across a DST change", () => {
+  it("runs in a zone that changes its clocks in the window", () => {
+    // Without the zone the test below passes whatever the code does.
+    expect(new Date("2026-10-20T12:00:00Z").getTimezoneOffset()).toBe(240);
+    expect(new Date("2026-11-03T12:00:00Z").getTimezoneOffset()).toBe(300);
+  });
+
   it("start every column at local midnight", () => {
     const records = ["2026-10-20T15:00:00Z", "2026-11-03T15:00:00Z"].map(
       (time, i) => ({

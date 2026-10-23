@@ -95,6 +95,16 @@ function RerunForm({
     sampleSize,
     enabled: !sameRows,
   });
+  // The same rows again have nothing to count: the server only prices them.
+  const sameCost = usePopulationCount({
+    unit,
+    projectId,
+    populationSize: remembered?.length,
+    sampleSize,
+    enabled: sameRows,
+  });
+  const costing =
+    sameRows && (sameCost.isLoading || sameCost.isPlaceholderData);
   const total = sameRows ? remembered?.length : count.data?.total;
   const isLowerBound = sameRows ? false : count.data?.totalIsLowerBound;
   // A Users count still climbing ("N+") shows as it goes.
@@ -137,7 +147,8 @@ function RerunForm({
 
   const busy = starting.state.status === "busy";
   // What the run costs, and whether the credits left pay for it.
-  const credits = sameRows ? null : count.data?.credits || null;
+  const credits =
+    (sameRows ? sameCost.data?.credits : count.data?.credits) || null;
   const creditLimited = Boolean(credits?.limited);
   const sentence = sampleSentence({
     unit,
@@ -235,7 +246,7 @@ function RerunForm({
                   total
                     ? ` · ${estimateMinutes(effectiveSample(total, sampleSize))}`
                     : ""
-                }${credits ? ` · ${creditWords(credits.estimate)}` : ""}`
+                }${credits?.estimate > 0 ? ` · ${creditWords(credits.estimate)}` : ""}`
               ) : (
                 ""
               )}
@@ -297,6 +308,7 @@ function RerunForm({
             busy ||
             creditLimited ||
             counting ||
+            costing ||
             (Number.isFinite(total) && total === 0)
           }
           startIcon={

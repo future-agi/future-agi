@@ -3,7 +3,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { paramsSerializer } from "src/utils/utils";
 import { filterParams } from "./askFilter";
-import { askRunKeys, toRecord } from "./useAskRun";
+import { askRunKeys, retryServerErrors, toRecord } from "./useAskRun";
 
 // The rows behind the charts, read from the server a page at a time and
 // narrowed by whatever the charts select. A live run's first page is read
@@ -35,12 +35,13 @@ export function useAskRows({
   enabled = true,
 }) {
   const params = rowsParams({ projectId, taskId, tz, filter, sort });
+  const active = Boolean(projectId && taskId) && enabled;
   const query = useInfiniteQuery({
     // `version` is not in the key: a new key started a new infinite query on
     // every 2 s poll, so pages loaded with "load more" collapsed back to the
     // first one and the scroll jumped.
     queryKey: [...askRunKeys.rows(projectId, taskId), params],
-    enabled: Boolean(projectId && taskId) && enabled,
+    enabled: active,
     initialPageParam: null,
     queryFn: async ({ pageParam, signal }) => {
       const response = await axios.get(endpoints.project.instantEvalRows(), {
@@ -61,17 +62,21 @@ export function useAskRows({
     },
     getNextPageParam: (last) => last.next || undefined,
     placeholderData: (previous) => previous,
-    retry: 2,
+    // A refused read (a selection the server won't take) is shown at once.
+    retry: retryServerErrors,
     meta: { errorHandled: true },
   });
   const pages = query.data?.pages || [];
   const seenVersion = useRef(version);
   const { refetch } = query;
   useEffect(() => {
-    if (seenVersion.current === version) return;
+    // `refetch` ignores `enabled`: a table hidden behind a chart's id
+    // selection is not read on every poll. A version it missed is read once
+    // it shows again: enabling alone skips rows read under 5 s ago.
+    if (!active || seenVersion.current === version) return;
     seenVersion.current = version;
     if (version === "done" || pages.length <= 1) refetch();
-  }, [version, pages.length, refetch]);
+  }, [version, pages.length, refetch, active]);
   return {
     rows: pages.flatMap((page) => page.rows),
     total: pages[0]?.total ?? null,

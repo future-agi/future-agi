@@ -492,6 +492,90 @@ describe("a new question the server holds for its confirm", () => {
     );
     expect(where().params.run).toBe("task-new");
   });
+
+  it("drops the server's confirm when the unit changes", async () => {
+    const { AskNeedsConfirm } = await import("../../useInstantEval");
+    fakes.startAskRun.mockRejectedValueOnce(
+      new AskNeedsConfirm({
+        message: "Confirm to start.",
+        rows_to_read: 6000,
+        credits_estimate: 360,
+      }),
+    );
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?new=1&unit=sessions&tab=sessions`,
+    );
+    await screen.findByText(/104,233 sessions in the Sessions view/);
+    fireEvent.change(screen.getByRole("textbox", { name: "Question 1" }), {
+      target: { value: QUESTION },
+    });
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Ask Jev about a sample of 1,000 sessions",
+        }),
+      );
+    });
+    expect(screen.getByText(/This reads 6,000 sessions/)).toBeInTheDocument();
+    // Its Start would launch the sessions question on the Traces view.
+    fireEvent.click(screen.getByRole("button", { name: "Traces" }));
+    await screen.findByText(/104,233 traces in the Traces view/);
+    expect(screen.queryByText(/This reads 6,000/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+    expect(fakes.startAskRun).toHaveBeenCalledTimes(1);
+  });
+
+  const holdTheSample = async () => {
+    const { AskNeedsConfirm } = await import("../../useInstantEval");
+    fakes.startAskRun.mockRejectedValueOnce(
+      new AskNeedsConfirm({
+        message: "Confirm to start.",
+        rows_to_read: 6000,
+        credits_estimate: 360,
+      }),
+    );
+    renderAt(askLink(PROJECT, { unit: "sessions", label: "Past 7D" }));
+    await screen.findByText(/104,233 sessions in the Sessions view/);
+    fireEvent.change(screen.getByRole("textbox", { name: "Question 1" }), {
+      target: { value: QUESTION },
+    });
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Ask Jev about a sample of 1,000 sessions",
+        }),
+      );
+    });
+    expect(screen.getByText(/This reads 6,000 sessions/)).toBeInTheDocument();
+  };
+
+  it("drops the server's confirm when the sample size changes", async () => {
+    await holdTheSample();
+    // Its Start would launch the sample of 1,000 under a picker showing 2,000.
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /Sample size/ }));
+    fireEvent.click(
+      await screen.findByRole("option", { name: "2,000 sessions" }),
+    );
+    expect(screen.queryByText(/This reads 6,000/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+    expect(
+      screen.getByRole("button", {
+        name: "Ask Jev about a sample of 2,000 sessions",
+      }),
+    ).toBeEnabled();
+    expect(fakes.startAskRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the server's confirm when what Jev reads changes", async () => {
+    await holdTheSample();
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /Jev reads/ }));
+    fireEvent.click(
+      await screen.findByRole("option", { name: /The whole session/ }),
+    );
+    expect(screen.queryByText(/This reads 6,000/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+    expect(fakes.startAskRun).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("the Ask page", () => {
@@ -1640,6 +1724,21 @@ describe("a new question's date and filters", () => {
     expect(
       await screen.findByRole("button", { name: "Past 30D" }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps the typed questions when the unit changes", async () => {
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?new=1&unit=sessions&tab=sessions`,
+    );
+    await screen.findByText(/104,233 sessions in the Sessions view/);
+    fireEvent.change(screen.getByRole("textbox", { name: "Question 1" }), {
+      target: { value: QUESTION },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Traces" }));
+    await screen.findByText(/104,233 traces in the Traces view/);
+    expect(screen.getByRole("textbox", { name: "Question 1" })).toHaveValue(
+      QUESTION,
+    );
   });
 
   it("remembers the sample size picked after a turn to every row", async () => {

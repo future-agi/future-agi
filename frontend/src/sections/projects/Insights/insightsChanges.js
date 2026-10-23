@@ -77,28 +77,34 @@ const newIds = (changes) =>
       .map((c) => c.category_id),
   ]);
 
-// A sub that moved exactly as a top did (a lone sub has its top's counts) is
-// the same move: one card, the top's.
-const echoesOfTops = (items) => {
-  const moves = new Set(
+// A sub that moved exactly as its own top did (a lone sub has its top's
+// counts) is the same move: one card, the top's. `parentOf` names a sub's top;
+// another top that happens to share the counts is a different move.
+const echoesOfTops = (items, parentOf) => {
+  const moves = new Map(
     items
-      .filter((c) => c?.level === 1)
-      .map((c) => `${c.count}:${c.previous_count}`),
+      .filter((c) => c?.level === 1 && c.category_id)
+      .map((c) => [c.category_id, `${c.count}:${c.previous_count}`]),
   );
   return (c) =>
     c?.level === 2 &&
     c.count != null &&
-    moves.has(`${c.count}:${c.previous_count}`);
+    moves.get(parentOf?.(c.category_id)) === `${c.count}:${c.previous_count}`;
 };
 
-export function buildChangeCards(changes) {
+export function buildChangeCards(changes, parentOf) {
   if (!changes || typeof changes !== "object") return [];
   const fresh = newIds(changes);
   const cards = [];
   const items = changes.categories || [];
-  const echo = echoesOfTops(items);
+  const echo = echoesOfTops(items, parentOf);
+  const echoed = new Set();
   items.forEach((c) => {
-    if (!c?.category_id || echo(c)) return;
+    if (!c?.category_id) return;
+    if (echo(c)) {
+      echoed.add(c.category_id);
+      return;
+    }
     const share = Number(c.share);
     const previous = Number(c.previous_share);
     const delta = Number.isFinite(c.delta)
@@ -138,9 +144,10 @@ export function buildChangeCards(changes) {
       tone: "neutral",
     });
   });
-  // A new category id with no row in `categories` still gets a card.
+  // A new category id with no row in `categories` still gets a card; a new
+  // sub that echoed its new top has the top's.
   fresh.forEach((id) => {
-    if (cards.some((card) => card.categoryId === id)) return;
+    if (echoed.has(id) || cards.some((card) => card.categoryId === id)) return;
     cards.push({
       key: `new-${id}`,
       kind: "new",

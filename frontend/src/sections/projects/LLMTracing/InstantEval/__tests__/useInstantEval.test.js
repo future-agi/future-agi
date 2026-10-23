@@ -186,6 +186,19 @@ describe("startAskRun", () => {
     });
   });
 
+  it("sends the rows a confirm covered, so the server can ask again", async () => {
+    serve();
+    await ask({ unit: "users", confirm: true, confirmedRows: 6000 });
+    expect(postBody("/start")).toMatchObject({
+      confirm: true,
+      confirmed_rows: 6000,
+    });
+    http.post.mockClear();
+    // Nothing confirmed, nothing claimed.
+    await ask({ unit: "users", confirm: false, confirmedRows: 6000 });
+    expect(postBody("/start")).not.toHaveProperty("confirmed_rows");
+  });
+
   it("reads whole sessions, steps included, when asked to", async () => {
     serve();
     await ask({ unit: "sessions", reads: "transcript_full" });

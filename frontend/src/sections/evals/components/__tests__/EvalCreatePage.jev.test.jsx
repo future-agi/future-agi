@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import React, { forwardRef } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
 import EvalCreatePage from "../EvalCreatePage";
 
@@ -8,6 +9,9 @@ const mocks = vi.hoisted(() => ({
   draft: null,
   mutate: vi.fn(),
   snack: vi.fn(),
+  // When set, the capability hooks read Jev's entry from /api/capabilities/
+  // for real: its answer, or "fail" for a fetch that fails.
+  capabilities: null,
 }));
 vi.mock("notistack", async (original) => ({
   ...(await original()),
@@ -21,17 +25,30 @@ vi.mock("react-router", async (original) => ({
 vi.mock("src/auth/hooks", () => ({
   useAuthContext: () => ({ role: "Owner" }),
 }));
-vi.mock("src/hooks/useCapabilities", async (original) => ({
-  ...(await original()),
-  useFeatureLocked: () => ({ locked: false, isLoading: false }),
-  useFeatureDenied: () => false,
-}));
+vi.mock("src/hooks/useCapabilities", async (original) => {
+  const actual = await original();
+  const real = (id) => Boolean(mocks.capabilities) && id === "jev_models";
+  return {
+    ...actual,
+    useFeatureLocked: (id) =>
+      real(id)
+        ? actual.useFeatureLocked(id)
+        : { locked: false, isLoading: false },
+    useFeatureDenied: (id) => (real(id) ? actual.useFeatureDenied(id) : false),
+  };
+});
 vi.mock("src/hooks/useErrorLocalization", () => ({
   useErrorLocalizationAvailable: () => false,
 }));
 vi.mock("src/utils/axios", () => ({
   default: {
-    get: vi.fn(async () => ({ data: { result: mocks.draft } })),
+    get: vi.fn(async (url) => {
+      if (String(url).includes("/api/capabilities/")) {
+        if (mocks.capabilities === "fail") throw new Error("unavailable");
+        return { data: mocks.capabilities };
+      }
+      return { data: { result: mocks.draft } };
+    }),
     post: vi.fn(),
   },
   endpoints: {
@@ -96,6 +113,7 @@ const lastPayload = () => mocks.mutate.mock.calls.at(-1)?.[0];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.capabilities = null;
   // An LLM judge drafted on the Agents tab: agent_mode stays "agent", and the
   // stored mapping is the Pass/Fail one from before the output change.
   mocks.draft = {
@@ -217,6 +235,55 @@ describe("EvalCreatePage with a Jev model", () => {
         screen.getByRole("button", { name: /Test Evaluation/ }),
       ).toBeEnabled(),
     );
+  });
+
+  describe("with the deployment's capabilities read for real", () => {
+    // A judge Jev can run: Pass/Fail over a variable.
+    const runnable = () => ({
+      ...mocks.draft,
+      name: "Resolved?",
+      instructions: "Did the agent resolve {{conversation}}?",
+      config: {
+        ...mocks.draft.config,
+        messages: [
+          {
+            role: "system",
+            content: "Did the agent resolve {{conversation}}?",
+          },
+        ],
+      },
+    });
+
+    const renderPage = () =>
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <EvalCreatePage />
+        </QueryClientProvider>,
+      );
+
+    it("leaves Jev testable when the capabilities can't be read", async () => {
+      mocks.draft = runnable();
+      mocks.capabilities = "fail";
+      renderPage();
+      await screen.findByDisplayValue("Jev latest");
+      // Past the fetch's retry: failed, which is no denial.
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      expect(
+        screen.getByRole("button", { name: /Test Evaluation/ }),
+      ).toBeEnabled();
+    });
+
+    it("locks Jev on the plan's denial", async () => {
+      mocks.draft = runnable();
+      mocks.capabilities = { features: { jev_models: { allowed: false } } };
+      renderPage();
+      await screen.findByDisplayValue("Jev latest");
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: /Test Evaluation/ }),
+        ).toBeDisabled(),
+      );
+    });
   });
 
   it("says once when autosave is refused", async () => {

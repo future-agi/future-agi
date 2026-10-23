@@ -152,9 +152,10 @@ export default function ChangeCards({ changes }) {
   const report = useReport();
   const [all, setAll] = useState(false);
   // A sub folded into its same-named top moved with it: one card, not two.
-  const cards = buildChangeCards(changes).filter(
-    (card) => !report.echoes?.has(card.categoryId),
-  );
+  const cards = buildChangeCards(
+    changes,
+    (id) => report.categoriesById?.get(id)?.parent_id,
+  ).filter((card) => !report.echoes?.has(card.categoryId));
   if (!cards.length) return null;
   const strong = cards.filter((card) => card.significant).length;
   // With nothing beyond the noise, the largest moves are enough.

@@ -39,6 +39,7 @@ import RunProgress from "./RunProgress";
 import TrendCard from "./TrendCard";
 import {
   deleteConfig,
+  forgetConfig,
   insightsErrorMessage,
   insightsKeys,
   patchConfig,
@@ -550,8 +551,7 @@ export default function ReportPage({
   const remove = () =>
     deleting.run(async () => {
       await deleteConfig(config.id);
-      queryClient.invalidateQueries({ queryKey: ["insights", "configs"] });
-      queryClient.removeQueries({ queryKey: insightsKeys.config(config.id) });
+      forgetConfig(queryClient, config.id);
       setConfirmDelete(false);
       onDeleted();
       return true;

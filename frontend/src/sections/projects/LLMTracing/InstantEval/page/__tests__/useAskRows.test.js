@@ -11,7 +11,7 @@ vi.mock("src/utils/axios", () => ({
   endpoints: { project: { instantEvalRows: () => "/rows" } },
 }));
 
-import { ROWS_PAGE, useAskRows } from "../useAskRows";
+import { ROWS_PAGE, fetchRowIds, useAskRows } from "../useAskRows";
 
 const page = (start, next) => ({
   status: 200,
@@ -30,9 +30,9 @@ const page = (start, next) => ({
   },
 });
 
-const wrapper = () => {
+const wrapper = (queries = {}) => {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    defaultOptions: { queries: { retry: false, ...queries } },
   });
   const Wrapper = ({ children }) =>
     React.createElement(QueryClientProvider, { client }, children);
@@ -79,5 +79,139 @@ describe("useAskRows on a live run", () => {
     rerender({ version: "done" });
     await waitFor(() => expect(http.get.mock.calls.length).toBe(reads + 2));
     expect(result.current.rows).toHaveLength(2 * ROWS_PAGE);
+  });
+});
+
+describe("useAskRows over a chart's selection", () => {
+  // "Show" on a 6-9 AM pattern over 30 days: one group key per day, and a
+  // model name holding a comma.
+  const groups = [
+    ...Array.from(
+      { length: 30 },
+      (_, i) => `hour3:2026-09-${String(i + 1).padStart(2, "0")}|6`,
+    ),
+    "model:gpt-4o, mini",
+  ];
+  const sent = (call) => {
+    const [, options] = call;
+    return new URLSearchParams(
+      options.paramsSerializer.serialize(options.params),
+    );
+  };
+
+  beforeEach(() => {
+    http.get.mockReset();
+    http.get.mockResolvedValue(page(0, null));
+  });
+
+  it("sends each group whole, as its own parameter", async () => {
+    renderHook(
+      () =>
+        useAskRows({
+          projectId: "p1",
+          taskId: "t1",
+          unit: "traces",
+          tz: "UTC",
+          filter: { group: groups },
+          version: "done",
+        }),
+      { wrapper: wrapper() },
+    );
+    await waitFor(() => expect(http.get).toHaveBeenCalledTimes(1));
+    expect(sent(http.get.mock.calls[0]).getAll("group")).toEqual(groups);
+  });
+
+  it("hands over the same selection", async () => {
+    await fetchRowIds({
+      projectId: "p1",
+      taskId: "t1",
+      tz: "UTC",
+      filter: { group: groups },
+      limit: 10,
+      unit: "traces",
+    });
+    expect(sent(http.get.mock.calls[0]).getAll("group")).toEqual(groups);
+  });
+
+  it("says a refused read failed, without retrying it", async () => {
+    http.get.mockRejectedValue({ statusCode: 400, message: "Bad group" });
+    const { result } = renderHook(
+      () =>
+        useAskRows({
+          projectId: "p1",
+          taskId: "t1",
+          unit: "traces",
+          tz: "UTC",
+          filter: { group: groups },
+          version: "done",
+        }),
+      { wrapper: wrapper() },
+    );
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(http.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("doesn't read a table hidden behind an id selection as answers land", async () => {
+    const { rerender } = renderHook(
+      ({ version }) =>
+        useAskRows({
+          projectId: "p1",
+          taskId: "t1",
+          unit: "traces",
+          tz: "UTC",
+          version,
+          enabled: false,
+        }),
+      { wrapper: wrapper(), initialProps: { version: 1 } },
+    );
+    rerender({ version: 2 });
+    rerender({ version: "done" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(http.get).not.toHaveBeenCalled();
+  });
+
+  it("reads the finished run once the hidden table shows again", async () => {
+    const rowsPage = (n) => ({
+      status: 200,
+      data: {
+        status: true,
+        result: {
+          rows: Array.from({ length: n }, (_, i) => ({
+            id: `r${i}`,
+            time: "2026-10-13T14:10:00Z",
+            answers: {},
+            facets: {},
+          })),
+          next_cursor: null,
+          total: n,
+        },
+      },
+    });
+    http.get.mockResolvedValue(rowsPage(3));
+    const { result, rerender } = renderHook(
+      ({ version, enabled }) =>
+        useAskRows({
+          projectId: "p1",
+          taskId: "t1",
+          unit: "traces",
+          tz: "UTC",
+          version,
+          enabled,
+        }),
+      {
+        // The app's default: rows read under 5 s ago aren't read again just
+        // because the query is enabled again.
+        wrapper: wrapper({ staleTime: 5000 }),
+        initialProps: { version: 3, enabled: true },
+      },
+    );
+    await waitFor(() => expect(result.current.total).toBe(3));
+    http.get.mockResolvedValue(rowsPage(10));
+    // A chart's id selection hides the table, and the run ends meanwhile.
+    rerender({ version: 3, enabled: false });
+    rerender({ version: "done", enabled: false });
+    rerender({ version: "done", enabled: true });
+    await waitFor(() => expect(result.current.total).toBe(10));
+    expect(result.current.rows).toHaveLength(10);
   });
 });

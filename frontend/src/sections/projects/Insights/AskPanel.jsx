@@ -24,6 +24,7 @@ import { categoriesFor } from "./insightsDistribution";
 import { formatCount, formatSpan } from "./insightsFormat";
 import { useElapsedSeconds } from "./insightsHooks";
 import {
+  ASK_INTERRUPTED,
   ASK_QUESTION_MAX,
   askHistory,
   normalizeAnswer,
@@ -311,14 +312,20 @@ export default function AskPanel({ run, lens }) {
   useEffect(() => {
     mounted.current = true;
     // Questions asked before the panel was last closed: their answers land
-    // here when they come.
+    // here when they come. One with nothing in flight in this page (it was
+    // reloaded) was cut off, and is asked again.
     readAskThread(runId)
       .filter((turn) => turn.status === "busy")
-      .forEach((turn) =>
-        inflight.get(`${runId}:${turn.id}`)?.then((patch) => {
+      .forEach((turn) => {
+        const answer = inflight.get(`${runId}:${turn.id}`);
+        if (!answer) {
+          settle(turn.id, { status: "error", error: ASK_INTERRUPTED });
+          return;
+        }
+        answer.then((patch) => {
           if (patch && mounted.current) settle(turn.id, patch);
-        }),
-      );
+        });
+      });
     // Leaving doesn't abort a question in flight: it is answered and charged
     // anyway, and its answer is kept with the thread.
     return () => {

@@ -23,6 +23,7 @@ import Iconify from "src/components/iconify";
 import { unitWord } from "src/sections/projects/observePopulation";
 import {
   deleteConfig,
+  forgetConfig,
   insightsErrorMessage,
   insightsKeys,
   patchConfig,
@@ -448,15 +449,7 @@ export default function ReportRail({
     deleting.run(async () => {
       const id = toDelete.id;
       await deleteConfig(id);
-      // Drop it from every cached list before the refetch lands, so the
-      // auto-open never reopens the report just deleted (or a lone one).
-      queryClient.setQueriesData(
-        { queryKey: ["insights", "configs"] },
-        (list) =>
-          Array.isArray(list) ? list.filter((c) => c.id !== id) : list,
-      );
-      queryClient.invalidateQueries({ queryKey: ["insights", "configs"] });
-      queryClient.removeQueries({ queryKey: insightsKeys.config(id) });
+      forgetConfig(queryClient, id);
       setToDelete(null);
       onDeleted(id);
       return true;

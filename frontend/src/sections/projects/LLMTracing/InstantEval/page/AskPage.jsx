@@ -208,8 +208,24 @@ export default function AskPage() {
   // A Run again the server holds back until its credits are confirmed:
   // {taskId, rows, credits}, confirmed or dropped on that run's page.
   const [rerunConfirm, setRerunConfirm] = useState(null);
+  // A new question the server held for its confirm: {args, rows, credits}.
+  // Another scope, unit, sample size or read retracts it, as the composer's
+  // own confirm is, so Start never launches what is no longer on screen.
   const [composerConfirm, setComposerConfirm] = useState(null);
+  // Stable: the composer retracts with it whenever its sample or read
+  // changes.
+  const dropComposerConfirm = useCallback(() => setComposerConfirm(null), []);
   useEffect(() => setRerunConfirm(null), [runId]);
+  useEffect(() => setComposerConfirm(null), [scope, unit]);
+  // The questions typed in the composer, carried to the composer of another
+  // unit (it mounts again) instead of being cleared.
+  const typedQuestions = useRef(null);
+  const [carriedQuestions, setCarriedQuestions] = useState(null);
+  const onQuestionsChange = useCallback((next) => {
+    if (typedQuestions.current && typedQuestions.current !== next)
+      setComposerConfirm(null);
+    typedQuestions.current = next;
+  }, []);
 
   const railFits = useMediaQuery(`(min-width:${RAIL_FITS_WIDTH}px)`, {
     noSsr: true,
@@ -292,6 +308,7 @@ export default function AskPage() {
   // A fresh question from the rail or the welcome: the past week again.
   const startOver = (nextUnit = unit) => {
     setEdited(null);
+    setCarriedQuestions(null);
     newQuestion(nextUnit);
   };
   // Another unit keeps the date; filters it can't read are dropped, and the
@@ -303,6 +320,7 @@ export default function AskPage() {
     // is kept under the key the page reads next ("own"), not the seed's: under
     // the seed it was ignored and the composer fell back to the past week.
     setEdited({ key: "own", scope: moved.scope, notice: moved.notice });
+    setCarriedQuestions(typedQuestions.current);
     newQuestion(nextUnit);
   };
 
@@ -489,6 +507,8 @@ export default function AskPage() {
         projectId={observeId}
         unit={unit}
         seed={handedOff}
+        initialQuestions={carriedQuestions}
+        onQuestionsChange={onQuestionsChange}
         scope={scope}
         onScopeChange={(next) => editScope(next)}
         scopeNotice={editedHere?.notice}
@@ -508,7 +528,7 @@ export default function AskPage() {
           setComposerConfirm(null);
           askFromComposer({ ...held.args, confirm: true, rows: held.rows });
         }}
-        onServerConfirmCancel={() => setComposerConfirm(null)}
+        onServerConfirmCancel={dropComposerConfirm}
         onAsk={askFromComposer}
       />
     </Box>

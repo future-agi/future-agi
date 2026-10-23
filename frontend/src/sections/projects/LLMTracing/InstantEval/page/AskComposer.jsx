@@ -654,6 +654,8 @@ export default function AskComposer({
   projectId,
   unit,
   seed,
+  initialQuestions,
+  onQuestionsChange,
   scope,
   onScopeChange,
   scopeNotice,
@@ -679,11 +681,17 @@ export default function AskComposer({
     sampleSize: Number.isNaN(typedSize) ? null : typedSize,
   });
   const saved = useInstantEvals(projectId, { unit });
+  // What was typed for another unit comes along when the unit changes.
   const [questions, setQuestions] = useState(() =>
-    seed?.questions?.length
-      ? draftsFromQuestions(seed.questions)
-      : [emptyDraft()],
+    initialQuestions?.length
+      ? initialQuestions
+      : seed?.questions?.length
+        ? draftsFromQuestions(seed.questions)
+        : [emptyDraft()],
   );
+  useEffect(() => {
+    onQuestionsChange?.(questions);
+  }, [questions, onQuestionsChange]);
   const [reads, setReads] = useState(() => defaultReads(unit));
   // A sample of 1,000 above 1,000 rows, else every row, until one is picked.
   // The last sample size picked (or CUSTOM), offered again after a turn to
@@ -837,6 +845,11 @@ export default function AskComposer({
   useEffect(() => {
     setConfirming(false);
   }, [scope]);
+  // The server's confirm is for the sample and reads it was asked with:
+  // another sample size or read retracts it too.
+  useEffect(() => {
+    onServerConfirmCancel?.();
+  }, [sampleSize, reads, onServerConfirmCancel]);
 
   const addQuestion = (entry) =>
     setQuestions((prev) => {
@@ -1214,6 +1227,9 @@ AskComposer.propTypes = {
   projectId: PropTypes.string.isRequired,
   unit: PropTypes.oneOf(["traces", "spans", "sessions", "users"]).isRequired,
   seed: PropTypes.object,
+  // Question drafts typed for another unit, to start from.
+  initialQuestions: PropTypes.array,
+  onQuestionsChange: PropTypes.func,
   // What the question reads (see observeScope), and its edits.
   scope: PropTypes.object.isRequired,
   onScopeChange: PropTypes.func.isRequired,
@@ -1228,6 +1244,7 @@ AskComposer.propTypes = {
     credits: PropTypes.number,
   }),
   onServerConfirm: PropTypes.func,
+  // Called again on every new sample size or read: keep it stable.
   onServerConfirmCancel: PropTypes.func,
   onAsk: PropTypes.func.isRequired,
 };

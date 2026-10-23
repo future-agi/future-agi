@@ -323,6 +323,63 @@ describe("InsightsView", () => {
     ).not.toBeInTheDocument();
   });
 
+  // The report's own menu deletes too; the list the auto-open reads must
+  // lose the report there as well.
+  it.each([
+    [
+      "opens the next report",
+      [sessionsConfig, configsFixture.result.configs[0]],
+    ],
+    ["shows the empty state for the only report", [sessionsConfig]],
+  ])("%s after a delete from the report's menu", async (_, listed) => {
+    let deleted = false;
+    const axios = (await import("src/utils/axios")).default;
+    axios.delete.mockImplementation(async () => {
+      deleted = true;
+      return { data: { status: true, result: sessionsConfig } };
+    });
+    const base = mocks.readQuery.getMockImplementation();
+    mocks.readQuery.mockImplementation((url, options) => {
+      if (url === "/tracer/insights/configs/")
+        return deleted
+          ? new Promise(() => {}) // the refetch is still in flight
+          : ok({ ...configsFixture.result, configs: listed });
+      if (deleted && url === `/tracer/insights/configs/${CONFIG_ID}/`)
+        return Promise.reject({ statusCode: 404, message: "Not found" });
+      return base(url, options);
+    });
+    renderAt("");
+    // The list, the auto-open, then the report: slow on a loaded runner.
+    fireEvent.click(
+      await screen.findByRole(
+        "button",
+        { name: "More report actions" },
+        { timeout: 5000 },
+      ),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Delete report" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    if (listed.length > 1)
+      await waitFor(() =>
+        expect(screen.getByTestId("location").textContent).toContain(
+          listed[1].id,
+        ),
+      );
+    else
+      expect(
+        await screen.findByText(
+          "What do you want to learn about your traffic?",
+        ),
+      ).toBeInTheDocument();
+    expect(screen.getByTestId("location").textContent).not.toContain(CONFIG_ID);
+    expect(
+      screen.queryByText(/This report could not be loaded/),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows why the reports didn't load in the page, with the rail closed", async () => {
     setViewport(1280);
     const base = mocks.readQuery.getMockImplementation();
@@ -706,6 +763,93 @@ describe("InsightsView", () => {
     }
   });
 
+  describe("a question still being answered", () => {
+    let store;
+    beforeEach(() => {
+      mocks.enriched = true;
+      store = new Map();
+      vi.stubGlobal("sessionStorage", {
+        getItem: (key) => store.get(key) ?? null,
+        setItem: (key, value) => store.set(key, value),
+        removeItem: (key) => store.delete(key),
+      });
+    });
+
+    it("keeps going while a category is open, and its answer is there after", async () => {
+      let answer;
+      mocks.post.mockImplementation((url) =>
+        url === `/tracer/insights/runs/${RUN_ID}/ask/`
+          ? new Promise((resolve) => {
+              answer = resolve;
+            })
+          : Promise.reject(new Error(`unexpected ${url}`)),
+      );
+      renderAt(`?report=${CONFIG_ID}`);
+      fireEvent.click(
+        await screen.findByRole(
+          "button",
+          { name: "Which users are hit hardest?" },
+          { timeout: 5000 },
+        ),
+      );
+      await screen.findByText("Reading 72 conversations…");
+      const table = await screen.findByRole("table");
+      fireEvent.click(
+        within(table).getByText("Unresponsive Support and No Escalation"),
+      );
+      await screen.findByRole("button", { name: "Measure with Jev" });
+      // The panel is gone; the question isn't aborted, and lands meanwhile.
+      expect(
+        screen.queryByRole("textbox", { name: "Ask about this report" }),
+      ).toBeNull();
+      answer({ data: askFixture });
+      await waitFor(() =>
+        expect(store.get(`insights-ask:${RUN_ID}`)).toContain(
+          "Customers who ask for a human are hit hardest",
+        ),
+      );
+      fireEvent.click(
+        screen.getAllByRole("button", { name: "Back to report" })[0],
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "1 answer" }));
+      expect(
+        (
+          await screen.findAllByText(
+            /Customers who ask for a human are hit hardest/,
+          )
+        ).length,
+      ).toBeGreaterThan(0);
+      expect(mocks.post).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads as interrupted after a reload, with Retry", async () => {
+      // Left busy a moment ago by a page since reloaded: nothing answers it.
+      store.set(
+        `insights-ask:${RUN_ID}`,
+        JSON.stringify([
+          {
+            id: "t1",
+            question: "Who came back?",
+            status: "busy",
+            startedAt: Date.now() - 5000,
+          },
+        ]),
+      );
+      renderAt(`?report=${CONFIG_ID}`);
+      fireEvent.click(
+        await screen.findByRole(
+          "button",
+          { name: "1 answer" },
+          { timeout: 5000 },
+        ),
+      );
+      expect(
+        await screen.findByText(/This question was interrupted/),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    });
+  });
+
   it("guides a new report and starts it on the scope the server reads", async () => {
     renderAt("?new=1&lens=failures");
     expect(
@@ -771,11 +915,22 @@ describe("InsightsView", () => {
       await screen.findByRole("radio", { name: /Your question/ }),
     ).toHaveAttribute("aria-checked", "true");
     expect(screen.getByText("12 sessions")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Run report" }));
+    // Run waits for the rows' cost.
+    const run = screen.getByRole("button", { name: "Run report" });
+    await waitFor(() => expect(run).toBeEnabled());
+    fireEvent.click(run);
     await waitFor(() =>
       expect(postsTo("/tracer/insights/runs/")).toHaveLength(1),
     );
-    expect(postsTo("/tracer/insights/estimate/")).toHaveLength(0);
+    // The rows are priced by their number, never counted from a scope.
+    const bodies = postsTo("/tracer/insights/estimate/").map(
+      ([, sent]) => sent,
+    );
+    expect(bodies.length).toBeGreaterThan(0);
+    bodies.forEach((sent) => {
+      expect(sent).not.toHaveProperty("scope");
+      expect(sent.population_size).toBe(12);
+    });
     const [[, body]] = postsTo("/tracer/insights/runs/");
     expect(body.scope).toEqual({
       label: "“No” answers · Was it resolved?",
@@ -954,6 +1109,99 @@ describe("InsightsView", () => {
       scope: { preset: "7D", window: week, filters: [windowItem(week)] },
     });
     expect(body).not.toHaveProperty("population");
+  });
+
+  it("runs a handed-over report again on the same rows", async () => {
+    const FIXED = { preset: "fixed", label: "3 sessions from Instant eval" };
+    const rows = [
+      { id: "s1", time: "2026-10-10T00:00:00Z", user_id: "u1" },
+      { id: "s2", time: "2026-10-10T01:00:00Z", user_id: "u2" },
+      { id: "s3", time: "2026-10-10T02:00:00Z", user_id: "" },
+    ];
+    const store = new Map([
+      [`insights-population:${CONFIG_ID}`, JSON.stringify(rows)],
+    ]);
+    vi.stubGlobal("sessionStorage", {
+      getItem: (key) => store.get(key) ?? null,
+      setItem: (key, value) => store.set(key, value),
+      removeItem: (key) => store.delete(key),
+    });
+    const base = mocks.readQuery.getMockImplementation();
+    mocks.readQuery.mockImplementation((url, options) =>
+      url === `/tracer/insights/configs/${CONFIG_ID}/`
+        ? ok({ ...configDetail, scope: FIXED })
+        : base(url, options),
+    );
+    renderAt(`?report=${CONFIG_ID}`);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Run now" }, { timeout: 5000 }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByLabelText("The same 3 sessions as last run"),
+    ).toBeChecked();
+    // Run again waits for the rows' cost.
+    const runAgain = within(dialog).getByRole("button", { name: "Run again" });
+    await waitFor(() => expect(runAgain).toBeEnabled());
+    fireEvent.click(runAgain);
+    await waitFor(() =>
+      expect(postsTo("/tracer/insights/runs/")).toHaveLength(1),
+    );
+    const [[, body]] = postsTo("/tracer/insights/runs/");
+    expect(body).toMatchObject({ config_id: CONFIG_ID, scope: FIXED });
+    expect(body.population.map((row) => row.id)).toEqual(["s1", "s2", "s3"]);
+    // The rows are named, not counted from filters: only priced.
+    const bodies = postsTo("/tracer/insights/estimate/").map(
+      ([, sent]) => sent,
+    );
+    expect(bodies.length).toBeGreaterThan(0);
+    bodies.forEach((sent) => {
+      expect(sent).not.toHaveProperty("scope");
+      expect(sent.population_size).toBe(3);
+    });
+  });
+
+  it("rediscovers categories only with a run the server starts", async () => {
+    let refuse = true;
+    mocks.post.mockImplementation((url) => {
+      if (url === "/tracer/insights/estimate/")
+        return ok({
+          population: 108,
+          population_is_lower_bound: false,
+          sample_size: 108,
+        });
+      if (url === "/tracer/insights/runs/" && refuse)
+        return Promise.reject({
+          statusCode: 429,
+          message: "Too many reports this hour.",
+        });
+      return ok({ run_id: RUN_ID, config_id: CONFIG_ID });
+    });
+    renderAt(`?report=${CONFIG_ID}`);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Run now" }, { timeout: 5000 }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByLabelText("Rediscover categories"));
+    const runAgain = within(dialog).getByRole("button", { name: "Run again" });
+    await waitFor(() => expect(runAgain).toBeEnabled());
+    fireEvent.click(runAgain);
+    await waitFor(() =>
+      expect(postsTo("/tracer/insights/runs/")).toHaveLength(1),
+    );
+    // The reset rides with the refused run: nothing erased the categories.
+    expect(postsTo("/tracer/insights/runs/")[0][1]).toMatchObject({
+      config_id: CONFIG_ID,
+      reset_taxonomy: true,
+    });
+    expect(mocks.patch).not.toHaveBeenCalled();
+    refuse = false;
+    fireEvent.click(runAgain);
+    await waitFor(() =>
+      expect(postsTo("/tracer/insights/runs/")).toHaveLength(2),
+    );
+    expect(postsTo("/tracer/insights/runs/")[1][1].reset_taxonomy).toBe(true);
+    expect(mocks.patch).not.toHaveBeenCalled();
   });
 
   it("measures a category over the rows the report read", async () => {
@@ -1228,6 +1476,30 @@ describe("InsightsView", () => {
       expect(screen.getByRole("button", { name: "Run report" })).toBeEnabled();
     });
 
+    it("holds a report while billing can't check credits, without pricing it at 0", async () => {
+      const unavailable =
+        "Credits can't be checked right now, so this can't start. Try again in a moment.";
+      mocks.post.mockImplementation((url, body) =>
+        url === "/tracer/insights/estimate/"
+          ? estimate(body.sample_size, {
+              // A billing config that doesn't load prices nothing.
+              credits_estimate: 0,
+              credit_limited: true,
+              credits_left: null,
+              credit_message: unavailable,
+            })
+          : ok({ run_id: RUN_ID, config_id: CONFIG_ID }),
+      );
+      renderAt("?new=1&lens=failures");
+      expect(await screen.findByRole("status")).toHaveTextContent(unavailable);
+      const [line] = await screen.findAllByText(
+        /Analysing all 108 sessions · about \d+ minutes/,
+      );
+      expect(line.textContent).not.toMatch(/about 0 credits/);
+      expect(screen.queryByText(/about 0 credits/)).toBeNull();
+      expect(screen.getByRole("button", { name: "Run report" })).toBeDisabled();
+    });
+
     it("holds a report the credits don't cover, and offers a sample that fits", async () => {
       mocks.post.mockImplementation((url, body) =>
         url !== "/tracer/insights/estimate/"
@@ -1382,6 +1654,134 @@ describe("InsightsView", () => {
           name: "Analyse a sample of 40 instead",
         }),
       ).toBeInTheDocument();
+    });
+
+    // Rows handed over by id (Find patterns from Instant eval, or a run
+    // again on the same rows) are priced by their number: the server has
+    // no scope to count, and answers with no window.
+    const priced = (body, extra = {}) =>
+      ok({
+        population: body.population_size,
+        population_is_lower_bound: false,
+        sample_size: Math.min(body.sample_size || 300, body.population_size),
+        window: null,
+        sample_ids: [],
+        credits_estimate: 3.6,
+        credit_limited: false,
+        credits_left: 500,
+        credit_max_sample: null,
+        credit_message: null,
+        ...extra,
+      });
+    const LIMITED = {
+      credit_limited: true,
+      credits_left: 1.3,
+      credit_max_sample: 40,
+      credit_message:
+        "This report needs about 3.6 credits; you have 1.3 left this month.",
+    };
+    const handOver = () => {
+      const key = "seedcost1";
+      sessionStorage.setItem(
+        `observe-handoff:${key}`,
+        JSON.stringify({
+          unit: "sessions",
+          population: population.slice(0, 12),
+          label: "“No” answers · Was it resolved?",
+          source: "Instant eval: Was it resolved?",
+        }),
+      );
+      return `?new=1&seed=${key}`;
+    };
+
+    it.each([
+      ["says what a handed-over population costs", {}],
+      ["holds a handed-over population the credits don't cover", LIMITED],
+    ])("%s", async (_, extra) => {
+      mocks.post.mockImplementation((url, body) =>
+        url === "/tracer/insights/estimate/"
+          ? priced(body, extra)
+          : ok({ run_id: RUN_ID, config_id: CONFIG_ID }),
+      );
+      renderAt(handOver());
+      expect(await screen.findByText("12 sessions")).toBeInTheDocument();
+      await waitFor(() => expect(estimates()).toHaveLength(1));
+      expect(estimates()[0][1]).toEqual({
+        project_id: PROJECT,
+        unit: "sessions",
+        population_size: 12,
+        sample_size: 300,
+      });
+      const run = screen.getByRole("button", { name: "Run report" });
+      if (extra.credit_limited) {
+        expect(
+          (await screen.findAllByText(LIMITED.credit_message, { exact: false }))
+            .length,
+        ).toBeGreaterThan(0);
+        expect(run).toBeDisabled();
+      } else {
+        expect(
+          (await screen.findAllByText(/about 3\.6 credits/)).length,
+        ).toBeGreaterThan(0);
+        expect(run).toBeEnabled();
+      }
+    });
+
+    it.each([
+      ["says what a run again on the same rows costs", {}],
+      ["holds a run again on the same rows the credits don't cover", LIMITED],
+    ])("%s", async (_, extra) => {
+      const FIXED = { preset: "fixed", label: "3 sessions from Instant eval" };
+      const rows = ["s1", "s2", "s3"].map((id) => ({
+        id,
+        time: "2026-10-10T00:00:00Z",
+        user_id: "",
+      }));
+      sessionStorage.setItem(
+        `insights-population:${CONFIG_ID}`,
+        JSON.stringify(rows),
+      );
+      const base = mocks.readQuery.getMockImplementation();
+      mocks.readQuery.mockImplementation((url, options) =>
+        url === `/tracer/insights/configs/${CONFIG_ID}/`
+          ? ok({ ...configDetail, scope: FIXED })
+          : base(url, options),
+      );
+      mocks.post.mockImplementation((url, body) =>
+        url === "/tracer/insights/estimate/"
+          ? priced(body, extra)
+          : ok({ run_id: RUN_ID, config_id: CONFIG_ID }),
+      );
+      renderAt(`?report=${CONFIG_ID}`);
+      fireEvent.click(
+        await screen.findByRole(
+          "button",
+          { name: "Run now" },
+          { timeout: 5000 },
+        ),
+      );
+      const dialog = await screen.findByRole("dialog");
+      await waitFor(() => expect(estimates()).toHaveLength(1));
+      expect(estimates()[0][1]).toEqual({
+        project_id: PROJECT,
+        unit: "sessions",
+        population_size: 3,
+        sample_size: configDetail.sample_size || 300,
+      });
+      const run = within(dialog).getByRole("button", { name: "Run again" });
+      if (extra.credit_limited) {
+        expect(
+          await within(dialog).findByText(LIMITED.credit_message, {
+            exact: false,
+          }),
+        ).toBeInTheDocument();
+        expect(run).toBeDisabled();
+      } else {
+        expect(
+          await within(dialog).findByText(/about 3\.6 credits/),
+        ).toBeInTheDocument();
+        expect(run).toBeEnabled();
+      }
     });
   });
 

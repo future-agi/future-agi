@@ -78,6 +78,19 @@ export const patchConfig = async (configId, body) =>
 export const deleteConfig = async (configId) =>
   result(await axios.delete(endpoints.project.insightsConfig(configId)));
 
+/**
+ * After a delete: drop the report from every cached list before the refetch
+ * lands, so the page's auto-open never reopens it as "could not be loaded"
+ * (and, with none left, shows the empty state).
+ */
+export function forgetConfig(queryClient, configId) {
+  queryClient.setQueriesData({ queryKey: ["insights", "configs"] }, (list) =>
+    Array.isArray(list) ? list.filter((c) => c.id !== configId) : list,
+  );
+  queryClient.invalidateQueries({ queryKey: ["insights", "configs"] });
+  queryClient.removeQueries({ queryKey: insightsKeys.config(configId) });
+}
+
 export const draftConfig = async (body, signal) =>
   result(await axios.post(endpoints.project.insightsDraft(), body, { signal }));
 
@@ -295,10 +308,11 @@ export async function askRun(runId, body, signal) {
  * How many units a scope ({filters, search?}) holds, counted on the server
  * the way a run reads them; a few of them the server picked for the draft
  * and preview; and what analysing a sample of `sampleSize` costs:
- * {total, totalIsLowerBound, sampleIds, credits}.
+ * {total, totalIsLowerBound, sampleIds, credits}. Rows handed over by id
+ * (`populationSize` of them) have nothing to count: only their cost is read.
  */
 export const fetchScopeCount = async (
-  { projectId, unit, scope, sampleSize },
+  { projectId, unit, scope, populationSize, sampleSize },
   signal,
 ) => {
   const data = result(
@@ -307,7 +321,7 @@ export const fetchScopeCount = async (
       {
         project_id: projectId,
         unit,
-        scope,
+        ...(populationSize ? { population_size: populationSize } : { scope }),
         ...(sampleSize ? { sample_size: sampleSize } : {}),
       },
       { signal },
@@ -341,13 +355,21 @@ export function usePopulationCount({
   unit,
   projectId,
   scope,
+  populationSize,
   sampleSize,
   enabled = true,
 }) {
   return useQuery({
-    queryKey: [...insightsKeys.population(unit, projectId, scope), sampleSize],
+    queryKey: [
+      ...insightsKeys.population(unit, projectId, scope),
+      sampleSize,
+      populationSize || null,
+    ],
     queryFn: ({ signal }) =>
-      fetchScopeCount({ projectId, unit, scope, sampleSize }, signal),
+      fetchScopeCount(
+        { projectId, unit, scope, populationSize, sampleSize },
+        signal,
+      ),
     enabled: Boolean(unit && projectId) && enabled,
     staleTime: 60_000,
     placeholderData: (previousData) => previousData,

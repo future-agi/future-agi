@@ -354,6 +354,14 @@ export default function NewReport({
     sampleSize: draft.sampleSize,
     enabled: !fixed,
   });
+  // Rows handed over have nothing to count: the server only prices them.
+  const handedCost = usePopulationCount({
+    unit: draft.unit,
+    projectId,
+    populationSize: fixedPopulation.length,
+    sampleSize: draft.sampleSize,
+    enabled: fixed,
+  });
   const serverExamples = count.data?.sampleIds;
   const examples = useExampleRows({
     unit: draft.unit,
@@ -367,6 +375,9 @@ export default function NewReport({
   const counting =
     !fixed &&
     (count.isLoading || count.isPlaceholderData || settledScope !== countScope);
+  // A handed-over population's cost for a new sample size, likewise.
+  const costing =
+    fixed && (handedCost.isLoading || handedCost.isPlaceholderData);
   const stillCounting =
     !fixed && draft.unit === "users" && Boolean(count.data?.totalIsLowerBound);
   const population = fixed
@@ -474,7 +485,8 @@ export default function NewReport({
     drafting.state.status === "busy" ||
     previewing.state.status === "busy";
   // What the run costs, and whether the credits left pay for it.
-  const credits = fixed ? null : count.data?.credits || null;
+  const credits =
+    (fixed ? handedCost.data?.credits : count.data?.credits) || null;
   const creditLimited = Boolean(credits?.limited);
   const blocker = questionMissing
     ? "Write the question this report should answer."
@@ -749,7 +761,9 @@ export default function NewReport({
               <Typography variant="body2" color="text.secondary">
                 {sentence}
                 {estimate ? ` · ${estimate}` : ""}
-                {credits ? ` · ${creditWords(credits.estimate)}` : ""}
+                {credits?.estimate > 0
+                  ? ` · ${creditWords(credits.estimate)}`
+                  : ""}
               </Typography>
             )}
           </Stack>
@@ -961,7 +975,7 @@ export default function NewReport({
                   [
                     sentence,
                     estimate,
-                    credits && creditWords(credits.estimate),
+                    credits?.estimate > 0 && creditWords(credits.estimate),
                     "it keeps running if you leave",
                   ]
                     .filter(Boolean)
@@ -977,7 +991,7 @@ export default function NewReport({
             onClick={runReport}
             // While a new scope or sample size is costed, the shown cost is
             // the previous one: Run waits for the server's figure.
-            disabled={Boolean(blocker) || busy || (!fixed && counting)}
+            disabled={Boolean(blocker) || busy || counting || costing}
             startIcon={<Iconify icon="mdi:play" width={16} />}
           >
             Run report
