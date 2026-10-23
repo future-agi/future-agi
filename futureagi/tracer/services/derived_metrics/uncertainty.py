@@ -46,7 +46,11 @@ Poisson and iid designs):
   ``n* = p(1-p)/V`` (the Kish size of the denominator units when ``V`` is 0, i.e.
   every unit agrees). It stays inside [0, 1] and keeps its coverage near 0 and 1,
   where a symmetric interval does not.
-* ``wald_t`` otherwise: ``value +/- t * SE``.
+* ``wald_t`` otherwise: ``value +/- t * SE``. Without census proof, zero or
+  numerically negligible variance withholds this interval (``unstable_variance``).
+  This includes an all-zero sample: no observed events do not establish that the
+  population total is zero. The point estimate remains valid; no boundary-aware
+  total interval is implemented.
 
 A weighted window whose units were all kept with certainty (p = 1) is a census:
 its standard error is 0 and its interval is the value itself.
@@ -59,9 +63,9 @@ from __future__ import annotations
 CONFIDENCE_LEVEL = 0.95
 Z_975 = 1.959963984540054
 
-# Exact two-sided 95% Student t quantiles for df 1..30 (scipy.stats.t.ppf(0.975)).
-# Above 30 the Cornish-Fisher expansion below is within 1.3e-8 relative of the
-# exact quantile (checked against scipy for every df from 31 to 200,000).
+# Exact two-sided 95% Student t quantiles for df 1..60 (scipy.stats.t.ppf(0.975)).
+# Include df=49 so small rare-event total intervals match the centered numeric
+# oracle even at their lower endpoint. Above 60 use the Cornish-Fisher expansion.
 T_975 = (
     12.7062047362,
     4.30265272975,
@@ -93,6 +97,36 @@ T_975 = (
     2.0484071418,
     2.04522964213,
     2.0422724563,
+    2.0395134464,
+    2.03693334346,
+    2.03451529745,
+    2.03224450932,
+    2.03010792825,
+    2.02809400098,
+    2.02619246303,
+    2.02439416391,
+    2.02269092004,
+    2.02107539031,
+    2.01954097044,
+    2.01808170282,
+    2.01669219923,
+    2.01536757444,
+    2.01410338888,
+    2.01289559892,
+    2.01174051373,
+    2.01063475762,
+    2.00957523713,
+    2.0085591121,
+    2.00758377032,
+    2.00664680506,
+    2.00574599532,
+    2.00487928819,
+    2.00404478329,
+    2.00324071885,
+    2.00246545929,
+    2.00171748415,
+    2.00099537809,
+    2.00029782201,
 )
 
 _Z = Z_975
@@ -207,7 +241,7 @@ def uncertainty_array_sql(ratio_kind: bool) -> str:
                 design = 'closed' AND singleton_strata > 0, 'single_unit_stratum',
                 df < 1, 'no_degrees_of_freedom',
                 ifNull(NOT isFinite(se) OR NOT isFinite(lo) OR NOT isFinite(hi), 1), 'non_finite',
-                NOT census AND NOT rate AND scale > 0 AND variance <= 1e-12*scale, 'unstable_variance',
+                NOT census AND NOT rate AND variance <= 1e-12*scale, 'unstable_variance',
                 '')""",
         },
     ]

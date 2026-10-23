@@ -208,10 +208,10 @@ def unit(y, p, stratum="h1", design="closed", population=None, x=1.0, invalid=0)
 
 
 def test_t_multipliers_match_the_student_distribution():
-    for df in range(1, 31):
+    for df in range(1, len(T_975) + 1):
         assert t_quantile_975(df) == pytest.approx(stats.t.ppf(0.975, df), rel=1e-10)
         assert T_975[df - 1] == pytest.approx(stats.t.ppf(0.975, df), rel=1e-10)
-    for df in [31, 40, 75, 120, 1000, 10_000, 1_000_000]:
+    for df in [31, 40, 49, 60, 61, 75, 120, 1000, 10_000, 1_000_000]:
         assert t_quantile_975(df) == pytest.approx(stats.t.ppf(0.975, df), rel=2e-8)
     with pytest.raises(ValueError):
         t_quantile_975(0)
@@ -344,6 +344,41 @@ def test_a_unanimous_sample_still_has_a_one_sided_interval(metric_ch):
         (1 + k / 2) / (1 + k) - t / (1 + k) * math.sqrt(k / 16)
     )
     assert row["ci_low"] < 1
+
+
+@pytest.mark.parametrize("formula", ["count_if(y == 1)", "sum(y)"])
+@pytest.mark.parametrize("design", ["closed", "live"])
+def test_zero_event_sample_is_not_exact_or_a_confident_alert(
+    metric_ch, formula, design
+):
+    from tracer.services.derived_metrics.integrations import monitor_comparison_value
+    from tracer.services.derived_metrics.service import shape_result
+
+    rows = [unit(0, 0.005, design=design, population=10_000) for _ in range(50)]
+    row = one_group(metric_ch, rows, formula)
+    assert row["status"] == "ok" and row["value"] == 0
+    shaped = shape_result(row, include_uncertainty=True)
+    confident = SimpleNamespace(alert_when="confident", threshold_operator="less_than")
+    point = SimpleNamespace(alert_when="point", threshold_operator="less_than")
+    # A point below 50 is still a valid estimate, not evidence that the true total
+    # is below 50. No transport is mocked: this is the production gating function.
+    assert monitor_comparison_value(point, shaped) == 0
+    assert monitor_comparison_value(confident, shaped) is None
+    assert row["ci_status"] == "not_estimable"
+    assert row["ci_reason"] == "unstable_variance"
+    assert row["std_error"] is row["ci_low"] is row["ci_high"] is None
+
+
+@pytest.mark.parametrize("formula", ["count_if(y == 1)", "sum(y)"])
+@pytest.mark.parametrize("design", ["closed", "live"])
+def test_zero_event_census_retains_its_exact_interval(metric_ch, formula, design):
+    row = one_group(
+        metric_ch,
+        [unit(0, 1.0, design=design, population=50) for _ in range(50)],
+        formula,
+    )
+    assert row["status"] == row["ci_status"] == "ok"
+    assert row["value"] == row["std_error"] == row["ci_low"] == row["ci_high"] == 0
 
 
 def test_closed_domain_pads_unsampled_members_with_zero(metric_ch):
@@ -869,6 +904,62 @@ def test_closed_small_sample_total_interval_coverage(native_ch):
     report["seconds"] = round(time.monotonic() - started, 1)
     assert_calibrated(report)
     assert report["mean_valid_units"] == 120
+
+
+@pytest.mark.parametrize("formula", ["count_if(y == 1)", "sum(y)"])
+def test_rare_event_totals_report_abstention_separately_from_coverage(
+    native_ch, formula
+):
+    from tracer.services.derived_metrics.integrations import monitor_comparison_value
+
+    # 100 events among 10,000 units; draw 50 without replacement. Zero events
+    # occurs about 60% of the time. An absent interval is an abstention, NOT a
+    # covered draw; report both availability and conditional coverage explicitly.
+    rng = np.random.default_rng(SEED + 5)
+    batch = closed_batch(rng, "count_if", (10_000,), (50,), (100,))
+    rows = stage_and_rollup(native_ch, _scope(), formula, batch)
+    zero_count = sum(expected["value"] == 0 for expected in batch.references)
+    expected_zero_probability = float(stats.hypergeom.pmf(0, 10_000, 100, 50))
+    assert abs(zero_count / REPLICATES - expected_zero_probability) < 0.04
+    withheld = covered = missed = false_alerts = 0
+    monitor = SimpleNamespace(alert_when="confident", threshold_operator="less_than")
+    for row, expected in zip(rows, batch.references, strict=True):
+        _, value, error, low, high, status, *_ = row
+        assert value == pytest.approx(expected["value"])
+        bound = monitor_comparison_value(
+            monitor,
+            {
+                "value": value,
+                "uncertainty": {"status": status, "ci_low": low, "ci_high": high},
+            },
+        )
+        false_alerts += bound is not None and bound < 50
+        if value == 0:
+            assert status == "not_estimable" and error is low is high is None
+            withheld += 1
+        else:
+            assert status == "ok"
+            assert error == pytest.approx(expected["std_error"], rel=1e-9)
+            assert low == pytest.approx(expected["ci_low"], rel=1e-9)
+            assert high == pytest.approx(expected["ci_high"], rel=1e-9)
+            covered += low <= 100 <= high
+            missed += not (low <= 100 <= high)
+    print(
+        "rare-event-total",
+        {
+            "formula": formula,
+            "draws": REPLICATES,
+            "zero_event_probability": expected_zero_probability,
+            "withheld": withheld,
+            "issued": covered + missed,
+            "covered_issued": covered,
+            "missed_issued": missed,
+            "conditional_coverage": covered / (covered + missed),
+            "false_confident_alerts": false_alerts,
+        },
+    )
+    assert withheld == zero_count and 0 < covered + missed < REPLICATES
+    assert false_alerts == 0
 
 
 def test_unweighted_mean_interval_coverage_of_the_process_mean(native_ch):
