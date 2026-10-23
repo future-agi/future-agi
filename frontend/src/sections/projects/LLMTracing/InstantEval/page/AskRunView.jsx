@@ -210,6 +210,10 @@ function RunControls({ run, onControl, busy, retryElsewhere }) {
   const live = run.status === "running" || run.status === "preparing";
   const cancelled = run.status === "cancelled";
   const resumable = PAUSED_STATES.has(run.status) || run.status === "stalled";
+  // A paused run with rows left is resumed first: a retry restarts the run,
+  // which reads every row still unread (the server answers 409).
+  const resumeFirst =
+    PAUSED_STATES.has(run.status) && run.pending + run.notRead > 0;
   return (
     <Stack direction="row" spacing={1} alignItems="center">
       {live && (
@@ -245,19 +249,23 @@ function RunControls({ run, onControl, busy, retryElsewhere }) {
           Cancel
         </Button>
       )}
-      {run.failed > 0 && !live && !cancelled && !retryElsewhere && (
-        <Button
-          size="small"
-          variant="outlined"
-          color="error"
-          disabled={busy}
-          startIcon={<Iconify icon="mdi:refresh" width={16} />}
-          onClick={() => onControl("retry_failed")}
-        >
-          Retry {run.failed.toLocaleString()}{" "}
-          {run.failed === 1 ? "row" : "rows"}
-        </Button>
-      )}
+      {run.failed > 0 &&
+        !live &&
+        !cancelled &&
+        !retryElsewhere &&
+        !resumeFirst && (
+          <Button
+            size="small"
+            variant="outlined"
+            color="error"
+            disabled={busy}
+            startIcon={<Iconify icon="mdi:refresh" width={16} />}
+            onClick={() => onControl("retry_failed")}
+          >
+            Retry {run.failed.toLocaleString()}{" "}
+            {run.failed === 1 ? "row" : "rows"}
+          </Button>
+        )}
     </Stack>
   );
 }
@@ -289,6 +297,10 @@ function SampleBanner({ run, unit, question, focusAnswer, onControl, busy }) {
   const live = run.status === "running" || run.status === "preparing";
   // A cancelled run reads no more and retries nothing: it is asked again.
   const cancelled = run.status === "cancelled";
+  // A paused run with rows left is resumed before it retries or reads more:
+  // either restarts the run, which reads every row still unread.
+  const resumeFirst =
+    PAUSED_STATES.has(run.status) && run.pending + run.notRead > 0;
   // Rows Jev couldn't answer: how far they could move the estimate.
   const bounds = estimate
     ? unansweredBounds(run, question, estimate.labels)
@@ -350,7 +362,7 @@ function SampleBanner({ run, unit, question, focusAnswer, onControl, busy }) {
             >
               {boundWords(bounds, question)}
             </Typography>
-            {run.failed > 0 && !cancelled && (
+            {run.failed > 0 && !cancelled && !resumeFirst && (
               <Button
                 size="small"
                 variant="outlined"
@@ -387,7 +399,7 @@ function SampleBanner({ run, unit, question, focusAnswer, onControl, busy }) {
               ? ` ${bounds.failed.toLocaleString()} couldn't be answered.`
               : ""}
           </Typography>
-          {remaining > 0 && !cancelled && (
+          {remaining > 0 && !cancelled && !resumeFirst && (
             <Stack direction="row" spacing={1}>
               {sample.next_size > 0 && sample.next_size < remaining && (
                 <Button

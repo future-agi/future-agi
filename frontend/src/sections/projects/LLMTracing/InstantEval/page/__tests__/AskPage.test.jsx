@@ -455,6 +455,45 @@ beforeEach(() => {
   globalThis.localStorage?.clear?.();
 });
 
+describe("a new question the server holds for its confirm", () => {
+  it("confirms the server's count from the composer, then starts", async () => {
+    const { AskNeedsConfirm } = await import("../../useInstantEval");
+    fakes.startAskRun
+      .mockRejectedValueOnce(
+        new AskNeedsConfirm({
+          message: "Confirm to start.",
+          rows_to_read: 6000,
+          credits_estimate: 360,
+        }),
+      )
+      .mockResolvedValue({ taskId: "task-new", questions: QUESTIONS });
+    renderAt(askLink(PROJECT, { unit: "sessions", label: "Past 7D" }));
+    await screen.findByText(/104,233 sessions in the Sessions view/);
+    fireEvent.change(screen.getByRole("textbox", { name: "Question 1" }), {
+      target: { value: QUESTION },
+    });
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Ask Jev about a sample of 1,000 sessions",
+        }),
+      );
+    });
+    // Not a plain error: the server's numbers, and a way to confirm them.
+    expect(
+      screen.getByText(/This reads 6,000 sessions: about 360 credits\./),
+    ).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    });
+    expect(fakes.startAskRun).toHaveBeenCalledTimes(2);
+    expect(fakes.startAskRun).toHaveBeenLastCalledWith(
+      expect.objectContaining({ confirm: true, confirmedRows: 6000 }),
+    );
+    expect(where().params.run).toBe("task-new");
+  });
+});
+
 describe("the Ask page", () => {
   it("reads a sample of a big view by default and opens the run", async () => {
     let finishStart;
@@ -1061,6 +1100,24 @@ describe("the Ask page", () => {
     expect(fakes.control).toHaveBeenCalledWith("pause", {});
     // A live run retries its failures once it is done.
     expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+  });
+
+  it("resumes a paused run before it retries or reads more", () => {
+    fakes.runs = [historyItem("task-sessions", "sessions", QUESTION)];
+    // 400 rows still unread: a retry or "read more" would restart the run
+    // and read all of them.
+    fakes.askRuns["task-sessions"] = runOf({
+      status: "paused",
+      total: 1000,
+      answered: 570,
+      failed: 30,
+    });
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
+    );
+    expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Read all/ })).toBeNull();
   });
 
   it("says a pause is draining, and when a run waits for its workers", () => {

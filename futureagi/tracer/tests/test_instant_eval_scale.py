@@ -307,8 +307,27 @@ def test_big_runs_need_a_confirm_and_runs_over_the_cap_are_refused(
     )
     assert not EvalTask.objects.filter(project=observe_project).exists()
 
+    # A confirm for fewer rows than the server would read asks again, with
+    # the server's numbers: the confirm never covers more than it said.
+    short = _start(
+        auth_client,
+        observe_project,
+        [yes_no],
+        sample_size=25,
+        confirm=True,
+        confirmed_rows=21,
+    )
+    assert short.status_code == status.HTTP_409_CONFLICT
+    assert short.json()["result"]["rows_to_read"] == 25
+    assert not EvalTask.objects.filter(project=observe_project).exists()
+
     confirmed = _start(
-        auth_client, observe_project, [yes_no], sample_size=25, confirm=True
+        auth_client,
+        observe_project,
+        [yes_no],
+        sample_size=25,
+        confirm=True,
+        confirmed_rows=25,
     )
     assert confirmed.status_code == status.HTTP_200_OK
     run = InstantEvalRun.objects.get(eval_task_id=confirmed.json()["result"]["task_id"])

@@ -320,6 +320,10 @@ class InstantEvalStartRequestSerializer(InstantEvalScopeSerializer):
         child=serializers.UUIDField(), min_length=1, max_length=MAX_QUESTIONS
     )
     confirm = serializers.BooleanField(required=False, default=False)
+    # The rows the person confirmed (the browser's count). A start that would
+    # read more than that asks again with the server's numbers, so a confirm
+    # never covers more than it said.
+    confirmed_rows = serializers.IntegerField(min_value=0, required=False)
 
 
 class InstantEvalStartSerializer(serializers.Serializer):
@@ -1096,7 +1100,10 @@ class InstantEvalStartView(InstantEvalLicenseRequired, APIView):
             return _credit_refusal(
                 self._gm, refused, credits, unit, questions, count, rate
             )
-        if rows > confirm_rows() and not data.get("confirm"):
+        confirmed = data.get("confirmed_rows")
+        if rows > confirm_rows() and (
+            not data.get("confirm") or (confirmed is not None and rows > confirmed)
+        ):
             return _confirm_response(self._gm, f"Reading {rows:,} rows", rows, credits)
         ordered = [configs[c] for c in dict.fromkeys(wanted)]
         first = _question(ordered[0])["question"]

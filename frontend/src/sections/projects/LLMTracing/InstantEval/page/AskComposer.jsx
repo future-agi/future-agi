@@ -660,6 +660,9 @@ export default function AskComposer({
   onUseView,
   starting,
   error,
+  serverConfirm,
+  onServerConfirm,
+  onServerConfirmCancel,
   onAsk,
 }) {
   const meta = unitMeta(unit);
@@ -1090,6 +1093,35 @@ export default function AskComposer({
         </Alert>
       )}
 
+      {serverConfirm && (
+        <Alert
+          severity="warning"
+          icon={<Iconify icon="mdi:cash-check" width={20} />}
+          action={
+            <Stack direction="row" spacing={1}>
+              <Button size="small" onClick={onServerConfirmCancel}>
+                Back
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                color="warning"
+                disabled={starting}
+                onClick={onServerConfirm}
+              >
+                Start
+              </Button>
+            </Stack>
+          }
+        >
+          {/* The server's count, which can be more than the estimate here. */}
+          {serverConfirm.credits != null
+            ? `This reads ${Number(serverConfirm.rows).toLocaleString()} ${unit === "users" ? "sessions" : meta.plural}: ${creditWords(serverConfirm.credits)}.`
+            : `This reads ${Number(serverConfirm.rows).toLocaleString()} ${unit === "users" ? "sessions" : meta.plural}.`}{" "}
+          Start it?
+        </Alert>
+      )}
+
       <Box>
         <Button
           size="large"
@@ -1191,5 +1223,11 @@ AskComposer.propTypes = {
   onUseView: PropTypes.func,
   starting: PropTypes.bool,
   error: PropTypes.node,
+  serverConfirm: PropTypes.shape({
+    rows: PropTypes.number,
+    credits: PropTypes.number,
+  }),
+  onServerConfirm: PropTypes.func,
+  onServerConfirmCancel: PropTypes.func,
   onAsk: PropTypes.func.isRequired,
 };

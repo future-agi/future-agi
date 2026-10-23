@@ -150734,6 +150734,11 @@
                     "title": "Confirm",
                     "type": "boolean",
                     "default": false
+                },
+                "confirmed_rows": {
+                    "title": "Confirmed rows",
+                    "type": "integer",
+                    "minimum": 0
                 }
             }
         },

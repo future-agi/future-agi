@@ -208,6 +208,7 @@ export default function AskPage() {
   // A Run again the server holds back until its credits are confirmed:
   // {taskId, rows, credits}, confirmed or dropped on that run's page.
   const [rerunConfirm, setRerunConfirm] = useState(null);
+  const [composerConfirm, setComposerConfirm] = useState(null);
   useEffect(() => setRerunConfirm(null), [runId]);
 
   const railFits = useMediaQuery(`(min-width:${RAIL_FITS_WIDTH}px)`, {
@@ -311,6 +312,7 @@ export default function AskPage() {
     ids,
     sampleSize,
     confirm,
+    rows,
     window,
     datePreset,
     label,
@@ -344,6 +346,7 @@ export default function AskPage() {
         ids,
         sampleSize,
         confirm,
+        confirmedRows: confirm ? rows : undefined,
         datePreset,
         label,
       });
@@ -397,12 +400,21 @@ export default function AskPage() {
     }
   };
 
+  const askFromComposer = (args) =>
+    launchRun({
+      ...args,
+      onNeedsConfirm: (held) =>
+        setComposerConfirm({ args, rows: held.rows, credits: held.credits }),
+    });
+
   // The same questions over the same filters and sample (the same
   // hash-ordered rows), a date preset re-anchored to now, or the same rows
   // handed over. A window moved to now can hold more rows than were
   // confirmed (or than whoever started the run confirmed), so a run past
   // the confirm size restates its credits here first, as the composer does.
   const runAgain = async (run, { confirm = false } = {}) => {
+    // What the person confirmed: the server asks again if it would read more.
+    const confirmedRows = confirm ? rerunConfirm?.rows : undefined;
     const asked = run.summary?.scope || {};
     const again = rerunScope(asked, {
       label: launches[runId]?.label,
@@ -418,6 +430,7 @@ export default function AskPage() {
         ids: asked.ids || undefined,
         sampleSize: asked.sample_size ?? null,
         confirm,
+        rows: confirmedRows ?? undefined,
         window: again.window,
         datePreset: again.datePreset,
         label: again.label,
@@ -483,7 +496,17 @@ export default function AskPage() {
         }
         starting={Boolean(pending)}
         error={startError}
-        onAsk={launchRun}
+        // The server counts again at the start: when it would read past what
+        // was confirmed (or past the confirm size the estimate didn't reach)
+        // it asks, and the composer confirms its numbers.
+        serverConfirm={composerConfirm}
+        onServerConfirm={() => {
+          const held = composerConfirm;
+          setComposerConfirm(null);
+          askFromComposer({ ...held.args, confirm: true, rows: held.rows });
+        }}
+        onServerConfirmCancel={() => setComposerConfirm(null)}
+        onAsk={askFromComposer}
       />
     </Box>
   );

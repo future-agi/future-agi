@@ -351,6 +351,7 @@ export async function startAskRun({
   search,
   sampleSize = null,
   confirm = false,
+  confirmedRows,
   datePreset,
   label,
 }) {
@@ -372,6 +373,11 @@ export async function startAskRun({
       sample_size: ids?.length ? null : sampleSize,
       config_ids: saved.map((item) => item.configId),
       confirm,
+      // What the person confirmed: the server asks again if it would read
+      // more (a Users count still climbing, a window grown since).
+      ...(confirm && Number.isFinite(confirmedRows)
+        ? { confirmed_rows: confirmedRows }
+        : {}),
       ...(datePreset ? { date_preset: datePreset } : {}),
       ...(label ? { label: String(label).slice(0, 300) } : {}),
     });
