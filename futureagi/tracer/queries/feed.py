@@ -37,7 +37,6 @@ from django.utils import timezone
 from tracer.models.observation_span import EvalLogger, EvalTargetType
 from tracer.models.trace_error_analysis import (
     ClusterSource,
-    ErrorClusterTraces,
     FeedIssueStatus,
     TraceErrorAnalysis,
     TraceErrorDetail,
@@ -47,7 +46,6 @@ from tracer.models.trace_investigation import (
     TraceInvestigationAttributionEvidence,
     TraceInvestigationFinding,
     TraceInvestigationFindingEvidence,
-    TraceInvestigationGroupingStatus,
     TraceInvestigationKeyMoment,
     TraceInvestigationReport,
     TraceInvestigationSource,
@@ -69,6 +67,7 @@ from tracer.types.feed_types import (
     EvaluationResult,
     EventsOverTimePoint,
     FeedDetailCore,
+    FeedEscalation,
     FeedListResponse,
     FeedListRow,
     FeedSidebar,
@@ -176,27 +175,42 @@ def _base_qs(project_ids: list[str]) -> QuerySet:
     )
 
 
+def _cluster_escalation(cluster: TraceErrorGroup) -> FeedEscalation | None:
+    if cluster.status_origin != "system":
+        return None
+    reason = cluster.escalation_state.get("reason")
+    if not isinstance(reason, dict):
+        return None
+    try:
+        return FeedEscalation(
+            current_count=reason["current_count"],
+            affected_trace_count=reason["affected_trace_count"],
+            baseline=reason["baseline"],
+            entry_threshold=reason["entry_threshold"],
+            recovery_threshold=reason["recovery_threshold"],
+            unit=reason["unit"],
+            window_start=datetime.fromisoformat(reason["window_start"]),
+            window_end=datetime.fromisoformat(reason["window_end"]),
+            evaluated_at=datetime.fromisoformat(reason["evaluated_at"]),
+            algorithm_version=reason["algorithm_version"],
+            policy_revision=reason["policy_revision"],
+            input_revision=reason.get("input_revision", 0),
+            entry_confirmation_minutes=reason["effective_settings"][
+                "entry_confirmation_minutes"
+            ],
+            recovery_confirmation_minutes=reason["effective_settings"][
+                "recovery_confirmation_minutes"
+            ],
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _current_memberships() -> QuerySet:
     """Source-aware active memberships; legacy scanner/eval rows keep their unit."""
-    return ErrorClusterTraces.objects.filter(
-        deleted=False, cluster__deleted=False
-    ).filter(
-        Q(cluster__issue_state__isnull=True)
-        | Q(
-            cluster__issue_state__dirty=False,
-            cluster__issue_state__retired=False,
-            finding__isnull=False,
-            finding__deleted=False,
-            finding__cluster_id=F("cluster_id"),
-            trace_id=F("finding__report__trace_id"),
-            finding__report__source=TraceInvestigationSource.OMEGA,
-            finding__report__project_id=F("cluster__project_id"),
-            finding__report__is_current=True,
-            finding__report__deleted=False,
-            finding__report__execution_status="completed",
-            finding__report__grouping_status=TraceInvestigationGroupingStatus.COMPLETED,
-        )
-    )
+    from tracer.services.feed_escalation_inputs import current_memberships
+
+    return current_memberships()
 
 
 def _members_with_occurrence_time() -> QuerySet:
@@ -505,6 +519,9 @@ def _row_from_cluster(
             type=cluster.issue_category or cluster.issue_group or "",
         ),
         status=cluster.status,
+        status_origin=cluster.status_origin,
+        status_revision=cluster.status_revision,
+        escalation=_cluster_escalation(cluster),
         severity=priority_to_severity(cluster.priority),
         severity_assessment_status=cluster.severity_assessment_status,
         severity_source=cluster.severity_source,
@@ -789,11 +806,16 @@ def update_cluster(
                     lambda current: _set_cluster_update_fields(
                         current, payload, changed_only=True
                     ),
+                    protect_on_intent=payload.status is not None,
                 )
             except GroupingHumanEditUnavailable:
                 return None
             cluster.refresh_from_db()
         else:
+            cluster = qs.select_for_update().first()
+            if cluster is None:
+                return None
+            alert_before = issue_snapshot(cluster)
             update_fields = _set_cluster_update_fields(cluster, payload)
             if update_fields:
                 cluster.save(update_fields=[*update_fields, "updated_at"])
@@ -820,6 +842,20 @@ def _set_cluster_update_fields(
         if not changed_only or cluster.status != payload.status:
             cluster.status = payload.status
             update_fields.append("status")
+        cluster.status_origin = "manual"
+        cluster.status_changed_at = timezone.now()
+        cluster.status_changed_by_id = payload.actor_id
+        cluster.status_revision += 1
+        cluster.escalation_next_evaluation_at = None
+        update_fields.extend(
+            [
+                "status_origin",
+                "status_changed_at",
+                "status_changed_by",
+                "status_revision",
+                "escalation_next_evaluation_at",
+            ]
+        )
 
     if payload.severity is not None:
         for field, value in (
@@ -1172,6 +1208,7 @@ def _tfidf_distinctive_terms(
     Empty list on degenerate inputs (corpus <2 docs, empty vocab, etc).
     """
     from sklearn.feature_extraction.text import TfidfVectorizer  # lazy
+
     if not target_doc or len(corpus) < 2:
         return []
     try:
@@ -1340,6 +1377,7 @@ def _log_odds_distinctive(
         z     = delta / sqrt(1/(y_f+a) + 1/(y_b+a))
     """
     from sklearn.feature_extraction.text import CountVectorizer  # lazy
+
     if not fail_docs or not base_docs:
         return []
     try:
@@ -1582,6 +1620,7 @@ def _insight_distribution_shift(
     ``project_id`` (single tenant — both corpora belong to the cluster's
     project) pins the totals reads so they prune by primary-key prefix."""
     from scipy.stats import ks_2samp  # lazy
+
     if not baseline_ids:
         return None
     fail_tot = _get_trace_totals_batch(trace_ids, project_id)

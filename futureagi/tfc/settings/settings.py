@@ -941,6 +941,20 @@ VAPI_WEBHOOK_SECRET = os.getenv("VAPI_WEBHOOK_SECRET", "")
 
 # Internal API authentication (shared secret for service-to-service calls)
 INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
+# Calculate in shadow mode until replay and managed source flows qualify writes.
+ERROR_FEED_ESCALATION_MODE = (
+    os.getenv("ERROR_FEED_ESCALATION_MODE", "shadow").strip().lower()
+)
+ERROR_FEED_ESCALATION_WORKSPACE_IDS = tuple(
+    value.strip()
+    for value in os.getenv("ERROR_FEED_ESCALATION_WORKSPACE_IDS", "").split(",")
+    if value.strip()
+)
+ERROR_FEED_ESCALATION_SOURCES = tuple(
+    value.strip()
+    for value in os.getenv("ERROR_FEED_ESCALATION_SOURCES", "scanner").split(",")
+    if value.strip()
+)
 ERROR_FEED_OMEGA_DELAY_SECONDS = int(os.getenv("ERROR_FEED_OMEGA_DELAY_SECONDS", "60"))
 ERROR_FEED_OMEGA_LEASE_SECONDS = int(os.getenv("ERROR_FEED_OMEGA_LEASE_SECONDS", "120"))
 ERROR_FEED_OMEGA_PROJECT_CONCURRENCY = int(
@@ -1054,7 +1068,9 @@ ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
 # message before a post-run chat sandbox is reclaimed, and only trades cost against latency.
 ALK_HOSTED_CHAT_TTL_SECONDS = int(os.getenv("ALK_HOSTED_CHAT_TTL_SECONDS", "1800"))
 # Off sends a fresh build through the staged authoring pipeline instead of the builder session.
-ALK_HOSTED_BUILDER_SESSION = os.getenv("ALK_HOSTED_BUILDER_SESSION", "true").strip().lower() not in (
+ALK_HOSTED_BUILDER_SESSION = os.getenv(
+    "ALK_HOSTED_BUILDER_SESSION", "true"
+).strip().lower() not in (
     "0",
     "false",
     "no",

@@ -629,7 +629,8 @@ def _hard_safe(
         raise GroupingConflict("hard issue exclusion forbids membership")
 
 
-def _recount(state: TraceGroupingIssueState) -> None:
+def _recount(state: TraceGroupingIssueState, *, structural: bool = False) -> None:
+
     cluster = state.cluster
     memberships = ErrorClusterTraces.no_workspace_objects.filter(
         Q(
@@ -676,6 +677,9 @@ def _recount(state: TraceGroupingIssueState) -> None:
             "updated_at",
         ]
     )
+    from tracer.services.feed_escalation import request_evaluation
+
+    request_evaluation(cluster.pk, structural=structural)
 
 
 def _new_issue(
@@ -748,6 +752,12 @@ def _assign(
             "trace_id": finding.report.trace_id,
             "span_id": None,
             "trace_session_id": None,
+            "occurred_at": finding.report.job.root_end_time
+            if finding.report.job_id
+            else None,
+            "occurrence_time_source": "omega_root_end"
+            if finding.report.job_id and finding.report.job.root_end_time
+            else "",
         },
     )
     if (
@@ -1660,7 +1670,20 @@ def publish_grouping(
             state = TraceGroupingIssueState.no_workspace_objects.select_related(
                 "cluster"
             ).get(cluster_id=_uuid(key, "issue ID"))
-            _recount(state)
+            structural = any(
+                command["type"] in {"merge", "split", "remove"}
+                and (
+                    key == command.get("issue_id")
+                    or key in command.get("source_issue_ids", [])
+                    or key == new_ids.get(command.get("temporary_id"))
+                    or any(
+                        key == new_ids.get(part.get("temporary_id"))
+                        for part in command.get("parts", [])
+                    )
+                )
+                for command in commands
+            )
+            _recount(state, structural=structural)
             from tracer.services.grouping.severity import enqueue_severity
 
             enqueue_severity(issue=state, attempt=attempt)

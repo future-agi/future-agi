@@ -13,7 +13,6 @@ import json
 import math
 import re
 from datetime import timedelta
-from typing import List, Optional, Tuple
 
 import structlog
 from django.db import IntegrityError, transaction
@@ -102,7 +101,9 @@ def _eval_result_score(entry: EvalLogger) -> float | None:
     if score is not None:
         return score
 
-    template = getattr(getattr(entry, "custom_eval_config", None), "eval_template", None)
+    template = getattr(
+        getattr(entry, "custom_eval_config", None), "eval_template", None
+    )
     if template is None:
         return None
     choice_scores = getattr(template, "choice_scores", None) or {}
@@ -168,8 +169,8 @@ def is_clusterable_eval_failure(entry: EvalLogger) -> bool:
 
 
 def get_unclustered_eval_results(
-    project_id: str, limit: Optional[int] = None
-) -> List[ClusterableEvalResult]:
+    project_id: str, limit: int | None = None
+) -> list[ClusterableEvalResult]:
     """
     Fetch EvalLogger rows that failed, have an explanation, and haven't
     been assigned to a cluster yet.
@@ -236,7 +237,7 @@ def get_unclustered_eval_results(
         .order_by("created_at")
     )
 
-    results: List[ClusterableEvalResult] = []
+    results: list[ClusterableEvalResult] = []
     # .iterator() so a huge backlog isn't all loaded into memory just to
     # stop early once `limit` unclustered rows have been collected.
     for ev in evals.iterator(chunk_size=2000):
@@ -251,9 +252,7 @@ def get_unclustered_eval_results(
                 explanation=ev.eval_explanation,
                 target_type=ev.target_type,
                 trace_id=str(ev.trace_id) if ev.trace_id else None,
-                session_id=(
-                    str(ev.trace_session_id) if ev.trace_session_id else None
-                ),
+                session_id=(str(ev.trace_session_id) if ev.trace_session_id else None),
                 score=_eval_result_score(ev),
             )
         )
@@ -271,7 +270,7 @@ def get_unclustered_eval_results(
 _EMBED_BATCH_SIZE = 64
 
 
-def embed_texts(texts: List[str]) -> List[List[float]]:
+def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed texts via the serving client in bounded batches.
 
     Chunked rather than per-row or all-at-once: one request carries up to
@@ -294,7 +293,7 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
         text_embed = model_manager.text_model
         return [text_embed(t) for t in texts]
 
-    embeddings: List[List[float]] = []
+    embeddings: list[list[float]] = []
     for start in range(0, len(texts), _EMBED_BATCH_SIZE):
         chunk = texts[start : start + _EMBED_BATCH_SIZE]
         try:
@@ -333,20 +332,22 @@ def _eval_family(eval_name: str, target_type: str = "span") -> str:
 
 
 def _update_centroid(
-    current: List[float], new_vector: List[float], count: int
-) -> List[float]:
+    current: list[float], new_vector: list[float], count: int
+) -> list[float]:
     """Incremental centroid update: (centroid * count + new) / (count + 1)."""
     if not current:
         return new_vector
-    return [(c * count + n) / (count + 1) for c, n in zip(current, new_vector)]
+    return [
+        (c * count + n) / (count + 1) for c, n in zip(current, new_vector, strict=False)
+    ]
 
 
 def find_nearest_centroid(
-    embedding: List[float],
+    embedding: list[float],
     project_id: str,
     eval_name: str,
     target_type: str = "span",
-) -> Optional[Tuple[str, float]]:
+) -> tuple[str, float] | None:
     """
     Find nearest cluster centroid for the given eval within threshold.
 
@@ -385,7 +386,7 @@ def find_nearest_centroid(
 # ---------------------------------------------------------------------------
 
 
-def _score_to_impact(avg_score: Optional[float]) -> str:
+def _score_to_impact(avg_score: float | None) -> str:
     """Map average eval score to impact level for the cluster."""
     if avg_score is None:
         return "MEDIUM"
@@ -457,7 +458,7 @@ def _eval_cluster_meta(eval_name: str, reasoning: str) -> EvalClusterMeta:
 def create_cluster(
     project_id: str,
     result: ClusterableEvalResult,
-    embedding: List[float],
+    embedding: list[float],
 ) -> str:
     """
     Create a new TraceErrorGroup cluster for an eval result + ClickHouse centroid.
@@ -523,7 +524,7 @@ def create_cluster(
                 title=meta.title,
                 combined_description=result.explanation,
                 combined_impact=_score_to_impact(result.score),
-                status=FeedIssueStatus.ESCALATING,
+                status=FeedIssueStatus.FOR_REVIEW,
                 priority=severity_to_priority(meta.severity),
                 error_type=result.eval_name,
                 eval_config_id=result.eval_config_id,
@@ -548,12 +549,20 @@ def create_cluster(
 
     # Create junction entry. Session evals anchor to the session (trace NULL);
     # span/trace evals anchor to the trace.
-    ErrorClusterTraces.objects.create(
-        cluster=cluster,
-        trace_id=result.trace_id,
-        trace_session_id=result.session_id,
-        eval_logger_id=result.eval_logger_id,
-    )
+    from tracer.services.feed_escalation import request_evaluation
+    from tracer.services.feed_escalation_publication import eval_occurrence_time
+
+    at, provenance = eval_occurrence_time(project_id, result)
+    with transaction.atomic():
+        ErrorClusterTraces.objects.create(
+            cluster=cluster,
+            trace_id=result.trace_id,
+            trace_session_id=result.session_id,
+            eval_logger_id=result.eval_logger_id,
+            occurred_at=at,
+            occurrence_time_source=provenance,
+        )
+        request_evaluation(cluster.pk)
     from tracer.services.feed_alerts.events import record_issue_event
 
     record_issue_event(
@@ -605,7 +614,7 @@ def assign_to_cluster(
     cluster_id: str,
     project_id: str,
     result: ClusterableEvalResult,
-    embedding: List[float],
+    embedding: list[float],
 ) -> None:
     """Assign an eval result to an existing cluster and update centroid."""
     cluster = TraceErrorGroup.objects.get(cluster_id=cluster_id, project_id=project_id)
@@ -621,7 +630,12 @@ def assign_to_cluster(
     # behind it while re-inflating counters and re-shifting the centroid on each
     # pass. Counter + membership are written in one transaction so a mid-row
     # activity kill can't leave the +1 without its row and reopen that loop.
+    from tracer.services.feed_escalation import request_evaluation
+    from tracer.services.feed_escalation_publication import eval_occurrence_time
+
+    at, provenance = eval_occurrence_time(project_id, result)
     with transaction.atomic():
+        cluster = TraceErrorGroup.objects.select_for_update().get(pk=cluster.pk)
         if result.target_type == "session":
             # (cluster, trace_session) is a real unique constraint — both
             # columns non-null — so a second failing eval on a session already
@@ -636,6 +650,8 @@ def assign_to_cluster(
                 cluster=cluster,
                 trace_session_id=None if session_already_member else result.session_id,
                 eval_logger_id=result.eval_logger_id,
+                occurred_at=at,
+                occurrence_time_source=provenance,
             )
         else:
             # Unique key is (cluster, trace, span) with span NULL here, and
@@ -647,6 +663,8 @@ def assign_to_cluster(
                 cluster=cluster,
                 trace_id=result.trace_id,
                 eval_logger_id=result.eval_logger_id,
+                occurred_at=at,
+                occurrence_time_source=provenance,
             )
 
         # Occurrence counters move per eval; ``unique_traces`` carries the
@@ -686,6 +704,8 @@ def assign_to_cluster(
             before=alert_before,
             source_key=f"eval-assign:{result.eval_logger_id}:{cluster.pk}",
         )
+
+        request_evaluation(cluster.pk)
 
     # Incrementally update centroid in ClickHouse
     family = _eval_family(result.eval_name, result.target_type)

@@ -38,6 +38,24 @@ class ErrorName:
 
 
 @dataclass
+class FeedEscalation:
+    current_count: int
+    affected_trace_count: int
+    baseline: float
+    entry_threshold: float
+    recovery_threshold: float
+    unit: str
+    window_start: datetime
+    window_end: datetime
+    evaluated_at: datetime
+    algorithm_version: str
+    policy_revision: int
+    input_revision: int
+    entry_confirmation_minutes: int
+    recovery_confirmation_minutes: int
+
+
+@dataclass
 class FeedListRow:
     """One row in the Error Feed table."""
 
@@ -70,6 +88,9 @@ class FeedListRow:
     severity_assessment_status: str = "unassessed"
     severity_source: str = "default"
     severity_reason: str = ""
+    status_origin: str = "legacy_unknown"
+    status_revision: int = 0
+    escalation: FeedEscalation | None = None
 
 
 @dataclass
@@ -159,6 +180,7 @@ class FeedUpdatePayload:
     severity: str | None = None
     assignee: str | None = None
     assignee_provided: bool = False
+    actor_id: str | None = None
 
 
 # ---------------------------------------------------------------------------

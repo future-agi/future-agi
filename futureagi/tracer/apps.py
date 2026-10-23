@@ -8,13 +8,17 @@ class SdkConfig(AppConfig):
     def ready(self):
         # Import all model modules so Django discovers them.
         # Required for cross-app FK resolution (model_hub → tracer).
+        from django.db.models.signals import post_save
+
+        from accounts.models.workspace import Workspace
         from tracer.models import (
             custom_eval_config,  # noqa: F401
             dashboard,  # noqa: F401
             eval_ci_cd,  # noqa: F401
             eval_task,  # noqa: F401
-            feed_alert,  # noqa: F401
             external_eval_config,  # noqa: F401
+            feed_alert,  # noqa: F401
+            feed_escalation,  # noqa: F401
             imagine_analysis,  # noqa: F401
             monitor,  # noqa: F401
             observability_provider,  # noqa: F401
@@ -33,4 +37,12 @@ class SdkConfig(AppConfig):
             trace_investigation,  # noqa: F401
             trace_scan,  # noqa: F401
             trace_session,  # noqa: F401
+        )
+        from tracer.services.feed_escalation_settings import provision_policy
+
+        post_save.connect(
+            provision_policy,
+            sender=Workspace,
+            dispatch_uid="tracer.feed_escalation_policy",
+            weak=False,
         )

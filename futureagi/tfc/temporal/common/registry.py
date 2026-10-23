@@ -56,6 +56,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tracer.tasks",
     "tracer.tasks.trace_scanner",
     "tracer.tasks.eval_task_sweeper",
+    "tracer.services.feed_escalation",
     "tracer.tasks.outbox_cdc",
     "tracer.utils.span",
     "tracer.utils.eval",

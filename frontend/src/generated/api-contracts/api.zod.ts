@@ -55457,6 +55457,340 @@ export const TracerEvalTaskDeleteParams = zod.object({
   id: zod.string(),
 });
 
+export const tracerFeedEscalationSettingsListResponseStatusDefault = true;
+export const tracerFeedEscalationSettingsListResponseResultValuesMinFindingsMin = 2;
+export const tracerFeedEscalationSettingsListResponseResultValuesMinFindingsMax = 1000000;
+
+export const tracerFeedEscalationSettingsListResponseResultValuesEntryDeltaMax = 1000000;
+
+export const tracerFeedEscalationSettingsListResponseResultValuesEntryConfirmationMinutesMin = 5;
+export const tracerFeedEscalationSettingsListResponseResultValuesEntryConfirmationMinutesMax = 60;
+
+export const tracerFeedEscalationSettingsListResponseResultValuesRecoveryMinMin = 0;
+
+export const tracerFeedEscalationSettingsListResponseResultValuesRecoveryDeltaMin = 0;
+
+export const tracerFeedEscalationSettingsListResponseResultValuesRecoveryConfirmationMinutesMin = 5;
+export const tracerFeedEscalationSettingsListResponseResultValuesRecoveryConfirmationMinutesMax = 60;
+
+export const tracerFeedEscalationSettingsListResponseResultDefaultsMinFindingsMin = 2;
+export const tracerFeedEscalationSettingsListResponseResultDefaultsMinFindingsMax = 1000000;
+
+export const tracerFeedEscalationSettingsListResponseResultDefaultsEntryDeltaMax = 1000000;
+
+export const tracerFeedEscalationSettingsListResponseResultDefaultsEntryConfirmationMinutesMin = 5;
+export const tracerFeedEscalationSettingsListResponseResultDefaultsEntryConfirmationMinutesMax = 60;
+
+export const tracerFeedEscalationSettingsListResponseResultDefaultsRecoveryMinMin = 0;
+
+export const tracerFeedEscalationSettingsListResponseResultDefaultsRecoveryDeltaMin = 0;
+
+export const tracerFeedEscalationSettingsListResponseResultDefaultsRecoveryConfirmationMinutesMin = 5;
+export const tracerFeedEscalationSettingsListResponseResultDefaultsRecoveryConfirmationMinutesMax = 60;
+
+export const TracerFeedEscalationSettingsListResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerFeedEscalationSettingsListResponseStatusDefault),
+  result: zod.object({
+    values: zod.object({
+      min_findings: zod
+        .number()
+        .min(tracerFeedEscalationSettingsListResponseResultValuesMinFindingsMin)
+        .max(
+          tracerFeedEscalationSettingsListResponseResultValuesMinFindingsMax,
+        ),
+      entry_multiplier: zod.string(),
+      entry_delta: zod
+        .number()
+        .min(1)
+        .max(tracerFeedEscalationSettingsListResponseResultValuesEntryDeltaMax),
+      entry_confirmation_minutes: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsListResponseResultValuesEntryConfirmationMinutesMin,
+        )
+        .max(
+          tracerFeedEscalationSettingsListResponseResultValuesEntryConfirmationMinutesMax,
+        ),
+      recovery_min: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsListResponseResultValuesRecoveryMinMin,
+        ),
+      recovery_multiplier: zod.string(),
+      recovery_delta: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsListResponseResultValuesRecoveryDeltaMin,
+        ),
+      recovery_confirmation_minutes: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsListResponseResultValuesRecoveryConfirmationMinutesMin,
+        )
+        .max(
+          tracerFeedEscalationSettingsListResponseResultValuesRecoveryConfirmationMinutesMax,
+        ),
+    }),
+    defaults: zod.object({
+      min_findings: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsListResponseResultDefaultsMinFindingsMin,
+        )
+        .max(
+          tracerFeedEscalationSettingsListResponseResultDefaultsMinFindingsMax,
+        ),
+      entry_multiplier: zod.string(),
+      entry_delta: zod
+        .number()
+        .min(1)
+        .max(
+          tracerFeedEscalationSettingsListResponseResultDefaultsEntryDeltaMax,
+        ),
+      entry_confirmation_minutes: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsListResponseResultDefaultsEntryConfirmationMinutesMin,
+        )
+        .max(
+          tracerFeedEscalationSettingsListResponseResultDefaultsEntryConfirmationMinutesMax,
+        ),
+      recovery_min: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsListResponseResultDefaultsRecoveryMinMin,
+        ),
+      recovery_multiplier: zod.string(),
+      recovery_delta: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsListResponseResultDefaultsRecoveryDeltaMin,
+        ),
+      recovery_confirmation_minutes: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsListResponseResultDefaultsRecoveryConfirmationMinutesMin,
+        )
+        .max(
+          tracerFeedEscalationSettingsListResponseResultDefaultsRecoveryConfirmationMinutesMax,
+        ),
+    }),
+    ranges: zod.record(zod.string(), zod.record(zod.string(), zod.number())),
+    revision: zod.number(),
+    algorithm_version: zod.string().min(1),
+    defaults_version: zod.number(),
+    workspace_id: zod.string().uuid(),
+    workspace_name: zod.string().min(1),
+    can_edit: zod.boolean(),
+    window_minutes: zod.number(),
+    baseline_hours: zod.number(),
+    cadence_minutes: zod.number(),
+    processing_allowance_minutes: zod.number(),
+  }),
+});
+
+export const tracerFeedEscalationSettingsPartialUpdateBodyMinFindingsMin = 2;
+export const tracerFeedEscalationSettingsPartialUpdateBodyMinFindingsMax = 1000000;
+
+export const tracerFeedEscalationSettingsPartialUpdateBodyEntryDeltaMax = 1000000;
+
+export const tracerFeedEscalationSettingsPartialUpdateBodyEntryConfirmationMinutesMin = 5;
+export const tracerFeedEscalationSettingsPartialUpdateBodyEntryConfirmationMinutesMax = 60;
+
+export const tracerFeedEscalationSettingsPartialUpdateBodyRecoveryMinMin = 0;
+
+export const tracerFeedEscalationSettingsPartialUpdateBodyRecoveryDeltaMin = 0;
+
+export const tracerFeedEscalationSettingsPartialUpdateBodyRecoveryConfirmationMinutesMin = 5;
+export const tracerFeedEscalationSettingsPartialUpdateBodyRecoveryConfirmationMinutesMax = 60;
+
+export const tracerFeedEscalationSettingsPartialUpdateBodyRevisionMin = 0;
+
+export const TracerFeedEscalationSettingsPartialUpdateBody = zod.object({
+  min_findings: zod
+    .number()
+    .min(tracerFeedEscalationSettingsPartialUpdateBodyMinFindingsMin)
+    .max(tracerFeedEscalationSettingsPartialUpdateBodyMinFindingsMax)
+    .optional(),
+  entry_multiplier: zod.string().optional(),
+  entry_delta: zod
+    .number()
+    .min(1)
+    .max(tracerFeedEscalationSettingsPartialUpdateBodyEntryDeltaMax)
+    .optional(),
+  entry_confirmation_minutes: zod
+    .number()
+    .min(
+      tracerFeedEscalationSettingsPartialUpdateBodyEntryConfirmationMinutesMin,
+    )
+    .max(
+      tracerFeedEscalationSettingsPartialUpdateBodyEntryConfirmationMinutesMax,
+    )
+    .optional(),
+  recovery_min: zod
+    .number()
+    .min(tracerFeedEscalationSettingsPartialUpdateBodyRecoveryMinMin)
+    .optional(),
+  recovery_multiplier: zod.string().optional(),
+  recovery_delta: zod
+    .number()
+    .min(tracerFeedEscalationSettingsPartialUpdateBodyRecoveryDeltaMin)
+    .optional(),
+  recovery_confirmation_minutes: zod
+    .number()
+    .min(
+      tracerFeedEscalationSettingsPartialUpdateBodyRecoveryConfirmationMinutesMin,
+    )
+    .max(
+      tracerFeedEscalationSettingsPartialUpdateBodyRecoveryConfirmationMinutesMax,
+    )
+    .optional(),
+  revision: zod
+    .number()
+    .min(tracerFeedEscalationSettingsPartialUpdateBodyRevisionMin),
+});
+
+export const tracerFeedEscalationSettingsPartialUpdateResponseStatusDefault =
+  true;
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultValuesMinFindingsMin = 2;
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultValuesMinFindingsMax = 1000000;
+
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultValuesEntryDeltaMax = 1000000;
+
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultValuesEntryConfirmationMinutesMin = 5;
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultValuesEntryConfirmationMinutesMax = 60;
+
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultValuesRecoveryMinMin = 0;
+
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultValuesRecoveryDeltaMin = 0;
+
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultValuesRecoveryConfirmationMinutesMin = 5;
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultValuesRecoveryConfirmationMinutesMax = 60;
+
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsMinFindingsMin = 2;
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsMinFindingsMax = 1000000;
+
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsEntryDeltaMax = 1000000;
+
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsEntryConfirmationMinutesMin = 5;
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsEntryConfirmationMinutesMax = 60;
+
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsRecoveryMinMin = 0;
+
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsRecoveryDeltaMin = 0;
+
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsRecoveryConfirmationMinutesMin = 5;
+export const tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsRecoveryConfirmationMinutesMax = 60;
+
+export const TracerFeedEscalationSettingsPartialUpdateResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerFeedEscalationSettingsPartialUpdateResponseStatusDefault),
+  result: zod.object({
+    values: zod.object({
+      min_findings: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultValuesMinFindingsMin,
+        )
+        .max(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultValuesMinFindingsMax,
+        ),
+      entry_multiplier: zod.string(),
+      entry_delta: zod
+        .number()
+        .min(1)
+        .max(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultValuesEntryDeltaMax,
+        ),
+      entry_confirmation_minutes: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultValuesEntryConfirmationMinutesMin,
+        )
+        .max(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultValuesEntryConfirmationMinutesMax,
+        ),
+      recovery_min: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultValuesRecoveryMinMin,
+        ),
+      recovery_multiplier: zod.string(),
+      recovery_delta: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultValuesRecoveryDeltaMin,
+        ),
+      recovery_confirmation_minutes: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultValuesRecoveryConfirmationMinutesMin,
+        )
+        .max(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultValuesRecoveryConfirmationMinutesMax,
+        ),
+    }),
+    defaults: zod.object({
+      min_findings: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsMinFindingsMin,
+        )
+        .max(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsMinFindingsMax,
+        ),
+      entry_multiplier: zod.string(),
+      entry_delta: zod
+        .number()
+        .min(1)
+        .max(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsEntryDeltaMax,
+        ),
+      entry_confirmation_minutes: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsEntryConfirmationMinutesMin,
+        )
+        .max(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsEntryConfirmationMinutesMax,
+        ),
+      recovery_min: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsRecoveryMinMin,
+        ),
+      recovery_multiplier: zod.string(),
+      recovery_delta: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsRecoveryDeltaMin,
+        ),
+      recovery_confirmation_minutes: zod
+        .number()
+        .min(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsRecoveryConfirmationMinutesMin,
+        )
+        .max(
+          tracerFeedEscalationSettingsPartialUpdateResponseResultDefaultsRecoveryConfirmationMinutesMax,
+        ),
+    }),
+    ranges: zod.record(zod.string(), zod.record(zod.string(), zod.number())),
+    revision: zod.number(),
+    algorithm_version: zod.string().min(1),
+    defaults_version: zod.number(),
+    workspace_id: zod.string().uuid(),
+    workspace_name: zod.string().min(1),
+    can_edit: zod.boolean(),
+    window_minutes: zod.number(),
+    baseline_hours: zod.number(),
+    cadence_minutes: zod.number(),
+    processing_allowance_minutes: zod.number(),
+  }),
+});
+
 /**
  * Returns the list of Linear teams for the team picker dropdown.
 Requires an active Linear integration for the user's org.
@@ -55533,6 +55867,28 @@ export const TracerFeedIssuesListResponse = zod.object({
   result: zod.object({
     data: zod.array(
       zod.object({
+        status_origin: zod
+          .enum(["system", "manual", "legacy_unknown"])
+          .optional(),
+        status_revision: zod.number().optional(),
+        escalation: zod
+          .object({
+            current_count: zod.number(),
+            affected_trace_count: zod.number(),
+            baseline: zod.number(),
+            entry_threshold: zod.number(),
+            recovery_threshold: zod.number(),
+            unit: zod.enum(["findings", "failed_evaluations"]),
+            window_start: zod.string().datetime({ offset: true }),
+            window_end: zod.string().datetime({ offset: true }),
+            evaluated_at: zod.string().datetime({ offset: true }),
+            algorithm_version: zod.string().min(1),
+            policy_revision: zod.number(),
+            input_revision: zod.number(),
+            entry_confirmation_minutes: zod.number(),
+            recovery_confirmation_minutes: zod.number(),
+          })
+          .optional(),
         severity_assessment_status: zod.string().min(1).optional(),
         severity_source: zod.string().min(1).optional(),
         severity_reason: zod.string().optional(),
@@ -55617,6 +55973,28 @@ export const TracerFeedIssuesReadResponse = zod.object({
   status: zod.boolean().default(tracerFeedIssuesReadResponseStatusDefault),
   result: zod.object({
     row: zod.object({
+      status_origin: zod
+        .enum(["system", "manual", "legacy_unknown"])
+        .optional(),
+      status_revision: zod.number().optional(),
+      escalation: zod
+        .object({
+          current_count: zod.number(),
+          affected_trace_count: zod.number(),
+          baseline: zod.number(),
+          entry_threshold: zod.number(),
+          recovery_threshold: zod.number(),
+          unit: zod.enum(["findings", "failed_evaluations"]),
+          window_start: zod.string().datetime({ offset: true }),
+          window_end: zod.string().datetime({ offset: true }),
+          evaluated_at: zod.string().datetime({ offset: true }),
+          algorithm_version: zod.string().min(1),
+          policy_revision: zod.number(),
+          input_revision: zod.number(),
+          entry_confirmation_minutes: zod.number(),
+          recovery_confirmation_minutes: zod.number(),
+        })
+        .optional(),
       severity_assessment_status: zod.string().min(1).optional(),
       severity_source: zod.string().min(1).optional(),
       severity_reason: zod.string().optional(),
@@ -55717,6 +56095,28 @@ export const TracerFeedIssuesPartialUpdateResponse = zod.object({
     .default(tracerFeedIssuesPartialUpdateResponseStatusDefault),
   result: zod.object({
     row: zod.object({
+      status_origin: zod
+        .enum(["system", "manual", "legacy_unknown"])
+        .optional(),
+      status_revision: zod.number().optional(),
+      escalation: zod
+        .object({
+          current_count: zod.number(),
+          affected_trace_count: zod.number(),
+          baseline: zod.number(),
+          entry_threshold: zod.number(),
+          recovery_threshold: zod.number(),
+          unit: zod.enum(["findings", "failed_evaluations"]),
+          window_start: zod.string().datetime({ offset: true }),
+          window_end: zod.string().datetime({ offset: true }),
+          evaluated_at: zod.string().datetime({ offset: true }),
+          algorithm_version: zod.string().min(1),
+          policy_revision: zod.number(),
+          input_revision: zod.number(),
+          entry_confirmation_minutes: zod.number(),
+          recovery_confirmation_minutes: zod.number(),
+        })
+        .optional(),
       severity_assessment_status: zod.string().min(1).optional(),
       severity_source: zod.string().min(1).optional(),
       severity_reason: zod.string().optional(),

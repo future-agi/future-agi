@@ -35,6 +35,7 @@ from tracer.views.feed import (
     FeedTrendsView,
     LinearTeamsView,
 )
+from tracer.views.feed.escalation_settings import FeedEscalationSettingsView
 from tracer.views.imagine_analysis import ImagineAnalysisView
 from tracer.views.monitor import UserAlertMonitorLogView, UserAlertMonitorView
 from tracer.views.observability_provider import ObservabilityProviderViewSet
@@ -270,6 +271,11 @@ urlpatterns = [
         name="trace-error-task",
     ),
     # Error Feed API
+    path(
+        "feed/escalation-settings/",
+        FeedEscalationSettingsView.as_view(),
+        name="feed-escalation-settings",
+    ),
     path("feed/issues/", FeedListView.as_view(), name="feed-issues-list"),
     path("feed/issues/stats/", FeedStatsView.as_view(), name="feed-issues-stats"),
     path(

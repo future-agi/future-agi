@@ -24,6 +24,7 @@ import { useNavigate } from "react-router-dom";
 import { formatDistanceToNowStrict } from "date-fns";
 import Iconify from "src/components/iconify";
 import ErrorStatusChip from "./ErrorStatusChip";
+import { escalationReasonText } from "./EscalationReason";
 import ErrorSeverityBadge from "./ErrorSeverityBadge";
 import ErrorTrendSparkline from "./ErrorTrendSparkline";
 import { useErrorFeedList } from "src/api/errorFeed/error-feed";
@@ -520,7 +521,11 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
 
                     {/* Status */}
                     <TableCell onClick={(e) => e.stopPropagation()}>
-                      <ErrorStatusChip status={row.status} />
+                      <Tooltip title={escalationReasonText(row)} arrow>
+                        <span>
+                          <ErrorStatusChip status={row.status} />
+                        </span>
+                      </Tooltip>
                     </TableCell>
 
                     {/* Events */}

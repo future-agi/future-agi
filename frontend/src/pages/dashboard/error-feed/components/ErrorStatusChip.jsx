@@ -41,7 +41,7 @@ const STATUS_CONFIG = {
 export default function ErrorStatusChip({ status, size = "small", onClick }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
-  const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.escalating;
+  const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.for_review;
 
   const baseBg = isDark ? cfg.darkBg : cfg.bg;
   return (

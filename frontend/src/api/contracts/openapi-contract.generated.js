@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1073,
+  endpointCount: 1074,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -34460,6 +34460,58 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/feed/escalation-settings/": {
+      get: {
+        operationId: "tracer_feed_escalation-settings_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/FeedEscalationSettingsApiResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      patch: {
+        operationId: "tracer_feed_escalation-settings_partial_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/FeedEscalationSettingsBody",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/FeedEscalationSettingsApiResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/feed/integrations/linear/teams/": {
       get: {
         operationId: "tracer_feed_integrations_linear_teams_list",
@@ -61519,6 +61571,75 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/FeedDetailCore",
+        },
+      },
+    },
+    FeedEscalationSettingsApiResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/FeedEscalationSettings",
+        },
+      },
+    },
+    FeedEscalationSettingsBody: {
+      required: ["revision"],
+      type: "object",
+      properties: {
+        min_findings: {
+          title: "Min findings",
+          type: "integer",
+          maximum: 1000000,
+          minimum: 2,
+        },
+        entry_multiplier: {
+          title: "Entry multiplier",
+          type: "string",
+          format: "decimal",
+        },
+        entry_delta: {
+          title: "Entry delta",
+          type: "integer",
+          maximum: 1000000,
+          minimum: 1,
+        },
+        entry_confirmation_minutes: {
+          title: "Entry confirmation minutes",
+          type: "integer",
+          maximum: 60,
+          minimum: 5,
+        },
+        recovery_min: {
+          title: "Recovery min",
+          type: "integer",
+          minimum: 0,
+        },
+        recovery_multiplier: {
+          title: "Recovery multiplier",
+          type: "string",
+          format: "decimal",
+        },
+        recovery_delta: {
+          title: "Recovery delta",
+          type: "integer",
+          minimum: 0,
+        },
+        recovery_confirmation_minutes: {
+          title: "Recovery confirmation minutes",
+          type: "integer",
+          maximum: 60,
+          minimum: 5,
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+          minimum: 0,
         },
       },
     },
@@ -92286,6 +92407,85 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    FeedEscalationSettings: {
+      required: [
+        "values",
+        "defaults",
+        "ranges",
+        "revision",
+        "algorithm_version",
+        "defaults_version",
+        "workspace_id",
+        "workspace_name",
+        "can_edit",
+        "window_minutes",
+        "baseline_hours",
+        "cadence_minutes",
+        "processing_allowance_minutes",
+      ],
+      type: "object",
+      properties: {
+        values: {
+          $ref: "#/definitions/FeedEscalationValues",
+        },
+        defaults: {
+          $ref: "#/definitions/FeedEscalationValues",
+        },
+        ranges: {
+          title: "Ranges",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            additionalProperties: {
+              type: "number",
+            },
+          },
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+        },
+        algorithm_version: {
+          title: "Algorithm version",
+          type: "string",
+          minLength: 1,
+        },
+        defaults_version: {
+          title: "Defaults version",
+          type: "integer",
+        },
+        workspace_id: {
+          title: "Workspace id",
+          type: "string",
+          format: "uuid",
+        },
+        workspace_name: {
+          title: "Workspace name",
+          type: "string",
+          minLength: 1,
+        },
+        can_edit: {
+          title: "Can edit",
+          type: "boolean",
+        },
+        window_minutes: {
+          title: "Window minutes",
+          type: "integer",
+        },
+        baseline_hours: {
+          title: "Baseline hours",
+          type: "integer",
+        },
+        cadence_minutes: {
+          title: "Cadence minutes",
+          type: "integer",
+        },
+        processing_allowance_minutes: {
+          title: "Processing allowance minutes",
+          type: "integer",
+        },
+      },
+    },
     FeedListResponse: {
       required: ["data", "total", "limit", "offset"],
       type: "object",
@@ -110413,6 +110613,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       type: "object",
       properties: {
+        status_origin: {
+          title: "Status origin",
+          type: "string",
+          enum: ["system", "manual", "legacy_unknown"],
+        },
+        status_revision: {
+          title: "Status revision",
+          type: "integer",
+        },
+        escalation: {
+          $ref: "#/definitions/FeedEscalation",
+        },
         severity_assessment_status: {
           title: "Severity assessment status",
           type: "string",
@@ -110628,6 +110840,65 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
+    },
+    FeedEscalationValues: {
+      required: [
+        "min_findings",
+        "entry_multiplier",
+        "entry_delta",
+        "entry_confirmation_minutes",
+        "recovery_min",
+        "recovery_multiplier",
+        "recovery_delta",
+        "recovery_confirmation_minutes",
+      ],
+      type: "object",
+      properties: {
+        min_findings: {
+          title: "Min findings",
+          type: "integer",
+          maximum: 1000000,
+          minimum: 2,
+        },
+        entry_multiplier: {
+          title: "Entry multiplier",
+          type: "string",
+          format: "decimal",
+        },
+        entry_delta: {
+          title: "Entry delta",
+          type: "integer",
+          maximum: 1000000,
+          minimum: 1,
+        },
+        entry_confirmation_minutes: {
+          title: "Entry confirmation minutes",
+          type: "integer",
+          maximum: 60,
+          minimum: 5,
+        },
+        recovery_min: {
+          title: "Recovery min",
+          type: "integer",
+          minimum: 0,
+        },
+        recovery_multiplier: {
+          title: "Recovery multiplier",
+          type: "string",
+          format: "decimal",
+        },
+        recovery_delta: {
+          title: "Recovery delta",
+          type: "integer",
+          minimum: 0,
+        },
+        recovery_confirmation_minutes: {
+          title: "Recovery confirmation minutes",
+          type: "integer",
+          maximum: 60,
+          minimum: 5,
+        },
+      },
     },
     CoOccurringIssue: {
       required: ["id", "title", "type", "co_occurrence", "count", "severity"],
@@ -119140,6 +119411,89 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
         },
       },
+    },
+    FeedEscalation: {
+      required: [
+        "current_count",
+        "affected_trace_count",
+        "baseline",
+        "entry_threshold",
+        "recovery_threshold",
+        "unit",
+        "window_start",
+        "window_end",
+        "evaluated_at",
+        "algorithm_version",
+        "policy_revision",
+        "input_revision",
+        "entry_confirmation_minutes",
+        "recovery_confirmation_minutes",
+      ],
+      type: "object",
+      properties: {
+        current_count: {
+          title: "Current count",
+          type: "integer",
+        },
+        affected_trace_count: {
+          title: "Affected trace count",
+          type: "integer",
+        },
+        baseline: {
+          title: "Baseline",
+          type: "number",
+        },
+        entry_threshold: {
+          title: "Entry threshold",
+          type: "number",
+        },
+        recovery_threshold: {
+          title: "Recovery threshold",
+          type: "number",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["findings", "failed_evaluations"],
+        },
+        window_start: {
+          title: "Window start",
+          type: "string",
+          format: "date-time",
+        },
+        window_end: {
+          title: "Window end",
+          type: "string",
+          format: "date-time",
+        },
+        evaluated_at: {
+          title: "Evaluated at",
+          type: "string",
+          format: "date-time",
+        },
+        algorithm_version: {
+          title: "Algorithm version",
+          type: "string",
+          minLength: 1,
+        },
+        policy_revision: {
+          title: "Policy revision",
+          type: "integer",
+        },
+        input_revision: {
+          title: "Input revision",
+          type: "integer",
+        },
+        entry_confirmation_minutes: {
+          title: "Entry confirmation minutes",
+          type: "integer",
+        },
+        recovery_confirmation_minutes: {
+          title: "Recovery confirmation minutes",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
     },
     TrendPoint: {
       required: ["timestamp", "value", "users"],

@@ -784,6 +784,166 @@
 - successful reconnect preserves the same workspace connection ID
 - disconnect removes the connection from the scoped integrations API
 
+### ESC-E2E-001 — New issues require evidence before showing Escalating
+
+**Goal:** An engineer sees a newly detected issue start in review before growth is confirmed  
+**Spec:** `flows/error-feed/creation-defaults.spec.ts:6`  
+**Tags:** —
+
+**User steps:**
+
+1. publish singleton and large initial scanner, F6 and evaluation clusters
+2. inspect each new issue and its filter results before confirmation
+3. check its original occurrence timestamps
+
+**Backend state verified:**
+
+- PG stores the exact source memberships with system ownership, For review and revision zero
+- collector timestamps remain original completion times
+- detail/list/status-filter APIs and the browser show those exact issues For review
+
+### ESC-E2E-002 — Confirm sustained growth and recover a quiet issue without new findings
+
+**Goal:** An engineer sees sustained growth escalate and a quiet issue return to review  
+**Spec:** `flows/error-feed/automatic-escalation-recovery.spec.ts:7`  
+**Tags:** —
+
+**User steps:**
+
+1. publish baseline findings, then attach a burst through collector and fenced publishers
+2. inspect review before confirmation
+3. advance four normal boundaries through Temporal
+4. inspect escalation and evidence
+5. publish nothing further and advance quiet recovery
+6. inspect review
+
+**Backend state verified:**
+
+- PG has exactly one status revision at entry and one at recovery, including duplicate checks
+- frozen baseline, counts, thresholds and boundary timestamps equal the independently seeded windows
+- detail/list/status-filter/statistics APIs and UI agree with each persisted transition
+
+### ESC-E2E-003 — Preserve user-selected statuses and F6 attachment protection
+
+**Goal:** An engineer keeps any chosen status while automatic trend checks and new findings run  
+**Spec:** `flows/error-feed/manual-status-protection.spec.ts:7`  
+**Tags:** —
+
+**User steps:**
+
+1. publish qualifying findings
+2. select all four statuses through detail controls, including the current value
+3. use the bulk status action
+4. advance growth and quiet boundaries
+5. attempt an F6 attachment and inspect rejection
+
+**Backend state verified:**
+
+- PG manual ownership, actor, status revision and F6 protection persist for all selections
+- real publisher rejects attachment to the protected issue without adding its finding
+- Feed APIs and UI retain each chosen status after both automatic cycles
+
+### ESC-E2E-004 — Configure and restore workspace escalation thresholds
+
+**Goal:** An administrator saves thresholds and can cancel, retry, or restore defaults safely  
+**Spec:** `flows/error-feed/escalation-settings.spec.ts:6`  
+**Tags:** —
+
+**User steps:**
+
+1. inspect defaults
+2. reject invalid thresholds
+3. save eight valid values
+4. cancel edits and a reset
+5. retain and retry a failed save
+6. save a reset
+
+**Backend state verified:**
+
+- scoped settings API equals each saved policy
+- PG policy has all eight values, one revision per changed save, and the updating user
+- canceled and failed saves do not mutate the policy
+
+### ESC-E2E-005 — Share workspace settings across projects and enforce scope permissions
+
+**Goal:** An administrator configures one workspace while other workspaces and read-only users stay isolated  
+**Spec:** `flows/error-feed/escalation-settings-scope.spec.ts:10`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest two uniquely named projects in workspace A
+2. save A settings
+3. inspect settings under each project filter
+4. inspect sibling and foreign workspace defaults
+5. inspect member and viewer read-only controls
+6. attempt forbidden and foreign-scope saves
+
+**Backend state verified:**
+
+- collector traces and PG projects belong to workspace A
+- PG and scoped settings API contain one saved A policy and unchanged defaults in other workspaces
+- unauthorized PATCHes return 403 and do not change policy values or revision
+
+### ESC-E2E-006 — Apply saved thresholds without arrivals and preserve manual choices
+
+**Goal:** An administrator changes thresholds and automatic decisions update after fresh confirmation  
+**Spec:** `flows/error-feed/settings-reevaluation.spec.ts:7`  
+**Tags:** —
+
+**User steps:**
+
+1. prepare a system escalation, candidate, review issue and manually controlled issue
+2. save workspace thresholds
+3. publish no new findings
+4. advance four eligible boundaries
+5. inspect policy revision, frozen incident baseline and preserved manual choice
+
+**Backend state verified:**
+
+- PG settings save does not itself transition any issue
+- new policy revision resets candidate confirmation and preserves the active baseline after history ages out
+- only qualifying system-owned issues change after full confirmation; API and UI show those exact decisions
+
+### ESC-E2E-007 — Evaluate current findings after merge, split, removal and supersession
+
+**Goal:** An engineer sees decisions follow current evidence when issues are regrouped or reinvestigated  
+**Spec:** `flows/error-feed/membership-revisions.spec.ts:7`  
+**Tags:** —
+
+**User steps:**
+
+1. publish and confirm two small issues with a real workspace policy
+2. merge through fenced reconciliation
+3. confirm the surviving issue
+4. split and remove through reconciliation
+5. replace a source report
+6. inspect surviving issues and original occurrence times
+
+**Backend state verified:**
+
+- PG current memberships match exact source finding IDs and keep original timestamps
+- structural changes request fresh confirmation and retired issues stop evaluation
+- source supersession removes obsolete findings; list APIs and UI contain only current surviving issues
+
+### ESC-E2E-008 — Resolve concurrent settings edits without losing another save
+
+**Goal:** An administrator reloads a conflicting edit and explicitly reapplies their changes  
+**Spec:** `flows/error-feed/settings-conflicts.spec.ts:6`  
+**Tags:** —
+
+**User steps:**
+
+1. open two sessions at one revision
+2. save in the first session
+3. see a conflict with retained draft in the second
+4. reload and explicitly save a new edit
+
+**Backend state verified:**
+
+- real stale PATCH returns 409 and leaves stored values and revision unchanged
+- scoped API and PG policy equal the last successful edit, with exactly two revision increments
+
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
 **Goal:** A saved link to a retired issue opens its surviving issue  

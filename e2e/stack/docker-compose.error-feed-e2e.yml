@@ -1,0 +1,91 @@
+# A separate local entitlement/clock profile; do not relax managed-mock's
+# provider/credential restrictions for other flows.
+x-error-feed-env: &error-feed-env
+  ENV_TYPE: local
+  E2E_ERROR_FEED_PROFILE: th8613
+  DJANGO_SETTINGS_MODULE: tfc.settings.settings
+  EE_LICENSE_KEY: ${EE_LICENSE_KEY:?Generate a local test license first}
+  EE_LICENSE_PUBLIC_KEY: ${EE_LICENSE_PUBLIC_KEY:?Generate a local test key first}
+  FUTURE_AGI_TELEMETRY_DISABLED: "true"
+  SENTRY_ENABLED: "false"
+  EMAIL_BACKEND: error_feed_mail.EmailBackend
+  DEFAULT_FROM_EMAIL: noreply@local.futureagi.test
+  # The private driver owns only its workspace's controlled evaluations.
+  # Other worker activities retain their normal registration and behavior.
+  ERROR_FEED_ESCALATION_MODE: disabled
+  ERROR_FEED_GROUPING_ENABLED: "false"
+  OTEL_ENABLED: "false"
+services:
+  error-feed-feature-bootstrap:
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-th8613-local}
+    working_dir: /app/backend
+    restart: "no"
+    entrypoint:
+      ["python", "manage.py", "provision_grouping_features", "--apply"]
+    environment:
+      <<: *error-feed-env
+      DJANGO_SETTINGS_MODULE: tfc.settings.settings
+      SERVICE_TYPE: bootstrap
+      NO_STARTUP_DB_MUTATIONS: "false"
+      STARTUP_DB_MUTATION_MODE: operator
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_USER: futureagi
+      PG_PASSWORD: futureagi
+      PG_DB: futureagi
+      PGBOUNCER_HOST: postgres
+      PGBOUNCER_PORT: "5432"
+      CH_HOST: clickhouse
+      CH_PORT: "9000"
+      CH_USERNAME: default
+      CH_PASSWORD: ${CH_PASSWORD}
+      CH_DATABASE: default
+      CH25_HOST: clickhouse
+      CH25_HTTP_PORT: "8123"
+      CH25_USER: default
+      CH25_PASSWORD: ${CH_PASSWORD}
+      CH25_DATABASE: default
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      MODEL_SERVING_URL: http://mock-llm:8080
+    depends_on:
+      postgres-schema-bootstrap:
+        condition: service_completed_successfully
+      clickhouse-native-bootstrap:
+        condition: service_completed_successfully
+  postgres-schema-bootstrap:
+    environment:
+      <<: *error-feed-env
+  clickhouse-native-bootstrap:
+    environment:
+      <<: *error-feed-env
+  clickhouse-cdc-bootstrap:
+    environment:
+      <<: *error-feed-env
+  backend:
+    env_file: !reset []
+    environment:
+      <<: *error-feed-env
+    depends_on:
+      error-feed-feature-bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - ./e2e/drivers/error_feed_driver.py:/opt/e2e/error_feed_driver.py:ro
+      - ./e2e/drivers/error_feed_mail.py:/app/backend/error_feed_mail.py:ro
+      - ./e2e/drivers/reset_fixture_auth.py:/opt/e2e/reset_fixture_auth.py:ro
+  worker:
+    env_file: !reset []
+    environment:
+      <<: *error-feed-env
+    volumes:
+      - ./e2e/drivers/error_feed_mail.py:/app/backend/error_feed_mail.py:ro
+  worker-exact-aggregation:
+    env_file: !reset []
+    environment:
+      <<: *error-feed-env
+  # Reuse installed local versions to avoid replacing working images during an
+  # overnight test run; their versions remain pinned in the profile receipt.
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-02-07T23-21-09Z
+  peerdb-minio:
+    image: quay.io/minio/minio:RELEASE.2025-02-07T23-21-09Z

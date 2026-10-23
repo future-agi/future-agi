@@ -21,6 +21,7 @@ import {
   useUpdateErrorFeedIssue,
 } from "src/api/errorFeed/error-feed";
 import ErrorStatusChip from "./components/ErrorStatusChip";
+import EscalationReason from "./components/EscalationReason";
 import ErrorSeverityBadge from "./components/ErrorSeverityBadge";
 import ErrorMetadataPanel, {
   LinearTeamPicker,
@@ -297,6 +298,7 @@ export default function ErrorFeedDetailView() {
                   }}
                 />
               </Stack>
+              <EscalationReason issue={currentError} />
             </Stack>
 
             {/* Action buttons */}
@@ -384,7 +386,7 @@ export default function ErrorFeedDetailView() {
                 onClick={() =>
                   updateIssue.mutate({
                     clusterId: currentError.cluster_id,
-                    status: "escalating",
+                    status: "for_review",
                   })
                 }
                 sx={{
@@ -396,7 +398,7 @@ export default function ErrorFeedDetailView() {
                   color: "text.secondary",
                 }}
               >
-                Ignore issue
+                Move to review
               </Button>
             </Stack>
           </Stack>

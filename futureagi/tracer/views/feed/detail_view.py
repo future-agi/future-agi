@@ -90,6 +90,7 @@ class FeedDetailView(ErrorFeedLicenseRequired, APIView):
             )
 
         payload = FeedUpdatePayload(
+            actor_id=request.user.id,
             status=request.validated_data.get("status"),
             severity=request.validated_data.get("severity"),
             assignee=request.validated_data.get("assignee"),

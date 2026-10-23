@@ -35,6 +35,17 @@ if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
   SERVICES=(app postgres clickhouse mock-llm)
 fi
 
+# Dedicated entitled profile for deterministic Error Feed source/time fixtures.
+# The generated development license stays outside the checkout, never in .env.
+if [[ "${E2E_STACK:-distributed}" == error-feed ]]; then
+  ENV_FILE="$ROOT/e2e/stack/error-feed-e2e.env"
+  COMPOSE=(docker compose --env-file "$ENV_FILE"
+    --env-file "${TH8613_LICENSE_ENV:?Set TH8613_LICENSE_ENV to the generated local test license file}"
+    --project-directory "${TH8613_BIND_ROOT:-$ROOT}"
+    -f "$ROOT/docker-compose.distributed.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
+    -f "$ROOT/e2e/stack/docker-compose.error-feed-e2e.yml" -p futureagi-th8613-e2e)
+fi
+
 BUILD_TARGETS="backend|frontend|collector|all|standalone|standalone-app"
 
 backend_port() { grep '^BACKEND_PORT=' "$ENV_FILE" | cut -d= -f2; }
@@ -100,6 +111,19 @@ build_target() {
     *) echo "usage: bin/e2e build $BUILD_TARGETS"; exit 2 ;;
   esac
 }
+
+# This profile has deliberately separate host ports. Its test/UI commands must
+# target the same stack as `up`, while honoring explicit attach-mode overrides.
+if [[ "${E2E_STACK:-distributed}" == error-feed ]]; then
+  profile_port() { rg --no-filename --no-line-number "^${1}=" "$ENV_FILE" | cut -d= -f2; }
+  export E2E_APP_URL="${E2E_APP_URL:-http://localhost:$(frontend_port)}"
+  export E2E_API_URL="${E2E_API_URL:-http://localhost:$(backend_port)}"
+  export E2E_COLLECTOR_URL="${E2E_COLLECTOR_URL:-http://localhost:$(profile_port FI_COLLECTOR_OTLP_HTTP_PORT)}"
+  export E2E_GATEWAY_URL="${E2E_GATEWAY_URL:-http://localhost:$(profile_port AGENTCC_GATEWAY_PORT)}"
+  export E2E_CH_URL="${E2E_CH_URL:-http://localhost:$(ch_port)}"
+  export E2E_CH_PASSWORD="${E2E_CH_PASSWORD:-$(ch_password)}"
+  export E2E_PG_URL="${E2E_PG_URL:-postgresql://futureagi:futureagi@localhost:$(profile_port PG_PORT)/futureagi}"
+fi
 
 cmd="${1:-}"; shift || true
 case "$cmd" in

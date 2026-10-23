@@ -518,6 +518,8 @@ import type {
   FalconMemoryDetailResponseApi,
   FalconMemoryListResponseApi,
   FeedDetailApiResponseApi,
+  FeedEscalationSettingsApiResponseApi,
+  FeedEscalationSettingsBodyApi,
   FeedListApiResponseApi,
   FeedRedirectApiResponseApi,
   FeedSidebarApiResponseApi,
@@ -71513,6 +71515,125 @@ export const tracerEvalTaskDelete = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type tracerFeedEscalationSettingsListResponse200 = {
+  data: FeedEscalationSettingsApiResponseApi;
+  status: 200;
+};
+
+export type tracerFeedEscalationSettingsListResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerFeedEscalationSettingsListResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerFeedEscalationSettingsListResponse409 = {
+  data: ApiErrorResponseApi;
+  status: 409;
+};
+
+export type tracerFeedEscalationSettingsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 409>;
+};
+
+export type tracerFeedEscalationSettingsListResponseSuccess =
+  tracerFeedEscalationSettingsListResponse200 & {
+    headers: Headers;
+  };
+export type tracerFeedEscalationSettingsListResponseError = (
+  | tracerFeedEscalationSettingsListResponse400
+  | tracerFeedEscalationSettingsListResponse403
+  | tracerFeedEscalationSettingsListResponse409
+  | tracerFeedEscalationSettingsListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerFeedEscalationSettingsListResponse =
+  | tracerFeedEscalationSettingsListResponseSuccess
+  | tracerFeedEscalationSettingsListResponseError;
+
+export const getTracerFeedEscalationSettingsListUrl = () => {
+  return `/tracer/feed/escalation-settings/`;
+};
+
+export const tracerFeedEscalationSettingsList = async (
+  options?: RequestInit,
+): Promise<tracerFeedEscalationSettingsListResponse> => {
+  return apiMutator<tracerFeedEscalationSettingsListResponse>(
+    getTracerFeedEscalationSettingsListUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerFeedEscalationSettingsPartialUpdateResponse200 = {
+  data: FeedEscalationSettingsApiResponseApi;
+  status: 200;
+};
+
+export type tracerFeedEscalationSettingsPartialUpdateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerFeedEscalationSettingsPartialUpdateResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerFeedEscalationSettingsPartialUpdateResponse409 = {
+  data: ApiErrorResponseApi;
+  status: 409;
+};
+
+export type tracerFeedEscalationSettingsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 409>;
+};
+
+export type tracerFeedEscalationSettingsPartialUpdateResponseSuccess =
+  tracerFeedEscalationSettingsPartialUpdateResponse200 & {
+    headers: Headers;
+  };
+export type tracerFeedEscalationSettingsPartialUpdateResponseError = (
+  | tracerFeedEscalationSettingsPartialUpdateResponse400
+  | tracerFeedEscalationSettingsPartialUpdateResponse403
+  | tracerFeedEscalationSettingsPartialUpdateResponse409
+  | tracerFeedEscalationSettingsPartialUpdateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerFeedEscalationSettingsPartialUpdateResponse =
+  | tracerFeedEscalationSettingsPartialUpdateResponseSuccess
+  | tracerFeedEscalationSettingsPartialUpdateResponseError;
+
+export const getTracerFeedEscalationSettingsPartialUpdateUrl = () => {
+  return `/tracer/feed/escalation-settings/`;
+};
+
+export const tracerFeedEscalationSettingsPartialUpdate = async (
+  feedEscalationSettingsBodyApi: FeedEscalationSettingsBodyApi,
+  options?: RequestInit,
+): Promise<tracerFeedEscalationSettingsPartialUpdateResponse> => {
+  return apiMutator<tracerFeedEscalationSettingsPartialUpdateResponse>(
+    getTracerFeedEscalationSettingsPartialUpdateUrl(),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(feedEscalationSettingsBodyApi),
     },
   );
 };

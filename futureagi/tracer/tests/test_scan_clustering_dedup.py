@@ -45,7 +45,9 @@ def _issue(project_id: str, brief: str = BRIEF, category: str = CATEGORY):
 def _expected_id(project_id: str, category: str, brief: str) -> str:
     """Mirror the id derivation so the test pins the contract, not the impl."""
     base = f"{project_id}|scanner|{category}|{brief[:100]}"
-    return f"S-{hashlib.md5(base.encode(), usedforsecurity=False).hexdigest()[:8].upper()}"
+    return (
+        f"S-{hashlib.md5(base.encode(), usedforsecurity=False).hexdigest()[:8].upper()}"
+    )
 
 
 def _seed_cluster(project, cluster_id: str, *, title: str, category: str):
@@ -76,18 +78,16 @@ class TestCreateClusterDeduplication:
         # The create-path collaborators are patched too, so that if the join is
         # ever regressed this fails on the assertions below (a second cluster
         # exists) rather than blowing up inside the create path.
-        with patch(
-            "tracer.queries.scan_clustering.assign_to_cluster"
-        ) as assign, patch(
-            "tracer.queries.scan_clustering._seed_severity", return_value="high"
-        ) as seed_sev, patch(
-            "tracer.queries.scan_clustering.ensure_centroid_table"
-        ), patch(
-            "tracer.queries.scan_clustering.ClickHouseVectorDB"
-        ), patch(
-            "tracer.queries.scan_clustering.ErrorClusterTraces"
-        ), patch(
-            "tracer.queries.scan_clustering.TraceScanIssue"
+        with (
+            patch("tracer.queries.scan_clustering.assign_to_cluster") as assign,
+            patch(
+                "tracer.queries.scan_clustering._seed_severity", return_value="high"
+            ) as seed_sev,
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+            patch("tracer.queries.scan_clustering.ClickHouseVectorDB"),
+            patch("tracer.queries.scan_clustering.ErrorClusterTraces"),
+            patch("tracer.queries.scan_clustering.TraceScanIssue"),
+            patch("tracer.services.feed_escalation_publication.bind_scan_occurrence"),
         ):
             returned = create_cluster(str(project.id), issue, [0.1, 0.2, 0.3])
 
@@ -110,18 +110,14 @@ class TestCreateClusterDeduplication:
         )
 
         issue = _issue(project.id)
-        with patch(
-            "tracer.queries.scan_clustering.assign_to_cluster"
-        ) as assign, patch(
-            "tracer.queries.scan_clustering._seed_severity", return_value="high"
-        ), patch(
-            "tracer.queries.scan_clustering.ensure_centroid_table"
-        ), patch(
-            "tracer.queries.scan_clustering.ClickHouseVectorDB"
-        ), patch(
-            "tracer.queries.scan_clustering.ErrorClusterTraces"
-        ), patch(
-            "tracer.queries.scan_clustering.TraceScanIssue"
+        with (
+            patch("tracer.queries.scan_clustering.assign_to_cluster") as assign,
+            patch("tracer.queries.scan_clustering._seed_severity", return_value="high"),
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+            patch("tracer.queries.scan_clustering.ClickHouseVectorDB"),
+            patch("tracer.queries.scan_clustering.ErrorClusterTraces"),
+            patch("tracer.queries.scan_clustering.TraceScanIssue"),
+            patch("tracer.services.feed_escalation_publication.bind_scan_occurrence"),
         ):
             returned = create_cluster(str(project.id), issue, [0.1, 0.2, 0.3])
 
@@ -139,18 +135,14 @@ class TestCreateClusterDeduplication:
         _seed_cluster(project, other, title=BRIEF, category=CATEGORY)
 
         issue = _issue(project.id, category="Goal Deviation")
-        with patch(
-            "tracer.queries.scan_clustering.assign_to_cluster"
-        ) as assign, patch(
-            "tracer.queries.scan_clustering._seed_severity", return_value="high"
-        ), patch(
-            "tracer.queries.scan_clustering.ensure_centroid_table"
-        ), patch(
-            "tracer.queries.scan_clustering.ClickHouseVectorDB"
-        ), patch(
-            "tracer.queries.scan_clustering.ErrorClusterTraces"
-        ), patch(
-            "tracer.queries.scan_clustering.TraceScanIssue"
+        with (
+            patch("tracer.queries.scan_clustering.assign_to_cluster") as assign,
+            patch("tracer.queries.scan_clustering._seed_severity", return_value="high"),
+            patch("tracer.queries.scan_clustering.ensure_centroid_table"),
+            patch("tracer.queries.scan_clustering.ClickHouseVectorDB"),
+            patch("tracer.queries.scan_clustering.ErrorClusterTraces"),
+            patch("tracer.queries.scan_clustering.TraceScanIssue"),
+            patch("tracer.services.feed_escalation_publication.bind_scan_occurrence"),
         ):
             returned = create_cluster(str(project.id), issue, [0.1, 0.2, 0.3])
 

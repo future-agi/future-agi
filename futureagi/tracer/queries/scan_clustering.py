@@ -316,7 +316,7 @@ def create_cluster(
                 issue_category=issue.category,
                 fix_layer=issue.fix_layer,
                 title=issue.brief,
-                status=FeedIssueStatus.ESCALATING,
+                status=FeedIssueStatus.FOR_REVIEW,
                 error_type=issue.group,
                 combined_impact=_severity_to_impact(seed_sev),
                 priority=severity_to_priority(seed_sev),
@@ -340,14 +340,10 @@ def create_cluster(
         assign_to_cluster(cluster_id, project_id, issue, embedding)
         return cluster_id
 
-    # Link issue → cluster
-    TraceScanIssue.objects.filter(id=issue.issue_id).update(cluster=cluster)
+    from tracer.services.feed_escalation_publication import bind_scan_occurrence
 
-    # Create ErrorClusterTraces junction
-    ErrorClusterTraces.objects.create(
-        cluster=cluster,
-        trace_id=issue.trace_id,
-        scan_issue_id=issue.issue_id,
+    bind_scan_occurrence(
+        cluster=cluster, finding_id=issue.issue_id, trace_id=issue.trace_id
     )
     from tracer.services.feed_alerts.events import record_issue_event
 
@@ -570,11 +566,10 @@ def assign_to_cluster(
     # Link issue → cluster. Both membership writes are idempotent: re-running the
     # scan over a trace updates the issue row it already owns, and matches the
     # junction row it already has.
-    TraceScanIssue.objects.filter(id=issue.issue_id).update(cluster=cluster)
-    ErrorClusterTraces.objects.get_or_create(
-        cluster=cluster,
-        trace_id=issue.trace_id,
-        defaults={"scan_issue_id": issue.issue_id},
+    from tracer.services.feed_escalation_publication import bind_scan_occurrence
+
+    bind_scan_occurrence(
+        cluster=cluster, finding_id=issue.issue_id, trace_id=issue.trace_id
     )
 
     # Both membership counts are DERIVED from the rows above, never incremented.
@@ -979,12 +974,21 @@ def _merge_pg(keep_id: str, absorb_id: str, project_id: str):
 
     Returns the (kept_id, absorbed_id) actually merged, or None when the pair was
     skipped because both sides are human-triaged."""
-    keep = TraceErrorGroup.objects.get(cluster_id=keep_id, project_id=project_id)
-    absorb = TraceErrorGroup.objects.get(cluster_id=absorb_id, project_id=project_id)
+    # Match publication's ordered issue locks before moving any memberships.
+    locked = list(
+        TraceErrorGroup.objects.select_for_update()
+        .filter(
+            cluster_id__in=[keep_id, absorb_id],
+            project_id=project_id,
+        )
+        .order_by("id")
+    )
+    by_cluster = {row.cluster_id: row for row in locked}
+    keep, absorb = by_cluster[keep_id], by_cluster[absorb_id]
     if is_grouping_issue(keep.pk) or is_grouping_issue(absorb.pk):
         return None
-    if absorb.status in _TRIAGED:
-        if keep.status in _TRIAGED:
+    if absorb.status in _TRIAGED or absorb.status_origin == "manual":
+        if keep.status in _TRIAGED or keep.status_origin == "manual":
             return None  # both triaged: leave both alone
         keep, absorb = absorb, keep  # survive the triaged one instead
         keep_id, absorb_id = absorb_id, keep_id
@@ -1040,6 +1044,9 @@ def _merge_pg(keep_id: str, absorb_id: str, project_id: str):
     )
 
     absorb.delete()
+    from tracer.services.feed_escalation import request_evaluation
+
+    request_evaluation(keep.pk, structural=True)
     return keep_id, absorb_id
 
 

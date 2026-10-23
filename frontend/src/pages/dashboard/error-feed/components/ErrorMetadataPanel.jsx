@@ -199,13 +199,14 @@ const STATUS_OPTIONS = [
   },
 ];
 
-function StatusDropdown({ clusterId, current }) {
+export function StatusDropdown({ clusterId, current }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const updateIssue = useUpdateErrorFeedIssue();
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const statusBase =
-    STATUS_OPTIONS.find((s) => s.value === current) || STATUS_OPTIONS[0];
+    STATUS_OPTIONS.find((s) => s.value === current) ||
+    STATUS_OPTIONS.find((s) => s.value === "for_review");
   const cur = {
     ...statusBase,
     color: isDark ? statusBase.darkColor : statusBase.color,
@@ -214,6 +215,9 @@ function StatusDropdown({ clusterId, current }) {
   return (
     <>
       <Box
+        component="button"
+        type="button"
+        aria-label="Change status"
         onClick={(e) => {
           e.stopPropagation();
           setAnchorEl(e.currentTarget);
@@ -272,30 +276,29 @@ function StatusDropdown({ clusterId, current }) {
           </Typography>
         </Box>
         <Divider sx={{ borderColor: "divider" }} />
-        {STATUS_OPTIONS.filter((option) => option.value !== current).map(
-          (option) => {
-            const statusColor = isDark ? option.darkColor : option.color;
-            return (
-              <MenuItem
-                key={option.value}
-                onClick={() => {
-                  updateIssue.mutate({ clusterId, status: option.value });
-                  setAnchorEl(null);
-                }}
-                sx={{ gap: 1, fontSize: "13px", py: 0.75 }}
-              >
-                <Iconify
-                  icon={option.icon}
-                  width={15}
-                  sx={{ color: statusColor }}
-                />
-                <Typography fontSize="12px" sx={{ color: statusColor }}>
-                  {option.label}
-                </Typography>
-              </MenuItem>
-            );
-          },
-        )}
+        {STATUS_OPTIONS.map((option) => {
+          const statusColor = isDark ? option.darkColor : option.color;
+          return (
+            <MenuItem
+              key={option.value}
+              selected={option.value === current}
+              onClick={() => {
+                updateIssue.mutate({ clusterId, status: option.value });
+                setAnchorEl(null);
+              }}
+              sx={{ gap: 1, fontSize: "13px", py: 0.75 }}
+            >
+              <Iconify
+                icon={option.icon}
+                width={15}
+                sx={{ color: statusColor }}
+              />
+              <Typography fontSize="12px" sx={{ color: statusColor }}>
+                {option.label}
+              </Typography>
+            </MenuItem>
+          );
+        })}
       </Menu>
     </>
   );
