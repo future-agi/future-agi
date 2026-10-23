@@ -734,18 +734,43 @@ export default function WidgetChart({
             const cellConfig = s.unit
               ? { ...leftAxisFormatConfig, ...getUnitRendering(s.unit) }
               : leftAxisFormatConfig;
+            const format = (number) =>
+              formatValueWithConfig(number, cellConfig, {
+                fallbackDecimals: autoDecimals,
+              });
+            // A single persisted derived-metric window can carry its 95%
+            // interval; it is advisory text and never replaces the value.
+            const point = s.data?.length === 1 ? s.data[0] : null;
+            const hasInterval =
+              value != null && point?.ci_low != null && point?.ci_high != null;
             return (
               <Box key={i} sx={{ textAlign: "center" }}>
                 <Typography variant="h3" sx={{ color: colorFor(s.name) }}>
-                  {value == null
-                    ? "—"
-                    : formatValueWithConfig(value, cellConfig, {
-                        fallbackDecimals: autoDecimals,
-                      })}
+                  {value == null ? "—" : format(value)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
                   {s.name}
                 </Typography>
+                {hasInterval && (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    display="block"
+                    data-testid="metric-card-interval"
+                  >
+                    {`95% interval ${format(point.ci_low)} – ${format(point.ci_high)}`}
+                  </Typography>
+                )}
+                {value != null && point?.ci_reason && (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    display="block"
+                    data-testid="metric-card-interval"
+                  >
+                    {`No 95% interval: ${point.ci_reason.replaceAll("_", " ")}`}
+                  </Typography>
+                )}
               </Box>
             );
           })}

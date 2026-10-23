@@ -22,6 +22,7 @@ import { paths } from "src/routes/paths";
 import useCanEditDashboard from "src/sections/dashboards/hooks/useCanEditDashboard";
 import MetricInputs from "./MetricInputs";
 import MetricResults from "./MetricResults";
+import MetricContributors from "./MetricContributors";
 import {
   initialForm,
   formFromMetric,
@@ -78,6 +79,7 @@ function MetricEditor({ scope }) {
   const [monitorName, setMonitorName] = useState("");
   const [threshold, setThreshold] = useState("0.8");
   const [operator, setOperator] = useState("less_than");
+  const [alertWhen, setAlertWhen] = useState("point");
   const [email, setEmail] = useState("");
   const projects = useQuery({
     queryKey: ["metric-projects", scope, projectPage, projectSearch],
@@ -137,7 +139,7 @@ function MetricEditor({ scope }) {
       (
         await axios.get(endpoints.derivedMetrics.results(runId), {
           signal,
-          params: { rollup, after, limit: 50 },
+          params: { rollup, after, limit: 50, include_uncertainty: true },
         })
       ).data,
   });
@@ -248,6 +250,7 @@ function MetricEditor({ scope }) {
         metric: metric.id,
         threshold_operator: operator,
         threshold_type: "static",
+        ...(alertWhen === "confident" ? { alert_when: "confident" } : {}),
         critical_threshold_value: Number(threshold),
         alert_frequency: 60,
         ...(email ? { notification_emails: [email] } : {}),
@@ -728,6 +731,17 @@ function MetricEditor({ scope }) {
                     results={displayed.results}
                     rollup={runId ? rollup : "overall"}
                   />
+                  {run.data?.result_id && displayed.results.length > 0 && (
+                    <MetricContributors
+                      key={`${runId}:${run.data.result_id}:${rollup}:${after}`}
+                      scope={scope}
+                      runId={runId}
+                      resultId={run.data.result_id}
+                      projectId={metric.project_id}
+                      rollup={rollup}
+                      groups={displayed.results}
+                    />
+                  )}
                   {runId && (
                     <Stack direction="row">
                       <Button disabled={!after} onClick={() => setAfter("")}>
@@ -806,6 +820,16 @@ function MetricEditor({ scope }) {
                   Create monitor
                 </Button>
               </Stack>
+              <TextField
+                select
+                label="Alert evidence"
+                value={alertWhen}
+                onChange={(event) => setAlertWhen(event.target.value)}
+                helperText="Confidence mode requires the entire fixed-window 95% interval to breach. Missing intervals do not alert. Repeated or overlapping windows are not sequentially corrected."
+              >
+                <MenuItem value="point">Point estimate (default)</MenuItem>
+                <MenuItem value="confident">Whole 95% interval</MenuItem>
+              </TextField>
               <Typography variant="body2" color="text.secondary">
                 Monitors consume new completed runs for the current version,
                 using their frozen filters. No value means no alert, not a

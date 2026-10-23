@@ -1802,6 +1802,10 @@ export const endpoints = {
     run: (id) => apiPath("/tracer/derived-metric-runs/{id}/", { id }),
     results: (id) =>
       apiPath("/tracer/derived-metric-runs/{id}/results/", { id }),
+    contributors: (id) =>
+      apiPath("/tracer/derived-metric-runs/{id}/contributors/", { id }),
+    compare: (id) =>
+      apiPath("/tracer/derived-metric-runs/{id}/compare/", { id }),
     recompute: (id) =>
       apiPath("/tracer/derived-metric-runs/{id}/recompute/", { id }),
   },

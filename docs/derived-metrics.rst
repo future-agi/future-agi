@@ -125,6 +125,102 @@ Semantics
   the same filter field (filters are ANDed). A run or preview whose filters
   contradict the saved version's own exact filter is rejected the same way.
 
+Uncertainty
+-----------
+
+Every persisted rollup row carries a design-based standard error and a two-sided
+95% interval, or ``ci_status = 'not_estimable'`` with a ``ci_reason``. The
+estimators, with the selection unit as the primary sampling unit, are documented
+in ``tracer/services/derived_metrics/uncertainty.py``:
+
+* ``stratified_wor_fpc`` (closed sampling cohorts): a closed window draws
+  ``n_h = p_h * N_h`` units per stratum without replacement, and both the inclusion
+  probability and the stratum ``population_size`` are frozen with each unit
+  (``derived_metric_inputs.sampling_design`` / ``population_size``). Ratios and
+  means are linearized (``u = y - R*x``); the finite-population correction
+  ``1 - p_h`` applies; sampled units outside a rollup group (a narrower window, a
+  filter, another group, missing inputs) contribute ``u = 0`` (domain estimation).
+* ``poisson`` (live policies, which keep each unit independently with
+  probability ``p``): ``V = sum((1 - p) * (u/p)^2) / X^2``.
+* ``iid_units`` (unweighted ratios and means): a model-based interval that treats
+  the window's units as independent draws of the underlying process. An
+  unweighted total of every unit is an exact count and has no interval.
+
+Rates (a 0/1 numerator inside a 0/1 denominator) use a Wilson score interval at
+the design-effective sample size ``p(1-p)/V``; other metrics use
+``value +/- t * SE``. Both use ``t(0.975, units - strata)``. A weighted window whose
+units were all kept with certainty is a census with a zero-width interval.
+
+No interval is produced when the design cannot support one: the snapshot predates
+design capture, designs are mixed, a closed stratum has a single sampled unit or
+no population size or an inconsistent probability, fewer than two units are
+valid, the value itself is missing, or expanded second moments suffer numerical
+cancellation (``unstable_variance``). A stratum with more valid units than its
+recorded sample size is inconsistent. Intervals are conditional on the documented
+sampling design (or the explicit independent-unit model); evaluator error,
+nonresponse bias, and dependence between distinct selection units are not modelled.
+They are fixed-window, approximate intervals, not confidence sequences.
+
+The interval is persisted (``std_error``, ``ci_low``, ``ci_high``, ``effective_n``
+(Kish), ``ci_df``, ``ci_method``, ``ci_interval``, ``ci_status``, ``ci_reason``),
+readable through the ``derived_metrics`` SQL view, returned on previews and, with
+``include_uncertainty=true``, on persisted results, and shown on dashboard metric
+cards as text beside the value. Persisted rows from before this column existed
+report ``not_computed``.
+
+Calibration is measured, not assumed. ``tracer/tests/test_derived_metric_uncertainty.py``
+draws 2,000 seeded replicates per design from known synthetic populations,
+computes each replicate with the production rollup SQL on ClickHouse, checks
+every replicate against an independent NumPy reference to 1e-9 relative, and
+requires empirical coverage within [92%, 98%], bias within 4 Monte Carlo standard
+errors and mean estimated variance within 15% of the empirical variance. With
+seed 20261023 and its four successive seeds on ClickHouse 25.3, measured coverage
+was 93.10% (closed stratified rate), 93.85% (live continuous ratio), 94.65%
+(closed total), 93.90% (unweighted process mean) and 95.35% (near-boundary rate).
+These are calibration results for those fixtures, not guaranteed coverage for
+arbitrary populations. The closed-rate weighted bias was 0.00028525 versus
+-0.17443587 for the unweighted estimator on the same draws.
+
+Contributor evidence and version comparison
+-------------------------------------------
+
+``GET /tracer/derived-metric-runs/{id}/contributors/`` reads only the authorized
+run's frozen snapshot. Select ``rollup`` and ``group_key``; ``limit`` is 1–100
+(default 20). Units are ranked by absolute leave-one-out influence, with unit ID
+as a deterministic tie-break. The response includes weight, raw and weighted
+numerator/denominator, trace/session identity, missing-input counts and bounded
+example IDs. ``truncated`` reports an incomplete top-K list; counts cover all
+units. Removing the last denominator produces no influence, not zero. The result
+page's optional contributor table leaves the existing result columns unchanged.
+
+``GET /tracer/derived-metric-runs/{candidate}/compare/?baseline_run_id={baseline}``
+compares two committed runs of the same metric, window, filters, task and unit
+grain, including different formula versions. It returns candidate minus baseline
+and both committed attempt IDs. It never re-reads live telemetry. Identical
+frozen formulas and exact census results have exact delta intervals. Other deltas
+return ``paired_covariance_unavailable``: marginal intervals alone cannot identify
+covariance between overlapping samples. General paired delta intervals are not
+implemented, and independence is never assumed silently.
+
+Confidence-aware monitors
+-------------------------
+
+``alert_when`` defaults to ``point``, preserving existing threshold behavior.
+For derived metrics only, ``confident`` requires the whole interval beyond a
+static above/below threshold. Above compares the lower bound; below compares the
+upper bound. Critical and warning precedence and the existing per-run delivery
+ledger remain unchanged. An absent interval cannot trigger a confident alert.
+This is a fixed-window test; repeated and overlapping windows have no sequential
+or multiple-testing correction. Email/Slack delivery remains best-effort.
+
+``test_derived_monitor_confidence.py`` measures both noise suppression and power:
+seed 20261024, 2,000 independent 50-unit windows per state, true rate 0.92 versus
+a 0.90 threshold produced 397 point alerts and 17 confident alerts. A shift to
+0.75 was detected within three windows in 99.40% of 666 disjoint three-window
+replicates. This uses the production estimator and threshold code; notification
+transport is stubbed. It does not establish delivery performance or a sequential
+false-positive guarantee.
+
 Reproducibility and storage
 ---------------------------
 
@@ -217,7 +313,9 @@ ClickHouse abort budgets: 60 seconds/statement, 512 MiB query memory, 20 million
 source rows / 8 GiB read, one million groups and two threads. Abort modes are “throw”,
 never partial-success truncation. For a session or user metric with evaluation
 inputs, the evaluation-target map holds one group per span plus one per session,
-so the group budget covers both in the window.
+so the group budget covers both in the window. Uncertainty first aggregates by
+(rollup group, sampling stratum); that intermediate cardinality is subject to the
+same group budget and fails closed rather than dropping strata.
 
 Interactive previews run synchronously on a web worker, so they are bounded more
 tightly: 15 seconds, 256 MiB memory, 5 million source rows / 2 GiB read, 250,000
@@ -236,7 +334,10 @@ budget must use smaller closed windows. This is a correctness-preserving workloa
 limit, not a claim to have benchmarked a billion-span population.
 
 Deployment applies additive PostgreSQL migrations and
-``028_derived_metrics.sql`` through the existing schema runner. Existing raw span
+``028_derived_metrics.sql`` followed by ``029_derived_metric_uncertainty.sql``
+through the existing schema runner. The latter adds columns idempotently and
+refreshes the committed-only SQL view; it has its own receipt, so installations
+that already applied 028 upgrade without forcing a checksum change. Existing raw span
 and evaluation schemas are not rewritten. Provision the ClickHouse schema before
 enabling writes, and register the existing exact-aggregation task queue. An
 application writer connection is required for snapshot persistence; readonly-only

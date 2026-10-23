@@ -60,6 +60,72 @@ describe("derived metric result semantics", () => {
     expect(screen.getByText("invalid probability")).toBeInTheDocument();
     expect(screen.getAllByText("—")).toHaveLength(3);
   });
+
+  const uncertainty = (overrides) => ({
+    confidence_level: 0.95,
+    status: "ok",
+    reason: "",
+    method: "stratified_wor_fpc",
+    interval: "wilson",
+    std_error: 0.05,
+    ci_low: 0.4,
+    ci_high: 0.6,
+    effective_n: 120,
+    degrees_of_freedom: 118,
+    ...overrides,
+  });
+
+  it("shows the 95% interval in its own table and keeps the value table unchanged", () => {
+    render(
+      <MetricResults
+        results={[
+          row({ value: 0.5, numerator: 1, uncertainty: uncertainty() }),
+        ]}
+      />,
+    );
+    const values = screen.getByRole("table", { name: "Metric results" });
+    expect(
+      within(values)
+        .getAllByRole("cell")
+        .map((cell) => cell.textContent),
+    ).toEqual(["All units", "0.5", "1", "2", "ok", "2", "2", "0", "0"]);
+    const interval = screen.getByRole("table", { name: "Metric uncertainty" });
+    const cells = within(interval)
+      .getAllByRole("cell")
+      .map((cell) => cell.textContent);
+    expect(cells).toEqual([
+      "All units",
+      "0.4 – 0.6",
+      "0.05",
+      "120",
+      "Stratified sample (finite population) · Wilson",
+    ]);
+  });
+
+  it("states why an interval is not estimable instead of showing one", () => {
+    render(
+      <MetricResults
+        results={[
+          row({
+            value: 3,
+            uncertainty: uncertainty({
+              status: "not_estimable",
+              reason: "single_unit_stratum",
+              interval: "",
+              std_error: null,
+              ci_low: null,
+              ci_high: null,
+            }),
+          }),
+        ]}
+      />,
+    );
+    const interval = screen.getByRole("table", { name: "Metric uncertainty" });
+    expect(
+      within(interval).getByText("Not estimable: single unit stratum"),
+    ).toBeInTheDocument();
+    expect(within(interval).queryByText(/–/)).not.toBeInTheDocument();
+  });
 });
 
 describe("derived metric form contract", () => {
