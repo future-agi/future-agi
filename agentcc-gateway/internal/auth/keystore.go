@@ -159,6 +159,9 @@ type KeyStore struct {
 	// listLoaded is set once a key list from the control plane has been
 	// applied (syncFromList), and never cleared. See KeyListLoaded.
 	listLoaded atomic.Bool
+	// appHasNoKeyTable is whether the control plane's latest answer to a key
+	// sync was 503 migrations_pending. See AppHasNoKeyTable.
+	appHasNoKeyTable atomic.Bool
 }
 
 // NewKeyStore creates a KeyStore from config.
@@ -260,6 +263,29 @@ func (ks *KeyStore) Identity(key *APIKey) Identity {
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
 	return Identity{KeyID: key.ID, OrgID: key.Metadata["org_id"]}
+}
+
+// KeyPeek is what the early key peek reads about a key (the server's
+// peekKeyOrgID), copied under the store lock, so an Update in flight never
+// races it. Update replaces the metadata map and the allowed lists whole and
+// never writes into them, so the copies keep the values they were read with.
+type KeyPeek struct {
+	KeyType          string
+	AllowedModels    []string
+	AllowedProviders []string
+	Metadata         map[string]string
+}
+
+// Peek returns key's KeyPeek, read under the store lock.
+func (ks *KeyStore) Peek(key *APIKey) KeyPeek {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	return KeyPeek{
+		KeyType:          key.KeyType,
+		AllowedModels:    key.AllowedModels,
+		AllowedProviders: key.AllowedProviders,
+		Metadata:         key.Metadata,
+	}
 }
 
 // Lookup finds a key by its raw value without updating last-used metadata.
@@ -811,6 +837,19 @@ func (ks *KeyStore) syncFromList(keys []SyncedKey, fetchedAt time.Time) int {
 // the app lists no key until one is made.
 func (ks *KeyStore) KeyListLoaded() bool {
 	return ks.listLoaded.Load()
+}
+
+// AppHasNoKeyTable reports whether the control plane answered the latest key
+// sync with 503 migrations_pending (ErrAppNotMigrated): its database has no
+// key table yet, as on a new install before its bootstrap job has migrated it,
+// so no key has been made in the app. The store then knows every key the app
+// has, as after an empty first list, but holds no list: any other answer, a
+// failure or a list, clears it, and keys already loaded stay. Server's /readyz
+// counts it in place of a loaded list, so that `helm install --wait`, which
+// runs the chart's post-install bootstrap job only once the gateway is ready,
+// can finish an install with bundled datastores.
+func (ks *KeyStore) AppHasNoKeyTable() bool {
+	return ks.appHasNoKeyTable.Load()
 }
 
 // idTaken reports whether id already belongs to a different key, and logs it.

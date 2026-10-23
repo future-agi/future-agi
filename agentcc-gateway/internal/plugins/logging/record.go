@@ -53,6 +53,14 @@ type TraceRecord struct {
 	// Error context.
 	ErrorMessage string `json:"error_message,omitempty"`
 	ErrorCode    string `json:"error_code,omitempty"`
+	// ErrorFromUpstream is APIError.UpstreamStatus > 0. The openai and azure
+	// adapters set it when they pass a provider's own error.code through, and
+	// models.ErrUpstreamProvider sets it on every error it makes with a
+	// nonzero status; the request log leaves ErrorCode out for these
+	// (flusher.go). It does not mark every provider error: the anthropic,
+	// gemini, bedrock and cohere adapters' parsed errors and
+	// the speech relay's refusals leave it false, with their provider_ codes.
+	ErrorFromUpstream bool `json:"-"`
 
 	// Optional bodies.
 	RequestBody      *models.ChatCompletionRequest  `json:"request_body,omitempty"`
@@ -146,8 +154,9 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 			if rc.OCRResponse != nil {
 				rec.StatusCode = 200
 			}
-		case "anthropic_count_tokens", "genai_count_tokens", "genai_embed":
-			// The handler passes the provider's answer through as it is, so
+		case "anthropic_count_tokens", "genai_count_tokens", "genai_embed", "assistants", "vector_stores", "files":
+			// The handler passes the provider's answer through as it is (or,
+			// for the Files API, serves it from the gateway's file store), so
 			// rc holds no answer: it records the status it answered with,
 			// the provider's own when the provider refused the call. A
 			// count's tokens stay 0 here (it consumes none); the count is in
@@ -175,6 +184,7 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 			rec.StatusCode = apiErr.Status
 			rec.ErrorMessage = apiErr.Message
 			rec.ErrorCode = apiErr.Code
+			rec.ErrorFromUpstream = apiErr.UpstreamStatus > 0
 		} else {
 			if rec.StatusCode == 0 {
 				rec.StatusCode = 500

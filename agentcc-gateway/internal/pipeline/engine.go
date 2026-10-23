@@ -144,13 +144,12 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 
 // RunRequestPlugins runs the request stage of the plugins named, in
 // priority order, and returns the first error, which it records on rc. It is
-// for a handler that sends the request to the provider without Process (the
-// Assistants API and vector store search proxies, a video job), so the
-// plugins named still refuse a request before the provider gets it: the
-// auth plugin, which writes the key's identity the guardrail plugin reads,
-// and the guardrail plugin. A plugin that short-circuits is passed over:
-// such a handler has no answer to serve in place of the provider's. No
-// post-plugin runs.
+// for a handler that sends the request to the provider without Process (a
+// video job), so the plugins named still refuse a request before the
+// provider gets it: the auth plugin, which writes the key's identity the
+// guardrail plugin reads, and the guardrail plugin. A plugin that
+// short-circuits is passed over: such a handler has no answer to serve in
+// place of the provider's. No post-plugin runs.
 func (e *Engine) RunRequestPlugins(ctx context.Context, rc *models.RequestContext, names ...string) *models.APIError {
 	if e == nil {
 		return nil

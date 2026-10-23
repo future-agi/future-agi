@@ -1,115 +1,83 @@
 package models
 
 import (
-	"encoding/json"
 	"testing"
 )
 
-func TestExtractModelFromBody(t *testing.T) {
-	tests := []struct {
-		name string
-		body string
-		want string
+// TestParseAssistantsBody: the model and stream of an Assistants body are
+// read as OpenAI reads them (the exact-case member, the last of a name; null
+// is absent), and a body chat refuses is refused (400 invalid_json): one
+// that is not a JSON object, or a "model" (any case) that is not a string or
+// a "stream" that is not a bool, even where a later member of the name is.
+func TestParseAssistantsBody(t *testing.T) {
+	for _, tt := range []struct {
+		name, body string
+		model      string
+		stream     bool
+		refused    bool
 	}{
-		{"valid model", `{"model":"gpt-4o","instructions":"help"}`, "gpt-4o"},
-		{"missing model", `{"instructions":"help"}`, ""},
-		{"empty body", `{}`, ""},
-		{"malformed json", `{invalid`, ""},
-		{"empty string", ``, ""},
-		{"model with prefix", `{"model":"openai/gpt-4o"}`, "openai/gpt-4o"},
-	}
-	for _, tt := range tests {
+		{"a model", `{"model":"gpt-4o","instructions":"help"}`, "gpt-4o", false, false},
+		{"no model", `{"instructions":"help"}`, "", false, false},
+		{"empty object", `{}`, "", false, false},
+		{"empty body", ``, "", false, false},
+		{"blank body", " \n", "", false, false},
+		{"a provider prefix", `{"model":"openai/gpt-4o"}`, "openai/gpt-4o", false, false},
+		{"two models, the last", `{"model":"gpt-4o-mini","model":"gpt-4o"}`, "gpt-4o", false, false},
+		{"null model", `{"model":null}`, "", false, false},
+		{"a model, then null", `{"model":"gpt-4o","model":null}`, "", false, false},
+		{"another case is not the model", `{"MODEL":"gpt-4o"}`, "", false, false},
+		{"stream", `{"stream":true}`, "", true, false},
+		{"stream false, then true", `{"stream":false,"stream":true}`, "", true, false},
+		{"malformed", `{invalid`, "", false, true},
+		{"a list", `[{"model":"gpt-4o"}]`, "", false, true},
+		{"null", `null`, "", false, true},
+		{"a number model, then a string", `{"model":0,"model":"gpt-4o"}`, "", false, true},
+		{"an object model, then a string", `{"model":{},"model":"gpt-4o"}`, "", false, true},
+		{"a string model, then a number", `{"model":"gpt-4o","model":0}`, "", false, true},
+		{"a number MODEL", `{"MODEL":0,"model":"gpt-4o"}`, "", false, true},
+		{"a number stream, then true", `{"stream":0,"stream":true}`, "", false, true},
+		{"a string stream", `{"stream":"true"}`, "", false, true},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ExtractModelFromBody([]byte(tt.body))
-			if got != tt.want {
-				t.Errorf("ExtractModelFromBody() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestReplaceModelInBody(t *testing.T) {
-	tests := []struct {
-		name     string
-		body     string
-		newModel string
-		wantErr  bool
-		check    func(t *testing.T, result []byte)
-	}{
-		{
-			name:     "replace existing model",
-			body:     `{"model":"openai/gpt-4o","instructions":"help"}`,
-			newModel: "gpt-4o",
-			check: func(t *testing.T, result []byte) {
-				got := ExtractModelFromBody(result)
-				if got != "gpt-4o" {
-					t.Errorf("model = %q, want %q", got, "gpt-4o")
+			b, err := ParseAssistantsBody([]byte(tt.body))
+			if tt.refused {
+				apiErr, ok := err.(*APIError)
+				if !ok || apiErr.Status != 400 || apiErr.Code != "invalid_json" {
+					t.Fatalf("err = %v, want 400 invalid_json", err)
 				}
-			},
-		},
-		{
-			name:     "body without model unchanged",
-			body:     `{"instructions":"help"}`,
-			newModel: "gpt-4o",
-			check: func(t *testing.T, result []byte) {
-				got := ExtractModelFromBody(result)
-				if got != "" {
-					t.Errorf("model = %q, want empty", got)
-				}
-			},
-		},
-		{
-			name:     "preserves other fields",
-			body:     `{"model":"old","name":"test","instructions":"help"}`,
-			newModel: "new",
-			check: func(t *testing.T, result []byte) {
-				got := ExtractModelFromBody(result)
-				if got != "new" {
-					t.Errorf("model = %q, want %q", got, "new")
-				}
-				// Check instructions are preserved.
-				var m struct{ Instructions string `json:"instructions"` }
-				if err := jsonUnmarshal(result, &m); err == nil && m.Instructions != "help" {
-					t.Errorf("instructions not preserved")
-				}
-			},
-		},
-		{
-			name:    "malformed json",
-			body:    `{invalid`,
-			wantErr: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := ReplaceModelInBody([]byte(tt.body), tt.newModel)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if tt.check != nil && err == nil {
-				tt.check(t, result)
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if b.Model != tt.model || b.Stream != tt.stream {
+				t.Errorf("model %q, stream %v; want %q, %v", b.Model, b.Stream, tt.model, tt.stream)
 			}
 		})
 	}
 }
 
-func TestExtractStreamFromBody(t *testing.T) {
-	tests := []struct {
-		name string
-		body string
-		want bool
+// TestAssistantsBodyWithModel: a body with a "model" member is sent written
+// again, with one "model" (the one given, or the member as it came for ""),
+// its other members kept; a body without one is sent as it came.
+func TestAssistantsBodyWithModel(t *testing.T) {
+	for _, tt := range []struct {
+		name, body, model, want string
 	}{
-		{"stream true", `{"stream":true}`, true},
-		{"stream false", `{"stream":false}`, false},
-		{"missing stream", `{"model":"gpt-4o"}`, false},
-		{"malformed json", `{invalid`, false},
-	}
-	for _, tt := range tests {
+		{"a model replaced", `{"model":"openai/gpt-4o","instructions":"help"}`, "gpt-4o", `{"instructions":"help","model":"gpt-4o"}`},
+		{"two models, one sent", `{"model":"gpt-4o-mini","model":"gpt-4o"}`, "gpt-4o", `{"model":"gpt-4o"}`},
+		{"null kept, one sent", `{"model":"gpt-4o","model":null}`, "", `{"model":null}`},
+		{"no model, as it came", `{ "instructions" : "help" }`, "gpt-4o", `{ "instructions" : "help" }`},
+		{"empty body, as it came", ``, "", ``},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ExtractStreamFromBody([]byte(tt.body))
-			if got != tt.want {
-				t.Errorf("ExtractStreamFromBody() = %v, want %v", got, tt.want)
+			b, err := ParseAssistantsBody([]byte(tt.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := b.WithModel(tt.model)
+			if err != nil || string(got) != tt.want {
+				t.Errorf("WithModel(%q) = %s, %v; want %s", tt.model, got, err, tt.want)
 			}
 		})
 	}
@@ -265,9 +233,4 @@ func TestExtractThreadAndRunMessagesContent(t *testing.T) {
 			}
 		})
 	}
-}
-
-// jsonUnmarshal is a test helper using the standard library.
-func jsonUnmarshal(data []byte, v interface{}) error {
-	return json.Unmarshal(data, v)
 }

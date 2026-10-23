@@ -239,6 +239,12 @@ type RequestFlags struct {
 	// when a check on the answer would block: block mode must not let an
 	// answer out unchecked.
 	AnswerUnavailable bool
+	// ClientIncludeUsage is whether the client itself set
+	// stream_options.include_usage on a streaming chat or completions
+	// request. The gateway asks the upstream for usage on every chat stream,
+	// to meter it, but only a client that asked gets the chunk with empty
+	// choices that carries usage (OpenAI's streaming contract).
+	ClientIncludeUsage bool
 }
 
 // PassThroughRequest is a request the guardrail checks read in the chat

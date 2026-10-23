@@ -94,6 +94,7 @@ type logEntry struct {
 	IsStream           bool              `json:"is_stream"`
 	IsError            bool              `json:"is_error"`
 	ErrorMessage       string            `json:"error_message,omitempty"`
+	ErrorCode          string            `json:"error_code,omitempty"`
 	CacheHit           bool              `json:"cache_hit"`
 	FallbackUsed       bool              `json:"fallback_used"`
 	GuardrailTriggered bool              `json:"guardrail_triggered"`
@@ -102,6 +103,7 @@ type logEntry struct {
 	AuthKeyID          string            `json:"auth_key_id,omitempty"`
 	UserID             string            `json:"user_id,omitempty"`
 	SessionID          string            `json:"session_id,omitempty"`
+	RoutingStrategy    string            `json:"routing_strategy,omitempty"`
 	Metadata           map[string]string `json:"metadata,omitempty"`
 	RequestBody        json.RawMessage   `json:"request_body,omitempty"`
 	ResponseBody       json.RawMessage   `json:"response_body,omitempty"`
@@ -586,6 +588,22 @@ func buildLogEntryV1(rec TraceRecord) logEntry {
 	if len(rec.RequestHeaders) > 0 {
 		reqHeaders, _ = json.Marshal(rec.RequestHeaders)
 	}
+	// error_code never carries a provider's own code as it is: Django reads a
+	// budget code there as the gateway's refusal (log_ingestion.py
+	// _budget_error_code), and the openai and azure adapters pass a
+	// provider's error.code through unchanged (parseProviderError), so a
+	// provider answering budget_exceeded must not raise budget.exceeded.
+	// Those errors set UpstreamStatus, as does every error
+	// models.ErrUpstreamProvider makes with a nonzero status, and their code
+	// is left out. error_code is not only the gateway's own codes, though: the
+	// anthropic, gemini, bedrock and cohere adapters' parsed
+	// errors, the speech relay's refusals and a provider that never answered
+	// (provider_0) leave UpstreamStatus at 0, so their provider_ codes reach
+	// error_code. None of them can equal a budget code.
+	errorCode := rec.ErrorCode
+	if rec.ErrorFromUpstream {
+		errorCode = ""
+	}
 	// Extract cost from metadata to promote as top-level field.
 	var cost float64
 	if costStr, ok := rec.Metadata["cost"]; ok {
@@ -605,6 +623,7 @@ func buildLogEntryV1(rec TraceRecord) logEntry {
 		IsStream:           rec.IsStream,
 		IsError:            rec.StatusCode >= 400,
 		ErrorMessage:       rec.ErrorMessage,
+		ErrorCode:          errorCode,
 		CacheHit:           rec.CacheHit,
 		FallbackUsed:       rec.FallbackUsed,
 		GuardrailTriggered: rec.GuardrailTriggered,
@@ -613,6 +632,7 @@ func buildLogEntryV1(rec TraceRecord) logEntry {
 		AuthKeyID:          rec.AuthKeyID,
 		UserID:             rec.UserID,
 		SessionID:          rec.SessionID,
+		RoutingStrategy:    rec.Metadata["routing_strategy"],
 		Metadata:           rec.Metadata,
 		RequestBody:        reqBody,
 		ResponseBody:       respBody,

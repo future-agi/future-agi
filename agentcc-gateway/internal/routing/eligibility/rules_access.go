@@ -2,6 +2,15 @@ package eligibility
 
 import "github.com/futureagi/agentcc-gateway/internal/models"
 
+// CheckKeyACL runs rule 1 (key_acl) alone on in, for an API that names its
+// model but is not routed (the Assistants API): a key it refuses there gets
+// the code and reason Check gives the same key and model on an explicit
+// route.
+func CheckKeyACL(in *Input) (code, reason string) {
+	c := checker{in: *in}
+	return checkKeyACL(&c)
+}
+
 // checkKeyACL is rule 1: the key's allowed_models, allowed_providers and
 // access groups, judged on the model the candidate would be sent, never the
 // literal "auto". The provider refusal carries the message every

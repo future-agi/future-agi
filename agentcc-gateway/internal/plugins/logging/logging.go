@@ -67,8 +67,10 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		return pipeline.ResultContinue()
 	}
 
-	// Skip logging for requests without a model (e.g., health checks that somehow enter the pipeline).
-	if rc.Model == "" && rc.Request == nil {
+	// A request without a model is logged only on an API whose requests may
+	// name none (loggedWithoutModel); any other (a health check that somehow
+	// enters the pipeline) is not.
+	if rc.Model == "" && rc.Request == nil && !loggedWithoutModel(rc.EndpointType) {
 		return pipeline.ResultContinue()
 	}
 
@@ -113,6 +115,19 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	}
 
 	return pipeline.ResultContinue()
+}
+
+// loggedWithoutModel reports whether endpoint is an API whose requests are
+// logged though they may name no model: the Assistants, Vector Stores and
+// Files APIs, which the gateway passes through (a list, a retrieval, a
+// vector store or a file names none). Each request on them has a request
+// log entry, as on the model endpoints.
+func loggedWithoutModel(endpoint string) bool {
+	switch endpoint {
+	case "assistants", "vector_stores", "files":
+		return true
+	}
+	return false
 }
 
 // contentMode is the request's content mode: the one the

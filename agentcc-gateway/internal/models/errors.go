@@ -49,8 +49,22 @@ type APIError struct {
 	Metadata any
 	// RetryAfterSec, when positive, is sent as the Retry-After header.
 	RetryAfterSec int
-	// UpstreamStatus is the HTTP status the provider itself answered with,
-	// 0 when the error is the gateway's own or the provider never answered.
+	// UpstreamStatus is the HTTP status the error was made with, when that
+	// is set: the openai and azure adapters put the provider's own status
+	// here when they parse its JSON error (parseProviderError), and
+	// ErrUpstreamProvider puts here the status it is given. That is the
+	// provider's status on an adapter's raw-body and unreadable-response
+	// paths and on the capability core's vendor 4xx, but a fixed 502 on
+	// some of the gateway's own failures (the provider returned no stream
+	// or closed it before any chunk, a provider or failover target is not
+	// found, a speech dial got no answer, a gemini speech answer has no
+	// audio the gateway can decode). It is 0 when the provider
+	// never answered (ErrUpstreamProvider(0, ...)), on the gateway's other
+	// errors, and also on the errors the anthropic, gemini, bedrock and
+	// cohere adapters parse from a provider's JSON body and on the speech
+	// relay's handshake refusals: those carry the provider's answer only in
+	// Code (provider_<status>, or the provider's error type or RPC status),
+	// from which routing's upstreamStatusOf reads a status when this is 0.
 	// Status is what the client gets (an upstream 5xx is a 502); retry,
 	// failover and circuit breaker status lists match either one. Never
 	// written to the client.
@@ -105,7 +119,8 @@ func ErrInternal(message string) *APIError {
 
 // ErrUpstreamProvider is a provider's failure the gateway answers as a 502:
 // status is the provider's own HTTP status (0 when it never answered), kept
-// in the code ("provider_<status>") and as UpstreamStatus.
+// in the code ("provider_<status>") and as UpstreamStatus. Some of the
+// gateway's own failures pass a fixed 502 instead (see UpstreamStatus).
 func ErrUpstreamProvider(status int, message string) *APIError {
 	e := newAPIError(http.StatusBadGateway, ErrTypeUpstream, fmt.Sprintf("provider_%d", status), message)
 	e.UpstreamStatus = status
