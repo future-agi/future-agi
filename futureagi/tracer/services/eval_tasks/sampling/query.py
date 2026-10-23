@@ -159,22 +159,6 @@ class SamplingQuery:
             source_table="sampling_source",
         )
         self.params.update(params)
-        # Remap groups are expanded only for ids touched by this scoped window.
-        maps = []
-        for kind, column, table in (
-            ("session", "trace_session_id", "trace_session_id_remap"),
-            ("user", "end_user_id", "end_user_id_remap"),
-        ):
-            maps.append(f"""{kind}_map AS (
-                SELECT any_id, argMin(survivor_id, toString(survivor_id)) AS survivor_id FROM (
-                    SELECT arrayJoin(arrayDistinct(arrayConcat(groupArray(old_id), [new_id]))) AS any_id,
-                           argMin(old_id, toString(old_id)) AS survivor_id
-                    FROM {table} FINAL WHERE new_id IN (
-                        SELECT new_id FROM {table} FINAL
-                        WHERE old_id IN (SELECT {column} FROM raw) OR new_id IN (SELECT {column} FROM raw)
-                    ) GROUP BY new_id
-                ) GROUP BY any_id
-            )""")
         session = "toString(s.trace_session_id)"
         user = "toString(s.end_user_id)"
         unit = self.policy["sampling_unit"]
@@ -313,6 +297,36 @@ class SamplingQuery:
                     WHERE trace_session_id IN %(sp_current_ids)s OR trace_session_id IN (
                         SELECT any_id FROM ({aliases}) WHERE survivor_id IN %(sp_current_ids)s
                     ))"""
+        latest_builder = SpanListQueryBuilderV2(project_id=str(self.task.project_id))
+        # Remap groups are expanded only for ids touched by this scope. ClickHouse
+        # inlines a CTE at every reference, so discovering those ids from ``raw``
+        # replayed the latest state once more per map and per ``sampling_source``
+        # reference. Every row ``raw`` replays is a physical row admitted by this
+        # same scope, so the ids the scope admits are a superset of the replayed
+        # ids and every remap group containing a replayed id is still expanded:
+        # the joined survivor of every ``raw`` row is unchanged. The scope (and
+        # its bound unit pages) appears once more in the statement, not per map.
+        maps = [
+            f"""sampling_touched AS (
+                SELECT trace_session_id, end_user_id FROM {latest_builder.TABLE}
+                PREWHERE {scope}
+            )"""
+        ]
+        for kind, column, table in (
+            ("session", "trace_session_id", "trace_session_id_remap"),
+            ("user", "end_user_id", "end_user_id_remap"),
+        ):
+            touched = f"SELECT {column} FROM sampling_touched"
+            maps.append(f"""{kind}_map AS (
+                SELECT any_id, argMin(survivor_id, toString(survivor_id)) AS survivor_id FROM (
+                    SELECT arrayJoin(arrayDistinct(arrayConcat(groupArray(old_id), [new_id]))) AS any_id,
+                           argMin(old_id, toString(old_id)) AS survivor_id
+                    FROM {table} FINAL WHERE new_id IN (
+                        SELECT new_id FROM {table} FINAL
+                        WHERE old_id IN ({touched}) OR new_id IN ({touched})
+                    ) GROUP BY new_id
+                ) GROUP BY any_id
+            )""")
         arrival = "greatest(created_at, updated_at, fromUnixTimestamp64Nano(toInt64(_version), 'UTC'))"
         consumer = " ".join(
             [
@@ -324,9 +338,7 @@ class SamplingQuery:
                 "project_id trace_id id start_time parent_span_id trace_session_id end_user_id is_deleted",
             ]
         )
-        latest = SpanListQueryBuilderV2(
-            project_id=str(self.task.project_id)
-        )._latest_state_source_sql(
+        latest = latest_builder._latest_state_source_sql(
             "sampling_latest",
             scope_sql=scope,
             consumer_sql=consumer,

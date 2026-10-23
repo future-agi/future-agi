@@ -963,6 +963,65 @@ def test_closed_expansion_reads_only_its_member_page_with_identical_rows(
         client.close()
 
 
+def _read_stats(client, comment):
+    client.command("SYSTEM FLUSH LOGS")
+    found = client.query(
+        "SELECT read_rows, read_bytes FROM system.query_log WHERE type = 'QueryFinish'"
+        " AND log_comment = {comment:String} AND event_date >= yesterday()",
+        parameters={"comment": comment},
+    ).result_rows
+    assert len(found) == 1, found
+    return found[0]
+
+
+def test_remap_lookup_reads_touched_ids_without_another_latest_state_replay(
+    project, ch_seed
+):
+    """ClickHouse inlines a CTE at every reference. The remap maps discover the
+    ids they expand from a physical scan of the same immutable scope, so a
+    statement replays the latest state once per ``sampling_source`` reference
+    (eligibility and projection for this task), never once more per map."""
+    payload = "p" * 8192
+    spans = []
+    for index in range(6):
+        session = TraceSession.objects.create(project=project, name=f"bytes-{index}")
+        spans += seed_contact(
+            project,
+            session,
+            {"locale": f"l{index % 2}", "payload": payload},
+            traces=1,
+            seed=False,
+        )
+    seed_ch_spans(spans)
+    task = EvalTask(
+        project=project,
+        row_type="spans",
+        filters={},
+        sampling_policy=make_policy(
+            group_by=[{"key": "locale"}], default={"rate": 100}
+        ),
+    )
+    policy, version = task_policy(task, now=timezone.now())
+    tag = f"sampling-replays-{uuid.uuid4().hex}"
+    cells = _rows(
+        SamplingQuery(task, policy, version, sampling_clock()).preview(),
+        log_comment=tag,
+    )
+    assert sum(cell[1] for cell in cells) == 6  # eligible units
+    assert sum(cell[6] for cell in cells) == len(spans) == 12  # selected rows
+    client = _get_ch_client()
+    try:
+        _read_rows_value, read_bytes = _read_stats(client, tag)
+    finally:
+        client.close()
+    # Every latest-state replay reads the attribute map with the payload of
+    # every span (uncompressed bytes); id-only remap scans never read it.
+    one_replay = len(spans) * len(payload)
+    measured = (read_bytes, one_replay)
+    assert read_bytes >= one_replay, measured
+    assert read_bytes < 3 * one_replay, measured
+
+
 def _live_task(project, start, **overrides):
     return EvalTask.objects.create(
         project=project,
