@@ -21,6 +21,10 @@ from tracer.models.derived_metric import (
 )
 from tracer.permissions.metrics import MetricWorkspacePermission
 from tracer.serializers.derived_metric import (
+    DerivedMetricCompareQuerySerializer,
+    DerivedMetricComparisonSerializer,
+    DerivedMetricContributorPageSerializer,
+    DerivedMetricContributorQuerySerializer,
     DerivedMetricEvaluatorPageSerializer,
     DerivedMetricEvaluatorQuerySerializer,
     DerivedMetricListQuerySerializer,
@@ -36,6 +40,7 @@ from tracer.serializers.derived_metric import (
     DerivedMetricWriteSerializer,
 )
 from tracer.services.derived_metrics import service
+from tracer.services.derived_metrics.contributors import read_contributors
 from tracer.services.derived_metrics.cursor import newest_first_page
 from tracer.services.derived_metrics.errors import MetricBusyError, MetricInputError
 from tracer.services.derived_metrics.formula import FormulaError
@@ -291,6 +296,29 @@ class DerivedMetricRunViewSet(MetricViewSet):
     def results(self, request, pk=None):
         data = request.validated_query_data
         return Response(service.read_results(self.get_object(), **data))
+
+    @validated_request(
+        query_serializer=DerivedMetricCompareQuerySerializer,
+        responses={200: DerivedMetricComparisonSerializer},
+    )
+    @action(detail=True, methods=["get"])
+    def compare(self, request, pk=None):
+        from tracer.services.derived_metrics.comparison import compare_runs
+
+        candidate = self.get_object()
+        baseline = get_object_or_404(
+            self.get_queryset(), pk=request.validated_query_data["baseline_run_id"]
+        )
+        return Response(compare_runs(baseline, candidate))
+
+    @validated_request(
+        query_serializer=DerivedMetricContributorQuerySerializer,
+        responses={200: DerivedMetricContributorPageSerializer},
+    )
+    @action(detail=True, methods=["get"])
+    def contributors(self, request, pk=None):
+        data = request.validated_query_data
+        return Response(read_contributors(self.get_object(), **data))
 
     @validated_request(
         request_serializer=DerivedMetricRecomputeSerializer,
