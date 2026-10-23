@@ -38,6 +38,7 @@ type Headline struct {
 	Status          string   `json:"status"`
 	WithheldReasons []string `json:"withheld_reasons"`
 	Definition      string   `json:"definition"`
+	Rule            string   `json:"rule"`
 	// Published only: acknowledged spans the exact-ID verification found
 	// stored, divided by the scheduled load duration.
 	VerifiedSpansPerSecond *float64 `json:"verified_sustained_spans_per_second,omitempty"`
@@ -157,13 +158,14 @@ func stages(r Result) []Stage {
 		{"attempted", r.Counters.Attempted, "spans in export requests the generator started"},
 		{"accepted", r.Counters.Acknowledged, "spans the collector acknowledged (OTLP success minus partial rejections); NOT a durability claim"},
 		{"durable", int64(v.DistinctExpected), durable},
-		{"read-visible (sentinel sample)", visible, fmt.Sprintf("acknowledged sentinel spans seen by a read query, of %d acknowledged sentinels (a sample: every %d-th request)", r.Lag.Sampled, r.Lag.Stride)},
+		{"read-visible (sentinel sample)", visible, fmt.Sprintf("acknowledged sentinel spans seen by a read query, of %d acknowledged sentinels (a sample: one sentinel per %d requests)", r.Lag.Sampled, r.Lag.Stride)},
 	}
 }
 
 func headline(r Result, minSustained time.Duration, telemetry *TelemetryCheck) Headline {
 	h := Headline{Status: "withheld", WithheldReasons: []string{}, OfferedSpansPerSecond: r.Config.Rate, SustainedSeconds: r.Config.Duration.Seconds(), MinSustainedSeconds: minSustained.Seconds(),
-		Definition: "acknowledged spans found stored by the exact-ID verification / scheduled load duration, printed only for a complete, loss-free run of at least the minimum duration that accepted all offered load"}
+		Definition: "verified sustained throughput = acknowledged spans the exact-ID verification found stored / scheduled load duration",
+		Rule:       "printed only for an executed run of at least the minimum duration whose verification completed with no missing or unexpected span, that started and acknowledged all offered load, saw every sentinel and had no fault"}
 	why := func(format string, args ...any) {
 		h.WithheldReasons = append(h.WithheldReasons, fmt.Sprintf(format, args...))
 	}
@@ -259,8 +261,12 @@ func disclosures(r Result, telemetry *TelemetryCheck) []Disclosure {
 	add("topology (shards x replicas, Distributed mode)", "partial", fmt.Sprintf("declared %q; system.clusters: %s; Distributed insert mode not recorded", cfg.Topology, orUnknown(strings.Join(clusters, ", "))))
 	hw := ch.Hardware
 	if hw.Error == "" && hw.OSMemoryBytes > 0 {
-		add("CPU, RAM, disk type and IOPS of each node", "partial", fmt.Sprintf("ClickHouse server (one node): memory %d bytes, cgroup CPU %s, max_threads %s; collector runtime %v; disk type and IOPS not captured",
-			hw.OSMemoryBytes, reportedNumber(hw.CGroupMaxCPU), orUnknown(hw.MaxThreads), col.Runtime))
+		runtime := "not reported"
+		if col.Runtime != nil {
+			runtime = fmt.Sprintf("num_cpu %v, gomaxprocs %v", col.Runtime["num_cpu"], col.Runtime["gomaxprocs"])
+		}
+		add("CPU, RAM, disk type and IOPS of each node", "partial", fmt.Sprintf("ClickHouse server (one node): memory %d bytes, cgroup CPU %s, max_threads %s; collector runtime %s; disk type and IOPS not captured",
+			hw.OSMemoryBytes, reportedNumber(hw.CGroupMaxCPU), orUnknown(hw.MaxThreads), runtime))
 	} else {
 		add("CPU, RAM, disk type and IOPS of each node", "not-captured", orUnknown(hw.Error))
 	}
@@ -427,13 +433,13 @@ func WritePublicationMarkdown(w io.Writer, p Publication) error {
 	f("## Headline\n\n")
 	if p.Headline.Status == "published" {
 		f("**%.1f verified sustained spans/s** for %.0f s at an offered %d spans/s.\n\n", *p.Headline.VerifiedSpansPerSecond, p.Headline.SustainedSeconds, p.Headline.OfferedSpansPerSecond)
-		f("Definition: %s.\n\n", p.Headline.Definition)
+		f("Definition: %s; %s (minimum %.0f s).\n\n", p.Headline.Definition, p.Headline.Rule, p.Headline.MinSustainedSeconds)
 	} else {
 		f("**No headline throughput.** It is withheld because:\n\n")
 		for _, reason := range p.Headline.WithheldReasons {
 			f("- %s\n", reason)
 		}
-		f("\nA headline is printed only for %s (minimum %.0f s).\n\n", p.Headline.Definition, p.Headline.MinSustainedSeconds)
+		f("\nDefinition: %s; %s (minimum %.0f s).\n\n", p.Headline.Definition, p.Headline.Rule, p.Headline.MinSustainedSeconds)
 	}
 	f("## Stages\n\n| Stage | Spans | Meaning |\n|---|---:|---|\n")
 	for _, s := range p.Stages {
