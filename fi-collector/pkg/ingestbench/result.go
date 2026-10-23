@@ -145,6 +145,10 @@ type Verification struct {
 	MissingRanges             []MissingRange `json:"missing_ranges"`
 	MissingRangesOmitted      int64          `json:"missing_ranges_omitted"`
 	MissingRangesOmittedSpans uint64         `json:"missing_ranges_omitted_spans"`
+	// FaultLoss counts fully acknowledged missing spans by the fault reporting
+	// windows, independently of MissingRanges. Absent in older checkpoints;
+	// counts are conclusive only when Complete is true.
+	FaultLoss []FaultLossWindow `json:"fault_loss_windows,omitempty"`
 	// DurableLag is the server-side insert lag of every stored span.
 	DurableLag DurableLagResult `json:"durable_lag"`
 }

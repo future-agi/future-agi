@@ -307,6 +307,8 @@ type verifyAccum struct {
 	RangeOpen          *MissingRange  `json:"missing_range_open,omitempty"`
 	RangesOmitted      int64          `json:"missing_ranges_omitted"`
 	RangesOmittedSpans uint64         `json:"missing_ranges_omitted_spans"`
+	// FaultLoss is accumulated per request before the ranges are compacted.
+	FaultLoss []FaultLossWindow `json:"fault_loss_windows,omitempty"`
 	// Durable (server insert) lag of every distinct stored span so far.
 	DurableLag      sparseHistogram `json:"durable_lag"`
 	DurableNegative uint64          `json:"durable_lag_negative_rows"`
@@ -328,6 +330,9 @@ func (a *verifyAccum) trackMissing(r int64, class outcomeClass, missing uint64, 
 		return
 	}
 	scheduled := float64(r*batch) / float64(rate)
+	if class == outcomeAcknowledged {
+		a.trackFaultLoss(scheduled, missing)
+	}
 	if open != nil && open.Class == class.String() && open.LastRequest >= r-1 {
 		open.LastRequest, open.LastScheduledS = r, scheduled
 		open.MissingSpans += missing
@@ -621,6 +626,7 @@ func (vf *verifier) fill(v *Verification) {
 		v.MissingRanges = append(v.MissingRanges, *a.RangeOpen)
 	}
 	v.MissingRangesOmitted, v.MissingRangesOmittedSpans = a.RangesOmitted, a.RangesOmittedSpans
+	v.FaultLoss = append([]FaultLossWindow(nil), a.FaultLoss...)
 	v.DurableLag = vf.durableLag(v.DistinctExpected, false)
 	// Only a finished, rechecked verification may conclude anything; run()
 	// sets these after the recheck succeeds.
@@ -948,8 +954,11 @@ func (vf *verifier) durableChunk(ctx context.Context, idx int64, spec chunkSpec,
 }
 
 // verifyRun plans and runs the verification of a finished load.
-func verifyRun(ctx context.Context, ch clickHouse, ledger *outcomeLedger, tl *timeline, attempted int64, preexisting uint64, origin *lagOrigin) Verification {
+func verifyRun(ctx context.Context, ch clickHouse, ledger *outcomeLedger, tl *timeline, attempted int64, preexisting uint64, origin *lagOrigin, faults ...FaultResult) Verification {
 	cp := newCheckpoint(ch.cfg, attempted, ledger, tl)
+	for _, f := range faults {
+		cp.Accum.FaultLoss = append(cp.Accum.FaultLoss, FaultLossWindow{Name: f.Name, EndS: f.EndS})
+	}
 	cp.Preexisting = preexisting
 	cp.DurableLagOrigin = origin
 	vf := &verifier{ch: ch, cfg: ch.cfg, ledger: ledger, cp: cp, path: ch.cfg.VerifyCheckpoint}

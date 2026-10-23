@@ -213,8 +213,18 @@ For each fault the result reports:
   ``/healthz`` (``--collector-health-url``; the recovery profile requires it);
 * the time until every acknowledged sentinel scheduled before the fault ended
   was visible, and how many never were;
-* the acknowledged-but-missing spans the exact-ID verification places in its
-  window.
+* the fully-acknowledged-but-missing spans scheduled after the preceding fault
+  end through this fault's end (inclusive), or from run start for the earliest
+  end. Equal ends assign loss only to the first listed fault; the others have
+  empty windows. Requests after the last end remain in global loss, not in a
+  fault's window. Partial-acknowledgement loss remains a global lower bound.
+  These are reporting windows, not proof that the fault caused the loss.
+
+Per-fault loss is accumulated from each request's missing spans before diagnostic
+ranges are compacted, including requests split across verification chunks.
+``verification.fault_loss_windows`` and the checkpoint retain those bounded
+counters independently of range truncation. An incomplete scan or an older
+checkpoint without these counters leaves per-fault loss unknown, not zero.
 
 The **recovery time** is the largest of the acknowledgement, backlog and
 sentinel figures. A fault counts as recovered only when all three were observed

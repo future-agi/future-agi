@@ -384,15 +384,17 @@ produce:
 	}
 	r.Backlog = backlog.result(r.LoadSeconds, int64(c.BatchSize), stallThreshold(r.Provenance.Collector.Limits))
 	r.Resources = append(r.Resources, resourceSnapshots(ctx, ch)...)
-	r.Verification = verifyRun(ctx, ch, ledger, tl, r.Counters.Attempted, preexisting, c.durableLagOrigin(start, r.Clock.Start))
+	// Preserve exact per-request loss in these reporting windows before the
+	// verifier compacts its diagnostic ranges (which may cross fault ends).
+	records := faults.all()
+	for _, f := range c.DeclaredFaults {
+		records = append(records, FaultResult{Name: f.Name, Source: "operator-declared", StartS: f.At.Seconds(), EndS: (f.At + f.Duration).Seconds()})
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].StartS < records[j].StartS })
+	r.Verification = verifyRun(ctx, ch, ledger, tl, r.Counters.Attempted, preexisting, c.durableLagOrigin(start, r.Clock.Start), records...)
 	storage = tableStorage(ctx, ch)
 	r.Provenance.ClickHouse.StorageAfter = &storage
-	if len(options.Faults)+len(c.DeclaredFaults) > 0 {
-		records := faults.all()
-		for _, f := range c.DeclaredFaults {
-			records = append(records, FaultResult{Name: f.Name, Source: "operator-declared", StartS: f.At.Seconds(), EndS: (f.At + f.Duration).Seconds()})
-		}
-		sort.Slice(records, func(i, j int) bool { return records[i].StartS < records[j].StartS })
+	if len(records) > 0 {
 		s.mu.Lock()
 		records = analyseRecovery(c, records, s, start, backlog.kept())
 		s.mu.Unlock()

@@ -173,6 +173,30 @@ type FaultResult struct {
 	AcknowledgedMissing *uint64 `json:"acknowledged_but_missing_spans_up_to_end,omitempty"`
 }
 
+// FaultLossWindow holds exact fully-acknowledged loss for one fault's reporting
+// window. The window ends at EndS (inclusive) and starts after the previous end,
+// or at zero for the earliest end. Equal ends assign to the first listed fault;
+// the others have empty windows. Faults need not be ordered by end time.
+// Stored separately from compacted/truncated missing ranges, including in the
+// verification checkpoint, so a resume cannot lose attribution precision.
+type FaultLossWindow struct {
+	Name         string  `json:"name"`
+	EndS         float64 `json:"end_offset_seconds"`
+	MissingSpans uint64  `json:"acknowledged_missing_spans"`
+}
+
+func (a *verifyAccum) trackFaultLoss(scheduled float64, missing uint64) {
+	best := -1
+	for i, f := range a.FaultLoss {
+		if scheduled <= f.EndS && (best < 0 || f.EndS < a.FaultLoss[best].EndS) {
+			best = i
+		}
+	}
+	if best >= 0 {
+		a.FaultLoss[best].MissingSpans += missing
+	}
+}
+
 const recoveryMethod = "faults injected by the harness or declared by the operator; loss from the exact-ID verification, recovery from acknowledgements, the collector backlog and read-visible sentinels"
 
 type RecoveryResult struct {
@@ -351,28 +375,21 @@ func (r *RecoveryResult) attachVerification(c Config, v Verification, backlog Ba
 		dead := backlog.RowsDeadLettered
 		r.DeadLetteredRows = &dead
 	}
-	if !v.Complete || v.MissingRangesOmitted > 0 {
+	for i := range r.Faults {
+		r.Faults[i].AcknowledgedMissing = nil
+	}
+	// Old checkpoints/results lack these per-request accumulators. Never
+	// reconstruct exact counts from compacted ranges or report absent data as 0.
+	if !v.Complete || len(v.FaultLoss) != len(r.Faults) {
 		return
 	}
-	// Each acknowledged-missing range counts once, for the first fault that
-	// ended at or after the range's first scheduled send.
-	counts := make([]uint64, len(r.Faults))
-	for _, m := range v.MissingRanges {
-		if m.Class != outcomeAcknowledged.String() {
-			continue
-		}
-		best := -1
-		for i, f := range r.Faults {
-			if m.FirstScheduledS <= f.EndS && (best < 0 || f.EndS < r.Faults[best].EndS) {
-				best = i
-			}
-		}
-		if best >= 0 {
-			counts[best] += m.MissingSpans
+	for i, f := range r.Faults {
+		if v.FaultLoss[i].Name != f.Name || v.FaultLoss[i].EndS != f.EndS {
+			return
 		}
 	}
 	for i := range r.Faults {
-		n := counts[i]
+		n := v.FaultLoss[i].MissingSpans
 		r.Faults[i].AcknowledgedMissing = &n
 	}
 }
