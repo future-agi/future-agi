@@ -225,7 +225,9 @@ jobs:
           # retryable. The tamper case drops 3 stored rows and stores 3 spans
           # twice; count() stays unchanged, but the exact-ID SQL must report
           # exactly 3 missing and 3 duplicates. The bucket case checks the durable lag's SQL bucketing
-          # against the Go histogram.
+          # against the Go histogram. Regression proofs also require later-only
+          # namespace reuse refusal, exact cross-window fault loss, and a visible
+          # sentinel beyond 4,096 permanently missing earlier identities.
           # The recovery case restarts the real collector mid-run and, separately,
           # holds every writer request to ClickHouse for 1.5 s; no acknowledged
           # span may be missing and each fault must recover within the run.
@@ -234,7 +236,7 @@ jobs:
           OTLPBENCH_LIVE_RECOVERY_RESULT="$RUNNER_TEMP/otlpbench-real-recovery.json" \
           OTLPBENCH_LIVE_TAMPER_RESULT="$RUNNER_TEMP/otlpbench-real-tamper.json" \
             go test -race -count=1 -p 1 -timeout 360s -json \
-            -run '^(TestLiveClickHouseCollectorPipeline|TestLiveClickHouseBackpressureAccounting|TestLiveClickHouseRecovery|TestLiveClickHouseVerifierCountsDroppedAndDuplicatedSpans|TestLiveClickHouseLatencyBucketsMatchGo)$' ./pkg/ingestbench \
+            -run '^(TestLiveClickHouseCollectorPipeline|TestLiveClickHouseBackpressureAccounting|TestLiveClickHouseRecovery|TestLiveClickHouseVerifierCountsDroppedAndDuplicatedSpans|TestLiveClickHouseLatencyBucketsMatchGo|TestLiveClickHouseReusePreflightChecksLaterTraces|TestLiveClickHouseFaultLossAttribution|TestLiveClickHouseSentinelPollingFairness)$' ./pkg/ingestbench \
             | tee "$RUNNER_TEMP/otlpbench-smoke-tests.jsonl"
           python3 - <<'PY'
           import json
@@ -253,6 +255,9 @@ jobs:
               'TestLiveClickHouseRecovery/clickhouse-pause',
               'TestLiveClickHouseVerifierCountsDroppedAndDuplicatedSpans',
               'TestLiveClickHouseLatencyBucketsMatchGo',
+              'TestLiveClickHouseReusePreflightChecksLaterTraces',
+              'TestLiveClickHouseFaultLossAttribution',
+              'TestLiveClickHouseSentinelPollingFairness',
           }
           missing = required - passed
           if missing:
