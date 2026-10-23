@@ -28,6 +28,7 @@ import {
   askHistory,
   normalizeAnswer,
   readAskThread,
+  settleAskTurn,
   suggestedQuestions,
   writeAskThread,
 } from "./insightsReport";
@@ -253,6 +254,11 @@ Answer.propTypes = {
   onRetry: PropTypes.func.isRequired,
 };
 
+// Answers still on their way, by run and turn: the panel unmounts when a
+// category opens, and its questions keep going (the server answers and
+// charges them). A panel mounted again picks up the ones it shows as busy.
+const inflight = new Map();
+
 /**
  * "Ask anything about these conversations": a composer pinned to the bottom
  * of the report, with the thread above it. Answers cite examples and
@@ -297,10 +303,28 @@ export default function AskPanel({ run, lens }) {
   );
 
   useEffect(() => writeAskThread(runId, thread), [runId, thread]);
+  const mounted = useRef(true);
+  const settle = (id, patch) =>
+    setThread((current) =>
+      current.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+    );
   useEffect(() => {
-    const own = controllers.current;
-    return () => own.forEach((controller) => controller.abort());
-  }, []);
+    mounted.current = true;
+    // Questions asked before the panel was last closed: their answers land
+    // here when they come.
+    readAskThread(runId)
+      .filter((turn) => turn.status === "busy")
+      .forEach((turn) =>
+        inflight.get(`${runId}:${turn.id}`)?.then((patch) => {
+          if (patch && mounted.current) settle(turn.id, patch);
+        }),
+      );
+    // Leaving doesn't abort a question in flight: it is answered and charged
+    // anyway, and its answer is kept with the thread.
+    return () => {
+      mounted.current = false;
+    };
+  }, [runId]); // eslint-disable-line react-hooks/exhaustive-deps
   // Show the start of the latest answer, within the panel only.
   useEffect(() => {
     const list = threadList.current;
@@ -327,37 +351,37 @@ export default function AskPanel({ run, lens }) {
     const own = new AbortController();
     controllers.current.get(id)?.abort();
     controllers.current.set(id, own);
-    try {
-      const result = await askRun(runId, { question: q, history }, own.signal);
-      controllers.current.delete(id);
-      const { answer, followUps, dropped } = normalizeAnswer(result);
-      setThread((current) =>
-        current.map((t) =>
-          t.id === id
-            ? { ...t, status: "done", answer, followUps, dropped }
-            : t,
-        ),
-      );
-    } catch (error) {
-      if (own.signal.aborted) return;
-      controllers.current.delete(id);
-      setThread((current) =>
-        current.map((t) =>
-          t.id === id
-            ? {
-                ...t,
-                status: "error",
-                error: insightsErrorMessage(
-                  error,
-                  "The question could not be answered.",
-                  "Couldn't answer right now. Try again in a moment.",
-                ),
-                billing: Boolean(insightsCreditRefusal(error)),
-              }
-            : t,
-        ),
-      );
-    }
+    const key = `${runId}:${id}`;
+    const answered = (async () => {
+      try {
+        const result = await askRun(
+          runId,
+          { question: q, history },
+          own.signal,
+        );
+        const { answer, followUps, dropped } = normalizeAnswer(result);
+        return { status: "done", answer, followUps, dropped };
+      } catch (error) {
+        if (own.signal.aborted) return null;
+        return {
+          status: "error",
+          error: insightsErrorMessage(
+            error,
+            "The question could not be answered.",
+            "Couldn't answer right now. Try again in a moment.",
+          ),
+          billing: Boolean(insightsCreditRefusal(error)),
+        };
+      }
+    })();
+    inflight.set(key, answered);
+    const patch = await answered;
+    if (inflight.get(key) === answered) inflight.delete(key);
+    if (controllers.current.get(id) === own) controllers.current.delete(id);
+    if (!patch) return;
+    if (mounted.current) settle(id, patch);
+    // The panel closed meanwhile: keep the answer with the stored thread.
+    else settleAskTurn(runId, id, patch);
   };
 
   return (

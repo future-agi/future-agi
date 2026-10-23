@@ -110,13 +110,27 @@ export function suggestedQuestions({ unit, lens, hasPrevious } = {}) {
 // The Ask thread of a run lives for this browser session.
 const ASK_PREFIX = "insights-ask:";
 
-export function readAskThread(runId) {
+// A question still being answered is kept with the thread, so leaving the
+// report (a category opened) and coming back shows it; one left busy longer
+// than this was cut off (a reload) and can be asked again.
+export const ASK_BUSY_STALE_MS = 3 * 60 * 1000;
+export const ASK_INTERRUPTED =
+  "This question was interrupted before its answer arrived. Ask it again.";
+
+export function readAskThread(runId, now = Date.now()) {
   if (!runId) return [];
   try {
     const raw = globalThis.sessionStorage?.getItem(ASK_PREFIX + runId);
     const parsed = raw ? JSON.parse(raw) : null;
     return Array.isArray(parsed)
-      ? parsed.filter((turn) => turn && typeof turn.question === "string")
+      ? parsed
+          .filter((turn) => turn && typeof turn.question === "string")
+          .map((turn) =>
+            turn.status === "busy" &&
+            !(now - Number(turn.startedAt || 0) < ASK_BUSY_STALE_MS)
+              ? { ...turn, status: "error", error: ASK_INTERRUPTED }
+              : turn,
+          )
       : [];
   } catch {
     return [];
@@ -128,11 +142,21 @@ export function writeAskThread(runId, thread) {
   try {
     globalThis.sessionStorage?.setItem(
       ASK_PREFIX + runId,
-      JSON.stringify(thread.filter((turn) => turn.status !== "busy")),
+      JSON.stringify(thread),
     );
   } catch {
     // Storage full or blocked: the thread lasts until the page reloads.
   }
+}
+
+/** Settle one stored turn: for an answer that lands after its panel closed. */
+export function settleAskTurn(runId, turnId, patch) {
+  writeAskThread(
+    runId,
+    readAskThread(runId).map((turn) =>
+      turn.id === turnId ? { ...turn, ...patch } : turn,
+    ),
+  );
 }
 
 /**

@@ -10,7 +10,9 @@ import {
   askHistory,
   engineLabel,
   normalizeAnswer,
+  ASK_INTERRUPTED,
   readAskThread,
+  settleAskTurn,
   reportMetaParts,
   samplingText,
   suggestedQuestions,
@@ -221,17 +223,42 @@ describe("Ask helpers", () => {
     expect(history[1].content).toHaveLength(4000);
   });
 
-  it("keeps the thread per run in session storage, without turns in flight", () => {
+  it("keeps the thread per run in session storage, a turn in flight included", () => {
+    const now = 1_800_000_000_000;
     writeAskThread("run1", [
       { id: "1", question: "Q", status: "done", answer: [] },
-      { id: "2", question: "Q2", status: "busy" },
+      { id: "2", question: "Q2", status: "busy", startedAt: now - 1000 },
     ]);
-    expect(readAskThread("run1")).toEqual([
+    // Back on the report while the answer is on its way: still asking.
+    expect(readAskThread("run1", now)).toEqual([
       { id: "1", question: "Q", status: "done", answer: [] },
+      { id: "2", question: "Q2", status: "busy", startedAt: now - 1000 },
     ]);
+    // An answer that lands after the panel closed is kept with it.
+    settleAskTurn("run1", "2", { status: "done", answer: [{ text: "A" }] });
+    expect(readAskThread("run1", now)[1]).toMatchObject({
+      status: "done",
+      answer: [{ text: "A" }],
+    });
     expect(readAskThread("run2")).toEqual([]);
     vi.stubGlobal("sessionStorage", blockedStorage());
     expect(readAskThread("run1")).toEqual([]);
+  });
+
+  it("offers to ask again a question cut off long ago (a reload)", () => {
+    const now = 1_800_000_000_000;
+    writeAskThread("run1", [
+      { id: "2", question: "Q2", status: "busy", startedAt: now - 10 * 60_000 },
+    ]);
+    expect(readAskThread("run1", now)).toEqual([
+      {
+        id: "2",
+        question: "Q2",
+        status: "error",
+        error: ASK_INTERRUPTED,
+        startedAt: now - 10 * 60_000,
+      },
+    ]);
   });
 
   it("suggests questions that fit the report", () => {
