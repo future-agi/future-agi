@@ -444,7 +444,10 @@ func pct(p Percentiles) string {
 	if p.Count == 0 {
 		return "not measured"
 	}
-	return fmt.Sprintf("%.0f / %.0f / %.0f / %.0f / %.0f ms (n=%d)", p.P50, p.P95, p.P99, p.P999, p.Max, p.Count)
+	// %g preserves the stored float rather than adding presentation rounding
+	// that could turn a lower bound into an overstatement (or an upper into an
+	// understatement). The histogram already supplies bounded quantization.
+	return fmt.Sprintf("%g / %g / %g / %g / %g ms (n=%d)", p.P50, p.P95, p.P99, p.P999, p.Max, p.Count)
 }
 
 func mdCell(s string) string { return strings.ReplaceAll(strings.ReplaceAll(s, "|", "\\|"), "\n", " ") }

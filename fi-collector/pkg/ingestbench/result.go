@@ -573,21 +573,21 @@ func Report(w io.Writer, r Result) error {
 	if l.FromScheduled.Count == 0 {
 		fmt.Fprintf(w, "Read-visible lag: not measured; seen 0 of %d acknowledged sentinels (%d registered)\n", l.Sampled, l.Registered)
 	} else {
-		fmt.Fprintf(w, "Read-visible lag from the scheduled send (sentinels: %d seen of %d acknowledged, %d never seen; poll %.0f ms): upper bound p50/p95/p99/p99.9/max %.0f/%.0f/%.0f/%.0f/%.0f ms; lower bound p50/p99 %.0f/%.0f ms\n",
+		fmt.Fprintf(w, "Read-visible lag from the scheduled send (sentinels: %d seen of %d acknowledged, %d never seen; poll %.0f ms): upper bound p50/p95/p99/p99.9/max %g/%g/%g/%g/%g ms; lower bound p50/p99 %g/%g ms\n",
 			l.FromScheduled.Count, l.Sampled, l.Unseen, l.PollIntervalMS, l.FromScheduled.P50, l.FromScheduled.P95, l.FromScheduled.P99, l.FromScheduled.P999, l.FromScheduled.Max, l.LowerFromScheduled.P50, l.LowerFromScheduled.P99)
 	}
 	d := v.DurableLag
 	if d.Lag.Count == 0 {
 		fmt.Fprintf(w, "Durable (server insert) lag: %s; %d spans measured, %d inserted before their scheduled send\n", orUnknown(d.Status), d.Rows, d.NegativeRows)
 	} else {
-		fmt.Fprintf(w, "Durable (server insert) lag from the scheduled send, %s, %d stored spans (%d before their scheduled send): p50/p95/p99/p99.9/max %.0f/%.0f/%.0f/%.0f/%.0f ms; clock offset applied %.3f ms +/- %.3f ms\n",
+		fmt.Fprintf(w, "Durable (server insert) lag from the scheduled send, %s, %d stored spans (%d before their scheduled send): p50/p95/p99/p99.9/max %g/%g/%g/%g/%g ms; clock offset applied %.3f ms +/- %.3f ms\n",
 			d.Status, d.Rows, d.NegativeRows, d.Lag.P50, d.Lag.P95, d.Lag.P99, d.Lag.P999, d.Lag.Max, d.ClockOffsetMS, d.ClockUncertaintyMS)
 	}
 	if r.Clock.Limited {
 		fmt.Fprintln(w, "Clock-limited: the generator-to-ClickHouse offset or its uncertainty exceeds 10 ms; durable lags below that are not resolved.")
 	}
 	if k := r.RequestLatencyFromScheduled; k.Count > 0 {
-		fmt.Fprintf(w, "OTLP request latency p50/p99/max: %.0f/%.0f/%.0f ms from the actual send, %.0f/%.0f/%.0f ms from the scheduled send\n",
+		fmt.Fprintf(w, "OTLP request latency p50/p99/max: %g/%g/%g ms from the actual send, %g/%g/%g ms from the scheduled send\n",
 			r.RequestLatency.P50, r.RequestLatency.P99, r.RequestLatency.Max, k.P50, k.P99, k.Max)
 	}
 	if sc := r.Schedule; sc.ScheduledSpans > 0 {
@@ -615,7 +615,7 @@ func Report(w io.Writer, r Result) error {
 		if n == 0 {
 			return ""
 		}
-		return fmt.Sprintf("; %d censored queries had run at least p50/max %.3f/%.3f ms when cut off (lower bounds; the successful latency excludes these slowest queries)", n, p.P50, p.Max)
+		return fmt.Sprintf("; %d censored queries had run at least p50/max %g/%g ms when cut off (lower bounds; excluding unfinished queries can bias successful-query latency low)", n, p.P50, p.Max)
 	}
 	for _, d := range r.DirectReads {
 		if d.Latency.Count == 0 {
@@ -626,7 +626,7 @@ func Report(w io.Writer, r Result) error {
 		if d.PayloadBytes != nil {
 			payload = fmt.Sprintf("; payload text read per query p50/max %d/%d bytes", d.PayloadBytes.P50, d.PayloadBytes.Max)
 		}
-		fmt.Fprintf(w, "Direct ClickHouse %s/%s: %s; successes/errors/skipped/censored %d/%d/%d/%d; p50/p95/p99 %.3f/%.3f/%.3f ms; non-empty results %d of %d%s%s\n",
+		fmt.Fprintf(w, "Direct ClickHouse %s/%s: %s; successes/errors/skipped/censored %d/%d/%d/%d; p50/p95/p99 %g/%g/%g ms; non-empty results %d of %d%s%s\n",
 			d.Phase, d.Name, d.Status, d.Successes, d.Errors, d.Skipped, d.Censored, d.Latency.P50, d.Latency.P95, d.Latency.P99, d.NonEmpty, d.Successes, payload, censored(d.Censored, d.CensoredElapsed))
 	}
 	reads := append([]ProbeResult(nil), r.Reads...)
@@ -636,7 +636,7 @@ func Report(w io.Writer, r Result) error {
 			fmt.Fprintf(w, "App %s: %s; successes/errors/censored %d/%d/%d; successful latency not measured%s\n", p.Name, p.Status, p.Successes, p.Errors, p.Censored, censored(p.Censored, p.CensoredElapsed))
 			continue
 		}
-		fmt.Fprintf(w, "App %s: %s; successes/errors/censored %d/%d/%d; successful p50/p95/p99 %.3f/%.3f/%.3f ms%s\n", p.Name, p.Status, p.Successes, p.Errors, p.Censored, p.Latency.P50, p.Latency.P95, p.Latency.P99, censored(p.Censored, p.CensoredElapsed))
+		fmt.Fprintf(w, "App %s: %s; successes/errors/censored %d/%d/%d; successful p50/p95/p99 %g/%g/%g ms%s\n", p.Name, p.Status, p.Successes, p.Errors, p.Censored, p.Latency.P50, p.Latency.P95, p.Latency.P99, censored(p.Censored, p.CensoredElapsed))
 	}
 	wl := r.Workload
 	if wl.Spans > 0 {
