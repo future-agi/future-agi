@@ -123720,8 +123720,14 @@
                         "system",
                         "tool_calls",
                         "tool_call_result",
+                        "sub_actor",
                         "unknown"
                     ]
+                },
+                "speaker_name": {
+                    "title": "Speaker name",
+                    "type": "string",
+                    "maxLength": 255
                 },
                 "content": {
                     "title": "Content",
@@ -124711,6 +124717,59 @@
                 "check": {
                     "title": "Check",
                     "type": "string"
+                },
+                "sub_actor": {
+                    "title": "Sub actor",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessEnvironmentSubActor": {
+            "required": [
+                "id",
+                "name",
+                "role",
+                "channel",
+                "persona",
+                "scenarios_count"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "role": {
+                    "title": "Role",
+                    "type": "string"
+                },
+                "channel": {
+                    "title": "Channel",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "persona": {
+                    "title": "Persona",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "loudness_db": {
+                    "title": "Loudness db",
+                    "type": "number"
+                },
+                "scenarios_count": {
+                    "title": "Scenarios count",
+                    "type": "integer"
                 }
             }
         },
@@ -124813,6 +124872,7 @@
             "required": [
                 "amendments",
                 "sub_goals",
+                "sub_actors",
                 "end_conditions",
                 "provenance"
             ],
@@ -124920,6 +124980,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/HarnessEnvironmentCatalogueSubGoal"
+                    }
+                },
+                "sub_actors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentSubActor"
                     }
                 },
                 "end_conditions": {
@@ -125073,6 +125139,38 @@
                 "claim": {
                     "title": "Claim",
                     "type": "string"
+                },
+                "sub_actor": {
+                    "title": "Sub actor",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessEnvironmentScenarioSubActor": {
+            "required": [
+                "id",
+                "instruction",
+                "trigger"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "instruction": {
+                    "title": "Instruction",
+                    "type": "string"
+                },
+                "trigger": {
+                    "title": "Trigger",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
                 }
             }
         },
@@ -125088,6 +125186,7 @@
                 "fixture",
                 "steps",
                 "sub_goals",
+                "sub_actors",
                 "persona",
                 "situation",
                 "outcome",
@@ -125150,6 +125249,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/HarnessEnvironmentSubGoal"
+                    }
+                },
+                "sub_actors": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentScenarioSubActor"
                     }
                 },
                 "persona": {
@@ -128063,6 +128168,16 @@
                 "judged": {
                     "title": "Judged",
                     "type": "boolean"
+                },
+                "verdict": {
+                    "title": "Verdict",
+                    "type": "string",
+                    "enum": [
+                        "pass",
+                        "fail",
+                        "not_applicable",
+                        "inconclusive"
+                    ]
                 }
             }
         },
@@ -128360,6 +128475,12 @@
                 },
                 "failure": {
                     "$ref": "#/definitions/HarnessFailure"
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 1
                 },
                 "digest": {
                     "title": "Digest",
@@ -132079,8 +132200,14 @@
                         "system",
                         "tool_calls",
                         "tool_call_result",
+                        "sub_actor",
                         "unknown"
                     ]
+                },
+                "speaker_name": {
+                    "title": "Speaker name",
+                    "type": "string",
+                    "maxLength": 255
                 },
                 "content": {
                     "title": "Content",
@@ -137375,6 +137502,8 @@
                         "passed",
                         "failed",
                         "inconclusive",
+                        "no_score",
+                        "skipped",
                         "error"
                     ]
                 },
@@ -139566,6 +139695,8 @@
                         "passed",
                         "failed",
                         "inconclusive",
+                        "no_score",
+                        "skipped",
                         "error"
                     ]
                 },

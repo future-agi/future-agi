@@ -83,6 +83,12 @@ FIELDS: tuple[dict[str, Any], ...] = (
         "category": "conditions",
     },
     {
+        "value": "sub_actors",
+        "label": "Sub-actors",
+        "type": "enum",
+        "category": "conditions",
+    },
+    {
         "value": "coverage.overlay",
         "label": "Attack",
         "type": "enum",
@@ -385,6 +391,30 @@ def _orm_path(field: str) -> str:
     return _ALIASES.get(head, head)
 
 
+# The filter's value for a scenario that includes no sub-actor.
+NO_SUB_ACTOR = "none"
+
+
+def sub_actor_entries(raw: Any) -> list[dict[str, Any]] | None:
+    """A scenario's sub-actors as `{id, instruction, trigger}`, the fields a run reads."""
+    entries = [
+        {
+            "id": str(one["id"]),
+            "instruction": str(one.get("instruction") or ""),
+            "trigger": one.get("trigger") or {},
+        }
+        for one in raw or []
+        if isinstance(one, dict) and one.get("id")
+    ]
+    return entries or None
+
+
+def _sub_actor_match(value: str) -> Q:
+    if value == NO_SUB_ACTOR:
+        return Q(sub_actors__isnull=True)
+    return Q(sub_actors__contains=[{"id": value}])
+
+
 def index_scenarios(
     job: HostedHarnessJob, docs: list[dict[str, Any]], prune: bool = False
 ) -> int:
@@ -444,6 +474,7 @@ def index_scenarios(
             "persona": doc.get("persona") or None,
             "coverage": doc.get("coverage") or None,
             "sub_goals": doc.get("sub_goals") or None,
+            "sub_actors": sub_actor_entries(doc.get("sub_actors")),
             # Older suites carry keywords on the persona.
             "keywords": (
                 doc.get("keywords")
@@ -490,6 +521,14 @@ def apply_filters(queryset: QuerySet, params) -> QuerySet:
         values = [one for one in params.getlist(key) if one not in (None, "")]
         if not values:
             continue
+        if field == "sub_actors":
+            matches = Q()
+            for value in values:
+                matches |= _sub_actor_match(value)
+            queryset = (
+                queryset.exclude(matches) if negated else queryset.filter(matches)
+            )
+            continue
         path = _orm_path(field)
         lookup = (
             f"{path}__contains"
@@ -531,12 +570,17 @@ def field_catalogue(queryset: QuerySet, spoken: bool = True) -> list[dict[str, A
     for row in queryset.values(*set(paths.values())):
         for value, path in paths.items():
             held = row.get(path)
+            if value == "sub_actors":
+                held = [one.get("id") for one in held or []] or [NO_SUB_ACTOR]
             for one in held if isinstance(held, list) else [held]:
                 text = str(one or "").strip()
                 if text:
                     counts = tally[value]
                     counts[text] = counts.get(text, 0) + 1
 
+    # A suite where no scenario includes a sub-actor has nothing to filter on.
+    if set(tally["sub_actors"]) <= {NO_SUB_ACTOR}:
+        tally["sub_actors"] = {}
     catalogue: list[dict[str, Any]] = []
     for field in FIELDS:
         if not spoken and field["value"] in VOICE_ONLY_FIELDS:
@@ -663,6 +707,7 @@ def scenario_row(row: HostedHarnessScenario) -> dict[str, Any]:
         "persona": persona,
         "coverage": row.coverage or {},
         "sub_goals": row.sub_goals or [],
+        "sub_actors": row.sub_actors or [],
         "keywords": row.keywords or [],
         "background_noise": row.background_noise,
         "max_turns": row.max_turns,

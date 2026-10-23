@@ -1899,6 +1899,18 @@ def _persist_bundle_stage_outputs(
                     data=catalogue,
                 )
             )
+    if "sub_actors" not in existing:
+        listing = _load_bundle_file(manifest, "sub_actors.json", job)
+        if isinstance(listing, dict) and listing.get("sub_actors"):
+            outputs.append(
+                HostedHarnessStageOutput(
+                    job=job,
+                    title="Sub-actors",
+                    summary=sub_actors_summary(listing),
+                    kind="sub_actors",
+                    data=listing,
+                )
+            )
     if outputs:
         HostedHarnessStageOutput.no_workspace_objects.bulk_create(outputs)
 
@@ -3512,6 +3524,7 @@ class HostedHarnessGateway:
         authored_bundle = _json("/work/authoring/environment-bundle/manifest.json")
         scenarios = _json("/work/authoring/scenarios.json")
         sub_goals = _json("/work/authoring/sub_goals.json")
+        sub_actors = _json("/work/authoring/sub_actors.json")
         bundle = _json("/work/bundle/manifest.json")
         # Written when the world is sealed, so it appears later than the authoring
         # documents above and only once a store has actually been built.
@@ -3569,6 +3582,7 @@ class HostedHarnessGateway:
             sub_goals=sub_goals,
             build_output=build_output,
             coverage=coverage,
+            sub_actors=sub_actors,
         )
         activities = _activity_events()
         if activities:
@@ -4920,6 +4934,11 @@ def _record_harness_spend(
     job.updated_at = locked.updated_at
 
 
+def sub_actors_summary(listing: dict[str, Any]) -> str:
+    count = len(listing.get("sub_actors") or [])
+    return f"{count} sub-actor" + ("" if count == 1 else "s")
+
+
 def authoring_stage_outputs(
     contract: Any,
     environment: Any,
@@ -4931,6 +4950,7 @@ def authoring_stage_outputs(
     repair_history: Any = None,
     action_certification: Any = None,
     coverage: Any = None,
+    sub_actors: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
     outputs: list[dict[str, Any]] = []
@@ -4981,6 +5001,17 @@ def authoring_stage_outputs(
                 "title": "Sub-goal catalogue",
                 "summary": f"{len(goals)} sub-goals · {len(suite)} suite evals",
                 "data": _secret_safe(sub_goals),
+            }
+        )
+    # Sent even when emptied, so a list read on an earlier poll does not outlive it.
+    if isinstance(sub_actors, dict):
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000007",
+                "kind": "sub_actors",
+                "title": "Sub-actors",
+                "summary": sub_actors_summary(sub_actors),
+                "data": _secret_safe(sub_actors),
             }
         )
     stores = _seeded_stores(build_output)
@@ -5084,6 +5115,7 @@ def authoring_stage_outputs_from_archive(
         "environment.json",
         "scenarios.json",
         "sub_goals.json",
+        "sub_actors.json",
         "certification.json",
         "repair-history.json",
         "action-certification.json",
@@ -5134,6 +5166,7 @@ def authoring_stage_outputs_from_archive(
         repair_history=documents.get("repair-history.json"),
         action_certification=documents.get("action-certification.json"),
         coverage=documents.get("coverage.json"),
+        sub_actors=documents.get("sub_actors.json"),
     )
 
 

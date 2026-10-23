@@ -34795,6 +34795,8 @@ export const simulateApiAlkSimulateCallExecutionsResultBodyResultDigestRegExp =
 
 export const simulateApiAlkSimulateCallExecutionsResultBodyArtifactManifestDigestRegExp =
   new RegExp("^sha256:[0-9a-f]{64}$");
+export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemSpeakerNameMax = 255;
+
 export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsDefault = 0;
 export const simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemStartTimeMsMin = 0;
 
@@ -34847,8 +34849,15 @@ export const SimulateApiAlkSimulateCallExecutionsResultBody = zod.object({
           "system",
           "tool_calls",
           "tool_call_result",
+          "sub_actor",
           "unknown",
         ]),
+        speaker_name: zod
+          .string()
+          .max(
+            simulateApiAlkSimulateCallExecutionsResultBodyTranscriptItemSpeakerNameMax,
+          )
+          .optional(),
         content: zod.string(),
         start_time_ms: zod
           .number()
@@ -35540,6 +35549,18 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         kind: zod.enum(["checkpoint", "judge"]),
         claim: zod.string(),
         check: zod.string(),
+        sub_actor: zod.string().min(1).optional(),
+      }),
+    ),
+    sub_actors: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        role: zod.string(),
+        channel: zod.string().min(1),
+        persona: zod.record(zod.string(), zod.string()),
+        loudness_db: zod.number().optional(),
+        scenarios_count: zod.number(),
       }),
     ),
     end_conditions: zod.object({
@@ -35599,6 +35620,14 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
           what: zod.string().optional(),
           kind: zod.enum(["checkpoint", "judge"]).optional(),
           claim: zod.string().optional(),
+          sub_actor: zod.string().min(1).optional(),
+        }),
+      ),
+      sub_actors: zod.array(
+        zod.object({
+          id: zod.string().min(1),
+          instruction: zod.string(),
+          trigger: zod.record(zod.string(), zod.string()),
         }),
       ),
       persona: zod.record(zod.string(), zod.string()),
@@ -35749,6 +35778,18 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         kind: zod.enum(["checkpoint", "judge"]),
         claim: zod.string(),
         check: zod.string(),
+        sub_actor: zod.string().min(1).optional(),
+      }),
+    ),
+    sub_actors: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        role: zod.string(),
+        channel: zod.string().min(1),
+        persona: zod.record(zod.string(), zod.string()),
+        loudness_db: zod.number().optional(),
+        scenarios_count: zod.number(),
       }),
     ),
     end_conditions: zod.object({
@@ -35808,6 +35849,14 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
           what: zod.string().optional(),
           kind: zod.enum(["checkpoint", "judge"]).optional(),
           claim: zod.string().optional(),
+          sub_actor: zod.string().min(1).optional(),
+        }),
+      ),
+      sub_actors: zod.array(
+        zod.object({
+          id: zod.string().min(1),
+          instruction: zod.string(),
+          trigger: zod.record(zod.string(), zod.string()),
         }),
       ),
       persona: zod.record(zod.string(), zod.string()),
@@ -36021,6 +36070,18 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           kind: zod.enum(["checkpoint", "judge"]),
           claim: zod.string(),
           check: zod.string(),
+          sub_actor: zod.string().min(1).optional(),
+        }),
+      ),
+      sub_actors: zod.array(
+        zod.object({
+          id: zod.string().min(1),
+          name: zod.string().min(1),
+          role: zod.string(),
+          channel: zod.string().min(1),
+          persona: zod.record(zod.string(), zod.string()),
+          loudness_db: zod.number().optional(),
+          scenarios_count: zod.number(),
         }),
       ),
       end_conditions: zod.object({
@@ -36080,6 +36141,14 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
             what: zod.string().optional(),
             kind: zod.enum(["checkpoint", "judge"]).optional(),
             claim: zod.string().optional(),
+            sub_actor: zod.string().min(1).optional(),
+          }),
+        ),
+        sub_actors: zod.array(
+          zod.object({
+            id: zod.string().min(1),
+            instruction: zod.string(),
+            trigger: zod.record(zod.string(), zod.string()),
           }),
         ),
         persona: zod.record(zod.string(), zod.string()),
@@ -38155,6 +38224,8 @@ export const simulateApiHarnessAttemptsResultsBodyFailureCodeMax = 128;
 
 export const simulateApiHarnessAttemptsResultsBodyFailureMessageMax = 2000;
 
+export const simulateApiHarnessAttemptsResultsBodyReasonMax = 500;
+
 export const simulateApiHarnessAttemptsResultsBodyDigestRegExp = new RegExp(
   "^sha256:[0-9a-f]{64}$",
 );
@@ -38187,6 +38258,9 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
       held: zod.boolean(),
       reason: zod.string().optional(),
       judged: zod.boolean(),
+      verdict: zod
+        .enum(["pass", "fail", "not_applicable", "inconclusive"])
+        .optional(),
     }),
   ),
   evaluations: zod.object({}).passthrough(),
@@ -38337,6 +38411,11 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
       .min(1)
       .max(simulateApiHarnessAttemptsResultsBodyFailureMessageMax),
   }),
+  reason: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessAttemptsResultsBodyReasonMax)
+    .optional(),
   digest: zod
     .string()
     .min(1)
@@ -42081,6 +42160,8 @@ export const SimulateCallExecutionsTranscriptsListParams = zod.object({
   call_execution_id: zod.string(),
 });
 
+export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemSpeakerNameMax = 255;
+
 export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemStartTimeMsMin =
   -9223372036854776000;
 export const simulateCallExecutionsTranscriptsListResponseTranscriptsItemStartTimeMsMax = 9223372036854776000;
@@ -42104,10 +42185,17 @@ export const SimulateCallExecutionsTranscriptsListResponse = zod.object({
             "system",
             "tool_calls",
             "tool_call_result",
+            "sub_actor",
             "unknown",
           ])
           .optional()
           .describe("Role of the speaker (user or assistant)"),
+        speaker_name: zod
+          .string()
+          .max(
+            simulateCallExecutionsTranscriptsListResponseTranscriptsItemSpeakerNameMax,
+          )
+          .optional(),
         content: zod.string().min(1).describe("Transcript content"),
         start_time_ms: zod
           .number()
@@ -47113,6 +47201,8 @@ export const SimulateTestExecutionsTranscriptsListParams = zod.object({
   test_execution_id: zod.string(),
 });
 
+export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemSpeakerNameMax = 255;
+
 export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemStartTimeMsMin =
   -9223372036854776000;
 export const simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemStartTimeMsMax = 9223372036854776000;
@@ -47140,10 +47230,17 @@ export const SimulateTestExecutionsTranscriptsListResponse = zod.object({
                   "system",
                   "tool_calls",
                   "tool_call_result",
+                  "sub_actor",
                   "unknown",
                 ])
                 .optional()
                 .describe("Role of the speaker (user or assistant)"),
+              speaker_name: zod
+                .string()
+                .max(
+                  simulateTestExecutionsTranscriptsListResponseCallsItemTranscriptsItemSpeakerNameMax,
+                )
+                .optional(),
               content: zod.string().min(1).describe("Transcript content"),
               start_time_ms: zod
                 .number()
@@ -47443,6 +47540,8 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     "passed",
     "failed",
     "inconclusive",
+    "no_score",
+    "skipped",
     "error",
   ]),
   cost_breakdown_cents: zod.object({
@@ -48420,6 +48519,8 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         "passed",
         "failed",
         "inconclusive",
+        "no_score",
+        "skipped",
         "error",
       ]),
       execution_status: zod.string().min(1),

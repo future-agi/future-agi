@@ -64,10 +64,10 @@ def test_a_receipt_from_before_verdicts_still_reads_from_held(goal, result):
 def test_not_applicable_and_inconclusive_are_published_with_their_reason_and_counted_as_decided():
     body = {"sub_goals": _GOALS, "evaluations": []}
     assert [
-        (one["name"], one["result"], one["passed"])
+        (one["name"], one.get("result"), one["passed"])
         for one in _receipt_evaluations(body)
     ] == [
-        ("done", "pass", True),
+        ("done", None, True),
         ("noticed", "not_applicable", None),
         ("heard", "inconclusive", None),
     ]

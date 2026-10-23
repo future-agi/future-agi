@@ -53779,6 +53779,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "passed",
             "failed",
             "inconclusive",
+            "no_score",
+            "skipped",
             "error",
           ],
         },
@@ -64674,6 +64676,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         failure: {
           $ref: "#/definitions/HarnessFailure",
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          maxLength: 500,
+          minLength: 1,
         },
         digest: {
           title: "Digest",
@@ -84444,8 +84452,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "system",
             "tool_calls",
             "tool_call_result",
+            "sub_actor",
             "unknown",
           ],
+        },
+        speaker_name: {
+          title: "Speaker name",
+          type: "string",
+          maxLength: 255,
         },
         content: {
           title: "Content",
@@ -87516,8 +87530,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "system",
             "tool_calls",
             "tool_call_result",
+            "sub_actor",
             "unknown",
           ],
+        },
+        speaker_name: {
+          title: "Speaker name",
+          type: "string",
+          maxLength: 255,
         },
         content: {
           title: "Content",
@@ -93686,7 +93706,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessEnvironmentContract: {
-      required: ["amendments", "sub_goals", "end_conditions", "provenance"],
+      required: [
+        "amendments",
+        "sub_goals",
+        "sub_actors",
+        "end_conditions",
+        "provenance",
+      ],
       type: "object",
       properties: {
         agent: {
@@ -93791,6 +93817,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             $ref: "#/definitions/HarnessEnvironmentCatalogueSubGoal",
+          },
+        },
+        sub_actors: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentSubActor",
           },
         },
         end_conditions: {
@@ -93968,6 +94000,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "fixture",
         "steps",
         "sub_goals",
+        "sub_actors",
         "persona",
         "situation",
         "outcome",
@@ -94030,6 +94063,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "array",
           items: {
             $ref: "#/definitions/HarnessEnvironmentSubGoal",
+          },
+        },
+        sub_actors: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentScenarioSubActor",
           },
         },
         persona: {
@@ -95193,6 +95232,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         judged: {
           title: "Judged",
           type: "boolean",
+        },
+        verdict: {
+          title: "Verdict",
+          type: "string",
+          enum: ["pass", "fail", "not_applicable", "inconclusive"],
         },
       },
     },
@@ -101167,6 +101211,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "passed",
             "failed",
             "inconclusive",
+            "no_score",
+            "skipped",
             "error",
           ],
         },
@@ -111369,6 +111415,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Check",
           type: "string",
         },
+        sub_actor: {
+          title: "Sub actor",
+          type: "string",
+          minLength: 1,
+        },
       },
     },
     HarnessEnvironmentEndConditions: {
@@ -111452,6 +111503,47 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
             "x-nullable": true,
           },
+        },
+      },
+    },
+    HarnessEnvironmentSubActor: {
+      required: ["id", "name", "role", "channel", "persona", "scenarios_count"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+        },
+        channel: {
+          title: "Channel",
+          type: "string",
+          minLength: 1,
+        },
+        persona: {
+          title: "Persona",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        loudness_db: {
+          title: "Loudness db",
+          type: "number",
+        },
+        scenarios_count: {
+          title: "Scenarios count",
+          type: "integer",
         },
       },
     },
@@ -111638,6 +111730,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentScenarioSubActor: {
+      required: ["id", "instruction", "trigger"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        instruction: {
+          title: "Instruction",
+          type: "string",
+        },
+        trigger: {
+          title: "Trigger",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+      },
+    },
     HarnessEnvironmentSubGoal: {
       required: ["name"],
       type: "object",
@@ -111659,6 +111774,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         claim: {
           title: "Claim",
           type: "string",
+        },
+        sub_actor: {
+          title: "Sub actor",
+          type: "string",
+          minLength: 1,
         },
       },
     },

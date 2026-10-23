@@ -27,6 +27,7 @@ from simulate.models import (
     HostedHarnessStageOutput,
     TestExecution,
 )
+from simulate.services.harness_scenarios import sub_actor_entries
 from simulate.utils.ended_reason import canonical_ended_reasons
 
 # The four states the list's status pill knows. The pipeline reports far finer
@@ -555,6 +556,9 @@ def _catalogue_index(catalogue: Any) -> dict[str, dict[str, Any]]:
             "kind": "judge" if entry.get("judged") else "checkpoint",
             "claim": str(entry.get("judged") or ""),
         }
+        # The sub-actor this sub-goal grades the agent's treatment of, when it names one.
+        if entry.get("sub_actor"):
+            index[name]["sub_actor"] = str(entry["sub_actor"])
     return index
 
 
@@ -627,6 +631,7 @@ def _scenarios(
                     for name in doc.get("sub_goals") or []
                     if isinstance(name, str)
                 ],
+                "sub_actors": sub_actor_entries(doc.get("sub_actors")) or [],
                 "persona": _persona_of(cells),
                 "situation": cells.get("situation") or None,
                 "outcome": cells.get("outcome") or None,
@@ -795,6 +800,9 @@ def _contract_section(
     section = {field: contract.get(field) for field in _CONTRACT_FIELDS}
     section["amendments"] = _amendments(contract.get("amendments"))
     section["sub_goals"] = _catalogue_entries(catalogue)
+    section["sub_actors"] = _sub_actor_list(
+        _stage_output(job, "sub_actors"), scenario_docs
+    )
     section["end_conditions"] = _end_conditions(job, contract, scenario_docs)
     section["provenance"] = _provenance(job, environment)
     return section
@@ -820,9 +828,29 @@ def _catalogue_entries(catalogue: Any) -> list[dict[str, Any]]:
                 "kind": "judge" if judged else "checkpoint",
                 "claim": judged,
                 "check": str(entry.get("check") or ""),
+                **(
+                    {"sub_actor": str(entry["sub_actor"])}
+                    if entry.get("sub_actor")
+                    else {}
+                ),
             }
         )
     return goals
+
+
+def _sub_actor_list(listing: Any, scenario_docs: Any) -> list[dict[str, Any]]:
+    """The environment's sub-actors, each with how many scenarios include it."""
+    included: dict[str, int] = {}
+    for doc in scenario_docs if isinstance(scenario_docs, list) else []:
+        for one in doc.get("sub_actors") or [] if isinstance(doc, dict) else []:
+            if isinstance(one, dict) and one.get("id"):
+                included[str(one["id"])] = included.get(str(one["id"]), 0) + 1
+    entries = listing.get("sub_actors") if isinstance(listing, dict) else None
+    return [
+        {**entry, "scenarios_count": included.get(str(entry["id"]), 0)}
+        for entry in entries or []
+        if isinstance(entry, dict) and entry.get("id")
+    ]
 
 
 def _end_conditions(

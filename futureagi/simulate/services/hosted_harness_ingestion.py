@@ -1000,7 +1000,7 @@ def _apply_receipt_to_call(
         )
         base_time = None
         if transcript is not None:
-            base_time = _ingest_hosted_transcript(call, transcript)
+            base_time = _ingest_hosted_transcript(call, transcript, metadata)
             call.transcript_available = True
             update_fields.append("transcript_available")
         if tool_trace is not None:
@@ -1216,8 +1216,8 @@ def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
                 "name": str(goal["name"]),
                 "kind": "judge" if goal.get("judged") else "checkpoint",
                 "passed": {"pass": True, "fail": False}.get(result),
-                "result": result,
                 "reason": str(goal.get("reason") or ""),
+                **({"result": result} if result not in ("pass", "fail") else {}),
             }
         )
     for evaluation in body.get("evaluations") or []:
@@ -1318,7 +1318,9 @@ def _epoch_seconds(value: Any) -> float | None:
 
 
 def _ingest_hosted_transcript(
-    call: CallExecution, artifact: HostedHarnessArtifact
+    call: CallExecution,
+    artifact: HostedHarnessArtifact,
+    metadata: dict[str, Any] | None = None,
 ) -> float | None:
     """Materialize the sealed transcript artifact into the normal call transcript model.
 
@@ -1338,6 +1340,13 @@ def _ingest_hosted_transcript(
         except json.JSONDecodeError:
             payload = {"transcript": raw, "messages": []}
         messages = payload.get("messages") if isinstance(payload, dict) else []
+        # Who else was in the call, who took part and when; a rerun without them clears it.
+        if metadata is not None:
+            record = payload.get("sub_actors") if isinstance(payload, dict) else None
+            if record:
+                metadata["harness_sub_actors"] = record
+            else:
+                metadata.pop("harness_sub_actors", None)
         # Guests predating the structured transcript contract uploaded the
         # rendered `customer: ...` / `agent: ...` text. Preserve visibility for
         # those in-flight and retained runs while all new guests emit JSON.
@@ -1394,6 +1403,8 @@ def _ingest_hosted_transcript(
                     "speaker_role": str(message.get("role") or "unknown"),
                     "content": str(message.get("content") or ""),
                 }
+                if message.get("name"):
+                    segment["speaker_name"] = str(message["name"])[:255]
                 if message.get("tool_calls"):
                     segment["tool_calls"] = message["tool_calls"]
                 at = sent_at(message)
@@ -1479,6 +1490,11 @@ def _ingest_hosted_transcript(
                     CallTranscript(
                         call_execution=call,
                         speaker_role=role if role in valid_roles else "unknown",
+                        speaker_name=(
+                            str(message.get("name") or "")[:255]
+                            if role == CallTranscript.SpeakerRole.SUB_ACTOR
+                            else ""
+                        ),
                         content=str(content),
                         start_time_ms=start_ms,
                         end_time_ms=end_ms,

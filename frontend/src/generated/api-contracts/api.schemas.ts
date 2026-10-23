@@ -17246,6 +17246,7 @@ export const ALKSimulateTranscriptSegmentApiSpeakerRole = {
   system: "system",
   tool_calls: "tool_calls",
   tool_call_result: "tool_call_result",
+  sub_actor: "sub_actor",
   unknown: "unknown",
 } as const;
 
@@ -17255,6 +17256,8 @@ export type ALKSimulateTranscriptSegmentApiToolCalls = {
 
 export interface ALKSimulateTranscriptSegmentApi {
   speaker_role: ALKSimulateTranscriptSegmentApiSpeakerRole;
+  /** @maxLength 255 */
+  speaker_name?: string;
   content: string;
   /** @minimum 0 */
   start_time_ms?: number;
@@ -17606,6 +17609,23 @@ export interface HarnessEnvironmentCatalogueSubGoalApi {
   kind: HarnessEnvironmentCatalogueSubGoalApiKind;
   claim: string;
   check: string;
+  /** @minLength 1 */
+  sub_actor?: string;
+}
+
+export type HarnessEnvironmentSubActorApiPersona = { [key: string]: string };
+
+export interface HarnessEnvironmentSubActorApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  role: string;
+  /** @minLength 1 */
+  channel: string;
+  persona: HarnessEnvironmentSubActorApiPersona;
+  loudness_db?: number;
+  scenarios_count: number;
 }
 
 export type HarnessEnvironmentEndConditionsApiClock =
@@ -17685,6 +17705,7 @@ export interface HarnessEnvironmentContractApi {
   open_questions?: string[];
   amendments: HarnessEnvironmentAmendmentApi[];
   sub_goals: HarnessEnvironmentCatalogueSubGoalApi[];
+  sub_actors: HarnessEnvironmentSubActorApi[];
   end_conditions: HarnessEnvironmentEndConditionsApi;
   notes?: string;
   chosen_evals?: string[];
@@ -17732,6 +17753,19 @@ export interface HarnessEnvironmentSubGoalApi {
   what?: string;
   kind?: HarnessEnvironmentSubGoalApiKind;
   claim?: string;
+  /** @minLength 1 */
+  sub_actor?: string;
+}
+
+export type HarnessEnvironmentScenarioSubActorApiTrigger = {
+  [key: string]: string;
+};
+
+export interface HarnessEnvironmentScenarioSubActorApi {
+  /** @minLength 1 */
+  id: string;
+  instruction: string;
+  trigger: HarnessEnvironmentScenarioSubActorApiTrigger;
 }
 
 export type HarnessEnvironmentScenarioApiFixture = { [key: string]: string };
@@ -17753,6 +17787,7 @@ export interface HarnessEnvironmentScenarioApi {
   fixture: HarnessEnvironmentScenarioApiFixture;
   steps: number;
   sub_goals: HarnessEnvironmentSubGoalApi[];
+  sub_actors: HarnessEnvironmentScenarioSubActorApi[];
   persona: HarnessEnvironmentScenarioApiPersona;
   /** @minLength 1 */
   situation: string;
@@ -19036,6 +19071,16 @@ export const HarnessResultReceiptApiStatus = {
 
 export type HarnessResultReceiptApiEvaluations = { [key: string]: unknown };
 
+export type HarnessSubGoalApiVerdict =
+  (typeof HarnessSubGoalApiVerdict)[keyof typeof HarnessSubGoalApiVerdict];
+
+export const HarnessSubGoalApiVerdict = {
+  pass: "pass",
+  fail: "fail",
+  not_applicable: "not_applicable",
+  inconclusive: "inconclusive",
+} as const;
+
 export interface HarnessSubGoalApi {
   /**
    * @minLength 1
@@ -19045,6 +19090,7 @@ export interface HarnessSubGoalApi {
   held: boolean;
   reason?: string;
   judged: boolean;
+  verdict?: HarnessSubGoalApiVerdict;
 }
 
 export type HarnessTargetMetricsApiProvider =
@@ -19179,6 +19225,11 @@ export interface HarnessResultReceiptApi {
   evaluations: HarnessResultReceiptApiEvaluations;
   call: HarnessCallApi;
   failure: HarnessFailureApi;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  reason?: string;
   /**
    * @minLength 1
    * @pattern ^sha256:[0-9a-f]{64}$
@@ -21028,6 +21079,7 @@ export const CallTranscriptApiSpeakerRole = {
   system: "system",
   tool_calls: "tool_calls",
   tool_call_result: "tool_call_result",
+  sub_actor: "sub_actor",
   unknown: "unknown",
 } as const;
 
@@ -21035,6 +21087,8 @@ export interface CallTranscriptApi {
   readonly id?: string;
   /** Role of the speaker (user or assistant) */
   speaker_role?: CallTranscriptApiSpeakerRole;
+  /** @maxLength 255 */
+  speaker_name?: string;
   /**
    * Transcript content
    * @minLength 1
@@ -22832,6 +22886,8 @@ export const CallExecutionV3DetailResponseApiOutcome = {
   passed: "passed",
   failed: "failed",
   inconclusive: "inconclusive",
+  no_score: "no_score",
+  skipped: "skipped",
   error: "error",
 } as const;
 
@@ -23610,6 +23666,8 @@ export const RunCallApiOutcome = {
   passed: "passed",
   failed: "failed",
   inconclusive: "inconclusive",
+  no_score: "no_score",
+  skipped: "skipped",
   error: "error",
 } as const;
 
