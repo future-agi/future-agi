@@ -458,3 +458,86 @@ func TestGRPCRefusedCallsAreReleasedWithTheirConnection(t *testing.T) {
 		}
 	})
 }
+
+// delayProxy forwards TCP connections to target, delaying each direction by
+// oneWay.
+func delayProxy(t *testing.T, target string, oneWay time.Duration) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	pipe := func(dst, src net.Conn) {
+		type chunk struct {
+			at time.Time
+			b  []byte
+		}
+		ch := make(chan chunk, 1<<12)
+		go func() {
+			defer close(ch)
+			for {
+				buf := make([]byte, 32<<10)
+				n, err := src.Read(buf)
+				if n > 0 {
+					ch <- chunk{time.Now(), buf[:n]}
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
+		for c := range ch {
+			time.Sleep(time.Until(c.at.Add(oneWay)))
+			if _, err := dst.Write(c.b); err != nil {
+				break
+			}
+		}
+		dst.Close()
+	}
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			s, err := net.Dial("tcp", target)
+			if err != nil {
+				c.Close()
+				continue
+			}
+			go pipe(s, c)
+			go pipe(c, s)
+		}
+	}()
+	return l.Addr().String()
+}
+
+// A large message is not slowed by round trips: the connection window holds
+// a message at the receive cap, and a stream's window opens to the message
+// once its handler reads it. (Before, a 1 MiB connection window let at most
+// 1 MiB through per round trip: 15 MiB at 150 ms RTT took more than 2 s.)
+func TestGRPCLargeMessageIsNotSlowedByRoundTrips(t *testing.T) {
+	if raceEnabled || testing.Short() {
+		t.Skip("times a 15 MiB call")
+	}
+	s, _, _ := startGRPCServer(t, Config{}, nil)
+	conn, err := grpc.NewClient(delayProxy(t, s.cfg.GRPCAddr, 75*time.Millisecond),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(64<<20)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	if err := exportRaw(conn, context.Background(), emptySpans(t, 1)); err != nil { // connect
+		t.Fatal(err)
+	}
+	body := tracesOfSize(t, "big", 15<<20)
+	start := time.Now()
+	if err := exportRaw(conn, context.Background(), body); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if took := time.Since(start); took > 1500*time.Millisecond {
+		t.Errorf("a 15 MiB Export at 150 ms RTT took %v, want a few round trips", took)
+	}
+}

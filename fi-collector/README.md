@@ -203,7 +203,8 @@ hold at once, from reading a body until ClickHouse has stored its rows. A
 request leases its body before reading it and the price of decoding and
 storing it (measured from the body before it is decoded) before decoding it.
 When the budget is full, requests wait their turn while it frees up (up to
-10 s, and less once nothing has been freed for 2 s), then get
+10 s for each of their two leases, and less once nothing has been freed for
+2 s), then get
 **503 + Retry-After** (HTTP) or **UNAVAILABLE** (gRPC), which OTLP exporters
 retry. A request that can never succeed (over a cap, too large for the whole
 budget, malformed) gets **413/400** or **INVALID_ARGUMENT**, which exporters

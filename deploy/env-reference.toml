@@ -1449,8 +1449,9 @@ sandbox port, and its `ml` and `sandbox` profiles publish none either.
   body = '''
 The trace collector bounds the memory that OTLP requests hold at once, from
 reading a body until its spans are stored. When that budget is full, a request
-waits its turn while the budget frees up (up to 10 seconds), then gets `503`
-with `Retry-After` (gRPC `UNAVAILABLE`), which OpenTelemetry exporters retry. A request that cannot succeed as sent gets
+waits its turn while the budget frees up (up to 10 seconds before its body is
+received, and up to 10 more before it is processed), then gets `503` with
+`Retry-After` (gRPC `UNAVAILABLE`), which OpenTelemetry exporters retry. A request that cannot succeed as sent gets
 `413` or `400` (gRPC `INVALID_ARGUMENT`), which they do not retry. See
 [Ingestion request limits](/docs/observe/reference/export-formats#ingestion-request-limits).
 '''
