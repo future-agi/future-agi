@@ -57,7 +57,7 @@ export default function CodingAgentsIntegrationPage() {
           <BrandMark brand={primary ? primary.id : "coding-agents"} size={48} />
           <Box flex={1} minWidth={0}>
             <Stack direction="row" alignItems="center" spacing={1}>
-              <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>IDE</Typography>
+              <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>IDE &amp; coding agents</Typography>
             </Stack>
             <Typography sx={{ typography: "s1", color: "text.secondary" }}>
               {primary

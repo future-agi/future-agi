@@ -795,7 +795,7 @@ const outcomeOf = (rec, { model } = {}) => {
      the best was verified like any other winner, and ships the same way. */
   if (plateauStopOf(r)) {
     const s = r.stoppedEarly;
-    return { ...base, ending: { key: "stopped-early", label: "Stopped early" }, headline: `Stopped early — no gain in the last ${noGainRunsOf(s)} runs, after ${s.after} of up to ${s.of}. Best: ${said.charAt(0).toLowerCase()}${said.slice(1)}.` };
+    return { ...base, ending: { key: "stopped-early", label: "Stopped early" }, headline: `Stopped early — no gain beyond noise in the last ${noGainRunsOf(s)} runs, after ${s.after} of up to ${s.of}. Best: ${said.charAt(0).toLowerCase()}${said.slice(1)}.` };
   }
   if (record.stoppedAtBudget) {
     const s = record.stoppedAtBudget;
@@ -1163,7 +1163,7 @@ export const improvementProgressOf = (record, now = Date.now()) => {
 export const runsCountOf = (progress, result) => {
   if (!progress) return null;
   const max = progress.runsMax ?? progress.runsTotal;
-  const stopped = progress.stoppedEarly ? `stopped early, no gain in the last ${noGainRunsOf(result?.stoppedEarly)}` : null;
+  const stopped = progress.stoppedEarly ? `stopped early, no gain beyond noise in the last ${noGainRunsOf(result?.stoppedEarly)}` : null;
   return { done: progress.runsDone, max, upTo: !stopped && progress.stage !== "verify", stopped };
 };
 

@@ -715,11 +715,14 @@ export const FINALISTS = 3;
 
 /*
   Stopping early (new improvements): once this many runs in a row don't beat
-  the best so far on the target scenarios, the search stops and the best
-  goes straight to verifying. The planned run count is a maximum. Older
-  records keep the rule they were searched with — four in a row, after six.
+  the best so far on the target scenarios by more than run-to-run noise (the
+  baseline-twice calibration), the search stops and the best goes straight
+  to verifying — never before MIN_RUNS_BEFORE_STOP, so a flaky first pair
+  can't end it. The planned run count is a maximum. Older records keep the
+  rule they were searched with — four in a row, after six.
 */
 export const NO_GAIN_RUNS = 2;
+export const MIN_RUNS_BEFORE_STOP = 4;
 /*
   Most searches keep finding gains — a directed search builds on the best
   so far, so a run that follows one with no gain usually lands. About one in
@@ -991,6 +994,8 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
   let stoppedEarly = null;
   /* New improvements only: does this search plateau (see plateausFor)? */
   const plateau = rsi ? plateausFor(seed, env?.id) : true;
+  /* A gain inside run-to-run noise isn't a gain for the stop rule. */
+  const gainMargin = rsi ? Math.max(1, calibration?.noise || 0) : 0;
 
   for (let n = 1; n <= count; n += 1) {
     /*
@@ -1162,12 +1167,15 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     const touchesCode = cfg.repoTests && candidate.some((p) => ["code", "structure"].includes(KIND_SURFACE[p.kind] || "code"));
     const repoTests = touchesCode && fits ? { command: cfg.repoTests, pass: repoTestsPass(`${seed}:${n}`) } : null;
 
+    /* For the stop rule: a gain that clears run-to-run noise (an issue fix is a count, so any new one counts). */
+    const clearGain = improved && (cfg.issue && issueFixed > best.issueFixed || score > best.score + gainMargin);
     trials.push({
       n,
       picks,
       score,
       delta: score - base,
       improved,
+      clearGain,
       perScenario,
       brokeBlocker,
       ...(mustPassFails.length && { mustPassFails }),
@@ -1199,9 +1207,9 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     /* Stop after runs with no gain: two in a row that don't beat the best so
        far on the target scenarios (new improvements); older records, four in
        a row once the search has had six to find its footing. */
-    const sinceGain = trials.length - 1 - trials.map((t) => t.improved).lastIndexOf(true);
+    const sinceGain = trials.length - 1 - trials.map((t) => (rsi ? t.clearGain : t.improved)).lastIndexOf(true);
     const noGain = rsi ? NO_GAIN_RUNS : LEGACY_NO_GAIN.runs;
-    if (n >= (rsi ? NO_GAIN_RUNS : LEGACY_NO_GAIN.after) && n < count && sinceGain >= noGain) {
+    if (n >= (rsi ? MIN_RUNS_BEFORE_STOP : LEGACY_NO_GAIN.after) && n < count && sinceGain >= noGain) {
       /* With every failing target already fixed there was nothing left to
          gain: the search is done, not stalled (`complete`). */
       const headroom = trainMeasured.some((t) => passShareOf(t) < 1 && best.per?.[t.id] !== "fixed" && best.per?.[t.id] !== "off-script");
@@ -1763,7 +1771,7 @@ export const searchTrace = (result, record = null) => {
         ),
         ...(result.stoppedEarly?.window ? [result.stoppedEarly.complete
           ? `stopped after ${result.stoppedEarly.after} of up to ${result.stoppedEarly.of} runs — the best already fixes every failing target, nothing left to gain`
-          : `stopped early after ${result.stoppedEarly.after} of up to ${result.stoppedEarly.of} runs — no gain in the last ${result.stoppedEarly.window}, so the best goes straight to verifying`] : []),
+          : `stopped early after ${result.stoppedEarly.after} of up to ${result.stoppedEarly.of} runs — the last ${result.stoppedEarly.window} didn't beat the best by more than run-to-run noise, so the best goes straight to verifying`] : []),
       ],
     },
     {

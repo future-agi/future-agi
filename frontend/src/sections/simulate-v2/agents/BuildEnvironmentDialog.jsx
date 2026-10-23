@@ -17,7 +17,6 @@ const MONO = "ui-monospace, Menlo, monospace";
 const SIZES = [10, 25, 50, 100];
 const MIN_SCENARIOS = 1;
 const MAX_SCENARIOS = 1000;
-const WORLDS = Array.from({ length: PARALLEL_MAX }, (_, i) => i + 1);
 
 /* The checks a build needs before it starts: the agent can be reached, its
    keys resolve, a sandbox is free, and the parallel worlds are admitted. */
@@ -56,7 +55,7 @@ const buildChecks = (agent, worlds) => {
 /**
  * "Build environment" from an agent: the choices the builder can't make for
  * you — what to call it, which version of the agent it's built from (and
- * tests first), how many scenarios to start with, and how many run at once.
+ * tests first), and how many scenarios to start with.
  * Build waits for preflight to pass and for the AI credits to cover it.
  * `defaultParallel` is the setting to start from (an environment's own,
  * when built from one); else the run default.
@@ -72,7 +71,8 @@ export default function BuildEnvironmentDialog({ open, onClose, agent, defaultVe
   const count = countOk ? typed : Math.min(MAX_SCENARIOS, Math.max(MIN_SCENARIOS, Number.isFinite(typed) ? typed : MIN_SCENARIOS));
   const cap = Math.round(Number(agent?.values?.maxConcurrency)) || PARALLEL_MAX;
   const startWorlds = Math.min(cap, Math.max(1, Math.round(Number(defaultParallel)) || RUN_DEFAULTS.conversationsAtOnce));
-  const [worlds, setWorlds] = useState(startWorlds);
+  /* How many run at once is a run setting (the environment's Settings), not a build choice — the build starts from the default, and preflight checks it's admitted. */
+  const worlds = startWorlds;
   /* The build writes scenarios with AI credits — over what's left, it would stop part-way. */
   const credits = countOk ? buildCreditsCheck(count) : null;
   const preflight = usePreflight(buildChecks(agent, worlds), [open, version, worlds]);
@@ -85,7 +85,6 @@ export default function BuildEnvironmentDialog({ open, onClose, agent, defaultVe
     const pick = agent.versions.find((v) => v.label === (defaultVersion || agent.latest));
     setVersion(pick && !pick.pendingDraft ? pick.label : agent.production || agent.latest);
     setCountText("10");
-    setWorlds(startWorlds);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const blocked = !name.trim() ? "Name it first"
@@ -162,18 +161,6 @@ export default function BuildEnvironmentDialog({ open, onClose, agent, defaultVe
             )}
           </Stack>
         )}
-        <Box>
-          <Label>Parallel worlds</Label>
-          <Stack direction="row" alignItems="center" spacing={0.75}>
-            {WORLDS.map((n) => <Pick key={n} on={worlds === n} onClick={() => setWorlds(n)} label={`${n} at once`}>{n}</Pick>)}
-            <Typography sx={{ typography: "s3", color: "text.subtitle", ml: 0.5 }}>
-              {worlds === 1 ? "Scenarios run one at a time" : `Up to ${worlds} scenarios run at once, each in its own world`}
-            </Typography>
-          </Stack>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>
-            Changes how fast a run finishes, never its results. You can change it later in the environment&apos;s Settings.
-          </Typography>
-        </Box>
         <ConnectPreflight preflight={preflight} required />
         {/* When another environment is the right call (RSI PRD). */}
         <Stack direction="row" spacing={0.75} alignItems="flex-start" sx={{ px: 1.25, py: 1, borderRadius: 1, bgcolor: "background.neutral" }}>

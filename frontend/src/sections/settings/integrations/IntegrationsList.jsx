@@ -52,7 +52,7 @@ export default function IntegrationsList() {
       on: !!integrations.slack,
     },
     {
-      id: "coding-agents", name: "IDE",
+      id: "coding-agents", name: "IDE & coding agents",
       brand: codingAgent ? codingAgent.id : "coding-agents",
       desc: codingAgent
         ? `${codingAgent.label} · ${codingAgent.via === "plugin" ? "plugin" : "MCP server"}`

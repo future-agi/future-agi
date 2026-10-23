@@ -6,7 +6,7 @@
   part it protects. The budget caps it: when the search would cost more, it
   runs the trials the budget pays for and says it stopped there.
 */
-import { runSearch, searchScope, maxRunsOf, NO_GAIN_RUNS } from "./optimizer";
+import { runSearch, searchScope, maxRunsOf, MIN_RUNS_BEFORE_STOP, NO_GAIN_RUNS } from "./optimizer";
 import { fixDepthOf, proofKindOf, runDefaultsOf, CONFIG_AREAS } from "./rsiModel";
 import { areaStatesOf } from "../agents/configAreas";
 import { getEval } from "./evals";
@@ -222,7 +222,7 @@ export const planSearch = ({
   What the search can stop early on, said once for every estimate: the
   planned run count is a maximum.
 */
-export const stopEarlyNote = () => `Stops early if ${NO_GAIN_RUNS} runs in a row don't beat the best so far on the target scenarios, and verifies the best — so it often spends less.`;
+export const stopEarlyNote = () => `After at least ${MIN_RUNS_BEFORE_STOP} runs, stops early if ${NO_GAIN_RUNS} in a row don't beat the best on the target scenarios by more than run-to-run noise, and verifies the best — so it often spends less.`;
 
 /**
  * What an improvement will spend, as a range: the search on the main
