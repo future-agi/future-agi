@@ -19,8 +19,8 @@ const MaxNewProjectsPerRequest = 16
 // ErrTooManyNewProjects reports a request that names more projects new to its
 // key than MaxNewProjectsPerRequest. The first of them (in name order) were
 // resolved, and created where needed, before it was returned; a name that
-// could not be created is not tried again for a while, and its spans are
-// dropped as unresolvable then. So the same request sent again makes
+// failed a permanent value constraint is not tried again for a while; its spans are
+// reported as rejected in OTLP partial success. So a retry makes
 // progress: callers answer it as retryable.
 var ErrTooManyNewProjects = errors.New("stamp: too many new project names in one request; retry")
 
@@ -53,6 +53,9 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 			missing = append(missing, i)
 			continue
 		}
+		if err := validateProjectName(pn, "project_name"); err != nil {
+			return 0, err
+		}
 		nameSet[pn] = struct{}{}
 	}
 	if len(missing) > 0 {
@@ -66,8 +69,8 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 	}
 	if a != nil {
 		if missing, ok := result.MissingProjectsInWorkspace(result.WorkspaceID, names); ok && len(missing) > MaxNewProjectsPerRequest {
-			// The first names, in order, are added; names that cannot be
-			// created are not tried again for a while, so each retry
+			// The first names, in order, are added; deterministic value
+			// failures are skipped for a while, so each retry
 			// gets further either way.
 			sort.Strings(missing)
 			if err := a.ResolveProjectsForKey(ctx, cacheKey, result, missing[:MaxNewProjectsPerRequest]); err != nil {

@@ -203,12 +203,33 @@ hold at once, from reading a body until ClickHouse has stored its rows. A
 request leases its body before reading it and the price of decoding and
 storing it (measured from the body before it is decoded) before decoding it.
 When the budget is full, requests wait their turn while it frees up (up to
-10 s for each of their two leases, and less once nothing has been freed for
-2 s), then get
+10 s per lease wait, and less once nothing has been freed and no drain has
+been storing rows for 2 s), then get
 **503 + Retry-After** (HTTP) or **UNAVAILABLE** (gRPC), which OTLP exporters
 retry. A request that can never succeed (over a cap, too large for the whole
-budget, malformed) gets **413/400** or **INVALID_ARGUMENT**, which exporters
+work pool, malformed) gets **413/400** or **INVALID_ARGUMENT**, which exporters
 do not retry. gRPC calls are authenticated before their message is read.
+HTTP's new 30 s body-read deadline starts after the initial wire lease;
+gRPC's starts before the length prefix and includes the wire wait. Client
+export deadlines may expire earlier (the Collector otlp exporter commonly
+uses 5 s per attempt); for large batches that fit, consider 15 s or smaller
+batches. Lease ordering prevents cross-pool waits, not same-pool growth:
+gzip and chunked plain bodies can wait while holding part of the wire pool
+until the no-progress timeout refuses them.
+
+Quota refusals are HTTP 429 without Retry-After and gRPC RESOURCE_EXHAUSTED
+without RetryInfo. The Go SDK and Collector otlp exporter do not retry that
+gRPC status; some other SDKs do. Temporary project resolution failures are
+503/UNAVAILABLE and are not negatively cached. Deterministic value/check
+failures may drop resources; their rejected span count is reported in OTLP
+partial success. Fully dropped batches emit no ingestion usage.
+
+Standalone uses GOMEMLIMIT=512MiB: a 232 MiB ingest budget and about 154.7 MiB
+work pool. 8,192 spans with 50 short string attributes each can exceed it;
+start Collector pipelines at send_batch_size/send_batch_max_size 4096 and
+reduce further when needed. GOMEMLIMIT is soft, not a hard RSS bound. The
+512MiB setting and whole-container load at minimum Standalone resources
+still need release sign-off; collector-only measurements are insufficient.
 
 | Setting | Default | What |
 |---|---|---|

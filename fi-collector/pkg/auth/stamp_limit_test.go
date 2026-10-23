@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
@@ -73,7 +74,7 @@ type failingResolver struct {
 func (r *failingResolver) GetOrCreateProject(ctx context.Context, org, ws, name, kind string) (string, error) {
 	r.tried[name]++
 	if len(name) >= 3 && name[:3] == "bad" {
-		return "", errors.New("constraint violation")
+		return "", &pgconn.PgError{Code: "23514", Message: "constraint violation"}
 	}
 	return r.creatingResolver.GetOrCreateProject(ctx, org, ws, name, kind)
 }

@@ -61,6 +61,7 @@ func TestServerEnd2End(t *testing.T) {
 	})
 
 	s := New(Config{GRPCAddr: "127.0.0.1:0", BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil)
+	s.cfg.HTTPAddr = "" // Test only gRPC; never bind the production HTTP port.
 	addr := testTCPAddr(t)
 	s.cfg.GRPCAddr = addr
 
@@ -313,6 +314,7 @@ func TestServerEnd2End_WritesTraceRow(t *testing.T) {
 	// curatedwriter over the SAME chwriter (as production: server.New wires it).
 	addr := testTCPAddr(t)
 	s := New(Config{GRPCAddr: addr, BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil)
+	s.cfg.HTTPAddr = "" // Test only gRPC; never bind the production HTTP port.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = s.Run(ctx) }()
@@ -697,6 +699,7 @@ func TestPricerWiredThroughGRPCExport(t *testing.T) {
 	stub := &stubPricer{cost: 0.0099}
 	addr := testTCPAddr(t)
 	s := New(Config{GRPCAddr: addr, BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil, WithPricer(stub))
+	s.cfg.HTTPAddr = "" // Test only gRPC; never bind the production HTTP port.
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -974,7 +977,7 @@ func TestGRPCAcceptsSpanLargerThanFourMiB(t *testing.T) {
 // An over-cap message must be rejected AND show up in the collector's own
 // logs (else the drop is diagnosable only from client logs). It is refused
 // from its length prefix, before it is read or leased, with INVALID_ARGUMENT:
-// grpc-go's own RESOURCE_EXHAUSTED is a code OTLP exporters retry.
+// Some exporters (Python, Java) retry RESOURCE_EXHAUSTED without RetryInfo.
 func TestGRPCOverCapRejectionIsLogged(t *testing.T) {
 	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)

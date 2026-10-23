@@ -364,13 +364,9 @@ func (s *Server) shutdown() {
 	s.drainNow(context.Background())
 }
 
-// grpcErrLogger surfaces transport-level message-size rejections. A message
-// larger than MaxRecvMsgSize is rejected with RESOURCE_EXHAUSTED before the
-// handler or interceptor runs, so a stats.Handler is the only server-side
-// hook that sees it — without this, the client's span is dropped with no
-// trace in the collector's own logs. Deliberately narrow: auth failures are
-// logged by the interceptor, quota rejections are silent by design (same
-// code, would be indistinguishable spam), and client cancels are benign.
+// grpcErrLogger logs fallback transport-level receive-cap failures. The
+// Export handler normally translates these to INVALID_ARGUMENT and counts
+// them itself; this narrow hook covers other transport rejection paths.
 type grpcErrLogger struct {
 	log *slog.Logger
 }
@@ -441,12 +437,18 @@ func (h *otlpHandler) export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	// Keep the authenticated workspace out-of-band. StampResourceAttrs retains
 	// the existing org/project behavior but deliberately does not add a
 	// workspace attribute to the canonical span payload.
+	var rejectedSpans int64
 	var propertyOrganizationID, propertyWorkspaceID string
 	var propertyProjectIDs map[string]struct{}
 	if result := auth.FromContext(ctx); result != nil {
 		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
 		ck := auth.CacheKeyFromContext(ctx)
+		beforeStamp := req.Traces().SpanCount()
 		dropped, err := auth.StampResourceAttrs(ctx, h.s.auth, ck, req.Traces(), result)
+		rejectedSpans = int64(beforeStamp - req.Traces().SpanCount())
+		if errors.Is(err, auth.ErrProjectResolutionUnavailable) {
+			return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rejectProjectUnavailable)
+		}
 		if errors.Is(err, auth.ErrTooManyNewProjects) {
 			return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rejectNewProjects)
 		}
@@ -472,7 +474,9 @@ func (h *otlpHandler) export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	payloadBytes := (&ptrace.ProtoMarshaler{}).TracesSize(req.Traces()) // what MarshalProto would write
 	h.s.emitUsage(ctx, req.Traces(), int64(payloadBytes))
 
-	return ptraceotlp.NewExportResponse(), true, nil
+	resp = ptraceotlp.NewExportResponse()
+	setProjectPartialSuccess(resp, rejectedSpans)
+	return resp, len(rows) > 0, nil
 }
 
 // handleHTTPTraces implements POST /v1/traces per the OTLP/HTTP wire spec
@@ -574,12 +578,19 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Keep the authenticated workspace out-of-band; see the gRPC path above.
+	var rejectedSpans int64
 	var propertyOrganizationID, propertyWorkspaceID string
 	var propertyProjectIDs map[string]struct{}
 	if result := auth.FromContext(r.Context()); result != nil {
 		propertyOrganizationID, propertyWorkspaceID = result.OrgID, result.WorkspaceID
 		ck := auth.CacheKeyFromContext(r.Context())
+		beforeStamp := req.Traces().SpanCount()
 		dropped, err := auth.StampResourceAttrs(r.Context(), s.auth, ck, req.Traces(), result)
+		rejectedSpans = int64(beforeStamp - req.Traces().SpanCount())
+		if errors.Is(err, auth.ErrProjectResolutionUnavailable) {
+			s.rejectHTTP(w, rejectProjectUnavailable)
+			return
+		}
 		if errors.Is(err, auth.ErrTooManyNewProjects) {
 			s.rejectHTTP(w, rejectNewProjects)
 			return
@@ -606,7 +617,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.enqueueScoped(rows, ids, propertyOrganizationID, propertyWorkspaceID, propertyProjectIDs)
-	enqueued = true
+	enqueued = len(rows) > 0
 
 	s.emitUsage(r.Context(), req.Traces(), int64(len(body)))
 
@@ -614,6 +625,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	// the request's content-type. The spec requires the response media type
 	// to match the request.
 	resp := ptraceotlp.NewExportResponse()
+	setProjectPartialSuccess(resp, rejectedSpans)
 	var out []byte
 	switch ct {
 	case "application/json":
@@ -628,6 +640,15 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", ct)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(out)
+}
+
+// Permanent project-value failures may discard part of a batch. Report the
+// actual rejected span count instead of acknowledging it as fully stored.
+func setProjectPartialSuccess(resp ptraceotlp.ExportResponse, rejected int64) {
+	if rejected > 0 {
+		resp.PartialSuccess().SetRejectedSpans(rejected)
+		resp.PartialSuccess().SetErrorMessage("spans rejected: project could not be resolved after a permanent value constraint failure")
+	}
 }
 
 // bodyRejection maps an error from reading an OTLP/HTTP body.

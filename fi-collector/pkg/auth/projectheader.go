@@ -41,10 +41,8 @@ const (
 // resourceProjectNameKey is the resource attribute StampResourceAttrs reads.
 const resourceProjectNameKey = "project_name"
 
-// maxProjectNameChars is the longest name the header may carry: the project
-// table's name column holds 255 characters, so a longer name could never be
-// matched or created, and its spans would be dropped without an error the
-// sender sees.
+// maxProjectNameChars matches the project table's varchar(255) column.
+// Header and resource values are checked before resolving or creating them.
 const maxProjectNameChars = 255
 
 // ProjectNameValues holds a request's project header field lines: those of
@@ -137,29 +135,41 @@ func projectNameFromHeader(header string, lines []string) (string, error) {
 	switch {
 	case v == "":
 		return "", nil
-	case !utf8.ValidString(v):
-		return "", fmt.Errorf("%s is not valid UTF-8", header)
 	case strings.ContainsRune(v, ','):
 		return "", fmt.Errorf("%s holds a comma-separated list; send one project name without commas", header)
-	case utf8.RuneCountInString(v) > maxProjectNameChars:
-		return "", fmt.Errorf("%s is longer than %d characters", header, maxProjectNameChars)
+	}
+	if err := validateProjectName(v, header); err != nil {
+		return "", err
+	}
+	return v, nil
+}
+
+// validateProjectName shares the value rules between headers and resources.
+// Header trimming and comma/list rejection stay in the header parser: a
+// resource attribute names one project verbatim, and may contain a comma.
+func validateProjectName(v, label string) error {
+	if !utf8.ValidString(v) {
+		return fmt.Errorf("%s is not valid UTF-8", label)
+	}
+	if utf8.RuneCountInString(v) > maxProjectNameChars {
+		return fmt.Errorf("%s is longer than %d characters", label, maxProjectNameChars)
 	}
 	for _, r := range v {
 		switch {
 		case unicode.IsControl(r):
-			return "", fmt.Errorf("%s contains a control character (%U)", header, r)
+			return fmt.Errorf("%s contains a control character (%U)", label, r)
 		case unicode.Is(unicode.Cf, r):
-			return "", fmt.Errorf("%s contains an invisible format character (%U)", header, r)
+			return fmt.Errorf("%s contains an invisible format character (%U)", label, r)
 		case unicode.In(r, unicode.Zl, unicode.Zp):
-			return "", fmt.Errorf("%s contains a line or paragraph separator (%U)", header, r)
+			return fmt.Errorf("%s contains a line or paragraph separator (%U)", label, r)
 		case unicode.In(r, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector):
-			return "", fmt.Errorf("%s contains an invisible character (%U)", header, r)
+			return fmt.Errorf("%s contains an invisible character (%U)", label, r)
 		}
 	}
 	if !hasVisibleRune(v) {
-		return "", fmt.Errorf("%s has no visible character", header)
+		return fmt.Errorf("%s has no visible character", label)
 	}
-	return v, nil
+	return nil
 }
 
 // hasVisibleRune reports whether v has a character that is drawn as something:

@@ -23,9 +23,9 @@ func (denyAll) CheckUsage(context.Context, string, string, int64) auth.CheckResu
 	return auth.CheckResult{Allowed: false, Reason: "monthly tracing events used up"}
 }
 
-// A request over its key's quota is refused as retryable (HTTP 429 with
-// Retry-After, gRPC RESOURCE_EXHAUSTED) before its body is read, and counted.
-func TestQuotaRefusalIsRetryableAndCounted(t *testing.T) {
+// A quota refusal is counted before reading the body: HTTP 429 without
+// Retry-After, gRPC RESOURCE_EXHAUSTED without RetryInfo. No short retry is promised.
+func TestQuotaRefusalIsCountedWithoutShortRetryHint(t *testing.T) {
 	result := &auth.ResolveResult{OrgID: "org"}
 	t.Run("http", func(t *testing.T) {
 		s := New(Config{}, nil, nil, nil, denyAll{})
@@ -34,8 +34,8 @@ func TestQuotaRefusalIsRetryableAndCounted(t *testing.T) {
 		req = req.WithContext(auth.WithResolvedContext(req.Context(), result, "ck"))
 		rec := httptest.NewRecorder()
 		s.handleHTTPTraces(rec, req)
-		if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" {
-			t.Errorf("status %d, Retry-After %q; want 429 with Retry-After", rec.Code, rec.Header().Get("Retry-After"))
+		if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "" {
+			t.Errorf("status %d, Retry-After %q; want 429 without Retry-After", rec.Code, rec.Header().Get("Retry-After"))
 		}
 		if got := s.IngestStats().Rejected["http/quota/429"]; got != 1 {
 			t.Errorf("quota refusals counted %d, want 1", got)
@@ -52,7 +52,7 @@ func TestQuotaRefusalIsRetryableAndCounted(t *testing.T) {
 			}
 		})
 		err := exportRaw(conn, context.Background(), emptySpans(t, 1))
-		if status.Code(err) != codes.ResourceExhausted {
+		if status.Code(err) != codes.ResourceExhausted || len(status.Convert(err).Details()) != 0 {
 			t.Errorf("Export over quota: %v, want RESOURCE_EXHAUSTED", err)
 		}
 		if got := s.IngestStats().Rejected["grpc/quota/ResourceExhausted"]; got != 1 {

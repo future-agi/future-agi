@@ -141,7 +141,12 @@ func TestIdleGRPCConnectionIsClosedAndItsSlotReused(t *testing.T) {
 		t.Fatalf("Export on another client after the idle one was closed: %v", err)
 	}
 	other.Close()
-	if err := exportRaw(idle, ctx, emptySpans(t, 1)); err != nil {
+	// Close on the client does not synchronously free the server's slot.
+	// Wait for reconnect readiness within the deadline, not for one immediate
+	// connection attempt to win that race.
+	body := emptySpans(t, 1)
+	var response []byte
+	if err := idle.Invoke(ctx, exportMethod, &body, &response, grpc.ForceCodec(rawProtoCodec{}), grpc.WaitForReady(true)); err != nil {
 		t.Fatalf("the idle client's next Export: %v", err)
 	}
 }
@@ -313,12 +318,8 @@ func (h *h2Call) ended(d time.Duration) error {
 	return h.dead
 }
 
-// grpc-go copies each DATA frame into a buffer of its own and queues it until
-// the handler reads the message, at about a hundred bytes of heap per frame
-// beyond its data. A connection whose stream sends many tiny DATA frames is
-// closed (frameGuardConn), whatever its credentials, so frames cost about
-// what they carry. (Before, a 1-byte frame cost a few hundred bytes of heap,
-// before the call was authenticated or leased.)
+// A connection whose stream sends many tiny DATA frames is closed by
+// frameGuardConn, independent of its credentials.
 func TestGRPCConnectionSendingTinyDataFramesIsClosed(t *testing.T) {
 	var allow atomic.Bool
 	s, _, _ := startGRPCServer(t, Config{}, func(s *Server) {
@@ -411,12 +412,9 @@ func TestFrameGuardCounts(t *testing.T) {
 	}
 }
 
-// grpc-go never cancels the context of a call its tap handle refused (nor
-// the timer of its deadline), so what such calls leave behind is held until
-// the connection's context ends. A connection gets a context that ends with
-// it, and is closed once grpcMaxTapRefusals of its calls were refused.
-// (Before, each refused call that set a deadline held a timer until the
-// deadline, however far off, and one connection could leave any number.)
+// Refused call contexts end with their connection; after enough unverified
+// tap refusals the connection is retired. Known-client capacity refusals are
+// covered separately by TestAuthenticatedBusyRefusalsKeepAcceptedCall.
 func TestGRPCRefusedCallsAreReleasedWithTheirConnection(t *testing.T) {
 	t.Run("connection context", func(t *testing.T) {
 		h := grpcConnTracker{s: New(Config{}, nil, nil, nil, nil)}

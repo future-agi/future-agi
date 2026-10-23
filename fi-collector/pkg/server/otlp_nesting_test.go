@@ -104,10 +104,7 @@ func TestCheckProtoNesting(t *testing.T) {
 
 // A protobuf body whose attribute value nests past maxValueNesting is a 400,
 // compressed or not, and one at the limit still decodes. The scan refuses it
-// before pdata decodes it: on dev, the 1.5M-array body (3M levels, 13.8 MiB)
-// overflows the decoder's stack ("goroutine stack exceeds 1000000000-byte
-// limit", a fatal error that ends this test binary), and a body at the old
-// 10,000-level limit grows a request's stack by about 4 MiB.
+// before pdata decodes it, bounding decoder recursion and request stack growth.
 func TestOTLPHTTPDeeplyNestedProtobufIs400(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -156,10 +153,7 @@ func (rawProtoCodec) Unmarshal(b []byte, v any) error {
 func (rawProtoCodec) Name() string { return "proto" }
 
 // gRPC requests get the same nesting limit, checked by the scan before pdata
-// decodes the request, and refused as INVALID_ARGUMENT. On dev, the
-// 1.5M-array request (14.5 MiB, under the 16 MiB receive cap) overflows the
-// decoder's stack: "goroutine stack exceeds 1000000000-byte limit", a fatal
-// error that ends this test binary.
+// decodes the request, and refused as INVALID_ARGUMENT.
 func TestGRPCDeeplyNestedProtobufIsRefused(t *testing.T) {
 	addr, _ := startGRPCOnly(t, Config{})
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -213,8 +207,7 @@ func TestNestingCheckedCodecChecksOnlyTraceExports(t *testing.T) {
 }
 
 // JSON gets the same attribute nesting limit, and a limit on JSON nesting
-// anywhere (unknown keys included, which jsoniter skips recursively). On dev,
-// jsoniter alone refused more than 10,000 levels.
+// anywhere, including unknown keys that the decoder skips recursively.
 func TestOTLPHTTPDeeplyNestedJSONIs400(t *testing.T) {
 	// Each nested array is 3 JSON levels: {"arrayValue":{"values":[ ... ]}}.
 	nested := func(arrays int) string {

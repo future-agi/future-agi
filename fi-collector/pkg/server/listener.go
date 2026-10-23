@@ -84,11 +84,9 @@ const (
 	http2FlagPadded    = 0x8
 )
 
-// Small DATA frames on OTLP/gRPC. grpc-go copies every DATA frame it reads
-// into a buffer of its own and queues it on the stream until the handler
-// reads the message: a frame costs about 100 bytes of heap beyond its data,
-// and a buffer of the frame's size class. A frame of a few bytes therefore
-// costs tens of times its size, before the call is authenticated or leased.
+// Small DATA frames on OTLP/gRPC. The transport queues frames until the
+// handler reads the message, so frames much smaller than clients normally
+// send are limited.
 // gRPC clients send frames of up to 16 KiB; a frame under smallDataFrame
 // ends a message, or the stream, or sits at a flow-control window boundary.
 // Each stream may send smallFrameCredit such frames, plus one per

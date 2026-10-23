@@ -33,11 +33,13 @@ import (
 //     size or count limit) or 400 (malformed, too deep), gRPC
 //     INVALID_ARGUMENT. OTLP exporters drop the batch.
 //   - busy: retry later. HTTP 503 with Retry-After, gRPC UNAVAILABLE; a quota
-//     refusal is HTTP 429 with Retry-After, gRPC RESOURCE_EXHAUSTED.
+//     refusal is HTTP 429 without Retry-After, gRPC RESOURCE_EXHAUSTED.
 //   - read timeout: the body or message did not arrive within
 //     otlpReadTimeout. HTTP 503 with Retry-After, gRPC DEADLINE_EXCEEDED.
 //
-// OTLP exporters retry busy refusals and read timeouts. Auth refusals (HTTP
+// OTLP exporters retry 503/UNAVAILABLE and read timeouts within their retry
+// and deadline policy. Quota RESOURCE_EXHAUSTED has no RetryInfo: the Go SDK
+// and Collector otlp exporter do not retry it; other SDKs may. Auth refusals (HTTP
 // 401, gRPC UNAUTHENTICATED), when credentials cannot be checked (HTTP 503,
 // gRPC UNAVAILABLE), and unsupported methods, media types or codings (HTTP
 // 405, 415) are answered as before. Refusals are counted in /healthz
@@ -92,7 +94,8 @@ func (r *rejection) grpcCode() codes.Code {
 }
 
 var (
-	rejectHeap = &rejection{reason: "heap", kind: rejectBusy,
+	rejectProjectUnavailable = &rejection{reason: "project_unavailable", kind: rejectBusy, msg: "project resolution temporarily unavailable, retry later"}
+	rejectHeap               = &rejection{reason: "heap", kind: rejectBusy,
 		msg: "server busy (memory), retry later"}
 	rejectWireBusy = &rejection{reason: "wire_busy", kind: rejectBusy,
 		msg: "server busy receiving other requests, retry later"}
@@ -111,8 +114,9 @@ var (
 		msg: fmt.Sprintf("more than %d new project names in one request; up to %d are added per request, retry", auth.MaxNewProjectsPerRequest, auth.MaxNewProjectsPerRequest)}
 )
 
-// quotaRejection is a request over its key's usage quota: retryable, once
-// the quota allows (HTTP 429, gRPC RESOURCE_EXHAUSTED).
+// quotaRejection is a request over its key's usage quota (HTTP 429, gRPC
+// RESOURCE_EXHAUSTED without RetryInfo). Monthly quotas and budget pauses
+// have no short recovery time, so do not override exporter backoff with 1s.
 func quotaRejection(reason string) *rejection {
 	return &rejection{reason: "quota", kind: rejectBusy, status: http.StatusTooManyRequests,
 		code: codes.ResourceExhausted, msg: "quota exceeded: " + reason}
@@ -170,7 +174,7 @@ func (s *Server) rejectHTTP(w http.ResponseWriter, r *rejection) {
 	if ok, held := s.countRejection("http", strconv.Itoa(st), r); ok {
 		s.logRejection("http", strconv.Itoa(st), r, held)
 	}
-	if r.kind != rejectPermanent {
+	if r.kind != rejectPermanent && st != http.StatusTooManyRequests {
 		w.Header().Set("Retry-After", "1")
 	}
 	http.Error(w, r.msg, st)
@@ -230,7 +234,7 @@ func (s *Server) leaseWork(ctx context.Context, body []byte, jsonBody bool) (wor
 	}
 	if shape.rowJSONBytes > s.limits.maxEncoded {
 		return nil, nil, &rejection{reason: "stored_size", tooLarge: true,
-			msg: fmt.Sprintf("payload too large: it would store about %d MiB, over the %d MiB limit for one request (%dx the OTLP body cap); send smaller batches",
+			msg: fmt.Sprintf("payload too large: its row JSON before storage compression is about %d MiB, over the %d MiB limit for one request (%dx the OTLP body cap); send smaller batches",
 				shape.rowJSONBytes>>20, s.limits.maxEncoded>>20, maxEncodedPerBody)}
 	}
 	p := shape.price()

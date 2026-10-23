@@ -10,7 +10,7 @@ import (
 
 func (s *Server) emitUsage(ctx context.Context, traces ptrace.Traces, payloadBytes int64) {
 	result := auth.FromContext(ctx)
-	if result == nil {
+	if result == nil || traces.SpanCount() == 0 {
 		return
 	}
 	// Single-trace export = a provider-pull call (deterministic trace id, re-polled):

@@ -134,6 +134,7 @@ type grpcSlot struct {
 }
 
 type grpcSlotKey struct{}
+type grpcBusyKey struct{}
 
 func (sl *grpcSlot) release() {
 	sl.mu.Lock()
@@ -177,6 +178,12 @@ func (s *Server) grpcTap(ctx context.Context, info *tap.Info) (context.Context, 
 		pool, rej = s.grpcPending, rejectUnverified
 	}
 	if !pool.TryAcquire(1) {
+		if pool == s.grpcStreams {
+			// Known clients receive a handler-level refusal. The handler
+			// returns without reading the body and completes this call's
+			// lifecycle without retiring a busy client's connection.
+			return context.WithValue(ctx, grpcBusyKey{}, rej), nil
+		}
 		s.tapRefused(ctx)
 		return nil, s.rejectGRPC(rej)
 	}
@@ -192,6 +199,9 @@ type rawExport struct{ b []byte }
 // exportStream serves one Export call.
 func (h *otlpHandler) exportStream(stream grpc.ServerStream) error {
 	s := h.s
+	if rej, ok := stream.Context().Value(grpcBusyKey{}).(*rejection); ok {
+		return s.rejectGRPC(rej)
+	}
 	ctx, err := s.grpcAuth(stream.Context())
 	if err != nil {
 		code := status.Code(err)
@@ -308,8 +318,8 @@ func (s *Server) recvGRPCMessageAtCap(ctx context.Context, stream grpc.ServerStr
 		}
 		if status.Code(err) == codes.ResourceExhausted {
 			// Over the receive cap: grpc-go refused it from the length
-			// prefix. Its code (RESOURCE_EXHAUSTED) is one OTLP exporters
-			// retry, so it is answered as the permanent refusal it is.
+			// prefix. Some exporters (Python, Java) retry RESOURCE_EXHAUSTED
+			// without RetryInfo; answer this permanent refusal as INVALID_ARGUMENT.
 			return nil, nil, s.rejectGRPC(s.rejectRecvTooLarge())
 		}
 		return nil, nil, s.recvError(err)
@@ -352,12 +362,10 @@ func readWithin(deadline time.Time, read func() error, after func()) error {
 	}
 }
 
-// grpc-go keeps the context of a call its tap handle refused until the
-// connection's context ends, and a timer with it when the call set a
-// deadline: it never cancels it. grpcConnTracker gives each connection a
-// context it cancels when the connection ends, and closes a connection once
-// grpcMaxTapRefusals of its calls have been refused, so what refused calls
-// leave behind is released then.
+// grpcConnTracker gives each connection a context cancelled when it ends.
+// It retires connections after grpcMaxTapRefusals unverified/missing-credential
+// tap refusals. Known clients' capacity and quota refusals end in the handler
+// instead, without closing their connections or interrupting accepted calls.
 const grpcMaxTapRefusals = 256
 
 // grpcConn is a connection's state, in the context of its calls.

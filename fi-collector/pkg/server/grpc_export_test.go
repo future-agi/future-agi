@@ -335,10 +335,9 @@ func TestGRPCCompressedFlagWithoutEncodingIsInvalid(t *testing.T) {
 }
 
 // Calls whose key the auth cache knows as valid take their in-flight slot
-// from the authenticated calls' limit; calls still being authenticated share
-// a smaller one. Callers with keys that take long to refuse then cannot hold
-// the slots of callers with known keys. (Before, every call with credentials
-// took a slot from one limit before its key was checked.)
+// from the authenticated calls' limit, and calls still being authenticated
+// from a separate, smaller one, so calls being authenticated cannot take
+// every slot.
 func TestGRPCCallsBeingAuthenticatedCannotHoldEverySlot(t *testing.T) {
 	key := func(ctx context.Context) string {
 		md, _ := metadata.FromIncomingContext(ctx)

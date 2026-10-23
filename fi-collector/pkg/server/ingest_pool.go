@@ -13,16 +13,15 @@ import (
 // memPool is a share of the ingest budget (see ingestLimits): bytes that
 // requests lease before they hold them, and give back when they no longer do.
 //
-// There are two pools, always taken in the same order (wire, then work), so
-// leases cannot deadlock: no request waits on a pool while holding a lease
-// from a pool later in the order. Each is taken once per request, except
-// that a gzip body that decompresses to more than its wire lease allows for
-// waits for the rest while it holds its compressed body (readOTLPHTTPBody).
+// The two pools are taken in order (wire, then work), so no request waits
+// on wire while holding work capacity. Within the wire pool, gzip inflation
+// or joining a chunked plain body may grow a lease while holding its first
+// share. Concurrent growers can wait on each other; the no-progress timeout
+// ends those waits with a busy refusal (readOTLPHTTPBody).
 //
 //   - wire: the request body, leased before it is read, and held until the
 //     handler returns. HTTP: the Content-Length, or the cap when it is not
-//     known (twice the cap for a plain body, which is joined after it is
-//     read); for gzip, also room for the decompressed body. gRPC: about
+//     known (a plain body read in chunks grows its lease for the joined copy); for gzip, also room for the decompressed body. gRPC: about
 //     twice the message, from its length prefix (grpc_export.go). It shrinks
 //     once the real size is known.
 //   - work: the price of decoding, converting and storing the request
@@ -185,9 +184,9 @@ func (l *lease) shrink(n int64) {
 }
 
 // grow adds n bytes to the lease, waiting for them as acquire does. It is
-// for a gzip body that decompresses to more than its wire lease allowed for
-// (readOTLPHTTPBody); nothing else holds a lease while it waits on the same
-// pool.
+// for gzip inflation or joining a chunked plain body (readOTLPHTTPBody).
+// Other requests may hold and grow leases from the same pool meanwhile;
+// as with acquire, no-progress and maximum-wait timeouts bound the wait.
 func (l *lease) grow(ctx context.Context, n int64) error {
 	if n <= 0 {
 		return nil
