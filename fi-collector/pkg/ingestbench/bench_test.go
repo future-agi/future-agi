@@ -509,10 +509,22 @@ func TestHistogramBoundaries(t *testing.T) {
 	if p.P50 != 50 || p.P95 != 95 || p.P99 != 99 || p.Max != 100 {
 		t.Fatalf("quantiles: %+v", p)
 	}
+	// Coarse (1 s) buckets above 10 s must never understate: a quantile is the
+	// bucket's upper edge, capped at the exact maximum, so it is never below the
+	// true value and never above the max.
 	h = &histogram{}
 	h.add(10001 * time.Millisecond)
-	if h.summary().P99 != 11000 {
-		t.Fatal("coarse buckets must be upper bounds")
+	if p := h.summary(); p.P99 < 10001 || p.P99 > p.Max || p.Max != 10001 {
+		t.Fatalf("coarse buckets must be upper bounds no larger than the max: %+v", p)
+	}
+	h = &histogram{}
+	for _, ms := range []int{10001, 10002, 10500} {
+		h.add(time.Duration(ms) * time.Millisecond)
+	}
+	// The median 10002 ms is in the bucket ending at 11000 ms; the cap keeps it
+	// an upper bound (>= 10002) without exceeding the observed max (10500).
+	if p := h.summary(); p.P50 != 10500 || p.P99 != 10500 || p.Max != 10500 {
+		t.Fatalf("capped coarse quantiles: %+v", p)
 	}
 }
 

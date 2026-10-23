@@ -266,7 +266,8 @@ type HistogramBucket struct {
 }
 
 // percentiles reads quantiles from buckets visited in increasing order. A
-// quantile is the upper edge of its bucket: never understated.
+// quantile is the upper edge of its bucket, capped at the exact maximum (no
+// value exceeds it): never understated, never above the max.
 func percentiles(n int64, maxMS float64, visit func(func(int, int64) bool)) Percentiles {
 	p := Percentiles{Count: n, Max: maxMS}
 	if n == 0 {
@@ -279,7 +280,7 @@ func percentiles(n int64, maxMS float64, visit func(func(int, int64) bool)) Perc
 	visit(func(i int, c int64) bool {
 		sum += c
 		for next < len(targets) && sum >= int64(math.Ceil(targets[next]*float64(n))) {
-			*out[next] = latencyEdge(i)
+			*out[next] = math.Min(latencyEdge(i), maxMS)
 			next++
 		}
 		return next < len(targets)
