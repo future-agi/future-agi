@@ -77,8 +77,8 @@ server (§8).
 | `digest` | §3 |
 | `name` | slug, e.g. `appointment_booking` |
 | `extends` | `null`, or `{"digest", "name"}` of the parent release (§2.2) |
-| `handlers` | `{tool: {"mode"}}`; `mode` is `environment`, `customer_source` or `customer_spec` |
-| `source` | required iff a handler is `customer_source`: `{"digest"}` of the customer source tree it imports |
+| `handlers` | `{tool: {"mode"}}`; `mode` is `environment`. `customer_source` and `customer_spec` are reserved for replacing a prebuilt tool with the customer's own code (§2.2) and refused in v1 |
+| `source` | `null` in v1; reserved for the customer source tree a `customer_source` handler would import |
 | `files` | bundle v2 `files[]` records |
 | `provenance` | `{generator, generator_version, derived_from}` |
 | `metadata` | free JSON |
@@ -107,13 +107,17 @@ the defaults there; the sealer refuses a release whose rows differ from the
 
 Sealing refuses:
 
-- a tool without a handler, a handler without a tool, or world handlers that
-  differ from `tools.json`;
+- a tool without a handler, a handler without a tool, a handler file for no
+  tool, or world handlers that differ from `tools.json`;
 - a world whose `tool_implementation` is not `environment`, or that has
   runtime-owned tools (their steps cannot be executed, so nothing can be proved);
+- a handler mode other than `environment`;
 - an `environment` handler that imports anything outside the standard library
   and `fi.alk.harness.world`, uses relative or dynamic import, or a world that
-  binds source or keeps `state.json` without a `customer_source` handler.
+  binds source or keeps `state.json`;
+- resealing a directory that already holds a sealed `release.json` with a
+  different `extends` (an extension resealed without its parent would silently
+  become a root).
 
 Authoring rule (not mechanically checkable): no agent-internal tools
 (handoffs, transfer-to-phase, end-call) in an environment.
@@ -149,22 +153,25 @@ every world:
   `/opt/mcp-servers` in the hosted image and never downloaded at run time.
   Releases attach only its read tools.
 
-Sealing refuses an unknown server, a duplicate id, a tool name that clashes with
-a native tool, a server that does not take the attach it is given or lacks one
-it needs, a table that does not exist or is internal, and a directory outside
-`attached/`. An extension cannot change its parent's `servers.json`. A scenario
-whose reference solution calls an attached tool is checked for readiness on
-SQLite and proved in full on PostgreSQL (§2.3), so such a suite needs a
-PostgreSQL DSN to seal. A provider agent without the tool cannot pass that
-scenario; adaptation reports it unscorable (§7.5).
+Sealing refuses an unknown server, a duplicate id, a tool listed twice, an
+`<id>__<tool>` that is not a valid tool name or clashes with a native tool, a
+server that does not take the attach it is given or lacks one it needs, a table
+that does not exist or is internal, and a directory outside `attached/`. An
+extension cannot change its parent's `servers.json` or any file under
+`attached/`. An attached tool changes state unless the server declares it
+read-only (MCP `readOnlyHint`); `sql`'s `query` and the filesystem server's read
+tools do. A scenario whose reference solution calls an attached tool is checked
+for readiness on SQLite and proved in full on PostgreSQL (§2.3), so such a suite
+needs a PostgreSQL DSN to seal. A provider agent without the tool cannot pass
+that scenario; adaptation reports it unscorable (§7.5).
 
 ### 2.2 Extensions (mixed environments)
 
 An extension is a complete `EnvironmentRelease` whose `extends` names a
-parent. It adds the tools the prebuilt environment lacks, implemented the same
-way as a fully custom environment: bound to the customer's own code when the
-source is available (`customer_source`), otherwise written by the harness from
-the tool's specification (`customer_spec`).
+parent. It adds the tools the prebuilt environment lacks, implemented as
+environment handlers like any release's. Replacing a prebuilt tool with the
+customer's own implementation (`customer_source`, or one written from the
+tool's specification, `customer_spec`) is not supported in v1.
 
 The sealer verifies the parent, then refuses an extension that:
 
@@ -173,6 +180,7 @@ The sealer verifies the parent, then refuses an extension that:
   are unchanged);
 - alters a parent table's schema or indexes, or adds, removes or changes rows
   in a parent table;
+- changes the parent's `servers.json` or anything under its `attached/`;
 - extends an extension (one level in v1).
 
 It may add tools, handlers, tables with their own rows, and rules. A run
@@ -239,9 +247,12 @@ Sealing:
    scenario again on PostgreSQL through the tool server's own execution path
    (§6.1). Each scenario runs on a fresh database cloned from the seeded
    template and is graded through the hosted world handle. It must hold with
-   its reference solution, fail when nothing is done, and hit no `fault`.
-   This is the engine and code a hosted run uses, so handler SQL that only
-   SQLite accepts is refused here rather than in a run.
+   its reference solution, fail when nothing is done, fail when every call it
+   made crashed (the same calls, each failed with no result, on an untouched
+   world), and hit no `fault`. This is the engine and code a hosted run uses,
+   so handler SQL that only SQLite accepts is refused here rather than in a run.
+   PostgreSQL seeds carry no foreign keys, CHECK constraints or partial indexes,
+   so a world relies on its handlers, not its schema, for its invariants.
 5. Writes `proofs.json` (environment digest, profile, per-scenario gates, and
    `runtime: {engine, server_version, scenarios}` or `null`), `provision.json`
    (`{"personas": [...]}`, each scenario's persona record exactly as the
@@ -250,7 +261,9 @@ Sealing:
 
 A suite runs only on its exact environment digest. A new environment release
 needs a re-proof and a new suite release; scenario files may be identical.
-Hosted runs require `proofs.json.runtime.engine == "postgres"`.
+Hosted runs require `proofs.json.runtime.engine == "postgres"`. Resealing a
+directory that already holds a sealed `suite.json` with a different parent or
+different scenario origins is refused.
 
 ### 2.4 AgentBinding — `futureagi.agent-binding.v1`
 
@@ -713,7 +726,9 @@ compose. Archives live at `harness-releases/<organization|system>/<environment|s
 
 `python manage.py register_harness_release --environment DIR --suite DIR
 [--organization ID]` (an operator command, like `seed_system_evals`) stores a
-sealed environment and a suite proved against it. It refuses:
+sealed environment and a suite proved against it. It recomputes both digests
+(§3) and checks every file against its manifest, then refuses:
+- a release or suite whose digest or files do not match its manifest;
 - a suite proved against another environment;
 - a suite without a passing PostgreSQL proof;
 - a `provision.json` that does not match the suite;
