@@ -47,6 +47,7 @@ from accounts.serializers.contracts import (
     UserOnboardingSaveResponseSerializer,
 )
 from accounts.serializers.user import UserOnboardingSerializer
+from accounts.services.simulate_access import restrict_simulate_to_environments
 
 # from accounts.user_onboard import upload_demo_dataset
 from accounts.utils import record_hubspot_login
@@ -700,6 +701,7 @@ def get_user_info(request):
         data["org_level"] = None
         data["ws_level"] = None
         data["effective_level"] = None
+        data["restrict_simulate_to_environments"] = False
         return Response(data)
 
     # Override the serialized organization with the resolved current org
@@ -711,6 +713,9 @@ def get_user_info(request):
         "display_name": current_org.display_name,
         "ws_enabled": current_org.ws_enabled,
     }
+    data["restrict_simulate_to_environments"] = restrict_simulate_to_environments(
+        current_org
+    )
 
     # Get the user's role in the current org (not necessarily the FK org)
     from accounts.models.organization_membership import (

@@ -85172,6 +85172,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "org_level",
         "ws_level",
         "effective_level",
+        "restrict_simulate_to_environments",
       ],
       type: "object",
       properties: {
@@ -85292,6 +85293,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Org 2fa grace ends at",
           type: "string",
           format: "date-time",
+        },
+        restrict_simulate_to_environments: {
+          title: "Restrict simulate to environments",
+          type: "boolean",
         },
       },
     },

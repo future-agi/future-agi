@@ -696,6 +696,7 @@ class UserInfoResponseSerializer(serializers.Serializer):
     two_factor_methods = UserInfoTwoFactorMethodsSerializer(required=False)
     org_2fa_required = serializers.BooleanField(required=False)
     org_2fa_grace_ends_at = serializers.DateTimeField(required=False)
+    restrict_simulate_to_environments = serializers.BooleanField()
 
 
 class AccountOrganizationDetailSerializer(serializers.Serializer):
