@@ -112,12 +112,13 @@ export default function OverviewPanel({ buildMode, env, envState, patch, onGo, a
           not definition. */}
 
       {/*
-        The "Connect your agent" banner never fires in build mode
-        because BuildFromAgent primes envState.agent before this
-        panel mounts. Kept for the post-run workspace, hidden here
-        so it can't flash on the first frame.
+        "Connect your agent": an environment built from a description has
+        no agent until one is connected — say so here, in the review step
+        as well as the workspace. Hidden only while the build is still
+        running. (Building from an agent attaches it before this mounts,
+        so it never shows there.)
       */}
-      {!agentConnected && !buildMode && (
+      {!agentConnected && !inBuild && (
         <Box
           sx={{
             p: 2, mb: 2, borderRadius: 1.5,
@@ -1524,6 +1525,8 @@ function SourceToSandboxMap({ env, envState, progress }) {
   /* Built from a description: nothing has been read from an agent yet, so
      every row says where it really came from — or that it's still to come. */
   const fromDescription = env?.builtFrom?.kind === "scratch";
+  /* Tools that came from an MCP server, not from reading the agent. */
+  const viaMcp = allTools.filter((t) => t.via?.kind === "mcp").length;
   const surface = getSurface(env.surface);
   const actors = [
     { key: "transfer", name: "transfer target", origin: "prompt", target: "Supervisor persona", mapped: true },
@@ -1572,7 +1575,7 @@ function SourceToSandboxMap({ env, envState, progress }) {
       </Box>
 
       {/* Groups */}
-      <MapGroup label="Tools" hint={fromDescription ? "read when your agent is connected" : "from the agent config & call-graph"}
+      <MapGroup label="Tools" hint={`${fromDescription ? (envState?.toolsRead ? `read from ${envState.toolsRead.from} when it was connected` : "read when your agent is connected") : "from the agent config & call-graph"}${viaMcp ? ` · ${viaMcp} added from MCP` : ""}`}
         right={found(tools.length, allTools.length, `${tools.length} mapped`)}
         first
       >
@@ -1608,7 +1611,7 @@ function SourceToSandboxMap({ env, envState, progress }) {
         ))}
       </MapGroup>
 
-      <MapGroup label="Stores" hint={fromDescription ? "seeded when your agent is connected" : "from your fixtures"}
+      <MapGroup label="Stores" hint={fromDescription ? "none yet — the world starts with no data" : "from your fixtures"}
         right={found(tables.length, allTables.length, `${tables.length} mapped`)}
       >
         {streaming && tables.length < allTables.length && (

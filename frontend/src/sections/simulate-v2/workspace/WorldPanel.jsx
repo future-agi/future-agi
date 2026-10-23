@@ -9,6 +9,8 @@ import CapabilityGraph from "./CapabilityGraph";
 import { focusRing } from "../components/clickable";
 import { TwinSandboxSection } from "./OverviewPanel";
 import WorldInternalsSection from "./WorldInternalsSection";
+import { agentMcpTools } from "../_mock/mcpServers";
+import { agentCallsOf } from "../_mock/worldTools";
 import ToolFitBanner from "./ToolFitBanner";
 import ConnectOnlyWorld, { EnvironmentKindNote } from "./ConnectOnlyWorld";
 import { isConnectOnly } from "../_mock/envModel";
@@ -63,6 +65,9 @@ export default function WorldPanel({ env, envState, patch, onGo, locked = false,
      once its handler is written, the rest once the world is done. */
   const inBuild = Array.isArray(buildDone) && !buildDone.includes("build");
   const [graphOpen, setGraphOpen] = useState(false);
+  /* The add-tools drawer: opened from the summary line up here, or from the tools further down. */
+  const [mcp, setMcp] = useState(null);
+  const canAddTools = !inBuild && !locked && !!patch;
   const read = !!buildDone?.includes("understand");
   const fit = toolFit(env, envState);
   const since = toolSince(env, envState);
@@ -87,6 +92,12 @@ export default function WorldPanel({ env, envState, patch, onGo, locked = false,
     );
   }
 
+  /* Tools the agent gets from its MCP servers that the world doesn't answer yet. */
+  const worldNames = new Set((env?.tools || []).map((t) => t.name));
+  const agentMcp = agentMcpTools(envState?.agent);
+  const mcpMissing = agentMcp.filter((t) => !worldNames.has(t.name)).length;
+  /* Everything the agent calls: its own tools and the ones its MCP servers list. */
+  const callsCount = envState?.toolsRead?.names ? agentCallsOf(env, envState).size : new Set([...fit.calls.map((t) => t.name), ...agentMcp.map((t) => t.name)]).size;
   const allRows = [
     ...fit.world.map((t) => ({ tool: t, answered: true })),
     ...fit.missing.map((t) => ({ tool: t, answered: false })),
@@ -196,8 +207,18 @@ export default function WorldPanel({ env, envState, patch, onGo, locked = false,
         /* When tools don't fit, the banner above already says so — once. */
         <Typography sx={{ typography: "s2", color: "text.secondary", px: 0.5, mb: 2 }}>
           {!activeAgent
-            ? `No agent connected yet — the world answers the ${allRows.length} tools it was built for.`
-            : `Agent ${activeAgent} calls ${fit.calls.length} tools — the world answers every one.`}
+            ? (allRows.length ? `No agent connected yet — the world answers the ${allRows.length} tools it was built for.` : "No agent connected yet, and no tools in the world yet.")
+            : mcpMissing
+              ? `Agent ${activeAgent} calls ${callsCount} tools — the world answers ${callsCount - mcpMissing}; ${mcpMissing} from its MCP server it doesn't answer yet.`
+              : `Agent ${activeAgent} calls ${callsCount} tools — the world answers every one.`}
+          {canAddTools && (
+            <ButtonBase
+              onClick={() => setMcp({ prefill: null })}
+              sx={{ ...focusRing, ml: 1, verticalAlign: "baseline", typography: "s2", fontWeight: 600, color: "text.primary", textDecoration: "underline", textUnderlineOffset: 3, textDecorationColor: (t) => t.palette.text.disabled, borderRadius: 0.5, "&:hover": { textDecorationColor: "currentColor" } }}
+            >
+              Add tools from an MCP server
+            </ButtonBase>
+          )}
         </Typography>
       )}
 
@@ -232,7 +253,7 @@ export default function WorldPanel({ env, envState, patch, onGo, locked = false,
         </Box>
       )}
 
-      {!inBuild && <WorldInternalsSection env={env} envState={envState} patch={patch} onGo={onGo} locked={locked} />}
+      {!inBuild && <WorldInternalsSection env={env} envState={envState} patch={patch} onGo={onGo} locked={locked} mcp={mcp} onMcp={setMcp} />}
     </Box>
   );
 }

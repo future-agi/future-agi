@@ -1,19 +1,22 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Collapse, IconButton, Tooltip, Menu, MenuItem, Button } from "@mui/material";
+import { Box, Stack, Typography, Collapse, IconButton, Tooltip, Button } from "@mui/material";
 import { useSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { SectionCard } from "../components/primitives";
 import { schemaFor, toolImplFor } from "../_mock/envInternals";
 import { PROOF_CHECKS } from "../_mock/proofs";
 import {
-  FAULT_PRESETS, allToolsFaultPatch, downgradeTierPatch, faultLine, needsSafeTarget, safeTargetPatch, tierOf,
+  downgradeTierPatch, needsSafeTarget, safeTargetPatch, tierOf,
   toolEnvPatch, toolEnvSummaryWords, toolSettingOf, allowLivePatch, liveAdvisoryOf,
 } from "../_mock/toolEnv";
 import { TierDial, FaultsControl, SafeTargetPrompt, LiveAdvisory } from "./ToolDial";
 import { toolArgsOf } from "../_mock/rlContract";
 import ToolArgsGrid from "./ToolArgsGrid";
+import AddMcpToolsDrawer from "./AddMcpToolsDrawer";
+import { mcpServersOfAgent } from "../_mock/mcpServers";
+import { agentCallsOf, toolReachOf } from "../_mock/worldTools";
 import { clickable, focusRing } from "../components/clickable";
 
 /**
@@ -26,25 +29,47 @@ import { clickable, focusRing } from "../components/clickable";
  * pass or fail, and the evaluations that score on top live on the
  * Evaluations tab.
  */
-export default function WorldInternalsSection({ env, envState, patch, onGo, locked = false }) {
+export default function WorldInternalsSection({ env, envState, patch, onGo, locked = false, mcp = null, onMcp }) {
   const schema = schemaFor(env);
   const tools = env?.tools || [];
+  /* Adding tools from an MCP server — any server, or one the agent already has
+     attached. The World panel holds the drawer's state so its summary line can open it too. */
+  const openMcp = (prefill = null) => onMcp?.({ prefill });
+  const editable = !locked && !!patch;
 
   const totalRows = schema.reduce((a, t) => a + (t.rows || 0), 0);
+  /* The agent's own MCP servers: tools it gets there that the world doesn't answer yet. */
+  const inWorld = new Set(tools.map((t) => t.name));
+  const agentServers = mcpServersOfAgent(envState?.agent)
+    .map(({ server, tools: listed }) => ({ server, tools: listed.filter((t) => !inWorld.has(t.name)) }))
+    .filter((s) => s.tools.length);
 
   return (
     <Stack spacing={2} sx={{ mb: 2 }}>
       {schema.length > 0 && (
         <SchemaCard schema={schema} totalRows={totalRows} />
       )}
-      {tools.length > 0 && (
-        <ToolImplsCard env={env} tools={tools} envState={envState} patch={locked ? null : patch} />
+      {agentServers.map(({ server, tools: missing }) => (
+        <AgentMcpNotice
+          key={server.id} agent={envState.agent} server={server} missing={missing}
+          onAdd={editable ? () => openMcp({ server, tools: missing }) : null}
+        />
+      ))}
+      {tools.length > 0 ? (
+        <ToolImplsCard env={env} tools={tools} envState={envState} patch={locked ? null : patch} onAddMcp={editable ? () => openMcp() : null} />
+      ) : (
+        <NoToolsCard agent={envState?.agent} onAddMcp={editable ? () => openMcp() : null} />
+      )}
+      {editable && (
+        <AddMcpToolsDrawer open={!!mcp} onClose={() => onMcp?.(null)} env={env} envState={envState} patch={patch} onGo={onGo} prefill={mcp?.prefill || null} />
       )}
       <ProofChecksCard onGo={onGo} />
     </Stack>
   );
 }
 WorldInternalsSection.propTypes = {
+  mcp: PropTypes.object,
+  onMcp: PropTypes.func,
   env: PropTypes.object.isRequired,
   envState: PropTypes.object,
   patch: PropTypes.func,
@@ -159,9 +184,11 @@ SchemaColumnRow.propTypes = { col: PropTypes.object };
   how the tool answers in a run, and what goes wrong with it on purpose. A
   change to either is a world edit — the next run is on a new minor version.
 */
-function ToolImplsCard({ env, tools, envState, patch }) {
+function ToolImplsCard({ env, tools, envState, patch, onAddMcp }) {
   const [openTool, setOpenTool] = useState(null);
-  const [allAnchor, setAllAnchor] = useState(null);
+  /* Tools the agent calls — an added tool it doesn't call is offered to it, or it can't see it. */
+  const agent = envState?.agent || null;
+  const calls = agentCallsOf(env, envState);
   const summary = toolEnvSummaryWords({ tools }, envState);
 
   const setTier = (setting, tier) => {
@@ -179,10 +206,6 @@ function ToolImplsCard({ env, tools, envState, patch }) {
     if (!patch) return;
     patch(toolEnvPatch(envState, setting.name, { faults }, `${setting.name} faults set to ${word}`));
   };
-  const applyAll = (presetId) => {
-    setAllAnchor(null);
-    if (patch) patch(allToolsFaultPatch({ ...env, tools }, envState, presetId));
-  };
 
   return (
     <SectionCard
@@ -193,33 +216,16 @@ function ToolImplsCard({ env, tools, envState, patch }) {
           {" — how each tool answers during a run. A change is a world edit, saved as the next environment version."}
         </>
       )}
-      action={patch && (
-        <>
-          <Button
-            size="small"
-            onClick={(e) => setAllAnchor(e.currentTarget)}
-            startIcon={<Iconify icon="solar:bolt-linear" width={14} />}
-            endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
-            sx={{ typography: "s2", fontWeight: 600, color: "text.secondary", flexShrink: 0, whiteSpace: "nowrap" }}
-          >
-            Faults for all tools
-          </Button>
-          <Menu
-            anchorEl={allAnchor}
-            open={!!allAnchor}
-            onClose={() => setAllAnchor(null)}
-            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-            transformOrigin={{ vertical: "top", horizontal: "right" }}
-            slotProps={{ paper: { sx: { minWidth: 260, mt: 0.5 } } }}
-          >
-            {Object.entries(FAULT_PRESETS).map(([id, p]) => (
-              <MenuItem key={id} onClick={() => applyAll(id)} sx={{ display: "block", py: 1 }}>
-                <Typography sx={{ typography: "s2", fontWeight: 600 }}>{p.label}</Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{faultLine(p.faults)}</Typography>
-              </MenuItem>
-            ))}
-          </Menu>
-        </>
+      action={patch && onAddMcp && (
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={onAddMcp}
+          startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
+          sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0, whiteSpace: "nowrap" }}
+        >
+          Add tools
+        </Button>
       )}
     >
       <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
@@ -249,9 +255,24 @@ function ToolImplsCard({ env, tools, envState, patch }) {
                 >
                   {tool.name}
                 </Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }} noWrap>
-                  {setting.safeTarget && setting.tier === "live" ? `Live at ${setting.safeTarget}` : tool.desc}
-                </Typography>
+                <Stack direction="row" alignItems="center" spacing={0.75} sx={{ flex: 1, minWidth: 0 }}>
+                  {tool.via?.kind === "mcp" && (
+                    <Tooltip arrow title={`From the MCP server ${tool.via.host}. The world answers it during runs; the server is only called if the tool is Live.`}>
+                      <Box component="span" sx={{ display: "inline-flex" }}><QuietChip>{`MCP · ${tool.via.label}`}</QuietChip></Box>
+                    </Tooltip>
+                  )}
+                  {tool.via?.kind === "mcp" && (() => {
+                    const reach = toolReachOf(tool, { agent, calls });
+                    return reach ? (
+                      <Tooltip arrow title={reach.tip}>
+                        <Box component="span" sx={{ display: "inline-flex" }}><QuietChip warn={reach.kind === "blocked"}>{reach.label}</QuietChip></Box>
+                      </Tooltip>
+                    ) : null;
+                  })()}
+                  <Typography sx={{ typography: "s3", color: "text.subtitle", minWidth: 0 }} noWrap>
+                    {setting.safeTarget && setting.tier === "live" ? `Live at ${setting.safeTarget}` : tool.desc}
+                  </Typography>
+                </Stack>
                 <TierDial
                   setting={setting}
                   onChange={patch ? (tier) => setTier(setting, tier) : null}
@@ -283,11 +304,95 @@ function ToolImplsCard({ env, tools, envState, patch }) {
             </Box>
           );
         })}
+        {/* Where the eye lands when the list ends: the next tool comes from here. */}
+        {patch && onAddMcp && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
+            {...clickable(onAddMcp)}
+            sx={{ ...focusRing, px: 2.5, py: 1.25, cursor: "pointer", "&:hover": { bgcolor: "action.hover" } }}
+          >
+            <Box sx={{ width: 13, flexShrink: 0 }} />
+            <Iconify icon="solar:add-circle-linear" width={15} sx={{ color: "text.secondary", flexShrink: 0 }} />
+            <Typography sx={{ typography: "s2", fontWeight: 600, width: 220, flexShrink: 0 }}>
+              Add tools from an MCP server
+            </Typography>
+            <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", minWidth: 0 }}>
+              Shopify, Stripe, Zendesk or any server URL. Each tool starts Simulated.
+            </Typography>
+          </Stack>
+        )}
       </Stack>
     </SectionCard>
   );
 }
-ToolImplsCard.propTypes = { env: PropTypes.object, tools: PropTypes.array, envState: PropTypes.object, patch: PropTypes.func };
+ToolImplsCard.propTypes = { env: PropTypes.object, tools: PropTypes.array, envState: PropTypes.object, patch: PropTypes.func, onAddMcp: PropTypes.func };
+
+/* A quiet label on a tool row — where it came from, whether the agent has it. */
+function QuietChip({ children, warn = false }) {
+  return (
+    <Typography
+      component="span" noWrap
+      sx={{
+        typography: "s3", fontSize: 11, fontWeight: 600, px: 0.625, lineHeight: "18px", borderRadius: 0.5, flexShrink: 0,
+        border: "1px solid", borderColor: warn ? (t) => alpha(t.palette.warning.main, 0.5) : "divider",
+        color: warn ? "warning.main" : "text.secondary",
+      }}
+    >
+      {children}
+    </Typography>
+  );
+}
+QuietChip.propTypes = { children: PropTypes.node, warn: PropTypes.bool };
+
+/* The world has no tools yet: they come from the agent, or from an MCP server. */
+function NoToolsCard({ agent, onAddMcp }) {
+  return (
+    <SectionCard
+      title="Tools · 0"
+      subtitle={agent
+        ? `${agent.name || "The agent"} declares no tools, so the world has none to answer. Add tools from an MCP server to give it some to act on.`
+        : "None yet — the agent's tools are read when it's connected. Or add tools from an MCP server now."}
+      action={onAddMcp && (
+        <Button
+          size="small" variant="outlined" onClick={onAddMcp}
+          startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
+          sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0, whiteSpace: "nowrap" }}
+        >
+          Add tools from an MCP server
+        </Button>
+      )}
+    />
+  );
+}
+NoToolsCard.propTypes = { agent: PropTypes.object, onAddMcp: PropTypes.func };
+
+/* The agent has an MCP server attached whose tools the world doesn't answer — runs would get no answer for them. */
+function AgentMcpNotice({ agent, server, missing, onAdd }) {
+  return (
+    <Stack
+      direction="row" alignItems="center" spacing={1.5}
+      sx={{ px: 2, py: 1.5, border: "1px solid", borderColor: "divider", borderRadius: 1.5, bgcolor: "background.paper" }}
+    >
+      <Iconify icon="solar:plug-circle-linear" width={18} sx={{ color: "text.secondary", flexShrink: 0 }} />
+      <Box flex={1} minWidth={0}>
+        <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+          {`${agent?.name || "The agent"} gets ${missing.length} tool${missing.length === 1 ? "" : "s"} from ${server.label} the world doesn't answer yet`}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+          {`Its MCP server ${server.host} lists ${missing.map((t) => t.name).join(", ")}. Add them so runs answer them instead of failing.`}
+        </Typography>
+      </Box>
+      {onAdd && (
+        <Button size="small" variant="outlined" onClick={onAdd} sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider", flexShrink: 0 }}>
+          Add them to the world
+        </Button>
+      )}
+    </Stack>
+  );
+}
+AgentMcpNotice.propTypes = { agent: PropTypes.object, server: PropTypes.object.isRequired, missing: PropTypes.array.isRequired, onAdd: PropTypes.func };
 
 /* A tool's arguments, read-only — the limits among them are edited on the Contract tab. */
 function ToolArgs({ tool, envState }) {

@@ -541,9 +541,9 @@ const SCRATCH_STAGES = {
   build: (source) => ({
     title: "Setting up the world",
     steps: [
-      think(`A ${source.surface === "voice" ? "voice" : "chat"} world, empty for now: no code to read and no data to seed until an agent is connected.`),
+      think(`A ${source.surface === "voice" ? "voice" : "chat"} world, empty for now: no code to read until an agent is connected, and no data to seed.`),
       tool("write_checks", "one check per sub-goal · judged from the conversation"),
-      note("Connect your agent from Overview. Its tools and data are read then, and the world learns to answer them."),
+      note("Connect your agent from Overview. Its tools are read then, and the world learns to answer them. The world starts with no data."),
     ],
     chips: [],
   }),

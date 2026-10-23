@@ -27,6 +27,7 @@ import { ADAPTERS } from "../_mock/rlContract";
 import { generatedPool } from "../_mock/scenarios";
 import { agentPromptOf } from "../_mock/agentPrompt";
 import { agentPinPatch } from "../_mock/versions";
+import { mcpBuildStateOf } from "../_mock/worldTools";
 import { agentRecordFromSource, envAgentKey } from "../_mock/agentRegistry";
 import { MODE_ICONS, REPLICATION_MODES, replicationRecordOf } from "../_mock/replication";
 import AgentPromptDrawer from "../workspace/agents/AgentPromptDrawer";
@@ -627,6 +628,9 @@ export default function BuildFromAgent() {
        the demo state under the shared id.) v1's tools are read from its
        source, and env v1's world is built to answer exactly those. */
     const v1Tools = (env.tools || []).map((t) => ({ ...t }));
+    /* Built from an MCP server: record it as the World tab's Add tools does. */
+    const mcp = mcpBuildStateOf(v1Tools, source?.worldSource, now);
+    const mcpPatch = mcp ? { mcpServers: mcp.mcpServers, toolEnv: { ...(envState.toolEnv || {}), ...mcp.toolEnv } } : {};
     /* The real agent from the first moment — identity, definition (GitHub
        link, entry file) and where it runs — so leaving mid-build never leaves
        a placeholder behind for "Use a connected agent" to duplicate. */
@@ -646,6 +650,7 @@ export default function BuildFromAgent() {
           ],
           activeEnvVersion: "v1",
           runs: [],
+          ...mcpPatch,
         },
       });
       return;
@@ -667,6 +672,7 @@ export default function BuildFromAgent() {
           ],
           activeEnvVersion: "v1",
           runs: [],
+          ...mcpPatch,
         },
       });
       return;
@@ -692,6 +698,7 @@ export default function BuildFromAgent() {
         ],
         activeEnvVersion: "v1",
         runs: [],
+          ...mcpPatch,
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

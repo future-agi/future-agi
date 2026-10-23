@@ -8,6 +8,7 @@ import {
   configRowsOf, identityRowsOf, isCodeAgent, reachRowsOf, snapshotLineOf, sourceRowsOf,
 } from "./agentRecord";
 import { MONO } from "./agentViewUtils";
+import { mcpServersOfAgent } from "../_mock/mcpServers";
 import { ActionText, KvRow, PanelCard } from "./AgentBits";
 
 /**
@@ -24,6 +25,7 @@ export default function AgentDefinitionTab({
 }) {
   const version = agent.versions.find((v) => v.label === label);
   const code = isCodeAgent(agent);
+  const mcpServers = mcpServersOfAgent(agent);
   /* A code agent's version reads as its commit: "main @ 3f9a2c1" here, the hash in the file tree. */
   const nameOf = (l) => versionNameOf(agent, l).main;
   const shortOf = (l) => versionNameOf(agent, l).ref?.sha || l;
@@ -83,6 +85,20 @@ export default function AgentDefinitionTab({
       >
         <Rows rows={config} />
       </Section>
+
+      {/* Tools it gets from MCP servers aren't in its config — the server lists them when it runs. */}
+      {mcpServers.length > 0 && (
+        <Section title="MCP servers" note={`${mcpServers.length} attached`}>
+          {mcpServers.map(({ server, tools }, i) => (
+            <KvRow key={server.id} label={server.label} first={i === 0} hint={`${server.host} · ${server.transport.toUpperCase()}. Its tools are listed by the server when the agent runs, not written in its config.`}>
+              <Typography sx={{ typography: "s2" }}>
+                {`${tools.length} tools · `}
+                <Box component="span" sx={{ fontFamily: MONO, color: "text.secondary" }}>{tools.map((t) => t.name).join(", ")}</Box>
+              </Typography>
+            </KvRow>
+          ))}
+        </Section>
+      )}
 
       {definition?.members?.length > 0 && (
         <AgentMembersCard members={definition.members} areas={memberAreas} protectedIds={protectedMembers || []} onConstraints={() => onTab("constraints")} />

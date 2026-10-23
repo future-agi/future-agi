@@ -47,6 +47,8 @@ const FRESH = /(price|rate|weather|news|web|fetch_url|stock|availability)/i;
 
 /** read · write · real (needs real execution) · fresh (freshness matters) */
 export const sideEffectOf = (tool) => {
+  /* An MCP tool says so itself (readOnlyHint) — that wins over its name. */
+  if (["read", "write", "fresh", "real"].includes(tool?.effect)) return tool.effect;
   const n = String(tool?.name || "");
   if (REAL.test(n)) return "real";
   if (WRITES.test(n)) return "write";

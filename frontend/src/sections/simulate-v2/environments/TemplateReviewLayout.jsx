@@ -388,9 +388,12 @@ export default function TemplateReviewLayout({
         </Tooltip>
         {(() => {
           const readiness = runReadiness(envState);
+          /* Built from a description: no agent yet, so nothing to run — Connect agent on Overview first. */
+          const noAgent = !envState?.agent;
           const reason = running
             ? "Building the environment — one moment…"
-            : readiness.ready ? "" : `${readiness.reason}. Opens the workspace there.`;
+            : noAgent ? "Connect an agent first — Connect agent, on Overview. Runs start once one is connected."
+              : readiness.ready ? "" : `${readiness.reason}. Opens the workspace there.`;
           const go = () => (readiness.ready
             ? checkRunFit(() => onFinish?.())
             : navigate(paths.dashboard.simulate.environmentStep(env.id, readiness.step)));
@@ -400,7 +403,7 @@ export default function TemplateReviewLayout({
                 <Button
                   variant="contained" color="primary"
                   onClick={go}
-                  disabled={running}
+                  disabled={running || noAgent}
                   startIcon={<Iconify icon="solar:play-circle-linear" width={15} />}
                   sx={{ typography: "s2", fontWeight: 700 }}
                 >

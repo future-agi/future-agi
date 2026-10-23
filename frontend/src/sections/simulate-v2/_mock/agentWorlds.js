@@ -17,6 +17,8 @@
   a repo or platform connect, a pasted prompt).
 */
 
+import { listMcpTools, worldToolFromMcp } from "./mcpServers";
+
 const SUPPORT = {
   id: "support",
   domain: "support",
@@ -234,8 +236,17 @@ const match = (text) => MATCHERS.find(([, re]) => re.test(text))?.[0] || null;
  * names a domain. A build that starts from a world the user picked (a
  * prebuilt world) uses that world instead of reading one from the agent.
  */
-export const worldFor = (source) => (Array.isArray(source?.worldSource?.world?.tools) ? source.worldSource.world : null)
-  || match(namesOf(source)) || match(promptOf(source)) || SUPPORT;
+export const worldFor = (source) => {
+  if (Array.isArray(source?.worldSource?.world?.tools)) return source.worldSource.world;
+  const read = match(namesOf(source)) || match(promptOf(source)) || SUPPORT;
+  /* An MCP server as the world: its tools are what the agent acts on, one
+     to one; the tables they answer from are still the agent's domain. */
+  if (source?.worldSource?.kind === "mcp") {
+    const listed = listMcpTools(source.worldSource);
+    if (listed.ok) return { ...read, tools: listed.tools.map((t) => worldToolFromMcp(t, listed.server)) };
+  }
+  return read;
+};
 
 /**
  * A prebuilt world in the shape a build reads: its tables, tools and rules as
@@ -271,7 +282,8 @@ export const worldToolsOf = (world, source) => {
   const extra = own
     .filter((t, i, list) => !have.has(t.name) && list.findIndex((x) => x.name === t.name) === i)
     .map((t) => ({ name: t.name, args: t.args || [], desc: t.desc || "Read from the agent." }));
-  return [...world.tools, ...extra].map((t) => ({ name: t.name, desc: t.desc, args: t.args }));
+  /* Where a tool came from, and whether it only reads, travel with it. */
+  return [...world.tools, ...extra].map((t) => ({ name: t.name, desc: t.desc, args: t.args, ...(t.effect && { effect: t.effect }), ...(t.via && { via: t.via }) }));
 };
 
 export const seededRowsOf = (world) => world.seed.reduce((n, s) => n + s.rows, 0);

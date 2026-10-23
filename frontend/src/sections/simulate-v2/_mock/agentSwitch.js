@@ -10,11 +10,14 @@
 
   Connecting the first agent isn't a switch — there's nothing to compare with.
 */
-import { agentVersions, currentAgentVersion, majorOf, nextAgentVersion } from "./versions";
+import { agentVersions, currentAgentVersion, environmentVersions, isEnvDraft, majorOf, nextAgentVersion, nextEnvVersion } from "./versions";
 import { agentToolsFor } from "./toolFit";
 import { detectNudges, withNudges } from "./decoupled";
 import { coreNudgeOf } from "./nudgeEffects";
 import { getAgentType } from "./agentTypes";
+import { definitionOf, sourceKindOf } from "./agentRegistry";
+import { agentMcpTools } from "./mcpServers";
+import { worldToolsFor } from "./toolFit";
 
 /** Where a connected agent runs: the environment it's used in, else its type's first surface. */
 export const surfaceOfAgent = (picked, state) => {
@@ -47,6 +50,62 @@ const toolsOfPicked = (picked, label, state) => {
   const e = u && (state?.myEnvironments || []).find((x) => x.id === u.envId);
   if (e) return agentToolsFor(e, { ...state.byEnv[u.envId], agentVersions: picked.versions?.length ? picked.versions : state.byEnv[u.envId].agentVersions }, label);
   return (picked?.versions || []).find((v) => v.label === label)?.tools || null;
+};
+
+/**
+ * The tools an agent calls, read from the agent itself — where it's already
+ * tested, else what its source declares (a repository's code, a platform's
+ * assistant). An endpoint or a pasted prompt declares none: their tools only
+ * show up once a run observes them. → [{ name, desc, args }]
+ */
+export const readAgentTools = (picked, label, state) => {
+  /* Tools its MCP servers list come too — they aren't in the agent's own config. */
+  const viaMcp = agentMcpTools(picked);
+  const withMcp = (list) => [...list, ...viaMcp.filter((t) => !list.some((x) => x.name === t.name))];
+  const tested = toolsOfPicked(picked, label, state);
+  if (tested?.length) return withMcp(tested.map((t) => ({ name: t.name, desc: t.desc || "", ...(t.args && { args: t.args }) })));
+  const kind = sourceKindOf(picked);
+  if (kind === "endpoint" || kind === "prompt") return viaMcp;
+  /* Only what the agent's own source or versions declare — never a demo world's
+     tools standing in for an agent that declares none. */
+  const own = [...(picked?.versions || [])].reverse().find((v) => v.tools?.length)?.tools || definitionOf(picked).tools || [];
+  return withMcp(own.map((t) => (typeof t === "string" ? { name: t, desc: "" } : { name: t.name, desc: t.desc || "", ...(t.args?.length && { args: t.args }) })));
+};
+
+/**
+ * Connecting the first agent to an environment built from a description:
+ * the world had no tools to answer, so the agent is read now — the same
+ * "read the agent" a build from an agent starts with. Its tools become the
+ * world's; a never-run environment (a draft) takes them in place on v1, one
+ * that has run gets the next version. Every scenario proved before the read
+ * is re-checked: its reference solution was written without the tools.
+ *   → { envPatch, statePatch, tools } or null when there's nothing to read
+ */
+export const firstAgentReadPlan = (env, envState, { picked, label, agentName, state, now = new Date().toISOString() }) => {
+  if (envState?.agent || envState?.toolsRead) return null;
+  /* A world built from an agent or a prebuilt world already knows its tools;
+     one with only tools added from an MCP server still reads the agent. */
+  const existing = worldToolsFor(env, envState);
+  if (existing.some((t) => t.via?.kind !== "mcp")) return null;
+  const fromAgent = readAgentTools(picked, label, state);
+  if (!fromAgent.length) return null;
+  const tools = [...fromAgent, ...existing.filter((t) => !fromAgent.some((r) => r.name === t.name))];
+  const note = `Tools read from ${agentName}${label ? ` ${label}` : ""} when it was connected.`;
+  const read = { from: agentName, label: label || null, at: now, count: fromAgent.length, names: fromAgent.map((t) => t.name) };
+  if (isEnvDraft(envState)) {
+    const v1 = [...environmentVersions(env, envState)].reverse()[0];
+    return {
+      tools, fromAgent,
+      envPatch: { tools, firstBuildTools: tools },
+      statePatch: { toolsRead: read, envVersions: [{ ...(({ current, ...rest }) => rest)(v1), tools, note: `First build, from your description. ${note}`, changed: [...new Set([...(v1.changed || []), "contract"])] }] },
+    };
+  }
+  const minted = nextEnvVersion(env, envState, { changed: ["contract"], note, now, tools });
+  return {
+    tools, fromAgent,
+    envPatch: { tools },
+    statePatch: { toolsRead: read, envVersions: [...(envState.envVersions?.length ? envState.envVersions : [...environmentVersions(env, envState)].reverse()), minted], activeEnvVersion: minted.label, unsavedEnvChanges: [] },
+  };
 };
 
 /**

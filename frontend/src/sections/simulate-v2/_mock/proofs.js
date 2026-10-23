@@ -118,6 +118,14 @@ export const proofStatus = (row, env, envState) => {
     };
   }
 
+  /* Built from a description, its tools were read from the agent later — in
+     place on a draft, so no version records it. A proof from before the read
+     was made without the tools. */
+  const toolsReadAt = envState?.toolsRead?.at;
+  if (toolsReadAt && (!row?.provedAt || new Date(row.provedAt) < new Date(toolsReadAt))) {
+    return { proved, current: current.label, stale: true, reasons: ["contract"], since: [] };
+  }
+
   if (proved === current.label) {
     return { proved, current: current.label, stale: false, reasons: [], since: [] };
   }

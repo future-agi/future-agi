@@ -15,7 +15,7 @@ import { envLabelOf } from "../_mock/envVersionKinds";
 import { envVersionNameOf } from "../_mock/codeRefs";
 import { replicationOf } from "../_mock/replication";
 import { agentToolsFor, worldToolsFor } from "../_mock/toolFit";
-import { applyAgentSwitch, fitsEnvChannel } from "../_mock/agentSwitch";
+import { applyAgentSwitch, firstAgentReadPlan, fitsEnvChannel } from "../_mock/agentSwitch";
 import { channelLabel } from "../_mock/nudgeEffects";
 import { scenarioStepOf, versionCardOf } from "../_mock/versionCard";
 import { openGapsInbox } from "../_mock/gapsInboxBus";
@@ -98,10 +98,19 @@ export default function EnvAgentLine({ env, envState, patch, locked = false, onF
       );
       return;
     }
+    /* Built from a description, the world has no tools yet: read them from the agent now. */
+    const read = firstAgentReadPlan(env, envState, { picked: candidate, label: activeLabel, agentName: n, state });
     applyAgentSwitch({ env, envState, plan: null, agent: next, versions: vs, activeLabel, changeEnvAgent, patch });
+    if (read) {
+      storeDispatch({ type: "patchEnvironment", envId: env.id, patch: read.envPatch });
+      patch(read.statePatch);
+    }
     setChanging(false);
     setConnectingNew(false);
-    enqueueSnackbar(`This environment now tests ${n}${activeLabel ? ` ${activeLabel}` : ""} — the world and scenarios apply as they are`, { variant: "success" });
+    const live = (envState?.scenarios || []).filter((r) => !r.retired && !r.archived).length;
+    enqueueSnackbar(read
+      ? `This environment now tests ${n}${activeLabel ? ` ${activeLabel}` : ""} — its ${read.fromAgent.length} tool${read.fromAgent.length === 1 ? "" : "s"} were read into the world${read.tools.length > read.fromAgent.length ? `, beside the ${read.tools.length - read.fromAgent.length} added from MCP` : ""}${live ? `, and ${live} scenario${live === 1 ? "" : "s"} need re-checking` : ""}`
+      : `This environment now tests ${n}${activeLabel ? ` ${activeLabel}` : ""} — the world and scenarios apply as they are`, { variant: "success" });
   };
   /* The agent, on its Environments tab, with this environment picked out. */
   const viewAgent = () => navigate(
