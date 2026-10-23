@@ -63413,7 +63413,7 @@
         "/tracer/insights/estimate/": {
             "post": {
                 "operationId": "tracer_insights_estimate_create",
-                "description": "How many units a scope holds, and how many a report on it reads.",
+                "description": "How many units a scope holds, and how many a report on it reads.\nRows handed over by id are only sized: they have no window to count.",
                 "parameters": [
                     {
                         "name": "data",
@@ -63842,7 +63842,7 @@
                         "required": false,
                         "type": "integer",
                         "default": 0,
-                        "maximum": 20000,
+                        "maximum": 1000,
                         "minimum": 0
                     },
                     {
@@ -148969,8 +148969,7 @@
         "InsightEstimateRequest": {
             "required": [
                 "project_id",
-                "unit",
-                "scope"
+                "unit"
             ],
             "type": "object",
             "properties": {
@@ -148990,6 +148989,11 @@
                 },
                 "scope": {
                     "$ref": "#/definitions/InsightScope"
+                },
+                "population_size": {
+                    "title": "Population size",
+                    "type": "integer",
+                    "minimum": 1
                 },
                 "sample_size": {
                     "title": "Sample size",
@@ -149028,7 +149032,8 @@
                 },
                 "window": {
                     "title": "Window",
-                    "type": "object"
+                    "type": "object",
+                    "x-nullable": true
                 },
                 "sample_ids": {
                     "type": "array",

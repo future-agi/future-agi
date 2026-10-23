@@ -35559,7 +35559,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "integer",
               minimum: 0,
-              maximum: 20000,
+              maximum: 1000,
               default: 0,
             },
           },
@@ -66585,7 +66585,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     InsightEstimateRequest: {
-      required: ["project_id", "unit", "scope"],
+      required: ["project_id", "unit"],
       type: "object",
       properties: {
         project_id: {
@@ -66600,6 +66600,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         scope: {
           $ref: "#/definitions/InsightScope",
+        },
+        population_size: {
+          title: "Population size",
+          type: "integer",
+          minimum: 1,
         },
         sample_size: {
           title: "Sample size",
@@ -97765,6 +97770,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         window: {
           title: "Window",
           type: "object",
+          "x-nullable": true,
         },
         sample_ids: {
           type: "array",

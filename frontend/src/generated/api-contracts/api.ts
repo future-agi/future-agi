@@ -73413,6 +73413,7 @@ export const getTracerInsightsEstimateCreateUrl = () => {
 
 /**
  * How many units a scope holds, and how many a report on it reads.
+Rows handed over by id are only sized: they have no window to count.
  */
 export const tracerInsightsEstimateCreate = async (
   insightEstimateRequestApi: InsightEstimateRequestApi,

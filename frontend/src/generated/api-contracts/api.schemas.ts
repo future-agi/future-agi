@@ -26807,7 +26807,9 @@ export const InsightEstimateRequestApiUnit = {
 export interface InsightEstimateRequestApi {
   project_id: string;
   unit: InsightEstimateRequestApiUnit;
-  scope: InsightScopeApi;
+  scope?: InsightScopeApi;
+  /** @minimum 1 */
+  population_size?: number;
   /**
    * @minimum 10
    * @maximum 1000
@@ -37511,7 +37513,7 @@ export type TracerInsightsRunsUnitsListParams = {
   unit_ids?: string;
   /**
    * @minimum 0
-   * @maximum 20000
+   * @maximum 1000
    */
   offset?: number;
   /**

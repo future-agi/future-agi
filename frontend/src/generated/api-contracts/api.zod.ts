@@ -56724,6 +56724,7 @@ export const TracerInsightsDraftCreateResponse = zod.object({
 
 /**
  * How many units a scope holds, and how many a report on it reads.
+Rows handed over by id are only sized: they have no window to count.
  */
 export const tracerInsightsEstimateCreateBodyScopeLabelMax = 300;
 
@@ -56741,30 +56742,33 @@ export const tracerInsightsEstimateCreateBodySampleSizeMax = 1000;
 export const TracerInsightsEstimateCreateBody = zod.object({
   project_id: zod.string().uuid(),
   unit: zod.enum(["traces", "sessions", "users"]),
-  scope: zod.object({
-    filters: zod.array(zod.object({}).passthrough()).optional(),
-    label: zod
-      .string()
-      .max(tracerInsightsEstimateCreateBodyScopeLabelMax)
-      .optional(),
-    preset: zod
-      .string()
-      .max(tracerInsightsEstimateCreateBodyScopePresetMax)
-      .optional(),
-    window: zod
-      .array(
-        zod
-          .string()
-          .min(1)
-          .max(tracerInsightsEstimateCreateBodyScopeWindowItemMax),
-      )
-      .max(tracerInsightsEstimateCreateBodyScopeWindowMax)
-      .optional(),
-    search: zod
-      .string()
-      .max(tracerInsightsEstimateCreateBodyScopeSearchMax)
-      .optional(),
-  }),
+  scope: zod
+    .object({
+      filters: zod.array(zod.object({}).passthrough()).optional(),
+      label: zod
+        .string()
+        .max(tracerInsightsEstimateCreateBodyScopeLabelMax)
+        .optional(),
+      preset: zod
+        .string()
+        .max(tracerInsightsEstimateCreateBodyScopePresetMax)
+        .optional(),
+      window: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(tracerInsightsEstimateCreateBodyScopeWindowItemMax),
+        )
+        .max(tracerInsightsEstimateCreateBodyScopeWindowMax)
+        .optional(),
+      search: zod
+        .string()
+        .max(tracerInsightsEstimateCreateBodyScopeSearchMax)
+        .optional(),
+    })
+    .optional(),
+  population_size: zod.number().min(1).optional(),
   sample_size: zod
     .number()
     .min(tracerInsightsEstimateCreateBodySampleSizeMin)
@@ -57139,7 +57143,7 @@ export const tracerInsightsRunsUnitsListQueryUnitIdsMax = 4000;
 
 export const tracerInsightsRunsUnitsListQueryOffsetDefault = 0;
 export const tracerInsightsRunsUnitsListQueryOffsetMin = 0;
-export const tracerInsightsRunsUnitsListQueryOffsetMax = 20000;
+export const tracerInsightsRunsUnitsListQueryOffsetMax = 1000;
 
 export const tracerInsightsRunsUnitsListQueryLimitDefault = 50;
 export const tracerInsightsRunsUnitsListQueryLimitMax = 200;
