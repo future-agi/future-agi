@@ -889,6 +889,180 @@ def test_retrying_on_a_stalled_run_restarts_it(
     assert EvalTask.objects.get(id=task.id).status == EvalTaskStatus.PENDING
 
 
+def _temporal_down(task, **kwargs):
+    raise RuntimeError("Temporal is unavailable")
+
+
+def _no_rows_read(monkeypatch):
+    """Fail any read of a view's rows or a user's sessions: a control call
+    prices a run from its record, never from ClickHouse."""
+
+    def read(*args, **kwargs):
+        raise AssertionError("a control call read the view")
+
+    for name in ("count_population", "pick_rows", "row_hashes", "read_facets"):
+        monkeypatch.setattr(rows_service, name, read)
+    monkeypatch.setattr("tracer.services.instant_eval_users.user_sessions", read)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("stopped", "status_", "more_refused_as"),
+    [
+        ("failed", EvalTaskStatus.FAILED, "instant_eval_paused"),
+        ("paused", EvalTaskStatus.PAUSED, "instant_eval_paused"),
+        # It says pending, but its workflow is gone.
+        ("workflow-gone", EvalTaskStatus.PENDING, "instant_eval_still_answering"),
+    ],
+    ids=["failed", "paused", "workflow-gone"],
+)
+def test_a_run_stopped_before_its_first_step_is_priced_for_every_row_it_asked_for(
+    auth_client,
+    observe_project,
+    yes_no,
+    fake_view,
+    started,
+    monkeypatch,
+    stopped,
+    status_,
+    more_refused_as,
+):
+    """A run's first step picks its rows. Stopped before it (its workflow
+    couldn't start, it was paused, or its workflow went), the run holds none
+    yet, and restarting it reads every row it asked for: resuming checks the
+    credits for all 6, not for the none it holds, and reading more resumes
+    it first."""
+    _credit_cap(monkeypatch)
+    with monkeypatch.context() as m:
+        if stopped == "failed":
+            m.setattr(
+                "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync",
+                _temporal_down,
+            )
+        result = _start(auth_client, observe_project, [yes_no], sample_size=6)
+    assert result.status_code == status.HTTP_200_OK, result.json()
+    task = EvalTask.objects.get(id=result.json()["result"]["task_id"])
+    if stopped == "paused":
+        paused = _control(auth_client, observe_project, task, "pause")
+        assert paused.status_code == status.HTTP_200_OK, paused.json()
+    elif stopped == "workflow-gone":
+        monkeypatch.setattr(instant_eval_scale, "_workflow_gone", lambda task: True)
+    assert EvalTask.objects.get(id=task.id).status == status_
+    assert fake_view.picks == []
+    _no_rows_read(monkeypatch)
+    before = len(started)
+
+    # Its restart would read the 6 rows as well as the 5 more it checks.
+    more = _control(auth_client, observe_project, task, "read_more", more=5)
+    assert more.status_code == status.HTTP_409_CONFLICT, more.json()
+    assert more.json()["code"] == more_refused_as
+
+    # 0.3 credits left; its 6 rows at 0.06 an answer need 0.36.
+    calls = _credit_cap(monkeypatch, left=0.3)
+    refused = _control(auth_client, observe_project, task, "resume")
+    assert refused.status_code == status.HTTP_403_FORBIDDEN, refused.json()
+    assert calls == [("jev_evaluator", 0.36)]
+    detail = refused.json()["result"]
+    assert (detail["error_code"], detail["credits_estimate"]) == (
+        "FREE_TIER_LIMIT",
+        0.36,
+    )
+    assert len(started) == before
+    assert EvalTask.objects.get(id=task.id).status == status_
+
+    calls = _credit_cap(monkeypatch, left=10.0)
+    resumed = _control(auth_client, observe_project, task, "resume")
+    assert resumed.status_code == status.HTTP_200_OK, resumed.json()
+    assert calls == [("jev_evaluator", 0.36)]
+    assert started[before:] == [(str(task.id), {"replace_existing": True})]
+    assert EvalTask.objects.get(id=task.id).status == EvalTaskStatus.PENDING
+    # Checked, not charged: the run's estimate is what its start priced.
+    run = InstantEvalRun.objects.get(eval_task_id=task.id)
+    assert (run.rows_requested, run.credits_estimate) == (6, 0.36)
+    assert not InstantEvalRow.objects.filter(task_id=task.id).exists()
+
+
+@pytest.mark.django_db
+def test_a_user_question_stopped_before_its_first_step_is_priced_at_five_sessions_each(
+    auth_client, observe_project, yes_no, category, started, monkeypatch
+):
+    """A user question's first step reads up to five sessions of each user
+    it asked about. Stopped before that step, the run holds none of them:
+    resuming is priced at the most they can be, as its start was, without
+    reading the users' sessions to count them."""
+    users = [str(uuid.uuid4()) for _ in range(3)]
+    _credit_cap(monkeypatch)
+    with monkeypatch.context() as m:
+        m.setattr(
+            "tfc.temporal.eval_tasks.client.start_eval_task_workflow_sync",
+            _temporal_down,
+        )
+        result = _start(
+            auth_client, observe_project, [yes_no, category], unit="users", ids=users
+        )
+    assert result.status_code == status.HTTP_200_OK, result.json()
+    # 3 users × 5 sessions × 2 questions × 0.06 credits.
+    assert result.json()["result"]["credits_estimate"] == 1.8
+    task = EvalTask.objects.get(id=result.json()["result"]["task_id"])
+    assert task.status == EvalTaskStatus.FAILED
+    _no_rows_read(monkeypatch)
+
+    # 1 credit left pays for one user's sessions.
+    calls = _credit_cap(monkeypatch, left=1.0)
+    refused = _control(auth_client, observe_project, task, "resume")
+    assert refused.status_code == status.HTTP_403_FORBIDDEN, refused.json()
+    assert calls == [("jev_evaluator", 1.8)]
+    detail = refused.json()["result"]
+    assert (
+        detail["credits_estimate"],
+        detail["sample_size"],
+        detail["rows_to_read"],
+    ) == (1.8, 1, 5)
+    assert started == []
+
+    calls = _credit_cap(monkeypatch, left=10.0)
+    resumed = _control(auth_client, observe_project, task, "resume")
+    assert resumed.status_code == status.HTTP_200_OK, resumed.json()
+    assert calls == [("jev_evaluator", 1.8)]
+    assert started == [(str(task.id), {"replace_existing": True})]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("found", [0, 4], ids=["empty", "short"])
+def test_a_finished_run_that_found_fewer_rows_than_it_asked_for_stays_finished(
+    auth_client, observe_project, yes_no, fake_view, started, monkeypatch, found
+):
+    """A run's first step stores what its view holds, which may be fewer
+    rows than it asked for, or none. Once the run has finished, those are
+    all its rows: it isn't resumed for the rest, and it reads more as any
+    finished run does, checking the credits for the rows it adds."""
+    result = _start(auth_client, observe_project, [yes_no], sample_size=6)
+    task = EvalTask.objects.get(id=result.json()["result"]["task_id"])
+    pick = fake_view.pick
+    monkeypatch.setattr(
+        rows_service, "pick_rows", lambda *args, **kw: pick(*args, **kw)[:found]
+    )
+    resolve_desired_rows(task)
+    _read_everything(task)
+    assert InstantEvalRow.objects.filter(task_id=task.id).count() == found
+    summary = _summary(auth_client, observe_project, task)
+    assert (summary["status"], summary["pending"]) == ("completed", 0)
+    assert summary["sample"]["can_extend"] is True
+
+    calls = _credit_cap(monkeypatch)
+    before = len(started)
+    resumed = _control(auth_client, observe_project, task, "resume")
+    assert resumed.status_code == status.HTTP_400_BAD_REQUEST, resumed.json()
+    assert calls == [] and len(started) == before
+
+    more = _control(auth_client, observe_project, task, "read_more", more=5)
+    assert more.status_code == status.HTTP_200_OK, more.json()
+    # The 5 rows it adds, at 0.06 an answer.
+    assert calls == [("jev_evaluator", 0.3)]
+    assert len(started) == before + 1
+    assert InstantEvalRun.objects.get(eval_task_id=task.id).rows_requested == 11
+
+
 @pytest.mark.django_db
 @override_settings(INSTANT_EVAL_MAX_ACTIVE_PER_ORG=1)
 @pytest.mark.parametrize("action", ["resume", "retry_failed", "read_more"])
@@ -1819,6 +1993,11 @@ def test_a_question_on_jev_needs_the_organizations_typesafe_key(
     result = _start(auth_client, observe_project, [question], sample_size=5)
     assert result.status_code == status.HTTP_200_OK, result.json()
     task_id = result.json()["result"]["task_id"]
+    # Its first step picked its 5 rows and each was answered: with none left
+    # to read, retrying and reading more reach the key check.
+    task = EvalTask.objects.get(id=task_id)
+    resolve_desired_rows(task)
+    _read_everything(task)
 
     def control(action, **body):
         return auth_client.post(

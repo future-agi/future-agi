@@ -1220,6 +1220,22 @@ def _unanswered_rows(run) -> int:
         return int(cur.fetchone()[0])
 
 
+def _rows_left(task, run) -> int:
+    """The rows restarting a stopped run reads: those still missing an
+    answer. Its first step picks the rows, so a run that stopped before
+    storing any (it failed, was paused or lost its workflow first) reads
+    every row it asked for, counted at the most that can be (a user's five
+    sessions each) rather than read from ClickHouse here. A finished run may
+    legitimately hold fewer rows, so its requested size is not treated as
+    unfinished work."""
+    if (
+        task.status != EvalTaskStatus.COMPLETED
+        and not InstantEvalRow.objects.filter(task_id=task.id).exists()
+    ):
+        return _rows_for(run.unit, run.rows_requested)
+    return _unanswered_rows(run)
+
+
 # Hundreds of KB of counts every 2 s compress about tenfold.
 @method_decorator(gzip_page, name="dispatch")
 class InstantEvalSummaryView(InstantEvalLicenseRequired, APIView):
@@ -1547,7 +1563,7 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
             return missing
         if run is not None:
             rate = credits_per_answer()
-            left = _unanswered_rows(run)
+            left = _rows_left(task, run)
             credits = _credits(left, run.questions, rate)
             if refused := check_credits(_org(request), credits):
                 return _credit_refusal(
@@ -1642,11 +1658,12 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         return self._restarted(task, f"Retrying {retried:,} answers.", retried=retried)
 
     def _stopped_with_rows_left(self, task, run):
-        """A 409 for a run that stopped with rows still to read: paused, or
-        stalled (its task ended, or its workflow is gone). Restarting it for
-        a retry or "read more" would read all of them, past what that action
-        checked and confirmed. Resuming is the way on: it checks them all."""
-        if run is None or not _unanswered_rows(run):
+        """A 409 for a run that stopped with rows still to read (every row,
+        if it stopped before picking them): paused, or stalled (its task
+        ended, or its workflow is gone). Restarting it for a retry or "read
+        more" would read all of them, past what that action checked and
+        confirmed. Resuming is the way on: it checks them all."""
+        if run is None or not _rows_left(task, run):
             return None
         message = (
             "This run is paused. Resume it to read the rest first."
