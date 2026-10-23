@@ -149,6 +149,53 @@ the population can change before the first successful execution. No dollar price
 is fabricated: the preview returns ``estimated_cost: null`` and explains that
 actual evaluator token usage/provider pricing are not fixed by a sampling policy.
 
+Coordinated (permanent random number) sampling
+----------------------------------------------
+
+``coordination`` chooses the string every unit hash is seeded with:
+
+* ``independent`` (the default, stored without the key): the seed is the
+  policy version, exactly as before. Each policy draws its own sample, so an
+  edited rate or quota re-draws every unit. Existing tasks and policy versions
+  are unchanged: the policy test pins two pre-coordination versions byte for
+  byte, and an explicit ``"independent"`` normalizes to the same stored form.
+* ``project``: the seed is ``prn-sha256-v1:<project id>:<panel>``. It omits
+  rates, quotas, strata, filters and the window, so every unit keeps one
+  permanent random number (PRN) across every coordinated policy of the
+  project (and the optional ``panel``). Each edit is still its own cohort and
+  policy version (lineage is unchanged); only the random numbers are shared.
+
+On the hash circle read from ``prn_start`` (percent, default 0), the closed
+sample is the ``k`` smallest ``(hash - start) mod 2**256`` per stratum and the
+live sample is every unit whose key is below the rate threshold. Therefore,
+for a fixed seed and start:
+
+* raising a rate or a quota keeps every unit already selected (nested), within
+  the same stratum for closed quotas;
+* two tasks (or evaluators) with the same unit and rate select the same units;
+* live intervals ``[start, start + rate)`` that do not overlap give disjoint
+  samples, and adjacent ones union to the wider interval (rotation);
+* decisions are per unit, so input order and pagination never change them.
+
+Inclusion probabilities stay ``k/N`` (closed) and the rate (live). They are
+marginal: results of coordinated policies share random numbers, so their
+inclusion events are dependent across tasks. Each such result carries
+``coordination: "project"`` and its cohort's ``selection_context`` records the
+seed, panel and start. Combining coordinated tasks in one estimator needs their
+joint design (for nested samples the smaller sample is a subset of the larger).
+
+Evidence: ``test_prn_nesting_overlap_and_rotation`` (10,000 ids: nested rates
+and quotas, 100% cross-task agreement against about 1% for independent
+policies, disjoint rotations, order/pagination stability),
+``test_prn_hash_uniformity_chi_square_100k`` (100,000 ids in 100 bins at two
+start points, chi-square p > 0.001) and the real-ClickHouse
+``test_coordinated_prn_sql_matches_reference_nests_and_persists`` (closed
+bottom-k and two-rule live Bernoulli, including an interval that wraps past the
+top of the circle, equal the Python reference unit for unit; a deliberately
+broken wrap branch makes it fail). Re-using completed results after a quota
+increase (evaluating only the new units) is not implemented: an edited
+population still needs Delete & rerun.
+
 Persistence and downstream metrics
 ----------------------------------
 
