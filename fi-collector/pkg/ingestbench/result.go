@@ -301,7 +301,7 @@ func (h *histogram) add(d time.Duration) {
 	us := durationMicros(d)
 	h.counts[latencyBucketMicros(us)]++
 	h.n++
-	h.max = math.Max(h.max, float64(us)/1000)
+	h.max = math.Max(h.max, max(0, float64(d)/float64(time.Millisecond)))
 }
 
 func (h *histogram) summary() Percentiles {
@@ -380,7 +380,7 @@ func (h *sparseHistogram) addN(d time.Duration, n int64) {
 	us := durationMicros(d)
 	h.Counts[latencyBucketMicros(us)] += n
 	h.N += n
-	h.MaxMS = math.Max(h.MaxMS, float64(us)/1000)
+	h.MaxMS = math.Max(h.MaxMS, max(0, float64(d)/float64(time.Millisecond)))
 }
 
 // addBucket adds n values already bucketed (by the server) to bucket b; maxMS

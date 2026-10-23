@@ -15,8 +15,9 @@ SDK → OTLP/HTTP JSON or protobuf, or OTLP/gRPC
 ```
 
 Default batch triggers are **5,000 rows or 5 seconds**, not a hard maximum batch
-size. The pending + in-flight budget is **20,000 rows**. See the operational limits
-below before treating an OTLP acknowledgement as durable storage.
+size. The pending + in-flight row budget is **disabled by default** (0); a
+positive `max_pending_rows` explicitly enables admission. See the operational
+limits below before treating an OTLP acknowledgement as durable storage.
 
 ## Layout and build
 

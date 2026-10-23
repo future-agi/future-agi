@@ -526,6 +526,18 @@ func TestHistogramBoundaries(t *testing.T) {
 	if p := h.summary(); !within(p.P50, 10002) || p.P99 != 10500 || p.Max != 10500 {
 		t.Fatalf("upper quantiles: %+v", p)
 	}
+	// Buckets use whole microseconds, but capping at a truncated maximum
+	// must not turn an upper bound into a value below the actual measurement.
+	fractional := 1000*time.Microsecond + 999*time.Nanosecond
+	h = &histogram{}
+	h.add(fractional)
+	var fractionalSparse sparseHistogram
+	fractionalSparse.addN(fractional, 1)
+	for _, p := range []Percentiles{h.summary(), fractionalSparse.summary(false)} {
+		if p.P50 < 1.000999 || p.Max != 1.000999 {
+			t.Fatalf("sub-microsecond maximum was truncated: %+v", p)
+		}
+	}
 	// A lower-bound series reads lower edges: with lower bounds 10,200 and
 	// 10,900 ms the median lower bound may not exceed 10,200 ms (the old rule
 	// reported 10,900 ms, above the true lag it was meant to bound from below).

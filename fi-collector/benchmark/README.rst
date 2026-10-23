@@ -566,8 +566,8 @@ was old enough in any round; a query cut off by the end of its phase is counted 
 ``measured-with-censoring``, or ``window-censored`` when no query completed; how
 long each cut-off query had already run is kept in
 ``censored_query_elapsed_lower_bound``, a right-censored lower bound on its
-latency: those are the slowest queries, so the successful latency alone
-understates the database's latency whenever any query was censored) and,
+latency: excluding queries that did not finish can bias the successful-query
+percentiles low, so those percentiles do not describe all attempted queries) and,
 for the trace and session probes, the payload text bytes each query read
 (``payload_text_bytes_read``). Results are aggregated
 server-side, so the latency covers reading the payload columns but not
