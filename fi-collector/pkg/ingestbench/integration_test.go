@@ -828,7 +828,9 @@ func TestVerificationRejectsInvalidAndChangingResponses(t *testing.T) {
 					t.Fatalf("unexpected rows: %+v", v)
 				}
 			case "outside-namespace":
-				if !v.Complete || v.OutsideNamespace != 2 || v.UnexpectedRows != 2 {
+				// Each clock-hour namespace window answers 2 rows; the run covers
+				// two windows when it is near the top of an hour.
+				if !v.Complete || v.NamespaceWindows < 1 || v.OutsideNamespace != 2*uint64(v.NamespaceWindows) || v.UnexpectedRows != v.OutsideNamespace {
 					t.Fatalf("outside-namespace rows: %+v", v)
 				}
 			case "server-error":
