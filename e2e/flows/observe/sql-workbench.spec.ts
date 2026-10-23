@@ -1,4 +1,4 @@
-import { request } from '@playwright/test';
+import { request, type Page, type TestInfo } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
 import { sendTrace } from '../../lib/otlp';
 import { POLL } from '../../lib/state-probe';
@@ -78,6 +78,7 @@ test('OBS-E2E-052: an analyst saves a scoped SQL result as a live dashboard quer
       await expect(editor).toBeFocused();
       await editor.press('ControlOrMeta+A');
       await page.keyboard.insertText(sql);
+      await attachPage(page, testInfo, 'sql-ui-editor-catalog-and-query');
       const response = page.waitForResponse((res) => res.url().endsWith(SQL_RUN) && res.request().method() === 'POST', { timeout: UI_READY });
       await page.getByRole('button', { name: 'Run query', exact: true }).click();
       const submitted = await response;
@@ -97,6 +98,7 @@ test('OBS-E2E-052: an analyst saves a scoped SQL result as a live dashboard quer
       await expect(cells).toHaveCount(2, { timeout: UI_READY });
       await expect(cells.nth(0).getByRole('cell')).toHaveText([child, '1'], { timeout: UI_READY });
       await expect(cells.nth(1).getByRole('cell')).toHaveText([root, '1'], { timeout: UI_READY });
+      await attachPage(page, testInfo, 'sql-ui-result-table');
       await page.getByRole('button', { name: 'Save query', exact: true }).click();
       await page.getByLabel('Query name', { exact: true }).fill(queryName);
       await page.getByLabel('Visibility', { exact: true }).click();
@@ -105,6 +107,7 @@ test('OBS-E2E-052: an analyst saves a scoped SQL result as a live dashboard quer
       await page.getByRole('dialog').getByRole('button', { name: 'Save', exact: true }).click();
       expect((await savedResponse).status()).toBe(201);
       await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: UI_READY });
+      await attachPage(page, testInfo, 'sql-ui-saved-query');
     }, { timeout: UI_READY });
     // Exact table names pinned from tracer/models/sql_query.py and dashboard.py.
     const saved = await probe.pg<{ id: string; sql: string; visibility: string }>(
@@ -144,8 +147,14 @@ test('OBS-E2E-052: an analyst saves a scoped SQL result as a live dashboard quer
       await expect(rows).toHaveCount(2, { timeout: UI_READY });
       await expect(rows.nth(0).getByRole('cell')).toHaveText([child, '1'], { timeout: UI_READY });
       await expect(rows.nth(1).getByRole('cell')).toHaveText([root, '1'], { timeout: UI_READY });
+      await attachPage(page, testInfo, 'sql-ui-dashboard-widget');
     }, { timeout: UI_READY });
   } finally {
     await req.dispose();
   }
 });
+
+// Additive review evidence only: a full-page PNG per key UI state, no assertions.
+async function attachPage(page: Page, testInfo: TestInfo, name: string) {
+  await testInfo.attach(name, { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' });
+}

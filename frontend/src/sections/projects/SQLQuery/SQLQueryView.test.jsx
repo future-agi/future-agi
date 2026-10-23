@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import SQLQueryView from "./SQLQueryView";
 import { sqlApi } from "./api";
+import { closeSnackbar, enqueueSnackbar } from "notistack";
 
 const editorState = vi.hoisted(() => ({ provider: null }));
 vi.mock("@monaco-editor/react", () => ({
@@ -38,7 +39,10 @@ vi.mock("src/hooks/useDashboards", () => ({
 vi.mock("src/auth/hooks", () => ({
   useAuthContext: () => ({ user: { id: "owner" } }),
 }));
-vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+vi.mock("notistack", () => ({
+  enqueueSnackbar: vi.fn(),
+  closeSnackbar: vi.fn(),
+}));
 vi.mock("./api", () => ({
   errorMessage: (error) => error.message,
   sqlApi: {
@@ -47,6 +51,7 @@ vi.mock("./api", () => ({
     save: vi.fn(),
     update: vi.fn(),
     run: vi.fn(),
+    estimate: vi.fn(),
     runSaved: vi.fn(),
     result: vi.fn(),
     getSaved: vi.fn(),
@@ -94,6 +99,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   sqlApi.catalog.mockResolvedValue(schema);
   sqlApi.saved.mockResolvedValue({ items: [], has_more: false });
+  sqlApi.estimate.mockResolvedValue({
+    status: "unavailable",
+    reason: "Estimate unavailable. Run is not affected.",
+    sources: [],
+    max_rows_to_read: 10000000,
+    exceeds_scan_bound: null,
+    elapsed_ms: 1,
+  });
 });
 
 describe("SQL workbench page", () => {
@@ -169,5 +182,156 @@ describe("SQL workbench page", () => {
       ),
     );
     expect(sqlApi.update).not.toHaveBeenCalled();
+  });
+  it("shows an over-limit estimate as a warning but never disables Run", async () => {
+    sqlApi.estimate.mockResolvedValue({
+      status: "ok",
+      reason: "",
+      sources: [
+        {
+          dataset: "spans",
+          estimated: true,
+          parts: 4,
+          marks: 1300,
+          max_rows: 10649600,
+          reason: "",
+        },
+      ],
+      max_rows_to_read: 10000000,
+      exceeds_scan_bound: true,
+      elapsed_ms: 3,
+    });
+    sqlApi.run.mockResolvedValue({ id: "job", state: "queued", sql: "" });
+    sqlApi.result.mockResolvedValue({ id: "job", state: "queued", sql: "" });
+    renderPage();
+    await screen.findByText(schema.identity_semantics);
+    const line = await screen.findByTestId("sql-estimate", undefined, {
+      timeout: 3000,
+    });
+    await waitFor(() =>
+      expect(line).toHaveTextContent(
+        "likely over the 10,000,000-row scan limit",
+      ),
+    );
+    expect(line).toHaveAttribute("data-tone", "warning");
+    expect(sqlApi.estimate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: "project",
+        sql: expect.any(String),
+      }),
+      expect.any(AbortSignal),
+    );
+    const runButton = screen.getByRole("button", {
+      name: "Run query",
+      exact: true,
+    });
+    expect(runButton).not.toBeDisabled();
+    fireEvent.click(runButton);
+    await waitFor(() => expect(sqlApi.run).toHaveBeenCalledTimes(1));
+    // The estimate opens no dialog (the E2E flow asserts none is open).
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it.each([false, true])(
+    "runs an opened saved query fresh (edited=%s)",
+    async (edited) => {
+      const saved = {
+        id: "saved-1",
+        name: "Saved count",
+        sql: "SELECT count() FROM spans",
+        window_hours: 24,
+        chart: { type: "table" },
+        visibility: "private",
+        created_by_id: "owner",
+      };
+      sqlApi.saved.mockResolvedValue({ items: [saved], has_more: false });
+      sqlApi.runSaved.mockResolvedValue({
+        id: "fresh-saved",
+        state: "succeeded",
+        sql: saved.sql,
+      });
+      sqlApi.run.mockResolvedValue({
+        id: "fresh-edit",
+        state: "succeeded",
+        sql: "SELECT count() FROM traces",
+      });
+      renderPage();
+      fireEvent.click(await screen.findByText("Saved count"));
+      if (edited) {
+        fireEvent.change(screen.getByLabelText("SQL query editor"), {
+          target: { value: "SELECT count() FROM traces" },
+        });
+      }
+      for (let count = 1; count <= 2; count += 1) {
+        fireEvent.click(
+          screen.getByRole("button", { name: "Run query", exact: true }),
+        );
+        const route = edited ? sqlApi.run : sqlApi.runSaved;
+        await waitFor(() => expect(route).toHaveBeenCalledTimes(count));
+        await waitFor(() =>
+          expect(
+            screen.getByRole("button", { name: "Run query", exact: true }),
+          ).not.toBeDisabled(),
+        );
+      }
+      if (edited) {
+        expect(sqlApi.runSaved).not.toHaveBeenCalled();
+        expect(sqlApi.run).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            project_id: "project",
+            sql: "SELECT count() FROM traces",
+          }),
+          expect.any(Object),
+        );
+      } else {
+        expect(sqlApi.run).not.toHaveBeenCalled();
+        expect(sqlApi.runSaved).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            project_id: "project",
+            saved_query_id: "saved-1",
+            start: expect.any(String),
+            end: expect.any(String),
+          }),
+          expect.any(Object),
+        );
+      }
+    },
+  );
+  it("inserts a vetted example in one click and offers Undo", async () => {
+    sqlApi.catalog.mockResolvedValue({
+      ...schema,
+      examples: [
+        {
+          id: "cost-tokens-by-model",
+          title: "Cost and tokens by model",
+          description: "Spans, total tokens and total cost per model.",
+          sql: "SELECT model, count() AS span_count\nFROM spans\nGROUP BY model",
+          datasets: ["spans"],
+        },
+      ],
+    });
+    renderPage();
+    const editor = await screen.findByLabelText("SQL query editor");
+    const typed = editor.value;
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Use example: Cost and tokens by model",
+      }),
+    );
+    expect(editor.value).toBe(
+      "SELECT model, count() AS span_count\nFROM spans\nGROUP BY model",
+    );
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "Inserted example: Cost and tokens by model",
+      expect.objectContaining({ action: expect.any(Function) }),
+    );
+    // Run stays the same single control the E2E flow clicks.
+    expect(
+      screen.getAllByRole("button", { name: "Run query", exact: true }),
+    ).toHaveLength(1);
+    const { action } = enqueueSnackbar.mock.calls.at(-1)[1];
+    render(action("snack-1"));
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(editor.value).toBe(typed);
+    expect(closeSnackbar).toHaveBeenCalledWith("snack-1");
   });
 });

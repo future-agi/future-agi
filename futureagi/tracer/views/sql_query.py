@@ -4,7 +4,7 @@ from django.http import HttpResponse
 from django.utils import timezone
 from drf_yasg import openapi
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ViewSet
@@ -14,6 +14,7 @@ from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tracer.serializers.sql_query import (
     SQLCatalogSerializer,
+    SQLEstimateSerializer,
     SQLExecutionSerializer,
     SQLExportSerializer,
     SQLHistorySerializer,
@@ -36,12 +37,25 @@ from tracer.sql_workbench.catalog import (
     catalog,
 )
 from tracer.sql_workbench.compiler import MAX_RESULT_ROWS, UnsafeQuery
+from tracer.sql_workbench.examples import examples
 from tracer.sql_workbench.runner import QueryUnavailable, derived_metrics_availability
 
 
 class SQLViewMixin:
     permission_classes = [IsAuthenticated]
-    lookup_value_regex = r"[0-9a-f-]{36}"
+    # Any single path segment reaches the view, which answers 404 for a value
+    # that is not a UUID. A narrower route pattern would turn a malformed id
+    # from an MCP tool into an unresolvable generated route (a server error)
+    # instead of "not found". List-level actions (catalog, run, run-saved) are
+    # routed before the detail pattern, so they are never read as an id.
+    lookup_value_regex = r"[^/]+"
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        # A value that is not a UUID is "not found" (after authentication),
+        # never an unhandled database validation error.
+        if "pk" in kwargs and service.object_id(kwargs["pk"]) is None:
+            raise NotFound("Not found.")
 
     def finalize_response(self, request, response, *args, **kwargs):
         response = super().finalize_response(request, response, *args, **kwargs)
@@ -82,7 +96,7 @@ class SQLQueryViewSet(SQLViewMixin, ViewSet):
     def catalog(self, request):
         actor = self.actor()
         project_id = request.validated_query_data["project_id"]
-        authorize(actor, project_id)
+        project = authorize(actor, project_id)
         try:
             authorize(actor, project_id, write=True)
             can_save = True
@@ -93,7 +107,13 @@ class SQLQueryViewSet(SQLViewMixin, ViewSet):
             {
                 "version": CATALOG_VERSION,
                 "identity_semantics": IDENTITY_SEMANTICS,
-                "datasets": catalog(metrics_available, reason),
+                "datasets": catalog(
+                    metrics_available,
+                    reason,
+                    service.eval_results_unavailable_reason(project),
+                ),
+                # Vetted examples: ordinary SQL, compiled and scoped like any query.
+                "examples": list(examples()),
                 "max_rows": MAX_RESULT_ROWS,
                 "max_window_days": 31,
                 "can_save": can_save,
@@ -107,6 +127,14 @@ class SQLQueryViewSet(SQLViewMixin, ViewSet):
     def run(self, request):
         job = service.submit(self.actor(), **request.validated_data)
         return Response(service.snapshot(job), status=202)
+
+    @action(detail=False, methods=["post"])
+    @validated_request(
+        request_serializer=SQLRunSerializer, responses={200: SQLEstimateSerializer}
+    )
+    def estimate(self, request):
+        """Advisory index estimate of a query; never admits or blocks a run."""
+        return Response(service.estimate(self.actor(), **request.validated_data))
 
     @action(detail=False, methods=["post"], url_path="run-saved")
     @validated_request(
@@ -126,6 +154,9 @@ class SQLQueryViewSet(SQLViewMixin, ViewSet):
             sql=saved.sql,
             start=start,
             end=end,
+            # Saved/dashboard runs have always created a fresh personal
+            # execution, even if the editor just ran this same definition.
+            reuse=False,
         )
         return Response(service.snapshot(job), status=202)
 

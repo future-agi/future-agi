@@ -15,6 +15,14 @@ export const sqlApi = {
         ...options,
       })
       .then((r) => r.data),
+  // Advisory index estimate: never admits or blocks a run.
+  estimate: (data, signal) =>
+    axios
+      .post(apiPath("/tracer/sql-query/estimate/"), data, {
+        signal,
+        timeout: 10_000,
+      })
+      .then((r) => r.data),
   runSaved: (data, options = {}) =>
     axios
       .post(apiPath("/tracer/sql-query/run-saved/"), data, {

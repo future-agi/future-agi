@@ -30160,21 +30160,27 @@ export interface SQLDatasetApi {
   columns: SQLColumnApi[];
 }
 
+export interface SQLExampleApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  sql: string;
+  datasets: string[];
+}
+
 export interface SQLCatalogApi {
   /** @minLength 1 */
   identity_semantics: string;
   version: number;
   datasets: SQLDatasetApi[];
+  examples: SQLExampleApi[];
   max_rows: number;
   max_window_days: number;
   can_save: boolean;
-}
-
-export interface SQLRunSavedApi {
-  project_id: string;
-  saved_query_id: string;
-  start?: string;
-  end?: string;
 }
 
 export interface SQLRunApi {
@@ -30186,6 +30192,40 @@ export interface SQLRunApi {
   sql: string;
   start: string;
   end: string;
+}
+
+export type SQLEstimateApiStatus =
+  (typeof SQLEstimateApiStatus)[keyof typeof SQLEstimateApiStatus];
+
+export const SQLEstimateApiStatus = {
+  ok: "ok",
+  unavailable: "unavailable",
+} as const;
+
+export interface SQLEstimateSourceApi {
+  /** @minLength 1 */
+  dataset: string;
+  estimated: boolean;
+  parts: number;
+  marks: number;
+  max_rows: number;
+  reason: string;
+}
+
+export interface SQLEstimateApi {
+  status: SQLEstimateApiStatus;
+  reason: string;
+  sources: SQLEstimateSourceApi[];
+  max_rows_to_read: number;
+  exceeds_scan_bound: boolean;
+  elapsed_ms: number;
+}
+
+export interface SQLRunSavedApi {
+  project_id: string;
+  saved_query_id: string;
+  start?: string;
+  end?: string;
 }
 
 export interface SQLProjectApi {

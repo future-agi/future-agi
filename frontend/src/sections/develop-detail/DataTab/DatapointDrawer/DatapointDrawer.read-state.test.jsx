@@ -68,6 +68,28 @@ const renderDrawer = (props = {}) => {
 describe("DatapointDrawer row adjacency", () => {
   beforeEach(() => axiosPostMock.mockReset());
 
+  it("clears pending loading delays when the drawer unmounts", () => {
+    vi.useFakeTimers();
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    try {
+      const { unmount } = renderDrawer();
+      const loadingTimers = timeoutSpy.mock.calls.flatMap(([, delay], index) =>
+        delay === 300 ? [timeoutSpy.mock.results[index].value] : [],
+      );
+      expect(loadingTimers.length).toBeGreaterThan(0);
+      unmount();
+      for (const timer of loadingTimers) {
+        expect(clearTimeoutSpy).toHaveBeenCalledWith(timer);
+      }
+    } finally {
+      vi.clearAllTimers();
+      timeoutSpy.mockRestore();
+      clearTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the current datapoint on failure and retries the same bounded action", async () => {
     const setDataPointDrawerData = vi.fn();
     axiosPostMock

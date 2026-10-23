@@ -17,6 +17,15 @@ class CatalogUnavailable(Exception):
 
 MAX_WINDOW = timedelta(days=31)
 MAX_CONFIGS = 1000
+EVAL_CONFIG_LIMIT_MESSAGE = (
+    "eval_results supports projects with at most 1,000 evaluation configurations, "
+    "including deleted ones. This project has more, so eval_results is "
+    "unavailable here rather than returning a partial result."
+)
+
+
+class EvalConfigLimitExceeded(ValueError):
+    """A documented, user-visible limit; never a silently partial dataset."""
 
 
 @dataclass(frozen=True)
@@ -30,6 +39,9 @@ class Scope:
     eval_table: str = "tracer_eval_logger"
     database: str = "default"
     derived_metrics_enabled: bool = False
+    # Project-owned configurations that were later soft-deleted. Their results
+    # stay in eval_results (flagged config_deleted = 1); never dropped silently.
+    deleted_eval_config_ids: tuple[UUID, ...] = ()
 
     def __post_init__(self):
         for value in (self.organization_id, self.workspace_id, self.project_id):
@@ -41,10 +53,12 @@ class Scope:
             raise ValueError("Use timezone-aware timestamps.")
         if not timedelta(0) < self.end - self.start <= MAX_WINDOW:
             raise ValueError("Select a time window of at most 31 days.")
-        if len(self.eval_config_ids) > MAX_CONFIGS or any(
+        if len(self.eval_config_ids) > MAX_CONFIGS:
+            raise EvalConfigLimitExceeded(EVAL_CONFIG_LIMIT_MESSAGE)
+        if any(
             not isinstance(value, UUID) or value.int == 0
             for value in self.eval_config_ids
-        ):
+        ) or not set(self.deleted_eval_config_ids) <= set(self.eval_config_ids):
             raise ValueError("Invalid evaluation configuration scope.")
         if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]{0,63}", self.database):
             raise ValueError("Invalid SQL source database.")
@@ -124,6 +138,7 @@ COLUMNS = {
         "sampling_window_start": "Nullable(DateTime64)",
         "sampling_window_end": "Nullable(DateTime64)",
         "population_size": "Nullable(UInt64)",
+        "config_deleted": "UInt8",
     },
     "annotations": {
         "id": "UUID",
@@ -170,7 +185,7 @@ DESCRIPTIONS = {
     "traces": "One live trace created in the selected window.",
     "sessions": "Sessions first seen in the window; locale is the latest present span locale in that window.",
     "users": "Users first seen in the window (not active-user counts).",
-    "eval_results": "Live scores created in the window with project-owned config and target; run_id is null until real execution provenance exists; eval_task_id is the task key. Sampling metadata is nullable for legacy results.",
+    "eval_results": "Live scores created in the window with project-owned config and target; run_id is null until real execution provenance exists; eval_task_id is the task key. Sampling metadata is nullable for legacy results. Results of configurations deleted later are kept with config_deleted = 1 (Observe hides them); projects with more than 1,000 configurations cannot use this dataset.",
     "derived_metrics": "Committed derived-metric attempts; windows fully contained in the selected window. Requires the derived metrics schema and reader grants.",
     "annotations": "Unified scores with explicit organization, workspace and tracer-project ownership; legacy null ownership is excluded.",
 }
@@ -179,17 +194,17 @@ DESCRIPTIONS = {
 def catalog(
     derived_metrics_available=False,
     unavailable_reason="Derived metrics schema is not enabled.",
+    eval_results_unavailable_reason="",
 ):
+    reasons = {"eval_results": eval_results_unavailable_reason}
+    if not derived_metrics_available:
+        reasons["derived_metrics"] = unavailable_reason
     return [
         {
             "name": name,
             "description": DESCRIPTIONS[name],
-            "available": name != "derived_metrics" or derived_metrics_available,
-            "unavailable_reason": (
-                unavailable_reason
-                if name == "derived_metrics" and not derived_metrics_available
-                else ""
-            ),
+            "available": not reasons.get(name),
+            "unavailable_reason": reasons.get(name, ""),
             "columns": [
                 {"name": column, "type": kind} for column, kind in columns.items()
             ],
@@ -223,6 +238,107 @@ def ownership_predicates(scope: Scope) -> dict[str, str]:
         scope.eval_table: f"{live_eval} AND {config_scope}",
         "model_hub_score": f"organization_id = {org} AND workspace_id = {workspace} AND tracer_project_id = {project} AND deleted = 0 AND _peerdb_is_deleted = 0",
     }
+
+
+# Every relation the provisioned service principal may be granted: the six
+# sources and the optional derived-metrics view with its two tables.
+DERIVED_METRIC_RELATIONS = (
+    "derived_metrics",
+    "derived_metric_results",
+    "derived_metric_commits",
+)
+
+
+def intrinsic_ownership(scope: Scope) -> dict[str, str]:
+    """Per physical relation: ownership columns that never change across versions.
+
+    Sent as ClickHouse ``additional_table_filters``, a server-side second
+    barrier that applies to every read of a listed table in one query,
+    independently of the AST rewrite: ``x IN <table>`` reads, views, joins,
+    scalar subqueries and FINAL included (checked on the owned 25.3 server by
+    ``test_server_table_filters_block_unscoped_sql_under_the_locked_profile``).
+    Deletion flags and event times are deliberately absent: a filter that hid
+    the newest (deleted) version before FINAL could surface an older one.
+
+    Derived-metric relations are always listed, even when the feature is off,
+    because an operator may have granted them; a key for a table that does not
+    exist is ignored by the server. ``<table>_local`` keys cover the shard
+    tables behind a Distributed source on a cluster installation.
+    """
+    project = f"toUUID('{scope.project_id}')"
+    org = f"toUUID('{scope.organization_id}')"
+    workspace = f"toUUID('{scope.workspace_id}')"
+    configs = ", ".join(f"toUUID('{value}')" for value in scope.eval_config_ids)
+    tenant = f"org_id = {org} AND workspace_id = {workspace} AND project_id = {project}"
+    result = {
+        "spans": f"project_id = {project} AND org_id = {org}",
+        "traces": f"project_id = {project}",
+        "trace_sessions": f"project_id = {project}",
+        "end_users": f"project_id = {project} AND organization_id = {org}",
+        # No eval relation is readable unless this query was scoped to the
+        # project's configurations; either evaluation store may be granted.
+        "tracer_eval_logger": (
+            f"custom_eval_config_id IN ({configs})" if configs else "0"
+        ),
+        "model_hub_score": (
+            f"organization_id = {org} AND workspace_id = {workspace} "
+            f"AND tracer_project_id = {project}"
+        ),
+        **dict.fromkeys(DERIVED_METRIC_RELATIONS, tenant),
+    }
+    result["tracer_eval_logger_v2"] = result["tracer_eval_logger"]
+    return result
+
+
+# Per physical relation: (catalog dataset it is reported as, the ownership
+# columns a scope pins, the column that identifies one project). An index
+# estimate counts whole granules. When the sort key starts with ownership
+# columns down to the project column, the granules it selects are this
+# project's own, plus at most two boundary granules per part whose key range
+# brackets this project (whatever that part's row count); otherwise the
+# granules hold other projects' rows and the numbers are withheld.
+ESTIMATE_SOURCES = {
+    "spans": ("spans", ("project_id", "org_id"), "project_id"),
+    "traces": ("traces", ("project_id",), "project_id"),
+    "trace_sessions": ("sessions", ("project_id",), "project_id"),
+    "end_users": ("users", ("project_id", "organization_id"), "project_id"),
+    "tracer_eval_logger": (
+        "eval_results",
+        ("custom_eval_config_id",),
+        "custom_eval_config_id",
+    ),
+    "tracer_eval_logger_v2": (
+        "eval_results",
+        ("custom_eval_config_id",),
+        "custom_eval_config_id",
+    ),
+    "model_hub_score": (
+        "annotations",
+        ("organization_id", "workspace_id", "tracer_project_id"),
+        "tracer_project_id",
+    ),
+    **dict.fromkeys(
+        DERIVED_METRIC_RELATIONS,
+        ("derived_metrics", ("org_id", "workspace_id", "project_id"), "project_id"),
+    ),
+}
+
+
+def additional_table_filters(scope: Scope) -> str:
+    """The per-query ``additional_table_filters`` map with database-qualified keys."""
+
+    def quoted(text):
+        return "'" + text.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+    filters = {}
+    for table, predicate in intrinsic_ownership(scope).items():
+        for name in (table, f"{table}_local"):
+            filters[f"{scope.database}.{name}"] = predicate
+    return (
+        "{"
+        + ", ".join(f"{quoted(key)}: {quoted(value)}" for key, value in filters.items())
+        + "}"
+    )
 
 
 def sources(scope: Scope) -> dict[str, str]:
@@ -278,6 +394,16 @@ def sources(scope: Scope) -> dict[str, str]:
             "parseDateTime64BestEffortOrNull(JSONExtractString(output_metadata, '_task_selection', 'sampling', 'window', 'start'), 6, 'UTC') AS sampling_window_start",
             "parseDateTime64BestEffortOrNull(JSONExtractString(output_metadata, '_task_selection', 'sampling', 'window', 'end'), 6, 'UTC') AS sampling_window_end",
             f"if({population} >= 0, toUInt64({population}), NULL) AS population_size",
+            (
+                "toUInt8(custom_eval_config_id IN ({}))".format(
+                    ", ".join(
+                        f"toUUID('{value}')" for value in scope.deleted_eval_config_ids
+                    )
+                )
+                if scope.deleted_eval_config_ids
+                else "toUInt8(0)"
+            )
+            + " AS config_deleted",
         ]
     )
     result = {
