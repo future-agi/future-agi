@@ -60943,6 +60943,115 @@
                 }
             ]
         },
+        "/tracer/derived-metric-runs/{id}/compare/": {
+            "get": {
+                "operationId": "tracer_derived-metric-runs_compare",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "baseline_run_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricComparison"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/derived-metric-runs/{id}/contributors/": {
+            "get": {
+                "operationId": "tracer_derived-metric-runs_contributors",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "rollup",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "overall",
+                            "session",
+                            "user",
+                            "cohort",
+                            "day"
+                        ],
+                        "default": "overall"
+                    },
+                    {
+                        "name": "group_key",
+                        "in": "query",
+                        "description": "The persisted rollup row to explain; empty for the overall row.",
+                        "required": false,
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 2048
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 20,
+                        "maximum": 100,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DerivedMetricContributorPage"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/tracer/derived-metric-runs/{id}/recompute/": {
             "post": {
                 "operationId": "tracer_derived-metric-runs_recompute",
@@ -61021,6 +61130,14 @@
                         "default": 50,
                         "maximum": 100,
                         "minimum": 1
+                    },
+                    {
+                        "name": "include_uncertainty",
+                        "in": "query",
+                        "description": "Add each row's design-based standard error and 95% interval as `uncertainty`.",
+                        "required": false,
+                        "type": "boolean",
+                        "default": false
                     }
                 ],
                 "responses": {
@@ -143861,6 +143978,20 @@
                     "title": "Value",
                     "type": "number",
                     "x-nullable": true
+                },
+                "ci_low": {
+                    "title": "Ci low",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "ci_high": {
+                    "title": "Ci high",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "ci_reason": {
+                    "title": "Ci reason",
+                    "type": "string"
                 }
             }
         },
@@ -144565,13 +144696,102 @@
                 }
             }
         },
-        "DerivedMetricRecompute": {
+        "DerivedMetricUncertainty": {
+            "description": "Present on previews, and on persisted results when include_uncertainty=true.",
+            "required": [
+                "confidence_level",
+                "status",
+                "reason",
+                "method",
+                "interval",
+                "std_error",
+                "ci_low",
+                "ci_high",
+                "effective_n",
+                "degrees_of_freedom"
+            ],
             "type": "object",
             "properties": {
-                "confirm": {
-                    "title": "Confirm",
-                    "type": "boolean",
-                    "default": true
+                "confidence_level": {
+                    "title": "Confidence level",
+                    "description": "Always 0.95 (two-sided).",
+                    "type": "number"
+                },
+                "status": {
+                    "title": "Status",
+                    "description": "`not_estimable` means no interval exists; `reason` says why. Never a guess.",
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "not_estimable"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "enum": [
+                        "",
+                        "no_value",
+                        "design_not_captured",
+                        "mixed_design",
+                        "unweighted_total",
+                        "fewer_than_two_units",
+                        "population_size_missing",
+                        "inconsistent_stratum_design",
+                        "single_unit_stratum",
+                        "no_degrees_of_freedom",
+                        "non_finite",
+                        "unstable_variance",
+                        "not_computed"
+                    ]
+                },
+                "method": {
+                    "title": "Method",
+                    "description": "stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error.",
+                    "type": "string",
+                    "enum": [
+                        "",
+                        "stratified_wor_fpc",
+                        "poisson",
+                        "iid_units"
+                    ]
+                },
+                "interval": {
+                    "title": "Interval",
+                    "description": "wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE.",
+                    "type": "string",
+                    "enum": [
+                        "",
+                        "wilson",
+                        "wald_t"
+                    ]
+                },
+                "std_error": {
+                    "title": "Std error",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "ci_low": {
+                    "title": "Ci low",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "ci_high": {
+                    "title": "Ci high",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "effective_n": {
+                    "title": "Effective n",
+                    "description": "Kish effective sample size of the valid units.",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "degrees_of_freedom": {
+                    "title": "Degrees of freedom",
+                    "type": "integer",
+                    "minimum": 1,
+                    "x-nullable": true
                 }
             }
         },
@@ -144639,6 +144859,355 @@
                     "title": "Invalid probability count",
                     "type": "integer",
                     "minimum": 0
+                },
+                "uncertainty": {
+                    "$ref": "#/definitions/DerivedMetricUncertainty"
+                }
+            }
+        },
+        "DerivedMetricDeltaUncertainty": {
+            "required": [
+                "status",
+                "reason",
+                "method",
+                "std_error",
+                "ci_low",
+                "ci_high"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "not_estimable"
+                    ]
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string"
+                },
+                "method": {
+                    "title": "Method",
+                    "type": "string"
+                },
+                "std_error": {
+                    "title": "Std error",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "ci_low": {
+                    "title": "Ci low",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "ci_high": {
+                    "title": "Ci high",
+                    "type": "number",
+                    "x-nullable": true
+                }
+            }
+        },
+        "DerivedMetricComparison": {
+            "required": [
+                "baseline_run_id",
+                "candidate_run_id",
+                "baseline_result_id",
+                "candidate_result_id",
+                "baseline_version",
+                "candidate_version",
+                "baseline",
+                "candidate",
+                "delta",
+                "delta_uncertainty"
+            ],
+            "type": "object",
+            "properties": {
+                "baseline_run_id": {
+                    "title": "Baseline run id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "candidate_run_id": {
+                    "title": "Candidate run id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "baseline_result_id": {
+                    "title": "Baseline result id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "candidate_result_id": {
+                    "title": "Candidate result id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "baseline_version": {
+                    "title": "Baseline version",
+                    "type": "integer"
+                },
+                "candidate_version": {
+                    "title": "Candidate version",
+                    "type": "integer"
+                },
+                "baseline": {
+                    "$ref": "#/definitions/DerivedMetricResult"
+                },
+                "candidate": {
+                    "$ref": "#/definitions/DerivedMetricResult"
+                },
+                "delta": {
+                    "title": "Delta",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "delta_uncertainty": {
+                    "$ref": "#/definitions/DerivedMetricDeltaUncertainty"
+                }
+            }
+        },
+        "DerivedMetricContributor": {
+            "required": [
+                "unit_id",
+                "trace_id",
+                "session_id",
+                "user_id",
+                "cohort",
+                "day",
+                "probability",
+                "weight",
+                "numerator",
+                "denominator",
+                "weighted_numerator",
+                "weighted_denominator",
+                "influence"
+            ],
+            "type": "object",
+            "properties": {
+                "unit_id": {
+                    "title": "Unit id",
+                    "description": "Selection unit id; span units are [\"trace_id\",\"span_id\"].",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "trace_id": {
+                    "title": "Trace id",
+                    "description": "Span units only: the unit's trace.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "session_id": {
+                    "title": "Session id",
+                    "type": "string"
+                },
+                "user_id": {
+                    "title": "User id",
+                    "type": "string"
+                },
+                "cohort": {
+                    "title": "Cohort",
+                    "type": "string"
+                },
+                "day": {
+                    "title": "Day",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "probability": {
+                    "title": "Probability",
+                    "type": "number"
+                },
+                "weight": {
+                    "title": "Weight",
+                    "description": "1 / inclusion probability.",
+                    "type": "number"
+                },
+                "numerator": {
+                    "title": "Numerator",
+                    "type": "number"
+                },
+                "denominator": {
+                    "title": "Denominator",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "weighted_numerator": {
+                    "title": "Weighted numerator",
+                    "type": "number"
+                },
+                "weighted_denominator": {
+                    "title": "Weighted denominator",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "influence": {
+                    "title": "Influence",
+                    "description": "Exact leave-one-out change: the persisted value minus the group's value without this unit (a total's weighted contribution). Null when removing the unit leaves no denominator or the group has no value.",
+                    "type": "number",
+                    "x-nullable": true
+                }
+            }
+        },
+        "DerivedMetricContributorDiagnostics": {
+            "required": [
+                "unit_count",
+                "valid_count",
+                "missing_count",
+                "invalid_probability_count",
+                "outside_denominator_count",
+                "undefined_arithmetic_count",
+                "missing_by_input",
+                "missing_examples",
+                "invalid_probability_examples"
+            ],
+            "type": "object",
+            "properties": {
+                "unit_count": {
+                    "title": "Unit count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "valid_count": {
+                    "title": "Valid count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "missing_count": {
+                    "title": "Missing count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "invalid_probability_count": {
+                    "title": "Invalid probability count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "outside_denominator_count": {
+                    "title": "Outside denominator count",
+                    "description": "Valid units whose denominator is 0 (ratios only).",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "undefined_arithmetic_count": {
+                    "title": "Undefined arithmetic count",
+                    "description": "Units with every input present whose row arithmetic is undefined.",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "missing_by_input": {
+                    "title": "Missing by input",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "minimum": 0
+                    }
+                },
+                "missing_examples": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "invalid_probability_examples": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "DerivedMetricContributorPage": {
+            "required": [
+                "rollup",
+                "group_key",
+                "kind",
+                "selection_unit",
+                "status",
+                "value",
+                "numerator",
+                "denominator",
+                "results",
+                "truncated",
+                "diagnostics"
+            ],
+            "type": "object",
+            "properties": {
+                "rollup": {
+                    "title": "Rollup",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "group_key": {
+                    "title": "Group key",
+                    "type": "string"
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "ratio",
+                        "mean",
+                        "sum",
+                        "count_if"
+                    ]
+                },
+                "selection_unit": {
+                    "title": "Selection unit",
+                    "type": "string",
+                    "enum": [
+                        "span",
+                        "session",
+                        "user"
+                    ]
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "numerator": {
+                    "title": "Numerator",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "denominator": {
+                    "title": "Denominator",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricContributor"
+                    }
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "description": "More valid units exist than were returned.",
+                    "type": "boolean"
+                },
+                "diagnostics": {
+                    "$ref": "#/definitions/DerivedMetricContributorDiagnostics"
+                }
+            }
+        },
+        "DerivedMetricRecompute": {
+            "type": "object",
+            "properties": {
+                "confirm": {
+                    "title": "Confirm",
+                    "type": "boolean",
+                    "default": true
                 }
             }
         },
@@ -159014,6 +159583,14 @@
                     "maxLength": 2556,
                     "x-nullable": true
                 },
+                "alert_when": {
+                    "title": "Alert when",
+                    "type": "string",
+                    "enum": [
+                        "point",
+                        "confident"
+                    ]
+                },
                 "threshold_operator": {
                     "title": "Threshold operator",
                     "type": "string",
@@ -159524,6 +160101,14 @@
                     "type": "string",
                     "maxLength": 2556,
                     "x-nullable": true
+                },
+                "alert_when": {
+                    "title": "Alert when",
+                    "type": "string",
+                    "enum": [
+                        "point",
+                        "confident"
+                    ]
                 },
                 "threshold_operator": {
                     "title": "Threshold operator",

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1093,
+  endpointCount: 1095,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -33788,6 +33788,74 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/derived-metric-runs/{id}/compare/": {
+      get: {
+        operationId: "tracer_derived-metric-runs_compare",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          baseline_run_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricComparison",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metric-runs/{id}/contributors/": {
+      get: {
+        operationId: "tracer_derived-metric-runs_contributors",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          rollup: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["overall", "session", "user", "cohort", "day"],
+              default: "overall",
+            },
+          },
+          group_key: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 2048,
+              default: "",
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 20,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricContributorPage",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/derived-metric-runs/{id}/recompute/": {
       post: {
         operationId: "tracer_derived-metric-runs_recompute",
@@ -33837,6 +33905,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               minimum: 1,
               maximum: 100,
               default: 50,
+            },
+          },
+          include_uncertainty: {
+            required: false,
+            schema: {
+              type: "boolean",
+              default: false,
             },
           },
         },
@@ -58696,6 +58771,136 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    DerivedMetricComparison: {
+      required: [
+        "baseline_run_id",
+        "candidate_run_id",
+        "baseline_result_id",
+        "candidate_result_id",
+        "baseline_version",
+        "candidate_version",
+        "baseline",
+        "candidate",
+        "delta",
+        "delta_uncertainty",
+      ],
+      type: "object",
+      properties: {
+        baseline_run_id: {
+          title: "Baseline run id",
+          type: "string",
+          format: "uuid",
+        },
+        candidate_run_id: {
+          title: "Candidate run id",
+          type: "string",
+          format: "uuid",
+        },
+        baseline_result_id: {
+          title: "Baseline result id",
+          type: "string",
+          format: "uuid",
+        },
+        candidate_result_id: {
+          title: "Candidate result id",
+          type: "string",
+          format: "uuid",
+        },
+        baseline_version: {
+          title: "Baseline version",
+          type: "integer",
+        },
+        candidate_version: {
+          title: "Candidate version",
+          type: "integer",
+        },
+        baseline: {
+          $ref: "#/definitions/DerivedMetricResult",
+        },
+        candidate: {
+          $ref: "#/definitions/DerivedMetricResult",
+        },
+        delta: {
+          title: "Delta",
+          type: "number",
+          "x-nullable": true,
+        },
+        delta_uncertainty: {
+          $ref: "#/definitions/DerivedMetricDeltaUncertainty",
+        },
+      },
+    },
+    DerivedMetricContributorPage: {
+      required: [
+        "rollup",
+        "group_key",
+        "kind",
+        "selection_unit",
+        "status",
+        "value",
+        "numerator",
+        "denominator",
+        "results",
+        "truncated",
+        "diagnostics",
+      ],
+      type: "object",
+      properties: {
+        rollup: {
+          title: "Rollup",
+          type: "string",
+          minLength: 1,
+        },
+        group_key: {
+          title: "Group key",
+          type: "string",
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["ratio", "mean", "sum", "count_if"],
+        },
+        selection_unit: {
+          title: "Selection unit",
+          type: "string",
+          enum: ["span", "session", "user"],
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        value: {
+          title: "Value",
+          type: "number",
+          "x-nullable": true,
+        },
+        numerator: {
+          title: "Numerator",
+          type: "number",
+          "x-nullable": true,
+        },
+        denominator: {
+          title: "Denominator",
+          type: "number",
+          "x-nullable": true,
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricContributor",
+          },
+        },
+        truncated: {
+          title: "Truncated",
+          description: "More valid units exist than were returned.",
+          type: "boolean",
+        },
+        diagnostics: {
+          $ref: "#/definitions/DerivedMetricContributorDiagnostics",
         },
       },
     },
@@ -83808,6 +84013,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 2556,
           "x-nullable": true,
         },
+        alert_when: {
+          title: "Alert when",
+          type: "string",
+          enum: ["point", "confident"],
+        },
         threshold_operator: {
           title: "Threshold operator",
           type: "string",
@@ -84438,6 +84648,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 2556,
           "x-nullable": true,
+        },
+        alert_when: {
+          title: "Alert when",
+          type: "string",
+          enum: ["point", "confident"],
         },
         threshold_operator: {
           title: "Threshold operator",
@@ -92005,27 +92220,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    DerivedMetricEvaluator: {
-      required: ["id", "name", "config_hash"],
+    DerivedMetricDeltaUncertainty: {
+      required: [
+        "status",
+        "reason",
+        "method",
+        "std_error",
+        "ci_low",
+        "ci_high",
+      ],
       type: "object",
       properties: {
-        id: {
-          title: "Id",
-          description: "Evaluator config ID to bind (config_id).",
+        status: {
+          title: "Status",
           type: "string",
-          format: "uuid",
+          enum: ["ok", "not_estimable"],
         },
-        name: {
-          title: "Name",
+        reason: {
+          title: "Reason",
           type: "string",
         },
-        config_hash: {
-          title: "Config hash",
-          description:
-            "Hash of the evaluator's CURRENT resolved definition: the config_hash that new evaluation results are stored under. Results produced under an earlier definition carry a different hash.",
+        method: {
+          title: "Method",
           type: "string",
-          pattern: "^[a-f0-9]{64}$",
-          minLength: 1,
+        },
+        std_error: {
+          title: "Std error",
+          type: "number",
+          "x-nullable": true,
+        },
+        ci_low: {
+          title: "Ci low",
+          type: "number",
+          "x-nullable": true,
+        },
+        ci_high: {
+          title: "Ci high",
+          type: "number",
+          "x-nullable": true,
         },
       },
     },
@@ -92093,6 +92325,189 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Invalid probability count",
           type: "integer",
           minimum: 0,
+        },
+        uncertainty: {
+          $ref: "#/definitions/DerivedMetricUncertainty",
+        },
+      },
+    },
+    DerivedMetricContributor: {
+      required: [
+        "unit_id",
+        "trace_id",
+        "session_id",
+        "user_id",
+        "cohort",
+        "day",
+        "probability",
+        "weight",
+        "numerator",
+        "denominator",
+        "weighted_numerator",
+        "weighted_denominator",
+        "influence",
+      ],
+      type: "object",
+      properties: {
+        unit_id: {
+          title: "Unit id",
+          description:
+            'Selection unit id; span units are ["trace_id","span_id"].',
+          type: "string",
+          minLength: 1,
+        },
+        trace_id: {
+          title: "Trace id",
+          description: "Span units only: the unit's trace.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        session_id: {
+          title: "Session id",
+          type: "string",
+        },
+        user_id: {
+          title: "User id",
+          type: "string",
+        },
+        cohort: {
+          title: "Cohort",
+          type: "string",
+        },
+        day: {
+          title: "Day",
+          type: "string",
+          minLength: 1,
+        },
+        probability: {
+          title: "Probability",
+          type: "number",
+        },
+        weight: {
+          title: "Weight",
+          description: "1 / inclusion probability.",
+          type: "number",
+        },
+        numerator: {
+          title: "Numerator",
+          type: "number",
+        },
+        denominator: {
+          title: "Denominator",
+          type: "number",
+          "x-nullable": true,
+        },
+        weighted_numerator: {
+          title: "Weighted numerator",
+          type: "number",
+        },
+        weighted_denominator: {
+          title: "Weighted denominator",
+          type: "number",
+          "x-nullable": true,
+        },
+        influence: {
+          title: "Influence",
+          description:
+            "Exact leave-one-out change: the persisted value minus the group's value without this unit (a total's weighted contribution). Null when removing the unit leaves no denominator or the group has no value.",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+    },
+    DerivedMetricContributorDiagnostics: {
+      required: [
+        "unit_count",
+        "valid_count",
+        "missing_count",
+        "invalid_probability_count",
+        "outside_denominator_count",
+        "undefined_arithmetic_count",
+        "missing_by_input",
+        "missing_examples",
+        "invalid_probability_examples",
+      ],
+      type: "object",
+      properties: {
+        unit_count: {
+          title: "Unit count",
+          type: "integer",
+          minimum: 0,
+        },
+        valid_count: {
+          title: "Valid count",
+          type: "integer",
+          minimum: 0,
+        },
+        missing_count: {
+          title: "Missing count",
+          type: "integer",
+          minimum: 0,
+        },
+        invalid_probability_count: {
+          title: "Invalid probability count",
+          type: "integer",
+          minimum: 0,
+        },
+        outside_denominator_count: {
+          title: "Outside denominator count",
+          description: "Valid units whose denominator is 0 (ratios only).",
+          type: "integer",
+          minimum: 0,
+        },
+        undefined_arithmetic_count: {
+          title: "Undefined arithmetic count",
+          description:
+            "Units with every input present whose row arithmetic is undefined.",
+          type: "integer",
+          minimum: 0,
+        },
+        missing_by_input: {
+          title: "Missing by input",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+            minimum: 0,
+          },
+        },
+        missing_examples: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        invalid_probability_examples: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    DerivedMetricEvaluator: {
+      required: ["id", "name", "config_hash"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          description: "Evaluator config ID to bind (config_id).",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        config_hash: {
+          title: "Config hash",
+          description:
+            "Hash of the evaluator's CURRENT resolved definition: the config_hash that new evaluation results are stored under. Results produced under an earlier definition carry a different hash.",
+          type: "string",
+          pattern: "^[a-f0-9]{64}$",
+          minLength: 1,
         },
       },
     },
@@ -110956,6 +111371,97 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    DerivedMetricUncertainty: {
+      description:
+        "Present on previews, and on persisted results when include_uncertainty=true.",
+      required: [
+        "confidence_level",
+        "status",
+        "reason",
+        "method",
+        "interval",
+        "std_error",
+        "ci_low",
+        "ci_high",
+        "effective_n",
+        "degrees_of_freedom",
+      ],
+      type: "object",
+      properties: {
+        confidence_level: {
+          title: "Confidence level",
+          description: "Always 0.95 (two-sided).",
+          type: "number",
+        },
+        status: {
+          title: "Status",
+          description:
+            "`not_estimable` means no interval exists; `reason` says why. Never a guess.",
+          type: "string",
+          enum: ["ok", "not_estimable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          enum: [
+            "",
+            "no_value",
+            "design_not_captured",
+            "mixed_design",
+            "unweighted_total",
+            "fewer_than_two_units",
+            "population_size_missing",
+            "inconsistent_stratum_design",
+            "single_unit_stratum",
+            "no_degrees_of_freedom",
+            "non_finite",
+            "unstable_variance",
+            "not_computed",
+          ],
+        },
+        method: {
+          title: "Method",
+          description:
+            "stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error.",
+          type: "string",
+          enum: ["", "stratified_wor_fpc", "poisson", "iid_units"],
+        },
+        interval: {
+          title: "Interval",
+          description:
+            "wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE.",
+          type: "string",
+          enum: ["", "wilson", "wald_t"],
+        },
+        std_error: {
+          title: "Std error",
+          type: "number",
+          "x-nullable": true,
+        },
+        ci_low: {
+          title: "Ci low",
+          type: "number",
+          "x-nullable": true,
+        },
+        ci_high: {
+          title: "Ci high",
+          type: "number",
+          "x-nullable": true,
+        },
+        effective_n: {
+          title: "Effective n",
+          description: "Kish effective sample size of the valid units.",
+          type: "number",
+          "x-nullable": true,
+        },
+        degrees_of_freedom: {
+          title: "Degrees of freedom",
+          type: "integer",
+          minimum: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     EmbeddingProvider: {
       required: ["name", "description", "requires_api_key", "config_schema"],
       type: "object",
@@ -122355,6 +122861,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Value",
           type: "number",
           "x-nullable": true,
+        },
+        ci_low: {
+          title: "Ci low",
+          type: "number",
+          "x-nullable": true,
+        },
+        ci_high: {
+          title: "Ci high",
+          type: "number",
+          "x-nullable": true,
+        },
+        ci_reason: {
+          title: "Ci reason",
+          type: "string",
         },
       },
     },

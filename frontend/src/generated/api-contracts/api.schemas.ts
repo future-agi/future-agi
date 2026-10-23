@@ -25053,6 +25053,9 @@ export interface DashboardQuerySeriesPointApi {
   /** @minLength 1 */
   timestamp: string;
   value: number;
+  ci_low?: number;
+  ci_high?: number;
+  ci_reason?: string;
 }
 
 export interface DashboardQuerySeriesApi {
@@ -25383,10 +25386,6 @@ export interface DerivedMetricRunApi {
   completed_at?: string;
 }
 
-export interface DerivedMetricRecomputeApi {
-  confirm?: boolean;
-}
-
 export type DerivedMetricResultApiStatus =
   (typeof DerivedMetricResultApiStatus)[keyof typeof DerivedMetricResultApiStatus];
 
@@ -25398,6 +25397,83 @@ export const DerivedMetricResultApiStatus = {
   zero_denominator: "zero_denominator",
   non_finite: "non_finite",
 } as const;
+
+/**
+ * `not_estimable` means no interval exists; `reason` says why. Never a guess.
+ */
+export type DerivedMetricUncertaintyApiStatus =
+  (typeof DerivedMetricUncertaintyApiStatus)[keyof typeof DerivedMetricUncertaintyApiStatus];
+
+export const DerivedMetricUncertaintyApiStatus = {
+  ok: "ok",
+  not_estimable: "not_estimable",
+} as const;
+
+export type DerivedMetricUncertaintyApiReason =
+  (typeof DerivedMetricUncertaintyApiReason)[keyof typeof DerivedMetricUncertaintyApiReason];
+
+export const DerivedMetricUncertaintyApiReason = {
+  "": "",
+  no_value: "no_value",
+  design_not_captured: "design_not_captured",
+  mixed_design: "mixed_design",
+  unweighted_total: "unweighted_total",
+  fewer_than_two_units: "fewer_than_two_units",
+  population_size_missing: "population_size_missing",
+  inconsistent_stratum_design: "inconsistent_stratum_design",
+  single_unit_stratum: "single_unit_stratum",
+  no_degrees_of_freedom: "no_degrees_of_freedom",
+  non_finite: "non_finite",
+  unstable_variance: "unstable_variance",
+  not_computed: "not_computed",
+} as const;
+
+/**
+ * stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error.
+ */
+export type DerivedMetricUncertaintyApiMethod =
+  (typeof DerivedMetricUncertaintyApiMethod)[keyof typeof DerivedMetricUncertaintyApiMethod];
+
+export const DerivedMetricUncertaintyApiMethod = {
+  "": "",
+  stratified_wor_fpc: "stratified_wor_fpc",
+  poisson: "poisson",
+  iid_units: "iid_units",
+} as const;
+
+/**
+ * wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE.
+ */
+export type DerivedMetricUncertaintyApiInterval =
+  (typeof DerivedMetricUncertaintyApiInterval)[keyof typeof DerivedMetricUncertaintyApiInterval];
+
+export const DerivedMetricUncertaintyApiInterval = {
+  "": "",
+  wilson: "wilson",
+  wald_t: "wald_t",
+} as const;
+
+/**
+ * Present on previews, and on persisted results when include_uncertainty=true.
+ */
+export interface DerivedMetricUncertaintyApi {
+  /** Always 0.95 (two-sided). */
+  confidence_level: number;
+  /** `not_estimable` means no interval exists; `reason` says why. Never a guess. */
+  status: DerivedMetricUncertaintyApiStatus;
+  reason: DerivedMetricUncertaintyApiReason;
+  /** stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error. */
+  method: DerivedMetricUncertaintyApiMethod;
+  /** wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE. */
+  interval: DerivedMetricUncertaintyApiInterval;
+  std_error: number;
+  ci_low: number;
+  ci_high: number;
+  /** Kish effective sample size of the valid units. */
+  effective_n: number;
+  /** @minimum 1 */
+  degrees_of_freedom: number;
+}
 
 export interface DerivedMetricResultApi {
   group_key: string;
@@ -25413,6 +25489,132 @@ export interface DerivedMetricResultApi {
   missing_count: number;
   /** @minimum 0 */
   invalid_probability_count: number;
+  uncertainty?: DerivedMetricUncertaintyApi;
+}
+
+export type DerivedMetricDeltaUncertaintyApiStatus =
+  (typeof DerivedMetricDeltaUncertaintyApiStatus)[keyof typeof DerivedMetricDeltaUncertaintyApiStatus];
+
+export const DerivedMetricDeltaUncertaintyApiStatus = {
+  ok: "ok",
+  not_estimable: "not_estimable",
+} as const;
+
+export interface DerivedMetricDeltaUncertaintyApi {
+  status: DerivedMetricDeltaUncertaintyApiStatus;
+  reason: string;
+  method: string;
+  std_error: number;
+  ci_low: number;
+  ci_high: number;
+}
+
+export interface DerivedMetricComparisonApi {
+  baseline_run_id: string;
+  candidate_run_id: string;
+  baseline_result_id: string;
+  candidate_result_id: string;
+  baseline_version: number;
+  candidate_version: number;
+  baseline: DerivedMetricResultApi;
+  candidate: DerivedMetricResultApi;
+  delta: number;
+  delta_uncertainty: DerivedMetricDeltaUncertaintyApi;
+}
+
+export type DerivedMetricContributorPageApiKind =
+  (typeof DerivedMetricContributorPageApiKind)[keyof typeof DerivedMetricContributorPageApiKind];
+
+export const DerivedMetricContributorPageApiKind = {
+  ratio: "ratio",
+  mean: "mean",
+  sum: "sum",
+  count_if: "count_if",
+} as const;
+
+export type DerivedMetricContributorPageApiSelectionUnit =
+  (typeof DerivedMetricContributorPageApiSelectionUnit)[keyof typeof DerivedMetricContributorPageApiSelectionUnit];
+
+export const DerivedMetricContributorPageApiSelectionUnit = {
+  span: "span",
+  session: "session",
+  user: "user",
+} as const;
+
+export interface DerivedMetricContributorApi {
+  /**
+   * Selection unit id; span units are ["trace_id","span_id"].
+   * @minLength 1
+   */
+  unit_id: string;
+  /**
+   * Span units only: the unit's trace.
+   * @minLength 1
+   */
+  trace_id: string;
+  session_id: string;
+  user_id: string;
+  cohort: string;
+  /** @minLength 1 */
+  day: string;
+  probability: number;
+  /** 1 / inclusion probability. */
+  weight: number;
+  numerator: number;
+  denominator: number;
+  weighted_numerator: number;
+  weighted_denominator: number;
+  /** Exact leave-one-out change: the persisted value minus the group's value without this unit (a total's weighted contribution). Null when removing the unit leaves no denominator or the group has no value. */
+  influence: number;
+}
+
+export type DerivedMetricContributorDiagnosticsApiMissingByInput = {
+  [key: string]: number;
+};
+
+export interface DerivedMetricContributorDiagnosticsApi {
+  /** @minimum 0 */
+  unit_count: number;
+  /** @minimum 0 */
+  valid_count: number;
+  /** @minimum 0 */
+  missing_count: number;
+  /** @minimum 0 */
+  invalid_probability_count: number;
+  /**
+   * Valid units whose denominator is 0 (ratios only).
+   * @minimum 0
+   */
+  outside_denominator_count: number;
+  /**
+   * Units with every input present whose row arithmetic is undefined.
+   * @minimum 0
+   */
+  undefined_arithmetic_count: number;
+  missing_by_input: DerivedMetricContributorDiagnosticsApiMissingByInput;
+  missing_examples: string[];
+  invalid_probability_examples: string[];
+}
+
+export interface DerivedMetricContributorPageApi {
+  /** @minLength 1 */
+  rollup: string;
+  group_key: string;
+  kind: DerivedMetricContributorPageApiKind;
+  selection_unit: DerivedMetricContributorPageApiSelectionUnit;
+  /** @minLength 1 */
+  status: string;
+  value: number;
+  numerator: number;
+  denominator: number;
+  results: DerivedMetricContributorApi[];
+  /** More valid units exist than were returned. */
+  truncated: boolean;
+  diagnostics: DerivedMetricContributorDiagnosticsApi;
+}
+
+export interface DerivedMetricRecomputeApi {
+  confirm?: boolean;
 }
 
 export interface DerivedMetricResultPageApi {
@@ -31770,6 +31972,14 @@ export const UserAlertMonitorApiMetricType = {
   derived_metric: "derived_metric",
 } as const;
 
+export type UserAlertMonitorApiAlertWhen =
+  (typeof UserAlertMonitorApiAlertWhen)[keyof typeof UserAlertMonitorApiAlertWhen];
+
+export const UserAlertMonitorApiAlertWhen = {
+  point: "point",
+  confident: "confident",
+} as const;
+
 export type UserAlertMonitorApiThresholdOperator =
   (typeof UserAlertMonitorApiThresholdOperator)[keyof typeof UserAlertMonitorApiThresholdOperator];
 
@@ -31810,6 +32020,7 @@ export interface UserAlertMonitorApi {
    * @maxLength 2556
    */
   metric?: string;
+  alert_when?: UserAlertMonitorApiAlertWhen;
   threshold_operator: UserAlertMonitorApiThresholdOperator;
   /** Method to set the threshold for the monitor (Static or Percentage change). */
   threshold_type?: UserAlertMonitorApiThresholdType;
@@ -31967,6 +32178,14 @@ export const UserAlertMonitorPreviewGraphApiMetricType = {
   derived_metric: "derived_metric",
 } as const;
 
+export type UserAlertMonitorPreviewGraphApiAlertWhen =
+  (typeof UserAlertMonitorPreviewGraphApiAlertWhen)[keyof typeof UserAlertMonitorPreviewGraphApiAlertWhen];
+
+export const UserAlertMonitorPreviewGraphApiAlertWhen = {
+  point: "point",
+  confident: "confident",
+} as const;
+
 export type UserAlertMonitorPreviewGraphApiThresholdOperator =
   (typeof UserAlertMonitorPreviewGraphApiThresholdOperator)[keyof typeof UserAlertMonitorPreviewGraphApiThresholdOperator];
 
@@ -32008,6 +32227,7 @@ export interface UserAlertMonitorPreviewGraphApi {
    * @maxLength 2556
    */
   metric?: string;
+  alert_when?: UserAlertMonitorPreviewGraphApiAlertWhen;
   threshold_operator: UserAlertMonitorPreviewGraphApiThresholdOperator;
   /** Method to set the threshold for the monitor (Static or Percentage change). */
   threshold_type?: UserAlertMonitorPreviewGraphApiThresholdType;
@@ -37028,6 +37248,35 @@ export type TracerDatasetList200 = {
   results: ObserveDatasetApi[];
 };
 
+export type TracerDerivedMetricRunsCompareParams = {
+  baseline_run_id: string;
+};
+
+export type TracerDerivedMetricRunsContributorsParams = {
+  rollup?: TracerDerivedMetricRunsContributorsRollup;
+  /**
+   * The persisted rollup row to explain; empty for the overall row.
+   * @maxLength 2048
+   */
+  group_key?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type TracerDerivedMetricRunsContributorsRollup =
+  (typeof TracerDerivedMetricRunsContributorsRollup)[keyof typeof TracerDerivedMetricRunsContributorsRollup];
+
+export const TracerDerivedMetricRunsContributorsRollup = {
+  overall: "overall",
+  session: "session",
+  user: "user",
+  cohort: "cohort",
+  day: "day",
+} as const;
+
 export type TracerDerivedMetricRunsResultsParams = {
   rollup?: TracerDerivedMetricRunsResultsRollup;
   /**
@@ -37039,6 +37288,10 @@ export type TracerDerivedMetricRunsResultsParams = {
    * @maximum 100
    */
   limit?: number;
+  /**
+   * Add each row's design-based standard error and 95% interval as `uncertainty`.
+   */
+  include_uncertainty?: boolean;
 };
 
 export type TracerDerivedMetricRunsResultsRollup =

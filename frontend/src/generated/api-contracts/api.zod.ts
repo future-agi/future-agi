@@ -50596,6 +50596,9 @@ export const TracerDashboardQueryResponse = zod.object({
               zod.object({
                 timestamp: zod.string().min(1),
                 value: zod.number(),
+                ci_low: zod.number().optional(),
+                ci_high: zod.number().optional(),
+                ci_reason: zod.string().optional(),
               }),
             ),
           }),
@@ -51446,6 +51449,9 @@ export const TracerDashboardWidgetsPreviewQueryResponse = zod.object({
               zod.object({
                 timestamp: zod.string().min(1),
                 value: zod.number(),
+                ci_low: zod.number().optional(),
+                ci_high: zod.number().optional(),
+                ci_reason: zod.string().optional(),
               }),
             ),
           }),
@@ -52015,6 +52021,9 @@ export const TracerDashboardWidgetsExecuteQueryResponse = zod.object({
               zod.object({
                 timestamp: zod.string().min(1),
                 value: zod.number(),
+                ci_low: zod.number().optional(),
+                ci_high: zod.number().optional(),
+                ci_reason: zod.string().optional(),
               }),
             ),
           }),
@@ -52773,6 +52782,320 @@ export const TracerDerivedMetricRunsReadResponse = zod.object({
   completed_at: zod.string().datetime({ offset: true }).optional(),
 });
 
+export const TracerDerivedMetricRunsCompareParams = zod.object({
+  id: zod.string(),
+});
+
+export const TracerDerivedMetricRunsCompareQueryParams = zod.object({
+  baseline_run_id: zod.string().uuid(),
+});
+
+export const tracerDerivedMetricRunsCompareResponseBaselineUnitCountMin = 0;
+
+export const tracerDerivedMetricRunsCompareResponseBaselineValidCountMin = 0;
+
+export const tracerDerivedMetricRunsCompareResponseBaselineMissingCountMin = 0;
+
+export const tracerDerivedMetricRunsCompareResponseBaselineInvalidProbabilityCountMin = 0;
+
+export const tracerDerivedMetricRunsCompareResponseCandidateUnitCountMin = 0;
+
+export const tracerDerivedMetricRunsCompareResponseCandidateValidCountMin = 0;
+
+export const tracerDerivedMetricRunsCompareResponseCandidateMissingCountMin = 0;
+
+export const tracerDerivedMetricRunsCompareResponseCandidateInvalidProbabilityCountMin = 0;
+
+export const TracerDerivedMetricRunsCompareResponse = zod.object({
+  baseline_run_id: zod.string().uuid(),
+  candidate_run_id: zod.string().uuid(),
+  baseline_result_id: zod.string().uuid(),
+  candidate_result_id: zod.string().uuid(),
+  baseline_version: zod.number(),
+  candidate_version: zod.number(),
+  baseline: zod.object({
+    group_key: zod.string(),
+    value: zod.number(),
+    numerator: zod.number(),
+    denominator: zod.number(),
+    status: zod.enum([
+      "ok",
+      "no_data",
+      "missing_inputs",
+      "invalid_probability",
+      "zero_denominator",
+      "non_finite",
+    ]),
+    unit_count: zod
+      .number()
+      .min(tracerDerivedMetricRunsCompareResponseBaselineUnitCountMin),
+    valid_count: zod
+      .number()
+      .min(tracerDerivedMetricRunsCompareResponseBaselineValidCountMin),
+    missing_count: zod
+      .number()
+      .min(tracerDerivedMetricRunsCompareResponseBaselineMissingCountMin),
+    invalid_probability_count: zod
+      .number()
+      .min(
+        tracerDerivedMetricRunsCompareResponseBaselineInvalidProbabilityCountMin,
+      ),
+    uncertainty: zod
+      .object({
+        confidence_level: zod.number().describe("Always 0.95 (two-sided)."),
+        status: zod
+          .enum(["ok", "not_estimable"])
+          .describe(
+            "`not_estimable` means no interval exists; `reason` says why. Never a guess.",
+          ),
+        reason: zod.enum([
+          "",
+          "no_value",
+          "design_not_captured",
+          "mixed_design",
+          "unweighted_total",
+          "fewer_than_two_units",
+          "population_size_missing",
+          "inconsistent_stratum_design",
+          "single_unit_stratum",
+          "no_degrees_of_freedom",
+          "non_finite",
+          "unstable_variance",
+          "not_computed",
+        ]),
+        method: zod
+          .enum(["", "stratified_wor_fpc", "poisson", "iid_units"])
+          .describe(
+            "stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error.",
+          ),
+        interval: zod
+          .enum(["", "wilson", "wald_t"])
+          .describe(
+            "wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE.",
+          ),
+        std_error: zod.number(),
+        ci_low: zod.number(),
+        ci_high: zod.number(),
+        effective_n: zod
+          .number()
+          .describe("Kish effective sample size of the valid units."),
+        degrees_of_freedom: zod.number().min(1),
+      })
+      .optional()
+      .describe(
+        "Present on previews, and on persisted results when include_uncertainty=true.",
+      ),
+  }),
+  candidate: zod.object({
+    group_key: zod.string(),
+    value: zod.number(),
+    numerator: zod.number(),
+    denominator: zod.number(),
+    status: zod.enum([
+      "ok",
+      "no_data",
+      "missing_inputs",
+      "invalid_probability",
+      "zero_denominator",
+      "non_finite",
+    ]),
+    unit_count: zod
+      .number()
+      .min(tracerDerivedMetricRunsCompareResponseCandidateUnitCountMin),
+    valid_count: zod
+      .number()
+      .min(tracerDerivedMetricRunsCompareResponseCandidateValidCountMin),
+    missing_count: zod
+      .number()
+      .min(tracerDerivedMetricRunsCompareResponseCandidateMissingCountMin),
+    invalid_probability_count: zod
+      .number()
+      .min(
+        tracerDerivedMetricRunsCompareResponseCandidateInvalidProbabilityCountMin,
+      ),
+    uncertainty: zod
+      .object({
+        confidence_level: zod.number().describe("Always 0.95 (two-sided)."),
+        status: zod
+          .enum(["ok", "not_estimable"])
+          .describe(
+            "`not_estimable` means no interval exists; `reason` says why. Never a guess.",
+          ),
+        reason: zod.enum([
+          "",
+          "no_value",
+          "design_not_captured",
+          "mixed_design",
+          "unweighted_total",
+          "fewer_than_two_units",
+          "population_size_missing",
+          "inconsistent_stratum_design",
+          "single_unit_stratum",
+          "no_degrees_of_freedom",
+          "non_finite",
+          "unstable_variance",
+          "not_computed",
+        ]),
+        method: zod
+          .enum(["", "stratified_wor_fpc", "poisson", "iid_units"])
+          .describe(
+            "stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error.",
+          ),
+        interval: zod
+          .enum(["", "wilson", "wald_t"])
+          .describe(
+            "wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE.",
+          ),
+        std_error: zod.number(),
+        ci_low: zod.number(),
+        ci_high: zod.number(),
+        effective_n: zod
+          .number()
+          .describe("Kish effective sample size of the valid units."),
+        degrees_of_freedom: zod.number().min(1),
+      })
+      .optional()
+      .describe(
+        "Present on previews, and on persisted results when include_uncertainty=true.",
+      ),
+  }),
+  delta: zod.number(),
+  delta_uncertainty: zod.object({
+    status: zod.enum(["ok", "not_estimable"]),
+    reason: zod.string(),
+    method: zod.string(),
+    std_error: zod.number(),
+    ci_low: zod.number(),
+    ci_high: zod.number(),
+  }),
+});
+
+export const TracerDerivedMetricRunsContributorsParams = zod.object({
+  id: zod.string(),
+});
+
+export const tracerDerivedMetricRunsContributorsQueryRollupDefault = `overall`;
+export const tracerDerivedMetricRunsContributorsQueryGroupKeyDefault = ``;
+export const tracerDerivedMetricRunsContributorsQueryGroupKeyMax = 2048;
+
+export const tracerDerivedMetricRunsContributorsQueryLimitDefault = 20;
+export const tracerDerivedMetricRunsContributorsQueryLimitMax = 100;
+
+export const TracerDerivedMetricRunsContributorsQueryParams = zod.object({
+  rollup: zod
+    .enum(["overall", "session", "user", "cohort", "day"])
+    .default(tracerDerivedMetricRunsContributorsQueryRollupDefault),
+  group_key: zod
+    .string()
+    .max(tracerDerivedMetricRunsContributorsQueryGroupKeyMax)
+    .default(tracerDerivedMetricRunsContributorsQueryGroupKeyDefault)
+    .describe(
+      "The persisted rollup row to explain; empty for the overall row.",
+    ),
+  limit: zod
+    .number()
+    .min(1)
+    .max(tracerDerivedMetricRunsContributorsQueryLimitMax)
+    .default(tracerDerivedMetricRunsContributorsQueryLimitDefault),
+});
+
+export const tracerDerivedMetricRunsContributorsResponseDiagnosticsUnitCountMin = 0;
+
+export const tracerDerivedMetricRunsContributorsResponseDiagnosticsValidCountMin = 0;
+
+export const tracerDerivedMetricRunsContributorsResponseDiagnosticsMissingCountMin = 0;
+
+export const tracerDerivedMetricRunsContributorsResponseDiagnosticsInvalidProbabilityCountMin = 0;
+
+export const tracerDerivedMetricRunsContributorsResponseDiagnosticsOutsideDenominatorCountMin = 0;
+
+export const tracerDerivedMetricRunsContributorsResponseDiagnosticsUndefinedArithmeticCountMin = 0;
+
+export const tracerDerivedMetricRunsContributorsResponseDiagnosticsMissingByInputMinOne = 0;
+
+export const TracerDerivedMetricRunsContributorsResponse = zod.object({
+  rollup: zod.string().min(1),
+  group_key: zod.string(),
+  kind: zod.enum(["ratio", "mean", "sum", "count_if"]),
+  selection_unit: zod.enum(["span", "session", "user"]),
+  status: zod.string().min(1),
+  value: zod.number(),
+  numerator: zod.number(),
+  denominator: zod.number(),
+  results: zod.array(
+    zod.object({
+      unit_id: zod
+        .string()
+        .min(1)
+        .describe('Selection unit id; span units are ["trace_id","span_id"].'),
+      trace_id: zod
+        .string()
+        .min(1)
+        .describe("Span units only: the unit's trace."),
+      session_id: zod.string(),
+      user_id: zod.string(),
+      cohort: zod.string(),
+      day: zod.string().min(1),
+      probability: zod.number(),
+      weight: zod.number().describe("1 / inclusion probability."),
+      numerator: zod.number(),
+      denominator: zod.number(),
+      weighted_numerator: zod.number(),
+      weighted_denominator: zod.number(),
+      influence: zod
+        .number()
+        .describe(
+          "Exact leave-one-out change: the persisted value minus the group's value without this unit (a total's weighted contribution). Null when removing the unit leaves no denominator or the group has no value.",
+        ),
+    }),
+  ),
+  truncated: zod
+    .boolean()
+    .describe("More valid units exist than were returned."),
+  diagnostics: zod.object({
+    unit_count: zod
+      .number()
+      .min(tracerDerivedMetricRunsContributorsResponseDiagnosticsUnitCountMin),
+    valid_count: zod
+      .number()
+      .min(tracerDerivedMetricRunsContributorsResponseDiagnosticsValidCountMin),
+    missing_count: zod
+      .number()
+      .min(
+        tracerDerivedMetricRunsContributorsResponseDiagnosticsMissingCountMin,
+      ),
+    invalid_probability_count: zod
+      .number()
+      .min(
+        tracerDerivedMetricRunsContributorsResponseDiagnosticsInvalidProbabilityCountMin,
+      ),
+    outside_denominator_count: zod
+      .number()
+      .min(
+        tracerDerivedMetricRunsContributorsResponseDiagnosticsOutsideDenominatorCountMin,
+      )
+      .describe("Valid units whose denominator is 0 (ratios only)."),
+    undefined_arithmetic_count: zod
+      .number()
+      .min(
+        tracerDerivedMetricRunsContributorsResponseDiagnosticsUndefinedArithmeticCountMin,
+      )
+      .describe(
+        "Units with every input present whose row arithmetic is undefined.",
+      ),
+    missing_by_input: zod.record(
+      zod.string(),
+      zod
+        .number()
+        .min(
+          tracerDerivedMetricRunsContributorsResponseDiagnosticsMissingByInputMinOne,
+        ),
+    ),
+    missing_examples: zod.array(zod.string().min(1)),
+    invalid_probability_examples: zod.array(zod.string().min(1)),
+  }),
+});
+
 export const TracerDerivedMetricRunsRecomputeParams = zod.object({
   id: zod.string(),
 });
@@ -52796,6 +53119,9 @@ export const tracerDerivedMetricRunsResultsQueryAfterMax = 4096;
 export const tracerDerivedMetricRunsResultsQueryLimitDefault = 50;
 export const tracerDerivedMetricRunsResultsQueryLimitMax = 100;
 
+export const tracerDerivedMetricRunsResultsQueryIncludeUncertaintyDefault =
+  false;
+
 export const TracerDerivedMetricRunsResultsQueryParams = zod.object({
   rollup: zod
     .enum(["overall", "session", "user", "cohort", "day"])
@@ -52809,6 +53135,12 @@ export const TracerDerivedMetricRunsResultsQueryParams = zod.object({
     .min(1)
     .max(tracerDerivedMetricRunsResultsQueryLimitMax)
     .default(tracerDerivedMetricRunsResultsQueryLimitDefault),
+  include_uncertainty: zod
+    .boolean()
+    .default(tracerDerivedMetricRunsResultsQueryIncludeUncertaintyDefault)
+    .describe(
+      "Add each row's design-based standard error and 95% interval as `uncertainty`.",
+    ),
 });
 
 export const tracerDerivedMetricRunsResultsResponseResultsItemUnitCountMin = 0;
@@ -52847,6 +53179,51 @@ export const TracerDerivedMetricRunsResultsResponse = zod.object({
         .number()
         .min(
           tracerDerivedMetricRunsResultsResponseResultsItemInvalidProbabilityCountMin,
+        ),
+      uncertainty: zod
+        .object({
+          confidence_level: zod.number().describe("Always 0.95 (two-sided)."),
+          status: zod
+            .enum(["ok", "not_estimable"])
+            .describe(
+              "`not_estimable` means no interval exists; `reason` says why. Never a guess.",
+            ),
+          reason: zod.enum([
+            "",
+            "no_value",
+            "design_not_captured",
+            "mixed_design",
+            "unweighted_total",
+            "fewer_than_two_units",
+            "population_size_missing",
+            "inconsistent_stratum_design",
+            "single_unit_stratum",
+            "no_degrees_of_freedom",
+            "non_finite",
+            "unstable_variance",
+            "not_computed",
+          ]),
+          method: zod
+            .enum(["", "stratified_wor_fpc", "poisson", "iid_units"])
+            .describe(
+              "stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error.",
+            ),
+          interval: zod
+            .enum(["", "wilson", "wald_t"])
+            .describe(
+              "wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE.",
+            ),
+          std_error: zod.number(),
+          ci_low: zod.number(),
+          ci_high: zod.number(),
+          effective_n: zod
+            .number()
+            .describe("Kish effective sample size of the valid units."),
+          degrees_of_freedom: zod.number().min(1),
+        })
+        .optional()
+        .describe(
+          "Present on previews, and on persisted results when include_uncertainty=true.",
         ),
     }),
   ),
@@ -53718,6 +54095,51 @@ export const TracerDerivedMetricsPreviewResponse = zod.object({
         .number()
         .min(
           tracerDerivedMetricsPreviewResponseResultsItemInvalidProbabilityCountMin,
+        ),
+      uncertainty: zod
+        .object({
+          confidence_level: zod.number().describe("Always 0.95 (two-sided)."),
+          status: zod
+            .enum(["ok", "not_estimable"])
+            .describe(
+              "`not_estimable` means no interval exists; `reason` says why. Never a guess.",
+            ),
+          reason: zod.enum([
+            "",
+            "no_value",
+            "design_not_captured",
+            "mixed_design",
+            "unweighted_total",
+            "fewer_than_two_units",
+            "population_size_missing",
+            "inconsistent_stratum_design",
+            "single_unit_stratum",
+            "no_degrees_of_freedom",
+            "non_finite",
+            "unstable_variance",
+            "not_computed",
+          ]),
+          method: zod
+            .enum(["", "stratified_wor_fpc", "poisson", "iid_units"])
+            .describe(
+              "stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error.",
+            ),
+          interval: zod
+            .enum(["", "wilson", "wald_t"])
+            .describe(
+              "wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE.",
+            ),
+          std_error: zod.number(),
+          ci_low: zod.number(),
+          ci_high: zod.number(),
+          effective_n: zod
+            .number()
+            .describe("Kish effective sample size of the valid units."),
+          degrees_of_freedom: zod.number().min(1),
+        })
+        .optional()
+        .describe(
+          "Present on previews, and on persisted results when include_uncertainty=true.",
         ),
     }),
   ),
@@ -72796,6 +73218,7 @@ export const TracerUserAlertsListResponse = zod.object({
         .max(tracerUserAlertsListResponseResultsItemMetricMax)
         .optional()
         .describe("Id of the evaluation template."),
+      alert_when: zod.enum(["point", "confident"]).optional(),
       threshold_operator: zod.enum(["greater_than", "less_than"]),
       threshold_type: zod
         .enum(["static", "percentage_change"])
@@ -72893,6 +73316,7 @@ export const TracerUserAlertsCreateBody = zod.object({
     .max(tracerUserAlertsCreateBodyMetricMax)
     .optional()
     .describe("Id of the evaluation template."),
+  alert_when: zod.enum(["point", "confident"]).optional(),
   threshold_operator: zod.enum(["greater_than", "less_than"]),
   threshold_type: zod
     .enum(["static", "percentage_change"])
@@ -73132,6 +73556,7 @@ export const TracerUserAlertsPreviewGraphBody = zod.object({
     .max(tracerUserAlertsPreviewGraphBodyMetricMax)
     .optional()
     .describe("Id of the evaluation template."),
+  alert_when: zod.enum(["point", "confident"]).optional(),
   threshold_operator: zod.enum(["greater_than", "less_than"]),
   threshold_type: zod
     .enum(["static", "percentage_change"])
@@ -73262,6 +73687,7 @@ export const TracerUserAlertsReadResponse = zod.object({
     .max(tracerUserAlertsReadResponseMetricMax)
     .optional()
     .describe("Id of the evaluation template."),
+  alert_when: zod.enum(["point", "confident"]).optional(),
   threshold_operator: zod.enum(["greater_than", "less_than"]),
   threshold_type: zod
     .enum(["static", "percentage_change"])
@@ -73361,6 +73787,7 @@ export const TracerUserAlertsUpdateBody = zod.object({
     .max(tracerUserAlertsUpdateBodyMetricMax)
     .optional()
     .describe("Id of the evaluation template."),
+  alert_when: zod.enum(["point", "confident"]).optional(),
   threshold_operator: zod.enum(["greater_than", "less_than"]),
   threshold_type: zod
     .enum(["static", "percentage_change"])
@@ -73455,6 +73882,7 @@ export const TracerUserAlertsUpdateResponse = zod.object({
     .max(tracerUserAlertsUpdateResponseMetricMax)
     .optional()
     .describe("Id of the evaluation template."),
+  alert_when: zod.enum(["point", "confident"]).optional(),
   threshold_operator: zod.enum(["greater_than", "less_than"]),
   threshold_type: zod
     .enum(["static", "percentage_change"])
@@ -73554,6 +73982,7 @@ export const TracerUserAlertsPartialUpdateBody = zod.object({
     .max(tracerUserAlertsPartialUpdateBodyMetricMax)
     .optional()
     .describe("Id of the evaluation template."),
+  alert_when: zod.enum(["point", "confident"]).optional(),
   threshold_operator: zod.enum(["greater_than", "less_than"]),
   threshold_type: zod
     .enum(["static", "percentage_change"])
@@ -73648,6 +74077,7 @@ export const TracerUserAlertsPartialUpdateResponse = zod.object({
     .max(tracerUserAlertsPartialUpdateResponseMetricMax)
     .optional()
     .describe("Id of the evaluation template."),
+  alert_when: zod.enum(["point", "confident"]).optional(),
   threshold_operator: zod.enum(["greater_than", "less_than"]),
   threshold_type: zod
     .enum(["static", "percentage_change"])
@@ -73757,6 +74187,7 @@ export const TracerUserAlertsMonitorDetailsResponse = zod.object({
     .max(tracerUserAlertsMonitorDetailsResponseMetricMax)
     .optional()
     .describe("Id of the evaluation template."),
+  alert_when: zod.enum(["point", "confident"]).optional(),
   threshold_operator: zod.enum(["greater_than", "less_than"]),
   threshold_type: zod
     .enum(["static", "percentage_change"])

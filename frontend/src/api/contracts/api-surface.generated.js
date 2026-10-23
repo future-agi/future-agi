@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1093,
+  endpointCount: 1095,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -1076,6 +1076,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/dataset/add_to_new_dataset/": ["post"],
       "/tracer/dataset/{id}/": ["delete", "get", "patch", "put"],
       "/tracer/derived-metric-runs/{id}/": ["get"],
+      "/tracer/derived-metric-runs/{id}/compare/": ["get"],
+      "/tracer/derived-metric-runs/{id}/contributors/": ["get"],
       "/tracer/derived-metric-runs/{id}/recompute/": ["post"],
       "/tracer/derived-metric-runs/{id}/results/": ["get"],
       "/tracer/derived-metrics/": ["get", "post"],
@@ -2381,6 +2383,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/dataset/add_to_new_dataset/": ["post"],
   "/tracer/dataset/{id}/": ["delete", "get", "patch", "put"],
   "/tracer/derived-metric-runs/{id}/": ["get"],
+  "/tracer/derived-metric-runs/{id}/compare/": ["get"],
+  "/tracer/derived-metric-runs/{id}/contributors/": ["get"],
   "/tracer/derived-metric-runs/{id}/recompute/": ["post"],
   "/tracer/derived-metric-runs/{id}/results/": ["get"],
   "/tracer/derived-metrics/": ["get", "post"],

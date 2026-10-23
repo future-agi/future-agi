@@ -398,6 +398,8 @@ import type {
   DeploymentRegistrationApi,
   DeploymentRegistrationResponseApi,
   DerivedMetricApi,
+  DerivedMetricComparisonApi,
+  DerivedMetricContributorPageApi,
   DerivedMetricEvaluatorPageApi,
   DerivedMetricListApi,
   DerivedMetricRecomputeApi,
@@ -1326,6 +1328,8 @@ import type {
   TracerDashboardWidgetsPreviewQueryParams,
   TracerDatasetList200,
   TracerDatasetListParams,
+  TracerDerivedMetricRunsCompareParams,
+  TracerDerivedMetricRunsContributorsParams,
   TracerDerivedMetricRunsResultsParams,
   TracerDerivedMetricsEvaluatorsParams,
   TracerDerivedMetricsListParams,
@@ -70577,6 +70581,126 @@ export const tracerDerivedMetricRunsRead = async (
 ): Promise<tracerDerivedMetricRunsReadResponse> => {
   return apiMutator<tracerDerivedMetricRunsReadResponse>(
     getTracerDerivedMetricRunsReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricRunsCompareResponse200 = {
+  data: DerivedMetricComparisonApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricRunsCompareResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricRunsCompareResponseSuccess =
+  tracerDerivedMetricRunsCompareResponse200 & {
+    headers: Headers;
+  };
+export type tracerDerivedMetricRunsCompareResponseError =
+  tracerDerivedMetricRunsCompareResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerDerivedMetricRunsCompareResponse =
+  | tracerDerivedMetricRunsCompareResponseSuccess
+  | tracerDerivedMetricRunsCompareResponseError;
+
+export const getTracerDerivedMetricRunsCompareUrl = (
+  id: string,
+  params: TracerDerivedMetricRunsCompareParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/derived-metric-runs/${id}/compare/?${stringifiedParams}`
+    : `/tracer/derived-metric-runs/${id}/compare/`;
+};
+
+export const tracerDerivedMetricRunsCompare = async (
+  id: string,
+  params: TracerDerivedMetricRunsCompareParams,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricRunsCompareResponse> => {
+  return apiMutator<tracerDerivedMetricRunsCompareResponse>(
+    getTracerDerivedMetricRunsCompareUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricRunsContributorsResponse200 = {
+  data: DerivedMetricContributorPageApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricRunsContributorsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricRunsContributorsResponseSuccess =
+  tracerDerivedMetricRunsContributorsResponse200 & {
+    headers: Headers;
+  };
+export type tracerDerivedMetricRunsContributorsResponseError =
+  tracerDerivedMetricRunsContributorsResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerDerivedMetricRunsContributorsResponse =
+  | tracerDerivedMetricRunsContributorsResponseSuccess
+  | tracerDerivedMetricRunsContributorsResponseError;
+
+export const getTracerDerivedMetricRunsContributorsUrl = (
+  id: string,
+  params?: TracerDerivedMetricRunsContributorsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/derived-metric-runs/${id}/contributors/?${stringifiedParams}`
+    : `/tracer/derived-metric-runs/${id}/contributors/`;
+};
+
+export const tracerDerivedMetricRunsContributors = async (
+  id: string,
+  params?: TracerDerivedMetricRunsContributorsParams,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricRunsContributorsResponse> => {
+  return apiMutator<tracerDerivedMetricRunsContributorsResponse>(
+    getTracerDerivedMetricRunsContributorsUrl(id, params),
     {
       ...options,
       method: "GET",

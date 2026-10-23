@@ -236,8 +236,6 @@ def ownership_predicates(scope: Scope) -> dict[str, str]:
 
 def sources(scope: Scope) -> dict[str, str]:
     """Only canonical UUIDs and datetimes enter these server-authored templates."""
-    from datetime import timezone
-
     project = f"toUUID('{scope.project_id}')"
     org = f"toUUID('{scope.organization_id}')"
     workspace = f"toUUID('{scope.workspace_id}')"
