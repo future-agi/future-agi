@@ -2293,6 +2293,40 @@ def test_every_spans_reading_function_is_filed():
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("cloud_present", [False, True])
+@pytest.mark.parametrize(
+    "missing_reader",
+    [
+        "ee.cloud.tasks.retention:missing_reader",
+        "ee.usage.tasks:missing_reader",
+        "ee.cloudlike.tasks:missing_reader",
+        "tracer.tasks:missing_reader",
+    ],
+)
+def test_reader_inventory_only_exempts_absent_private_cloud(
+    monkeypatch, tmp_path, cloud_present, missing_reader
+):
+    (tmp_path / "ee").mkdir()
+    if cloud_present:
+        (tmp_path / "ee" / "cloud").mkdir()
+
+    # Isolate checkout detection from the AST scan and the filings' own claims.
+    readers = dict.fromkeys(FILED)
+    filings = dict(FILED)
+    filings[missing_reader] = next(iter(FILED.values()))
+    monkeypatch.setitem(globals(), "FUTUREAGI", tmp_path)
+    monkeypatch.setitem(globals(), "FILED", filings)
+    monkeypatch.setitem(globals(), "scan_readers", lambda: (readers, 1001))
+    monkeypatch.setitem(globals(), "_filing_problems", lambda readers: [])
+
+    if cloud_present or not missing_reader.startswith("ee.cloud."):
+        with pytest.raises(AssertionError, match=re.escape(missing_reader)):
+            test_every_spans_reading_function_is_filed()
+    else:
+        test_every_spans_reading_function_is_filed()
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("name", "files"),
     [
