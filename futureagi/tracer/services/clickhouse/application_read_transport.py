@@ -23,6 +23,8 @@ def create_application_read_http_client(**kwargs):
     import clickhouse_connect
     from urllib3.util import Timeout
 
+    from tfc.telemetry.instrumentation import instrument_clickhouse_client
+
     kwargs.setdefault("autogenerate_session_id", False)
     connect = kwargs.setdefault("connect_timeout", 10)
     bootstrap = kwargs.setdefault("send_receive_timeout", 10)
@@ -34,7 +36,7 @@ def create_application_read_http_client(**kwargs):
     kwargs["settings"] = application_read_settings(kwargs.get("settings"))
     client = clickhouse_connect.get_client(**kwargs)
     client.timeout = Timeout(connect=int(connect), read=None)
-    return client
+    return instrument_clickhouse_client(client)
 
 
 @contextmanager

@@ -1,5 +1,106 @@
 # Changelog
 
+## [1.53.0](https://github.com/future-agi/future-agi/compare/v1.52.0...v1.53.0) (2026-10-21)
+
+
+### Features
+
+* **simulate:** agent layer and voice observability, phase 1, into main (TH-7957) ([ffa6fd2](https://github.com/future-agi/future-agi/commit/ffa6fd21cd11b98cce7f30610197c02709854940))
+
+
+### Bug Fixes
+
+* **fi-collector:** give the default project config dev's target_type field (TH-7957) ([528c88b](https://github.com/future-agi/future-agi/commit/528c88b8ae63504bd213aa1aead1044bcff4496a))
+* **gateway:** answer 504 on a provider timeout, and keep the error writable ([f904189](https://github.com/future-agi/future-agi/commit/f904189b52d5a51e22c2afb616aa9e3e380174b5))
+* **gateway:** enforce the token rate limit instead of only accepting it ([d872f7b](https://github.com/future-agi/future-agi/commit/d872f7bd2d0c2e79c568937a4833262fc8acd04d))
+* **gateway:** judge every redirect hop against the configured origin ([06554b1](https://github.com/future-agi/future-agi/commit/06554b1e7e23cbddfdf227c0b51d624ad1ab330f))
+* **gateway:** keep the Gemini API key out of URLs and error messages ([635f0ad](https://github.com/future-agi/future-agi/commit/635f0ad51e3c4c6ee69235c286a467017f31f25e))
+* **gateway:** send a routing alias's model_override upstream; warn on unread config keys ([e9190c5](https://github.com/future-agi/future-agi/commit/e9190c5b24a446d94a22d2d2d845883f21cf152a))
+* **gateway:** stop dropping caller tools and provider response fields ([d727ba0](https://github.com/future-agi/future-agi/commit/d727ba018a865888bd72a6c17ed40df67620d6e9))
+* **gateway:** timeout classification, credential handling and token limits ([e9e0d3a](https://github.com/future-agi/future-agi/commit/e9e0d3a137600950c1791edeb3496b67f9cf8e48))
+* **simulate:** the observability toggle also updates the version copies the config form reads (TH-8683) ([d0cb2d7](https://github.com/future-agi/future-agi/commit/d0cb2d77224704a7b98a11b18f6a25c3b780fc1d))
+* **simulate:** the observability toggle also updates the version copies the config form reads (TH-8683) ([728a068](https://github.com/future-agi/future-agi/commit/728a06878c8ac19b767aabe14ed56fe2359b8929))
+* **tests:** bring the branch's tests in line with dev (TH-7957) ([4bf61b5](https://github.com/future-agi/future-agi/commit/4bf61b58329bf5b7ccebfcb8245eda0b3528f15b))
+* **tests:** the gateway's fake job carries dev's environment link (TH-7957) ([1560164](https://github.com/future-agi/future-agi/commit/15601644a6347a9d9710f24698b5fa5fdd65589c))
+* **tests:** two more gateway fakes return dev's plain simulator config (TH-7957) ([ac97da7](https://github.com/future-agi/future-agi/commit/ac97da7847c7fadf5eba3b48b1a48ab8dc708e11))
+
+## [1.52.0](https://github.com/future-agi/future-agi/compare/v1.51.0...v1.52.0) (2026-10-19)
+
+
+### Features
+
+* **error-feed:** add Slack issue alert rules ([ba5003c](https://github.com/future-agi/future-agi/commit/ba5003c618384af9ce81c238b9764b30b6a184d8))
+* **error-feed:** add Slack issue alert rules ([985f806](https://github.com/future-agi/future-agi/commit/985f806499cbd028d9734c4a67ae0e420178881e))
+* **simulate:** add builder-session setting; sync saved scenario count ([18b312b](https://github.com/future-agi/future-agi/commit/18b312b547303e469ecc13d3fbf7f53dcc938b0b))
+* **simulate:** environment workspace layout cleanup [TH-8603] ([b82168c](https://github.com/future-agi/future-agi/commit/b82168ca0359c8485522f00a26fded43a06e3d41))
+* **simulate:** expose scoring status on the calls API and time out stuck scoring ([90e948a](https://github.com/future-agi/future-agi/commit/90e948a5fa72a61e3e428e965a3d3e31ba765717))
+* **simulate:** one builder session per environment ([c354847](https://github.com/future-agi/future-agi/commit/c3548474ae7811a580ffc45e670ac2d23b793561))
+* **simulate:** send fresh builds through the builder session behind ALK_HOSTED_BUILDER_SESSION, on by default ([3bcb185](https://github.com/future-agi/future-agi/commit/3bcb18569ed8b7f4348001f00253384d483a3c61))
+* **simulate:** show scoring state in run detail cells and drawers ([2e3ea90](https://github.com/future-agi/future-agi/commit/2e3ea908d5db2859695147b467246585293eb51e))
+
+
+### Bug Fixes
+
+* align generated contracts with CI organization limit ([0defe42](https://github.com/future-agi/future-agi/commit/0defe42f24cae06e0e95833c66e8c256ae30d7ef))
+* **e2e:** validate settings module per stack ([9f93367](https://github.com/future-agi/future-agi/commit/9f933673db4b2de503aa82f9b031442783be5c23))
+* **error-feed:** address PR review and CI blockers ([25e5f6f](https://github.com/future-agi/future-agi/commit/25e5f6fc2d215f957416b472169c8f7c828e8f53))
+* **error-feed:** reconcile dev migrations and contracts ([885043f](https://github.com/future-agi/future-agi/commit/885043f4dcc15cfb12a10ef9485f64abb9be0e02))
+* **error-feed:** type alert trigger thresholds in API contract ([3b5177d](https://github.com/future-agi/future-agi/commit/3b5177db2eaef81f59d33a521121c356fc36f4cf))
+* **evals:** auto-select newly added evals and restore saved model on edit hydration ([97c479d](https://github.com/future-agi/future-agi/commit/97c479d6a1103b162fe9f75c10fc2594a1100249))
+* **experiments:** enforce workspace scope in generated get tool ([3e1bdab](https://github.com/future-agi/future-agi/commit/3e1bdab90d3df1281a1360fb5350bb2819ef296c))
+* **experiments:** enforce workspace scope in generated MCP reads ([8356b31](https://github.com/future-agi/future-agi/commit/8356b310ef1f0a8033abbbdecd2dc13977f943ca))
+* **gateway:** hash org configs before taking the tenant store's write lock ([bdbe945](https://github.com/future-agi/future-agi/commit/bdbe945b8bad16a29e30cf88bbc694acfe698c53))
+* **gateway:** hold every request at one timeout ceiling ([558d677](https://github.com/future-agi/future-agi/commit/558d67724baea66a8cbe78ee1bfbc97fba96f702))
+* **gateway:** hold every request at one timeout ceiling (TH-8662) ([142391d](https://github.com/future-agi/future-agi/commit/142391da1ceb251705511e07fc36201cfe699c64))
+* **gateway:** keep an org's last good config when the control plane cannot build it (TH-8487) ([6af8261](https://github.com/future-agi/future-agi/commit/6af8261e9a02dbd16fed0d0ab23c9ce3ac777a70))
+* **gateway:** keep an org's last good config when the control plane cannot build it (TH-8487) ([f41296c](https://github.com/future-agi/future-agi/commit/f41296cbdc6d7e35b70a409e4b0a2f135eea6819))
+* **gateway:** re-admit a provider after its circuit breaker cooldown ([c909938](https://github.com/future-agi/future-agi/commit/c909938af9a67e5dbc04d4110b2bfa5ef3509de7))
+* **gateway:** report the successful fallback provider timeout (TH-8662) ([95346d4](https://github.com/future-agi/future-agi/commit/95346d4eaeb8e02b501e0fd98702be243c960649))
+* **gateway:** share a failed Vertex token exchange and ignore stale invalidations ([cbab74a](https://github.com/future-agi/future-agi/commit/cbab74a472b32b3081324f4345c5d4bbd31d5f8a))
+* **gateway:** share failed Vertex token exchanges, re-admit tripped providers, hash outside the tenant lock ([0de18dd](https://github.com/future-agi/future-agi/commit/0de18ddc9bea922d6df336c4025bd76c73aede09))
+* make OAuth invalid-attempt lockout atomic ([e8e0546](https://github.com/future-agi/future-agi/commit/e8e05461c162e585d582cfc0a811762cf6d24476))
+* **mcp:** harden OAuth throttle fallbacks ([2ce9437](https://github.com/future-agi/future-agi/commit/2ce943774421412343db23cc5d3a0a09c2371e23))
+* **mcp:** keep proxy trust scoped to OAuth throttling ([792a3dd](https://github.com/future-agi/future-agi/commit/792a3dd06596cc089a3ca607d6bdc8885f91c897))
+* **mcp:** make OAuth throttle fallbacks deterministic ([6a73d38](https://github.com/future-agi/future-agi/commit/6a73d384235e47505eec22ae0ce0b5f05292d955))
+* **mcp:** make OAuth throttles atomic ([42c189a](https://github.com/future-agi/future-agi/commit/42c189ae6d206f836aa7177aba1c742f9da634bf))
+* **mcp:** pass request into OAuth invalid paths ([a53f492](https://github.com/future-agi/future-agi/commit/a53f49251a2da68fe3a33b3bb6673264ed6b2a68))
+* **mcp:** require distributed rate limiting in production ([2d7f372](https://github.com/future-agi/future-agi/commit/2d7f372d94058e9afecad011b26bb12faa031b36))
+* **mcp:** throttle OAuth token endpoint ([48623fe](https://github.com/future-agi/future-agi/commit/48623fe474b0ae39ab25ffec6c2b835ef3700737))
+* **observe:** load preset dates fresh in saved views and links [TH-8634] ([30247db](https://github.com/future-agi/future-agi/commit/30247db92764aafbe1e5507e5417de9b915ff221))
+* **simulate:** keep a run's scenarios as they ran when its chat saves, and start one run per chat request ([798e849](https://github.com/future-agi/future-agi/commit/798e8495ec8d155f84a4c4978f5b600335ad6c72))
+* **simulate:** keep the payload scenario count in step with the column after a chat save ([2a70ec9](https://github.com/future-agi/future-agi/commit/2a70ec9f8846c498d7057b0a4133b7a74084e311))
+* **simulate:** run dev's chat, adjust and recovery when the builder session is off ([8224748](https://github.com/future-agi/future-agi/commit/822474806a4672f035bbd9b2dcb9cd1f2783643c))
+* **system_evals:** count hits from the alignment in word_info_preserved ([e97ccbf](https://github.com/future-agi/future-agi/commit/e97ccbf8a7c93551a5b9e9e0fdc62ff69cc9bc6d))
+* **system_evals:** count hits from the alignment in word_info_preserved ([a370f9a](https://github.com/future-agi/future-agi/commit/a370f9a77edb12c4cb99453c7497b09e34fa1086))
+* **system-evals:** align SDK word information metrics ([487ee32](https://github.com/future-agi/future-agi/commit/487ee320f5aa5791e5147914cadb4d8e8ecb881c))
+* **system-evals:** handle null transcript inputs ([4e0871f](https://github.com/future-agi/future-agi/commit/4e0871fba97c86c13f6be848590529e7839a75c7))
+* **system-evals:** sequence the system eval version ([458f6da](https://github.com/future-agi/future-agi/commit/458f6dadd997bcf5401d7579a1c16cc029aab13a))
+* **system-evals:** support long transcript alignment ([7d10426](https://github.com/future-agi/future-agi/commit/7d104262ed663daba7e2f6232c3795b3b1e57310))
+* throttle MCP OAuth token endpoint ([20b9dfa](https://github.com/future-agi/future-agi/commit/20b9dfa2a8ff298ebf621807e9726eee4aa4d677))
+
+## [1.51.0](https://github.com/future-agi/future-agi/compare/v1.50.0...v1.51.0) (2026-10-15)
+
+
+### Features
+
+* **error-feed:** exact grouping retrieval and the unrecovered-finding gate ([#3503](https://github.com/future-agi/future-agi/issues/3503)) ([c4f633d](https://github.com/future-agi/future-agi/commit/c4f633d561dc97086ae6ce4ce04a6e3480df0027))
+* **simulate:** reach every hosted model through AgentCC ([c4ff1b6](https://github.com/future-agi/future-agi/commit/c4ff1b686a6bf633dd1f1d572d3c76033405d97e))
+
+
+### Bug Fixes
+
+* **agentic_eval:** sandbox JsonValidation LLM prompt rendering with SandboxedEnvironment ([#3436](https://github.com/future-agi/future-agi/issues/3436)) ([d5a318c](https://github.com/future-agi/future-agi/commit/d5a318cb3fb71003e24b5f67a8db2081407bd384))
+* **feedback:** tie feedback vector lifecycle to Feedback record [agent] ([c0fb3bb](https://github.com/future-agi/future-agi/commit/c0fb3bb1d73fd5400243cdcf3d8c4a3dd57cd324))
+* **gateway:** fix the native, audio and translated routes simulation traffic uses ([9066a7c](https://github.com/future-agi/future-agi/commit/9066a7cc437d8d1b072179637ef9593d136d282a))
+* **saml:** tenant isolation and session boundary (TH-8356) ([ecdbe24](https://github.com/future-agi/future-agi/commit/ecdbe2442ab91ad90c20492f7a3c4c5792f49300))
+* **tests:** point feedback vector lifecycle tests at the CH sidecar ([c9e8f75](https://github.com/future-agi/future-agi/commit/c9e8f75d95684da3f510a8d8ed4cfc17201521c6))
+* **tests:** point feedback vector lifecycle tests at the CH sidecar ([c2a9220](https://github.com/future-agi/future-agi/commit/c2a92208331654b10eda670fc530cd7452a0bfa2))
+
+
+### Performance Improvements
+
+* **simulate:** speed up uncached run calls v3 listing ([e1fc145](https://github.com/future-agi/future-agi/commit/e1fc1452b7907f72631fc7ad78871bd4034a9eb4))
+
 ## [1.50.0](https://github.com/future-agi/future-agi/compare/v1.49.0...v1.50.0) (2026-10-14)
 
 

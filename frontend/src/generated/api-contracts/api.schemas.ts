@@ -1321,6 +1321,7 @@ export interface UserInfoResponseApi {
   two_factor_methods?: UserInfoTwoFactorMethodsApi;
   org_2fa_required?: boolean;
   org_2fa_grace_ends_at?: string;
+  restrict_simulate_to_environments: boolean;
 }
 
 export interface DeactivateUserApi {
