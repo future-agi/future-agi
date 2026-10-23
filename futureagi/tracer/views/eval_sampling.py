@@ -34,18 +34,31 @@ _UNAVAILABLE = (
 )
 
 
+# TOO_MANY_SIMULTANEOUS_QUERIES, NO_FREE_CONNECTION, SOCKET_TIMEOUT,
+# NETWORK_ERROR, ALL_CONNECTION_TRIES_FAILED: the server or its replicas are
+# reachable only in part. Any other server error is a defect, not an outage.
+_UNAVAILABLE_SERVER_CODES = frozenset({202, 203, 209, 210, 279})
+
+
 def _dependency_unavailable(exc: Exception) -> bool:
     """Only genuine read pressure or an unreachable dependency is a 503."""
 
     from tracer.selectors.eval_tasks.row_resolver import EvalTaskReadBudgetExceeded
 
-    if isinstance(exc, EvalTaskReadBudgetExceeded | OSError | RuntimeError):
+    # OSError covers refused/reset connections and socket timeouts; the native
+    # driver raises EOFError when the server drops the connection mid-read.
+    if isinstance(exc, EvalTaskReadBudgetExceeded | OSError | EOFError):
         return True
     try:
-        from clickhouse_driver.errors import Error as ClickHouseDriverError
+        from clickhouse_driver import errors as driver_errors
     except ImportError:  # pragma: no cover - the driver is a runtime dependency
         return False
-    return isinstance(exc, ClickHouseDriverError)
+    if isinstance(exc, driver_errors.NetworkError | driver_errors.SocketTimeoutError):
+        return True
+    return (
+        isinstance(exc, driver_errors.ServerException)
+        and getattr(exc, "code", None) in _UNAVAILABLE_SERVER_CODES
+    )
 
 
 def _error(message: str, status_code: int, **headers):
