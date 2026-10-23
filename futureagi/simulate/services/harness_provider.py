@@ -37,6 +37,9 @@ _SOURCE_ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz", ".rar", ".7z")
 _SOURCE_ARCHIVE_DETAIL = (
     "upload the expanded project folder; archives are not supported"
 )
+_SOURCE_UPLOAD_MAX_BYTES = 200 * 1024 * 1024
+# Multipart framing and one `paths` field per file, on top of the files themselves.
+_SOURCE_UPLOAD_FRAMING_BYTES = 8 * 1024 * 1024
 
 
 def _rejected_archive_upload(files) -> Response | None:
@@ -47,6 +50,21 @@ def _rejected_archive_upload(files) -> Response | None:
         return Response(
             {"detail": _SOURCE_ARCHIVE_DETAIL},
             status=status.HTTP_400_BAD_REQUEST,
+        )
+    return None
+
+
+def _oversized_upload(request) -> Response | None:
+    """Refuse on the declared length, before Django reads the body: the size of the parsed files
+    is known only after the whole request has been buffered (up to `DATA_UPLOAD_MAX_MEMORY_SIZE`)."""
+    try:
+        declared = int(request.META.get("CONTENT_LENGTH") or 0)
+    except ValueError:
+        declared = 0
+    if declared > _SOURCE_UPLOAD_MAX_BYTES + _SOURCE_UPLOAD_FRAMING_BYTES:
+        return Response(
+            {"detail": "source may not exceed 200 MiB"},
+            status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
         )
     return None
 
@@ -2357,6 +2375,8 @@ class HostedHarnessProvider:
         from simulate.services.hosted_harness import HostedHarnessError
         from simulate.services.hosted_harness_gateway import store_source_archive
 
+        if (oversized := _oversized_upload(request)) is not None:
+            return oversized
         organization = request_organization(request)
         if organization is None:
             return Response(
@@ -2373,13 +2393,9 @@ class HostedHarnessProvider:
         rejected = _rejected_archive_upload(files)
         if rejected is not None:
             return rejected
-        if len(files) > 5_000:
-            return Response(
-                {"detail": "source may contain at most 5000 files"},
-                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            )
+        # Django refuses more than DATA_UPLOAD_MAX_NUMBER_FILES files before this view runs.
         total = sum(int(getattr(uploaded, "size", 0) or 0) for uploaded in files)
-        if total > 200 * 1024 * 1024:
+        if total > _SOURCE_UPLOAD_MAX_BYTES:
             return Response(
                 {"detail": "source may not exceed 200 MiB"},
                 status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -2671,6 +2687,8 @@ class SandboxHarnessProvider:
             HarnessSandboxUnavailable,
         )
 
+        if (oversized := _oversized_upload(request)) is not None:
+            return oversized
         files = request.FILES.getlist("files")
         paths = request.data.getlist("paths")
         if not files or len(files) != len(paths):

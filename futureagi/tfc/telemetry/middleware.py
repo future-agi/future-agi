@@ -42,7 +42,15 @@ logger = structlog.get_logger(__name__)
 # Defaults
 DEFAULT_MAX_BODY_SIZE = 8192
 DEFAULT_MAX_ITEMS = 50
-SENSITIVE_BODY_PATH_PREFIXES = ("/telemetry/", "/saml2_auth/")
+# Bodies never captured: credentials, uploaded files (whose names and form fields can carry
+# personal data), and the secret values and files a harness job is configured with.
+SENSITIVE_BODY_PATH_PREFIXES = (
+    "/telemetry/",
+    "/saml2_auth/",
+    "/simulate/api/harness-jobs/sources/",
+    "/simulate/api/harness-jobs/secret-files/",
+    "/simulate/api/harness-jobs/secret-values/",
+)
 
 
 def _safe_json(value: Any, max_size: int = DEFAULT_MAX_BODY_SIZE) -> str:
