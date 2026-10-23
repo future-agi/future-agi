@@ -207,10 +207,16 @@ class SamplingPreviewMixin:
         )
 
         query = request.validated_query_data
+        # A project FK join does not apply Project's simulation-excluding
+        # manager. Recheck it even for an inconsistent preexisting task row.
+        visible_projects = self._scope_project_queryset(Project.objects.all())
         task = (
             self._scope_eval_task_queryset(EvalTask.objects)
             .select_related("project")
-            .filter(id=query["eval_task_id"])
+            .filter(
+                id=query["eval_task_id"],
+                project_id__in=visible_projects.values("id"),
+            )
             .first()
         )
         if task is None:
