@@ -173,18 +173,21 @@ export default function ConnectedAgentsView({ onConnect }) {
       cell: ({ row }) => <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>{row.original.source.label}</Typography>,
     },
     {
-      id: "latest", accessorKey: "latest", header: "Versions", size: 210, enableSorting: false,
+      id: "latest", accessorKey: "latest", header: "Versions", size: 200, enableSorting: false,
       cell: ({ row }) => {
         const a = row.original;
-        /* A code agent: the version in production with its commit on main,
-           how many versions, and fixes waiting on their own branches. */
+        /* A code agent: the version in production with its short commit (the
+           branch is on the agent's page), how many versions, and fixes
+           waiting on their own branches. */
         if (isGitAgent(a)) {
           const fixes = branchesOf(a).filter((x) => !x.release && x.count && commitsOn(a, x.name).some((c) => c.draft)).length;
+          const sha = versionNameOf(a, a.production).ref?.sha;
           return (
             <Typography variant="body2" noWrap sx={{ fontSize: 13 }}>
-              <Box component="span" sx={{ fontFamily: MONO, fontWeight: 600 }}>{versionNameOf(a, a.production).main}</Box>
+              <Box component="span" sx={{ fontFamily: MONO, fontWeight: 600 }}>{a.production}</Box>
+              {sha && <Box component="span" sx={{ color: "text.secondary" }}>{" · "}<Box component="span" sx={{ fontFamily: MONO }}>{sha}</Box></Box>}
               <Box component="span" sx={{ color: "text.secondary" }}>
-                {` · ${a.versions.length} total${fixes ? ` · ${fixes} open PR${fixes === 1 ? "" : "s"}` : ""}`}
+                {` · ${a.versions.length} total${fixes ? ` · ${fixes} PR${fixes === 1 ? "" : "s"}` : ""}`}
               </Box>
             </Typography>
           );
