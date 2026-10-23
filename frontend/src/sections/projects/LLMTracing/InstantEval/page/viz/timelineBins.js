@@ -202,29 +202,43 @@ export function buildTimeline({
     return { binMs: HOUR, origin: 0, columns: [], dayTicks: [], maxStack: 0 };
   const binMs = chooseBinMs(to - from, maxColumns);
   const origin = localMidnight(from);
-  const first = Math.floor((from - origin) / binMs);
+  // Day-sized bins step by calendar day in the viewer's zone, so a DST
+  // change (a 23- or 25-hour day) never shifts a column off midnight.
+  const daysPerBin = binMs % DAY === 0 ? binMs / DAY : 0;
+  const originDate = new Date(origin);
+  const dayStart = (days) =>
+    new Date(
+      originDate.getFullYear(),
+      originDate.getMonth(),
+      originDate.getDate() + days,
+    ).getTime();
+  const binOf = (ms) =>
+    daysPerBin
+      ? Math.floor(Math.round((localMidnight(ms) - origin) / DAY) / daysPerBin)
+      : Math.floor((ms - origin) / binMs);
+  const binStart = (index) =>
+    daysPerBin ? dayStart(index * daysPerBin) : origin + index * binMs;
+  const first = binOf(from);
   // A window that ends on a column edge does not open one more column; a row
   // at the very end still gets its own.
   const last = Math.max(
     first,
-    Number.isFinite(windowEnd)
-      ? Math.floor((windowEnd - 1 - origin) / binMs)
-      : first,
-    ...times.map((ms) => Math.floor((ms - origin) / binMs)),
+    Number.isFinite(windowEnd) ? binOf(windowEnd - 1) : first,
+    ...times.map(binOf),
   );
   const columns = [];
   for (let index = first; index <= last; index += 1)
     columns.push({
       index: index - first,
-      start: origin + index * binMs,
-      end: origin + (index + 1) * binMs,
+      start: binStart(index),
+      end: binStart(index + 1),
       items: [],
       errors: 0,
     });
   records.forEach((record) => {
     const ms = toMs(record.time);
     if (!Number.isFinite(ms)) return;
-    const column = columns[Math.floor((ms - origin) / binMs) - first];
+    const column = columns[binOf(ms) - first];
     if (!column) return;
     const { state, answer, unsure } = answerState(record, configId);
     if (record.facets?.error === true) column.errors += 1;
