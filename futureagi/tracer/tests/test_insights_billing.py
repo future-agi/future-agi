@@ -2,6 +2,8 @@
 model's token price), a written report is charged once as AI credits, and
 the credit cap refuses a report, a question, a draft or a preview up front."""
 
+import json
+
 import pytest
 from rest_framework import status
 
@@ -128,27 +130,35 @@ class TestPricing:
     def test_the_agent_reports_tokens_when_it_has_no_cost(self, monkeypatch):
         from ee.agenthub.insights import agent
 
-        class Reply:
-            status_code = 200
-
-            @staticmethod
-            def json():
-                return {
-                    "usage": {
-                        "model": "turing_large",
-                        "prompt_tokens": 4000,
-                        "completion_tokens": 900,
-                        "cost_usd": 0,
-                    }
-                }
-
-        monkeypatch.setattr(
-            agent, "_setting", lambda name: "http://agent" if "URL" in name else "x"
-        )
-        monkeypatch.setattr(agent.httpx, "post", lambda *a, **k: Reply())
+        body = {
+            "usage": {
+                "model": "turing_large",
+                "prompt_tokens": 4000,
+                "completion_tokens": 900,
+                "cost_usd": 0,
+            }
+        }
+        _agent_replies(monkeypatch, agent, 200, json.dumps(body).encode())
         spend = llm.Spend()
         agent._post("/v1/ask", {}, spend)
         assert spend.cost_usd == llm.call_cost("turing_large", 0.0, 4000, 900) > 0
+
+    @pytest.mark.parametrize(
+        "content",
+        [b"<html>bad gateway</html>", b'["not", "an", "object"]', None],
+    )
+    def test_an_unreadable_or_oversized_agent_reply_is_unavailable(
+        self, monkeypatch, content
+    ):
+        from ee.agenthub.insights import agent
+
+        if content is None:
+            # Read in chunks and given up on past the cap, never held whole.
+            content = b"x" * (agent.MAX_RESPONSE_BYTES + 1)
+        _agent_replies(monkeypatch, agent, 200, content)
+        with pytest.raises(llm.InsightModelError) as error:
+            agent._post("/v1/ask", {}, llm.Spend())
+        assert error.value.unavailable
 
 
 class TestCharging:
@@ -380,3 +390,23 @@ def test_off_cloud_a_report_over_any_cap_starts(
     assert response.status_code == 200, response.content
     assert len(started) == 1
     assert checked == []
+
+
+def _agent_replies(monkeypatch, agent, status_code, content):
+    """httpx.stream answering with ``content`` in 1 MB chunks."""
+    import contextlib
+
+    class Reply:
+        def __init__(self):
+            self.status_code = status_code
+
+        def iter_bytes(self):
+            for start in range(0, len(content), 1 << 20):
+                yield content[start : start + (1 << 20)]
+
+    monkeypatch.setattr(
+        agent, "_setting", lambda name: "http://agent" if "URL" in name else "x"
+    )
+    monkeypatch.setattr(
+        agent.httpx, "stream", lambda *a, **k: contextlib.nullcontext(Reply())
+    )

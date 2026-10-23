@@ -23,8 +23,20 @@ MAX_HIGHLIGHTS = 6
 MAX_REPORT_UNITS = 400
 UNIT_CONTENT_CHARS = 9000
 _STAT_KEYS = (
-    "count", "share", "share_ci", "users", "sessions", "turns", "outcomes", "sentiment",
-    "failure_rate", "unresolved_rate", "error_rate", "latency_ms", "cost", "attributes",
+    "count",
+    "share",
+    "share_ci",
+    "users",
+    "sessions",
+    "turns",
+    "outcomes",
+    "sentiment",
+    "failure_rate",
+    "unresolved_rate",
+    "error_rate",
+    "latency_ms",
+    "cost",
+    "attributes",
     "top_user_share",
 )
 
@@ -33,7 +45,9 @@ def _clean(text, limit: int) -> str:
     return " ".join(str(text or "").split())[:limit]
 
 
-def agent_payload(run, result: dict, units: list[dict], contents: dict[str, str]) -> dict:
+def agent_payload(
+    run, result: dict, units: list[dict], contents: dict[str, str]
+) -> dict:
     """What the analyst sees: the categories with their statistics and the
     analysed units with their summaries, evidence and text."""
     categories = [
@@ -46,7 +60,10 @@ def agent_payload(run, result: dict, units: list[dict], contents: dict[str, str]
             "status": c.get("status", "active"),
             "stats": {k: c["stats"].get(k) for k in _STAT_KEYS if k in c["stats"]},
             "notable": [
-                {k: n.get(k) for k in ("metric", "label", "kind", "value", "rest", "lift", "q")}
+                {
+                    k: n.get(k)
+                    for k in ("metric", "label", "kind", "value", "rest", "lift", "q")
+                }
                 for n in c.get("notable", [])
             ],
         }
@@ -54,11 +71,13 @@ def agent_payload(run, result: dict, units: list[dict], contents: dict[str, str]
     ]
     chosen = sorted(units, key=lambda u: u["time"])[:MAX_REPORT_UNITS]
     totals = dict(result["totals"])
-    totals.update({
-        "population_size": result.get("population_size"),
-        "sample_size": result.get("sample_size"),
-        "excluded": result.get("excluded"),
-    })
+    totals.update(
+        {
+            "population_size": result.get("population_size"),
+            "sample_size": result.get("sample_size"),
+            "excluded": result.get("excluded"),
+        }
+    )
     changes = result.get("changes") or {}
     return {
         "run": insight_agent.run_context(run.settings, run.unit, run.id),
@@ -123,7 +142,9 @@ def _without_ids(text: str, units: list[dict]) -> str:
     return text
 
 
-def _inline_citations(text: str, units_by_key: dict[str, dict], categories) -> tuple[str, list, list]:
+def _inline_citations(
+    text: str, units_by_key: dict[str, dict], categories
+) -> tuple[str, list, list]:
     """Examples and categories cited in the text as [key] or [id] (unit keys
     are row ids, category ids carry digits) are citations, not claims. They
     leave the text, which the page follows with chips for cited examples, and
@@ -166,12 +187,19 @@ def _evidence(items, units_by_key, contents) -> list[dict]:
             continue
         found, _ = insight_agent.verified_evidence([item], contents.get(key, ""), key)
         for e in found:
-            kept.append({"unit_id": units_by_key[key]["unit_id"], "quote": e["quote"],
-                         "evidence_id": e["evidence_id"]})
+            kept.append(
+                {
+                    "unit_id": units_by_key[key]["unit_id"],
+                    "quote": e["quote"],
+                    "evidence_id": e["evidence_id"],
+                }
+            )
     return kept[:3]
 
 
-def from_agent(reply: dict, result: dict, units: list[dict], contents: dict[str, str]) -> dict:
+def from_agent(
+    reply: dict, result: dict, units: list[dict], contents: dict[str, str]
+) -> dict:
     """Map the analyst's reply onto unit ids and keep only what checks out."""
     units_by_key = {u["key"]: u for u in units}
     categories = {c["id"]: c for c in result["categories"]}
@@ -192,18 +220,25 @@ def from_agent(reply: dict, result: dict, units: list[dict], contents: dict[str,
         keys = [str(k) for k in raw.get("unit_keys") or []]
         keys += [str((e or {}).get("unit_key", "")) for e in raw.get("evidence") or []]
         cited = [refs.ref(k) for k in dict.fromkeys(keys)]
-        findings.append({
-            "headline": headline,
-            "detail": detail,
-            "action": action,
-            "severity": raw.get("severity") if raw.get("severity") in ("high", "medium", "low") else "medium",
-            "category_ids": [c for c in raw.get("category_ids") or [] if c in categories],
-            "refs": [
-                {"ref": r, "unit_id": units_by_key[refs.order[r - 1]]["unit_id"]}
-                for r in cited if r
-            ],
-            "evidence": _evidence(raw.get("evidence"), units_by_key, contents),
-        })
+        findings.append(
+            {
+                "headline": headline,
+                "detail": detail,
+                "action": action,
+                "severity": raw.get("severity")
+                if raw.get("severity") in ("high", "medium", "low")
+                else "medium",
+                "category_ids": [
+                    c for c in raw.get("category_ids") or [] if c in categories
+                ],
+                "refs": [
+                    {"ref": r, "unit_id": units_by_key[refs.order[r - 1]]["unit_id"]}
+                    for r in cited
+                    if r
+                ],
+                "evidence": _evidence(raw.get("evidence"), units_by_key, contents),
+            }
+        )
         if len(findings) >= MAX_FINDINGS:
             break
     highlights = []
@@ -212,22 +247,26 @@ def from_agent(reply: dict, result: dict, units: list[dict], contents: dict[str,
         unit = units_by_key.get(key)
         if not unit:
             continue
-        category_id = raw.get("category_id") if raw.get("category_id") in categories else (
-            unit["sub_category_id"] or unit["category_id"]
+        category_id = (
+            raw.get("category_id")
+            if raw.get("category_id") in categories
+            else (unit["sub_category_id"] or unit["category_id"])
         )
         quotes = _evidence(
             [{"unit_key": key, "quote": raw.get("quote")}], units_by_key, contents
         )
-        highlights.append({
-            "ref": refs.ref(key),
-            "unit_id": unit["unit_id"],
-            "category_id": category_id,
-            "category_name": categories.get(category_id, {}).get("name", ""),
-            "title": _clean(raw.get("title"), 120) or _clean(unit["summary"], 90),
-            "summary": unit["summary"],
-            "reason": _clean(raw.get("reason"), 240),
-            "quote": quotes[0]["quote"] if quotes else "",
-        })
+        highlights.append(
+            {
+                "ref": refs.ref(key),
+                "unit_id": unit["unit_id"],
+                "category_id": category_id,
+                "category_name": categories.get(category_id, {}).get("name", ""),
+                "title": _clean(raw.get("title"), 120) or _clean(unit["summary"], 90),
+                "summary": unit["summary"],
+                "reason": _clean(raw.get("reason"), 240),
+                "quote": quotes[0]["quote"] if quotes else "",
+            }
+        )
         if len(highlights) >= MAX_HIGHLIGHTS:
             break
     insights = {}
@@ -240,19 +279,25 @@ def from_agent(reply: dict, result: dict, units: list[dict], contents: dict[str,
                 "evidence": _evidence(raw.get("evidence"), units_by_key, contents),
             }
     verification = dict(reply.get("verification") or {})
-    verification.update({
-        "numbers": True,
-        "quotes": any(f["evidence"] for f in findings),
-        "audit": verification.get("model_verifier") == "passed",
-    })
+    verification.update(
+        {
+            "numbers": True,
+            "quotes": any(f["evidence"] for f in findings),
+            "audit": verification.get("model_verifier") == "passed",
+        }
+    )
     return {
         "title": _clean(reply.get("title"), 200),
         "findings": findings,
         "key_points": _legacy_points(findings),
         "highlights": highlights,
         "examples": [
-            {"ref": i, "unit_id": units_by_key[k]["unit_id"],
-             "category_id": units_by_key[k]["sub_category_id"] or units_by_key[k]["category_id"]}
+            {
+                "ref": i,
+                "unit_id": units_by_key[k]["unit_id"],
+                "category_id": units_by_key[k]["sub_category_id"]
+                or units_by_key[k]["category_id"],
+            }
             for i, k in enumerate(refs.order, start=1)
         ],
         "category_insights": insights,
@@ -272,9 +317,13 @@ def _legacy_points(findings: list[dict]) -> list[dict]:
     ]
 
 
-def write(run, result: dict, units: list[dict], contents: dict[str, str], spend: Spend) -> dict:
+def write(
+    run, result: dict, units: list[dict], contents: dict[str, str], spend: Spend
+) -> dict:
     if insight_agent.enabled():
-        reply = insight_agent.analyse_report(agent_payload(run, result, units, contents), spend)
+        reply = insight_agent.analyse_report(
+            agent_payload(run, result, units, contents), spend
+        )
         return from_agent(reply, result, units, contents)
     by_category: dict[str, list[dict]] = {}
     for unit in units:
@@ -288,12 +337,21 @@ def write(run, result: dict, units: list[dict], contents: dict[str, str], spend:
         units_by_category=by_category,
         spend=spend,
     )
-    summary.setdefault("findings", [
-        {"headline": p["text"].split(". ")[0], "detail": ". ".join(p["text"].split(". ")[1:]),
-         "action": "", "severity": "medium", "category_ids": p["category_ids"], "refs": p["refs"],
-         "evidence": []}
-        for p in summary.get("key_points", [])
-    ])
+    summary.setdefault(
+        "findings",
+        [
+            {
+                "headline": p["text"].split(". ")[0],
+                "detail": ". ".join(p["text"].split(". ")[1:]),
+                "action": "",
+                "severity": "medium",
+                "category_ids": p["category_ids"],
+                "refs": p["refs"],
+                "evidence": [],
+            }
+            for p in summary.get("key_points", [])
+        ],
+    )
     summary["verification"] = {"numbers": True, "quotes": False, "audit": False}
     return summary
 
@@ -309,56 +367,83 @@ _ASK_SYSTEM = (
 )
 
 
-def _answer_payload(reply: dict, result: dict, units: list[dict], contents: dict[str, str]) -> dict:
+def _answer_payload(
+    reply: dict, result: dict, units: list[dict], contents: dict[str, str]
+) -> dict:
     units_by_key = {u["key"]: u for u in units}
     categories = {c["id"] for c in result["categories"]}
     numbers = checked_numbers(result, units)
     paragraphs, dropped = [], 0
     for raw in reply.get("answer") or []:
+        if not isinstance(raw, dict):
+            # A model-written item that isn't an object ({"answer": ["text"]})
+            # is dropped like any unverifiable paragraph, never a 500.
+            dropped += 1
+            continue
         text, cited, cited_ids = _inline_citations(
-            _clean((raw or {}).get("text"), 1200), units_by_key, categories
+            _clean(raw.get("text"), 1200), units_by_key, categories
         )
         if not text:
             continue
         if not verified(_without_ids(text, units), numbers):
             dropped += 1
             continue
-        keys = [str(k) for k in raw.get("unit_keys") or [] if str(k) in units_by_key] + cited
+        keys = [
+            str(k) for k in raw.get("unit_keys") or [] if str(k) in units_by_key
+        ] + cited
         ids = [c for c in raw.get("category_ids") or [] if c in categories] + cited_ids
-        paragraphs.append({
-            "text": text,
-            "unit_ids": [units_by_key[k]["unit_id"] for k in dict.fromkeys(keys)],
-            "category_ids": list(dict.fromkeys(ids)),
-            "evidence": _evidence(raw.get("evidence"), units_by_key, contents),
-        })
+        paragraphs.append(
+            {
+                "text": text,
+                "unit_ids": [units_by_key[k]["unit_id"] for k in dict.fromkeys(keys)],
+                "category_ids": list(dict.fromkeys(ids)),
+                "evidence": _evidence(raw.get("evidence"), units_by_key, contents),
+            }
+        )
     dropped_reply = reply.get("dropped")
     if isinstance(dropped_reply, dict):
         dropped += int(dropped_reply.get("paragraphs") or 0)
     return {
         "answer": paragraphs,
-        "follow_ups": [_clean(q, 160) for q in (reply.get("follow_ups") or [])[:3] if q],
+        "follow_ups": [
+            _clean(q, 160) for q in (reply.get("follow_ups") or [])[:3] if q
+        ],
         "dropped": dropped,
     }
 
 
-def answer(run, result: dict, units: list[dict], contents: dict[str, str],
-           question: str, history: list[dict], spend: Spend) -> dict:
+def answer(
+    run,
+    result: dict,
+    units: list[dict],
+    contents: dict[str, str],
+    question: str,
+    history: list[dict],
+    spend: Spend,
+) -> dict:
     if insight_agent.enabled():
         payload = agent_payload(run, result, units, contents)
         summary = result.get("summary") or {}
-        payload.update({
-            "question": question,
-            "history": history[-10:],
-            # The report's own findings, as context for the answer.
-            "report": {
-                "title": summary.get("title", ""),
-                "findings": [
-                    {k: f.get(k) for k in ("headline", "detail", "action", "category_ids")}
-                    for f in summary.get("findings", [])
-                ],
-            },
-        })
-        return _answer_payload(insight_agent.ask(payload, spend), result, units, contents)
+        payload.update(
+            {
+                "question": question,
+                "history": history[-10:],
+                # The report's own findings, as context for the answer.
+                "report": {
+                    "title": summary.get("title", ""),
+                    "findings": [
+                        {
+                            k: f.get(k)
+                            for k in ("headline", "detail", "action", "category_ids")
+                        }
+                        for f in summary.get("findings", [])
+                    ],
+                },
+            }
+        )
+        return _answer_payload(
+            insight_agent.ask(payload, spend), result, units, contents
+        )
     from ee.agenthub.insights.llm import THINKING, chat_json
 
     lines = []
@@ -374,15 +459,22 @@ def answer(run, result: dict, units: list[dict], contents: dict[str, str],
         f"[{u['key']}] ({u['sub_category_id'] or u['category_id']}) {u['summary']}"
         for u in sorted(units, key=lambda u: u["time"])[:MAX_ASK_UNITS]
     ]
-    talk = "\n".join(f"{m.get('role')}: {_clean(m.get('content'), 600)}" for m in history[-6:])
+    talk = "\n".join(
+        f"{m.get('role')}: {_clean(m.get('content'), 600)}" for m in history[-6:]
+    )
     prompt = (
         f"Report question: {run.settings.get('question', '')}\n"
         f"Totals: {result['totals'].get('count')} analysed, {result['totals'].get('users')} users.\n"
-        "Categories:\n" + "\n".join(lines) + "\n\nExamples:\n" + "\n".join(examples)
+        "Categories:\n"
+        + "\n".join(lines)
+        + "\n\nExamples:\n"
+        + "\n".join(examples)
         + (f"\n\nConversation so far:\n{talk}" if talk else "")
-        + f"\n\nQuestion: {question}\n\nReturn {{\"answer\": [{{\"text\": \"a paragraph\", "
-        "\"unit_keys\": [\"...\"], \"category_ids\": [\"...\"]}}], \"follow_ups\": "
-        "[\"up to 3 short next questions\"]}."
+        + f'\n\nQuestion: {question}\n\nReturn {{"answer": [{{"text": "a paragraph", '
+        '"unit_keys": ["..."], "category_ids": ["..."]}}], "follow_ups": '
+        '["up to 3 short next questions"]}.'
     )
     reply = chat_json(_ASK_SYSTEM, prompt, tier=THINKING, max_tokens=1600, spend=spend)
-    return _answer_payload(reply if isinstance(reply, dict) else {}, result, units, contents)
+    return _answer_payload(
+        reply if isinstance(reply, dict) else {}, result, units, contents
+    )

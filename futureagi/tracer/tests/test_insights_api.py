@@ -37,7 +37,11 @@ def insight_enabled(monkeypatch):
 
 def population(n=30):
     return [
-        {"id": str(uuid.uuid4()), "time": f"2026-10-{1 + i % 28:02d}T10:00:00Z", "user_id": f"u{i}"}
+        {
+            "id": str(uuid.uuid4()),
+            "time": f"2026-10-{1 + i % 28:02d}T10:00:00Z",
+            "user_id": f"u{i}",
+        }
         for i in range(n)
     ]
 
@@ -81,21 +85,31 @@ def test_a_new_report_saves_its_config_and_samples_the_population(
 def test_run_again_while_a_run_is_in_flight_joins_it(
     auth_client, observe_project, insight_enabled
 ):
-    first = auth_client.post(RUNS, new_run_body(observe_project), format="json").json()["result"]
-    again = auth_client.post(RUNS, {
-        "project_id": str(observe_project.id),
-        "config_id": first["config_id"],
-        "population": population(5),
-    }, format="json").json()["result"]
+    first = auth_client.post(RUNS, new_run_body(observe_project), format="json").json()[
+        "result"
+    ]
+    again = auth_client.post(
+        RUNS,
+        {
+            "project_id": str(observe_project.id),
+            "config_id": first["config_id"],
+            "population": population(5),
+        },
+        format="json",
+    ).json()["result"]
     assert again["run_id"] == first["run_id"]
     assert InsightRun.objects.filter(config_id=first["config_id"]).count() == 1
 
     InsightRun.objects.filter(id=first["run_id"]).update(status="completed")
-    third = auth_client.post(RUNS, {
-        "project_id": str(observe_project.id),
-        "config_id": first["config_id"],
-        "population": population(5),
-    }, format="json").json()["result"]
+    third = auth_client.post(
+        RUNS,
+        {
+            "project_id": str(observe_project.id),
+            "config_id": first["config_id"],
+            "population": population(5),
+        },
+        format="json",
+    ).json()["result"]
     assert third["run_id"] != first["run_id"]
 
 
@@ -141,7 +155,9 @@ def test_reports_on_turing_models_need_the_turing_capability(
 
 
 @pytest.mark.django_db
-def test_other_organizations_projects_and_runs_are_not_found(auth_client, observe_project):
+def test_other_organizations_projects_and_runs_are_not_found(
+    auth_client, observe_project
+):
     other = Organization.objects.create(name="Other org")
     project = getattr(Project, "no_workspace_objects", Project.objects).create(
         name="Elsewhere",
@@ -149,14 +165,20 @@ def test_other_organizations_projects_and_runs_are_not_found(auth_client, observ
         model_type=AIModel.ModelTypes.GENERATIVE_LLM,
         trace_type="observe",
     )
-    assert auth_client.post(RUNS, new_run_body(project), format="json").status_code == 404
+    assert (
+        auth_client.post(RUNS, new_run_body(project), format="json").status_code == 404
+    )
     assert auth_client.get(CONFIGS, {"project_id": str(project.id)}).status_code == 404
     assert auth_client.get(f"{RUNS}{uuid.uuid4()}/").status_code == 404
 
 
 @pytest.mark.django_db
-def test_run_units_filter_by_category_and_skip_left_out_units(auth_client, observe_project):
-    created = auth_client.post(RUNS, new_run_body(observe_project), format="json").json()["result"]
+def test_run_units_filter_by_category_and_skip_left_out_units(
+    auth_client, observe_project
+):
+    created = auth_client.post(
+        RUNS, new_run_body(observe_project), format="json"
+    ).json()["result"]
     units = list(InsightUnit.objects.filter(run_id=created["run_id"]).order_by("id"))
     for i, u in enumerate(units):
         u.status = "done"
@@ -175,15 +197,26 @@ def test_run_units_filter_by_category_and_skip_left_out_units(auth_client, obser
     wanted = units[4].unit_id
     picked = auth_client.get(base, {"unit_ids": wanted}).json()["result"]
     assert [u["unit_id"] for u in picked["units"]] == [wanted]
+    # No page starts past the most units a report can hold.
+    assert auth_client.get(base, {"offset": 20001}).status_code == 400
 
 
 @pytest.mark.django_db
 def test_saved_reports_list_their_latest_run(auth_client, observe_project):
-    created = auth_client.post(RUNS, new_run_body(observe_project), format="json").json()["result"]
-    configs = auth_client.get(CONFIGS, {"project_id": str(observe_project.id)}).json()["result"]["configs"]
+    created = auth_client.post(
+        RUNS, new_run_body(observe_project), format="json"
+    ).json()["result"]
+    configs = auth_client.get(CONFIGS, {"project_id": str(observe_project.id)}).json()[
+        "result"
+    ]["configs"]
     assert [c["id"] for c in configs] == [created["config_id"]]
     assert configs[0]["latest_run"]["id"] == created["run_id"]
     deleted = auth_client.delete(f"{CONFIGS}{created['config_id']}/")
     assert deleted.status_code == 200
-    configs = auth_client.get(CONFIGS, {"project_id": str(observe_project.id)}).json()["result"]["configs"]
+    configs = auth_client.get(CONFIGS, {"project_id": str(observe_project.id)}).json()[
+        "result"
+    ]["configs"]
     assert configs == []
+    # Its runs are soft-deleted like any row: flagged and stamped.
+    run = InsightRun.all_objects.get(id=created["run_id"])
+    assert run.deleted and run.deleted_at is not None

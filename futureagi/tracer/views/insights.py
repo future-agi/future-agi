@@ -248,7 +248,10 @@ class InsightUnitsQuerySerializer(serializers.Serializer):
         max_length=64, required=False, allow_blank=True
     )
     unit_ids = serializers.CharField(max_length=4000, required=False, allow_blank=True)
-    offset = serializers.IntegerField(min_value=0, required=False, default=0)
+    # A report holds at most MAX_POPULATION units; no page starts past them.
+    offset = serializers.IntegerField(
+        min_value=0, max_value=MAX_POPULATION, required=False, default=0
+    )
     limit = serializers.IntegerField(
         min_value=1, max_value=200, required=False, default=UNITS_PAGE
     )
@@ -906,7 +909,10 @@ class InsightConfigDetailView(InsightsLicenseRequired, APIView):
         """Edit a report's setup, or forget its saved categories so the next
         run discovers afresh. Changing the question or lens changes what the
         categories mean, so it resets them too. Applies from the next run."""
-        from ee.agenthub.insights.facets import clean_attributes
+        try:
+            from ee.agenthub.insights.facets import clean_attributes
+        except ImportError:
+            return _unavailable(self._gm)
 
         config = self._config(request, config_id)
         if config is None:
@@ -955,7 +961,9 @@ class InsightConfigDetailView(InsightsLicenseRequired, APIView):
             return self._gm.not_found("Report not found")
         item = _config_item(config)
         config.delete()
-        InsightRun.objects.filter(config=config).update(deleted=True)
+        InsightRun.objects.filter(config=config).update(
+            deleted=True, deleted_at=timezone.now()
+        )
         return self._gm.success_response(item)
 
 
@@ -1038,7 +1046,10 @@ class InsightPreviewView(InsightsLicenseRequired, APIView):
         refused = _credits_refused(self._gm, org, "preview")
         if refused:
             return refused
-        from ee.agenthub.insights.llm import Spend
+        try:
+            from ee.agenthub.insights.llm import Spend
+        except ImportError:
+            return _unavailable(self._gm)
 
         config = data["config"]
         spend = Spend()
@@ -1398,9 +1409,12 @@ class InsightRunAskView(InsightsLicenseRequired, APIView):
     )
     def post(self, request, run_id):
         """Answer a follow-up question about a completed report, citing its examples."""
-        from ee.agenthub.insights import report
-        from ee.agenthub.insights.llm import InsightModelError, Spend
-        from ee.agenthub.insights.pipeline import _unit_dict
+        try:
+            from ee.agenthub.insights import report
+            from ee.agenthub.insights.llm import InsightModelError, Spend
+            from ee.agenthub.insights.pipeline import _unit_dict
+        except ImportError:
+            return _unavailable(self._gm)
 
         org = _org(request)
         run = InsightRun.objects.filter(

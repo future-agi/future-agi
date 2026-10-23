@@ -15,6 +15,7 @@ the report's statistics, and citations must point at units of the run.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 
@@ -58,28 +59,66 @@ def engine() -> dict:
     return {"kind": "builtin", "version": BUILTIN_ENGINE_VERSION}
 
 
+# An agent reply is a report or an answer: a few hundred KB at most. Anything
+# far larger is a broken agent, not a reply to read.
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+
+
+class _Oversized(Exception):
+    pass
+
+
+def _bounded_body(response) -> bytes:
+    """The response body, read no further than MAX_RESPONSE_BYTES."""
+    chunks, size = [], 0
+    for chunk in response.iter_bytes():
+        size += len(chunk)
+        if size > MAX_RESPONSE_BYTES:
+            raise _Oversized
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _unavailable() -> InsightModelError:
+    return InsightModelError(
+        "The Insights agent is unavailable right now. Try again shortly.",
+        unavailable=True,
+    )
+
+
 def _post(path: str, payload: dict, spend: Spend | None = None) -> dict:
     url = _setting("INSIGHTS_AGENT_URL").rstrip("/") + path
     headers = {"Authorization": f"Bearer {_setting('INSIGHTS_AGENT_SECRET')}"}
     try:
-        response = httpx.post(url, json=payload, headers=headers, timeout=_TIMEOUTS[path])
+        with httpx.stream(
+            "POST", url, json=payload, headers=headers, timeout=_TIMEOUTS[path]
+        ) as response:
+            status_code = response.status_code
+            content = _bounded_body(response)
     except httpx.HTTPError as exc:
         logger.warning("insight_agent_unreachable", path=path, error=str(exc)[:200])
-        raise InsightModelError(
-            "The Insights agent is unavailable right now. Try again shortly.",
-            unavailable=True,
-        ) from exc
-    if response.status_code >= 500 or response.status_code == 429:
-        logger.warning("insight_agent_error", path=path, status=response.status_code)
-        raise InsightModelError(
-            "The Insights agent is unavailable right now. Try again shortly.",
-            unavailable=True,
+        raise _unavailable() from exc
+    except _Oversized:
+        logger.warning("insight_agent_oversized", path=path)
+        raise _unavailable() from None
+    if status_code >= 500 or status_code == 429:
+        logger.warning("insight_agent_error", path=path, status=status_code)
+        raise _unavailable()
+    if status_code >= 400:
+        logger.error(
+            "insight_agent_rejected",
+            path=path,
+            status=status_code,
+            body=content[:300].decode("utf-8", errors="replace"),
         )
-    if response.status_code >= 400:
-        logger.error("insight_agent_rejected", path=path, status=response.status_code,
-                     body=response.text[:300])
         raise InsightModelError("The Insights agent rejected the request.")
-    body = response.json()
+    try:
+        body = json.loads(content)
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        logger.warning("insight_agent_not_json", path=path, status=status_code)
+        raise _unavailable()
     if spend is not None:
         _add_usage(spend, body.get("usage") or {})
     return body
@@ -158,19 +197,22 @@ def verified_evidence(evidence, content: str, key: str) -> tuple[list[dict], int
             dropped += 1
             continue
         start, end = span
-        kept.append({
-            "evidence_id": f"{key}:{start}:{end - start}",
-            "quote": content[start:end],
-            "start": start,
-            "end": end,
-            "supports": str((item or {}).get("supports", ""))[:60],
-        })
+        kept.append(
+            {
+                "evidence_id": f"{key}:{start}:{end - start}",
+                "quote": content[start:end],
+                "start": start,
+                "end": end,
+                "supports": str((item or {}).get("supports", ""))[:60],
+            }
+        )
     return kept[:3], dropped
 
 
 # ─── Steps ──────────────────────────────────────────────────────────────────
-def read_units(context: dict, units: list[tuple[str, str]], attributes: list[dict],
-               spend: Spend) -> dict[str, dict]:
+def read_units(
+    context: dict, units: list[tuple[str, str]], attributes: list[dict], spend: Spend
+) -> dict[str, dict]:
     """``{key: {"facets": ..., "evidence": [...], "error": str|None}}``."""
     body = _post(
         "/v1/read-units",
@@ -186,7 +228,11 @@ def read_units(context: dict, units: list[tuple[str, str]], attributes: list[dic
         if not item.get("ok", True):
             error = item.get("error")
             message = error.get("message") if isinstance(error, dict) else error
-            out[key] = {"error": str(message or "The Insights agent could not read this item.")[:200]}
+            out[key] = {
+                "error": str(message or "The Insights agent could not read this item.")[
+                    :200
+                ]
+            }
             continue
         facets = normalise(item.get("facets") or {}, attributes)
         evidence, dropped = verified_evidence(item.get("evidence"), contents[key], key)
@@ -197,12 +243,15 @@ def read_units(context: dict, units: list[tuple[str, str]], attributes: list[dic
         facets["dropped_quotes"] = dropped + int(item.get("dropped_quotes") or 0)
         out[key] = {"facets": facets}
     for key in contents:
-        out.setdefault(key, {"error": "The Insights agent returned nothing for this item."})
+        out.setdefault(
+            key, {"error": "The Insights agent returned nothing for this item."}
+        )
     return out
 
 
-def name_taxonomy(context: dict, clusters: list[dict], target_top_count: int,
-                  spend: Spend) -> dict:
+def name_taxonomy(
+    context: dict, clusters: list[dict], target_top_count: int, spend: Spend
+) -> dict:
     return _post(
         "/v1/name-taxonomy",
         {"run": context, "clusters": clusters, "target_top_count": target_top_count},

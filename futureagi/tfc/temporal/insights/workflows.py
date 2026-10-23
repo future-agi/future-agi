@@ -6,7 +6,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError
+from temporalio.exceptions import ActivityError, ApplicationError
 
 with workflow.unsafe.imports_passed_through():
     from tfc.temporal.insights.types import (
@@ -14,6 +14,8 @@ with workflow.unsafe.imports_passed_through():
         InsightFailInput,
         InsightRunInput,
     )
+
+FAILED_MESSAGE = "The report could not be completed."
 
 BATCH = 24
 PARALLEL_BATCHES = 4
@@ -75,8 +77,13 @@ class InsightReportWorkflow:
                 retry_policy=STAGE_RETRY,
             )
         except ActivityError as exc:
+            # Only an ApplicationError carries text written for people; a
+            # timeout or cancellation cause says "activity StartToClose
+            # timeout", which is not for the report page.
             cause = getattr(exc, "cause", None)
-            message = getattr(cause, "message", "") or "The report could not be completed."
+            message = (
+                cause.message if isinstance(cause, ApplicationError) else ""
+            ) or FAILED_MESSAGE
             await workflow.execute_activity(
                 "insight_fail",
                 InsightFailInput(run_id=input.run_id, message=message),

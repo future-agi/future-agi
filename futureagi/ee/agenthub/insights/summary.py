@@ -35,24 +35,28 @@ def _pct(value: float) -> str:
 
 def _notable_text(note: dict) -> str:
     if note["kind"] == "rate":
-        return f"{_pct(note['value'])} {note['label']} vs {_pct(note['rest'])} elsewhere"
+        return (
+            f"{_pct(note['value'])} {note['label']} vs {_pct(note['rest'])} elsewhere"
+        )
     if note["metric"] == "latency_ms":
         return f"median latency {note['value'] / 1000:.1f}s vs {note['rest'] / 1000:.1f}s elsewhere"
     return f"{note['label']} {note['value']:.1f} vs {note['rest']:.1f} elsewhere"
 
 
 def allowed_numbers(result: dict) -> set[str]:
-    """Every number the report's statistics hold, as a claim may write it."""
+    """Every number the report's statistics hold, as a claim may write it.
+    Rates may also be written as percentages; other decimals (a cost of 0.42,
+    a sentiment of 3.2) only as themselves, so they never vouch for "42"."""
     numbers: set[str] = set()
 
-    def add(value):
+    def add(value, *, rate: bool = False):
         if value is None:
             return
         if isinstance(value, float):
-            for text in (
-                f"{value:.1f}", f"{value:.2f}", f"{round(value)}",
-                f"{value * 100:.0f}", f"{value * 100:.1f}",
-            ):
+            texts = [f"{value:.1f}", f"{value:.2f}", f"{round(value)}"]
+            if rate:
+                texts += [f"{value * 100:.0f}", f"{value * 100:.1f}"]
+            for text in texts:
                 numbers.add(text.rstrip("0").rstrip(".") if "." in text else text)
         else:
             numbers.add(str(value))
@@ -60,8 +64,15 @@ def allowed_numbers(result: dict) -> set[str]:
     def add_stats(stats: dict):
         for key in ("count", "users", "sessions", "turns"):
             add(stats.get(key))
-        for key in ("share", "failure_rate", "unresolved_rate", "error_rate", "top_user_share"):
-            add(stats.get(key))
+        for key in (
+            "share",
+            "failure_rate",
+            "unresolved_rate",
+            "error_rate",
+            "top_user_share",
+        ):
+            if stats.get(key) is not None:
+                add(float(stats[key]), rate=True)
         for key in ("sentiment", "cost"):
             if stats.get(key) is not None:
                 add(float(stats[key]))
@@ -69,15 +80,16 @@ def allowed_numbers(result: dict) -> set[str]:
             add(stats["latency_ms"])
             add(stats["latency_ms"] / 1000)
         for bound in stats.get("share_ci") or []:
-            add(float(bound))
+            add(float(bound), rate=True)
         for count in (stats.get("outcomes") or {}).values():
             add(count)
             if stats.get("count"):
-                add(count / stats["count"])
+                add(count / stats["count"], rate=True)
         for attribute in (stats.get("attributes") or {}).values():
-            for key in ("rate", "mean"):
-                if attribute.get(key) is not None:
-                    add(float(attribute[key]))
+            if attribute.get("rate") is not None:
+                add(float(attribute["rate"]), rate=True)
+            if attribute.get("mean") is not None:
+                add(float(attribute["mean"]))
             add(attribute.get("n"))
             for top in attribute.get("top") or []:
                 add(top.get("count"))
@@ -89,9 +101,10 @@ def allowed_numbers(result: dict) -> set[str]:
     for category in result["categories"]:
         add_stats(category["stats"])
         for note in category.get("notable", []):
-            add(note["value"])
-            add(note["rest"])
-            add(note["lift"])
+            is_rate = note.get("kind") == "rate"
+            add(float(note["value"]), rate=is_rate)
+            add(float(note["rest"]), rate=is_rate)
+            add(float(note["lift"]))
             if note["metric"] == "latency_ms":
                 add(note["value"] / 1000)
                 add(note["rest"] / 1000)
@@ -103,15 +116,22 @@ def without_citations(text: str) -> str:
     return re.sub(r"#\d+", "", text)
 
 
+# A number as a claim writes it: "2,300" is one number, not "2" and "300".
+_NUMBER = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
+
+
 def verified(text: str, numbers: set[str]) -> bool:
-    for found in re.findall(r"\d+(?:\.\d+)?", text):
+    for found in _NUMBER.findall(text):
+        found = found.replace(",", "")
         normal = found.rstrip("0").rstrip(".") if "." in found else found
         if normal not in numbers and found not in numbers:
             return False
     return True
 
 
-def pick_examples(units_by_category: dict[str, list[dict]], categories: list[dict]) -> list[dict]:
+def pick_examples(
+    units_by_category: dict[str, list[dict]], categories: list[dict]
+) -> list[dict]:
     """Up to two examples from each category, notable categories first."""
     ordered = sorted(
         (c for c in categories if c["level"] == 2 or not c.get("has_children")),
@@ -122,7 +142,7 @@ def pick_examples(units_by_category: dict[str, list[dict]], categories: list[dic
         members = [
             u for u in units_by_category.get(category["id"], []) if u.get("summary")
         ]
-        members.sort(key=lambda u: (u["facets"].get("sentiment") or 3))
+        members.sort(key=lambda u: u["facets"].get("sentiment") or 3)
         for unit in members[:EXAMPLES_PER_CATEGORY]:
             examples.append({"unit": unit, "category": category})
         if len(examples) >= 16:
@@ -146,8 +166,8 @@ def write_summary(
     for top in sorted(tops, key=lambda c: -c["stats"]["count"]):
         stats = top["stats"]
         line = (
-            f'[{top["id"]}] {top["name"]}: {stats["count"]} {noun} ({_pct(stats["share"])}), '
-            f'{stats["users"]} users. {top["description"]}'
+            f"[{top['id']}] {top['name']}: {stats['count']} {noun} ({_pct(stats['share'])}), "
+            f"{stats['users']} users. {top['description']}"
         )
         for note in top.get("notable", [])[:3]:
             line += f" Notable: {_notable_text(note)}."
@@ -158,15 +178,15 @@ def write_summary(
         ):
             sstats = sub["stats"]
             sline = (
-                f'    [{sub["id"]}] {sub["name"]}: {sstats["count"]} {noun} '
-                f'({_pct(sstats["share"])}), {sstats["users"]} users.'
+                f"    [{sub['id']}] {sub['name']}: {sstats['count']} {noun} "
+                f"({_pct(sstats['share'])}), {sstats['users']} users."
             )
             for note in sub.get("notable", [])[:2]:
                 sline += f" Notable: {_notable_text(note)}."
             lines.append(sline)
     examples = pick_examples(units_by_category, categories)
     example_lines = [
-        f'#{i} [{e["category"]["name"]}] {e["unit"]["summary"]}'
+        f"#{i} [{e['category']['name']}] {e['unit']['summary']}"
         for i, e in enumerate(examples, start=1)
     ]
     totals = result["totals"]
@@ -178,21 +198,27 @@ def write_summary(
         + "\n".join(lines)
         + "\n\nExamples:\n"
         + "\n".join(example_lines)
-        + "\n\nReturn {\"title\": \"the report question, phrased crisply\", "
-        f"\"findings\": [up to {MAX_POINTS} {{\"headline\": \"at most 140 characters, leads "
-        "with the number, names the mechanism\", \"detail\": \"one or two sentences on how it "
-        "happens, citing examples as #n\", \"action\": \"imperative fix, at most 120 "
-        "characters\", \"severity\": \"high|medium|low\", \"category_ids\": [\"...\"]}}], "
-        f"\"highlights\": [up to {MAX_HIGHLIGHTS} {{\"ref\": n, \"title\": \"at most 90 "
-        "characters, what happened\", \"reason\": \"why this example matters, one line\"}}]}}. "
+        + '\n\nReturn {"title": "the report question, phrased crisply", '
+        f'"findings": [up to {MAX_POINTS} {{"headline": "at most 140 characters, leads '
+        'with the number, names the mechanism", "detail": "one or two sentences on how it '
+        'happens, citing examples as #n", "action": "imperative fix, at most 120 '
+        'characters", "severity": "high|medium|low", "category_ids": ["..."]}}], '
+        f'"highlights": [up to {MAX_HIGHLIGHTS} {{"ref": n, "title": "at most 90 '
+        'characters, what happened", "reason": "why this example matters, one line"}}]}}. '
         "Lead with the biggest or most actionable finding. Be specific: name the task, tool, "
         "policy or behaviour, never 'some users had issues'."
     )
-    raw = chat_json(_SYSTEM, prompt, tier=THINKING, max_tokens=2200, temperature=0.3, spend=spend)
+    raw = chat_json(
+        _SYSTEM, prompt, tier=THINKING, max_tokens=2200, temperature=0.3, spend=spend
+    )
     numbers = allowed_numbers(result)
     ids = {c["id"] for c in categories}
     points, findings, dropped = [], [], 0
-    raw_points = (raw.get("findings") or raw.get("key_points") or []) if isinstance(raw, dict) else []
+    raw_points = (
+        (raw.get("findings") or raw.get("key_points") or [])
+        if isinstance(raw, dict)
+        else []
+    )
     for point in raw_points:
         if not isinstance(point, dict):
             continue
@@ -207,22 +233,31 @@ def write_summary(
         if not verified(without_citations(f"{text} {action}"), numbers):
             dropped += 1
             continue
-        refs = sorted({
-            int(r) for r in re.findall(r"#(\d+)", f"{text} {action}")
-            if 0 < int(r) <= len(examples)
-        })
-        ref_items = [{"ref": r, "unit_id": examples[r - 1]["unit"]["unit_id"]} for r in refs]
+        refs = sorted(
+            {
+                int(r)
+                for r in re.findall(r"#(\d+)", f"{text} {action}")
+                if 0 < int(r) <= len(examples)
+            }
+        )
+        ref_items = [
+            {"ref": r, "unit_id": examples[r - 1]["unit"]["unit_id"]} for r in refs
+        ]
         category_ids = [c for c in point.get("category_ids", []) if c in ids]
         points.append({"text": text, "category_ids": category_ids, "refs": ref_items})
-        findings.append({
-            "headline": re.sub(r"\s*\(?#\d+(?:,\s*#\d+)*\)?", "", headline).strip(),
-            "detail": detail,
-            "action": action,
-            "severity": point.get("severity") if point.get("severity") in ("high", "medium", "low") else "medium",
-            "category_ids": category_ids,
-            "refs": ref_items,
-            "evidence": [],
-        })
+        findings.append(
+            {
+                "headline": re.sub(r"\s*\(?#\d+(?:,\s*#\d+)*\)?", "", headline).strip(),
+                "detail": detail,
+                "action": action,
+                "severity": point.get("severity")
+                if point.get("severity") in ("high", "medium", "low")
+                else "medium",
+                "category_ids": category_ids,
+                "refs": ref_items,
+                "evidence": [],
+            }
+        )
         if len(points) >= MAX_POINTS:
             break
     highlights = []
@@ -234,25 +269,33 @@ def write_summary(
         if not 0 < ref <= len(examples):
             continue
         example = examples[ref - 1]
-        highlights.append({
-            "ref": ref,
-            "unit_id": example["unit"]["unit_id"],
-            "category_id": example["category"]["id"],
-            "category_name": example["category"]["name"],
-            "summary": example["unit"]["summary"],
-            "title": " ".join(str(entry.get("title", "")).split())[:120]
-            or example["unit"]["summary"][:90],
-            "reason": " ".join(str(entry.get("reason", "")).split())[:240],
-        })
+        highlights.append(
+            {
+                "ref": ref,
+                "unit_id": example["unit"]["unit_id"],
+                "category_id": example["category"]["id"],
+                "category_name": example["category"]["name"],
+                "summary": example["unit"]["summary"],
+                "title": " ".join(str(entry.get("title", "")).split())[:120]
+                or example["unit"]["summary"][:90],
+                "reason": " ".join(str(entry.get("reason", "")).split())[:240],
+            }
+        )
         if len(highlights) >= MAX_HIGHLIGHTS:
             break
     return {
-        "title": " ".join(str(raw.get("title", "")).split())[:200] if isinstance(raw, dict) else "",
+        "title": " ".join(str(raw.get("title", "")).split())[:200]
+        if isinstance(raw, dict)
+        else "",
         "key_points": points,
         "findings": findings,
         "highlights": highlights,
         "examples": [
-            {"ref": i, "unit_id": e["unit"]["unit_id"], "category_id": e["category"]["id"]}
+            {
+                "ref": i,
+                "unit_id": e["unit"]["unit_id"],
+                "category_id": e["category"]["id"],
+            }
             for i, e in enumerate(examples, start=1)
         ],
         "dropped_points": dropped,
