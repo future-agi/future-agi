@@ -20,6 +20,7 @@ import { useController, useWatch } from "react-hook-form";
 import axios, { endpoints } from "src/utils/axios";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { getNewTaskFilters } from "../schema";
+import SamplingPrecisionPlanner from "./SamplingPrecisionPlanner";
 
 import {
   defaultSamplingPolicy,
@@ -244,9 +245,15 @@ export default function SamplingPolicyEditor({ control, getValues }) {
   const policy = field.value;
   const policyErrors = samplingPolicyErrors(policy);
   const invalid = Object.keys(policyErrors).length > 0;
-  const update = (next) => {
+  const update = (next, keepCellQuotas = false) => {
     requestRef.current += 1;
     setBusy(false);
+    // Ordinary policy edits must not leave invisible planned targets overriding
+    // the visible rate/floor/census controls. Explicit Apply preserves them.
+    if (next && !keepCellQuotas) {
+      next = { ...next };
+      delete next.cell_quotas;
+    }
     field.onChange(next);
     setPreview(null);
     setError("");
@@ -482,7 +489,7 @@ export default function SamplingPolicyEditor({ control, getValues }) {
           </Stack>
           <Typography variant="caption" color="text.secondary">
             {policy.coordination === "project"
-              ? "Every coordinated policy in this project (and panel) gives each contact the same permanent random number: raising a rate or quota keeps every contact already selected, and tasks with equal rates select the same contacts. Disjoint start intervals give disjoint live samples."
+              ? "Coordinated policies in this project and panel share each contact’s random number. With the same start point, eligible population and cell assignments, raising a rate or quota keeps the smaller sample; equal quotas select the same contacts. Disjoint start intervals give disjoint live samples."
               : "This policy draws its own sample: editing a rate or quota re-draws every contact."}
           </Typography>
           <TextField
@@ -632,6 +639,16 @@ export default function SamplingPolicyEditor({ control, getValues }) {
             present. Inclusion probabilities are saved with results for weighted
             metrics.
           </Typography>
+          {policy.cell_quotas && (
+            <Alert severity="info">
+              {Object.keys(policy.cell_quotas).length} explicit cell quota(s)
+              override the rules below for those cells. Any policy-control edit
+              clears the planned quotas; preview to inspect them.
+              <Button onClick={() => update(policy)}>
+                Clear planned quotas
+              </Button>
+            </Alert>
+          )}
           <Button
             variant="outlined"
             onClick={runPreview}
@@ -693,6 +710,17 @@ export default function SamplingPolicyEditor({ control, getValues }) {
               <Typography variant="caption" color="text.secondary">
                 {preview.cost_note}
               </Typography>
+              {preview.strata.every(
+                (cell) =>
+                  Number.isSafeInteger(cell.eligible_units) &&
+                  Number.isSafeInteger(cell.selected_units),
+              ) && (
+                <SamplingPrecisionPlanner
+                  policy={policy}
+                  preview={preview}
+                  onApply={(next) => update(next, true)}
+                />
+              )}
             </Box>
           )}
         </>

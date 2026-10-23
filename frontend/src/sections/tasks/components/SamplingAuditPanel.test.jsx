@@ -124,7 +124,7 @@ describe("Sampling audit panel", () => {
     renderPanel();
     expect(
       await screen.findByText(
-        "Every stratum holds exactly its quota and the frozen population still reproduces.",
+        "Quota and population counts match in every stratum; identical membership is not verified.",
       ),
     ).toBeVisible();
     expect(axios.get).toHaveBeenCalledWith(
@@ -151,7 +151,7 @@ describe("Sampling audit panel", () => {
     expect(within(balance).getAllByText("87%")).toHaveLength(2);
     expect(within(balance).getByText("50%")).toBeVisible();
     expect(
-      screen.getByText(/Weighted shares restore the population mix/),
+      screen.getByText(/No weighted imbalance above the threshold/),
     ).toBeVisible();
     // Advisory only: no control in the panel edits the policy or cohort.
     expect(screen.queryByRole("button")).not.toBeInTheDocument();

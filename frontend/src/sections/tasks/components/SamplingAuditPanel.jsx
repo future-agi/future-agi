@@ -57,6 +57,8 @@ Stat.propTypes = {
 };
 
 function StratumCheck({ row, mode }) {
+  if (row.population_check === "changed")
+    return <Chip size="small" color="warning" label="Population changed" />;
   if (mode === "live") {
     return row.srm_flagged ? (
       <Chip
@@ -72,8 +74,6 @@ function StratumCheck({ row, mode }) {
       />
     );
   }
-  if (row.population_check === "changed")
-    return <Chip size="small" color="warning" label="Population changed" />;
   return row.exact ? (
     <Chip size="small" variant="outlined" label="Exact" />
   ) : (
@@ -140,8 +140,8 @@ export default function SamplingAuditPanel({ taskId }) {
       <Alert severity={summary.integrity === "ok" ? "success" : "warning"}>
         {summary.integrity === "ok"
           ? audit.mode === "live"
-            ? "Realized selections match the configured rates in every stratum."
-            : "Every stratum holds exactly its quota and the frozen population still reproduces."
+            ? "No sample-ratio mismatch detected at the configured threshold."
+            : "Quota and population counts match in every stratum; identical membership is not verified."
           : `${summary.flagged_strata} stratum(s) need attention (see Check).`}
       </Alert>
       <Stack direction="row" spacing={3} flexWrap="wrap" useFlexGap>
@@ -153,7 +153,7 @@ export default function SamplingAuditPanel({ taskId }) {
         <Stat
           label="Kish effective n"
           value={number(summary.kish_effective_n, 1)}
-          hint="Sample size an equal-weight sample would need for the same precision"
+          hint="Unequal-weight diagnostic, not outcome-specific precision"
         />
         <Stat label="Design effect" value={number(summary.design_effect, 3)} />
         <Stat label="Weight CV" value={number(summary.weight_cv, 3)} />
@@ -216,8 +216,10 @@ export default function SamplingAuditPanel({ taskId }) {
             , p = {item.p_value == null ? "—" : item.p_value.toPrecision(3)}{" "}
             (sampled versus population shares).{" "}
             {item.weighted_imbalance
-              ? "Weighted shares do not restore the population mix."
-              : "Weighted shares restore the population mix."}
+              ? "Weighted shares exceed the imbalance threshold."
+              : item.categories.some((row) => row.weighted_share != null)
+                ? "No weighted imbalance above the threshold."
+                : "Weighted balance is not estimable without sampled units."}
           </Typography>
           <Box sx={{ overflowX: "auto" }}>
             <Table size="small" aria-label={`Balance on ${item.attribute}`}>

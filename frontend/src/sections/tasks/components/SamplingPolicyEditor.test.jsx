@@ -481,3 +481,64 @@ describe("Sampling policy editor", () => {
     expect(restored).toEqual(policy);
   });
 });
+
+describe("planned cell quotas in the real editor", () => {
+  it("applies explicitly, invalidates the preview and clears overrides on a rule edit", async () => {
+    const identity = '["default",[]]';
+    axios.post.mockResolvedValue({
+      data: {
+        result: {
+          strata: [
+            {
+              stratum: identity,
+              eligible_units: 100,
+              selected_units: 10,
+              expected_units: 10,
+              selected_rows: 20,
+            },
+          ],
+          expected_evaluations: null,
+        },
+      },
+    });
+    render(<Harness policy={defaultSamplingPolicy()} />);
+    const preview = () =>
+      screen.getByRole("button", { name: "Preview sampling policy" });
+    await userEvent.click(preview());
+    await userEvent.click(
+      await screen.findByText("Precision planner · advisory"),
+    );
+    const budget = screen.getByLabelText("Total unit budget");
+    await userEvent.clear(budget);
+    await userEvent.type(budget, "25");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Suggest quotas" }),
+    );
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Apply suggested quotas" }),
+    );
+    expect(
+      screen.queryByText("Precision planner · advisory"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "1 explicit cell quota",
+    );
+    await userEvent.click(preview());
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
+    expect(axios.post.mock.calls[1][1].sampling_policy.cell_quotas).toEqual({
+      [identity]: 25,
+    });
+    const rate = screen.getByRole("spinbutton", { name: "Rate (%)" });
+    await userEvent.clear(rate);
+    await userEvent.type(rate, "30");
+    expect(
+      screen.queryByText("Precision planner · advisory"),
+    ).not.toBeInTheDocument();
+    await userEvent.click(preview());
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(3));
+    expect(axios.post.mock.calls[2][1].sampling_policy).not.toHaveProperty(
+      "cell_quotas",
+    );
+  });
+});
