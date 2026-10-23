@@ -21,6 +21,7 @@ import SurfaceIcon from "../components/SurfaceIcon";
 import LivePill from "./LivePill";
 import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
+import { compositionSummary } from "./composition/composition.helpers";
 // EnvVersionPin renders a mock "env v3" version from a fixture fallback
 // (_fixtures/versions.js) — there is no real version field in the environments
 // contract yet. Hidden in the header until the contract exposes one.
@@ -120,7 +121,7 @@ export default function WorkspaceHeader({
               <EnvVersionPin env={env} envState={envState} patch={patch} readOnly={locked} /> */}
         </Stack>
         <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
-          {env.tagline}
+          {env.composition ? compositionSummary(env.composition) : env.tagline}
         </Typography>
       </Box>
 
@@ -134,6 +135,7 @@ export default function WorkspaceHeader({
               trials={headerTrials}
               onChange={setHeaderTrials}
               scenarioCount={scenarioCount}
+              composition={env.composition}
             />
           )}
           <CustomTooltip show={!canRun} title={runBlockedReason} size="small" arrow>
@@ -216,6 +218,7 @@ WorkspaceHeader.propTypes = {
     name: PropTypes.string,
     tagline: PropTypes.string,
     surface: PropTypes.string,
+    composition: PropTypes.object,
     status: PropTypes.string,
     buildStatus: PropTypes.string,
     platform: PropTypes.shape({

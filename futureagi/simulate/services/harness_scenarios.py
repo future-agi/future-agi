@@ -386,9 +386,16 @@ def _orm_path(field: str) -> str:
 
 
 def index_scenarios(
-    job: HostedHarnessJob, docs: list[dict[str, Any]], prune: bool = False
+    job: HostedHarnessJob,
+    docs: list[dict[str, Any]],
+    prune: bool = False,
+    *,
+    exact_keys: bool = False,
 ) -> int:
-    """Persist the authored suite so it can be queried, and return how many rows it holds."""
+    """Persist the authored suite so it can be queried, and return how many rows it holds.
+
+    `exact_keys` matches rows by scenario key only: a sealed release suite's keys are its
+    identity, so a new scenario that reuses a removed one's name is still a new row."""
     if not docs:
         return 0
     from simulate.services.hosted_harness_gateway import _scenario_token
@@ -409,14 +416,17 @@ def index_scenarios(
     written = 0
     seen: set[str] = set()
     for position, doc in enumerate(docs, start=1):
-        held = next(
-            (
-                by_token[token]
-                for value in (doc.get("scenario_key"), doc.get("name"))
-                if (token := _scenario_token(value)) in by_token
-            ),
-            None,
-        )
+        if exact_keys:
+            held = existing.get(str(doc.get("scenario_key") or ""))
+        else:
+            held = next(
+                (
+                    by_token[token]
+                    for value in (doc.get("scenario_key"), doc.get("name"))
+                    if (token := _scenario_token(value)) in by_token
+                ),
+                None,
+            )
         key = (
             held.scenario_key
             if held is not None

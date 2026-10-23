@@ -16,6 +16,7 @@ export const WORKSPACE_TABS = [
     icon: "solar:document-text-linear",
     hint: "What this environment is made of: the world runs execute against, the code behind every tool call and grader, and how each run ends.",
   },
+  { id: "composition", label: "Alignment", icon: "solar:routing-2-linear" },
   {
     id: "scenarios",
     label: "Scenarios",

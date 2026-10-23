@@ -5,6 +5,7 @@ import { Box, Stack, Typography, Button, Popover, TextField } from "@mui/materia
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
+import { CompositionLabels } from "../composition/CompositionPanel";
 
 // Trial presets — 1 is the single-shot; 3/5/8 are the common repeat counts;
 // Custom covers anything else in 1–20. Same set as the header TrialsPicker so
@@ -36,7 +37,7 @@ const RED = BUILD_TONES.red;
  * disabled, with the reason on hover, rather than leaving it out.
  */
 export default function SelectionBar({
-  count, trials, onTrialsChange, onRun, runBlockedReason, onDelete, onClear, matching,
+  count, trials, onTrialsChange, onRun, runBlockedReason, onDelete, onClear, matching, composition = null,
 }) {
   const [trialsAnchor, setTrialsAnchor] = useState(null);
   const [customOpen, setCustomOpen] = useState(false);
@@ -168,28 +169,30 @@ export default function SelectionBar({
 
       {/* The actions move as one: on a narrow bar they wrap together, right-aligned. */}
       <Stack direction="row" alignItems="center" spacing={1.25} sx={{ ml: "auto", flexShrink: 0 }}>
-        {/* DESTRUCTIVE — Delete */}
-        <CustomTooltip show arrow size="small" title="Delete selected scenarios">
-          <Button
-            size="small"
-            onClick={onDelete}
-            variant="outlined"
-            startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={13} />}
-            sx={{
-              typography: "s2", fontWeight: 600, fontSize: 12.5,
-              color: RED,
-              borderColor: alpha(RED, 0.4),
-              px: 1.5, height: 32, minWidth: 0, flexShrink: 0,
-              whiteSpace: "nowrap",
-              "&:hover": {
-                borderColor: RED,
-                bgcolor: (t) => alpha(RED, t.palette.mode === "dark" ? 0.1 : 0.05),
-              },
-            }}
-          >
-            Delete
-          </Button>
-        </CustomTooltip>
+        {/* DESTRUCTIVE — Delete; absent where scenarios change only through the chat */}
+        {onDelete && (
+          <CustomTooltip show arrow size="small" title="Delete selected scenarios">
+            <Button
+              size="small"
+              onClick={onDelete}
+              variant="outlined"
+              startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={13} />}
+              sx={{
+                typography: "s2", fontWeight: 600, fontSize: 12.5,
+                color: RED,
+                borderColor: alpha(RED, 0.4),
+                px: 1.5, height: 32, minWidth: 0, flexShrink: 0,
+                whiteSpace: "nowrap",
+                "&:hover": {
+                  borderColor: RED,
+                  bgcolor: (t) => alpha(RED, t.palette.mode === "dark" ? 0.1 : 0.05),
+                },
+              }}
+            >
+              Delete
+            </Button>
+          </CustomTooltip>
+        )}
 
         {/* TRIALS — reliability dial */}
         {onTrialsChange && (
@@ -257,6 +260,11 @@ export default function SelectionBar({
           <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 11.5, mt: 0.25 }}>
             {count} {count === 1 ? "scenario" : "scenarios"} × {k} {k === 1 ? "repeat" : "repeats"} = {totalRuns} runs
           </Typography>
+          {composition && (
+            <Box sx={{ mt: 1 }}>
+              <CompositionLabels composition={composition} dense />
+            </Box>
+          )}
         </Box>
         {TRIAL_PRESETS.map((v) => {
           const active = v === k;
@@ -378,7 +386,7 @@ SelectionBar.propTypes = {
   onRun: PropTypes.func,
   // Why Run is unavailable; shows the button disabled with this on hover.
   runBlockedReason: PropTypes.string,
-  onDelete: PropTypes.func.isRequired,
+  onDelete: PropTypes.func,
   onClear: PropTypes.func.isRequired,
   // Select-all-matching context from the pagination predicate. Absent → a plain
   // page selection with no escalation. { mode, total, pageCount, onSelectAll }.
@@ -388,4 +396,6 @@ SelectionBar.propTypes = {
     pageCount: PropTypes.number,
     onSelectAll: PropTypes.func,
   }),
+  // The composition every run is pinned to, shown beside the repeats.
+  composition: PropTypes.object,
 };
