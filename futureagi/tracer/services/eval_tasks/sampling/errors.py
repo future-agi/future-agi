@@ -34,6 +34,10 @@ class SamplingValueTooLarge(EvalTaskSelectionRejected):
     """A unit identity or group-by value exceeds its documented byte bound."""
 
 
+class SamplingStatementTooLarge(EvalTaskSelectionRejected):
+    """The compiled sampling statement exceeds its compiler budget."""
+
+
 class SamplingReadCeilingExceeded(EvalTaskSelectionRejected):
     """A sampling read would exceed its configured row/byte ceiling."""
 
@@ -54,23 +58,34 @@ class SamplingLeaseLost(EvalTaskReadBudgetExceeded):
     """This reconcile's lease or task revision changed; nothing more is written."""
 
 
+# The server message starts with the thrown marker, then echoes the failing
+# expression, which can quote the *other* bound checks' markers too. Only the
+# leftmost marker is the one that was actually thrown.
+_MARKER = re.compile(
+    re.escape(OVERSIZED_UNIT_MARKER)
+    + "|"
+    + re.escape(OVERSIZED_GROUP_MARKER)
+    + r"(\d+)"
+)
+
+
 def oversized_message(policy: dict | None, text: str) -> str | None:
     """Name the bound a query rejected, using only the policy's own keys."""
 
-    if OVERSIZED_UNIT_MARKER in text:
+    match = _MARKER.search(text)
+    if match is None:
+        return None
+    if match.group(1) is None:
         unit = (policy or {}).get("sampling_unit", "sampling")
         detail = ""
         if unit == "attribute":
             key = ((policy or {}).get("unit_attribute") or {}).get("key", "")
             detail = f" (contact attribute {key!r})"
         return (
-            f"A {unit} sampling unit ID{detail} exceeds {MAX_UNIT_ID_BYTES} bytes "
-            "in this window. Exclude those rows with a task filter or choose "
-            "another sampling unit."
+            f"One {unit} sampling unit ID{detail} exceeds {MAX_UNIT_ID_BYTES} "
+            "bytes in this window. Exclude those rows with a task filter or "
+            "choose another sampling unit."
         )
-    match = re.search(re.escape(OVERSIZED_GROUP_MARKER) + r"(\d+)", text)
-    if match is None:
-        return None
     index = int(match.group(1))
     groups = (policy or {}).get("group_by") or []
     key = groups[index]["key"] if index < len(groups) else f"#{index + 1}"

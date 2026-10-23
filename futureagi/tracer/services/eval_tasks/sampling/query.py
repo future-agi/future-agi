@@ -639,11 +639,17 @@ def stream_query(
         application_read_context,
     )
     from tracer.services.clickhouse.v2.query_service import get_v2_query_client
-    from tracer.services.eval_tasks.sampling.errors import classify_read_error
+    from tracer.services.eval_tasks.sampling.errors import (
+        SamplingStatementTooLarge,
+        classify_read_error,
+    )
 
     if len(sql.encode("utf-8")) > READ_SETTINGS["max_query_size"]:
-        raise ValueError(
-            "Sampling query exceeds its compiler budget. Reduce the number of slices."
+        # Deterministic for this policy: a request/policy error, never retried
+        # and never reported as an outage.
+        raise SamplingStatementTooLarge(
+            "Sampling query exceeds its compiler budget. Reduce the number of "
+            "slices, predicates or group-by attributes."
         )
     policy = policy if policy is not None else getattr(params, "policy", None)
     proof = proof or bool(getattr(params, "proof", False))

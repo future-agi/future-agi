@@ -687,6 +687,29 @@ def test_read_errors_are_typed_without_leaking_values():
     assert isinstance(unit, SamplingValueTooLarge) and "'contact_id'" in str(unit)
     assert isinstance(group, SamplingValueTooLarge) and "'category'" in str(group)
     assert "secret-value" not in str(unit) + str(group)
+    # The server echoes the whole failing AND expression after the thrown
+    # marker (shape captured from ClickHouse 25.3), so the other bound checks'
+    # markers appear later in the text. Only the leftmost one was thrown.
+    echoed = (
+        "EVAL_SAMPLING_OVERSIZED_GROUP_0: while executing 'FUNCTION and("
+        "equals(throwIf(greater(length(__table1.unit_id), 2048_UInt16), "
+        "'EVAL_SAMPLING_OVERSIZED_UNIT'_String), 0_UInt8) :: 5, "
+        "equals(throwIf(greater(length(arrayElement(__table1.groups, 1_UInt8)), "
+        "1024_UInt16), 'EVAL_SAMPLING_OVERSIZED_GROUP_0'_String), 0_UInt8) :: 3)"
+    )
+    thrown_group = classify_read_error(server(395, echoed), policy=clean)
+    assert isinstance(thrown_group, SamplingValueTooLarge)
+    assert "'locale'" in str(thrown_group) and "contact_id" not in str(thrown_group)
+    thrown_unit = classify_read_error(
+        server(
+            395,
+            "EVAL_SAMPLING_OVERSIZED_UNIT: while executing 'FUNCTION throwIf("
+            "greater(length(__table1.unit_id), 2048_UInt16) :: 0, "
+            "'EVAL_SAMPLING_OVERSIZED_UNIT'_String :: 1)'",
+        ),
+        policy=clean,
+    )
+    assert "'contact_id'" in str(thrown_unit) and "locale" not in str(thrown_unit)
     ceiling = classify_read_error(server(158, "Limit for rows"), policy=clean)
     proof = classify_read_error(
         server(307, "Limit for bytes"), policy=clean, proof=True
@@ -738,6 +761,23 @@ def test_stream_query_types_errors_and_only_tightens_budgets():
         with pytest.raises(ValueError, match="only tighten"):
             list(stream_query("SELECT 1", {}, settings={"max_rows_to_read": 10**12}))
     assert seen == [{**READ_SETTINGS, "max_rows_to_read": 10}]
+
+
+def test_oversized_statement_is_a_typed_rejection_before_any_read():
+    from tracer.selectors.eval_tasks.row_resolver import EvalTaskSelectionRejected
+    from tracer.services.eval_tasks.sampling.errors import SamplingStatementTooLarge
+    from tracer.services.eval_tasks.sampling.query import stream_query
+
+    oversized = "SELECT 1" + " " * READ_SETTINGS["max_query_size"]
+    with patch(
+        "tracer.services.clickhouse.v2.query_service.get_v2_query_client"
+    ) as client:
+        with pytest.raises(SamplingStatementTooLarge, match="compiler budget") as err:
+            list(stream_query(oversized, {}))
+    # Deterministic for the policy: fail fast as a client error, never retried
+    # as read pressure, and no statement is sent.
+    assert isinstance(err.value, EvalTaskSelectionRejected)
+    client.assert_not_called()
 
 
 @pytest.mark.parametrize(
