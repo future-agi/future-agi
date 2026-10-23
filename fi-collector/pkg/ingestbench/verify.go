@@ -368,6 +368,8 @@ type verifier struct {
 	path     string
 	v        *Verification
 	lastSave time.Time
+	// saveCost is how long the last checkpoint write took.
+	saveCost time.Duration
 }
 
 // checkpointEvery bounds how often progress is saved between chunks (the
@@ -375,8 +377,14 @@ type verifier struct {
 // so only a killed process can lose up to this much progress.
 const checkpointEvery = 10 * time.Second
 
+// checkpointOverhead caps the share of verification time spent writing
+// checkpoints: a day-long run whose outcomes alternate under backpressure has a
+// ledger of millions of runs, so saves are spaced at least this many times their
+// own duration apart.
+const checkpointOverhead = 20
+
 func (vf *verifier) saveProgress() error {
-	if time.Since(vf.lastSave) < checkpointEvery {
+	if time.Since(vf.lastSave) < max(checkpointEvery, checkpointOverhead*vf.saveCost) {
 		return nil
 	}
 	return vf.save()
@@ -525,6 +533,7 @@ func (vf *verifier) save() error {
 	if vf.path == "" {
 		return nil
 	}
+	began := time.Now()
 	b, err := json.Marshal(vf.cp)
 	if err != nil {
 		return fmt.Errorf("encode verification checkpoint: %w", err)
@@ -553,6 +562,7 @@ func (vf *verifier) save() error {
 		return err
 	}
 	vf.lastSave = time.Now()
+	vf.saveCost = vf.lastSave.Sub(began)
 	return nil
 }
 

@@ -436,8 +436,11 @@ own client) and checks EVERY attempted span by BOTH deterministic IDs:
   enforced by a client deadline 10s later), ``--verify-max-memory`` (default 1 GiB
   per query) and ``--verify-query-retries`` (default 2, exponential backoff).
 * **Resume.** ``--verify-checkpoint new-path`` saves the plan, the outcome ledger and
-  the progress after each chunk (atomic rename, mode 0600, no credentials). If the
-  budget runs out or a query keeps failing, continue in a new process::
+  the progress (atomic rename, mode 0600, no credentials) at most every 10 seconds
+  and at least twenty times the last save's own duration apart, so a large ledger
+  cannot dominate the budget; failures and completion always save, so only a
+  killed process loses the progress since the last save. If the budget runs out or
+  a query keeps failing, continue in a new process::
 
       go run ./cmd/otlpbench verify --checkpoint /path/to/checkpoint.json \
         --out /path/to/new/verification.json --ch-headers-env BENCH_CH_HEADERS \

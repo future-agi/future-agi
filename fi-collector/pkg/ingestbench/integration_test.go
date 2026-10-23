@@ -621,6 +621,35 @@ func TestVerificationResumesFromCheckpoint(t *testing.T) {
 	}
 }
 
+// B4: checkpoint writes are spaced by at least twenty times their own cost, so
+// a huge ledger (outcomes alternating under backpressure for a day) cannot make
+// the verification spend most of its budget rewriting the checkpoint.
+func TestCheckpointSavesAreSpacedByTheirCost(t *testing.T) {
+	c := testConfig()
+	path := filepath.Join(t.TempDir(), "verify.checkpoint.json")
+	vf := &verifier{cfg: c, cp: newCheckpoint(c, 0, newOutcomeLedger(int64(c.BatchSize)), newTimeline(time.Now())), path: path}
+	vf.lastSave, vf.saveCost = time.Now().Add(-15*time.Second), time.Second
+	if err := vf.saveProgress(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("saved 15s after a save that took 1s: %v", err)
+	}
+	vf.lastSave = time.Now().Add(-21 * time.Second)
+	if err := vf.saveProgress(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil || vf.saveCost <= 0 {
+		t.Fatalf("not saved 21s after a 1s save, or its cost not measured: %v %s", err, vf.saveCost)
+	}
+	// A cheap checkpoint is still saved every checkpointEvery.
+	vf.lastSave, vf.saveCost = time.Now().Add(-checkpointEvery-time.Second), time.Millisecond
+	before := vf.lastSave
+	if err := vf.saveProgress(); err != nil || !vf.lastSave.After(before) {
+		t.Fatalf("cheap checkpoint not saved after %s: %v", checkpointEvery, err)
+	}
+}
+
 func cannedVerifier(t *testing.T, handler http.HandlerFunc, attempted int64, preexisting uint64) Verification {
 	t.Helper()
 	srv := httptest.NewServer(handler)
