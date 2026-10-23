@@ -56921,6 +56921,8 @@ export const tracerInsightsRunsCreateBodyPopulationItemUserIdMax = 255;
 export const tracerInsightsRunsCreateBodySampleSizeMin = 10;
 export const tracerInsightsRunsCreateBodySampleSizeMax = 1000;
 
+export const tracerInsightsRunsCreateBodyResetTaxonomyDefault = false;
+
 export const TracerInsightsRunsCreateBody = zod.object({
   project_id: zod.string().uuid(),
   config_id: zod.string().uuid().optional(),
@@ -57019,6 +57021,9 @@ export const TracerInsightsRunsCreateBody = zod.object({
     .min(tracerInsightsRunsCreateBodySampleSizeMin)
     .max(tracerInsightsRunsCreateBodySampleSizeMax)
     .optional(),
+  reset_taxonomy: zod
+    .boolean()
+    .default(tracerInsightsRunsCreateBodyResetTaxonomyDefault),
 });
 
 export const tracerInsightsRunsCreateResponseStatusDefault = true;
@@ -57134,6 +57139,7 @@ export const tracerInsightsRunsUnitsListQueryUnitIdsMax = 4000;
 
 export const tracerInsightsRunsUnitsListQueryOffsetDefault = 0;
 export const tracerInsightsRunsUnitsListQueryOffsetMin = 0;
+export const tracerInsightsRunsUnitsListQueryOffsetMax = 20000;
 
 export const tracerInsightsRunsUnitsListQueryLimitDefault = 50;
 export const tracerInsightsRunsUnitsListQueryLimitMax = 200;
@@ -57156,6 +57162,7 @@ export const TracerInsightsRunsUnitsListQueryParams = zod.object({
   offset: zod
     .number()
     .min(tracerInsightsRunsUnitsListQueryOffsetMin)
+    .max(tracerInsightsRunsUnitsListQueryOffsetMax)
     .default(tracerInsightsRunsUnitsListQueryOffsetDefault),
   limit: zod
     .number()
@@ -57684,6 +57691,7 @@ export const tracerInstantEvalStartCreateBodySearchMax = 200;
 export const tracerInstantEvalStartCreateBodyConfigIdsMax = 5;
 
 export const tracerInstantEvalStartCreateBodyConfirmDefault = false;
+export const tracerInstantEvalStartCreateBodyConfirmedRowsMin = 0;
 
 export const TracerInstantEvalStartCreateBody = zod.object({
   project_id: zod.string().uuid(),
@@ -57767,6 +57775,10 @@ export const TracerInstantEvalStartCreateBody = zod.object({
   confirm: zod
     .boolean()
     .default(tracerInstantEvalStartCreateBodyConfirmDefault),
+  confirmed_rows: zod
+    .number()
+    .min(tracerInstantEvalStartCreateBodyConfirmedRowsMin)
+    .optional(),
 });
 
 export const tracerInstantEvalStartCreateResponseStatusDefault = true;

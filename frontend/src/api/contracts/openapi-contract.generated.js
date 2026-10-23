@@ -35559,6 +35559,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "integer",
               minimum: 0,
+              maximum: 20000,
               default: 0,
             },
           },
@@ -66692,6 +66693,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maximum: 1000,
           minimum: 10,
         },
+        reset_taxonomy: {
+          title: "Reset taxonomy",
+          type: "boolean",
+          default: false,
+        },
       },
     },
     InsightRunCreatedResponse: {
@@ -67217,6 +67223,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Confirm",
           type: "boolean",
           default: false,
+        },
+        confirmed_rows: {
+          title: "Confirmed rows",
+          type: "integer",
+          minimum: 0,
         },
       },
     },

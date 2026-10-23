@@ -26925,6 +26925,7 @@ export interface InsightRunCreateApi {
    * @maximum 1000
    */
   sample_size?: number;
+  reset_taxonomy?: boolean;
 }
 
 export interface InsightRunCreatedResultApi {
@@ -27453,6 +27454,8 @@ export interface InstantEvalStartRequestApi {
    */
   config_ids: string[];
   confirm?: boolean;
+  /** @minimum 0 */
+  confirmed_rows?: number;
 }
 
 export interface InstantEvalStartApi {
@@ -37508,6 +37511,7 @@ export type TracerInsightsRunsUnitsListParams = {
   unit_ids?: string;
   /**
    * @minimum 0
+   * @maximum 20000
    */
   offset?: number;
   /**
@@ -37553,7 +37557,7 @@ export type TracerInstantEvalExportListParams = {
    */
   time_to?: string;
   /**
-   * @maxItems 50
+   * @maxItems 400
    */
   group?: string[];
   /**
@@ -37640,7 +37644,7 @@ export type TracerInstantEvalRowsListParams = {
    */
   time_to?: string;
   /**
-   * @maxItems 50
+   * @maxItems 400
    */
   group?: string[];
   /**
