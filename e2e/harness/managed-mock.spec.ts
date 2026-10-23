@@ -8,6 +8,9 @@ import { validateStandaloneAppEnvironment } from '../lib/managed-mock-standalone
 import { test as isolatedTest } from '../lib/mock-model-fixtures';
 import type { TestActor } from '../lib/provisioning';
 import type { StateProbe } from '../lib/state-probe';
+import { PUBLIC_NETWORK } from '../lib/public-network';
+import { PROFILE_FILES, altConfig, validateAltProfile } from '../lib/profile';
+import { createHash } from 'node:crypto';
 
 const source = readFileSync(new URL('../stack/gateway.e2e.yaml', import.meta.url), 'utf8');
 
@@ -350,7 +353,7 @@ const fakeDockerScript = `#!/bin/sh
 if [ -n "$FAKE_DOCKER_FAIL" ]; then echo "$FAKE_DOCKER_FAIL $*" >&2; exit 1; fi
 case " $* " in
   *" context inspect "*) cat "$FAKE_DOCKER/context.json" ;;
-  *" network inspect "*) cat "$FAKE_DOCKER/network.json" ;;
+  *" network inspect "*) for last; do :; done; cat "$FAKE_DOCKER/network-$last.json" ;;
   *" compose "*" config "*) cat "$FAKE_DOCKER/config.json" ;;
   *" compose "*" ps "*) cat "$FAKE_DOCKER/ps.txt" ;;
   *" inspect "*) cat "$FAKE_DOCKER/containers.json" ;;
@@ -364,10 +367,15 @@ type FakeContainer = { service: string; ports?: Record<string, string>; cmd?: st
 function fakeStack(stack: 'standalone' | 'distributed') {
   const project = stack === 'standalone' ? 'futureagi-e2e-standalone' : 'futureagi-e2e';
   const network = `${project}_default`;
+  const publicNetwork = `${project}_${PUBLIC_NETWORK.key}`;
+  const members: readonly string[] = PUBLIC_NETWORK.members[stack];
+  const pinned = PUBLIC_NETWORK.pinned as Record<string, { ip: string; alias: string }>;
   const port = (url: string) => new URL(url).port;
   const gatewayConfig = repoFile('stack/gateway.e2e.yaml');
   const mock: FakeContainer = { service: 'mock-llm', cmd: ['node', '/srv/server.mjs'], entrypoint: ['docker-entrypoint.sh'],
-    mounts: [[repoFile('stack/mock-llm/server.mjs'), '/srv/server.mjs']] };
+    ports: { '8080/tcp': port(E2E.mockLlmUrl) }, mounts: [[repoFile('stack/mock-llm/server.mjs'), '/srv/server.mjs']] };
+  const sink: FakeContainer = { service: 'webhook-sink', cmd: ['node', '/srv/server.mjs'], entrypoint: ['docker-entrypoint.sh'],
+    ports: { '8080/tcp': port(E2E.webhookSinkUrl) }, mounts: [[repoFile('stack/webhook-sink/server.mjs'), '/srv/server.mjs']] };
   const mockSlack: FakeContainer = { service: 'mock-slack', cmd: ['node', '/srv/server.mjs'], entrypoint: ['docker-entrypoint.sh'],
     ports: { '8080/tcp': port(E2E.slackMockUrl) },
     mounts: [[repoFile('stack/mock-slack/server.mjs'), '/srv/server.mjs']] };
@@ -377,27 +385,37 @@ function fakeStack(stack: 'standalone' | 'distributed') {
     ports: { '3000/tcp': port(E2E.appUrl), '8000/tcp': port(E2E.apiUrl), '8080/tcp': port(E2E.gatewayUrl) },
     extraHosts: ['code-executor:127.0.0.1', 'agentcc-gateway:127.0.0.1'],
     mounts: [[gatewayConfig, '/etc/futureagi/secrets/agentcc.yaml'], ['/dev/null', '/etc/futureagi/secrets/vertex.json']],
-  }, mock, ...stores] : [{ service: 'agentcc-gateway', cmd: ['--config', '/app/config.yaml'],
+  }, mock, sink, ...stores] : [{ service: 'agentcc-gateway', cmd: ['--config', '/app/config.yaml'],
     entrypoint: ['/app/agentcc-gateway'], ports: { '8080/tcp': port(E2E.gatewayUrl) },
-    mounts: [[gatewayConfig, '/app/config.yaml']] }, mock, mockSlack,
+    mounts: [[gatewayConfig, '/app/config.yaml']] }, mock, mockSlack, sink,
   { service: 'backend', ports: { '80/tcp': port(E2E.apiUrl) }, env: { OPENAI_API_KEY: 'e2e-mock' } },
   { service: 'worker' }, { service: 'frontend', ports: { '80/tcp': port(E2E.appUrl) } }, ...stores];
   const containers = services.map((c, i) => ({
-    Id: String(i + 1).repeat(64), Image: `sha256:${String(i + 1).repeat(64)}`,
+    Id: (i + 1).toString(16).repeat(64), Image: `sha256:${(i + 1).toString(16).repeat(64)}`,
     State: { Running: true, StartedAt: '2999-01-01T00:00:00Z' },
     Config: { Labels: { 'com.docker.compose.service': c.service, 'com.docker.compose.project': project },
       Env: Object.entries(c.env ?? {}).map(([key, value]) => `${key}=${value}`), Cmd: c.cmd ?? [], Entrypoint: c.entrypoint ?? [] },
     HostConfig: { ExtraHosts: c.extraHosts ?? null },
     Mounts: (c.mounts ?? []).map(([Source, Destination]) => ({ Type: 'bind', Source, Destination, RW: false })),
-    NetworkSettings: { Networks: { [network]: { NetworkID: 'e2e-network', Aliases: [c.service], IPAddress: '172.18.0.2' } },
+    NetworkSettings: { Networks: { [network]: { NetworkID: 'e2e-network', Aliases: [c.service], IPAddress: '172.18.0.2' },
+      ...(members.includes(c.service) ? { [publicNetwork]: { NetworkID: 'e2e-public-network',
+        Aliases: [c.service, ...(pinned[c.service] ? [pinned[c.service].alias] : [])],
+        IPAddress: pinned[c.service]?.ip ?? `11.88.0.${20 + i}` } } : {}) },
       Ports: Object.fromEntries(Object.entries(c.ports ?? {}).map(([p, host]) => [p, [{ HostIp: '127.0.0.1', HostPort: host }]])) },
   }));
   return {
     'context.json': [{ Endpoints: { docker: { Host: 'unix:///var/run/docker.sock' } } }],
-    'config.json': { name: project, networks: { default: { name: network } }, services: {} },
+    'config.json': { name: project, networks: { default: { name: network }, [PUBLIC_NETWORK.key]: { name: publicNetwork } },
+      services: {} },
     'ps.txt': containers.map(c => c.Id).join('\n'),
     'containers.json': containers,
-    'network.json': [{ Driver: 'bridge', Labels: { 'com.docker.compose.project': project, 'com.docker.compose.network': 'default' } }],
+    'network-e2e-network.json': [{ Driver: 'bridge', Labels: { 'com.docker.compose.project': project, 'com.docker.compose.network': 'default' } }],
+    'network-e2e-public-network.json': [{ Driver: 'bridge', Internal: true,
+      IPAM: { Driver: 'default', Config: [{ Subnet: PUBLIC_NETWORK.subnet, Gateway: '11.88.0.1' }] },
+      Labels: { 'com.docker.compose.project': project, 'com.docker.compose.network': PUBLIC_NETWORK.key },
+      Containers: Object.fromEntries(containers.filter(c => members.includes(c.Config.Labels['com.docker.compose.service']))
+        .map(c => [c.Id, { Name: c.Config.Labels['com.docker.compose.service'],
+          IPv4Address: `${c.NetworkSettings.Networks[publicNetwork].IPAddress}/24` }])) }],
   } as Record<string, any>;
 }
 
@@ -406,11 +424,12 @@ function withFakeDocker<T>(dir: string, stack: 'standalone' | 'distributed', fil
   mkdirSync(dir, { recursive: true });
   writeFileSync(`${dir}/docker`, fakeDockerScript, { mode: 0o755 });
   for (const [name, body] of Object.entries(files)) writeFileSync(`${dir}/${name}`, typeof body === 'string' ? body : JSON.stringify(body));
-  const saved = Object.fromEntries(['PATH', 'DOCKER_CONTEXT', 'DOCKER_HOST', 'E2E_STACK', 'FAKE_DOCKER', 'FAKE_DOCKER_FAIL']
-    .map(key => [key, process.env[key]]));
+  const saved = Object.fromEntries(['PATH', 'DOCKER_CONTEXT', 'DOCKER_HOST', 'E2E_STACK', 'FAKE_DOCKER', 'FAKE_DOCKER_FAIL',
+    'E2E_GATEWAY_PROFILE'].map(key => [key, process.env[key]]));
   Object.assign(process.env, { PATH: `${dir}:${process.env.PATH}`, DOCKER_CONTEXT: 'e2e-fake', E2E_STACK: stack,
     FAKE_DOCKER: dir, FAKE_DOCKER_FAIL: fail });
   delete process.env.DOCKER_HOST;
+  delete process.env.E2E_GATEWAY_PROFILE; // a case declares its profile inside `inspect`
   try {
     return inspect();
   } finally {
@@ -420,22 +439,26 @@ function withFakeDocker<T>(dir: string, stack: 'standalone' | 'distributed', fil
   }
 }
 
-const offlineEndpoints = () => [E2E.appUrl, E2E.apiUrl, E2E.gatewayUrl, E2E.pgUrl, E2E.chUrl, E2E.slackMockUrl]
-  .every(url => new URL(url).hostname === 'localhost');
+const offlineEndpoints = () => [E2E.appUrl, E2E.apiUrl, E2E.gatewayUrl, E2E.pgUrl, E2E.chUrl, E2E.slackMockUrl,
+  E2E.mockLlmUrl, E2E.webhookSinkUrl, E2E.mailSinkUrl].every(url => new URL(url).hostname === 'localhost');
+const inspectedServices = (stack: 'standalone' | 'distributed') => (stack === 'standalone'
+  ? ['app', 'mock-llm', 'webhook-sink', 'postgres', 'clickhouse']
+  : ['agentcc-gateway', 'mock-llm', 'mock-slack', 'webhook-sink', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse']);
+const fakeService = (files: Record<string, any>, service: string) =>
+  files['containers.json'].find((c: any) => c.Config.Labels['com.docker.compose.service'] === service);
 
 for (const stack of ['standalone', 'distributed'] as const) {
   test(`managed mock inspects a well-formed ${stack} stack offline`, ({}, testInfo) => {
     test.skip(!offlineEndpoints(), 'attach mode points the harness at another host');
     const receipt = withFakeDocker(testInfo.outputPath('docker'), stack, fakeStack(stack), () => inspectManagedMock());
-    expect(receipt.services.map(s => s.service)).toEqual(stack === 'standalone'
-      ? ['app', 'mock-llm', 'postgres', 'clickhouse']
-      : ['agentcc-gateway', 'mock-llm', 'mock-slack', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse']);
+    expect(receipt.services.map(s => s.service)).toEqual(inspectedServices(stack));
+    expect(receipt.publicNetworkId).toBe('e2e-public-network');
   });
 
   test(`managed mock refuses a ${stack} network the project does not own`, ({}, testInfo) => {
     test.skip(!offlineEndpoints(), 'attach mode points the harness at another host');
     const files = fakeStack(stack);
-    files['network.json'][0].Driver = 'host';
+    files['network-e2e-network.json'][0].Driver = 'host';
     expect(() => withFakeDocker(testInfo.outputPath('docker'), stack, files, () => inspectManagedMock()))
       .toThrow('STOP: managed mock unmanaged network');
   });
@@ -447,13 +470,150 @@ for (const stack of ['standalone', 'distributed'] as const) {
   });
 }
 
+// The network rule: the public-classified network holds
+// exactly the declared members, as the project's own internal bridge on exactly
+// its subnet, with the pinned addresses and aliases. One case per rule, each
+// asserting that rule's own STOP message.
+type Stack = 'standalone' | 'distributed';
+const publicCases: [string, string, (files: Record<string, any>, stack: Stack) => void, string | ((stack: Stack) => string)][] = [
+  ['N1', 'a service on a third network', (files) => {
+    fakeService(files, 'mock-llm').NetworkSettings.Networks.other_net = { NetworkID: 'other', Aliases: ['mock-llm'], IPAddress: '10.9.0.2' };
+  }, 'service mock-llm network or DNS override'],
+  ['N2', 'the public network attached to a non-member (postgres)', (files, stack) => {
+    const pg = fakeService(files, 'postgres');
+    const name = Object.keys(fakeService(files, 'mock-llm').NetworkSettings.Networks).find(n => n.endsWith('_e2e-public'))!;
+    pg.NetworkSettings.Networks[name] = { NetworkID: 'e2e-public-network', Aliases: ['postgres'], IPAddress: '11.88.0.40' };
+    files['network-e2e-public-network.json'][0].Containers[pg.Id] = { Name: `${stack}-postgres` };
+  }, 'service postgres network or DNS override'],
+  ['N3', 'a public network that is not internal', (files) => {
+    files['network-e2e-public-network.json'][0].Internal = false;
+  }, 'public network is not internal'],
+  ['N4', 'a public network on another subnet', (files) => {
+    files['network-e2e-public-network.json'][0].IPAM.Config[0].Subnet = '11.89.0.0/24';
+  }, 'public network subnet is not 11.88.0.0/24'],
+  ['N4b', 'a public network with a second subnet', (files) => {
+    files['network-e2e-public-network.json'][0].IPAM.Config.push({ Subnet: '10.0.0.0/24' });
+  }, 'public network subnet is not 11.88.0.0/24'],
+  ['N5', 'a public network the project does not label', (files) => {
+    files['network-e2e-public-network.json'][0].Labels['com.docker.compose.project'] = 'another-project';
+  }, 'unmanaged public network'],
+  ['N6', 'mock-llm on the public network at another address', (files) => {
+    const mock = fakeService(files, 'mock-llm');
+    mock.NetworkSettings.Networks[Object.keys(mock.NetworkSettings.Networks).find(n => n.endsWith('_e2e-public'))!].IPAddress = '11.88.0.99';
+  }, 'service mock-llm public address or alias mismatch'],
+  ['N6b', 'mock-llm on the public network without its alias', (files) => {
+    const mock = fakeService(files, 'mock-llm');
+    mock.NetworkSettings.Networks[Object.keys(mock.NetworkSettings.Networks).find(n => n.endsWith('_e2e-public'))!].Aliases = ['mock-llm'];
+  }, 'service mock-llm public address or alias mismatch'],
+  ['N6c', 'the webhook alias also defined on the default network', (files) => {
+    const sink = fakeService(files, 'webhook-sink');
+    sink.NetworkSettings.Networks[Object.keys(sink.NetworkSettings.Networks).find(n => n.endsWith('_default'))!].Aliases
+      .push('hooks.e2e-public.test');
+  }, 'service webhook-sink public address or alias mismatch'],
+  ['N6d', 'an app container answering to the mock\'s public alias', (files, stack) => {
+    const app = fakeService(files, stack === 'standalone' ? 'app' : 'agentcc-gateway');
+    app.NetworkSettings.Networks[Object.keys(app.NetworkSettings.Networks).find(n => n.endsWith('_e2e-public'))!].Aliases
+      .push('llm.e2e-public.test');
+  }, (stack) => `service ${stack === 'standalone' ? 'app' : 'agentcc-gateway'} public address or alias mismatch`],
+  ['N7', 'a container the inspection does not list attached to the public network', (files) => {
+    files['network-e2e-public-network.json'][0].Containers['f'.repeat(64)] = { Name: 'unlisted' };
+  }, 'public network has an unlisted member'],
+];
+for (const stack of ['standalone', 'distributed'] as const) {
+  for (const [id, name, mutate, reason] of publicCases) {
+    test(`managed mock ${id} refuses a ${stack} stack with ${name}`, ({}, testInfo) => {
+      test.skip(!offlineEndpoints(), 'attach mode points the harness at another host');
+      const files = fakeStack(stack);
+      mutate(files, stack);
+      expect(() => withFakeDocker(testInfo.outputPath('docker'), stack, files, () => inspectManagedMock()))
+        .toThrow(`STOP: managed mock ${typeof reason === 'string' ? reason : reason(stack)}`);
+    });
+  }
+}
+
+// The profile rule: the declared gateway profile picks
+// the file the gateway must mount; alt is Standalone only and must be exactly
+// the stock file plus ALT_DELTA; the routing contract stays the stock file's.
+const stockSource = readFileSync(repoFile('stack/gateway.e2e.yaml'), 'utf8');
+const altSource = readFileSync(repoFile('stack/gateway.alt.yaml'), 'utf8');
+const declare = (profile: string | undefined, inspect: () => ReturnType<typeof inspectManagedMock>) => () => {
+  if (profile !== undefined) process.env.E2E_GATEWAY_PROFILE = profile;
+  return inspect();
+};
+const mountAlt = (files: Record<string, any>) => {
+  const app = fakeService(files, 'app');
+  app.Mounts.find((m: any) => m.Destination === '/etc/futureagi/secrets/agentcc.yaml').Source = repoFile('stack/gateway.alt.yaml');
+};
+
+test('managed mock P3 inspects a Standalone stack with alt declared and mounted offline', ({}, testInfo) => {
+  test.skip(!offlineEndpoints(), 'attach mode points the harness at another host');
+  const files = fakeStack('standalone');
+  mountAlt(files);
+  const receipt = withFakeDocker(testInfo.outputPath('docker'), 'standalone', files, declare('alt', inspectManagedMock));
+  expect(receipt.profile).toBe('alt');
+  expect(receipt.gatewaySha).toBe(createHash('sha256').update(readFileSync(repoFile('stack/gateway.alt.yaml'))).digest('hex'));
+  const stock = withFakeDocker(testInfo.outputPath('docker'), 'standalone', fakeStack('standalone'), declare(undefined, inspectManagedMock));
+  expect(stock.profile).toBe('stock');
+});
+
+test('managed mock P4 the committed alt file is exactly stock plus the declared delta', () => {
+  validateAltProfile(stockSource, altSource);
+  expect(parse(altSource)).toEqual(altConfig(stockSource));
+  expect(PROFILE_FILES).toEqual({ stock: 'e2e/stack/gateway.e2e.yaml', alt: 'e2e/stack/gateway.alt.yaml' });
+});
+
+test('managed mock N8 refuses the alt mount when no profile is declared', ({}, testInfo) => {
+  test.skip(!offlineEndpoints(), 'attach mode points the harness at another host');
+  const files = fakeStack('standalone');
+  mountAlt(files);
+  expect(withFakeDocker.bind(null, testInfo.outputPath('docker'), 'standalone', files, declare(undefined, inspectManagedMock)))
+    .toThrow('STOP: managed mock gateway profile stock expects e2e/stack/gateway.e2e.yaml mounted');
+});
+
+test('managed mock N9 refuses alt declared with the stock file mounted', ({}, testInfo) => {
+  test.skip(!offlineEndpoints(), 'attach mode points the harness at another host');
+  expect(withFakeDocker.bind(null, testInfo.outputPath('docker'), 'standalone', fakeStack('standalone'), declare('alt', inspectManagedMock)))
+    .toThrow('STOP: managed mock gateway profile alt expects e2e/stack/gateway.alt.yaml mounted');
+});
+
+for (const [name, mutate] of [
+  ['an extra routing section', (c: any) => { c.routing = { model_fallbacks: { 'gpt-4o': ['gpt-4o-mini'] } }; }],
+  ['logging at debug', (c: any) => { c.logging.level = 'debug'; }],
+  ['a delta value changed', (c: any) => { c.server.read_timeout = '8s'; }],
+  ['a stock key dropped', (c: any) => { delete c.providers['fagi-managed']; }],
+  ['the cache off', (c: any) => { delete c.cache; }],
+] as [string, (c: any) => void][]) {
+  test(`managed mock N10 refuses an alt file with ${name}`, () => {
+    const cfg = parse(altSource); mutate(cfg);
+    expect(() => validateAltProfile(stockSource, stringify(cfg)))
+      .toThrow('STOP: managed mock gateway profile alt is not stock plus the declared delta');
+  });
+}
+
+test('managed mock N10b refuses an alt file with environment expansion or aliases', () => {
+  const cfg = parse(altSource); cfg.providers.openai.base_url = '${UPSTREAM}';
+  expect(() => validateAltProfile(stockSource, stringify(cfg))).toThrow('STOP: managed mock gateway profile alt is environment-dependent');
+  const aliased = parse(altSource); aliased.providers.other = aliased.providers.openai;
+  expect(() => validateAltProfile(stockSource, stringify(aliased))).toThrow('STOP: managed mock gateway profile alt uses YAML aliases');
+});
+
+test('managed mock N11 still refuses request logging in the stock file', () => {
+  const cfg = parse(stockSource); cfg.logging.request_logging = { enabled: true, include_bodies: true };
+  expect(() => validateMockRouting(stringify(cfg))).toThrow('STOP: managed mock unexpected logging configuration');
+});
+
+test('managed mock N12 refuses alt declared on Distributed', ({}, testInfo) => {
+  test.skip(!offlineEndpoints(), 'attach mode points the harness at another host');
+  expect(withFakeDocker.bind(null, testInfo.outputPath('docker'), 'distributed', fakeStack('distributed'), declare('alt', inspectManagedMock)))
+    .toThrow('STOP: managed mock gateway profile alt is Standalone only');
+});
+
 test('managed stack routing has runtime labels, network and read-only source proof', async ({}, testInfo) => {
   const receipt = inspectManagedMock();
   // Standalone runs the gateway, backend, worker and UI in one `app` container
   // (lib/managed-mock-standalone.ts).
-  expect(receipt.services.map(s => s.service)).toEqual(process.env.E2E_STACK === 'standalone'
-    ? ['app', 'mock-llm', 'postgres', 'clickhouse']
-    : ['agentcc-gateway', 'mock-llm', 'mock-slack', 'backend', 'worker', 'frontend', 'postgres', 'clickhouse']);
+  expect(receipt.services.map(s => s.service)).toEqual(
+    inspectedServices(process.env.E2E_STACK === 'standalone' ? 'standalone' : 'distributed'));
   expect(receipt.gatewaySha).toMatch(/^[a-f0-9]{64}$/);
   expect(receipt.mockSha).toMatch(/^[a-f0-9]{64}$/);
   await testInfo.attach('verified-managed-mock', { contentType: 'application/json', body: JSON.stringify(receipt) });

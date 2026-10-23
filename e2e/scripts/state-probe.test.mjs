@@ -25,7 +25,45 @@ registerHooks({
     };
   },
 });
-const { StateProbe } = await import("../lib/state-probe.ts");
+const { StateProbe, POLL } = await import("../lib/state-probe.ts");
+
+// Every budget, pinned: a flow names its wait by what it waits on (README
+// "The three assertion lanes"), so a silent change here moves every flow.
+test("POLL budgets are pinned, each to what it waits on", () => {
+  assert.deepEqual(POLL, {
+    SPAN_VISIBLE: { timeout: 15_000, intervals: [500, 1000, 2000] },
+    EVAL_RESULT: { timeout: 90_000, intervals: [2000, 5000] },
+    CDC_VISIBLE: { timeout: 180_000, intervals: [2000, 5000] },
+    ASYNC_JOB: { timeout: 60_000, intervals: [2000, 5000] },
+    // AGENTCC_SYNC_INTERVAL (60 s, both stacks) + 15 s.
+    GATEWAY_SYNC: { timeout: 75_000, intervals: [2000, 5000] },
+    // A 30-60 s schedule interval after a 30 s retry backoff, plus the run.
+    SCHEDULE_TICK: { timeout: 150_000, intervals: [2000, 5000] },
+  });
+  // The sync budget must outlast the gateway's sync interval in both stacks.
+  for (const file of ["e2e.env", "standalone-e2e.env"]) {
+    const text = readFileSync(
+      new URL(`../stack/${file}`, import.meta.url),
+      "utf8",
+    );
+    assert.doesNotMatch(
+      text,
+      /^AGENTCC_SYNC_INTERVAL=/m,
+      `${file} must keep the 60s default`,
+    );
+  }
+  for (const file of ["docker-compose.yml", "docker-compose.distributed.yml"]) {
+    const text = readFileSync(
+      new URL(`../../${file}`, import.meta.url),
+      "utf8",
+    );
+    assert.match(
+      text,
+      /^ +AGENTCC_SYNC_INTERVAL: \$\{AGENTCC_SYNC_INTERVAL:-60s\}$/m,
+      file,
+    );
+  }
+});
 
 const source = "http://localhost:28125";
 const catalog = "http://localhost:28123";
@@ -153,8 +191,10 @@ test("env takes the ClickHouse password of an attached stack", async (t) => {
 // Both managed stacks run ClickHouse with the password the probe sends.
 for (const file of ["e2e.env", "standalone-e2e.env"]) {
   test(`${file} gives ClickHouse the probe's password`, () => {
-    const lines = readFileSync(new URL(`../stack/${file}`, import.meta.url), "utf8")
-      .split("\n");
+    const lines = readFileSync(
+      new URL(`../stack/${file}`, import.meta.url),
+      "utf8",
+    ).split("\n");
     assert.deepEqual(
       lines.filter((line) => line.startsWith("CH_PASSWORD=")),
       ["CH_PASSWORD=e2e-clickhouse-password"],
