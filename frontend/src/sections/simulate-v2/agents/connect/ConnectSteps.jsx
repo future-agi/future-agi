@@ -138,7 +138,7 @@ function ScenarioCount({ value, onChange, ok, credits = null }) {
         </Typography>
       </Box>
       <TextField
-        size="small" type="number" value={value}
+        size="small" type="number" value={value} placeholder="10"
         onChange={(e) => onChange(e.target.value)}
         inputProps={{ min: 1, max: MAX_BUILD_SCENARIOS, "aria-label": "Scenarios to generate" }}
         sx={{ width: 96, flexShrink: 0, "& .MuiInputBase-input": { typography: "s2", fontFamily: "ui-monospace, Menlo, monospace", py: 0.75 } }}

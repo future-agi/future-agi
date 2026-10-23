@@ -72,6 +72,7 @@ export default function BuildEnvironmentDialog({ open, onClose, agent, defaultVe
             <TextField
               size="small" fullWidth type="number"
               value={countText}
+              placeholder="10"
               onChange={(e) => setCountText(e.target.value)}
               onBlur={() => setCountText(String(count))}
               error={!countOk}
