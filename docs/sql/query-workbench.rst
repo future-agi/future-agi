@@ -210,8 +210,9 @@ Security and lifecycle
   cancelled but keeps its admission slot until the worker confirms the native
   query stopped (the watchdog polls every 0.5 s) or the execution deadline
   passes; the cancel request waits up to 3 seconds for that confirmation, and
-  a lost worker cannot hold the slot beyond the deadline. Malformed ids in
-  URLs return 404. Execution is capped at 30 seconds,
+  a lost worker cannot hold the slot beyond the deadline. A malformed
+  execution or saved-query id, in a URL or an MCP tool argument, returns 404;
+  it never reaches a database query. Execution is capped at 30 seconds,
   10 million scanned rows, 1 GB scanned bytes, 256 MiB memory, 64 MiB join state,
   one million/64 MiB candidate-set entries,
   two threads, 10,000 output rows and 8 MB output. Leaf-node limits apply as well.
@@ -328,10 +329,14 @@ operators, right-hand sides, quoting, case, comments, whitespace, database
 qualification and query positions must each be rejected or compile to a
 statement whose only table reads are the generated scoped sources. To check a
 SQLGlot upgrade before it lands, run the compiler suites with the newer SQLGlot
-first on ``PYTHONPATH``; 28.10.1 and 30.23.0 were both checked. The live suite
+first on ``PYTHONPATH``; 28.10.1, 30.23.0 and 30.24.0 each passed the
+compiler and property suites unchanged (1,391 variants rejected, 109 compiled
+and verified as fully scoped, identical across the three). The live suite
 (``test_clickhouse.py``) compiles and executes the whole adversarial corpus
 against two tenants with sentinel rows and asserts no foreign value is
-returned.
+returned. On the owned 25.3.14.14 server (2026-10-22) its 1,682 queries split
+into 1,557 rejected by the compiler, 118 executed and 7 refused by the server
+itself; none returned a foreign value.
 
 The adversarial unit suite covers joins/CTEs/UNION/subqueries, hidden table
 functions, write/settings/schema escape attempts, null and malicious identifiers,
