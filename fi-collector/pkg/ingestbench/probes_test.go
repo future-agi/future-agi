@@ -55,6 +55,13 @@ func TestReadWindowDeadlineCensorsRequestButNotClientTimeout(t *testing.T) {
 				}
 			} else if r.Errors != 0 || r.Censored != 1 || r.Status != "measured-with-censoring" || r.FailureLatency.Count != 0 {
 				t.Fatalf("window cancellation misreported as server failure: %+v", r)
+			} else if r.CensoredElapsed.Count != 1 || r.CensoredElapsed.Max <= 0 || r.CensoredElapsed.P50 > r.CensoredElapsed.Max {
+				// The request started at about 1000 ms and was cut off at 1100 ms:
+				// its elapsed time is kept as a lower bound on its latency.
+				t.Fatalf("censored request elapsed not recorded: %+v", r.CensoredElapsed)
+			}
+			if mode == "client-timeout" && r.CensoredElapsed.Count != 0 {
+				t.Fatalf("a client timeout recorded as censored: %+v", r.CensoredElapsed)
 			}
 		})
 	}

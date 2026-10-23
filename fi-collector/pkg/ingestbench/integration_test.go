@@ -893,7 +893,10 @@ func TestDirectProbeCutOffByThePhaseIsCensored(t *testing.T) {
 					fmt.Fprint(w, `{"rows":1,"payload_bytes":10}`)
 					return
 				}
-				cancel() // the phase ends while ClickHouse is still answering
+				// The phase ends while ClickHouse is still answering, after the
+				// query has already run for 200 ms.
+				time.Sleep(200 * time.Millisecond)
+				cancel()
 				select {
 				case <-r.Context().Done():
 				case <-release:
@@ -922,6 +925,20 @@ func TestDirectProbeCutOffByThePhaseIsCensored(t *testing.T) {
 				}
 				if r.Status != wantStatus || r.Censored != 1 || r.Successes != wantSuccesses || r.Errors != 0 || r.Latency.Count != wantSuccesses || r.FailureLatency.Count != 0 {
 					t.Fatalf("cut-off query misreported: %+v", r)
+				}
+				// F13: the cut-off query is not dropped from the latency picture:
+				// its elapsed time is kept as a right-censored lower bound.
+				if c := r.CensoredElapsed; c.Count != 1 || c.Max < 200 || c.P50 > c.Max || c.P50 < 200*(1-1.0/128) {
+					t.Fatalf("censored query elapsed not recorded as a lower bound: %+v", c)
+				}
+				res := newResult(c)
+				res.DirectReads = []DirectReadResult{r}
+				var out strings.Builder
+				if err := Report(&out, res); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(out.String(), "1 censored queries had run at least") {
+					t.Fatalf("report hides the censored lower bound: %s", out.String())
 				}
 				return
 			}

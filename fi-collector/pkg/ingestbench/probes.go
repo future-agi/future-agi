@@ -69,7 +69,7 @@ func HeadersFromEnv(name string) (http.Header, error) {
 
 func runReadProbe(ctx context.Context, client *http.Client, p ReadProbe, headers http.Header) ProbeResult {
 	r := ProbeResult{Name: p.Name, Kind: "authenticated_application_http", Status: "measured", HTTPStatuses: map[int]int64{}}
-	good, bad := &histogram{}, &histogram{}
+	good, bad, censored := &histogram{}, &histogram{}, &histogram{lowerBound: true}
 	ticker := time.NewTicker(time.Duration(p.IntervalMS) * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -105,6 +105,7 @@ func runReadProbe(ctx context.Context, client *http.Client, p ReadProbe, headers
 		// or an actual HTTP/error payload, remains an error.
 		if ctx.Err() != nil && (errors.Is(requestErr, context.Canceled) || errors.Is(requestErr, context.DeadlineExceeded)) {
 			r.Censored++
+			censored.add(time.Since(start))
 			break
 		}
 		if success {
@@ -119,7 +120,7 @@ func runReadProbe(ctx context.Context, client *http.Client, p ReadProbe, headers
 		case <-ticker.C:
 		}
 	}
-	r.Latency, r.FailureLatency = good.summary(), bad.summary()
+	r.Latency, r.FailureLatency, r.CensoredElapsed = good.summary(), bad.summary(), censored.summary()
 	if r.Censored > 0 {
 		r.Status = "measured-with-censoring"
 	}

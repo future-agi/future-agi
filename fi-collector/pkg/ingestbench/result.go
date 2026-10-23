@@ -436,16 +436,19 @@ func (h *sparseHistogram) summary(lowerBound bool) Percentiles {
 }
 
 type ProbeResult struct {
-	Name           string        `json:"name"`
-	Kind           string        `json:"kind"`
-	Status         string        `json:"status"`
-	Successes      int64         `json:"successes"`
-	Censored       int64         `json:"window_censored_requests"`
-	Errors         int64         `json:"errors"`
-	HTTPStatuses   map[int]int64 `json:"http_statuses"`
-	Latency        Percentiles   `json:"successful_response_latency"`
-	FailureLatency Percentiles   `json:"failed_response_latency"`
-	ResponseBytes  int64         `json:"response_bytes"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	Status    string `json:"status"`
+	Successes int64  `json:"successes"`
+	Censored  int64  `json:"window_censored_requests"`
+	// CensoredElapsed: how long each censored request had run when its window
+	// closed, a right-censored lower bound on its latency (see DirectReadResult).
+	CensoredElapsed Percentiles   `json:"censored_response_elapsed_lower_bound"`
+	Errors          int64         `json:"errors"`
+	HTTPStatuses    map[int]int64 `json:"http_statuses"`
+	Latency         Percentiles   `json:"successful_response_latency"`
+	FailureLatency  Percentiles   `json:"failed_response_latency"`
+	ResponseBytes   int64         `json:"response_bytes"`
 }
 
 // RetryHints summarises server-requested delays on retryable rejections.
@@ -608,26 +611,32 @@ func Report(w io.Writer, r Result) error {
 			fmt.Fprintf(w, "Fault %s (%s) %.3f-%.3fs: %s; requests scheduled during it %+v\n", f.Name, f.Source, f.StartS, f.EndS, recovery, f.RequestsScheduledDuring)
 		}
 	}
+	censored := func(n int64, p Percentiles) string {
+		if n == 0 {
+			return ""
+		}
+		return fmt.Sprintf("; %d censored queries had run at least p50/max %.3f/%.3f ms when cut off (lower bounds; the successful latency excludes these slowest queries)", n, p.P50, p.Max)
+	}
 	for _, d := range r.DirectReads {
 		if d.Latency.Count == 0 {
-			fmt.Fprintf(w, "Direct ClickHouse %s/%s: %s; successes/errors/skipped/censored %d/%d/%d/%d; latency not measured\n", d.Phase, d.Name, d.Status, d.Successes, d.Errors, d.Skipped, d.Censored)
+			fmt.Fprintf(w, "Direct ClickHouse %s/%s: %s; successes/errors/skipped/censored %d/%d/%d/%d; latency not measured%s\n", d.Phase, d.Name, d.Status, d.Successes, d.Errors, d.Skipped, d.Censored, censored(d.Censored, d.CensoredElapsed))
 			continue
 		}
 		payload := ""
 		if d.PayloadBytes != nil {
 			payload = fmt.Sprintf("; payload text read per query p50/max %d/%d bytes", d.PayloadBytes.P50, d.PayloadBytes.Max)
 		}
-		fmt.Fprintf(w, "Direct ClickHouse %s/%s: %s; successes/errors/skipped/censored %d/%d/%d/%d; p50/p95/p99 %.3f/%.3f/%.3f ms; non-empty results %d of %d%s\n",
-			d.Phase, d.Name, d.Status, d.Successes, d.Errors, d.Skipped, d.Censored, d.Latency.P50, d.Latency.P95, d.Latency.P99, d.NonEmpty, d.Successes, payload)
+		fmt.Fprintf(w, "Direct ClickHouse %s/%s: %s; successes/errors/skipped/censored %d/%d/%d/%d; p50/p95/p99 %.3f/%.3f/%.3f ms; non-empty results %d of %d%s%s\n",
+			d.Phase, d.Name, d.Status, d.Successes, d.Errors, d.Skipped, d.Censored, d.Latency.P50, d.Latency.P95, d.Latency.P99, d.NonEmpty, d.Successes, payload, censored(d.Censored, d.CensoredElapsed))
 	}
 	reads := append([]ProbeResult(nil), r.Reads...)
 	sort.Slice(reads, func(i, j int) bool { return reads[i].Name < reads[j].Name })
 	for _, p := range reads {
 		if p.Latency.Count == 0 {
-			fmt.Fprintf(w, "App %s: %s; successes/errors/censored %d/%d/%d; successful latency not measured\n", p.Name, p.Status, p.Successes, p.Errors, p.Censored)
+			fmt.Fprintf(w, "App %s: %s; successes/errors/censored %d/%d/%d; successful latency not measured%s\n", p.Name, p.Status, p.Successes, p.Errors, p.Censored, censored(p.Censored, p.CensoredElapsed))
 			continue
 		}
-		fmt.Fprintf(w, "App %s: %s; successes/errors/censored %d/%d/%d; successful p50/p95/p99 %.3f/%.3f/%.3f ms\n", p.Name, p.Status, p.Successes, p.Errors, p.Censored, p.Latency.P50, p.Latency.P95, p.Latency.P99)
+		fmt.Fprintf(w, "App %s: %s; successes/errors/censored %d/%d/%d; successful p50/p95/p99 %.3f/%.3f/%.3f ms%s\n", p.Name, p.Status, p.Successes, p.Errors, p.Censored, p.Latency.P50, p.Latency.P95, p.Latency.P99, censored(p.Censored, p.CensoredElapsed))
 	}
 	wl := r.Workload
 	if wl.Spans > 0 {

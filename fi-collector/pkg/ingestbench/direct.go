@@ -42,11 +42,16 @@ type DirectReadResult struct {
 	Skipped   int64  `json:"skipped_no_candidate"`
 	// Censored counts queries cut off because their phase ended (the load
 	// window closed or the run was cancelled): neither a success nor a failure.
-	Censored       int64        `json:"window_censored_queries"`
-	NonEmpty       int64        `json:"non_empty_results"`
-	Latency        Percentiles  `json:"successful_query_latency"`
-	FailureLatency Percentiles  `json:"failed_query_latency"`
-	Rows           Distribution `json:"rows_returned"`
+	// Each had already run for its elapsed time when it was cut off, so
+	// CensoredElapsed is a right-censored LOWER bound on those queries'
+	// latency. They are the slowest queries of the phase, so Latency alone (the
+	// successes) understates the database latency whenever Censored > 0.
+	Censored        int64        `json:"window_censored_queries"`
+	CensoredElapsed Percentiles  `json:"censored_query_elapsed_lower_bound"`
+	NonEmpty        int64        `json:"non_empty_results"`
+	Latency         Percentiles  `json:"successful_query_latency"`
+	FailureLatency  Percentiles  `json:"failed_query_latency"`
+	Rows            Distribution `json:"rows_returned"`
 	// PayloadBytes is the input+output text the query read server-side, for the
 	// probes that read span payloads the way a trace or session view does.
 	PayloadBytes *Distribution `json:"payload_text_bytes_read,omitempty"`
@@ -72,10 +77,10 @@ var directProbes = []directProbe{
 }
 
 type directAccum struct {
-	result    DirectReadResult
-	good, bad *histogram
-	rows      *valueHistogram
-	payload   *valueHistogram
+	result              DirectReadResult
+	good, bad, censored *histogram
+	rows                *valueHistogram
+	payload             *valueHistogram
 }
 
 type directRunner struct {
@@ -94,7 +99,7 @@ func (d *directRunner) acc(phase string, p directProbe) *directAccum {
 	a := d.accum[key]
 	if a == nil {
 		a = &directAccum{result: DirectReadResult{Name: p.name, Phase: phase, Kind: "direct_clickhouse_sql", Query: fmt.Sprintf(p.query, d.ch.table())},
-			good: &histogram{}, bad: &histogram{}, rows: &valueHistogram{}, payload: &valueHistogram{}}
+			good: &histogram{}, bad: &histogram{}, censored: &histogram{lowerBound: true}, rows: &valueHistogram{}, payload: &valueHistogram{}}
 		d.accum[key] = a
 	}
 	return a
@@ -159,6 +164,7 @@ func (d *directRunner) round(ctx context.Context, phase string, cand candidate) 
 			// The phase ended while the query ran: not a database failure.
 			d.mu.Lock()
 			a.result.Censored++
+			a.censored.add(elapsed)
 			d.mu.Unlock()
 			return
 		}
@@ -194,7 +200,7 @@ func (d *directRunner) results() []DirectReadResult {
 				continue
 			}
 			r := a.result
-			r.Latency, r.FailureLatency, r.Rows = a.good.summary(), a.bad.summary(), a.rows.summary()
+			r.Latency, r.FailureLatency, r.CensoredElapsed, r.Rows = a.good.summary(), a.bad.summary(), a.censored.summary(), a.rows.summary()
 			if p.payload {
 				payload := a.payload.summary()
 				r.PayloadBytes = &payload
