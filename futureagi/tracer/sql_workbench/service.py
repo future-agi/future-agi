@@ -440,8 +440,8 @@ def summarize_estimate(raw, database):
     granules can hold (granules x index granularity), never the raw row total
     of the granules, which can include an adjacent project's rows. Sources
     whose primary index does not start with project ownership are withheld.
-    ``exceeds_scan_bound`` compares every table's granule rows with the read
-    limit: the same fact a run reveals when the server stops it there.
+    ``exceeds_scan_bound`` is unknown if any source is withheld: even a
+    threshold comparison would disclose information about that source's rows.
     """
     from .catalog import ESTIMATE_SOURCES
     from .runner import QUERY_SETTINGS
@@ -449,7 +449,6 @@ def summarize_estimate(raw, database):
     bound = QUERY_SETTINGS["max_rows_to_read"]
     sources, granule_rows = {}, 0
     for item in raw["tables"]:
-        granule_rows += item["rows"]
         known = ESTIMATE_SOURCES.get(item["table"])
         layout = raw["layout"].get(item["table"])
         dataset = known[0] if known else "other"
@@ -479,6 +478,7 @@ def summarize_estimate(raw, database):
                 reason=ESTIMATE_WITHHELD,
             )
             continue
+        granule_rows += item["rows"]
         entry["parts"] += item["parts"]
         entry["marks"] += item["marks"]
         entry["max_rows"] += item["marks"] * _granularity(layout[1])
@@ -487,7 +487,11 @@ def summarize_estimate(raw, database):
         "reason": "",
         "sources": sorted(sources.values(), key=lambda value: value["dataset"]),
         "max_rows_to_read": bound,
-        "exceeds_scan_bound": granule_rows > bound,
+        "exceeds_scan_bound": (
+            granule_rows > bound
+            if all(entry["estimated"] for entry in sources.values())
+            else None
+        ),
     }
 
 

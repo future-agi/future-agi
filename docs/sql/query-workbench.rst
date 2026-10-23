@@ -94,6 +94,10 @@ matching rows. Sources whose actual primary index does not lead with project
 ownership withhold parts/marks/row estimates; raw granule row counts are never
 returned. ``ORDER BY`` alone is not sufficient: an explicitly shorter or empty
 ``PRIMARY KEY`` is withheld even when the sorting key contains the project.
+If any source is withheld, the query-wide ``exceeds_scan_bound`` is ``null``
+("scan limit not checked" in the editor); withheld row counts never contribute
+an over/under-limit signal. Fully estimated queries retain the advisory scan
+threshold check. Neither case changes the server's enforced read limit.
 Project-keyed sources report parts, marks and marks times index granularity.
 Boundary granules can still include adjacent projects: the live regression
 measures unchanged counts for foreign-only growth outside that key range and

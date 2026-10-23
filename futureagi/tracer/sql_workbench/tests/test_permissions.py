@@ -1296,7 +1296,7 @@ def test_estimate_reports_tenant_local_sources_and_withholds_shared_indexes(
     data = response.data
     assert data["status"] == "ok"
     assert data["max_rows_to_read"] == 10_000_000
-    assert data["exceeds_scan_bound"] is False
+    assert data["exceeds_scan_bound"] is None
     by_dataset = {entry["dataset"]: entry for entry in data["sources"]}
     # Granules x granularity, never the raw granule row total (9000).
     assert by_dataset["spans"] == {
@@ -1316,21 +1316,39 @@ def test_estimate_reports_tenant_local_sources_and_withholds_shared_indexes(
     assert not SQLExecution.objects.filter(project=project).exists()
 
 
-def test_estimate_scan_bound_counts_withheld_sources_without_revealing_them(
+def test_estimate_withholds_scan_bound_when_any_source_is_withheld(
     tenants, estimate_cache, settings
 ):
+    from tracer.sql_workbench.runner import QUERY_SETTINGS
+
     (actor, project, user), _ = tenants
     database = settings.CLICKHOUSE_V2["CH25_DATABASE"]
-    with patch(
-        "tracer.sql_workbench.runner.estimate",
-        return_value=_raw_estimate(database, eval_rows=12_345_678),
-    ):
-        response = _estimate_request(
-            actor, user, project, "SELECT count() FROM eval_results"
-        )
-    assert response.status_code == 200
-    assert response.data["exceeds_scan_bound"] is True
-    assert "12345678" not in str(response.data)
+    bound = QUERY_SETTINGS["max_rows_to_read"]
+    responses = []
+    for eval_rows in (bound - 9001, bound - 8999):
+        with (
+            patch(
+                "tracer.sql_workbench.runner.estimate",
+                return_value=_raw_estimate(database, eval_rows=eval_rows),
+            ),
+            patch("tracer.sql_workbench.service.time.monotonic", return_value=42.0),
+        ):
+            response = _estimate_request(
+                actor,
+                user,
+                project,
+                "SELECT e.score FROM eval_results AS e JOIN spans AS s ON e.span_id = s.id",
+            )
+        assert response.status_code == 200
+        assert response["Cache-Control"] == "no-store"
+        assert str(eval_rows) not in str(response.data)
+        responses.append(response.data)
+    # Compare the whole serialized response, not just the withheld source. Only
+    # elapsed time is controlled; raw rows cross the actual configured bound.
+    assert responses[0] == responses[1]
+    assert responses[0]["exceeds_scan_bound"] is None
+    assert responses[0]["elapsed_ms"] == 0
+    assert not SQLExecution.objects.filter(project=project).exists()
 
 
 @pytest.mark.parametrize(

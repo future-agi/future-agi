@@ -801,7 +801,8 @@ def test_estimate_runs_on_the_locked_principal_and_bounds_other_projects_influen
         }
         for sql, summary in before.items():
             assert summary["status"] == "ok", sql
-            assert summary["exceeds_scan_bound"] is False, sql
+            expected_bound = None if sql == "SELECT * FROM annotations" else False
+            assert summary["exceeds_scan_bound"] is expected_bound, sql
             for entry in summary["sources"]:
                 # Whole granules only, never a row total.
                 if entry["estimated"]:
@@ -1224,7 +1225,9 @@ def test_every_gallery_example_returns_the_expected_rows(live):
 
 
 @pytest.mark.parametrize("primary_key", ["org_id", "tuple()"])
-def test_estimate_withholds_short_primary_indexes_during_foreign_growth(primary_key):
+def test_estimate_withholds_short_primary_indexes_during_foreign_growth(
+    primary_key, monkeypatch
+):
     from tracer.sql_workbench import runner, service
 
     keys = {
@@ -1235,6 +1238,7 @@ def test_estimate_withholds_short_primary_indexes_during_foreign_growth(primary_
         database = live.scope.database
         admin.execute(f"SYSTEM STOP MERGES {database}.spans")
         observed, raw_rows = [], []
+        bound = 40
         for count in (0, 40):
             if count:
                 admin.execute(
@@ -1253,16 +1257,23 @@ def test_estimate_withholds_short_primary_indexes_during_foreign_growth(primary_
                 table_filters=additional_table_filters(live.scope),
                 database=database,
             )
-            entry = _source(service.summarize_estimate(raw, database), "spans")
+            # Lower only the summarizer's advisory threshold for this tiny
+            # fixture. Real queries retain the production profile and ceilings.
+            with monkeypatch.context() as advisory:
+                advisory.setitem(runner.QUERY_SETTINGS, "max_rows_to_read", bound)
+                summary = service.summarize_estimate(raw, database)
+            entry = _source(summary, "spans")
             assert entry["estimated"] is False
             assert entry["parts"] is entry["marks"] is entry["max_rows"] is None
-            observed.append(entry)
+            observed.append(summary)
             raw_rows.append(sum(t["rows"] for t in raw["tables"]))
-        assert raw_rows[1] > raw_rows[0], (
-            "foreign growth must affect the shared index control"
+            assert live.rows("SELECT count() FROM spans") == [[len(live.owned.spans)]]
+        assert raw_rows[0] < bound < raw_rows[1], (
+            "foreign-only growth must cross the advisory threshold in the raw control"
         )
+        print(f"withheld {primary_key}: raw rows {raw_rows}, advisory threshold {bound}")
         assert observed[0] == observed[1]
-        assert live.rows("SELECT count() FROM spans") == [[len(live.owned.spans)]]
+        assert observed[0]["exceeds_scan_bound"] is None
 
 
 def test_annotation_gallery_deduplicates_evaluations_and_annotations():
