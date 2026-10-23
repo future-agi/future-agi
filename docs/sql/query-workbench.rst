@@ -172,8 +172,12 @@ Security and lifecycle
   parenthesized and database-qualified ``IN``-table reads, ``GLOBAL IN``, the
   ``in()``/``globalIn()`` functions, alias and CTE names on the right of ``IN``,
   ``FINAL``, joins, ``EXISTS``, scalar subqueries and reads through a view (the
-  live test ``test_server_table_filters_block_unscoped_sql_under_the_locked_profile``);
-  a one-node Distributed table was also checked by hand. The predicates
+  live test ``test_server_table_filters_block_unscoped_sql_under_the_locked_profile``).
+  ``test_server_table_filters_cover_distributed_and_shard_reads`` repeats raw
+  reads, ``FINAL``, ``IN``/``GLOBAL IN`` subqueries and a join against a
+  Distributed ``spans`` over ``spans_local`` on a one-node cluster of the same
+  server, reading both relations directly; a multi-node cluster has not been
+  tested. The predicates
   deliberately omit deletion flags and event times, so a filter can never hide
   the newest version of a row before ``FINAL`` merges it. Limits: the barrier
   covers only the listed relations (the principal is granted nothing else), a
@@ -352,7 +356,8 @@ repository flush fixture handles legacy unmanaged-table foreign keys.
 Live release gates remain explicit: optional
 derived-metric integration and direct-user policy/privilege probes;
 Temporal-dispatched native cancellation under a running scan; complete browser flow and independent
-fallibility perturbations; distributed-table behavior; 1-billion-span latency and
+fallibility perturbations; multi-node distributed-table behavior (only a
+one-node Distributed table on a single server is tested); 1-billion-span latency and
 24-hour endurance. Unit tests or SQLite ORM checks are not evidence for those
 claims. No seconds-at-1B performance claim is made. This bounded lane intentionally
 rejects scans beyond its resource profile rather than silently launching an

@@ -1045,6 +1045,104 @@ def test_server_table_filters_block_unscoped_sql_under_the_locked_profile(
         client.execute(f"DROP VIEW {view} SYNC")
 
 
+def test_server_table_filters_cover_distributed_and_shard_reads(
+    scoped_clickhouse, monkeypatch
+):
+    """The ``<table>_local`` keys: a cluster's Distributed source and its shard.
+
+    A second database mirrors a cluster installation: ``spans`` is a
+    Distributed table over ``spans_local`` on a one-shard cluster whose only
+    replica is this server. Raw, unscoped reads of either relation, including
+    IN-table and GLOBAL IN forms, must see only the scope's rows.
+    """
+    from dataclasses import replace
+
+    from django.test import override_settings
+
+    from conftest import _ch_test_native_client
+    from tracer.sql_workbench.catalog import additional_table_filters
+    from tracer.sql_workbench.runner import run
+
+    client, scope, _ = scoped_clickhouse
+    clusters = client.execute(
+        "SELECT cluster FROM system.clusters GROUP BY cluster "
+        "HAVING max(shard_num) = 1 AND count() = 1 AND max(is_local) = 1 "
+        "ORDER BY cluster LIMIT 1"
+    )
+    if not clusters:
+        pytest.skip("no one-node cluster that resolves to this server")
+    cluster = clusters[0][0]
+    database = f"{scope.database}_d"
+    sharded = replace(scope, database=database)
+    project = f"toUUID('{scope.project_id}')"
+    with _ch_test_native_client(owned_database=database) as admin:
+        admin.execute(f"CREATE DATABASE {database}")
+        principal = None
+        try:
+            admin.execute(
+                f"CREATE TABLE {database}.spans_local ({TABLES['spans']}) "
+                "ENGINE=ReplacingMergeTree(_version) ORDER BY (project_id, id)"
+            )
+            admin.execute(
+                f"CREATE TABLE {database}.spans AS {database}.spans_local "
+                f"ENGINE=Distributed('{cluster}', '{database}', 'spans_local')"
+            )
+            columns = ", ".join(
+                column.split()[0] for column in TABLES["spans"].split(", ")
+            )
+            admin.execute(
+                f"INSERT INTO {database}.spans_local ({columns}) "
+                f"SELECT {columns} FROM {scope.database}.spans"
+            )
+            assert admin.execute(
+                f"SELECT count() FROM {database}.spans WHERE project_id != {project}"
+            )[0][0], "control: the Distributed table has no foreign row"
+            principal, password, statements = _service_principal(
+                client, sharded, extra_grants=[f"{database}.spans_local"]
+            )
+            for statement in statements:
+                client.execute(statement)
+            foreign = admin.execute(
+                f"SELECT project_id, org_id, id FROM {database}.spans_local "
+                f"WHERE project_id != {project} LIMIT 1"
+            )[0]
+            row = f"(toUUID('{foreign[0]}'), toUUID('{foreign[1]}'), '{foreign[2]}')"
+            raw = [
+                f"SELECT count() FROM spans WHERE project_id != {project}",
+                f"SELECT count() FROM {database}.spans WHERE project_id != {project}",
+                f"SELECT count() FROM spans_local WHERE project_id != {project}",
+                f"SELECT count() FROM spans FINAL WHERE project_id != {project}",
+                f"SELECT {row} IN (SELECT project_id, org_id, id FROM spans)",
+                f"SELECT {row} GLOBAL IN (SELECT project_id, org_id, id FROM spans)",
+                f"SELECT {row} IN (SELECT project_id, org_id, id FROM spans_local)",
+                f"SELECT count() FROM spans AS a JOIN spans_local AS b ON a.id = b.id "
+                f"WHERE b.project_id != {project}",
+            ]
+            for sql in raw:
+                assert admin.execute(sql.replace(" spans", f" {database}.spans"))[0][
+                    0
+                ], f"control has no foreign row: {sql}"
+            monkeypatch.setenv("SQL_WORKBENCH_CH_USER", principal)
+            monkeypatch.setenv("SQL_WORKBENCH_CH_PASSWORD", password)
+            monkeypatch.setenv("SQL_WORKBENCH_CH_SECURE", "false")
+            filters = additional_table_filters(sharded)
+            with override_settings(CLICKHOUSE_V2=_service_settings(client, database)):
+                for sql in raw:
+                    result = run(sql, uuid4(), lambda: False, table_filters=filters)
+                    assert result["rows"] in ([[0]], [[False]]), (sql, result["rows"])
+                own = run(
+                    "SELECT name FROM spans ORDER BY name",
+                    uuid4(),
+                    lambda: False,
+                    table_filters=filters,
+                )
+            assert own["rows"] == [["tenant-0"]]
+        finally:
+            if principal:
+                client.execute(f"DROP USER IF EXISTS {principal}")
+            admin.execute(f"DROP DATABASE IF EXISTS {database} SYNC")
+
+
 def _fill_owned_spans(client, scope, rows=60_000):
     # 60 blocks of 1,000 owned rows; at 0.5 ms per row a full scan takes far
     # longer than any cancellation bound asserted below.
