@@ -2,7 +2,7 @@ OTLP ingestion benchmark
 ========================
 
 Scope and acceptance (TH-8687)
------------------------------
+------------------------------
 
 This is reproducible measurement infrastructure, not a published capacity claim.
 The acceptance target is **15,000 spans/second for 24 hours** with no missing
@@ -38,6 +38,21 @@ Shipped:
   ``max_pending_rows`` is smaller than the profile needs.
 * Offline-by-default planning, local smoke and explicit full-scale profiles;
   versioned JSON results; plain-text reports; an input-driven sizing worksheet.
+* Five separately counted stages (offered, scheduled, attempted, accepted, durable)
+  plus read-visible sentinels, each as a total and a 1 s telemetry series.
+* Read-visible lag from the SCHEDULED send on up to 40,960 sentinel spans of the
+  load, bracketed by the polls around each one; the server-side insert lag
+  (``created_at``) of every stored span, corrected by a measured clock offset;
+  request latency from the scheduled send next to the actual send.
+* The collector backlog over time (``/healthz`` buffered rows and writer counters)
+  with its slope, drain, restarts and insert stalls, separate from throughput.
+* Recovery from faults injected by a test harness or declared by an operator:
+  acknowledged loss attributed per fault, duplicates, backlog drain and recovery
+  time; missing spans listed as request ranges by outcome.
+* ``otlpbench publish``: a Markdown and JSON publication with 24 disclosure fields,
+  a "Not measured" section and a headline throughput withheld unless the run earns
+  it. What every number means and which comparisons it does not support is in
+  `METHODOLOGY.rst <METHODOLOGY.rst>`_.
 
 Deliberately pending, not completed by merging the harness:
 
@@ -72,13 +87,18 @@ probe queries. They verify protocol and accounting over every wire path, the
 backpressure and oversize cases, HTTP 429 with ``Retry-After`` from a throttling
 proxy in front of the collector, the per-request decomposition of missing and
 refused-but-stored spans, resumable verification and the rejection of invalid or
-changing responses, not ClickHouse SQL, storage, throughput or production
-behaviour. To save the explicitly labelled artifact to a NEW path::
+changing responses, the read-visible sentinel bracket and the backlog summary,
+the falsifiability of the insert lag (a forged ``created_at``, a skewed server
+clock, inserts before the scheduled send, a failing lag query), a 1.4 s collector
+stall at 1,000 spans/s timed from the actual and the scheduled send, a collector
+restart and a held ClickHouse in the middle of a run (``recovery_test.go``), and
+the publication rules (``publish_test.go``); not ClickHouse SQL, storage,
+throughput or production behaviour. To save the explicitly labelled artifact to a NEW path::
 
     OTLPBENCH_MOCK_RESULT=/path/to/new/mock-result.json \
       go test ./pkg/ingestbench -run TestMockCollectorPipelineAndIndependentLossDetection -count=1
 
-Two opt-in real ClickHouse tests run the in-process real collector (PostgreSQL
+Three opt-in real ClickHouse tests run the in-process real collector (PostgreSQL
 authentication bypassed ONLY in this fixture) against an ALREADY provisioned
 isolated v2 schema. They never start/stop containers or create/delete tables, and
 leave their run-tagged rows for inspection. The normal suite skips them::
@@ -88,11 +108,14 @@ leave their run-tagged rows for inspection. The normal suite skips them::
     OTLPBENCH_LIVE_CONFIRM=isolated-test-stack \
     OTLPBENCH_LIVE_RESULT=/path/to/new/live-result.json \
     OTLPBENCH_LIVE_BACKPRESSURE_RESULT=/path/to/new/live-backpressure.json \
+    OTLPBENCH_LIVE_RECOVERY_RESULT=/path/to/new/live-recovery.json \
       go test ./pkg/ingestbench -count=1 -v \
-        -run '^(TestLiveClickHouseCollectorPipeline|TestLiveClickHouseBackpressureAccounting)$'
+        -run '^(TestLiveClickHouseCollectorPipeline|TestLiveClickHouseBackpressureAccounting|TestLiveClickHouseRecovery)$'
 
 * ``TestLiveClickHouseCollectorPipeline``: 20 spans, multi-chunk verification,
-  lag samples and direct ClickHouse reads that must find the acknowledged data.
+  read-visible sentinels, the insert lag of all 20 stored spans, the clock probe,
+  the settings, DDL-hash and storage provenance, and direct ClickHouse reads that
+  must find the acknowledged data.
 * ``TestLiveClickHouseBackpressureAccounting``: a real collector with a 16-row
   budget (the in-process equivalent of ``FI_MAX_PENDING_ROWS=16``) over HTTP
   protobuf, HTTP JSON+gzip and gRPC+gzip. Load must produce whole-request 503 /
@@ -101,6 +124,11 @@ leave their run-tagged rows for inspection. The normal suite skips them::
   non-retryable 413 / ``INVALID_ARGUMENT`` without a retry hint, exactly once each.
   Independent verification must find every acknowledged span, no refused span and
   attribute every missing span to a rejection.
+* ``TestLiveClickHouseRecovery``: 160 spans per case. The real collector is
+  restarted gracefully in the middle of the load; separately, every writer request
+  to ClickHouse is held for 1.5 s against a 24-row budget. Every acknowledged span
+  must be found, the backlog must drain and each fault must recover within the
+  run (``measured-recovery-complete``).
 
 Optional credentials: ``OTLPBENCH_LIVE_CH_USER`` and ``OTLPBENCH_LIVE_CH_PASSWORD``.
 On a shared, overloaded developer ClickHouse set ``OTLPBENCH_LIVE_SLOW_HOST=1``:
@@ -111,14 +139,15 @@ passing live test is functional integration evidence, NOT a capacity benchmark.
 The ``otlp-benchmark-smoke`` job in ``.github/workflows/fi-collector-ci.yml``
 provisions one disposable, pinned ClickHouse 25.3.14.14 container on the hosted CI
 runner (2 CPUs/2 GiB), applies the actual canonical spans SQL and the existing
-curated-table DDL, runs both live tests under ``-race``, requires an explicit PASS
-of each (including the three backpressure sub-tests) rather than a skip, and
-uploads the JSON results. It deletes only its uniquely named CI Compose project and
+curated-table DDL, runs the three live tests under ``-race``, requires an explicit
+PASS of each (including the three backpressure and two recovery sub-tests) rather
+than a skip, publishes the smoke result (its headline must be withheld) and
+uploads the JSON results and the publication. It deletes only its uniquely named CI Compose project and
 never runs the sustained/burst profiles. Adding this job is not evidence that it
 has passed; inspect the PR's actual run before claiming that.
 
 Authenticated external-collector smoke
--------------------------------------
+--------------------------------------
 
 Use a provisioned test project, the real collector's API-key authentication, a
 separate ClickHouse read credential and the same schema the deployment uses.
@@ -187,7 +216,7 @@ revision is recorded separately as the generator revision and is never used as t
 system-under-test revision.
 
 Collector settings each profile needs
-------------------------------------
+-------------------------------------
 
 The collector refuses whole requests when its pending plus in-flight rows would
 exceed ``server.max_pending_rows`` / ``FI_MAX_PENDING_ROWS`` (default 20,000):
@@ -223,13 +252,20 @@ as a ``*** WARNING`` banner and kept in the result's ``warnings``. The collector
 must also be given enough memory for that many rows; the row cap is not a byte cap.
 
 Sustained and burst profiles
----------------------------
+----------------------------
 
 Run on dedicated load-generator hosts and provisioned isolated storage, not a
 shared developer VM. Scripts do not provision, resize or restart anything::
 
     bash benchmark/run-profile.sh sustained   # offline plan, 15k/s x 24h
     bash benchmark/run-profile.sh burst       # offline plan, 60k/s x 60s
+    BENCH_DECLARED_FAULTS='clickhouse-stop@30m+60m' \
+      bash benchmark/run-profile.sh recovery  # offline plan, 15k/s x 3h with a declared fault
+
+The ``recovery`` profile is for an operator-run disruption of an ISOLATED stack:
+the script never stops anything; the operator performs each declared disruption
+at its offset and the result analyses it like an injected one (``METHODOLOGY.rst``,
+"Recovery").
 
 Executing either requires ``--execute --confirm-load "$BENCH_RUN_ID" --out ...``,
 the collector settings above, ``BENCH_VERIFY_CHECKPOINT`` (strongly recommended)
@@ -260,7 +296,7 @@ IDs and their combined rates must be summed explicitly rather than assuming a
 single run met a cluster target.
 
 Single-node and 3-shard x 2-replica integration
----------------------------------------------
+-----------------------------------------------
 
 The benchmark accepts any provisioned topology through explicit endpoints. For a
 3x2 test, point OTLP at the cluster-configured collector, ``--ch-url`` at one
@@ -382,8 +418,8 @@ load window. ``success_status_spans`` (HTTP 200 /
 gRPC OK) does NOT imply a valid OTLP response. ``accepted_spans`` and
 ``acknowledged_spans`` intentionally have the same value: what the collector claims
 to have accepted, not a durable commit. ``response_statuses`` counts requests by
-``http:<code>``, ``grpc:<Code>`` or ``transport-error``. Visibility lag is sampled
-only for acknowledged requests. The collector writer can retry an ambiguous insert
+``http:<code>``, ``grpc:<Code>`` or ``transport-error``. Read-visible sentinels
+are kept only for fully acknowledged requests. The collector writer can retry an ambiguous insert
 on its own, so duplicates are possible even without exporter retries and must be
 measured.
 
@@ -459,11 +495,18 @@ independently verified with no missing, duplicate or unexpected rows. It does NO
 mean full-scale targets were tested or all four app probes configured. A dry run,
 mock fixture or small real smoke must stay labelled as such.
 
-Lag is sampled from deterministic batches, at most 4,096 samples, from send time
-to the first successful query observing that ID. Reported p50/p95/p99 include
-poll/query delay and are **upper bounds**, not insertion commit timestamps.
-Unseen samples and query failures remain visible. Histograms have bounded memory:
-1ms upper-edge buckets to 10s, 1s above.
+Read-visible lag uses sentinels: the first span of every k-th fully acknowledged
+request (at most ``--max-sentinels``, default 40,960), polled every
+``--poll-interval`` (default 100 ms) with a ``start_time`` window. Each lag is
+bracketed between the start of the last poll that missed the sentinel and the end
+of the first that saw it, timed from the scheduled send; the upper bound includes
+poll/query delay and neither is a commit timestamp. The insert lag
+(``verification.durable_lag``) is ClickHouse's ``created_at`` minus the scheduled
+send for every stored span, a lower bound on commit latency; ``--durable-lag=false``
+skips its one query per chunk. Unseen sentinels and query failures remain
+visible. Histograms have bounded memory: 1 ms upper-edge buckets to 10 s, 1 s
+above, quantiles capped at the exact maximum. Exact definitions:
+``METHODOLOGY.rst``.
 
 Direct ClickHouse reads
 -----------------------
@@ -540,8 +583,9 @@ Artifacts, provenance and resource measurements
 -----------------------------------------------
 
 ``--out run.json`` creates a new mode-0600 JSON result with schema
-``fi.otlpbench.v2`` (v1 results are refused by ``report`` because counter meanings
-changed) and a separate ``run.json.telemetry.jsonl`` stream. ``provenance`` records:
+``fi.otlpbench.v3`` (older results are refused by ``report`` and ``publish``
+because measurement meanings changed) and a separate ``run.json.telemetry.jsonl``
+stream. ``provenance`` records:
 
 * ``command_line``: the exact invocation with credential-like flag values,
   ``KEY=value`` pairs and URL userinfo/credential parameters replaced by
@@ -561,6 +605,21 @@ changed) and a separate ``run.json.telemetry.jsonl`` stream. ``provenance`` reco
   limits (or the declared budget), and the budget check.
 * ``system_under_test``: the revision, its source, and whether a declared
   ``--revision`` agrees with what the collector reports (a conflict is a warning).
+* ``clickhouse`` also records the verification user's insert-related session
+  settings, the server's MergeTree fsync and deduplication defaults, the SHA-256
+  of the table DDL and the table's active-part storage before the load and after
+  verification (table-wide, including other data); ``collector.writer`` is the
+  writer's insert mode and retry policy from ``/healthz``.
+
+``otlpbench publish --markdown new.md --json new.json --telemetry
+run.json.telemetry.jsonl run.json`` renders the shareable form: stages, outcomes,
+verification with missing ranges, the latency table, backlog, recovery, the 24
+disclosure fields (captured, partial or not captured), a "Not measured" section,
+limitations and warnings. Its headline throughput is withheld, with every reason,
+unless the run is executed, at least ``--min-sustained`` long (default 1 hour),
+completely verified with nothing missing or unexpected, started and acknowledged
+all offered load, saw every sentinel and had no fault. A telemetry stream of
+another run is refused; each progress line's accounting identity is checked.
 
 First/last resource snapshots are in the main result; periodic resources (10s
 cadence, serial bounded queries) and 1s cumulative-counter samples (with in-flight
@@ -573,7 +632,7 @@ headers are excluded. Per-node optional queries collect ClickHouse
 network and cumulative block I/O with Docker's displayed units.
 
 Sizing worksheet: inputs, not invented nodes
--------------------------------------------
+--------------------------------------------
 
 Copy ``sizing-input.template.json`` outside the repository and replace every null
 with a measurement. The builder rejects missing, nonpositive, infinite or
@@ -601,7 +660,7 @@ published row. Test failover/headroom separately; extrapolation assumes per-shar
 linearity and does not establish it.
 
 Public methodology comparison (checked 2026-10-22)
--------------------------------------------------
+--------------------------------------------------
 
 This compares WHAT public tools and vendor benchmarks measure and how, from their
 own documentation. It is not a performance ranking: no number below was measured
