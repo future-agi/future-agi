@@ -24,14 +24,16 @@ import (
 )
 
 // OTLP/gRPC trace export, registered by hand so that nothing of a call's
-// message is read before the call is authenticated and has its wire lease.
+// message is read before the call is authenticated, and no more than its
+// length prefix before it has its wire lease.
 //
 // grpc-go reads and decodes a unary call's whole message before any
 // interceptor or handler runs. Export is therefore registered as a stream
 // method: grpc-go hands the handler the call before reading its message, and
-// the handler authenticates, checks the quota, leases the wire pool and only
-// then reads the one message, as raw bytes (rawExport), to scan and price it
-// before pdata decodes it. On the wire a unary call is a stream of one
+// the handler authenticates, checks the quota, reads the message's length
+// prefix, leases the wire pool for that length (recvGRPCMessage) and only
+// then reads the one message, as raw bytes, to scan and price it before
+// pdata decodes it. On the wire a unary call is a stream of one
 // message each way, so stock OTLP exporters are unaffected.
 //
 // Before a call is even accepted, a tap handle refuses calls that carry no
