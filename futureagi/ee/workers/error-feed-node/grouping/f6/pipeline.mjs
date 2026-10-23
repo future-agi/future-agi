@@ -33,8 +33,17 @@ export function matchKnown(id, registry, context) {
 }
 
 export function retrieveIssues(cohort, registry, index, policy) {
+  // Score from the cohort's unassigned findings only: an assigned neighbour in the cohort matches its own
+  // issue at similarity 1, which would tie every such issue and leave the order to issue ids. The
+  // neighbour still brings its issue in, through its similarity to the findings being grouped.
+  const membership = assigned(registry);
+  const queries = cohort.members.filter(id => !membership.has(id));
+  const query = queries.length ? queries : [cohort.seed];
   return registry.issues.filter(i => i.active && i.scope === scopeKey(index.rows.get(cohort.seed)))
-    .map(i => ({...i, retrieval_score: Math.max(...cohort.members.flatMap(id => i.prototypes.map(p => index.similarity(id, p))))}))
+    .map(i => {
+      const targets = [...new Set([...i.prototypes, ...i.members.filter(id => index.rows.has(id))])];
+      return {...i, retrieval_score: Math.max(...query.flatMap(id => targets.map(p => index.similarity(id, p))))};
+    })
     .sort((a, b) => b.retrieval_score - a.retrieval_score || a.id.localeCompare(b.id)).slice(0, policy.candidate_issues);
 }
 
