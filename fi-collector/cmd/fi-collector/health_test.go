@@ -108,10 +108,10 @@ func TestAdminHealthReportsBuildAndAdmissionLimits(t *testing.T) {
 	if want := debug.SetMemoryLimit(-1); (want == math.MaxInt64) == reported || (reported && limit != float64(want)) {
 		t.Fatalf("memory limit misreported (in force %d): %v", want, body.Runtime)
 	}
-	// The default budget is reported, not a zero that a reader could take for unlimited.
+	// Zero explicitly reports the compatibility default: row admission disabled.
 	rec = httptest.NewRecorder()
 	adminHandler(writer, nil, server.New(server.Config{}, writer, nil, nil, nil)).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-	if !bytes.Contains(rec.Body.Bytes(), []byte(`"max_pending_rows":20000`)) {
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"max_pending_rows":0`)) {
 		t.Fatalf("default budget not reported: %s", rec.Body.String())
 	}
 }

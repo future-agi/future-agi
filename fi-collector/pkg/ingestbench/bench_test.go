@@ -633,11 +633,11 @@ func TestSystemUnderTestRevision(t *testing.T) {
 	}
 }
 
-// B5: the documented profiles need far more than the default 20,000-row
-// budget, and the check says so; a batch over the budget is called out.
+// B5: the profiles need more than an explicitly configured 20,000-row
+// budget; an unbounded default and a batch over the budget are called out.
 func TestCollectorBudgetCheck(t *testing.T) {
-	sustained := CheckBudget(15000, 500, 16, nil, 0)
-	if sustained.Sufficient || sustained.AvailablePendingRows != 20000 || sustained.RequiredPendingRows != 43000 || !strings.Contains(sustained.Source, "NOT observed") {
+	sustained := CheckBudget(15000, 500, 16, nil, 20000)
+	if sustained.Sufficient || sustained.AvailablePendingRows != 20000 || sustained.RequiredPendingRows != 43000 || !strings.Contains(sustained.Source, "not observed") {
 		t.Fatalf("sustained: %+v", sustained)
 	}
 	burst := CheckBudget(60000, 500, 32, &CollectorLimits{MaxPendingRows: 100000, BatchMaxRows: 5000, BatchMaxAgeMS: 5000}, 0)
@@ -649,8 +649,15 @@ func TestCollectorBudgetCheck(t *testing.T) {
 		t.Fatalf("raised budget: %+v", raised)
 	}
 	smoke := CheckBudget(100, 100, 2, nil, 0)
-	if !smoke.Sufficient || len(smoke.Warnings()) != 0 {
+	if !smoke.Sufficient || !smoke.BatchFits || smoke.AvailablePendingRows != 0 || !strings.Contains(smoke.Source, "NOT observed") || !strings.Contains(strings.Join(smoke.Warnings(), " "), "row admission is disabled") {
 		t.Fatalf("smoke: %+v", smoke)
+	}
+	// Disabled admission must never invent a finite crash-loss bound, even
+	// when exact verification is complete and no acknowledged rows were lost.
+	recovery := RecoveryResult{Faults: []FaultResult{{Name: "restart"}}}
+	recovery.attachVerification(testConfig(), Verification{Complete: true}, BacklogResult{}, smoke)
+	if recovery.LossBound != 0 || recovery.LossWithinBound != nil || recovery.LossBoundSource != "" {
+		t.Fatalf("unbounded buffer given a crash-loss bound: %+v", recovery)
 	}
 	oversize := CheckBudget(100, 30, 1, nil, 16)
 	if oversize.BatchFits || !strings.Contains(strings.Join(oversize.Warnings(), " "), "admitted only while the collector's buffer is below the budget") {

@@ -101,14 +101,14 @@ func TestCLIRecordsRedactedCommandLineAndEncoding(t *testing.T) {
 }
 
 // B5: the budget check is offline without a health URL, and warns loudly when
-// a documented profile needs more than the collector's default budget.
+// a documented profile needs more than an explicitly declared collector budget.
 func TestCLICollectorBudgetWarnsLoudly(t *testing.T) {
 	var warn bytes.Buffer
 	old := warnings
 	warnings = &warn
 	defer func() { warnings = old }()
 	var out bytes.Buffer
-	if err := command(context.Background(), []string{"collector-budget", "--rate", "15000", "--batch-size", "500", "--concurrency", "16"}, &out); err != nil {
+	if err := command(context.Background(), []string{"collector-budget", "--rate", "15000", "--batch-size", "500", "--concurrency", "16", "--declared-collector-max-pending-rows", "20000"}, &out); err != nil {
 		t.Fatal(err)
 	}
 	var info ingestbench.CollectorInfo

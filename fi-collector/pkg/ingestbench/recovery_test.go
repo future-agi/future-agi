@@ -529,7 +529,8 @@ func TestRecoveryFromACollectorRestartLosesNoAcknowledgedSpan(t *testing.T) {
 	store := &mockStorage{}
 	ch := httptest.NewServer(http.HandlerFunc(store.serve))
 	defer ch.Close()
-	collector := newRestartableCollector(t, chwriter.Config{URL: ch.URL, Table: "spans", Database: "default"}, server.Config{})
+	// This case also asserts a finite crash-loss bound, so opt into a budget.
+	collector := newRestartableCollector(t, chwriter.Config{URL: ch.URL, Table: "spans", Database: "default"}, server.Config{MaxPendingRows: 20000})
 	c := recoveryConfig(collector)
 	c.ClickHouseURL = ch.URL
 	store.cfg = c

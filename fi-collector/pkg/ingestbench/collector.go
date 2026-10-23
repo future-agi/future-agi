@@ -31,7 +31,7 @@ type WriterPolicy struct {
 }
 
 // Defaults of the fi-collector when /healthz is not available to report them.
-var collectorDefaultLimits = CollectorLimits{MaxPendingRows: 20000, BatchMaxRows: 5000, BatchMaxAgeMS: 5000, GRPCMaxRecvMiB: 16, MaxHTTPBodyBytes: 16 << 20}
+var collectorDefaultLimits = CollectorLimits{MaxPendingRows: 0, BatchMaxRows: 5000, BatchMaxAgeMS: 5000, GRPCMaxRecvMiB: 16, MaxHTTPBodyBytes: 16 << 20}
 
 // CollectorInfo is what the run knows about the collector under test.
 type CollectorInfo struct {
@@ -84,8 +84,8 @@ func CheckBudget(rate int64, batchSize, concurrency int, reported *CollectorLimi
 	}
 	b := BudgetCheck{Method: "heuristic: min(batch_max_rows, rate*batch_max_age) + rate*2s insert allowance + concurrency*batch_size",
 		RequiredPendingRows: RequiredPendingRows(rate, batchSize, concurrency, limits), AvailablePendingRows: limits.MaxPendingRows, Source: source}
-	b.Sufficient = b.AvailablePendingRows >= b.RequiredPendingRows
-	b.BatchFits = int64(batchSize) <= b.AvailablePendingRows
+	b.Sufficient = b.AvailablePendingRows == 0 || b.AvailablePendingRows >= b.RequiredPendingRows
+	b.BatchFits = b.AvailablePendingRows == 0 || int64(batchSize) <= b.AvailablePendingRows
 	b.RecommendedSetting = fmt.Sprintf("FI_MAX_PENDING_ROWS=%d (server.max_pending_rows)", b.RequiredPendingRows)
 	return b
 }
@@ -93,6 +93,9 @@ func CheckBudget(rate int64, batchSize, concurrency int, reported *CollectorLimi
 // Warnings are the loud, human-readable consequences of a budget check.
 func (b BudgetCheck) Warnings() []string {
 	var out []string
+	if b.AvailablePendingRows == 0 {
+		out = append(out, fmt.Sprintf("collector row admission is disabled (%s): retained rows and crash loss have no configured bound. For an isolated capacity run, provision and explicitly set %s or higher; this heuristic does not bound process memory", b.Source, b.RecommendedSetting))
+	}
 	if !b.BatchFits {
 		out = append(out, fmt.Sprintf("batch size exceeds the collector budget of %d rows (%s): each request is admitted only while the collector's buffer is below the budget and is refused as retryable otherwise (collectors that predate this rule refuse it as non-retryable: HTTP 413 / gRPC INVALID_ARGUMENT)", b.AvailablePendingRows, b.Source))
 	}

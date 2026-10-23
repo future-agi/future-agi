@@ -314,10 +314,13 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	}
 	if v := os.Getenv("FI_MAX_PENDING_ROWS"); v != "" {
 		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			return fmt.Errorf("FI_MAX_PENDING_ROWS must be a positive integer")
+		if err != nil || n < 0 {
+			return fmt.Errorf("FI_MAX_PENDING_ROWS must be a non-negative integer (0 disables row admission)")
 		}
 		c.Server.MaxPendingRows = n
+	}
+	if c.Server.MaxPendingRows < 0 {
+		return fmt.Errorf("server.max_pending_rows must be non-negative (0 disables row admission)")
 	}
 	if v := os.Getenv("FI_DEAD_LETTER_FILE"); v != "" {
 		c.Writer.DeadLetterFile = v

@@ -134,8 +134,11 @@ the litellm table nor custom pricing applies, the span's cost is 0.
 
 - HTTP request bodies are capped at 16 MiB; the configurable gRPC receive limit
   defaults to 16 MiB. These are per-request limits, not a total memory limiter.
-- `server.max_pending_rows` / `FI_MAX_PENDING_ROWS` caps rows in both the pending
-  buffer and the batch currently being flushed. Default: 20,000. A full budget
+- `server.max_pending_rows` / `FI_MAX_PENDING_ROWS` opts into a row admission
+  budget for both the pending buffer and the batch currently being flushed.
+  Default: **0 (disabled)**, preserving the previous unbounded buffer. An explicit
+  positive value requires deployment sizing; without one, retained rows and crash
+  loss have no configured bound. With admission enabled, a full budget
   rejects the **whole request before enqueue**: HTTP 503 with `Retry-After`, or
   gRPC `RESOURCE_EXHAUSTED` with `RetryInfo`; both are retryable. A request with
   more spans than the entire budget is admitted whenever the buffer is below the
@@ -144,7 +147,7 @@ the litellm table nor custom pricing applies, the span's cost is 0.
   retryable refusal. No request is refused as non-retryable because of the budget.
   Keep exporter batches at or below the budget anyway: under sustained overload a
   larger one waits like every other request. Do not hot-loop retries.
-- `batch_max_rows` above `max_pending_rows` could never trigger a flush, so it is
+- `batch_max_rows` above a positive `max_pending_rows` could never trigger a flush, so it is
   clamped to `max_pending_rows` with a startup warning.
 - On graceful shutdown, admission closes before the final drain. An HTTP handler
   still running after the 5 s shutdown timeout is refused (HTTP 503 with
@@ -191,17 +194,20 @@ the litellm table nor custom pricing applies, the span's cost is 0.
 
 ### Client-visible changes from the previous collector (release note)
 
-The previous collector buffered every request in memory without a row limit and
-always answered full success. Exporters see these differences:
+The previous collector had no row admission limit. That default is preserved;
+no deployment acquires a new row limit just by upgrading. Exporters see these
+differences:
 
-1. When ClickHouse is slower than the incoming load and the 20,000-row budget is
-   full, requests get HTTP 503 with `Retry-After` or gRPC `RESOURCE_EXHAUSTED`
-   with `RetryInfo` (retryable) instead of being buffered without limit. Size the
-   budget for the load (see the benchmark's collector settings).
+1. Only after an operator explicitly enables a positive row budget, a full buffer
+   returns HTTP 503 with `Retry-After` or gRPC `RESOURCE_EXHAUSTED` with `RetryInfo`
+   (retryable) instead of buffering without limit. Size the budget for the load
+   and exporter batches before enabling it (see the benchmark's collector settings).
 2. Spans whose project cannot be resolved are reported as OTLP partial success
    (`rejected_spans`, counted as spans) instead of a full success that silently
-   dropped them.
-3. A request larger than the whole budget is admitted only while the buffer is
+   dropped them. This corrects reporting, not routing: the same unresolved spans
+   are dropped as before, valid spans are still admitted, and OTLP partial success
+   must not be retried. Existing routing partial-success responses are preserved.
+3. With admission enabled, a request larger than the whole budget is admitted only while the buffer is
    below the budget (see above); it is never refused as non-retryable.
 4. Requests that arrive after the final shutdown drain are refused as retryable.
 5. OTLP/HTTP error bodies are `google.rpc.Status` messages; gzip request bodies

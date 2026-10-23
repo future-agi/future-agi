@@ -166,15 +166,17 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	if cfg.BatchMaxAge <= 0 {
 		cfg.BatchMaxAge = 5 * time.Second
 	}
-	if cfg.MaxPendingRows <= 0 {
-		cfg.MaxPendingRows = 20000
+	// Admission is opt-in: zero preserves the pre-budget unbounded buffer.
+	// Production configuration rejects negative values before constructing us.
+	if cfg.MaxPendingRows < 0 {
+		cfg.MaxPendingRows = 0
 	}
 	// The size trigger counts parked rows, which can never exceed the budget
 	// (except for one larger-than-budget request). A trigger above the budget
 	// would never fire, so the flusher would run only on the age timer while
 	// every other request is refused: clamp it below.
 	clampedBatchRows := 0
-	if cfg.BatchMaxRows > cfg.MaxPendingRows {
+	if cfg.MaxPendingRows > 0 && cfg.BatchMaxRows > cfg.MaxPendingRows {
 		clampedBatchRows, cfg.BatchMaxRows = cfg.BatchMaxRows, cfg.MaxPendingRows
 	}
 	if cfg.GRPCMaxRecvMiB <= 0 {
@@ -267,7 +269,8 @@ func (s *Server) Limits() Limits {
 // the budget bounds: rows parked for the next flush plus rows of the flush in
 // progress (including its retries). PendingRows is the parked part only.
 // Acknowledged rows in BufferedRows are not in ClickHouse yet. BufferedRows can
-// exceed MaxPendingRows by at most one request: see enqueueParcels.
+// exceed a positive MaxPendingRows by at most one request: see enqueueParcels.
+// MaxPendingRows == 0 disables the row cap (the compatibility default).
 type Admission struct {
 	BufferedRows   int      `json:"buffered_rows"`
 	PendingRows    int      `json:"pending_rows"`
@@ -929,6 +932,7 @@ func (s *Server) enqueueParcels(parcels ...parcel) enqueueOutcome {
 	}
 	free := s.cfg.MaxPendingRows - s.bufferedRows
 	switch {
+	case s.cfg.MaxPendingRows == 0: // compatibility default: no row admission cap
 	case total <= free:
 	case total > s.cfg.MaxPendingRows && free > 0:
 		s.refusals.OverBudgetAdmittedRequests++

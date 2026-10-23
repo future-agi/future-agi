@@ -33,6 +33,8 @@ server:
   # per https://opentelemetry.io/docs/specs/otlp/#otlphttp.
   # Set "" (or FI_HTTP_ADDR=disable) to turn the listener off.
   http_addr: ":4318"
+  # Opt-in row admission; 0 preserves the previous unbounded buffer. Set a
+  # positive budget only after sizing it for the deployment and exporter batches.
   # Whole exports over the pending + in-flight budget get HTTP 503 with
   # Retry-After / gRPC RESOURCE_EXHAUSTED with RetryInfo; both are retryable. A
   # single export with more spans than this whole budget is admitted while the
@@ -40,7 +42,7 @@ server:
   # export); keep exporter batches at or below this value so they never wait for
   # that. batch_max_rows above this value is clamped to it. This bounds rows, not
   # bytes or all process memory.
-  max_pending_rows: 20000
+  max_pending_rows: 0
   batch_max_rows: 5000
   batch_max_age: 5s
   # Max gRPC receive message size in MiB (FI_GRPC_MAX_RECV_MIB); 16 matches
