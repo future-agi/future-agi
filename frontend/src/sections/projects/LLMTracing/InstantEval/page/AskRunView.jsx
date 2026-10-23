@@ -1201,6 +1201,8 @@ export default function AskRunView({
               total={tableTotal}
               runTotal={run.total}
               loading={!selectedRecords && rows.isLoading}
+              error={!selectedRecords && rows.isError}
+              onRetry={rows.refetch}
               hasMore={!selectedRecords && rows.hasMore}
               loadingMore={rows.isFetchingMore}
               onLoadMore={rows.loadMore}

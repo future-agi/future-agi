@@ -64190,7 +64190,7 @@
                             "maxLength": 300,
                             "minLength": 1
                         },
-                        "maxItems": 50
+                        "maxItems": 400
                     },
                     {
                         "name": "user",
@@ -64420,7 +64420,7 @@
                             "maxLength": 300,
                             "minLength": 1
                         },
-                        "maxItems": 50
+                        "maxItems": 400
                     },
                     {
                         "name": "user",

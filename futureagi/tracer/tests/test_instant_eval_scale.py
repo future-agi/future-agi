@@ -538,10 +538,22 @@ def test_rows_page_through_every_row_and_filter_like_the_charts(
         "result"
     ]
     assert {r["id"] for r in model["rows"]} == {i for i in ids if keys[i] % 2}
+    # Several groups are repeated parameters, each key taken whole.
     either = auth_client.get(
-        ROWS, {**base, "group": "model:gpt-4.1-mini,model:gpt-4.1"}
+        ROWS, {**base, "group": ["model:gpt-4.1-mini", "model:gpt-4.1"]}
     ).json()["result"]
     assert either["total"] == 12
+    # A long range's pattern selects a key per day: 90 of them still read.
+    many = auth_client.get(
+        ROWS,
+        {
+            **base,
+            "group": ["model:gpt-4.1-mini", "model:gpt-4.1"]
+            + [f"day:2026-07-{d:02d}" for d in range(1, 31)] * 3,
+        },
+    )
+    assert many.status_code == 200, many.content
+    assert many.json()["result"]["total"] == 12
     both = auth_client.get(
         ROWS,
         {
@@ -1790,3 +1802,34 @@ def test_reading_another_eval_task_creates_no_run(auth_client, observe_project):
     for url in (SUMMARY, ROWS):
         assert auth_client.get(url, params).status_code == status.HTTP_404_NOT_FOUND
     assert not InstantEvalRun.objects.filter(eval_task=task).exists()
+
+
+def test_legacy_time_zone_names_reach_sql_by_their_canonical_name(monkeypatch):
+    """Chrome reports Asia/Calcutta; Postgres on current Debian images only
+    knows Asia/Kolkata, so every summary read failed with a 503."""
+    from tracer.services import instant_eval_summary as summary_service
+
+    assert summary_service.zone("Asia/Calcutta").key == "Asia/Kolkata"
+    assert summary_service.zone("US/Pacific").key == "America/Los_Angeles"
+    assert summary_service.zone(None).key == "UTC"
+    # A name Postgres can't convert to is a 400, not a summary that never loads.
+    monkeypatch.setattr(summary_service, "_postgres_knows", lambda name: False)
+    with pytest.raises(summary_service.BadFilter):
+        summary_service.zone("Europe/Paris")
+
+
+@pytest.mark.django_db
+def test_the_summary_reads_with_a_legacy_browser_time_zone(
+    auth_client, observe_project, answered_run
+):
+    task, _ = answered_run
+    response = auth_client.get(
+        SUMMARY,
+        {
+            "project_id": str(observe_project.id),
+            "eval_task_id": str(task.id),
+            "tz": "Asia/Calcutta",
+        },
+    )
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert InstantEvalRun.objects.get(eval_task=task).last_tz == "Asia/Kolkata"

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { paramsSerializer } from "src/utils/utils";
 import { askLink, readHandoff } from "src/sections/projects/observeHandoff";
 import { OBSERVE_LINK_FILTER_PARAM } from "src/sections/projects/LLMTracing/common";
 import {
@@ -209,7 +210,7 @@ describe("what the charts select, as a filter", () => {
       time_to: "2026-10-13T17:00:00.000Z",
       config_id: C1,
       answer: "No",
-      group: "weekday:6,weekday:7",
+      group: ["weekday:6", "weekday:7"],
     });
     expect(
       filterParams({
@@ -221,6 +222,21 @@ describe("what the charts select, as a filter", () => {
       unsure: true,
     });
     expect(filterParams(null)).toEqual({});
+  });
+
+  it("sends each group as its own parameter, a comma kept inside its key", () => {
+    // A 30-day "6-9 AM" pattern selects a key per day: one joined value
+    // outgrew the server's 300-character item, and split keys with commas.
+    const days = Array.from(
+      { length: 30 },
+      (_, i) => `hour3:2026-09-${String(i + 1).padStart(2, "0")}T06`,
+    );
+    const query = paramsSerializer().serialize(
+      filterParams({ group: ["user:Doe, Jane", ...days] }),
+    );
+    const groups = new URLSearchParams(query).getAll("group");
+    expect(groups).toEqual(["user:Doe, Jane", ...days]);
+    expect(Math.max(...groups.map((g) => g.length))).toBeLessThan(300);
   });
 
   it("combines a focused answer with a selection", () => {

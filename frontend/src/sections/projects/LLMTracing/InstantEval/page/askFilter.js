@@ -39,7 +39,9 @@ export function filterParams(filter = {}) {
   const groups = (
     Array.isArray(filter.group) ? filter.group : [filter.group]
   ).filter(Boolean);
-  if (groups.length) params.group = groups.join(",");
+  // Each group its own `group` parameter: one joined value outgrew the
+  // server's per-item cap over long ranges, and split keys holding a comma.
+  if (groups.length) params.group = groups;
   if (filter.unsure) {
     params.unsure = true;
     if (filter.config_id && !params.config_id)

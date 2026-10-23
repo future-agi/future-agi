@@ -356,9 +356,11 @@ class InstantEvalRowsQuerySerializer(InstantEvalRunQuerySerializer):
     answers = serializers.CharField(max_length=4000, required=False)
     time_from = serializers.CharField(max_length=64, required=False)
     time_to = serializers.CharField(max_length=64, required=False)
-    # "<dim>:<key>"; repeat it (or join with ",") for any of several groups.
+    # "<dim>:<key>"; repeat the parameter for any of several groups. A key is
+    # taken whole (it may hold a comma). A pattern over a long range selects
+    # one key per day, so a selection may carry a few hundred.
     group = serializers.ListField(
-        child=serializers.CharField(max_length=300), required=False, max_length=50
+        child=serializers.CharField(max_length=300), required=False, max_length=400
     )
     user = serializers.CharField(max_length=255, required=False)
     model = serializers.CharField(max_length=255, required=False)
@@ -1669,7 +1671,7 @@ def _row_filter(params) -> summary_service.RowFilter:
                 answers.append(
                     (str(item.get("config_id") or "") or None, str(item["answer"]))
                 )
-    groups = [g for raw in params.get("group") or [] for g in str(raw).split(",") if g]
+    groups = [str(g) for g in params.get("group") or [] if g]
     return summary_service.RowFilter(
         answers=answers,
         unsure=bool(params.get("unsure")),

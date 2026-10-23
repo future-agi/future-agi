@@ -1,5 +1,6 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { paramsSerializer } from "src/utils/utils";
 import { filterParams } from "./askFilter";
 import { askRunKeys, toRecord } from "./useAskRun";
 
@@ -43,6 +44,7 @@ export function useAskRows({
           page_size: ROWS_PAGE,
           ...(pageParam ? { cursor: pageParam } : {}),
         },
+        paramsSerializer: paramsSerializer(),
         signal,
       });
       const data = result(response) || {};
@@ -90,6 +92,7 @@ export async function fetchRowIds({
         page_size: Math.min(1500, limit - out.length),
         ...(cursor ? { cursor } : {}),
       },
+      paramsSerializer: paramsSerializer(),
     });
     const data = result(response) || {};
     out.push(...(data.rows || []).map((row) => toRecord(row, unit)));
@@ -115,6 +118,7 @@ export async function downloadRowsCsv({
       ...rowsParams({ projectId, taskId, tz, filter }),
       ...(sessions ? { sessions: true } : {}),
     },
+    paramsSerializer: paramsSerializer(),
     responseType: "blob",
   });
   const url = URL.createObjectURL(response.data);

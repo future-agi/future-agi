@@ -35785,7 +35785,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 maxLength: 300,
                 minLength: 1,
               },
-              maxItems: 50,
+              maxItems: 400,
             },
           },
           user: {
@@ -35980,7 +35980,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 maxLength: 300,
                 minLength: 1,
               },
-              maxItems: 50,
+              maxItems: 400,
             },
           },
           user: {

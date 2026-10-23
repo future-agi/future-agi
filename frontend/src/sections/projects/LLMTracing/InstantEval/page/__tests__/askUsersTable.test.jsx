@@ -129,6 +129,32 @@ describe("the rows table of a user question", () => {
   });
 });
 
+describe("the rows table when its rows fail to load", () => {
+  it("says so and offers a retry instead of going blank", () => {
+    const onRetry = vi.fn();
+    render(
+      <ThemeProvider theme={theme}>
+        <AskRowsTable
+          records={[]}
+          questions={[QUESTION]}
+          unit="sessions"
+          onOpen={vi.fn()}
+          total={0}
+          loading={false}
+          error
+          onRetry={onRetry}
+          onExport={vi.fn()}
+        />
+      </ThemeProvider>,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "These sessions couldn't be loaded.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("History", () => {
   it("counts a user question's users and the sessions it read", () => {
     render(

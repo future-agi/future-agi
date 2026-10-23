@@ -164,6 +164,8 @@ export default function AskRowsTable({
   total,
   runTotal,
   loading,
+  error,
+  onRetry,
   hasMore,
   loadingMore,
   onLoadMore,
@@ -343,7 +345,22 @@ export default function AskRowsTable({
           </TableBody>
         </Table>
       </Box>
-      {!records.length && !loading && (
+      {!records.length && !loading && error && (
+        <Box
+          role="alert"
+          sx={{ px: 2, py: 2.5, display: "flex", alignItems: "center", gap: 1 }}
+        >
+          <Typography variant="body2" color="error.main">
+            These {meta.plural} couldn&apos;t be loaded.
+          </Typography>
+          {onRetry && (
+            <Button size="small" onClick={() => onRetry()}>
+              Retry
+            </Button>
+          )}
+        </Box>
+      )}
+      {!records.length && !loading && !error && (
         <Typography
           variant="body2"
           color="text.secondary"
@@ -395,6 +412,8 @@ AskRowsTable.propTypes = {
   total: PropTypes.number,
   runTotal: PropTypes.number,
   loading: PropTypes.bool,
+  error: PropTypes.bool,
+  onRetry: PropTypes.func,
   hasMore: PropTypes.bool,
   loadingMore: PropTypes.bool,
   onLoadMore: PropTypes.func,

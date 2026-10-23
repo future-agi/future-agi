@@ -57399,7 +57399,7 @@ export const tracerInstantEvalExportListQueryTimeToMax = 64;
 
 export const tracerInstantEvalExportListQueryGroupItemMax = 300;
 
-export const tracerInstantEvalExportListQueryGroupMax = 50;
+export const tracerInstantEvalExportListQueryGroupMax = 400;
 
 export const tracerInstantEvalExportListQueryUserMax = 255;
 
@@ -57511,7 +57511,7 @@ export const tracerInstantEvalRowsListQueryTimeToMax = 64;
 
 export const tracerInstantEvalRowsListQueryGroupItemMax = 300;
 
-export const tracerInstantEvalRowsListQueryGroupMax = 50;
+export const tracerInstantEvalRowsListQueryGroupMax = 400;
 
 export const tracerInstantEvalRowsListQueryUserMax = 255;
 
