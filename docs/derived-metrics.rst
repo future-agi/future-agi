@@ -155,8 +155,14 @@ No interval is produced when the design cannot support one: the snapshot predate
 design capture, designs are mixed, a closed stratum has a single sampled unit or
 no population size or an inconsistent probability, fewer than two units are
 valid, the value itself is missing, or expanded second moments suffer numerical
-cancellation (``unstable_variance``). A stratum with more valid units than its
-recorded sample size is inconsistent. Intervals are conditional on the documented
+cancellation (``unstable_variance``). The same reason withholds non-census,
+non-rate intervals when the estimated variance is zero, including all-zero
+``sum`` and ``count_if`` samples. No observed events do not prove a zero population
+total: the zero point estimate remains available, but cannot trigger a confident
+alert without an interval. A boundary-aware total interval is not implemented.
+The rare-event regression reports withheld draws separately from coverage among
+issued intervals; withholding an interval is not counted as covering the truth.
+A stratum with more valid units than its recorded sample size is inconsistent. Intervals are conditional on the documented
 sampling design (or the explicit independent-unit model); evaluator error,
 nonresponse bias, and dependence between distinct selection units are not modelled.
 They are fixed-window, approximate intervals, not confidence sequences.
@@ -197,8 +203,13 @@ page's optional contributor table leaves the existing result columns unchanged.
 compares two committed runs of the same metric, window, filters, task and unit
 grain, including different formula versions. It returns candidate minus baseline
 and both committed attempt IDs. It never re-reads live telemetry. Identical
-frozen formulas and exact census results have exact delta intervals. Other deltas
-return ``paired_covariance_unavailable``: marginal intervals alone cannot identify
+frozen formulas and verified census results have exact delta intervals. Census
+verification reads both authorized frozen snapshots under the existing query
+budgets: every unit must have a captured closed/live design, valid probability
+exactly one, and the unit count must match the persisted overall result. Zero
+standard error or a zero-width marginal interval alone is never census proof;
+legacy, absent or partially retained snapshots without that proof are not
+estimable. Other deltas return ``paired_covariance_unavailable``: marginal intervals alone cannot identify
 covariance between overlapping samples. General paired delta intervals are not
 implemented, and independence is never assumed silently.
 
@@ -334,11 +345,16 @@ budget must use smaller closed windows. This is a correctness-preserving workloa
 limit, not a claim to have benchmarked a billion-span population.
 
 Deployment applies additive PostgreSQL migrations and
-``028_derived_metrics.sql`` followed by ``029_derived_metric_uncertainty.sql``
-through the existing schema runner. The latter adds columns idempotently and
-refreshes the committed-only SQL view; it has its own receipt, so installations
-that already applied 028 upgrade without forcing a checksum change. Existing raw span
-and evaluation schemas are not rewritten. Provision the ClickHouse schema before
+``028_derived_metrics.sql``, ``029_derived_metric_uncertainty.sql``, then
+``030_derived_metric_view_refresh.sql`` through the existing schema runner. 029
+adds columns idempotently and refreshes the committed-only SQL view; it has its
+own receipt, so installations that already applied 028 upgrade without changing
+its checksum. The replicated runner distributes ordinary view creation and
+replacement with the configured ``ON CLUSTER``. 030 has a new receipt to repair a
+stale projection even where an older runner already recorded 029 as applied.
+Neither earlier file is rewritten. Local runner execution and replicated emitted
+DDL are tested separately; multi-replica deployment remains a qualification gate.
+Existing raw span and evaluation schemas are not rewritten. Provision the ClickHouse schema before
 enabling writes, and register the existing exact-aggregation task queue. An
 application writer connection is required for snapshot persistence; readonly-only
 deployments fail explicitly. PostgreSQL migrations add new empty tables and one
