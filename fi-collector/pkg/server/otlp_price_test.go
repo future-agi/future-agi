@@ -543,3 +543,79 @@ func TestPriceCoversJSONDecodeAllocations(t *testing.T) {
 		})
 	}
 }
+
+// A deeply nested request makes the goroutine that decodes and converts it
+// grow its stack, which its size does not show: the price covers it. Many
+// requests run at once, each holding its grown stack, and the average stack
+// each holds stays within its price's share for the stack.
+func TestPriceCoversDeepNestingStacks(t *testing.T) {
+	if raceEnabled {
+		t.Skip("the race detector's instrumentation makes every frame larger")
+	}
+	value := `{"stringValue":"x"}`
+	for i := 1; i < maxValueNesting; i++ {
+		value = `{"arrayValue":{"values":[` + value + `]}}`
+	}
+	deepValue := `{"resourceSpans":[{"scopeSpans":[{"spans":[{"name":"n","attributes":[{"key":"k","value":` + value + `}]}]}]}]}`
+	req := ptraceotlp.NewExportRequest()
+	if err := req.UnmarshalJSON([]byte(deepValue)); err != nil {
+		t.Fatal(err)
+	}
+	deepProto, _ := req.MarshalProto()
+	skip := func(d int) []byte {
+		return []byte(`{"resourceSpans":[],"x":` + strings.Repeat("[", d) + strings.Repeat("]", d) + `}`)
+	}
+	cases := map[string]struct {
+		body     []byte
+		jsonBody bool
+	}{
+		"unknown member nested 505 levels": {skip(maxJSONNesting - 7), true},
+		"unknown member nested 256 levels": {skip(256), true},
+		"value nested to the limit (JSON)": {[]byte(deepValue), true},
+		"value nested to the limit":        {deepProto, false},
+	}
+	stacks := func() int64 {
+		s := []metrics.Sample{{Name: "/memory/classes/heap/stacks:bytes"}}
+		metrics.Read(s)
+		return int64(s[0].Value.Uint64())
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			shape, err := scanBody(c.body, c.jsonBody)
+			if err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			const n = 128
+			runtime.GC()
+			base := stacks()
+			var wg, ran sync.WaitGroup
+			hold := make(chan struct{})
+			for i := 0; i < n; i++ {
+				wg.Add(1)
+				ran.Add(1)
+				go func() {
+					defer wg.Done()
+					_, _ = scanBody(c.body, c.jsonBody)
+					r := ptraceotlp.NewExportRequest()
+					if c.jsonBody {
+						_ = r.UnmarshalJSON(c.body)
+					} else {
+						_ = r.UnmarshalProto(c.body)
+					}
+					_, _, _ = chexp.ConvertWithIdentities(context.Background(), r.Traces(), nil)
+					ran.Done()
+					<-hold // keep the grown stack
+				}()
+			}
+			ran.Wait()
+			each := (stacks() - base) / n
+			close(hold)
+			wg.Wait()
+			priced := stackInRequest + stackPrice(shape.depth)
+			t.Logf("depth %d: %d KiB of stack each, %d KiB priced", shape.depth, each>>10, priced>>10)
+			if each > priced {
+				t.Errorf("each request holds %d bytes of stack, over the %d priced", each, priced)
+			}
+		})
+	}
+}

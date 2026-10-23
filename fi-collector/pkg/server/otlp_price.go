@@ -67,7 +67,8 @@ func (s otlpShape) price() ingestPrice {
 		s.arrayValues*priceArrayValue +
 		s.containers*priceContainer +
 		sizeClassBound(s.bytesValues, 0) + // pdata's copy of bytes values
-		sizeClassBound(s.transientBytes, 0)
+		sizeClassBound(s.transientBytes, 0) +
+		stackPrice(s.depth)
 	rows := int64(priceRows) +
 		s.spans*priceRow +
 		s.keyValues*priceRowKeyValue +
@@ -87,6 +88,29 @@ func (s otlpShape) price() ingestPrice {
 		2*s.curatedJSONBytes
 	return ingestPrice{handler: handler, rows: rows}
 }
+
+// stackPrice is the goroutine stack a request nested depth levels deep
+// needs beyond the share priceRequest has for it: the JSON scan, jsoniter
+// and conversion recurse once per level, at most stackPerLevel bytes
+// each (measured: up to about 360, for a value nested in JSON), and a stack
+// grows by doubling.
+// TestPriceCoversDeepNestingStacks measures it.
+func stackPrice(depth int64) int64 {
+	need := depth * stackPerLevel
+	if need <= stackInRequest {
+		return 0
+	}
+	grown := int64(stackInRequest)
+	for grown < need {
+		grown *= 2
+	}
+	return grown - stackInRequest
+}
+
+const (
+	stackPerLevel  = 512
+	stackInRequest = 32 << 10 // of priceRequest
+)
 
 // sizeClassBound bounds the heap that n bytes in count allocations take: Go
 // rounds an allocation up to its size class (at most a quarter more, plus 16

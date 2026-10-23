@@ -60,6 +60,7 @@ func (j *jsonScan) open(c byte) (isNull bool, err error) {
 		if j.depth > maxJSONNesting {
 			return false, errJSONTooDeep
 		}
+		j.s.depth = max(j.s.depth, int64(j.depth))
 		return false, nil
 	case 'n':
 		j.skipScalar()

@@ -35,6 +35,9 @@ const (
 	// value recursively. An attribute value at maxValueNesting sits about 270
 	// levels down.
 	maxJSONNesting = 512
+	// protoDepthPerValue is how many JSON nesting levels one protobuf value
+	// level is counted as for its stack ({"arrayValue":{"values":[{...).
+	protoDepthPerValue = 4
 	// maxSpansPerRequest, maxResourceSpansPerRequest and
 	// maxKeyValuesPerRequest bound the elements of one request. The OTel
 	// Collector's batch processor sends 8,192 spans by default and SDKs 512.
@@ -109,6 +112,10 @@ type otlpShape struct {
 	// hot-column copy of an input.value or output.value that is not a
 	// string, and the span-events column.
 	hotCopyBytes int64
+	// depth is how deep decoding and converting the request recurse, in JSON
+	// nesting levels (protoDepthPerValue for each protobuf value level),
+	// for its goroutine stack (stackPrice).
+	depth int64
 	// transientBytes is what the JSON decoder allocates and drops while it
 	// decodes (jsonDropped): for every object member name, known or not, and
 	// every string with escapes. Priced in the handler part, as if it were
@@ -657,6 +664,7 @@ func (s *otlpShape) protoAnyValue(b []byte, depth int) (valueInfo, error) {
 			if depth >= maxValueNesting {
 				return v, errValueTooDeep
 			}
+			s.depth = max(s.depth, int64(depth+1)*protoDepthPerValue)
 			a, err := s.protoArray(val, depth+1)
 			if err != nil {
 				return v, err
@@ -666,6 +674,7 @@ func (s *otlpShape) protoAnyValue(b []byte, depth int) (valueInfo, error) {
 			if depth >= maxValueNesting {
 				return v, errValueTooDeep
 			}
+			s.depth = max(s.depth, int64(depth+1)*protoDepthPerValue)
 			a, err := s.protoKVList(val, depth+1)
 			if err != nil {
 				return v, err
