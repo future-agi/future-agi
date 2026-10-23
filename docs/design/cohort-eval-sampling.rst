@@ -196,6 +196,57 @@ broken wrap branch makes it fail). Re-using completed results after a quota
 increase (evaluating only the new units) is not implemented: an edited
 population still needs Delete & rerun.
 
+Sampling audit
+--------------
+
+``GET /tracer/eval-task/sampling_audit/?eval_task_id=<id>[&cohort_id=<id>]``
+audits the cohort of the task's current policy (or the named cohort, for
+example an archived one). The task page shows it in a read-only "Sampling
+audit" tab, present only for policy tasks.
+
+* Closed cohorts: the realized sample is the persisted membership. The
+  population of every stratum is re-read once at the cohort's ``frozen_at``
+  with the preview statement (one bounded ClickHouse read under the sampling
+  read budget and the per-actor preview admission), so strata whose quota is
+  zero are reported too. A stratum whose re-read population or quota no longer
+  equals the persisted ``population_size`` and member count is marked
+  ``changed`` (deleted rows or identity merges since the freeze); the persisted
+  ``N`` is kept because the stored weights used it. An uncertified cohort
+  (still freezing) is refused with 409.
+* Live cohorts: every first decision is persisted (selected and rejected), so
+  the audit reads PostgreSQL aggregates only. Each stratum gets an exact
+  two-sided binomial sample-ratio-mismatch (SRM) test of selected against
+  decided units at its rate, flagged at p < 0.0005.
+
+Per stratum it reports population ``N``, target (the rule's quota before the
+population cap), expected size (``k = min(N, target)``, or ``N x rate``),
+achieved ``n``, shortage, inclusion probability, design weight ``1/p`` and the
+exactness/SRM check. The summary reports the Kish effective sample size
+``(sum w)^2 / sum w^2``, the design effect ``n / n_eff = 1 + CV^2``, the weight
+CV, the weighted population (for closed cohorts it equals the represented
+population exactly: ``sum w = sum N`` over strata with a sampled unit) and the
+unrepresented strata. The balance check covers each declared stratum
+attribute (the slice and every group-by key): population, sample and weighted
+shares per category, standardized differences and a Pearson chi-square
+goodness-of-fit of the sampled counts to the population shares. Unweighted
+differences are expected under disproportionate quotas; a weighted imbalance
+(|standardized difference| > 0.1) means part of the population is
+unrepresented.
+
+Evidence: ``test_eval_sampling_audit.py`` checks the report against
+hand-computed values (for example ``n_eff = 1536/277`` and ``deff = 831/512``
+for weights 2.5 x 2, 10 x 4 and 1 x 3; chi-square ``271/15`` on 3 df) and the
+endpoint statuses (404 unknown task, other workspace or no cohort, 400 no
+policy, 409 uncertified cohort). The real-ClickHouse
+``test_closed_audit_endpoint_reports_frozen_design_weights_and_balance``
+freezes a five-cell design, checks every per-cell number, ``n_eff =
+13824/1693``, the weighted population of 48, the locale balance and the
+unsampled stratum, then deletes one selected-cell contact after the freeze and
+sees that stratum flagged ``changed``. ``test_srm_false_alarm_and_power``
+measured, with seeded simulation, 7 false alarms in 10,000 correct runs
+(2,000 units at 10%) and 1,000 of 1,000 detections of a 5% relative
+under-selection in a 200,000-unit stratum at 10%.
+
 Persistence and downstream metrics
 ----------------------------------
 
