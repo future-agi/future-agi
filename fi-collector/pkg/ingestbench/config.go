@@ -85,7 +85,11 @@ type Config struct {
 	TextPoolBlocks        int     `json:"text_pool_blocks"`
 
 	// Verification budget. Zero means derive a default from the run size.
+	// VerifyTimeout bounds the exact-ID verification; the durable lag's extra
+	// query per chunk has its own budget (DurableLagTimeout, by default the
+	// same size) and never spends the exact-ID verification's.
 	VerifyTimeout      time.Duration `json:"verify_timeout_ns"`
+	DurableLagTimeout  time.Duration `json:"durable_lag_timeout_ns"`
 	VerifyQueryTimeout time.Duration `json:"verify_query_timeout_ns"`
 	VerifyQueryRetries int           `json:"verify_query_retries"`
 	VerifyMaxMemory    int64         `json:"verify_query_max_memory_bytes"`
@@ -187,8 +191,8 @@ func (c Config) Validate() error {
 	if c.TreeDepth < 1 || c.TreeDepth > 64 || c.FanOut < 1 || c.FanOut > 64 || !(c.BytesPerToken >= 1 && c.BytesPerToken <= 16) || c.TextPoolBlocks < 1 || c.TextPoolBlocks > 65536 {
 		return fmt.Errorf("tree-depth and fan-out must be 1..64, bytes-per-token 1..16 and text-pool-blocks 1..65536")
 	}
-	if c.VerifyTimeout < 0 || c.VerifyTimeout > 72*time.Hour || c.VerifyQueryTimeout < 0 || c.VerifyQueryTimeout > time.Hour || c.VerifyQueryRetries < 0 || c.VerifyQueryRetries > 10 || (c.VerifyMaxMemory != 0 && (c.VerifyMaxMemory < 64<<20 || c.VerifyMaxMemory > 256<<30)) {
-		return fmt.Errorf("verify-timeout <= 72h, verify-query-timeout <= 1h, verify-query-retries 0..10, verify-max-memory 0 (default) or 64MiB..256GiB")
+	if c.VerifyTimeout < 0 || c.VerifyTimeout > 72*time.Hour || c.DurableLagTimeout < 0 || c.DurableLagTimeout > 72*time.Hour || c.VerifyQueryTimeout < 0 || c.VerifyQueryTimeout > time.Hour || c.VerifyQueryRetries < 0 || c.VerifyQueryRetries > 10 || (c.VerifyMaxMemory != 0 && (c.VerifyMaxMemory < 64<<20 || c.VerifyMaxMemory > 256<<30)) {
+		return fmt.Errorf("verify-timeout and durable-lag-timeout <= 72h, verify-query-timeout <= 1h, verify-query-retries 0..10, verify-max-memory 0 (default) or 64MiB..256GiB")
 	}
 	if c.CollectorMaxPendingRows < 0 {
 		return fmt.Errorf("declared collector max pending rows must not be negative")
@@ -315,9 +319,14 @@ func (c Config) client() *http.Client {
 	return &http.Client{Transport: transport, Timeout: c.Timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
-// VerifyBudget is the verification time budget for a run of this plan.
+// VerifyBudget is the verification time budget for a run of this plan: the
+// exact-ID budget plus, with the durable lag, its own budget.
 func (c Config) VerifyBudget() time.Duration {
-	return c.effectiveVerifyTimeout(c.PlannedSpans())
+	b := c.effectiveVerifyTimeout(c.PlannedSpans())
+	if c.DurableLag {
+		b += c.effectiveDurableLagTimeout(c.PlannedSpans())
+	}
+	return b
 }
 
 // DirectProbeBudget bounds the after-settle direct probe rounds.

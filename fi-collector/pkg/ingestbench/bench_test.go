@@ -70,6 +70,7 @@ func TestSafetyValidation(t *testing.T) {
 		{"verify-memory", func(c *Config) { c.VerifyMaxMemory = 1 }},
 		{"verify-retries", func(c *Config) { c.VerifyQueryRetries = 11 }},
 		{"verify-timeout", func(c *Config) { c.VerifyTimeout = 73 * time.Hour }},
+		{"durable-lag-timeout", func(c *Config) { c.DurableLagTimeout = 73 * time.Hour }},
 		{"direct-interval", func(c *Config) { c.DirectProbes.Interval = time.Millisecond }},
 		{"ledger", func(c *Config) {
 			c.Rate, c.Duration, c.MaxDuration, c.BatchSize = 1000000, 24*time.Hour, 24*time.Hour, 1

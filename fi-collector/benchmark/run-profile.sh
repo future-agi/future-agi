@@ -37,15 +37,17 @@ case "$profile" in
     rate=15000 batch=500 concurrency=16
     load=(--rate "$rate" --duration 24h --max-duration 24h --max-bytes 7000000000000
       --batch-size "$batch" --concurrency "$concurrency" --settle 2m)
-    # Verification of 1.296e9 spans: 1M-span chunks, 5-minute chunk queries and a
-    # 12-hour budget. These are unmeasured allowances, not a measured cost.
-    verify=(--verify-chunk 1000000 --verify-query-timeout 5m --verify-timeout 12h --verify-max-memory 4294967296
+    # Verification of 1.296e9 spans: 1M-span chunks, 5-minute chunk queries, a
+    # 12-hour exact-ID budget and a separate 12-hour budget for the durable lag
+    # query of each chunk (it never spends the exact-ID budget). These are
+    # unmeasured allowances, not a measured cost.
+    verify=(--verify-chunk 1000000 --verify-query-timeout 5m --verify-timeout 12h --durable-lag-timeout 12h --verify-max-memory 4294967296
       --direct-probe-interval 10s --direct-probe-min-age 30s --direct-probe-after-settle 20) ;;
   burst)
     rate=60000 batch=500 concurrency=32
     load=(--rate "$rate" --duration 60s --max-duration 1m --max-bytes 24000000000
       --batch-size "$batch" --concurrency "$concurrency" --settle 2m)
-    verify=(--verify-chunk 1000000 --verify-query-timeout 2m --verify-timeout 1h --verify-max-memory 4294967296
+    verify=(--verify-chunk 1000000 --verify-query-timeout 2m --verify-timeout 1h --durable-lag-timeout 1h --verify-max-memory 4294967296
       --direct-probe-interval 2s --direct-probe-min-age 10s --direct-probe-after-settle 20) ;;
   recovery)
     # Operator-run recovery case on an ISOLATED stack. This script never stops,

@@ -123,17 +123,22 @@ type Verification struct {
 	ChunkSpans        int64                      `json:"chunk_spans"`
 	// Chunks and NamespaceWindows are the totals verified so far, including
 	// any done before a resume; ResumedAtChunk is where this process started.
-	NamespaceWindows   int64   `json:"verified_namespace_windows"`
-	RecheckedChunks    int64   `json:"rechecked_chunks"`
-	ResumedAtChunk     int64   `json:"resumed_at_chunk"`
-	Queries            int64   `json:"queries"`
-	QueryRetries       int64   `json:"query_retries"`
-	TimeoutSeconds     float64 `json:"timeout_seconds"`
-	QueryTimeoutSecs   float64 `json:"query_timeout_seconds"`
-	QueryMaxMemory     int64   `json:"query_max_memory_bytes"`
-	Error              string  `json:"error,omitempty"`
-	ElapsedSeconds     float64 `json:"elapsed_seconds"`
-	PreexistingRunRows uint64  `json:"preexisting_run_rows"`
+	NamespaceWindows int64   `json:"verified_namespace_windows"`
+	RecheckedChunks  int64   `json:"rechecked_chunks"`
+	ResumedAtChunk   int64   `json:"resumed_at_chunk"`
+	Queries          int64   `json:"queries"`
+	QueryRetries     int64   `json:"query_retries"`
+	TimeoutSeconds   float64 `json:"timeout_seconds"`
+	// DurableLagTimeoutSecs is the durable lag's own budget (0 when disabled);
+	// DurableLagElapsedSecs the time its queries took, which did not count
+	// against TimeoutSeconds.
+	DurableLagTimeoutSecs float64 `json:"durable_lag_timeout_seconds"`
+	DurableLagElapsedSecs float64 `json:"durable_lag_elapsed_seconds"`
+	QueryTimeoutSecs      float64 `json:"query_timeout_seconds"`
+	QueryMaxMemory        int64   `json:"query_max_memory_bytes"`
+	Error                 string  `json:"error,omitempty"`
+	ElapsedSeconds        float64 `json:"elapsed_seconds"`
+	PreexistingRunRows    uint64  `json:"preexisting_run_rows"`
 	// MissingRanges lists maximal runs of consecutive requests of one outcome
 	// class that each miss at least one span, in request order (at most
 	// maxMissingRanges; the rest are counted as omitted).

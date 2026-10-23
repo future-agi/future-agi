@@ -1119,11 +1119,26 @@ func TestVerificationBudgetsScaleAndReachTheServer(t *testing.T) {
 	if got := c.effectiveVerifyTimeout(500); got != 10*time.Minute {
 		t.Fatalf("smoke verification budget %s", got)
 	}
-	// The durable lag's extra query per chunk doubles the per-span allowance.
+	// The durable lag's extra query per chunk has its own budget, by default
+	// the size of the exact-ID budget, so the whole plan allows both.
 	withLag, withoutLag := c, c
 	withoutLag.DurableLag = false
-	if a, b := withLag.effectiveVerifyTimeout(50_000_000), withoutLag.effectiveVerifyTimeout(50_000_000); a != 10*time.Minute+2000*time.Second || b != 10*time.Minute+1000*time.Second {
-		t.Fatalf("verification budget with/without durable lag: %s / %s", a, b)
+	if a, b, d := withLag.effectiveVerifyTimeout(50_000_000), withoutLag.effectiveVerifyTimeout(50_000_000), withLag.effectiveDurableLagTimeout(50_000_000); a != 10*time.Minute+1000*time.Second || b != a || d != a {
+		t.Fatalf("exact-ID budget with/without durable lag %s / %s, durable lag budget %s", a, b, d)
+	}
+	plan := withLag
+	plan.Rate, plan.Duration = 1000, 50_000*time.Second
+	if got, want := plan.VerifyBudget(), 2*plan.effectiveVerifyTimeout(plan.PlannedSpans()); got != want {
+		t.Fatalf("plan budget with durable lag %s, want exact-ID plus durable lag %s", got, want)
+	}
+	explicit := withLag
+	explicit.VerifyTimeout = 12 * time.Hour
+	if explicit.effectiveDurableLagTimeout(1) != 12*time.Hour {
+		t.Fatal("the durable lag budget does not follow an explicit exact-ID budget by default")
+	}
+	explicit.DurableLagTimeout = 3 * time.Hour
+	if explicit.effectiveDurableLagTimeout(1) != 3*time.Hour || explicit.effectiveVerifyTimeout(1) != 12*time.Hour {
+		t.Fatal("explicit durable lag budget ignored")
 	}
 	c.VerifyChunk = 1_000_000
 	if got := c.effectiveVerifyQueryTimeout(); got < 50*time.Second {
@@ -1145,6 +1160,48 @@ func TestVerificationBudgetsScaleAndReachTheServer(t *testing.T) {
 	}, 1, 0)
 	if !v.Complete || seen.Load() != "30/1073741824" || v.QueryTimeoutSecs != 30 {
 		t.Fatalf("limits not sent: %v %+v", seen.Load(), v)
+	}
+}
+
+// F10: a slow durable lag query cannot exhaust the exact-ID verification. The
+// exact-ID budget (1 s here) and the durable lag budget (1 s, the default) are
+// separate: a durable query that runs out of its own budget stops the durable
+// lag, and the exact-ID verification still completes. With one shared budget
+// the same run ended as "verification budget exhausted" (incomplete).
+func TestSlowDurableLagQueriesDoNotSpendTheExactIDBudget(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		switch q := string(body); {
+		case strings.Contains(q, "toUnixTimestamp64Micro(created_at)"):
+			select {
+			case <-time.After(3 * time.Second):
+			case <-r.Context().Done():
+				return
+			}
+			fmt.Fprint(w, `{"b":5,"n":1,"max_us":5}`)
+		case strings.Contains(q, "GROUP BY r"):
+			fmt.Fprint(w, `{"r":0,"d":1,"n":1}`)
+		default:
+			fmt.Fprint(w, `{"rows":0}`)
+		}
+	}))
+	defer srv.Close()
+	c := testConfig()
+	c.ClickHouseURL, c.VerifyQueryRetries, c.VerifyTimeout = srv.URL, 0, time.Second
+	ledger := newOutcomeLedger(int64(c.BatchSize))
+	if err := ledger.record(0, exportOutcome{class: outcomeAcknowledged}); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	tl := newTimeline(start)
+	tl.add(start, 0, 1)
+	v := verifyRun(context.Background(), clickHouse{cfg: c, client: c.readClient()}, ledger, tl, 1, 0, c.durableLagOrigin(start, ClockSample{}))
+	if !v.Complete || v.DistinctExpected != 1 || v.Error != "" {
+		t.Fatalf("the exact-ID verification ran out of budget because of the durable lag: %+v", v)
+	}
+	d := v.DurableLag
+	if d.Status != "errors" || !strings.Contains(d.Method, "durable lag budget of 1s exhausted") || v.DurableLagTimeoutSecs != 1 || v.DurableLagElapsedSecs < 0.9 || v.TimeoutSeconds != 1 {
+		t.Fatalf("durable lag budget not reported: %+v (durable budget %.1f s, spent %.1f s)", d, v.DurableLagTimeoutSecs, v.DurableLagElapsedSecs)
 	}
 }
 

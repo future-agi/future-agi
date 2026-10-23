@@ -43,20 +43,26 @@ func (c Config) verifyLimits() queryLimits {
 	return queryLimits{timeout: c.effectiveVerifyQueryTimeout(), maxMemory: c.effectiveVerifyMaxMemory(), maxResponse: 16 << 20}
 }
 
-// effectiveVerifyTimeout is the whole verification budget. The default grows
-// with the run (10 minutes plus one second per 50,000 attempted spans, at most
-// 48 hours): a fixed 10 minutes cannot verify a 24-hour profile. The durable
-// lag adds one query per chunk, so with it the per-span allowance doubles and
-// the extra query cannot eat the exact-ID scan's budget.
+// effectiveVerifyTimeout is the exact-ID verification budget. The default
+// grows with the run (10 minutes plus one second per 50,000 attempted spans, at
+// most 48 hours): a fixed 10 minutes cannot verify a 24-hour profile. Time
+// spent on durable lag queries does not count against it.
 func (c Config) effectiveVerifyTimeout(attempted int64) time.Duration {
 	if c.VerifyTimeout > 0 {
 		return c.VerifyTimeout
 	}
-	perSpan := attempted / 50000
-	if c.DurableLag {
-		perSpan *= 2
+	return min(10*time.Minute+time.Duration(attempted/50000)*time.Second, 48*time.Hour)
+}
+
+// effectiveDurableLagTimeout is the durable lag's own budget: one query per
+// chunk, about as costly as the exact-ID query, so by default the same size
+// as the exact-ID budget. When it runs out the durable lag stops (and says
+// so); the exact-ID verification carries on.
+func (c Config) effectiveDurableLagTimeout(attempted int64) time.Duration {
+	if c.DurableLagTimeout > 0 {
+		return c.DurableLagTimeout
 	}
-	return min(10*time.Minute+time.Duration(perSpan)*time.Second, 48*time.Hour)
+	return c.effectiveVerifyTimeout(attempted)
 }
 
 // effectiveVerifyQueryTimeout bounds one chunk query: by default 30 seconds or
@@ -468,6 +474,18 @@ type verifier struct {
 	lastSave time.Time
 	// saveCost is how long the last checkpoint write took.
 	saveCost time.Duration
+	// exactDeadline is when the exact-ID budget ends, not counting
+	// durableSpent, the time durable lag queries took: exact-ID queries run
+	// until exactDeadline + durableSpent, so the durable lag never spends the
+	// exact-ID budget. durableBudget bounds durableSpent.
+	exactDeadline time.Time
+	durableSpent  time.Duration
+	durableBudget time.Duration
+}
+
+// exactContext bounds one exact-ID verification query by the exact-ID budget.
+func (vf *verifier) exactContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithDeadline(ctx, vf.exactDeadline.Add(vf.durableSpent))
 }
 
 // checkpointEvery bounds how often progress is saved between chunks (the
@@ -498,18 +516,21 @@ func (vf *verifier) run(ctx context.Context) Verification {
 	v := Verification{Method: "chunked-exact-id-per-request-outcome", TotalChunks: int64(len(vf.cp.Chunks)), ChunkSpans: vf.cp.ChunkSpans,
 		ResumedAtChunk: vf.cp.NextChunk, TimeoutSeconds: c.effectiveVerifyTimeout(vf.cp.Attempted).Seconds(),
 		QueryTimeoutSecs: c.effectiveVerifyQueryTimeout().Seconds(), QueryMaxMemory: c.effectiveVerifyMaxMemory(), PreexistingRunRows: vf.cp.Preexisting}
+	if vf.cp.DurableLagOrigin != nil {
+		v.DurableLagTimeoutSecs = c.effectiveDurableLagTimeout(vf.cp.Attempted).Seconds()
+	}
 	vf.v = &v
+	vf.exactDeadline, vf.durableBudget = start.Add(c.effectiveVerifyTimeout(vf.cp.Attempted)), c.effectiveDurableLagTimeout(vf.cp.Attempted)
 	fail := func(err error) Verification {
 		vf.fill(&v)
 		v.Chunks, v.NamespaceWindows = vf.cp.NextChunk, vf.cp.NextWindow
 		v.Complete = false
 		v.Error = err.Error()
 		v.ElapsedSeconds = time.Since(start).Seconds()
+		v.DurableLagElapsedSecs = vf.durableSpent.Seconds()
 		_ = vf.save()
 		return v
 	}
-	ctx, cancel := context.WithTimeout(ctx, c.effectiveVerifyTimeout(vf.cp.Attempted))
-	defer cancel()
 	requests := (vf.cp.Attempted + int64(c.BatchSize) - 1) / int64(c.BatchSize)
 	for r := int64(0); r < requests; r++ {
 		if vf.ledger.class(r) == outcomeNotSent {
@@ -567,6 +588,7 @@ func (vf *verifier) run(ctx context.Context) Verification {
 	v.DurableLag = vf.durableLag(v.DistinctExpected, true)
 	vf.cp.Complete = true
 	v.ElapsedSeconds = time.Since(start).Seconds()
+	v.DurableLagElapsedSecs = vf.durableSpent.Seconds()
 	if err := vf.save(); err != nil {
 		v.Complete = false
 		v.Error = err.Error()
@@ -719,7 +741,9 @@ func (vf *verifier) chunk(ctx context.Context, idx int64, accumulate bool) (chun
 	query := "WITH " + sequenceExpr + " AS seq, (" + identityExpr + " AND seq >= {lo:UInt64} AND seq < {hi:UInt64}) AS valid" +
 		" SELECT if(valid, intDiv(seq, {batch:UInt64}), toUInt64(18446744073709551615)) AS r, uniqExactIf(seq, valid) AS d, count() AS n" +
 		vf.ch.scope() + filter + " GROUP BY r ORDER BY r"
-	body, err := vf.withRetries(ctx, query, params)
+	qctx, cancel := vf.exactContext(ctx)
+	body, err := vf.withRetries(qctx, query, params)
+	cancel()
 	if err != nil {
 		return chunkSummary{}, err
 	}
@@ -796,7 +820,7 @@ func (vf *verifier) chunk(ctx context.Context, idx int64, accumulate bool) (chun
 	if spec.Last {
 		a.closeRange()
 	}
-	vf.durableChunk(ctx, spec, params, filter)
+	vf.durableChunk(ctx, idx, spec, params, filter)
 	// A partial request is final once the scan has passed its last span.
 	for r := firstReq; r <= lastReq; r++ {
 		present, open := a.PartialOpen[r]
@@ -821,6 +845,8 @@ func (vf *verifier) namespaceWindow(ctx context.Context, w timeWindow) error {
 	params := vf.ch.params()
 	params["ns_lo"], params["ns_hi"] = vf.cp.Config.namespaceBounds()
 	params["time_lo"], params["time_hi"] = formatCHTime(w.Lo), formatCHTime(w.Hi)
+	ctx, cancel := vf.exactContext(ctx)
+	defer cancel()
 	body, err := vf.withRetries(ctx, "SELECT count() AS rows"+vf.ch.scope()+
 		" AND start_time >= {time_lo:DateTime64(6, 'UTC')} AND start_time < {time_hi:DateTime64(6, 'UTC')}"+
 		" AND NOT (trace_id >= {ns_lo:String} AND trace_id <= {ns_hi:String})", params)
@@ -868,15 +894,33 @@ func (vf *verifier) durableLag(distinct uint64, complete bool) DurableLagResult 
 
 // durableChunk adds one chunk's durable lags. A failure stops further durable
 // lag queries but never the exact-ID verification.
-func (vf *verifier) durableChunk(ctx context.Context, spec chunkSpec, params map[string]string, filter string) {
+func (vf *verifier) durableChunk(ctx context.Context, idx int64, spec chunkSpec, params map[string]string, filter string) {
 	o, a := vf.cp.DurableLagOrigin, &vf.cp.Accum
 	if o == nil || a.DurableError != "" {
 		return
 	}
+	exhausted := func() {
+		a.DurableError = fmt.Sprintf("durable lag budget of %s exhausted at chunk %d of %d; the exact-ID verification continued without it", vf.durableBudget, idx+1, len(vf.cp.Chunks))
+	}
+	left := vf.durableBudget - vf.durableSpent
+	if left <= 0 {
+		exhausted()
+		return
+	}
 	params["offset"], params["origin"], params["rate"] = strconv.FormatInt(o.OffsetMicro, 10), strconv.FormatInt(o.StartUnixMicro, 10), strconv.FormatInt(o.Rate, 10)
-	body, err := vf.withRetries(ctx, durableLagQuery+vf.ch.scope()+filter+" AND valid GROUP BY seq) GROUP BY b ORDER BY b", params)
+	dctx, cancel := context.WithTimeout(ctx, left)
+	began := time.Now()
+	body, err := vf.withRetries(dctx, durableLagQuery+vf.ch.scope()+filter+" AND valid GROUP BY seq) GROUP BY b ORDER BY b", params)
+	vf.durableSpent += time.Since(began)
+	budgetOver := dctx.Err() != nil
+	cancel()
 	if err != nil {
-		if ctx.Err() == nil {
+		switch {
+		case ctx.Err() != nil:
+			// The whole verification was cancelled; the exact-ID scan reports it.
+		case budgetOver:
+			exhausted()
+		default:
 			a.DurableError = err.Error()
 		}
 		return

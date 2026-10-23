@@ -98,7 +98,8 @@ func command(ctx context.Context, args []string, stdout io.Writer) error {
 	f.BoolVar(&c.DurableLag, "durable-lag", c.DurableLag, "measure created_at minus the scheduled send for every stored span (one extra query per verification chunk)")
 	f.DurationVar(&c.CollectorPollInterval, "collector-poll-interval", c.CollectorPollInterval, "collector /healthz backlog sampling period (with --collector-health-url)")
 	f.Int64Var(&c.VerifyChunk, "verify-chunk", c.VerifyChunk, "exact distinct verification chunk size in spans (bounded CH memory)")
-	f.DurationVar(&c.VerifyTimeout, "verify-timeout", c.VerifyTimeout, "whole verification budget; 0 derives one from the run size")
+	f.DurationVar(&c.VerifyTimeout, "verify-timeout", c.VerifyTimeout, "exact-ID verification budget; 0 derives one from the run size")
+	f.DurationVar(&c.DurableLagTimeout, "durable-lag-timeout", c.DurableLagTimeout, "separate budget of the durable lag queries; 0 means the size of the exact-ID budget")
 	f.DurationVar(&c.VerifyQueryTimeout, "verify-query-timeout", c.VerifyQueryTimeout, "per chunk query limit (server and client); 0 derives one from the chunk size")
 	f.IntVar(&c.VerifyQueryRetries, "verify-query-retries", c.VerifyQueryRetries, "retries of a failed read-only verification query")
 	f.Int64Var(&c.VerifyMaxMemory, "verify-max-memory", c.VerifyMaxMemory, "per-query max_memory_usage in bytes; 0 means 1 GiB")
@@ -312,7 +313,8 @@ func verifyCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	out := f.String("out", "", "new path for the verification result; refuses overwriting")
 	chEnv := f.String("ch-headers-env", "", "env variable containing read-only ClickHouse auth headers")
 	confirmRemote := f.String("confirm-remote", "", "must equal the run ID when the ClickHouse URL is not loopback")
-	timeout := f.Duration("verify-timeout", 0, "budget for this resume; 0 keeps the run's budget")
+	timeout := f.Duration("verify-timeout", 0, "exact-ID budget for this resume; 0 keeps the run's budget")
+	durableTimeout := f.Duration("durable-lag-timeout", 0, "durable lag budget for this resume; 0 keeps the run's budget")
 	queryTimeout := f.Duration("verify-query-timeout", 0, "per chunk query limit; 0 keeps the run's limit")
 	retries := f.Int("verify-query-retries", -1, "retries per failed query; -1 keeps the run's setting")
 	if err := f.Parse(args); err != nil {
@@ -321,8 +323,8 @@ func verifyCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	if *checkpoint == "" || *out == "" || len(f.Args()) != 0 {
 		return fmt.Errorf("usage: otlpbench verify --checkpoint path --out new-result.json [--ch-headers-env NAME]")
 	}
-	if *timeout < 0 || *timeout > 72*time.Hour || *queryTimeout < 0 || *queryTimeout > time.Hour || *retries > 10 {
-		return fmt.Errorf("verify-timeout <= 72h, verify-query-timeout <= 1h, verify-query-retries <= 10")
+	if *timeout < 0 || *timeout > 72*time.Hour || *durableTimeout < 0 || *durableTimeout > 72*time.Hour || *queryTimeout < 0 || *queryTimeout > time.Hour || *retries > 10 {
+		return fmt.Errorf("verify-timeout and durable-lag-timeout <= 72h, verify-query-timeout <= 1h, verify-query-retries <= 10")
 	}
 	headers, err := ingestbench.HeadersFromEnv(*chEnv)
 	if err != nil {
@@ -337,6 +339,9 @@ func verifyCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		c.Execute, c.ConfirmRemote = true, *confirmRemote
 		if *timeout > 0 {
 			c.VerifyTimeout = *timeout
+		}
+		if *durableTimeout > 0 {
+			c.DurableLagTimeout = *durableTimeout
 		}
 		if *queryTimeout > 0 {
 			c.VerifyQueryTimeout = *queryTimeout
