@@ -177,7 +177,9 @@ def preview_precision(cells: list[dict]) -> dict:
 
     Adds each cell's 95% margin of error (finite-population corrected, at the
     conservative p = 0.5) for its selected units, and summarizes the
-    stratified margin and the Kish effect of the design weights N/n.
+    stratified margin and the Kish effect of the design weights 1/p. Within
+    each cell p is constant, so expected_units = N*p: closed cells use k/N,
+    while live cells use their configured rate, not the realized fraction n/N.
     """
 
     for cell in cells:
@@ -188,7 +190,7 @@ def preview_precision(cells: list[dict]) -> dict:
             confidence=PLANNING_CONFIDENCE,
         )
     weighted = [
-        (cell["eligible_units"] / cell["selected_units"], cell["selected_units"])
+        (cell["eligible_units"] / cell["expected_units"], cell["selected_units"])
         for cell in cells
         if cell["selected_units"]
     ]

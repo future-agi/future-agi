@@ -298,7 +298,11 @@ clears the planned overrides so they cannot invisibly supersede edited rules.
 Saving a changed population still follows the explicit fresh-run contract.
 Neither quotas nor precision estimates reserve a future population. Live
 previews show descriptive precision for their current snapshot but offer no
-quota application. Empty samples have no estimable margin; a census has zero
+quota application. Preview Kish effective size and unequal-weight design effect
+use the same inclusion weights as the audit: ``1/p`` for the configured live
+rate, or ``N/k`` for a closed quota. A live cell's realized ``N/n`` is not its
+design weight; equal-rate cells keep equal weights even if their realized
+selection fractions differ. Empty samples have no estimable margin; a census has zero
 sampling error. These are planning approximations, not observed-outcome
 confidence intervals, and small samples need a different inferential method.
 

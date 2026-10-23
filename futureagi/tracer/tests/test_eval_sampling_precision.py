@@ -112,6 +112,63 @@ def test_extreme_binomial_mismatch_has_logarithmic_boundary_search():
         assert calls.call_count < 30
 
 
+@pytest.mark.parametrize(
+    "mode,expected,selected,effective_n,design_effect",
+    [
+        ("live", [5, 5], [5, 1], 6, 1),
+        ("live", [5, 2.5], [5, 1], 49 / 9, 54 / 49),
+        ("closed", [5, 1], [5, 1], 10 / 3, 1.8),
+        ("live", [5, 5], [5, 0], 5, 1),
+        ("live", [0, 0], [0, 0], None, None),
+    ],
+)
+def test_preview_design_weights_match_audit_not_realized_fractions(
+    mode, expected, selected, effective_n, design_effect
+):
+    from tracer.services.eval_tasks.sampling.service import preview_precision
+
+    cells = [
+        {
+            "stratum": f'["cell-{index}",[]]',
+            "eligible_units": 10,
+            "expected_units": target,
+            "selected_units": achieved,
+        }
+        for index, (target, achieved) in enumerate(zip(expected, selected, strict=True))
+    ]
+    preview = preview_precision(cells)
+    audited = audit_report(
+        {
+            "mode": mode,
+            "group_by": [],
+            "strata": [
+                {"name": f"cell-{index}", "rate": target * 10}
+                for index, target in enumerate(expected)
+            ],
+            "default": {"rate": 0},
+        },
+        [
+            {
+                "stratum": cell["stratum"],
+                "population": 10,
+                "achieved": cell["selected_units"],
+                "probability": cell["expected_units"] / 10,
+                "population_check": "match",
+            }
+            for cell in cells
+        ],
+    )["summary"]
+    for key, expected_value in (
+        ("kish_effective_n", effective_n),
+        ("design_effect", design_effect),
+    ):
+        if expected_value is None:
+            assert preview[key] is None
+        else:
+            assert preview[key] == pytest.approx(expected_value)
+        assert preview[key] == audited[key]
+
+
 def test_live_audit_flags_inconsistent_persisted_probabilities():
     result = audit_report(
         {

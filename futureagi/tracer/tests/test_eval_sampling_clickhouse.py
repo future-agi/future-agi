@@ -1421,6 +1421,73 @@ def test_coordinated_prn_sql_matches_reference_nests_and_persists(
     } == {"project"}
 
 
+def test_live_preview_and_audit_use_configured_weights_with_unequal_realizations(
+    auth_client, project, custom_eval_config, ch_seed
+):
+    """Two N=10 cells at 50% realize 5 and 1; all six weights are still 2."""
+    from tracer.services.eval_tasks.sampling.policy import rate_selects
+
+    task = EvalTask.objects.create(
+        project=project,
+        row_type="spans",
+        run_type=RunType.CONTINUOUS,
+        filters={},
+        sampling_policy=make_policy(
+            mode="live",
+            window={
+                "start": (timezone.now() - timedelta(hours=1)).isoformat(),
+                "end": None,
+            },
+            group_by=[{"key": "cell"}],
+            default={"rate": 50},
+        ),
+    )
+    task.evals.add(custom_eval_config)
+    _, version = task_policy(task, now=sampling_clock())
+    spans = []
+    for cell, selected_target in (("a", 5), ("b", 1)):
+        remaining = {True: selected_target, False: 10 - selected_target}
+        for index in range(1000):
+            identity = uuid.uuid5(project.id, f"live-precision-{cell}-{index}")
+            selected = rate_selects(version, f"session:{identity}", 50)
+            if remaining[selected]:
+                session = TraceSession.objects.create(project=project, id=identity)
+                spans += seed_contact(
+                    project, session, {"cell": cell}, traces=1, seed=False
+                )
+                remaining[selected] -= 1
+            if not any(remaining.values()):
+                break
+        assert remaining == {True: 0, False: 0}, "fixture must realize both rates"
+    seed_ch_spans(spans)
+    preview = preview_policy(task)
+    assert sorted(
+        (row["eligible_units"], row["expected_units"], row["selected_units"])
+        for row in preview["strata"]
+    ) == [(10, 5, 1), (10, 5, 5)]
+    reconcile(task)
+    response = auth_client.get(
+        "/tracer/eval-task/sampling_audit/", {"eval_task_id": str(task.id)}
+    )
+    assert response.status_code == 200, response.content
+    audit = response.json()["result"]
+    assert sorted(
+        (row["population_size"], row["achieved"]) for row in audit["strata"]
+    ) == [(10, 1), (10, 5)]
+    assert all(row["design_weight"] == 2 for row in audit["strata"])
+    assert (
+        list(
+            EvalSamplingMember.objects.filter(
+                cohort__task=task, selected=True
+            ).values_list("inclusion_probability", flat=True)
+        )
+        == [0.5] * 6
+    )
+    for key, expected in (("kish_effective_n", 6), ("design_effect", 1)):
+        assert preview["precision"][key] == pytest.approx(expected)
+        assert preview["precision"][key] == pytest.approx(audit["summary"][key])
+
+
 def test_closed_audit_endpoint_reports_frozen_design_weights_and_balance(
     auth_client, project, custom_eval_config, ch_seed
 ):
