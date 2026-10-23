@@ -519,8 +519,9 @@ def _jev_playground(auth_client, model="jev-latest"):
         "mapping": {"input": "Agent: I issued a full refund."},
         "config": {"params": {}},
     }
-    if model is not None:
-        body["model"] = model
+    # The page sends null for a saved template's own model; an absent model
+    # would default to turing_large.
+    body["model"] = model
     return lambda: auth_client.post("/model-hub/eval-playground/", body, format="json")
 
 

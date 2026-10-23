@@ -163,9 +163,12 @@ def test_r17_dataset_runner_emits_jev_properties():
         billing.return_value.get_eval_per_run_fee.return_value = 0.0005
         billing.return_value.calculate_ai_credits.return_value = 0.06
         runner._process_eval_result(SimpleNamespace(id="row"), {})
-    # Flat pricing: only the per-run fee is converted to credits.
-    billing.return_value.calculate_ai_credits.assert_called_once_with(0.0005)
+    # Flat pricing: only the per-run fee is converted to credits, and the
+    # answer is charged that (credits_per_answer, as on every Jev path).
+    conversions = billing.return_value.calculate_ai_credits.call_args_list
+    assert conversions and all(c.args == (0.0005,) for c in conversions)
     events = [call.args[0] for call in emit.call_args_list]
+    assert [event.amount for event in events] == [0, 0.06]
     assert [event.event_id for event in events] == [
         usage_event_id("run-1", 1),
         usage_event_id("run-1", 2),

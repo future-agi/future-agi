@@ -496,6 +496,8 @@ def test_a_rediscovered_run_is_not_compared_with_the_last_one(
     first, _, _ = run_report(
         report, user, ids(order=6, human=6, refund=6, stock=6), model=model
     )
+    # The first run froze its categories on the saved report.
+    report.refresh_from_db()
     second, _, _ = run_report(
         report, user, ids(order=6, human=6, refund=6, stock=6), model=model
     )
