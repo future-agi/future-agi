@@ -1583,15 +1583,18 @@ def record_cleanup(
             job.state = HostedHarnessJob.State.RETRY_WAIT
             job.save(update_fields=["state", "updated_at"])
             return job
-        # An adaptation job is completed by complete_adaptation, not by an authoring archive.
+        # Adaptation and design jobs are completed by their own services, not by an authoring
+        # archive.
+        metadata = job.payload.get("metadata") or {}
         snapshot_missing = (
             job.environment_id is None
             and job.test_execution_id is None
             and attempt.terminal_stage == "completed"
-            and not (job.payload.get("metadata") or {}).get("adaptation")
+            and not metadata.get("adaptation")
+            and not metadata.get("design")
             and (
                 not job.run_test_id
-                or not (job.payload.get("metadata") or {}).get("authoring_object_key")
+                or not metadata.get("authoring_object_key")
                 or HostedHarnessScenario.no_workspace_objects.filter(job=job).count()
                 != job.scenario_count
             )

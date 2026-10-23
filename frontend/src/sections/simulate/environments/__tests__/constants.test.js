@@ -28,7 +28,7 @@ describe("environmentOptions", () => {
     const coming = OPTIONS.filter(
       (o) => o.status === OPTION_STATUS.COMING_SOON,
     ).map((o) => o.id);
-    expect(live).toEqual(["source", "hosted", "upload"]);
+    expect(live).toEqual(["source", "hosted", "upload", "design"]);
     expect(coming).toEqual(["templates", "web", "mcp", "local"]);
   });
 

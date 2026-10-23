@@ -91,10 +91,14 @@ def serialize_conversation(
         conversation=conversation
     ).first()
     # A live job always accepts messages: they wait in order until its sandbox can run chat.
+    terminal = conversation.job.state in _TERMINAL_JOB_STATES
     chat_available = (
         conversation.state != HostedHarnessConversation.State.RETIRED
+        # Only a design's own process answers it: a finished design is continued or started
+        # again, never chatted with.
+        and not (terminal and job_metadata.get("design"))
         and bool(
-            conversation.job.state not in _TERMINAL_JOB_STATES
+            not terminal
             or conversation.latest_workspace_object_key
             or job_metadata.get("authoring_object_key")
             # A composition's workspace is assembled from its releases (contract §7.8).
@@ -1630,6 +1634,9 @@ def promote_conversation_checkpoint(
     )
     environment = job.environment or job
     if environment.state != HostedHarnessJob.State.COMPLETED:
+        return None
+    # A design's checkpoints are for continuing it; what it made is the releases it sealed.
+    if ((environment.payload or {}).get("metadata") or {}).get("design"):
         return None
     checkpoint = _read_object(object_key)
     if checkpoint is None:

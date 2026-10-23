@@ -300,9 +300,12 @@ def list_releases(organization) -> list[dict[str, Any]]:
         .order_by("name", "created_at")
     ):
         suites.setdefault(suite.environment_id, []).append(suite)
+    named = {environment.digest: environment.name for environment in environments}
     results = []
     for environment in environments:
         rules = (environment.policy or {}).get("rules") or []
+        manifest = environment.manifest or {}
+        derived = str((manifest.get("provenance") or {}).get("derived_from") or "")
         results.append(
             {
                 "id": str(environment.id),
@@ -316,6 +319,18 @@ def list_releases(organization) -> list[dict[str, Any]]:
                     }
                     if environment.parent_id
                     else None
+                ),
+                # A designed release names its template as `release:<digest>` (decision 2).
+                "derived_from": (
+                    {
+                        "digest": derived.removeprefix("release:"),
+                        "name": named.get(derived.removeprefix("release:")),
+                    }
+                    if derived.startswith("release:")
+                    else None
+                ),
+                "provenance": list(
+                    (manifest.get("metadata") or {}).get("provenance") or []
                 ),
                 "tools": [
                     {

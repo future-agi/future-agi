@@ -50,6 +50,7 @@ SENSITIVE_BODY_PATH_PREFIXES = (
     "/simulate/api/harness-jobs/sources/",
     "/simulate/api/harness-jobs/secret-files/",
     "/simulate/api/harness-jobs/secret-values/",
+    "/simulate/api/harness-environment-designs/documents/",
 )
 
 

@@ -8,6 +8,22 @@ export const OPTION_ID = {
   MCP: "mcp",
   UPLOAD: "upload",
   LOCAL: "local",
+  DESIGN: "design",
+};
+
+// Designing builds a new environment from requirements rather than around an agent
+// (environment-releases.md §7.9).
+export const DESIGN_OPTION = {
+  id: "design",
+  group: "design",
+  title: "Describe your environment",
+  icon: "solar:magic-stick-3-linear",
+  blurb:
+    "Say what your agent does, the systems it acts on and its rules, and add your documents. The harness asks what it still needs, proposes a design for your approval, then builds and proves it.",
+  preview: ["Requirements", "Documents", "Templates"],
+  setupSubtitle:
+    "The result is a sealed environment of your own: use it with your agent, run our agent on it, or customize it again.",
+  status: OPTION_STATUS.LIVE,
 };
 
 export const OPTIONS = [
@@ -87,6 +103,7 @@ export const OPTIONS = [
       "The CLI runs on your machine and streams simulations back over a secure tunnel.",
     status: OPTION_STATUS.COMING_SOON,
   },
+  DESIGN_OPTION,
 ];
 
 export const BRING_YOUR_AGENT_ORDER = [
@@ -147,6 +164,8 @@ export const ENVIRONMENTS_HEADER = {
   title: "Environments",
   subtitle:
     "An environment is the world your agent runs in: seeded state, tools, and rules. Pick how you want to bring your agent in and we take care of the rest.",
+  designHeading: "Or design one",
+  designSub: "From your requirements, your documents or a template.",
   connectHeading: "Or connect your own agent",
   connectSub: "We work with what you already have: no rewrite, no adapter.",
 };

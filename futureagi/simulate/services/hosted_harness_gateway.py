@@ -28,6 +28,7 @@ import requests
 import structlog
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from minio.error import S3Error
 
@@ -238,6 +239,30 @@ def _ask_harness_to_adapt(
             "the agent's instructions conflict with the policy, then finish."
         ),
         client_request_id=f"adapt-{attempt.id}",
+    )
+    schedule_conversation_runtime(str(conversation.id), endpoint_base_url)
+
+
+def _ask_harness_to_design(
+    job: HostedHarnessJob, attempt: HostedHarnessAttempt, endpoint_base_url: str
+) -> None:
+    """Put the design request into the job's conversation; its harness designs the environment.
+    A continued design is asked to carry on: its builder asks the parked question again."""
+    from simulate.services.harness_designs import design_of
+    from simulate.services.hosted_harness_conversation import enqueue_message
+    from simulate.tasks.hosted_harness_conversation import schedule_conversation_runtime
+
+    design = design_of(job) or {}
+    conversation, _message, _created = enqueue_message(
+        job,
+        content=(
+            "Carry on with this design from where it stopped."
+            if design.get("resume_from")
+            else "Customize the template to my requirements in your brief."
+            if design.get("template")
+            else "Design this environment from my requirements in your brief."
+        ),
+        client_request_id=f"design-{attempt.id}",
     )
     schedule_conversation_runtime(str(conversation.id), endpoint_base_url)
 
@@ -1023,7 +1048,9 @@ class HostedSourceAcquirer:
 class PlatformSecretResolver:
     def resolve(self, job: HostedHarnessJob) -> dict[str, str]:
         resolved: dict[str, str] = {}
-        for alias, reference in job.payload["agent"]["secret_refs"].items():
+        # A design job has no agent, so nothing to resolve.
+        agent = job.payload.get("agent") or {}
+        for alias, reference in (agent.get("secret_refs") or {}).items():
             if reference["manager"] != "platform-vault":
                 raise HostedHarnessError(
                     "secret_manager_unsupported",
@@ -2279,6 +2306,7 @@ class HostedHarnessGateway:
         _mark_stage(job, "acquiring_source")
         source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
         authoring_archive = _authoring_archive_for(job)
+        from simulate.services.harness_designs import design_launch_for
         from simulate.services.harness_releases import (
             adaptation_launch_for,
             apply_frozen_simulator,
@@ -2286,11 +2314,13 @@ class HostedHarnessGateway:
         )
 
         # A run of a composition receives immutable releases instead of an authoring archive;
-        # an adaptation receives the releases it adapts the agent to and runs nothing else.
+        # an adaptation receives the releases it adapts the agent to and runs nothing else; a
+        # design receives its template, its documents and, continued, its checkpoint.
         release = release_launch_for(job)
         adaptation = adaptation_launch_for(job)
-        # Releases staged under /work/releases: a job carries a composition or an adaptation.
-        staged = release or adaptation
+        design = design_launch_for(job)
+        # What is staged in the sandbox: a job carries one of these at most.
+        staged = release or adaptation or design
         payload = dict(job.payload)
         if authoring_archive is not None:
             # Resolve cached authoring created before connector resolution shipped as well as
@@ -2322,7 +2352,10 @@ class HostedHarnessGateway:
         secrets_map = PlatformSecretResolver().resolve(job)
         authoring_target_secrets, _authoring_connector = (
             _provider_import_authoring_material(job, payload)
-            if authoring_archive is None and release is None and adaptation is None
+            if authoring_archive is None
+            and release is None
+            and adaptation is None
+            and design is None
             else ({}, "")
         )
         from simulate.services.harness_capacity import configured_capacity
@@ -2607,12 +2640,13 @@ class HostedHarnessGateway:
                 (dispatch_payload.get("metadata") or {}).get("simulation_only")
             )
             # A fresh build is the conversation's harness's work; this command waits for it.
-            # Release and adaptation jobs author nothing, so they never ask it to build.
+            # Release, adaptation and design jobs never ask it to build.
             harness_builds = (
                 authoring_archive is None
                 and not simulation_only
                 and release is None
                 and adaptation is None
+                and design is None
                 and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
             )
             bundle_command = (
@@ -2636,6 +2670,8 @@ class HostedHarnessGateway:
             )
             if adaptation is not None:
                 guest_command = adaptation.command
+            elif design is not None:
+                guest_command = design.command
             elif release is not None:
                 guest_command = f"{release.bundle_command} && {entrypoint}"
             else:
@@ -2670,6 +2706,8 @@ class HostedHarnessGateway:
                 _ask_harness_to_build(job, attempt, endpoint_base_url)
             elif adaptation is not None:
                 _ask_harness_to_adapt(job, attempt, endpoint_base_url)
+            elif design is not None:
+                _ask_harness_to_design(job, attempt, endpoint_base_url)
             return attempt
         except Exception as exc:
             provider_status_code = getattr(exc, "status_code", None)
@@ -2759,6 +2797,8 @@ class HostedHarnessGateway:
         endpoint_base_url: str,
     ) -> HostedHarnessConversationLease:
         """Start the conversation process beside the job's existing harness process."""
+        from simulate.services.harness_designs import design_of
+
         simulator_env = _platform_simulator_material()
         _add_scoped_guest_pin_policy(simulator_env, job)
         capability = issue_conversation_capability(
@@ -2769,7 +2809,9 @@ class HostedHarnessGateway:
             ttl_seconds=_execution_ttl_seconds(
                 job.payload["runtime"], self.client.name
             ),
-            control_only=True,
+            # A design's chat owns its workspace, so it checkpoints it: continuing a parked
+            # design starts from there. Other attempt chats store only their own state.
+            control_only=design_of(job) is None,
             runtime_name=self.client.runtime_name,
             runtime_digest=self.client.runtime_digest,
         )
@@ -2879,6 +2921,8 @@ class HostedHarnessGateway:
         Liveness is the process's own command polling, not a provider probe, and no provider
         call is made while the conversation row is locked.
         """
+        from simulate.services.harness_designs import design_of
+
         terminal_states = {
             HostedHarnessJob.State.COMPLETED,
             HostedHarnessJob.State.FAILED,
@@ -2937,7 +2981,8 @@ class HostedHarnessGateway:
                     conversation=conversation,
                     defaults={
                         "attempt": attempt,
-                        "control_only": attempt is not None,
+                        "control_only": attempt is not None
+                        and design_of(job) is None,
                         "provider_ref": claim_ref,
                         "state": HostedHarnessConversationLease.State.STARTING,
                         "token_hash": claim_hash,
@@ -4235,10 +4280,13 @@ class HostedHarnessGateway:
             attempt.heartbeat_at = timezone.now()
             attempt.save(update_fields=["heartbeat_at", "updated_at"])
             return None
+        from simulate.services.harness_designs import design_of
         from simulate.services.harness_releases import adaptation_of
 
         if exit_code in {0, 2} and adaptation_of(job) is not None:
             return self._finish_adaptation(attempt)
+        if exit_code in {0, 2} and design_of(job) is not None:
+            return self._finish_design(attempt)
 
         # Event/manifest ingestion runs independently from the provider poll. The attempt object
         # held by the workflow may predate terminal HTTP requests even though both commits are
@@ -4430,6 +4478,44 @@ class HostedHarnessGateway:
         attempt.save(update_fields=["terminal_stage", "terminal_failure", "updated_at"])
         return self._delete_and_record(attempt)
 
+    def _finish_design(self, attempt: HostedHarnessAttempt) -> HostedHarnessJob:
+        """Settle a design whose process exited 0 or 2 from its `design-output` (contract §7.9),
+        then clean up through the normal attempt protocol, which reads its spend first."""
+        from simulate.services.harness_designs import (
+            DESIGN_OUTPUT,
+            complete_design,
+            unpack_output,
+        )
+
+        sandbox = self.client.get(
+            str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+        )
+        packed = sandbox.process.exec(
+            f"mkdir -p {DESIGN_OUTPUT} && tar -czf /tmp/design.tar.gz -C {DESIGN_OUTPUT} .",
+            timeout=180,
+        )
+        if packed.exit_code:
+            raise HostedHarnessError(
+                "design_pack_failed",
+                str(packed.result or "")[-500:],
+                status_code=502,
+                retryable=True,
+            )
+        body = sandbox.fs.download_file("/tmp/design.tar.gz", 300)
+        try:
+            scratch = unpack_output(body)
+        except tarfile.TarError:
+            job = complete_design(attempt.job, None)
+        else:
+            with scratch:
+                job = complete_design(attempt.job, Path(scratch.name))
+        attempt.terminal_stage = (
+            "completed" if job.state == HostedHarnessJob.State.COMPLETED else "failed"
+        )
+        attempt.terminal_failure = job.failure
+        attempt.save(update_fields=["terminal_stage", "terminal_failure", "updated_at"])
+        return self._delete_and_record(attempt)
+
     def _cleanup_conversation_runtime(self, job: HostedHarnessJob) -> None:
         """Delete the control-only chat sandbox after the execution becomes terminal."""
         conversation = HostedHarnessConversation.no_workspace_objects.filter(
@@ -4438,8 +4524,9 @@ class HostedHarnessGateway:
         if conversation is None:
             return
         lease = HostedHarnessConversationLease.no_workspace_objects.filter(
+            # A design's chat lives in its attempt's sandbox without being control-only.
+            Q(control_only=True) | Q(attempt__isnull=False),
             conversation=conversation,
-            control_only=True,
             state__in=(
                 HostedHarnessConversationLease.State.STARTING,
                 HostedHarnessConversationLease.State.ACTIVE,

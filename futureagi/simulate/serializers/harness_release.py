@@ -48,6 +48,26 @@ class HarnessSuiteSummarySerializer(serializers.Serializer):
     policy_profile = serializers.JSONField()
 
 
+class HarnessReleaseDerivedFromSerializer(serializers.Serializer):
+    digest = serializers.CharField()
+    name = serializers.CharField(
+        allow_null=True, help_text="Null when the template is not visible to you."
+    )
+
+
+class HarnessReleaseProvenanceSerializer(serializers.Serializer):
+    target = serializers.CharField(
+        help_text="`table:<name>` for imported rows, else the attached file's path."
+    )
+    document = serializers.CharField()
+    part = serializers.CharField(required=False, allow_blank=True)
+    sha256 = serializers.CharField()
+    rows = serializers.IntegerField(required=False, allow_null=True)
+    replaced = serializers.IntegerField(
+        required=False, help_text="Personal details replaced with made-up ones."
+    )
+
+
 class HarnessReleaseSerializer(serializers.Serializer):
     """An environment release an organization may compose: a system release or its own."""
 
@@ -56,6 +76,11 @@ class HarnessReleaseSerializer(serializers.Serializer):
     name = serializers.CharField()
     system = serializers.BooleanField()
     parent = HarnessReleaseParentSerializer(allow_null=True)
+    derived_from = HarnessReleaseDerivedFromSerializer(
+        allow_null=True,
+        help_text="The template a designed release was customized from.",
+    )
+    provenance = HarnessReleaseProvenanceSerializer(many=True)
     tools = HarnessReleaseToolSerializer(many=True)
     policy = HarnessReleasePolicySerializer()
     suites = HarnessSuiteSummarySerializer(many=True)
@@ -102,3 +127,28 @@ class HarnessHostedAgentRequestSerializer(serializers.Serializer):
 class HarnessHostedAgentResponseSerializer(serializers.Serializer):
     id = serializers.UUIDField(help_text="The composition, an environment id.")
     agent_version_id = serializers.UUIDField()
+
+
+class HarnessDesignRequestSerializer(serializers.Serializer):
+    """A design (contract §7.9): requirements, and optionally a root template and documents."""
+
+    name = serializers.CharField(max_length=255)
+    requirements = serializers.CharField(max_length=20000)
+    modality = serializers.ChoiceField(choices=("chat", "voice"), default="chat")
+    template_suite_id = serializers.UUIDField(required=False, allow_null=True)
+    document_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, max_length=100
+    )
+    idempotency_key = serializers.CharField(max_length=255)
+
+
+class HarnessDesignContinueRequestSerializer(serializers.Serializer):
+    idempotency_key = serializers.CharField(max_length=255)
+
+
+class HarnessDesignDocumentResponseSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    content_type = serializers.CharField()
+    sha256 = serializers.CharField()
+    size = serializers.IntegerField()
