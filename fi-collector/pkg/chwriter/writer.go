@@ -248,8 +248,16 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) 
 			return errors.Join(firstErr, err)
 		}
 		if i == len(rows)-1 || (limit > 0 && buf.Len() >= limit) {
-			if err := w.insertChunk(ctx, url, buf.Bytes(), rows[start:i+1]); err != nil && firstErr == nil {
+			unavailable, err := w.insertChunk(ctx, url, buf.Bytes(), rows[start:i+1])
+			if err != nil && firstErr == nil {
 				firstErr = err
+			}
+			if unavailable && i < len(rows)-1 {
+				// ClickHouse did not take this insert after every retry
+				// (or the drain was cancelled): each remaining insert
+				// would wait as long. Dead-letter the rest of the batch
+				// now, so the drain ends and its rows' memory is freed.
+				return errors.Join(firstErr, w.deadLetterUnsent(rows[i+1:]))
 			}
 			// A new buffer, not Reset: when ClickHouse answers before it has
 			// read a whole body, the HTTP transport may still be reading
@@ -264,11 +272,24 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) 
 	return firstErr
 }
 
+// deadLetterUnsent dead-letters rows that were never sent.
+func (w *Writer) deadLetterUnsent(rows []map[string]any) error {
+	if err := w.appendDeadLetter(rows); err != nil {
+		return fmt.Errorf("chwriter: dead-letter write failed for %d unsent rows: %w", len(rows), err)
+	}
+	atomic.AddUint64(&w.stats.BatchesFailed, 1)
+	atomic.AddUint64(&w.stats.RowsDeadLettered, uint64(len(rows)))
+	return fmt.Errorf("chwriter: %d rows dead-lettered unsent: an earlier insert of the batch could not reach ClickHouse", len(rows))
+}
+
 // insertChunk POSTs one insert body with retry/backoff and dead-letters its
-// rows if it cannot be confirmed.
-func (w *Writer) insertChunk(ctx context.Context, url string, body []byte, rows []map[string]any) error {
+// rows if it cannot be confirmed. unavailable reports that it gave up
+// because ClickHouse kept failing (transport errors, 429 or 5xx) or the
+// context ended, not because of this body.
+func (w *Writer) insertChunk(ctx context.Context, url string, body []byte, rows []map[string]any) (unavailable bool, err error) {
 	var lastErr error
 	attempts := 0
+	unavailable = true
 	for attempt := 0; attempt <= w.cfg.MaxRetries; attempt++ {
 		if attempt > 0 {
 			atomic.AddUint64(&w.stats.BatchesRetried, 1)
@@ -282,19 +303,21 @@ func (w *Writer) insertChunk(ctx context.Context, url string, body []byte, rows 
 		if err == nil && status == http.StatusOK {
 			atomic.AddUint64(&w.stats.BatchesInserted, 1)
 			atomic.AddUint64(&w.stats.RowsInserted, uint64(len(rows)))
-			return nil
+			return false, nil
 		}
 		lastErr = err
 		if status == http.StatusOK {
 			// A late exception or incomplete response does not prove that no
 			// rows committed. Preserve the batch, but never add a source replay.
 			lastErr = fmt.Errorf("chwriter: insert not confirmed; reconcile canonical source before replay: %w", err)
+			unavailable = false
 			break
 		}
 		// 4xx (except 429) is non-retryable — schema or data bug. Dead-letter
 		// immediately so we don't loop on a guaranteed failure.
 		if status >= 400 && status < 500 && status != http.StatusTooManyRequests {
 			lastErr = fmt.Errorf("chwriter: non-retryable status %d: %w", status, err)
+			unavailable = false
 			break
 		}
 	}
@@ -302,11 +325,11 @@ func (w *Writer) insertChunk(ctx context.Context, url string, body []byte, rows 
 	// Exhausted retries — persist verbatim and surface error so the caller
 	// (and any /healthz reader) sees the failure.
 	if dlErr := w.appendDeadLetter(rows); dlErr != nil {
-		return fmt.Errorf("chwriter: terminal failure and dead-letter write failed: %v (original: %w)", dlErr, lastErr)
+		return unavailable, fmt.Errorf("chwriter: terminal failure and dead-letter write failed: %v (original: %w)", dlErr, lastErr)
 	}
 	atomic.AddUint64(&w.stats.BatchesFailed, 1)
 	atomic.AddUint64(&w.stats.RowsDeadLettered, uint64(len(rows)))
-	return fmt.Errorf("chwriter: batch dead-lettered after %d attempts: %w", attempts, lastErr)
+	return unavailable, fmt.Errorf("chwriter: batch dead-lettered after %d attempts: %w", attempts, lastErr)
 }
 
 // insertURL builds an INSERT URL for an arbitrary table, mirroring the

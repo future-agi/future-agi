@@ -124,3 +124,58 @@ func TestInsertDeadLettersOnlyTheFailedInsert(t *testing.T) {
 		t.Errorf("%d inserts sent, want the rest sent after the failure", len(ch.bodies))
 	}
 }
+
+// When ClickHouse keeps failing an insert of a batch through every retry,
+// the rest of the batch is dead-lettered without being sent, so the drain
+// (and the memory its rows hold) does not wait through every retry of every
+// insert. A body ClickHouse refuses as bad does not stop the others.
+func TestInsertDeadLettersTheRestWhenClickHouseIsDown(t *testing.T) {
+	var requests sync.Map
+	count := func(k string) int { v, _ := requests.LoadOrStore(k, new(int)); return *v.(*int) }
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		mu.Lock()
+		v, _ := requests.LoadOrStore("all", new(int))
+		*v.(*int)++
+		mu.Unlock()
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	dl := t.TempDir() + "/dl.jsonl"
+	w, err := New(Config{URL: srv.URL, MaxRetries: 2, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond,
+		RequestTimeout: 5 * time.Second, DeadLetterFile: dl})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.Close() })
+	w.SetMaxInsertBytes(4 << 10)
+	rows := chunkRows(40, 1<<10) // about ten inserts
+	if err := w.Insert(context.Background(), rows); err == nil {
+		t.Fatal("Insert succeeded against a ClickHouse that refuses everything")
+	}
+	mu.Lock()
+	got := count("all")
+	mu.Unlock()
+	if got != 3 {
+		t.Errorf("%d requests, want 3 (the first insert and its 2 retries)", got)
+	}
+	b, _ := os.ReadFile(dl)
+	if n := lineCount(b); n != len(rows) {
+		t.Errorf("%d rows dead-lettered, want all %d", n, len(rows))
+	}
+	if st := w.Snapshot(); st.RowsDeadLettered != uint64(len(rows)) {
+		t.Errorf("RowsDeadLettered %d, want %d", st.RowsDeadLettered, len(rows))
+	}
+
+	// A body refused as bad (4xx) is not an outage: the other inserts go on.
+	w2, ch, _ := newChunkWriter(t, `"id":0,`)
+	w2.SetMaxInsertBytes(4 << 10)
+	_ = w2.Insert(context.Background(), rows)
+	ch.mu.Lock()
+	sent := len(ch.bodies)
+	ch.mu.Unlock()
+	if sent < 5 {
+		t.Errorf("%d inserts sent after one was refused as bad, want every insert of the batch", sent)
+	}
+}
