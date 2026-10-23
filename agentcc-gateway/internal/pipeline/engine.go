@@ -2,9 +2,7 @@ package pipeline
 
 import (
 	"context"
-	"errors"
 	"log/slog"
-	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -143,9 +141,8 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 // text can quote the content being judged, so decision calls log only the
 // error code and status, as the request log and span do.
 func loggedError(rc *models.RequestContext, err error) any {
-	var apiErr *models.APIError
-	if rc.EndpointType == "decision" && errors.As(err, &apiErr) {
-		return apiErr.Code + ": " + http.StatusText(apiErr.Status)
+	if rc.EndpointType == "decision" {
+		return models.LoggedError(rc.EndpointType, err)
 	}
 	return err
 }

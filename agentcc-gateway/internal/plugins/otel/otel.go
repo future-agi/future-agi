@@ -2,10 +2,8 @@ package otel
 
 import (
 	"context"
-	"errors"
 	"hash/fnv"
 	"log/slog"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -312,12 +310,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 // status, as in the request log: a vendor's error text can quote the
 // decision's content back.
 func spanError(rc *models.RequestContext) string {
-	err := rc.Errors[0]
-	var apiErr *models.APIError
-	if rc.EndpointType == "decision" && errors.As(err, &apiErr) {
-		return apiErr.Code + ": " + http.StatusText(apiErr.Status)
-	}
-	return err.Error()
+	return models.LoggedError(rc.EndpointType, rc.Errors[0])
 }
 
 // endpointKinds maps the gateway's endpoint types onto the platform's span

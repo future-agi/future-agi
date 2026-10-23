@@ -57,6 +57,22 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
+// LoggedError is the text a log, span or audit event records for err. A
+// decision vendor's error text can quote the content being judged back, so a
+// decision call's API error is recorded as its code and status only
+// ("provider_error: Bad Gateway"); any other error as itself. Every sink that
+// records a request's error goes through this.
+func LoggedError(endpointType string, err error) string {
+	if err == nil {
+		return ""
+	}
+	var apiErr *APIError
+	if endpointType == "decision" && errors.As(err, &apiErr) {
+		return apiErr.Code + ": " + http.StatusText(apiErr.Status)
+	}
+	return err.Error()
+}
+
 // Common error constructors.
 //
 // Every one goes through newAPIError, so no message reaches a caller, a

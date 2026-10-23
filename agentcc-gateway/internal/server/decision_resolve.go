@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -402,35 +403,73 @@ func errFormatMismatch(model, providerID, providerFormat string) *models.APIErro
 // log field, and is kept only inside the provider that sends it.
 type keyedDecisionProviders struct {
 	mu        sync.Mutex
-	providers map[[sha256.Size]byte]providers.Provider
+	providers map[[sha256.Size]byte]*keyedDecisionProvider
+	// now is time.Now, replaced in tests.
+	now func() time.Time
 }
 
-// maxKeyedDecisionProviders bounds the cache; past it an entry is dropped.
-const maxKeyedDecisionProviders = 256
+type keyedDecisionProvider struct {
+	provider providers.Provider
+	lastUsed time.Time
+}
+
+// maxKeyedDecisionProviders bounds the cache; past it the least recently used
+// entry is dropped. An entry idle for keyedDecisionIdleTTL is dropped too, so
+// a key used for one call isn't kept in memory until 256 others push it out.
+const (
+	maxKeyedDecisionProviders = 256
+	keyedDecisionIdleTTL      = 10 * time.Minute
+)
+
+func (c *keyedDecisionProviders) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
 
 func (c *keyedDecisionProviders) get(dialect, baseURL, apiKey string) (providers.Provider, error) {
 	sum := sha256.Sum256([]byte(dialect + "\x00" + baseURL + "\x00" + apiKey))
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if p, ok := c.providers[sum]; ok {
-		return p, nil
+	now := c.clock()
+	// Closing only drops idle connections; a call in flight finishes.
+	for key, entry := range c.providers {
+		if now.Sub(entry.lastUsed) > keyedDecisionIdleTTL {
+			entry.provider.Close()
+			delete(c.providers, key)
+		}
+	}
+	if entry, ok := c.providers[sum]; ok {
+		entry.lastUsed = now
+		return entry.provider, nil
 	}
 	p, err := providers.NewKeyedDecisionProvider(dialect, baseURL, apiKey)
 	if err != nil {
 		return nil, err
 	}
 	if c.providers == nil {
-		c.providers = make(map[[sha256.Size]byte]providers.Provider)
+		c.providers = make(map[[sha256.Size]byte]*keyedDecisionProvider)
 	}
 	if len(c.providers) >= maxKeyedDecisionProviders {
-		for evict, old := range c.providers {
-			// Closing only drops idle connections; a call in flight finishes.
-			old.Close()
-			delete(c.providers, evict)
-			break
+		var oldestKey [sha256.Size]byte
+		var oldest *keyedDecisionProvider
+		for key, entry := range c.providers {
+			if oldest == nil || entry.lastUsed.Before(oldest.lastUsed) {
+				oldestKey, oldest = key, entry
+			}
 		}
+		oldest.provider.Close()
+		delete(c.providers, oldestKey)
 	}
-	c.providers[sum] = p
+	c.providers[sum] = &keyedDecisionProvider{provider: p, lastUsed: now}
 	return p, nil
+}
+
+// size is how many providers the cache holds.
+func (c *keyedDecisionProviders) size() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.providers)
 }

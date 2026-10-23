@@ -178,7 +178,7 @@ func (p *Provider) SystemOne(ctx context.Context, req *models.DecisionRequest) (
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		message := req.SafeUpstreamMessage(data, p.apiKey, vendor+" rejected the request.")
+		message := req.UpstreamErrorMessage(resp.StatusCode, data, p.apiKey, vendor+" rejected the request.")
 		return nil, models.DecisionUpstreamError(vendor, resp.StatusCode, resp.Header, message)
 	}
 	if len(data) > models.MaxDecisionResponseBytes {

@@ -331,6 +331,17 @@ func parseDecisionUsage(raw json.RawMessage) DecisionUsage {
 	}
 }
 
+// UpstreamErrorMessage is the message a vendor's non-200 answer passes on.
+// Only a 400 or 422 shows the vendor's text (DecisionUpstreamError), so only
+// those parse the reply and check it against the request (up to 32 MB);
+// every other status gets the fallback without that work.
+func (r *DecisionRequest) UpstreamErrorMessage(status int, body []byte, apiKey, fallback string) string {
+	if status != http.StatusBadRequest && status != http.StatusUnprocessableEntity {
+		return fallback
+	}
+	return r.SafeUpstreamMessage(body, apiKey, fallback)
+}
+
 // SafeUpstreamMessage returns the vendor's error.message when it echoes
 // nothing sensitive: not the key, and none of the request's content (state or
 // input, and every question field but its type and name). Otherwise, and when

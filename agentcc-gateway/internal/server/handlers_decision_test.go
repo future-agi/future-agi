@@ -645,6 +645,38 @@ func TestKeyedDecisionProvidersAreBounded(t *testing.T) {
 	}
 }
 
+// A key used once isn't kept until 256 others push it out: an entry idle past
+// the TTL is dropped, and the least recently used one goes at the bound.
+func TestKeyedDecisionProvidersDropIdleKeys(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	c := keyedDecisionProviders{now: func() time.Time { return now }}
+	once, err := c.get("typesafe", "", "ONE-CALL-KEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(keyedDecisionIdleTTL / 2)
+	if _, err := c.get("typesafe", "", "BUSY-KEY"); err != nil {
+		t.Fatal(err)
+	}
+	if c.size() != 2 {
+		t.Fatalf("cache entries = %d, want 2", c.size())
+	}
+	now = now.Add(keyedDecisionIdleTTL/2 + time.Second)
+	if _, err := c.get("typesafe", "", "BUSY-KEY"); err != nil {
+		t.Fatal(err)
+	}
+	if c.size() != 1 {
+		t.Fatalf("cache entries = %d, want 1: the idle key is still held", c.size())
+	}
+	again, err := c.get("typesafe", "", "ONE-CALL-KEY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again == once {
+		t.Fatal("the idle key's provider was kept")
+	}
+}
+
 // An internal caller names the vendor as the model prefix; anything else is
 // refused before any call.
 func TestDecisionInternalKeyNeedsAVendorPrefix(t *testing.T) {

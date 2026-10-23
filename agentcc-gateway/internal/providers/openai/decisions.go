@@ -47,7 +47,7 @@ func (p *Provider) CreateDecision(ctx context.Context, req *models.DecisionReque
 		return nil, models.DecisionTransportError(ctx, err, decisionsVendor)
 	}
 	if resp.StatusCode != http.StatusOK {
-		message := req.SafeUpstreamMessage(data, p.apiKey, decisionsVendor+" rejected the request.")
+		message := req.UpstreamErrorMessage(resp.StatusCode, data, p.apiKey, decisionsVendor+" rejected the request.")
 		return nil, models.DecisionUpstreamError(decisionsVendor, resp.StatusCode, resp.Header, message)
 	}
 	if len(data) > models.MaxDecisionResponseBytes {

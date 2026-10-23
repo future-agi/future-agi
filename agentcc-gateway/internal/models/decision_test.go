@@ -320,3 +320,19 @@ func mustParse(body string) *DecisionRequest {
 	}
 	return req
 }
+
+// Only a 400 or 422 passes the vendor's text on, so only those parse it.
+func TestUpstreamErrorMessageParsesOnlyWhatItShows(t *testing.T) {
+	req, _ := ParseDecisionRequest([]byte(`{"model":"jev-latest","questions":{"resolved":{"type":"noul","instructions":["Judge"]}}}`))
+	body, _ := json.Marshal(map[string]any{"error": map[string]string{"message": "the type field is invalid"}})
+	for _, status := range []int{400, 422} {
+		if got := req.UpstreamErrorMessage(status, body, "k", "generic"); got != "the type field is invalid" {
+			t.Errorf("%d: got %q", status, got)
+		}
+	}
+	for _, status := range []int{401, 429, 500, 502, 503} {
+		if got := req.UpstreamErrorMessage(status, body, "k", "generic"); got != "generic" {
+			t.Errorf("%d: got %q, want the fallback", status, got)
+		}
+	}
+}
