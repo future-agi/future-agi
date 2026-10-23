@@ -1131,7 +1131,32 @@ def test_a_paused_budget_or_unpaid_invoice_stops_every_run(
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("billing", ["allowed", "missing", "broken"])
+def test_a_priced_run_is_refused_when_billing_cannot_answer(
+    auth_client, observe_project, yes_no, fake_view, started, monkeypatch
+):
+    """A Redis or billing outage on Cloud refuses with a 503: a priced run
+    never starts, and bills, unchecked."""
+    _credit_cap(monkeypatch, raises=RuntimeError("redis down"))
+    estimate = auth_client.post(
+        ESTIMATE,
+        {
+            "project_id": str(observe_project.id),
+            "unit": "sessions",
+            "filters": WINDOW,
+            "sample_size": 20,
+            "questions": 1,
+        },
+        format="json",
+    )
+    assert estimate.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    refused = _start(auth_client, observe_project, [yes_no], sample_size=20)
+    assert refused.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert "Credits can't be checked" in str(refused.json())
+    assert not InstantEvalRun.objects.filter(project=observe_project).exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("billing", ["allowed", "missing"])
 def test_a_run_starts_when_billing_allows_it_or_is_not_set_up(
     auth_client,
     observe_project,
@@ -1145,10 +1170,7 @@ def test_a_run_starts_when_billing_allows_it_or_is_not_set_up(
         # No ee here: the import fails.
         monkeypatch.setitem(sys.modules, "ee.usage.services.metering", None)
     else:
-        _credit_cap(
-            monkeypatch,
-            raises=RuntimeError("no billing.yaml") if billing == "broken" else None,
-        )
+        _credit_cap(monkeypatch)
     check = _estimate(auth_client, observe_project)["credit_check"]
     assert (check["allowed"], check["credits_left"], check["message"]) == (
         True,
@@ -1745,3 +1767,26 @@ def test_users_by_answer_are_kept_as_long_as_the_summary(monkeypatch, live, time
     # Kept as long as the summaries it is part of.
     finished = instant_eval_scale.FINISHED_SUMMARY_TTL
     assert summary_service.USERS_BY_ANSWER_TTL == finished
+
+
+@pytest.mark.django_db
+def test_reading_another_eval_task_creates_no_run(auth_client, observe_project):
+    """Summary, rows and export read Instant eval runs only: a read of an
+    ordinary (here continuous) eval task is a 404 and writes no run, so it
+    can never count against the org's runs in flight."""
+    task = EvalTask.objects.create(
+        project=observe_project,
+        name="Continuous monitor",
+        filters={"project_id": str(observe_project.id)},
+        sampling_rate=100,
+        run_type=RunType.CONTINUOUS,
+        status=EvalTaskStatus.RUNNING,
+    )
+    params = {
+        "project_id": str(observe_project.id),
+        "eval_task_id": str(task.id),
+        "tz": "UTC",
+    }
+    for url in (SUMMARY, ROWS):
+        assert auth_client.get(url, params).status_code == status.HTTP_404_NOT_FOUND
+    assert not InstantEvalRun.objects.filter(eval_task=task).exists()

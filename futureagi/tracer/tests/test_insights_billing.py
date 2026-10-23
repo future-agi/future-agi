@@ -5,11 +5,17 @@ the credit cap refuses a report, a question, a draft or a preview up front."""
 import pytest
 from rest_framework import status
 
-from ee.agenthub.insights import billing, llm, pipeline
-from ee.usage.schemas.events import CheckResult
-from tracer.models.insights import InsightRun
-from tracer.tests.test_insights_api import RUNS, insight_enabled, new_run_body  # noqa: F401
-from tracer.views import insights as views
+pytest.importorskip("ee.agenthub.insights")
+
+from ee.agenthub.insights import billing, llm, pipeline  # noqa: E402
+from ee.usage.schemas.events import CheckResult  # noqa: E402
+from tracer.models.insights import InsightRun  # noqa: E402
+from tracer.tests.test_insights_api import (  # noqa: E402, F401
+    RUNS,
+    insight_enabled,
+    new_run_body,
+)
+from tracer.views import insights as views  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -85,10 +91,21 @@ class TestPricing:
         from ee.agenthub.insights import agent
 
         usage = {
-            "model_calls": 5, "input_tokens": 26000, "output_tokens": 3300, "cost_usd": None,
+            "model_calls": 5,
+            "input_tokens": 26000,
+            "output_tokens": 3300,
+            "cost_usd": None,
             "by_model": {
-                "turing_flash": {"model_calls": 4, "input_tokens": 20000, "output_tokens": 2000},
-                "turing_large": {"model_calls": 1, "input_tokens": 6000, "output_tokens": 1300},
+                "turing_flash": {
+                    "model_calls": 4,
+                    "input_tokens": 20000,
+                    "output_tokens": 2000,
+                },
+                "turing_large": {
+                    "model_calls": 1,
+                    "input_tokens": 6000,
+                    "output_tokens": 1300,
+                },
             },
         }
         spend = llm.Spend()
@@ -116,10 +133,18 @@ class TestPricing:
 
             @staticmethod
             def json():
-                return {"usage": {"model": "turing_large", "prompt_tokens": 4000,
-                                  "completion_tokens": 900, "cost_usd": 0}}
+                return {
+                    "usage": {
+                        "model": "turing_large",
+                        "prompt_tokens": 4000,
+                        "completion_tokens": 900,
+                        "cost_usd": 0,
+                    }
+                }
 
-        monkeypatch.setattr(agent, "_setting", lambda name: "http://agent" if "URL" in name else "x")
+        monkeypatch.setattr(
+            agent, "_setting", lambda name: "http://agent" if "URL" in name else "x"
+        )
         monkeypatch.setattr(agent.httpx, "post", lambda *a, **k: Reply())
         spend = llm.Spend()
         agent._post("/v1/ask", {}, spend)
@@ -173,8 +198,13 @@ class TestCharging:
 
         def write(run, result, units, contents, spend):
             spend.add(0.1)
-            return {"title": "t", "findings": [], "key_points": [], "highlights": [],
-                    "examples": []}
+            return {
+                "title": "t",
+                "findings": [],
+                "key_points": [],
+                "highlights": [],
+                "examples": [],
+            }
 
         monkeypatch.setattr(pipeline.report, "write", write)
         pipeline.finish(run_id)
@@ -221,7 +251,10 @@ class TestCreditCap:
         detail = response.json()["result"]
         assert detail["sample_size"] >= 200
         assert billing.credits(billing.run_cost(detail["sample_size"])) <= left
-        assert f"A sample of up to {detail['sample_size']:,} sessions fits." in detail["message"]
+        assert (
+            f"A sample of up to {detail['sample_size']:,} sessions fits."
+            in detail["message"]
+        )
 
     @pytest.mark.django_db
     def test_unpaid_invoices_refuse_with_402(
@@ -233,16 +266,21 @@ class TestCreditCap:
         assert "unpaid invoices" in response.json()["result"]["message"]
 
     @pytest.mark.django_db
-    def test_without_billing_a_report_starts(
+    def test_a_billing_outage_refuses_the_report_with_503(
         self, auth_client, observe_project, started, monkeypatch
     ):
+        """Reports run on Future AGI's model keys: a Redis or billing outage
+        refuses (fail closed) instead of starting an unchecked report."""
+
         def unavailable(*a, **k):
             raise RuntimeError("no billing redis here")
 
         monkeypatch.setattr("ee.usage.services.metering.check_usage", unavailable)
         response = auth_client.post(RUNS, new_run_body(observe_project), format="json")
-        assert response.status_code == status.HTTP_200_OK
-        assert len(started) == 1
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert "Credits can't be checked" in str(response.json())
+        assert started == []
+        assert not InsightRun.objects.filter(project=observe_project).exists()
 
 
 @pytest.mark.django_db
@@ -289,6 +327,16 @@ def test_the_estimate_carries_the_credit_fields(monkeypatch, refuse):
 
 class Org:
     id = "org-1"
+
+
+def test_a_billing_outage_limits_the_estimate(monkeypatch):
+    def unavailable(*a, **k):
+        raise RuntimeError("no billing redis here")
+
+    monkeypatch.setattr("ee.usage.services.metering.check_usage", unavailable)
+    out = views._credit_estimate(Org(), 300, "sessions")
+    assert out["credit_limited"] is True
+    assert "Credits can't be checked" in out["credit_message"]
 
 
 def test_off_cloud_nothing_is_estimated_or_checked_in_credits(monkeypatch, refuse):

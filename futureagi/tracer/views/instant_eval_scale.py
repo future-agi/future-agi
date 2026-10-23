@@ -525,22 +525,42 @@ CREDIT_MESSAGES = {
 }
 
 
+class CreditCheckUnavailable(Exception):
+    """Billing couldn't be asked about a priced run (its Redis or config is
+    down). Credits are priced only on Cloud, so this refuses the run with a
+    503 rather than letting it start, and bill, unchecked."""
+
+
+CREDIT_CHECK_UNAVAILABLE = (
+    "Credits can't be checked right now, so the run wasn't started. "
+    "Please retry in a moment."
+)
+
+
+def credit_check_unavailable(gm):
+    return gm.custom_error_response(
+        503, CREDIT_CHECK_UNAVAILABLE, code="credit_check_unavailable"
+    )
+
+
 def check_credits(org, credits: float | None):
     """The organization's credit cap against a run costing ``credits``:
     None when it may run (or this deployment has no billing), else billing's
-    CheckResult. Read-only."""
+    CheckResult. Read-only. Raises CreditCheckUnavailable when billing can't
+    answer: a priced run never starts unchecked, as with every other caller
+    of check_usage."""
     if org is None or not credits or credits <= 0:
         return None
     try:
         from ee.usage.services.metering import check_usage
     except ImportError:
+        # No billing module: this deployment doesn't bill.
         return None
     try:
         result = check_usage(str(org.id), CREDIT_EVENT, amount=credits)
-    except Exception:
-        # No billing config (or its Redis) here: don't block the run.
+    except Exception as exc:
         logger.warning("instant_eval_credit_check_unavailable", exc_info=True)
-        return None
+        raise CreditCheckUnavailable() from exc
     return None if result.allowed else result
 
 
@@ -736,6 +756,8 @@ def _active_runs(org):
             eval_task__deleted=False,
             eval_task__status__in=ACTIVE,
         )
+        # A continuous task never finishes: it is not a run in flight.
+        .exclude(eval_task__run_type=RunType.CONTINUOUS)
         .select_related("eval_task", "created_by")
         .order_by("created_at")
     )
@@ -933,10 +955,13 @@ class InstantEvalEstimateView(InstantEvalLicenseRequired, APIView):
         # The chosen run, and the most the composer can ask (every row, every
         # question): a refusal of either reports the cap, so each choice and
         # any number of questions can be judged from it.
-        refused = check_credits(org, chosen_credits)
-        ceiling = check_credits(
-            org, _credits(_rows_for(unit, count), MAX_QUESTIONS, rate)
-        )
+        try:
+            refused = check_credits(org, chosen_credits)
+            ceiling = check_credits(
+                org, _credits(_rows_for(unit, count), MAX_QUESTIONS, rate)
+            )
+        except CreditCheckUnavailable:
+            return credit_check_unavailable(self._gm)
         left = _credits_left(refused, ceiling)
         blocked = _blocked(refused, ceiling)
         fits = None if blocked else _fits(left, unit, questions, count, rate)
@@ -1061,7 +1086,10 @@ class InstantEvalStartView(InstantEvalLicenseRequired, APIView):
             )
         rate = credits_per_answer()
         credits = _credits(rows, questions, rate)
-        refused = check_credits(org, credits)
+        try:
+            refused = check_credits(org, credits)
+        except CreditCheckUnavailable:
+            return credit_check_unavailable(self._gm)
         if refused is not None:
             return _credit_refusal(
                 self._gm, refused, credits, unit, questions, count, rate
@@ -1140,9 +1168,24 @@ def _load(request, params, gm):
         .prefetch_related("evals")
         .first()
     )
-    if task is None:
+    if task is None or not _is_instant_task(task):
+        # Only an Instant eval run is read (and given a run record) here: a
+        # read of any other eval task would write rows and a run for it, and
+        # a continuous one would then count against the org's runs forever.
         return None, gm.not_found("Eval task not found")
     return task, None
+
+
+def _is_instant_task(task) -> bool:
+    """A task the Ask page started (it carries RUN_MARKER), or a one-off task
+    whose questions are all Instant eval questions (asked through the plain
+    eval-task API)."""
+    if (task.filters or {}).get(rows_service.RUN_MARKER):
+        return True
+    if task.run_type != RunType.HISTORICAL:
+        return False
+    configs = list(task.evals.all())
+    return bool(configs) and all((c.config or {}).get("instant_eval") for c in configs)
 
 
 def _run_of(task):
@@ -1746,7 +1789,10 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         run = _run_of(task)
         action = data["action"]
         handler = getattr(self, f"_{action}")
-        return handler(request, task, run, data)
+        try:
+            return handler(request, task, run, data)
+        except CreditCheckUnavailable:
+            return credit_check_unavailable(self._gm)
 
     def _ok(self, task, message, **extra):
         task.refresh_from_db(fields=["status"])

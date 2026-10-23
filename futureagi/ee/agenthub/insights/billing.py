@@ -56,7 +56,9 @@ def run_cost(sample_size: int) -> float:
     return _run_cost(sample_size, *_step_prices())
 
 
-def largest_sample(credits_left: float, low: int, high: int, step: int = 10) -> int | None:
+def largest_sample(
+    credits_left: float, low: int, high: int, step: int = 10
+) -> int | None:
     """The largest sample from ``high`` down to ``low`` (in ``step``s) whose
     report costs no more than ``credits_left``, or None when none does."""
     prices = _step_prices()
@@ -111,28 +113,42 @@ def credits(cost_usd: float) -> float:
         return 0.0
 
 
+class CreditCheckUnavailable(Exception):
+    """Billing couldn't be asked (its Redis or config is down). Reports run
+    on Future AGI's own model keys, so a step is refused rather than run
+    unchecked: an outage must not mean unlimited free reports."""
+
+
 def check(org, cost_usd: float):
     """The organization's credit cap against a step costing about
     ``cost_usd``: None when it may run (or this deployment has no billing),
-    else billing's CheckResult. Read-only."""
+    else billing's CheckResult. Read-only. Raises CreditCheckUnavailable when
+    billing can't answer."""
     amount = credits(cost_usd)
     if org is None or amount <= 0:
         return None
     try:
         from ee.usage.services.metering import check_usage
     except ImportError:
+        # No billing module: this deployment doesn't bill.
         return None
     try:
         result = check_usage(str(org.id), EVENT, amount=amount)
-    except Exception:
-        # No billing config (or its Redis) here: don't block the report.
+    except Exception as exc:
         logger.warning("insight_credit_check_unavailable", exc_info=True)
-        return None
+        raise CreditCheckUnavailable() from exc
     return None if result.allowed else result
 
 
-def charge(org_id, cost_usd: float, *, source: str, source_id: str, spend=None,
-           event_id: str | None = None) -> float:
+def charge(
+    org_id,
+    cost_usd: float,
+    *,
+    source: str,
+    source_id: str,
+    spend=None,
+    event_id: str | None = None,
+) -> float:
     """Emit the usage event for model calls that cost ``cost_usd``. Returns
     the credits charged (0 when nothing was spent). Never raises: the user's
     report must not fail because metering did."""
@@ -151,11 +167,13 @@ def charge(org_id, cost_usd: float, *, source: str, source_id: str, spend=None,
             "thinking_model": model_for(THINKING),
         }
         if spend is not None:
-            properties.update({
-                "model_calls": spend.calls,
-                "prompt_tokens": spend.prompt_tokens,
-                "completion_tokens": spend.completion_tokens,
-            })
+            properties.update(
+                {
+                    "model_calls": spend.calls,
+                    "prompt_tokens": spend.prompt_tokens,
+                    "completion_tokens": spend.completion_tokens,
+                }
+            )
         event = UsageEvent(
             org_id=str(org_id),
             event_type=EVENT,

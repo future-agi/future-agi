@@ -77,7 +77,9 @@ ASKS_PER_HOUR = 120
 class InsightAttributeSerializer(serializers.Serializer):
     key = serializers.CharField(max_length=60)
     type = serializers.ChoiceField(choices=["boolean", "number", "string"])
-    description = serializers.CharField(max_length=300, required=False, allow_blank=True)
+    description = serializers.CharField(
+        max_length=300, required=False, allow_blank=True
+    )
     filter_by = serializers.BooleanField(required=False, default=False)
 
 
@@ -86,8 +88,12 @@ class InsightConfigInputSerializer(serializers.Serializer):
     unit = serializers.ChoiceField(choices=InsightUnitType.choices)
     lens = serializers.ChoiceField(choices=InsightLens.choices)
     question = serializers.CharField(max_length=500)
-    agent_description = serializers.CharField(max_length=500, required=False, allow_blank=True)
-    instructions = serializers.CharField(max_length=1000, required=False, allow_blank=True)
+    agent_description = serializers.CharField(
+        max_length=500, required=False, allow_blank=True
+    )
+    instructions = serializers.CharField(
+        max_length=1000, required=False, allow_blank=True
+    )
     attributes = InsightAttributeSerializer(many=True, required=False)
     sample_size = serializers.IntegerField(min_value=10, max_value=1000, required=False)
 
@@ -149,7 +155,9 @@ class InsightScopeSerializer(serializers.Serializer):
     def validate(self, attrs):
         # A window the lists would refuse is refused, instead of being read
         # as the last 30 days: the scope's own window and any date filter.
-        filters = [item for item in attrs.get("filters") or [] if isinstance(item, dict)]
+        filters = [
+            item for item in attrs.get("filters") or [] if isinstance(item, dict)
+        ]
         window = attrs.get("window") or []
         if len(window) == 2:
             filters.append(_window_item(window))
@@ -169,6 +177,10 @@ class InsightRunCreateSerializer(serializers.Serializer):
         many=True, min_length=1, max_length=MAX_POPULATION, required=False
     )
     sample_size = serializers.IntegerField(min_value=10, max_value=1000, required=False)
+    # Forget the saved report's categories so this run discovers afresh.
+    # Applied only once the run is allowed to start, so a refused run (credits,
+    # rate limit, a bad range) leaves the saved categories as they were.
+    reset_taxonomy = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):
         if not attrs.get("config_id") and not attrs.get("config"):
@@ -194,7 +206,9 @@ class InsightDraftSerializer(serializers.Serializer):
     unit = serializers.ChoiceField(choices=InsightUnitType.choices)
     lens = serializers.ChoiceField(choices=InsightLens.choices)
     goal = serializers.CharField(max_length=500, required=False, allow_blank=True)
-    agent_description = serializers.CharField(max_length=500, required=False, allow_blank=True)
+    agent_description = serializers.CharField(
+        max_length=500, required=False, allow_blank=True
+    )
     sample_ids = serializers.ListField(
         child=serializers.CharField(max_length=255), min_length=1, max_length=5
     )
@@ -217,8 +231,12 @@ class InsightConfigPatchSerializer(serializers.Serializer):
     reset_taxonomy = serializers.BooleanField(required=False, default=False)
     question = serializers.CharField(max_length=500, required=False)
     lens = serializers.ChoiceField(choices=InsightLens.choices, required=False)
-    agent_description = serializers.CharField(max_length=500, required=False, allow_blank=True)
-    instructions = serializers.CharField(max_length=1000, required=False, allow_blank=True)
+    agent_description = serializers.CharField(
+        max_length=500, required=False, allow_blank=True
+    )
+    instructions = serializers.CharField(
+        max_length=1000, required=False, allow_blank=True
+    )
     attributes = InsightAttributeSerializer(many=True, required=False, max_length=8)
     sample_size = serializers.IntegerField(min_value=10, max_value=1000, required=False)
     scope = InsightScopeSerializer(required=False)
@@ -226,10 +244,14 @@ class InsightConfigPatchSerializer(serializers.Serializer):
 
 class InsightUnitsQuerySerializer(serializers.Serializer):
     category_id = serializers.CharField(max_length=64, required=False, allow_blank=True)
-    sub_category_id = serializers.CharField(max_length=64, required=False, allow_blank=True)
+    sub_category_id = serializers.CharField(
+        max_length=64, required=False, allow_blank=True
+    )
     unit_ids = serializers.CharField(max_length=4000, required=False, allow_blank=True)
     offset = serializers.IntegerField(min_value=0, required=False, default=0)
-    limit = serializers.IntegerField(min_value=1, max_value=200, required=False, default=UNITS_PAGE)
+    limit = serializers.IntegerField(
+        min_value=1, max_value=200, required=False, default=UNITS_PAGE
+    )
     # The unit's full text (what the model read), for showing its evidence in
     # place. Only for small pages.
     include_content = serializers.BooleanField(required=False, default=False)
@@ -596,8 +618,15 @@ def _charge(org, cost_usd, source: str, source_id) -> None:
     """Charge a step's model spend as AI credits (a no-op without billing)."""
     billing = _billing()
     if billing is not None:
-        billing.charge(org.id, float(cost_usd or 0), source=source, source_id=str(source_id))
+        billing.charge(
+            org.id, float(cost_usd or 0), source=source, source_id=str(source_id)
+        )
 
+
+CREDIT_CHECK_UNAVAILABLE = (
+    "Credits can't be checked right now, so this wasn't started. "
+    "Please retry in a moment."
+)
 
 # Credit refusals that no smaller report gets past.
 CREDIT_MESSAGES = {
@@ -624,7 +653,9 @@ def _credit_count(credits: float) -> str:
     return f"{amount} credit{'' if amount == '1' else 's'}"
 
 
-def _credit_verdict(billing, org, cost_usd: float, *, what: str, unit: str | None = None):
+def _credit_verdict(
+    billing, org, cost_usd: float, *, what: str, unit: str | None = None
+):
     """The organization's credit cap against a step costing about
     ``cost_usd``: None when it may run, else why not, what is left and, for a
     report, the largest sample that fits."""
@@ -694,14 +725,21 @@ def _credit_estimate(org, sample_size: int, unit: str) -> dict:
         return out
     cost = billing.run_cost(sample_size)
     out["credits_estimate"] = billing.credits(cost)
-    verdict = _credit_verdict(billing, org, cost, what=_STEPS["run"], unit=unit)
+    try:
+        verdict = _credit_verdict(billing, org, cost, what=_STEPS["run"], unit=unit)
+    except billing.CreditCheckUnavailable:
+        # Fail closed: the report can't start until billing answers.
+        out.update({"credit_limited": True, "credit_message": CREDIT_CHECK_UNAVAILABLE})
+        return out
     if verdict is not None:
-        out.update({
-            "credit_limited": True,
-            "credits_left": verdict["credits_left"],
-            "credit_max_sample": verdict["credit_max_sample"],
-            "credit_message": verdict["message"],
-        })
+        out.update(
+            {
+                "credit_limited": True,
+                "credits_left": verdict["credits_left"],
+                "credit_max_sample": verdict["credit_max_sample"],
+                "credit_message": verdict["message"],
+            }
+        )
     return out
 
 
@@ -711,9 +749,20 @@ def _credits_refused(gm, org, step: str, *, sample_size=None, unit=None):
     billing = _billing()
     if billing is None:
         return None
-    verdict = _credit_verdict(
-        billing, org, _step_cost(billing, step, sample_size), what=_STEPS[step], unit=unit
-    )
+    try:
+        verdict = _credit_verdict(
+            billing,
+            org,
+            _step_cost(billing, step, sample_size),
+            what=_STEPS[step],
+            unit=unit,
+        )
+    except billing.CreditCheckUnavailable:
+        # Fail closed: reports run on Future AGI's model keys, so an outage
+        # must not mean unchecked (and possibly unbilled) spend.
+        return gm.custom_error_response(
+            503, CREDIT_CHECK_UNAVAILABLE, code="credit_check_unavailable"
+        )
     if verdict is None:
         return None
     refused = verdict["refused"]
@@ -782,7 +831,9 @@ def _population_error(gm, exc):
         )
     if isinstance(exc, rows_service.PopulationUnavailable):
         return gm.custom_error_response(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc), code="population_unavailable"
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            str(exc),
+            code="population_unavailable",
         )
     logger.exception("insight_population_failed")
     return gm.custom_error_response(
@@ -823,7 +874,9 @@ class InsightConfigListView(InsightsLicenseRequired, APIView):
         configs = InsightConfig.objects.filter(project=project, deleted=False).order_by(
             "-created_at"
         )
-        return self._gm.success_response({"configs": [_config_item(c) for c in configs]})
+        return self._gm.success_response(
+            {"configs": [_config_item(c) for c in configs]}
+        )
 
 
 class InsightConfigDetailView(InsightsLicenseRequired, APIView):
@@ -835,7 +888,9 @@ class InsightConfigDetailView(InsightsLicenseRequired, APIView):
             id=config_id, organization=_org(request), deleted=False
         ).first()
 
-    @validated_request(responses={200: InsightConfigResponseSerializer, **ERROR_RESPONSES})
+    @validated_request(
+        responses={200: InsightConfigResponseSerializer, **ERROR_RESPONSES}
+    )
     def get(self, request, config_id):
         """One saved report with every run, for the trend chart and run pager."""
         config = self._config(request, config_id)
@@ -890,7 +945,9 @@ class InsightConfigDetailView(InsightsLicenseRequired, APIView):
         config.save(update_fields=sorted(fields))
         return self._gm.success_response(_config_item(config, with_runs=True))
 
-    @validated_request(responses={200: InsightConfigResponseSerializer, **ERROR_RESPONSES})
+    @validated_request(
+        responses={200: InsightConfigResponseSerializer, **ERROR_RESPONSES}
+    )
     def delete(self, request, config_id):
         """Delete a saved report and hide its runs."""
         config = self._config(request, config_id)
@@ -943,7 +1000,9 @@ class InsightDraftView(InsightsLicenseRequired, APIView):
             )
         except InsightModelError as exc:
             return self._gm.custom_error_response(
-                status.HTTP_503_SERVICE_UNAVAILABLE, str(exc), code="insight_unavailable"
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                str(exc),
+                code="insight_unavailable",
             )
         _charge(org, result.pop("cost_usd", 0), "insights_draft", data["project_id"])
         return self._gm.success_response(result)
@@ -997,7 +1056,9 @@ class InsightPreviewView(InsightsLicenseRequired, APIView):
             )
         except InsightModelError as exc:
             return self._gm.custom_error_response(
-                status.HTTP_503_SERVICE_UNAVAILABLE, str(exc), code="insight_unavailable"
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                str(exc),
+                code="insight_unavailable",
             )
         _charge(org, spend.cost_usd, "insights_preview", data["project_id"])
         return self._gm.success_response({"units": units})
@@ -1154,9 +1215,15 @@ class InsightRunCreateView(InsightsLicenseRequired, APIView):
         if not _spend("run", org.id, RUNS_PER_HOUR):
             return _rate_limited(self._gm)
         if config is not None:
+            fields = set()
             if scope:
                 config.scope = scope
-                config.save(update_fields=["scope", "updated_at"])
+                fields.add("scope")
+            if data.get("reset_taxonomy") and (config.taxonomy or {}).get("subs"):
+                config.taxonomy = {}
+                fields.add("taxonomy")
+            if fields:
+                config.save(update_fields=sorted(fields | {"updated_at"}))
         else:
             config = InsightConfig.objects.create(
                 project=project,
@@ -1193,7 +1260,9 @@ class InsightRunDetailView(InsightsLicenseRequired, APIView):
     def get(self, request, run_id):
         """A run's progress while it works, and its full report once complete."""
         run = (
-            InsightRun.objects.filter(id=run_id, organization=_org(request), deleted=False)
+            InsightRun.objects.filter(
+                id=run_id, organization=_org(request), deleted=False
+            )
             .select_related("config")
             .first()
         )
@@ -1201,8 +1270,16 @@ class InsightRunDetailView(InsightsLicenseRequired, APIView):
             return self._gm.not_found("Report run not found")
         settle_lost_runs([run])
         siblings = InsightRun.objects.filter(config_id=run.config_id, deleted=False)
-        previous = siblings.filter(created_at__lt=run.created_at).order_by("-created_at").first()
-        following = siblings.filter(created_at__gt=run.created_at).order_by("created_at").first()
+        previous = (
+            siblings.filter(created_at__lt=run.created_at)
+            .order_by("-created_at")
+            .first()
+        )
+        following = (
+            siblings.filter(created_at__gt=run.created_at)
+            .order_by("created_at")
+            .first()
+        )
         return self._gm.success_response(
             {
                 "id": run.id,
@@ -1326,7 +1403,9 @@ class InsightRunAskView(InsightsLicenseRequired, APIView):
         from ee.agenthub.insights.pipeline import _unit_dict
 
         org = _org(request)
-        run = InsightRun.objects.filter(id=run_id, organization=org, deleted=False).first()
+        run = InsightRun.objects.filter(
+            id=run_id, organization=org, deleted=False
+        ).first()
         if run is None:
             return self._gm.not_found("Report run not found")
         if run.status != "completed" or not (run.result or {}).get("categories"):
@@ -1346,13 +1425,20 @@ class InsightRunAskView(InsightsLicenseRequired, APIView):
         spend = Spend()
         try:
             answer = report.answer(
-                run, run.result, units, contents, data["question"],
-                [dict(m) for m in data.get("history") or []], spend,
+                run,
+                run.result,
+                units,
+                contents,
+                data["question"],
+                [dict(m) for m in data.get("history") or []],
+                spend,
             )
         except InsightModelError as exc:
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE, str(exc), code="model_unavailable"
             )
-        InsightRun.objects.filter(id=run.id).update(cost_usd=F("cost_usd") + spend.cost_usd)
+        InsightRun.objects.filter(id=run.id).update(
+            cost_usd=F("cost_usd") + spend.cost_usd
+        )
         _charge(org, spend.cost_usd, "insights_ask", run.id)
         return self._gm.success_response(answer)
