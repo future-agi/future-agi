@@ -6,7 +6,6 @@ import pytest
 
 from tracer.sql_workbench import runner, service
 
-
 FILTERS = "{'analytics.spans': 'project_id = toUUID(\\'1\\')'}"
 
 
@@ -79,12 +78,12 @@ def test_estimate_never_falls_back_to_execution_or_admin(
 def test_estimate_profile_is_stricter_without_changing_execution_limits():
     from tracer.sql_workbench.provision import service_access_ddl
 
-    kwargs = dict(
-        database="analytics",
-        principal="estimator",
-        password="test-only" * 4,
-        cidr="10.3.0.0/24",
-    )
+    kwargs = {
+        "database": "analytics",
+        "principal": "estimator",
+        "password": "test-only" * 4,
+        "cidr": "10.3.0.0/24",
+    }
     estimate = service_access_ddl(**kwargs, estimate=True)
     execution = service_access_ddl(**kwargs)
     assert estimate[1:] == execution[1:]
@@ -121,6 +120,7 @@ def test_estimate_provision_command_requires_a_distinct_principal(
     monkeypatch, settings
 ):
     from io import StringIO
+
     from django.core.management import call_command
     from django.core.management.base import CommandError
 
