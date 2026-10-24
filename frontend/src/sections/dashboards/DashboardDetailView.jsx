@@ -58,6 +58,7 @@ import { useSnackbar } from "src/components/snackbar";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import WidgetChart from "./WidgetChart";
 import { resolveGlobalDateRange } from "./dashboardDateRange";
+import { useDebounce } from "src/hooks/use-debounce";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
 import TruncatedTooltipText from "./TruncatedTooltipText";
 import {
@@ -756,9 +757,10 @@ export default function DashboardDetailView() {
   const [customDateRange, setCustomDateRange] = useState(null); // [start, end]
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const customDateAnchorRef = useRef(null);
+  const debouncedDatePreset = useDebounce(datePreset, 300);
   const globalDateRange = useMemo(
     () => resolveGlobalDateRange(datePreset, customDateRange),
-    [datePreset, customDateRange],
+    [debouncedDatePreset, customDateRange],
   );
 
   // Widget context menu
