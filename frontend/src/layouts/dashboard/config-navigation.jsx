@@ -679,11 +679,6 @@ export function useNavGatewayData() {
           iconName: "mdi:tag-multiple-outline",
         },
         {
-          title: "MCP Tools",
-          path: paths.dashboard.gateway.mcp,
-          iconName: "mdi:tools",
-        },
-        {
           title: "Settings",
           path: paths.dashboard.gateway.settings,
           iconName: "mdi:cog-outline",

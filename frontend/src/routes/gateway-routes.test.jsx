@@ -6,9 +6,11 @@ import { useNavGatewayData } from "src/layouts/dashboard/config-navigation";
 import { paths } from "./paths";
 import { dashboardRoutes } from "./sections/dashboard";
 
-// The console pages whose content is a placeholder. They are hidden for the
-// launch: no nav entry and no route, so the app's catch-all
-// (routes/sections/index.jsx) sends their URLs to /404.
+// The console pages whose content is a placeholder, and the MCP page: the
+// gateway connects only the MCP servers in its own config file, never an
+// organization's, so nothing that page saves or tests reaches a server. They
+// are hidden for the launch: no nav entry and no route, so the app's
+// catch-all (routes/sections/index.jsx) sends their URLs to /404.
 // Give a page its route and nav entry back only with its real content.
 const HIDDEN_PAGE_URLS = [
   "/dashboard/gateway/playground",
@@ -25,6 +27,8 @@ const HIDDEN_PAGE_URLS = [
   "/dashboard/gateway/policies/presets",
   "/dashboard/gateway/policies/versions",
   "/dashboard/gateway/policies/rollout",
+  "/dashboard/gateway/mcp",
+  "/dashboard/gateway/mcp/registry",
 ];
 const HIDDEN_NAV_TITLES = [
   "Playground",
@@ -32,19 +36,17 @@ const HIDDEN_NAV_TITLES = [
   "Policies",
   "Runs",
   "Billing & Credits",
+  "MCP Tools",
 ];
 
 // Real gateway pages, so a route table that matches nothing fails here
-// rather than passing the hidden-page check by accident. The MCP tab URL
-// still matches: its page shows the overview for a tab it does not list.
+// rather than passing the hidden-page check by accident.
 const ROUTED_URLS = [
   "/dashboard/gateway",
   "/dashboard/gateway/models",
   "/dashboard/gateway/models/auto",
   "/dashboard/gateway/logs",
   "/dashboard/gateway/budgets",
-  "/dashboard/gateway/mcp",
-  "/dashboard/gateway/mcp/registry",
   "/dashboard/gateway/settings",
 ];
 
@@ -124,7 +126,6 @@ describe("gateway console navigation", () => {
       "Budgets",
       "Webhooks",
       "Custom Properties",
-      "MCP Tools",
       "Settings",
     ]);
   });

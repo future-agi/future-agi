@@ -167,13 +167,12 @@ const GatewayCustomProperties = lazyWithRetry(
 const GatewayFallbacks = lazyWithRetry(
   () => import("src/pages/dashboard/gateway/GatewayFallbacks"),
 );
-const GatewayMCP = lazyWithRetry(
-  () => import("src/pages/dashboard/gateway/GatewayMCP"),
-);
 // The Runs, Run detail, Billing & Credits, Policies, Playground and
 // Capabilities pages (pages/dashboard/gateway) are placeholders, hidden for
-// the launch: they have no route, so their URLs go to the app's 404. Route a
-// page again only with its real content, and give it its nav entry
+// the launch: they have no route, so their URLs go to the app's 404. The MCP
+// page (GatewayMCP) is hidden the same way: the gateway connects only the MCP
+// servers in its own config file, never an organization's. Route a page again
+// only with its real content, and give it its nav entry
 // (layouts/dashboard/config-navigation.jsx) in the same change.
 const ObserveList = lazyWithRetry(
   () => import("src/pages/dashboard/projects/ObserveList"),
@@ -1656,8 +1655,6 @@ export const dashboardRoutes = (
             { path: "sessions", element: <GatewaySessions /> },
             { path: "custom-properties", element: <GatewayCustomProperties /> },
             { path: "fallbacks", element: <GatewayFallbacks /> },
-            { path: "mcp", element: <GatewayMCP /> },
-            { path: "mcp/:tab", element: <GatewayMCP /> },
             // { path: "experiments", element: <GatewayExperiments /> },
             // {
             //   path: "experiments/:experimentId",
