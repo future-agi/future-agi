@@ -7,6 +7,7 @@ publication, catalog compilation and the restricted read runner are production.
 import ipaddress
 import json
 import secrets
+import time
 from copy import deepcopy
 from datetime import timedelta
 from uuid import uuid4
@@ -43,6 +44,8 @@ from tracer.services.eval_tasks.entries import (
     writing_onto_entry,
 )
 from tracer.services.eval_tasks.reconciler import reconcile
+from tracer.services.eval_tasks.sampling.query import sampling_clock
+from tracer.services.eval_tasks.sampling.service import closed_settle_margin
 from tracer.sql_workbench.access import Actor, authorize
 from tracer.sql_workbench.catalog import additional_table_filters, catalog
 from tracer.sql_workbench.compiler import compile_query
@@ -247,6 +250,13 @@ def test_closed_sampling_weighted_metric_is_readable_through_scoped_sql(
         spans.append(span)
         regions[f"session:{session.id}"] = region
     assert seed_ch_spans(spans) == 6
+    assert client.execute("SELECT count() FROM spans") == [(6,)]
+    # The source events are old, but this fixture transported their physical
+    # versions just now. Respect the production closed-cohort settle margin
+    # before freezing; do not disable it or backdate the rows to force selection.
+    settle_at = sampling_clock() + closed_settle_margin()
+    while (remaining := (settle_at - sampling_clock()).total_seconds()) > 0:
+        time.sleep(min(remaining, 1))
     spans_by_unit = {f"session:{span.trace.session_id}": span for span in spans}
     task = EvalTask.objects.create(
         project=project,
