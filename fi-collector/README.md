@@ -239,12 +239,6 @@ and are not changed here. The stricter header-only rules (including rejection
 of format/variation characters and line separators) do not apply to resource
 names. Use resource attributes for names that cannot be sent in a header.
 
-**Draft metering compatibility change — product/reviewer decision pending.**
-The byte-unit change below is proposed in this draft, not billing/product
-sign-off or release readiness. Its technical precedent is the existing gRPC
-accepted/stamped protobuf calculation; that precedent is not approval to change
-successful HTTP usage totals.
-
 Storage-mode ingestion usage (`observe_add.amount`) uses the canonical OTLP
 protobuf size of accepted traces **after** project-header filling, org/project
 stamping and permanent resource drops. HTTP protobuf, HTTP JSON, either with

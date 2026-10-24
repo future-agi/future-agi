@@ -13,7 +13,6 @@ import (
 // resource attributes), not HTTP wire/JSON bytes or compressed ClickHouse size.
 // This keeps gRPC's existing basis; HTTP intentionally changes even on full
 // success from decompressed-body length to accepted semantic protobuf bytes.
-// It is a metering compatibility change, not a pricing or release approval.
 func (s *Server) emitUsage(ctx context.Context, traces ptrace.Traces) {
 	result := auth.FromContext(ctx)
 	if result == nil || traces.SpanCount() == 0 {
