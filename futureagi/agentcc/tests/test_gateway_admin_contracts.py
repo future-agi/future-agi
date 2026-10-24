@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from agentcc.contracts.gateway_admin import (
     CreateKeyRequest,
+    GuardrailConfig,
     UpdateKeyRequest,
 )
 from agentcc.contracts.gateway_admin import (
@@ -18,6 +19,7 @@ from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.services.config_push import (
     _assemble_providers,
     _build_payload,
+    _transform_guardrails,
     push_all_org_configs,
 )
 from agentcc.views.gateway import _prepare_vertex_provider_config
@@ -370,3 +372,105 @@ def test_key_admin_requests_are_typed_at_backend_boundary():
         create.model_dump(exclude_none=True)["metadata"]["purpose"] == "gateway-startup"
     )
     assert update.model_dump(exclude_none=True) == {"metadata": {"enabled": "true"}}
+
+
+def test_transform_guardrails_dict_checks_projects_contract_fields():
+    guardrails_data = {
+        "enabled": True,
+        "fail_open": False,
+        "pipeline_mode": "parallel",
+        "timeout_ms": 1500,
+        "rules": [{"name": "pii-detector", "action": "block"}],
+        "checks": {
+            "futureagi-eval": {
+                "enabled": True,
+                "action": "block",
+                "threshold": 0.85,
+                "mode": "sync",
+                "stage": "pre_call",
+                "provider": "futureagi",
+                "_meta": "editor-state",
+                "config": {"eval_ids": ["42"]},
+            },
+            "pii-detector": {
+                "enabled": True,
+                "action": "block",
+                "confidence_threshold": 0.9,
+                "mode": "async",
+                "stage": "post_call",
+                "provider": "presidio",
+                "config": {"entities": ["EMAIL_ADDRESS"]},
+            },
+        },
+    }
+
+    result = _transform_guardrails(guardrails_data)
+
+    assert "rules" not in result
+    assert "enabled" not in result
+    assert result["fail_open"] is False
+    assert result["pipeline_mode"] == "parallel"
+    assert result["timeout_ms"] == 1500
+
+    checks = result["checks"]
+    assert "pii-detection" in checks
+    assert "futureagi-eval" in checks
+
+    fi = checks["futureagi-eval"]
+    assert fi["enabled"] is True
+    assert fi["action"] == "block"
+    assert fi["confidence_threshold"] == 0.85
+    assert fi["config"]["provider"] == "futureagi"
+    assert fi["config"]["eval_ids"] == ["42"]
+    assert "mode" not in fi
+    assert "stage" not in fi
+    assert "provider" not in fi
+    assert "_meta" not in fi
+
+    pii = checks["pii-detection"]
+    assert pii["enabled"] is True
+    assert pii["action"] == "block"
+    assert pii["confidence_threshold"] == 0.9
+    assert pii["config"]["provider"] == "presidio"
+    assert "mode" not in pii
+    assert "stage" not in pii
+    assert "provider" not in pii
+
+    validated = GuardrailConfig.model_validate(result)
+    assert validated.checks["futureagi-eval"].confidence_threshold == 0.85
+    assert validated.checks["pii-detection"].confidence_threshold == 0.9
+
+
+@patch("agentcc.services.config_push._assemble_providers", return_value={})
+def test_build_payload_accepts_org_config_editor_guardrails(mock_providers):
+    config = AgentccOrgConfig(
+        guardrails={
+            "enabled": True,
+            "fail_open": False,
+            "pipeline_mode": "parallel",
+            "timeout_ms": 1000,
+            "rules": [{"name": "stale-rule", "action": "block"}],
+            "checks": {
+                "pii-detector": {
+                    "enabled": True,
+                    "action": "block",
+                    "threshold": 0.9,
+                    "mode": "sync",
+                    "stage": "pre_call",
+                    "provider": "presidio",
+                    "config": {"entities": ["EMAIL"]},
+                }
+            },
+        }
+    )
+
+    payload = _build_payload("org-123", config)
+    contract = GatewayOrgConfig.model_validate(payload)
+
+    assert contract.guardrails is not None
+    assert "pii-detection" in contract.guardrails.checks
+    check = contract.guardrails.checks["pii-detection"]
+    assert check.enabled is True
+    assert check.action == "block"
+    assert check.confidence_threshold == 0.9
+    assert check.config["provider"] == "presidio"
