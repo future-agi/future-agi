@@ -1,0 +1,5 @@
+# BEGIN ${name}
+# Render only; review before installing. No policy is enabled by this entry.
+# Raw output is discarded. Private runner events are bounded to 1000 records.
+*/5 * * * * ${command}
+# END ${name}
