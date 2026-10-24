@@ -152,6 +152,70 @@ func TestTaskStore(t *testing.T) {
 	}
 }
 
+func TestTaskStoreSnapshotsTasks(t *testing.T) {
+	ts := NewTaskStore()
+	task := &Task{
+		ID: "task-1",
+		Status: TaskStatus{
+			State:   TaskStatusWorking,
+			Message: []MessagePart{{Type: "data", Data: json.RawMessage(`{"step":1}`)}},
+		},
+		Artifacts: []Artifact{{
+			Name:     "result",
+			Parts:    []MessagePart{{Type: "text", Text: "original"}},
+			Metadata: json.RawMessage(`{"source":"worker"}`),
+		}},
+		History: []Message{{
+			Role:     "user",
+			Parts:    []MessagePart{{Type: "text", Text: "hello"}},
+			Metadata: json.RawMessage(`{"turn":1}`),
+		}},
+		Metadata: json.RawMessage(`{"model":"test"}`),
+	}
+
+	ts.Store(task)
+	task.Status.State = TaskStatusCompleted
+	task.Status.Message[0].Data[8] = '9'
+	task.Artifacts[0].Parts[0].Text = "changed"
+	task.Artifacts[0].Metadata[11] = 'X'
+	task.History[0].Parts[0].Text = "changed"
+	task.History[0].Metadata[8] = '9'
+	task.Metadata[10] = 'X'
+
+	stored, ok := ts.Get(task.ID)
+	if !ok {
+		t.Fatal("expected stored task")
+	}
+	if stored.Status.State != TaskStatusWorking {
+		t.Fatalf("stored task changed through caller pointer: %s", stored.Status.State)
+	}
+	if string(stored.Status.Message[0].Data) != `{"step":1}` {
+		t.Fatalf("stored status data changed: %s", stored.Status.Message[0].Data)
+	}
+	if stored.Artifacts[0].Parts[0].Text != "original" {
+		t.Fatalf("stored artifact changed: %s", stored.Artifacts[0].Parts[0].Text)
+	}
+	if string(stored.Artifacts[0].Metadata) != `{"source":"worker"}` {
+		t.Fatalf("stored artifact metadata changed: %s", stored.Artifacts[0].Metadata)
+	}
+	if stored.History[0].Parts[0].Text != "hello" {
+		t.Fatalf("stored history changed: %s", stored.History[0].Parts[0].Text)
+	}
+	if string(stored.History[0].Metadata) != `{"turn":1}` {
+		t.Fatalf("stored history metadata changed: %s", stored.History[0].Metadata)
+	}
+	if string(stored.Metadata) != `{"model":"test"}` {
+		t.Fatalf("stored metadata changed: %s", stored.Metadata)
+	}
+
+	stored.Status.State = TaskStatusFailed
+	stored.Artifacts[0].Parts[0].Text = "changed again"
+	again, _ := ts.Get(task.ID)
+	if again.Status.State != TaskStatusWorking || again.Artifacts[0].Parts[0].Text != "original" {
+		t.Fatal("Get returned mutable task-store state")
+	}
+}
+
 func TestTaskStoreCleanup(t *testing.T) {
 	ts := NewTaskStore()
 
