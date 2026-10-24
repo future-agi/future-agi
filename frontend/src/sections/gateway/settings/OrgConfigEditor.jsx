@@ -29,7 +29,6 @@ import RateLimitingConfigTab from "./RateLimitingConfigTab";
 import BudgetsConfigTab from "./BudgetsConfigTab";
 import SecurityConfigTab from "./SecurityConfigTab";
 import AlertingConfigTab from "./AlertingConfigTab";
-import MCPConfigTab from "./MCPConfigTab";
 import ModelDatabaseConfigTab from "./ModelDatabaseConfigTab";
 import ModelMapConfigTab from "./ModelMapConfigTab";
 import GatewayAdminOnly from "../components/GatewayAdminOnly";
@@ -37,10 +36,10 @@ import { useGatewayAdmin } from "../hooks/useGatewayAdmin";
 
 // The sections the editor edits, each with the camelCase name a payload
 // may carry. Providers are not among them: they are managed on the Providers
-// page, and update-config does not accept them. The org audit and A2A
-// sections have no tab (the gateway applies neither per org)
-// and are not here either, so a save never sends, rewrites or drops a stored
-// one.
+// page, and update-config does not accept them. The org audit, A2A and MCP
+// sections have no tab (the gateway applies no org audit or A2A section and
+// connects no organization's MCP server) and are not here either, so a save
+// never sends, rewrites or drops a stored one.
 const SECTIONS = [
   ["guardrails"],
   ["routing"],
@@ -52,7 +51,6 @@ const SECTIONS = [
   ["alerting"],
   ["privacy"],
   ["tool_policy", "toolPolicy"],
-  ["mcp"],
   ["model_database", "modelDatabase"],
   ["model_map", "modelMap"],
 ];
@@ -230,7 +228,6 @@ const OrgConfigEditor = ({ open, onClose, initialConfig, defaultTab = 0 }) => {
           <Tab label="Budgets" />
           <Tab label="Security" />
           <Tab label="Alerting" />
-          <Tab label="MCP" />
           <Tab label="Model Database" />
           <Tab label="Model Map" />
         </Tabs>
@@ -305,12 +302,6 @@ const OrgConfigEditor = ({ open, onClose, initialConfig, defaultTab = 0 }) => {
             />
           )}
           {tab === 8 && (
-            <MCPConfigTab
-              mcp={draft.mcp}
-              onChange={(mcp) => setDraft((d) => ({ ...d, mcp }))}
-            />
-          )}
-          {tab === 9 && (
             <ModelDatabaseConfigTab
               modelDatabase={draft.model_database}
               onChange={(model_database) =>
@@ -318,7 +309,7 @@ const OrgConfigEditor = ({ open, onClose, initialConfig, defaultTab = 0 }) => {
               }
             />
           )}
-          {tab === 10 && (
+          {tab === 9 && (
             <ModelMapConfigTab
               modelMap={draft.model_map}
               onChange={(model_map) => setDraft((d) => ({ ...d, model_map }))}

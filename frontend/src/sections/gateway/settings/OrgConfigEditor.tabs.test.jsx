@@ -4,6 +4,8 @@
 //   never deleted.
 //   No A2A tab (the gateway applies no per-org A2A section); a stored a2a
 //   section is never deleted.
+//   No MCP tab (the gateway connects no organization's MCP server); a stored
+//   mcp section is never sent or deleted.
 //   Around the Budgets, Security (IP ACL, Tool Policy), Cache, Alerting and
 //   Rate Limiting tab content, "Not enforced on this gateway" when the
 //   gateway's org_sections_enforced lacks the section, "enforcement unknown"
@@ -57,7 +59,6 @@ vi.mock("./RateLimitingConfigTab", stub("Rate limiting"));
 vi.mock("./BudgetsConfigTab", stub("Budgets"));
 vi.mock("./SecurityConfigTab", stub("Security"));
 vi.mock("./AlertingConfigTab", stub("Alerting"));
-vi.mock("./MCPConfigTab", stub("MCP"));
 vi.mock("./ModelDatabaseConfigTab", stub("Model database"));
 vi.mock("./ModelMapConfigTab", stub("Model map"));
 
@@ -66,6 +67,7 @@ const STORED = {
   rate_limiting: { enabled: true, global_rpm: 60 },
   audit: { enabled: true, sinks: [{ type: "webhook", url: "https://siem" }] },
   a2a: { enabled: true, agents: { helper: { url: "https://agent" } } },
+  mcp: { enabled: true, servers: { search: { url: "https://search" } } },
   cache: {
     enabled: true,
     default_ttl: 300,
@@ -113,7 +115,7 @@ beforeEach(() => {
 });
 
 describe("Org Config tabs", () => {
-  it("offers no Audit and no A2A tab, and lists the tabs in this order", () => {
+  it("offers no Audit, A2A or MCP tab, and lists the tabs in this order", () => {
     renderEditor();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "Providers",
@@ -124,7 +126,6 @@ describe("Org Config tabs", () => {
       "Budgets",
       "Security",
       "Alerting",
-      "MCP",
       "Model Database",
       "Model Map",
     ]);
@@ -134,15 +135,14 @@ describe("Org Config tabs", () => {
     [2, "Routing body"],
     [3, "Enable Response Cache"],
     [4, "Rate limiting body"],
-    [8, "MCP body"],
-    [9, "Model database body"],
-    [10, "Model map body"],
+    [8, "Model database body"],
+    [9, "Model map body"],
   ])("defaultTab %i opens %s", (defaultTab, text) => {
     renderEditor({ defaultTab });
     expect(screen.getByText(text)).toBeInTheDocument();
   });
 
-  it("a save never sends, nulls or drops the stored audit and a2a sections", async () => {
+  it("a save never sends, nulls or drops the stored audit, a2a and mcp sections", async () => {
     gatewayConfig.current = { org_sections_enforced: ["cache"] };
     const user = userEvent.setup();
     const { onClose } = renderEditor({ defaultTab: 3 });
@@ -157,6 +157,7 @@ describe("Org Config tabs", () => {
     expect(body).toEqual({ cache: { default_ttl: "1h" } });
     expect(body).not.toHaveProperty("audit");
     expect(body).not.toHaveProperty("a2a");
+    expect(body).not.toHaveProperty("mcp");
   });
 });
 
@@ -246,8 +247,8 @@ describe("Enforcement notes", () => {
     [0, "Providers body"],
     [1, "Guardrails body"],
     [2, "Routing body"],
-    [8, "MCP body"],
-    [9, "Model database body"],
+    [8, "Model database body"],
+    [9, "Model map body"],
   ])(
     "tab %i (a section the gateway does not report on) carries no note",
     async (defaultTab, text) => {

@@ -119,10 +119,6 @@ vi.mock("./SecurityConfigTab", () => ({
   default: () => <div>Security tab</div>,
 }));
 
-vi.mock("./MCPConfigTab", () => ({
-  default: () => <div>MCP tab</div>,
-}));
-
 vi.mock("./ModelDatabaseConfigTab", () => ({
   default: () => <div>Model database tab</div>,
 }));
@@ -276,6 +272,75 @@ describe("OrgConfigEditor", () => {
     expect(body).toEqual({
       guardrails: { checks: { "openai-moderation": { enabled: false } } },
     });
+  });
+
+  // The gateway connects no organization's MCP server and enforces no org MCP
+  // guardrail, so the editor has no MCP tab, and a save leaves a stored mcp
+  // section as it is.
+  it("offers no MCP tab", () => {
+    render(
+      withQueryClient(
+        <OrgConfigEditor
+          open
+          onClose={vi.fn()}
+          initialConfig={ACTIVE_CONFIG}
+        />,
+      ),
+    );
+
+    expect(screen.getByRole("tab", { name: "Alerting" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "MCP" })).toBeNull();
+  });
+
+  it("saves another tab without an mcp section when one is stored", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+
+    render(
+      withQueryClient(
+        <OrgConfigEditor
+          open
+          onClose={onClose}
+          initialConfig={{
+            ...ACTIVE_CONFIG,
+            mcp: {
+              enabled: true,
+              servers: { search: { url: "https://search.example" } },
+            },
+          }}
+          defaultTab={4}
+        />,
+      ),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Raise global RPM" }));
+    await user.click(screen.getByRole("button", { name: "Save & Activate" }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(post).toHaveBeenCalledTimes(1);
+    const [, body] = post.mock.calls[0];
+    expect(Object.keys(body)).toEqual(["rate_limiting"]);
+  });
+
+  it.each([
+    ["Model Database", "Model database tab"],
+    ["Model Map", "Model map tab"],
+  ])("opens the %s tab by its name", async (name, body) => {
+    const user = userEvent.setup();
+
+    render(
+      withQueryClient(
+        <OrgConfigEditor
+          open
+          onClose={vi.fn()}
+          initialConfig={ACTIVE_CONFIG}
+        />,
+      ),
+    );
+
+    await user.click(screen.getByRole("tab", { name }));
+
+    expect(screen.getByText(body)).toBeInTheDocument();
   });
 
   it("closes without posting when nothing was edited", async () => {

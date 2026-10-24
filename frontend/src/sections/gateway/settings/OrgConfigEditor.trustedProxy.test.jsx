@@ -46,7 +46,6 @@ vi.mock("./RateLimitingConfigTab", stub("Rate limiting"));
 vi.mock("./BudgetsConfigTab", stub("Budgets"));
 vi.mock("./SecurityConfigTab", stub("Security"));
 vi.mock("./AlertingConfigTab", stub("Alerting"));
-vi.mock("./MCPConfigTab", stub("MCP"));
 vi.mock("./ModelDatabaseConfigTab", stub("Model database"));
 vi.mock("./ModelMapConfigTab", stub("Model map"));
 
