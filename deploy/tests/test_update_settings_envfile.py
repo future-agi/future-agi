@@ -24,6 +24,7 @@ from deploy.update import envfile
 from deploy.update.envfile import EnvFileError, example_keys, read_env, render_changes, write_changes
 from deploy.update.manifest import CHANNELS
 from deploy.update.settings import (
+    AUTOMATION_DEFAULTS,
     CONFIG_FILE,
     DEFAULT_COSIGN_IMAGE,
     DEFAULT_MANIFEST_URL,
@@ -292,7 +293,9 @@ class UpdateConfParsingTests(_SettingsCase):
 
 class SettingsPrecedenceTests(_SettingsCase):
     def test_layer_table_covers_every_setting(self) -> None:
-        self.assertEqual(set(LAYER_VALUES), set(DEFAULTS))
+        # New host automation settings have their own exhaustive layer table
+        # in test_update_automation_settings; retain this legacy matrix intact.
+        self.assertEqual(set(LAYER_VALUES), set(DEFAULTS) - set(AUTOMATION_DEFAULTS))
 
     def test_defaults_when_nothing_is_set(self) -> None:
         settings = self.load()
@@ -710,7 +713,9 @@ class SettingsDefaultsTests(unittest.TestCase):
 
     def test_every_setting_is_documented(self) -> None:
         readme = (ROOT / "deploy" / "update" / "README.md").read_text(encoding="utf-8")
-        for key in DEFAULTS:
+        # This checks the existing operator README. Automation operator docs
+        # ship with runner/CLI integration, not the S01 settings-only slice.
+        for key in LAYER_VALUES:
             with self.subTest(key=key):
                 self.assertIn(f"`{key}`", readme)
 

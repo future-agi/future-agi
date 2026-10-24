@@ -372,6 +372,33 @@ FUTURE_AGI_UPDATE_POLICY=minor
 | `FUTURE_AGI_UPDATE_COSIGN_OFFLINE` | `false` | Needs `FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY` (keyless verification needs the transparency log): verify without the transparency log, and run the cosign container without network. |
 | `FUTURE_AGI_UPDATE_COSIGN_IMAGE` | pinned `cosign:v3.1.3` by digest | cosign runs from this image when no `cosign` is on `PATH`. |
 
+### Scheduled runs
+
+These keys control the scheduled runner. bin/update checks them every time it
+loads its settings, but nothing runs unattended until you install a timer and
+set `FUTURE_AGI_UPDATE_ENABLED=true`. With the defaults (`manual` and
+disabled) a scheduled run does nothing. Do not confuse
+`FUTURE_AGI_UPDATE_AUTOMATION_MODE` with `FUTURE_AGI_UPDATE_MODE`: the backup
+hook receives the second one as the install type (Standalone, Distributed or
+production).
+
+| Key | Default | What it does |
+| --- | ------- | ------------ |
+| `FUTURE_AGI_UPDATE_AUTOMATION_MODE` | `manual` | How far a scheduled run goes: `manual` (nothing), `notify` (check and report), `download` (also fetch and verify the images) or `apply` (also update, inside the maintenance window). |
+| `FUTURE_AGI_UPDATE_ENABLED` | `false` | Master switch. While `false`, a scheduled run does nothing in any mode. |
+| `FUTURE_AGI_UPDATE_INTERVAL_SECONDS` | `21600` | Time between scheduled release checks: 300 to 86400. |
+| `FUTURE_AGI_UPDATE_MAX_BACKOFF_SECONDS` | `86400` | Longest wait after repeated failures: 300 to 86400, and not less than the interval. |
+| `FUTURE_AGI_UPDATE_TIMEZONE` | `UTC` | IANA time zone name of the maintenance window (for example Europe/Berlin, written exactly as in the tz database). It must exist in the host's tzdata. |
+| `FUTURE_AGI_UPDATE_MAINTENANCE_WINDOW` | none | When a scheduled apply may start. Empty means never. Otherwise `always`, or `HH:MM-HH:MM` in the time zone above (two different times; it may cross midnight). |
+| `FUTURE_AGI_UPDATE_MAINTENANCE_DAYS` | `MON,TUE,WED,THU,FRI,SAT,SUN` | Days a window may start on, from `MON` to `SUN`, comma-separated, each at most once. |
+| `FUTURE_AGI_UPDATE_MIN_START_BUDGET_SECONDS` | `900` | A scheduled apply starts only if at least this much of the window is left: 60 to 7200. |
+| `FUTURE_AGI_UPDATE_BACKUP_MAX_AGE_SECONDS` | `3600` | Oldest backup a scheduled apply accepts: 60 to 86400. |
+| `FUTURE_AGI_UPDATE_STAGE_MAX_AGE_SECONDS` | `86400` | How old a staged update may be before a scheduled apply refuses to finish it: 300 to 604800. |
+| `FUTURE_AGI_UPDATE_AUTOMATIC_ROLLBACK` | `false` | Allow one automatic images-only fallback after a failed scheduled apply, and only for a release whose signed manifest certifies it. It never restores a database or reverses a migration. |
+| `FUTURE_AGI_UPDATE_PROBE_TIMEOUT_SECONDS` | `60` | Longest a single Docker or Compose status probe may take: 5 to 300. |
+| `FUTURE_AGI_UPDATE_PULL_TIMEOUT_SECONDS` | `1800` | Longest an image pull may take: 60 to 7200. |
+| `FUTURE_AGI_UPDATE_TICK_TIMEOUT_SECONDS` | `14400` | Longest a whole scheduled run may take: 900 to 172800. In `apply` mode it must cover the backup timeout, one pull, twice the wait timeout and 600 seconds; with automatic rollback, the backup timeout, two pulls, four times the wait timeout and 1200 seconds. |
+
 Requirements on the Docker host: Python 3.9 or newer (run isolated:
 `PYTHONPATH` and user site-packages are ignored), Docker with Compose v2.24
 or newer (as for `./bin/install`; v2.25.0 is refused because it cannot print

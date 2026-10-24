@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 from typing import Dict, Mapping, Optional
 
+from .contracts import AutomationPolicy, ContractError, MaintenanceWindowSpec, POLICY_BOUNDS
 from .manifest import CHANNELS
 
 CONFIG_FILE = "update.conf"
@@ -40,7 +41,36 @@ DEFAULT_COSIGN_IMAGE = (
     "@sha256:9e5c2f2edc34351160407ca3416c61855bdf9403c3c5936e0f0be7fc261611b8"
 )
 
+# Host-only policy. FUTURE_AGI_UPDATE_MODE is NOT a setting: existing backup
+# hooks receive that name as the installation topology. Durable controls in a
+# later runner override configured enabled/pause; this loader does not read or
+# write those controls and does not install a scheduler.
+AUTOMATION_DEFAULTS: Dict[str, str] = {
+    "FUTURE_AGI_UPDATE_AUTOMATION_MODE": "manual",
+    "FUTURE_AGI_UPDATE_ENABLED": "false",
+    "FUTURE_AGI_UPDATE_INTERVAL_SECONDS": "21600",
+    "FUTURE_AGI_UPDATE_MAX_BACKOFF_SECONDS": "86400",
+    "FUTURE_AGI_UPDATE_TIMEZONE": "UTC",
+    "FUTURE_AGI_UPDATE_MAINTENANCE_WINDOW": "",
+    "FUTURE_AGI_UPDATE_MAINTENANCE_DAYS": "MON,TUE,WED,THU,FRI,SAT,SUN",
+    "FUTURE_AGI_UPDATE_MIN_START_BUDGET_SECONDS": "900",
+    "FUTURE_AGI_UPDATE_BACKUP_MAX_AGE_SECONDS": "3600",
+    "FUTURE_AGI_UPDATE_STAGE_MAX_AGE_SECONDS": "86400",
+    "FUTURE_AGI_UPDATE_AUTOMATIC_ROLLBACK": "false",
+    "FUTURE_AGI_UPDATE_PROBE_TIMEOUT_SECONDS": "60",
+    "FUTURE_AGI_UPDATE_PULL_TIMEOUT_SECONDS": "1800",
+    "FUTURE_AGI_UPDATE_TICK_TIMEOUT_SECONDS": "14400",
+}
+_WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
+_WINDOW_RE = re.compile(r"((?:[01][0-9]|2[0-3]):[0-5][0-9])-((?:[01][0-9]|2[0-3]):[0-5][0-9])")
+# Shared field names and bounds also validate direct AutomationPolicy callers.
+_POLICY_KEYS = {
+    name: "FUTURE_AGI_UPDATE_" + ("INTERVAL_SECONDS" if name == "check_interval_seconds" else name.upper())
+    for name in POLICY_BOUNDS
+}
+
 DEFAULTS: Dict[str, str] = {
+    **AUTOMATION_DEFAULTS,
     "FUTURE_AGI_UPDATE_MANIFEST_URL": DEFAULT_MANIFEST_URL,
     "FUTURE_AGI_UPDATE_CHANNEL": "stable",
     "FUTURE_AGI_UPDATE_POLICY": "minor",
@@ -113,7 +143,12 @@ class Settings:
         raw = self._values[key]
         if not re.fullmatch(r"[0-9]+", raw or ""):
             raise SettingsError(f"{key} must be a whole number of seconds, not {raw!r}{self.origin(key)}")
-        value = int(raw)
+        # Bound conversion on all supported Pythons, including 3.9 without an
+        # interpreter digit limit; retain legacy leading-zero support.
+        digits = raw.lstrip("0") or "0"
+        if len(digits) > max(len(str(minimum)), len(str(maximum))):
+            raise SettingsError(f"{key} must be between {minimum} and {maximum}, not {raw}{self.origin(key)}")
+        value = int(digits)
         if not minimum <= value <= maximum:
             raise SettingsError(f"{key} must be between {minimum} and {maximum}, not {value}{self.origin(key)}")
         return value
@@ -125,6 +160,60 @@ class Settings:
         if raw in ("", "0", "false", "no", "off"):
             return False
         raise SettingsError(f"{key} must be true or false, not {self._values[key]!r}{self.origin(key)}")
+
+    @property
+    def automation_policy(self) -> AutomationPolicy:
+        """Immutable configured policy, not effective durable controls or eligibility.
+
+        Window grammar is empty (automatic apply blocked), ``always``, or
+        HH:MM-HH:MM; weekdays are unique MON..SUN start days (ISO 1..7).
+        Timezone names require local zoneinfo; no fallback or package install.
+        Parsing a window does not evaluate DST or authorize a start.
+        """
+        mode_key = "FUTURE_AGI_UPDATE_AUTOMATION_MODE"
+        mode = self.get(mode_key)
+        if mode not in ("manual", "notify", "download", "apply"):
+            raise SettingsError(f"{mode_key} must be manual, notify, download or apply{self.origin(mode_key)}")
+        numbers = {name: self.integer(key, *POLICY_BOUNDS[name]) for name, key in _POLICY_KEYS.items()}
+        if numbers["max_backoff_seconds"] < numbers["check_interval_seconds"]:
+            key = "FUTURE_AGI_UPDATE_MAX_BACKOFF_SECONDS"
+            raise SettingsError(f"{key} must be >= FUTURE_AGI_UPDATE_INTERVAL_SECONDS{self.origin(key)}")
+        days_key = "FUTURE_AGI_UPDATE_MAINTENANCE_DAYS"
+        days = self.get(days_key).split(",")
+        if any(day not in _WEEKDAYS for day in days) or len(set(days)) != len(days):
+            raise SettingsError(f"{days_key} must be unique comma-separated MON..SUN start days{self.origin(days_key)}")
+        zone_key = "FUTURE_AGI_UPDATE_TIMEZONE"
+        zone = self.get(zone_key)
+        try:
+            # Validate even when the window is unset, so enabling later cannot
+            # silently switch an invalid zone to UTC.
+            always = MaintenanceWindowSpec("always", zone)
+        except ContractError:
+            raise SettingsError(f"{zone_key} requires a valid locally available IANA timezone"
+                                f"{self.origin(zone_key)}; install system tzdata if needed") from None
+        window_key = "FUTURE_AGI_UPDATE_MAINTENANCE_WINDOW"
+        raw = self.get(window_key)
+        window = None
+        if raw == "always":
+            window = always
+        elif raw:
+            match = _WINDOW_RE.fullmatch(raw)
+            if match is None or match[1] == match[2]:
+                raise SettingsError(f"{window_key} must be empty, always, or HH:MM-HH:MM with distinct endpoints"
+                                    f"{self.origin(window_key)}")
+            window = MaintenanceWindowSpec("interval", zone, tuple(_WEEKDAYS.index(day) + 1 for day in days),
+                                           match[1], match[2])
+        try:
+            return AutomationPolicy(
+                mode=mode, enabled=self.boolean("FUTURE_AGI_UPDATE_ENABLED"), channel=self.channel,
+                version_policy=self.policy, timezone=zone, maintenance_window=window,
+                automatic_rollback=self.boolean("FUTURE_AGI_UPDATE_AUTOMATIC_ROLLBACK"), **numbers,
+            )
+        except ContractError:
+            key = "FUTURE_AGI_UPDATE_TICK_TIMEOUT_SECONDS"
+            raise SettingsError(f"{key} is too small for scheduled apply: require backup + pull + 2*wait + 600;"
+                                " with automatic rollback require backup + 2*pull + 4*wait + 1200"
+                                f"{self.origin(key)}") from None
 
     @property
     def policy(self) -> str:
@@ -146,6 +235,10 @@ def load_settings(root: Path, overrides: Optional[Mapping[str, Optional[str]]] =
     """
 
     environ = os.environ if environ is None else environ
+    # Unknown ambient keys remain ignored for legacy hook/environment
+    # compatibility; explicit configuration and CLI overrides are closed.
+    if overrides is not None and any(key not in DEFAULTS for key in overrides):
+        raise SettingsError("unknown setting in command line overrides")
     file_values = read_config_file(root / CONFIG_FILE)
     values: Dict[str, str] = {}
     sources: Dict[str, str] = {}
@@ -159,6 +252,9 @@ def load_settings(root: Path, overrides: Optional[Mapping[str, Optional[str]]] =
             values[key], sources[key] = file_values[key], CONFIG_FILE
         else:
             values[key], sources[key] = default, "default"
+    for key, value in values.items():
+        if type(value) is not str:
+            raise SettingsError(f"{key} must be text (from {sources[key]})")
     settings = Settings(values, sources)
     if settings.policy not in POLICIES:
         raise SettingsError(
@@ -170,8 +266,9 @@ def load_settings(root: Path, overrides: Optional[Mapping[str, Optional[str]]] =
             f"FUTURE_AGI_UPDATE_CHANNEL must be one of {', '.join(CHANNELS)}, not {settings.channel!r}"
             f"{settings.origin('FUTURE_AGI_UPDATE_CHANNEL')}"
         )
-    settings.integer("FUTURE_AGI_UPDATE_BACKUP_TIMEOUT_SECONDS", 1, 86400)
-    settings.integer("FUTURE_AGI_UPDATE_WAIT_TIMEOUT_SECONDS", 60, 7200)
+    # Validate all configured automation inputs even for local/status commands.
+    # This only parses values and consults local tzdata, never Docker/network.
+    _ = settings.automation_policy
     offline = settings.boolean("FUTURE_AGI_UPDATE_COSIGN_OFFLINE")
     if verify and offline and not settings.get("FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY").strip():
         # Keyless verification (the default) checks the signing certificate
