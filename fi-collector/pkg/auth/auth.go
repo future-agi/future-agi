@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/sync/singleflight"
@@ -25,12 +26,27 @@ const (
 
 var (
 	ErrUnauthenticated = errors.New("invalid or missing API key")
+	// ErrProjectResolutionUnavailable must be retried, not acknowledged as a drop.
+	ErrProjectResolutionUnavailable = errors.New("project resolution temporarily unavailable")
 )
+
+// ProjectAuthChangedError means the authenticated cache entry disappeared or
+// was replaced while project persistence was in flight. The attempt must fail
+// closed, but retry with fresh authentication rather than permanently drop data.
+type ProjectAuthChangedError struct{}
+
+func (*ProjectAuthChangedError) Error() string {
+	return "project resolution authentication cache missing or replaced; retry"
+}
+func (*ProjectAuthChangedError) Unwrap() error { return ErrProjectResolutionUnavailable }
 
 // Authenticator is the top-level auth facade. Safe for concurrent use.
 type Authenticator struct {
-	cfg      Config
-	pg       *PGResolver
+	cfg  Config
+	pg   *PGResolver
+	keys interface {
+		ValidateKey(context.Context, string, string) (*ResolveResult, error)
+	}
 	projects projectResolver
 	cache    *cache
 	rdb      *redis.Client
@@ -39,12 +55,19 @@ type Authenticator struct {
 	log      *slog.Logger
 }
 
+// Resolver provides key and project persistence. Authentication, caching,
+// stamping and request middleware remain owned by Authenticator.
+type Resolver interface {
+	ValidateKey(context.Context, string, string) (*ResolveResult, error)
+	projectResolver
+}
+
 type projectResolver interface {
 	ResolveProjects(context.Context, string, string, []string) (map[string]string, error)
 	GetOrCreateProject(context.Context, string, string, string, string) (string, error)
 }
 
-// New creates an Authenticator. If cfg.Enabled is false, returns nil
+// New creates an Authenticator. If cfg.PGWrite is empty, returns nil
 // (all interceptor/middleware checks become no-ops).
 // rdb is optional — when non-nil, WatchRevocations can be called to enable
 // instant cache eviction on key disable/delete.
@@ -59,14 +82,47 @@ func New(ctx context.Context, cfg Config, rdb *redis.Client, log *slog.Logger) (
 		return nil, fmt.Errorf("auth pg resolver: %w", err)
 	}
 
-	return &Authenticator{
-		cfg:      cfg,
-		pg:       pg,
-		projects: pg,
-		cache:    newCache(cfg.CacheTTL, cfg.WarmTTL),
-		rdb:      rdb,
-		log:      log,
-	}, nil
+	a, err := NewWithResolver(cfg, pg, rdb, log)
+	if err != nil {
+		pg.Close()
+		return nil, err
+	}
+	a.pg = pg
+	return a, nil
+}
+
+// NewWithResolver constructs the real authentication pipeline with an injected
+// persistence implementation. It owns no database pool; callers own resolver's
+// lifetime. Tests can exercise cold/warm cache and middleware without a database.
+func NewWithResolver(cfg Config, resolver Resolver, rdb *redis.Client, log *slog.Logger) (*Authenticator, error) {
+	if resolver == nil {
+		return nil, errors.New("auth requires a resolver")
+	}
+	cfg.defaults()
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Authenticator{cfg: cfg, keys: resolver, projects: resolver,
+		cache: newCache(cfg.CacheTTL, cfg.WarmTTL), rdb: rdb, log: log}, nil
+}
+
+// keyResolver keeps the in-package PG-backed constructors compatible.
+func (a *Authenticator) keyResolver() interface {
+	ValidateKey(context.Context, string, string) (*ResolveResult, error)
+} {
+	if a.keys != nil {
+		return a.keys
+	}
+	return a.pg
+}
+
+// InvalidateKey removes a hashed CacheKey after revocation or explicit
+// invalidation. In-flight project lookups cannot repopulate this entry; the next
+// request must authenticate again. It is also used by WatchRevocations.
+func (a *Authenticator) InvalidateKey(cacheKey string) {
+	if a != nil {
+		a.cache.m.Delete(cacheKey)
+	}
 }
 
 // WatchRevocations evicts cache entries on two Redis channels: fi:auth:revoke
@@ -88,7 +144,7 @@ func (a *Authenticator) WatchRevocations(ctx context.Context) {
 			}
 			switch msg.Channel {
 			case revocationChannel:
-				a.cache.m.Delete(msg.Payload)
+				a.InvalidateKey(msg.Payload)
 				a.log.Debug("revoked key evicted from cache", "cache_key", msg.Payload[:min(len(msg.Payload), 8)]+"…")
 			case projectInvalidateChannel:
 				if n := a.cache.evictProjectID(msg.Payload); n > 0 {
@@ -145,7 +201,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, apiKey, secretKey stri
 	val, err, _ := a.sfKey.Do(ck, func() (any, error) {
 		sfCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		return a.pg.ValidateKey(sfCtx, apiKey, secretKey)
+		return a.keyResolver().ValidateKey(sfCtx, apiKey, secretKey)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("auth resolve: %w", err)
@@ -170,8 +226,16 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 		return nil
 	}
 
+	for _, name := range names {
+		if err := validateProjectName(name, "project_name"); err != nil {
+			return err
+		}
+	}
 	if result.OrgID == "" || result.WorkspaceID == "" {
 		return errors.New("resolve projects requires authenticated organization and workspace scope")
+	}
+	if a.cache.projectEntry(cacheKey, result) == nil {
+		return &ProjectAuthChangedError{}
 	}
 	missing, scoped := result.MissingProjectsInWorkspace(result.WorkspaceID, names)
 	if !scoped {
@@ -191,12 +255,11 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 	// Batch resolve from PG read pool
 	resolved, err := resolver.ResolveProjects(ctx, result.OrgID, result.WorkspaceID, missing)
 	if err != nil {
-		return fmt.Errorf("resolve projects: %w", err)
+		return fmt.Errorf("%w: %w", ErrProjectResolutionUnavailable, err)
 	}
 
-	if !result.SetProjectsInWorkspace(result.WorkspaceID, resolved) ||
-		!a.cache.addProjectsScoped(cacheKey, result.OrgID, result.WorkspaceID, resolved) {
-		return errors.New("resolve projects authentication cache scope changed during lookup")
+	if !a.cache.addProjectsScoped(cacheKey, result, resolved) {
+		return &ProjectAuthChangedError{}
 	}
 
 	// Auto-create any still-missing projects via write pool
@@ -204,21 +267,35 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 		if _, ok := result.GetProjectInWorkspace(result.WorkspaceID, name); ok {
 			continue
 		}
+		// Deduplicate only within this authenticated result. A fresh request
+		// must not inherit an old in-flight create after same-scope replacement.
 		sfKey := strings.Join(
-			[]string{cacheKey, result.OrgID, result.WorkspaceID, name, "observe"}, "\x00",
+			[]string{cacheKey, fmt.Sprintf("%p", result), result.OrgID, result.WorkspaceID, name, "observe"}, "\x00",
 		)
 		val, err, _ := a.sfProj.Do(sfKey, func() (any, error) {
 			return resolver.GetOrCreateProject(ctx, result.OrgID, result.WorkspaceID, name, "observe")
 		})
+		// A stale authentication result must not acknowledge a permanent drop
+		// either. Retry under the current key scope before classifying the name.
+		if a.cache.projectEntry(cacheKey, result) == nil {
+			return &ProjectAuthChangedError{}
+		}
 		if err != nil {
 			a.log.Warn("project auto-create failed", "name", name, "org", result.OrgID, "err", err)
-			continue
+			// Only deterministic value/check failures are negatively cached.
+			// Unique/FK conflicts, context cancellation and unknown errors may
+			// recover; do not cache or acknowledge any of their spans.
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && (pgErr.Code == "22001" || pgErr.Code == "23514") {
+				result.markFailed(name, time.Now())
+				continue
+			}
+			return fmt.Errorf("%w: %w", ErrProjectResolutionUnavailable, err)
 		}
 		id := val.(string)
 		created := map[string]string{name: id}
-		if !result.SetProjectsInWorkspace(result.WorkspaceID, created) ||
-			!a.cache.addProjectsScoped(cacheKey, result.OrgID, result.WorkspaceID, created) {
-			return errors.New("created project cache scope changed during lookup")
+		if !a.cache.addProjectsScoped(cacheKey, result, created) {
+			return &ProjectAuthChangedError{}
 		}
 	}
 
@@ -232,7 +309,7 @@ func (a *Authenticator) refreshKey(ctx context.Context, apiKey, secretKey string
 
 	ck := CacheKey(apiKey, secretKey)
 
-	result, err := a.pg.ValidateKey(ctx, apiKey, secretKey)
+	result, err := a.keyResolver().ValidateKey(ctx, apiKey, secretKey)
 	if err != nil {
 		a.log.Debug("background key refresh failed", "err", err)
 		return

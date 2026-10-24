@@ -187,22 +187,97 @@ for models not in the litellm table. Custom model pricing is stored in the Djang
 (scoped by organization); the collector reads it on-demand and caches for 24 hours. When neither
 the litellm table nor custom pricing applies, the span's cost is 0.
 
-## Operational backpressure model
+## Ingest limits and backpressure
 
 ```
-SDK   ──HTTP/gRPC──►   fi-collector
-                        ├─ OTLP receiver       (default queue: 1K requests)
-                        ├─ memory_limiter      (hard ceiling — drops if exceeded)
-                        ├─ batch processor     (10K spans / 5s, whichever first)
-                        ├─ retry-on-failure    (exponential, max 5 min)
-                        └─ persistent queue    (disk-backed, survives restart)
-                                ▼
-                        ClickHouse 25.3 (async_insert=1 server-side batching)
+SDK ──OTLP/HTTP or gRPC──► fi-collector
+                            ├─ auth, quota, live-heap check     (nothing read yet)
+                            ├─ wire lease, then read the body   (capped; read deadline)
+                            ├─ scan the body, work lease        (limits; price of decode + rows)
+                            ├─ decode, convert, park the rows   (the rows keep their lease)
+                            └─ flush: inserts of a bounded size ─► ClickHouse 25.3
 ```
 
-If ClickHouse is briefly unavailable, the persistent queue absorbs the
-backlog. If memory crosses the limit, the receiver returns 429 and SDKs
-back off — no silent drops, no OOM crashes. Same pattern SigNoz uses.
+One budget bounds the memory that all OTLP requests (plain, gzip and gRPC)
+hold at once, from reading a body until ClickHouse has stored its rows. A
+request leases its body before reading it and the price of decoding and
+storing it (measured from the body before it is decoded) before decoding it.
+When the budget is full, requests wait their turn while it frees up (up to
+10 s per lease wait, and less once nothing has been freed and no drain has
+been storing rows for 2 s), then get
+**503 + Retry-After** (HTTP) or **UNAVAILABLE** (gRPC), which OTLP exporters
+retry. A request that can never succeed (over a cap, too large for the whole
+work pool, malformed) gets **413/400** or **INVALID_ARGUMENT**, which exporters
+do not retry. gRPC calls are authenticated before their message is read.
+HTTP's new 30 s body-read deadline starts after the initial wire lease;
+gRPC's starts before the length prefix and includes the wire wait. Client
+export deadlines may expire earlier (the Collector otlp exporter commonly
+uses 5 s per attempt); for large batches that fit, consider 15 s or smaller
+batches. Lease ordering prevents cross-pool waits, not same-pool growth:
+gzip and chunked plain bodies can wait while holding part of the wire pool
+until the no-progress timeout refuses them.
+
+Quota refusals are HTTP 429 without Retry-After and gRPC RESOURCE_EXHAUSTED
+without RetryInfo. The Go SDK and Collector otlp exporter do not retry that
+gRPC status; some other SDKs do. Temporary project resolution failures are
+503 + Retry-After: 1 / UNAVAILABLE and are not negatively cached. This includes
+an authentication-cache entry expired, evicted or replaced before or during
+project lookup/create, even a same-workspace replacement. The old lookup cannot merge
+into the replacement; the failed export enqueues no spans and emits no usage.
+Retry authenticates again; a revoked key remains rejected. Project creation
+may already have succeeded, so retry resolves the persisted project.
+Deterministic value/check failures may drop resources; their rejected span
+count is reported in OTLP partial success.
+
+Resource `project_name` values are kept verbatim, including significant spaces,
+commas, and format/variation characters in visible names such as `deploy ✈️`
+and `team 👩‍💻`. This applies both to existing and newly created projects.
+Ingest still rejects invalid UTF-8, names over 255 Unicode characters, Unicode
+Cc controls, and entirely invisible/blank names. These are collector safeguards:
+the app serializers accept some invisible/control names, trim edge whitespace,
+and are not changed here. The stricter header-only rules (including rejection
+of format/variation characters and line separators) do not apply to resource
+names. Use resource attributes for names that cannot be sent in a header.
+
+Storage-mode ingestion usage (`observe_add.amount`) uses the canonical OTLP
+protobuf size of accepted traces **after** project-header filling, org/project
+stamping and permanent resource drops. HTTP protobuf, HTTP JSON, either with
+gzip, and gRPC use the same calculation. It includes accepted resource/scope
+metadata and stamped attributes; it is decoded semantic bytes, not wire bytes,
+JSON text length, or compressed/stored ClickHouse table bytes. This preserves
+gRPC's existing byte basis and intentionally replaces HTTP's decompressed-body
+length, including on full success for protobuf/JSON/plain/gzip. It is not raw
+JSON or compressed-body length: gzip already used the decompressed body before
+this change. JSON formatting no longer changes usage, gzip ratio still does not,
+and rejected resources never contribute. Event-mode usage still
+counts accepted distinct traces plus accepted spans. Fully dropped or empty
+batches emit no ingestion usage. Usage follows enqueue, not confirmation of a
+durable database insert; existing retry/dedup semantics are unchanged.
+
+Standalone uses GOMEMLIMIT=512MiB: a 232 MiB ingest budget and about 154.7 MiB
+work pool. 8,192 spans with 50 short string attributes each can exceed it;
+start Collector pipelines at send_batch_size/send_batch_max_size 4096 and
+reduce further when needed. GOMEMLIMIT is soft, not a hard RSS bound. The
+512MiB setting and whole-container load at minimum Standalone resources
+still need release sign-off; collector-only measurements are insufficient.
+
+| Setting | Default | What |
+|---|---|---|
+| `FI_INGEST_BUDGET_MIB` (`server.ingest_budget_mib`) | about half of the Go memory limit, less a fixed allowance | the budget. Without GOMEMLIMIT the collector sets the Go memory limit to 90% of its container's memory limit; with neither, the budget is 256 MiB. |
+| `FI_OTLP_MAX_BODY_MIB` (`server.otlp_max_body_mib`) | 16 | largest OTLP/HTTP body, as sent and after gzip decompression; lowered to fit a sixth of the budget |
+| `FI_GRPC_MAX_RECV_MIB` (`server.grpc_max_recv_mib`) | the body cap | largest OTLP/gRPC message |
+| `FI_OTLP_MAX_CONNECTIONS` (`server.otlp_max_connections`) | 0 (no cap) | open connections per listener |
+
+Per request, a body may also hold at most 65,536 spans, 10,000 ResourceSpans,
+1,048,576 attributes (array entries included), 64 KiB of resource attributes
+per ResourceSpans, attribute values nested at most 64 levels, and rows of at
+most 8 times the body cap once encoded for ClickHouse. The resolved limits
+are logged at startup ("ingest limits"), and `/healthz` reports the budget's
+use and the requests refused by transport, reason and code under `ingest`.
+
+If ClickHouse is slow or down, the pending rows keep their share of the
+budget until their inserts finish (or are dead-lettered), so new requests
+wait and then get 503 / UNAVAILABLE instead of growing memory.
 
 ## Migration relationship
 
