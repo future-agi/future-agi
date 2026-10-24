@@ -94133,7 +94133,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         reason: {
           title: "Reason",
           type: "string",
-          enum: ["gateway_mcp_disabled", "gateway_unreachable"],
+          enum: [
+            "gateway_mcp_disabled",
+            "gateway_unreachable",
+            "gateway_not_org_scoped",
+          ],
         },
       },
     },

@@ -89363,7 +89363,8 @@
                     "type": "string",
                     "enum": [
                         "gateway_mcp_disabled",
-                        "gateway_unreachable"
+                        "gateway_unreachable",
+                        "gateway_not_org_scoped"
                     ]
                 }
             }

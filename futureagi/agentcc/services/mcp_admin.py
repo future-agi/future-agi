@@ -2,7 +2,11 @@
 
 Every answer is about the org's own servers, the ``mcp.servers`` of its active
 config: anything the gateway returns that is not attributed to one of those
-servers is left out.
+servers is left out. A gateway whose MCP status is not org-scoped (no
+``org_enabled``) builds its one registry from its own config file, never from
+an org's servers, so such a status counts as no org servers: the status reads
+as disabled with ``reason`` ``gateway_not_org_scoped``, every list is empty,
+and the playground raises ``NoMCPServers``.
 
 A gateway that runs with MCP off registers no ``/-/mcp/*`` route and answers
 404. The status then reads as disabled with ``reason`` ``gateway_mcp_disabled``
@@ -30,6 +34,7 @@ MCP_TOOL_NOT_FOUND_MESSAGE = "MCP tool not found."
 NO_MCP_SERVERS_MESSAGE = "No MCP servers configured for this org"
 GATEWAY_MCP_DISABLED = "gateway_mcp_disabled"
 GATEWAY_MCP_DISABLED_MESSAGE = "MCP is turned off for this deployment."
+GATEWAY_NOT_ORG_SCOPED = "gateway_not_org_scoped"
 GATEWAY_UNREACHABLE = "gateway_unreachable"
 GATEWAY_UNREACHABLE_MESSAGE = "The gateway could not be reached for MCP data."
 
@@ -74,9 +79,11 @@ def org_status(organization: "Organization | None") -> dict[str, Any]:
 
     When the gateway answers 404 (its MCP is off) or cannot be reached, the
     status is disabled with ``reason`` ``gateway_mcp_disabled`` or
-    ``gateway_unreachable``, and lists no server. The gateway is asked even for
-    an org with no MCP server, so that org also learns that MCP is off; with
-    MCP on, such an org reads as disabled with no reason.
+    ``gateway_unreachable``, and lists no server; when its status is not
+    org-scoped, the reason is ``gateway_not_org_scoped``. The gateway is asked
+    even for an org with no MCP server, so that org also learns that MCP is
+    off; with MCP on and an org-scoped status, such an org reads as disabled
+    with no reason.
     """
     if organization is None:
         return _disabled_status()
@@ -90,6 +97,8 @@ def org_status(organization: "Organization | None") -> dict[str, Any]:
             "mcp_status_unavailable", org_id=org_id, reason=reason, error=str(e)
         )
         return {**_disabled_status(), "reason": reason}
+    if not gateway_mcp.is_org_scoped_status(status):
+        return {**_disabled_status(), "reason": GATEWAY_NOT_ORG_SCOPED}
     if not servers:
         return _disabled_status()
 
@@ -103,12 +112,8 @@ def org_status(organization: "Organization | None") -> dict[str, Any]:
     )
     return {
         "enabled": enabled,
-        # Sessions belong to no server: only an org-scoped status counts this org's.
-        "sessions": (
-            _count(status.get("sessions"))
-            if gateway_mcp.is_org_scoped_status(status)
-            else 0
-        ),
+        # Sessions belong to no server; the org-scoped status counts this org's.
+        "sessions": _count(status.get("sessions")),
         "tools": sum(_count(s.get("tool_count")) for s in own),
         "resources": len(resources),
         "prompts": len(prompts),
@@ -120,7 +125,8 @@ def org_tools(organization: "Organization | None") -> list[dict[str, Any]]:
     """The org's tools. Raises ``MCPDisabled`` or ``GatewayClientError``.
 
     ``org_resources`` and ``org_prompts`` answer and raise the same way; an org
-    with no MCP server gets an empty list without a gateway call.
+    with no MCP server gets an empty list without a gateway call, and so does
+    every org after a status that is not org-scoped (no list is read).
     """
     return _org_items(gateway_mcp.list_tools, organization)
 
@@ -138,13 +144,15 @@ def run_tool_test(
 ) -> dict[str, Any]:
     """Run one of the org's tools through the gateway's admin playground.
 
-    Raises ``NoMCPServers``, ``MCPToolNotFound``, ``MCPDisabled`` or
-    ``GatewayClientError``.
+    Raises ``NoMCPServers`` (also when the gateway's status is not
+    org-scoped), ``MCPToolNotFound``, ``MCPDisabled`` or ``GatewayClientError``.
     """
     servers = org_server_ids(organization)
     if not servers:
         raise NoMCPServers(NO_MCP_SERVERS_MESSAGE)
     org_id = str(organization.id)
+    if not _is_org_scoped(org_id):
+        raise NoMCPServers(NO_MCP_SERVERS_MESSAGE)
     # The tool's server is the one the gateway's tool list names. A name prefix
     # cannot tell, because a server id may contain the "_" separator.
     tools = _gateway_read(gateway_mcp.list_tools, org_id)
@@ -173,8 +181,19 @@ def _org_items(
     servers = org_server_ids(organization)
     if not servers:
         return []
-    items = _gateway_read(fetch, str(organization.id))
+    org_id = str(organization.id)
+    if not _is_org_scoped(org_id):
+        return []
+    items = _gateway_read(fetch, org_id)
     return _own(items, servers)
+
+
+def _is_org_scoped(org_id: str) -> bool:
+    """Whether the gateway answers MCP from this org's own pool, not from a
+    registry shared by every org. Raises ``MCPDisabled`` or
+    ``GatewayClientError``."""
+    status = _gateway_read(gateway_mcp.get_status, org_id)
+    return gateway_mcp.is_org_scoped_status(status)
 
 
 def _counted_items(

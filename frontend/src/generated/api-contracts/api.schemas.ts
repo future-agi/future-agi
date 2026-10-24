@@ -2932,6 +2932,7 @@ export type GatewayMCPStatusResultApiReason =
 export const GatewayMCPStatusResultApiReason = {
   gateway_mcp_disabled: "gateway_mcp_disabled",
   gateway_unreachable: "gateway_unreachable",
+  gateway_not_org_scoped: "gateway_not_org_scoped",
 } as const;
 
 export type GatewayMCPStatusResultApiServersItem = { [key: string]: unknown };

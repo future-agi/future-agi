@@ -57,7 +57,9 @@ def test_gateway_mcp_status_accepts_gateway_server_statuses():
     assert serializer.is_valid(), serializer.errors
 
 
-@pytest.mark.parametrize("reason", ["gateway_mcp_disabled", "gateway_unreachable"])
+@pytest.mark.parametrize(
+    "reason", ["gateway_mcp_disabled", "gateway_unreachable", "gateway_not_org_scoped"]
+)
 def test_gateway_mcp_status_disabled_carries_a_reason(reason):
     serializer = GatewayMCPStatusResponseSerializer(
         data={

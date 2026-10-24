@@ -5852,7 +5852,11 @@ export const AgentccGatewaysMcpStatusResponse = zod.object({
         "The gateway's MCP server statuses (mcp-admin-status-v1, keyed by server_id), limited to the org's own servers.",
       ),
     reason: zod
-      .enum(["gateway_mcp_disabled", "gateway_unreachable"])
+      .enum([
+        "gateway_mcp_disabled",
+        "gateway_unreachable",
+        "gateway_not_org_scoped",
+      ])
       .optional(),
   }),
 });

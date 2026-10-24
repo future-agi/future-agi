@@ -385,9 +385,15 @@ class GatewayMCPStatusResultSerializer(serializers.Serializer):
             "server_id), limited to the org's own servers."
         ),
     )
-    # Why MCP reads as disabled when the gateway's status call failed.
+    # Why MCP reads as disabled when the gateway's status call failed, or when
+    # its status is not org-scoped (gateway_not_org_scoped).
     reason = serializers.ChoiceField(
-        choices=("gateway_mcp_disabled", "gateway_unreachable"), required=False
+        choices=(
+            "gateway_mcp_disabled",
+            "gateway_unreachable",
+            "gateway_not_org_scoped",
+        ),
+        required=False,
     )
 
 

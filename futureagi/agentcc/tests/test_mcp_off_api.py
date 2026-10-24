@@ -23,6 +23,7 @@ from agentcc.tests.test_mcp_admin_api import (
     GATEWAY,
     STATUS_BODY,
     TOOLS_LIST,
+    V1_STATUS,
     faked_gateway,
     seed_mcp,
 )
@@ -113,13 +114,15 @@ class TestMCPOffStatus:
     def test_mcp_on_without_servers_lists_no_other_org_server(
         self, auth_client, org_without_servers, fake_gateway
     ):
-        # MCP on: Django reports only the org's own servers and counts.
+        # MCP on, in a status that is not org-scoped: none of its servers and
+        # counts is this org's.
         fake_gateway.on("GET", "/-/mcp/status", body=STATUS_BODY)
 
         result = _status(auth_client)
 
         assert result == {
             "enabled": False,
+            "reason": "gateway_not_org_scoped",
             "sessions": 0,
             "tools": 0,
             "resources": 0,
@@ -151,6 +154,7 @@ class TestMCPOffLists:
     def test_list_gateway_failure_stays_an_error(
         self, auth_client, org_with_servers, fake_gateway, path, route
     ):
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         fake_gateway.on("GET", LIST_ROUTES[path], **route)
 
         response = auth_client.get(f"{GATEWAY}/{path}/")
@@ -162,6 +166,7 @@ class TestMCPOffLists:
     def test_list_malformed_body_is_an_error(
         self, auth_client, org_with_servers, fake_gateway, path
     ):
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         fake_gateway.on("GET", LIST_ROUTES[path], body={"not": "a list"})
 
         response = auth_client.get(f"{GATEWAY}/{path}/")
@@ -197,7 +202,8 @@ class TestMCPOffToolTest:
     def test_mcp_turned_off_between_lookup_and_run(
         self, auth_client, org_with_servers, fake_gateway
     ):
-        # The tool list still answers; the run route is gone (404).
+        # The status and the tool list still answer; the run route is gone (404).
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         fake_gateway.on("GET", "/-/mcp/tools", body=TOOLS_LIST)
 
         response = auth_client.post(
@@ -210,6 +216,7 @@ class TestMCPOffToolTest:
     def test_tool_test_gateway_failure_stays_an_error(
         self, auth_client, org_with_servers, fake_gateway
     ):
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         fake_gateway.on("GET", "/-/mcp/tools", body=TOOLS_LIST)
         fake_gateway.on("POST", "/-/mcp/test", status=500, body={"error": "boom"})
 

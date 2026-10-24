@@ -4,7 +4,9 @@ The gateway is faked at its HTTP client (``FakeGateway``), so the real admin
 transport, its error mapping and the MCP response adapter all run. A path the
 fake has no route for answers 404, as the gateway does when MCP is off and its
 ``/-/mcp/*`` routes are not registered. Django keeps only the org's own
-servers in every answer.
+servers in every answer, and attributes nothing from a status that is not
+org-scoped (``test_mcp_org_scope_guard``), so the cases that check attribution
+by server id answer the status in the org-scoped v1 shape.
 """
 
 import json
@@ -253,7 +255,7 @@ class TestMCPAdminRole:
         assert fake_gateway.calls == []
 
     def test_member_reads_stay_open(self, org_a, workspace, fake_gateway):
-        fake_gateway.on("GET", "/-/mcp/status", body=STATUS_BODY)
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         fake_gateway.on("GET", "/-/mcp/tools", body=TOOLS_LIST)
         # MCP is on, so every /-/mcp/* route answers (a 404 means MCP is off).
         fake_gateway.on("GET", "/-/mcp/resources", body=[])
@@ -277,6 +279,7 @@ class TestMCPTestToolOrgScope:
     def test_admin_test_tool_rejects_other_org_server_with_same_body_as_unknown(
         self, auth_client, org_a, org_b, fake_gateway
     ):
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         fake_gateway.on("GET", "/-/mcp/tools", body=TOOLS_LIST)
         fake_gateway.on("POST", "/-/mcp/test", body={"is_error": False})
 
@@ -316,6 +319,7 @@ class TestMCPTestToolOrgScope:
     def test_test_tool_refused_when_gateway_tool_list_fails(
         self, auth_client, org_a, fake_gateway
     ):
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         fake_gateway.on("GET", "/-/mcp/tools", status=503, body={"error": "down"})
         fake_gateway.on("POST", "/-/mcp/test", body={"is_error": False})
 
@@ -330,12 +334,10 @@ class TestMCPTestToolOrgScope:
 @pytest.mark.integration
 @pytest.mark.api
 class TestMCPStatusTruth:
-    @pytest.mark.parametrize(
-        "body", [STATUS_BODY, V1_STATUS], ids=["server-list", "v1"]
-    )
     def test_status_uses_server_id_and_golden_shape(
-        self, auth_client, org_a, fake_gateway, body
+        self, auth_client, org_a, fake_gateway
     ):
+        body = V1_STATUS
         fake_gateway.on("GET", "/-/mcp/status", body=body)
 
         result = _status(auth_client)
@@ -402,11 +404,12 @@ class TestMCPStatusTruth:
         self, auth_client, user, fake_gateway
     ):
         seed_mcp(user.organization, [])
-        fake_gateway.on("GET", "/-/mcp/status", body=STATUS_BODY)
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
 
         result = _status(auth_client)
 
         assert result["enabled"] is False
+        assert "reason" not in result
         assert result["servers"] == []
         # One status call, so a deployment with MCP off says so to every org
         # (test_mcp_off_api); no list is read for an org with no server.
@@ -415,7 +418,7 @@ class TestMCPStatusTruth:
         ]
 
     def test_counts_are_org_scoped(self, auth_client, org_a, fake_gateway):
-        fake_gateway.on("GET", "/-/mcp/status", body=STATUS_BODY)
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         fake_gateway.on(
             "GET",
             "/-/mcp/resources",
@@ -436,11 +439,9 @@ class TestMCPStatusTruth:
 
         result = _status(auth_client)
 
-        assert result["tools"] == 3  # alpha's tool_count, not the gateway's 7
+        assert result["tools"] == 2  # alpha's tool_count, not the gateway's 11
         assert result["resources"] == 1
         assert result["prompts"] == 1
-        # A status without org_enabled has no per-org session count: 0.
-        assert result["sessions"] == 0
 
     def test_org_scoped_v1_status_reports_its_sessions(
         self, auth_client, org_a, fake_gateway
@@ -469,6 +470,7 @@ class TestMCPListsOrgScope:
     def test_resources_prompts_filtered_by_server_id(
         self, auth_client, org_a, fake_gateway
     ):
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         fake_gateway.on(
             "GET",
             "/-/mcp/resources",
@@ -507,6 +509,7 @@ class TestMCPListsOrgScope:
         ids=["server-list", "v1"],
     )
     def test_tools_filtered_by_server_id(self, auth_client, org_a, fake_gateway, body):
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         fake_gateway.on("GET", "/-/mcp/tools", body=body)
 
         tools = auth_client.get(f"{GATEWAY}/mcp-tools/").json()["result"]
@@ -525,6 +528,7 @@ class TestMCPListsOrgScope:
     def test_lists_error_when_gateway_unreachable(
         self, auth_client, org_a, fake_gateway, path, error
     ):
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         for route in ("/-/mcp/tools", "/-/mcp/resources", "/-/mcp/prompts"):
             fake_gateway.on("GET", route, error=error)
 
@@ -615,6 +619,7 @@ class TestMCPAdminGoldens:
     ):
         golden = _golden("mcp-admin-tools-v1")
         seed_mcp(user.organization, sorted({t["server_id"] for t in golden["tools"]}))
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         fake_gateway.on("GET", "/-/mcp/tools", body=golden)
 
         tools = auth_client.get(f"{GATEWAY}/mcp-tools/").json()["result"]

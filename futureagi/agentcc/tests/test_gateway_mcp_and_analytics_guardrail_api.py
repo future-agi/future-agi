@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from agentcc.models.org_config import AgentccOrgConfig
-from agentcc.tests.test_mcp_admin_api import faked_gateway
+from agentcc.tests.test_mcp_admin_api import V1_STATUS, faked_gateway
 
 
 @pytest.fixture
@@ -58,6 +58,7 @@ class TestGatewayMCPStatus:
             "/-/mcp/status",
             body={
                 "enabled": True,
+                "org_enabled": True,
                 "sessions": 1,
                 "tools": 5,
                 "resources": 2,
@@ -92,6 +93,7 @@ class TestGatewayMCPTools:
         self, fake_gateway, auth_client, gateway_id, user
     ):
         _seed_mcp_config(user, servers={"server-a": {"url": "http://mcp"}})
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         fake_gateway.on(
             "GET",
             "/-/mcp/tools",
@@ -184,6 +186,7 @@ class TestGatewayMCPUpdates:
 class TestGatewayMCPTest:
     def test_test_mcp_tool_happy(self, fake_gateway, auth_client, gateway_id, user):
         _seed_mcp_config(user, servers={"server-a": {"url": "http://mcp"}})
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         fake_gateway.on(
             "GET",
             "/-/mcp/tools",
@@ -233,6 +236,7 @@ class TestGatewayMCPReadonly:
         self, fake_gateway, auth_client, gateway_id, user
     ):
         _seed_mcp_config(user, servers={"server-a": {"url": "http://mcp"}})
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         fake_gateway.on(
             "GET",
             "/-/mcp/resources",
@@ -250,6 +254,7 @@ class TestGatewayMCPReadonly:
         self, fake_gateway, auth_client, gateway_id, user
     ):
         _seed_mcp_config(user, servers={"server-a": {"url": "http://mcp"}})
+        fake_gateway.on("GET", "/-/mcp/status", body=V1_STATUS)
         fake_gateway.on(
             "GET",
             "/-/mcp/prompts",
