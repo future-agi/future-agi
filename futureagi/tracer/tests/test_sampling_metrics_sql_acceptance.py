@@ -72,6 +72,13 @@ def _reset_clients():
 
 
 @pytest.fixture
+def project(observe_project):
+    # SQL workbench deliberately excludes experiment projects. Keep every leg,
+    # including the evaluator fixture, on the same authorized Observe project.
+    return observe_project
+
+
+@pytest.fixture
 def acceptance_ch(settings, monkeypatch):
     """A unique guarded database and host-restricted, locked SQL service login."""
     # The SQL service provisioner limits identifiers to 48 characters, including
