@@ -62,7 +62,7 @@ type GuardrailConfig struct {
 // GuardrailCheck configures a single guardrail check for an org.
 type GuardrailCheck struct {
 	Enabled             bool                   `json:"enabled"`
-	Action              string                 `json:"action,omitempty"` // "block", "warn", "mask", "log"
+	Action              string                 `json:"action,omitempty"` // "block", "warn", "log"; any other value runs as "log"
 	ConfidenceThreshold float64                `json:"confidence_threshold,omitempty"`
 	Config              map[string]interface{} `json:"config,omitempty"` // check-specific settings
 }

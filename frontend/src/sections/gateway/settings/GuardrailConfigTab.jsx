@@ -15,10 +15,32 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import InheritedBadge from "../components/InheritedBadge";
+import { GUARDRAIL_CHECK_ACTIONS } from "../constants/guardrailActions";
 import GuardrailCheckDialog from "./GuardrailCheckDialog";
 
 const GUARDRAIL_CHECKS = [
-  { name: "pii-detection", label: "PII Detection", icon: "mdi:shield-account" },
+  {
+    name: "pii-detection",
+    label: "PII Detection",
+    icon: "mdi:shield-account",
+    fields: [
+      {
+        key: "remediation",
+        label: "Remediation",
+        type: "select",
+        // The gateway calls detect-only "block"
+        options: [
+          { value: "block", label: "None (detect only)" },
+          { value: "mask", label: "Mask" },
+          { value: "redact", label: "Redact" },
+          { value: "hash", label: "Hash" },
+        ],
+        defaultValue: "block",
+        helperText:
+          "Mask, Redact and Hash replace each match with ***, [REDACTED:type] or a short hash before the request reaches the provider. Use them with the Warn or Log action, since Block rejects the request. The hash is unkeyed and short, so short values such as SSNs can be recovered from it.",
+      },
+    ],
+  },
   {
     name: "content-moderation",
     label: "Content Moderation",
@@ -976,6 +998,7 @@ const GuardrailConfigTab = ({ guardrails, onChange }) => {
             >
               <Typography variant="caption" color="text.secondary">
                 Action: {action}
+                {!GUARDRAIL_CHECK_ACTIONS.includes(action) && " (runs as log)"}
               </Typography>
               <Typography variant="caption" color="text.secondary">
                 Threshold: {Number(threshold).toFixed(2)}

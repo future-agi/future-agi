@@ -88,7 +88,7 @@ func New(cfg map[string]interface{}) *PIIGuardrail {
 	return g
 }
 
-func (g *PIIGuardrail) Name() string           { return "pii-detection" }
+func (g *PIIGuardrail) Name() string            { return "pii-detection" }
 func (g *PIIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check scans messages for PII and returns a result.
@@ -140,8 +140,7 @@ func (g *PIIGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) 
 
 		// Apply remediation (mutate message content in-place).
 		if g.remediation != RemediationBlock {
-			remediated := applyRemediation(text, detections, g.remediation)
-			msg.Content = marshalContentString(remediated)
+			msg.Content = g.remediateContent(msg.Content, text, detections)
 		}
 	}
 
@@ -238,17 +237,100 @@ func marshalContentString(s string) json.RawMessage {
 	return b
 }
 
+// remediateContent returns raw with its PII replaced. text and detections come
+// from extractContentText. For an array of content parts only the text of each
+// text part is rewritten, so images and other parts still reach the provider.
+// The whole content is replaced as plain text instead when a part spells
+// "type" or "text" in another case, or when PII is still found afterwards
+// (such as a match that spans two parts).
+func (g *PIIGuardrail) remediateContent(raw json.RawMessage, text string, detections []Detection) json.RawMessage {
+	var parts []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return marshalContentString(applyRemediation(text, detections, g.remediation))
+	}
+
+	changed := false
+	for _, part := range parts {
+		// Detection reads these keys in any case and keeps the last one, so
+		// such a part can hide detected PII from this loop and the re-check.
+		if hasCaseVariantKey(part, "type", "text") {
+			return marshalContentString(applyRemediation(text, detections, g.remediation))
+		}
+		var partType, partText string
+		if json.Unmarshal(part["type"], &partType) != nil || partType != "text" {
+			continue
+		}
+		if json.Unmarshal(part["text"], &partText) != nil {
+			continue
+		}
+		// detections are offsets into the joined text, so match each part again.
+		if found := g.detect(partText); len(found) > 0 {
+			part["text"] = marshalContentString(applyRemediation(partText, found, g.remediation))
+			changed = true
+		}
+	}
+	out := raw
+	if changed {
+		if b, err := json.Marshal(parts); err == nil {
+			out = b
+		}
+	}
+	// Detected PII must never reach the provider, even at the cost of the
+	// non-text parts.
+	if rest, ok := extractContentText(out); ok && len(g.detect(rest)) > 0 {
+		return marshalContentString(applyRemediation(text, detections, g.remediation))
+	}
+	return out
+}
+
+// hasCaseVariantKey reports whether part has a key that equals one of names
+// only when case is ignored, such as "Text" for "text".
+func hasCaseVariantKey(part map[string]json.RawMessage, names ...string) bool {
+	for key := range part {
+		for _, name := range names {
+			if key != name && strings.EqualFold(key, name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // applyRemediation replaces all detections in text with remediated values.
-// Processes matches in reverse order to preserve positions.
+// Overlapping detections, such as an email inside URL credentials or a phone
+// number inside a card number, are replaced as one span.
 func applyRemediation(text string, detections []Detection, rem Remediation) string {
-	// Sort by start position descending so replacements don't shift offsets.
 	sorted := make([]Detection, len(detections))
 	copy(sorted, detections)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Start > sorted[j].Start
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].Start != sorted[j].Start {
+			return sorted[i].Start < sorted[j].Start
+		}
+		return sorted[i].End > sorted[j].End
 	})
 
+	// A merged span keeps the type of its longest detection, e.g.
+	// url_credentials rather than the email inside it.
+	var spans []Detection
+	longest := 0
 	for _, d := range sorted {
+		n := len(spans)
+		if n == 0 || d.Start >= spans[n-1].End {
+			spans = append(spans, d)
+			longest = d.End - d.Start
+			continue
+		}
+		last := &spans[n-1]
+		if d.End-d.Start > longest {
+			last.EntityType, longest = d.EntityType, d.End-d.Start
+		}
+		last.End = max(last.End, d.End)
+		last.Value = text[last.Start:last.End]
+	}
+
+	// Replace right to left so the offsets still to come stay valid.
+	for i := len(spans) - 1; i >= 0; i-- {
+		d := spans[i]
 		replacement := remediate(d.Value, d.EntityType, rem)
 		text = text[:d.Start] + replacement + text[d.End:]
 	}

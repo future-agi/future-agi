@@ -1,6 +1,12 @@
 import React from "react";
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, within } from "src/utils/test-utils";
+import {
+  render,
+  screen,
+  fireEvent,
+  within,
+  userEvent,
+} from "src/utils/test-utils";
 
 import GuardrailCheckDialog from "./GuardrailCheckDialog";
 import GuardrailConfigTab from "./GuardrailConfigTab";
@@ -57,6 +63,110 @@ describe("GuardrailCheckDialog title", () => {
     expect(
       screen.getByText("Configure: Keyword Blocklist"),
     ).toBeInTheDocument();
+  });
+});
+
+describe("GuardrailCheckDialog action", () => {
+  // The gateway only knows block, warn and log; it ran the "mask" this
+  // dialog used to offer as log, so nothing was ever masked.
+  it("offers block, warn and log, and no mask", async () => {
+    renderDialog();
+
+    await userEvent.click(screen.getByRole("combobox", { name: /^Action/ }));
+
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual(["Block", "Warn", "Log"]);
+  });
+
+  it("shows a stored mask action as Log, explains it, and saves log", () => {
+    const onSave = vi.fn();
+    renderDialog({
+      checkName: "content-moderation",
+      initialData: { enabled: true, action: "mask", confidence_threshold: 0.8 },
+      onSave,
+    });
+
+    expect(screen.getByRole("combobox", { name: /^Action/ })).toHaveTextContent(
+      "Log",
+    );
+    const note = screen.getByRole("alert");
+    expect(note).toHaveTextContent('saved with action "mask"');
+    expect(note).toHaveTextContent("so it runs as Log");
+    expect(note).toHaveTextContent("Saving stores Log");
+    // Only checks with a Remediation field get pointed at it.
+    expect(note).not.toHaveTextContent("Remediation");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSave).toHaveBeenCalledWith(
+      "content-moderation",
+      expect.objectContaining({ action: "log" }),
+    );
+  });
+
+  it("keeps a supported stored action and shows no note", () => {
+    const onSave = vi.fn();
+    renderDialog({ initialData: { enabled: true, action: "warn" }, onSave });
+
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSave).toHaveBeenCalledWith(
+      "presidio-pii",
+      expect.objectContaining({ action: "warn" }),
+    );
+  });
+
+  // The Rules tab reuses one dialog for every check.
+  it.each([
+    ["a check with a supported action", { enabled: true, action: "warn" }],
+    ["an unconfigured check", null],
+  ])("drops the note when reopened for %s", (_, initialData) => {
+    const { rerender } = renderDialog({
+      initialData: { enabled: true, action: "mask" },
+    });
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+
+    rerender(
+      <GuardrailCheckDialog
+        open
+        onClose={noop}
+        onSave={noop}
+        checkName="content-moderation"
+        initialData={initialData}
+        providerMeta={null}
+      />,
+    );
+
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("GuardrailCheckDialog config", () => {
+  it("keeps stored keys without a field and drops a cleared field", () => {
+    const onSave = vi.fn();
+    renderDialog({
+      checkName: "hiddenlayer-guard",
+      providerMeta: {
+        label: "HiddenLayer",
+        fields: [{ key: "model_id", label: "Model ID", type: "text" }],
+      },
+      initialData: {
+        enabled: true,
+        action: "block",
+        config: { model_id: "m-1", scan_mode: "strict" },
+      },
+      onSave,
+    });
+
+    fireEvent.change(screen.getByLabelText("Model ID"), {
+      target: { value: "" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSave.mock.calls[0][1].config).toEqual({ scan_mode: "strict" });
   });
 });
 
