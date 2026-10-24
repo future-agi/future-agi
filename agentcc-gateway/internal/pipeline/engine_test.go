@@ -311,6 +311,7 @@ func TestRunPostPluginsSkipOnCacheHitTimings(t *testing.T) {
 		Timings:   map[string]time.Duration{},
 		Errors:    []error{},
 	}
+	rc.Flags.CacheHit = true
 	rc.Flags.ShortCircuited = true
 
 	engine.RunPostPlugins(context.Background(), rc)
@@ -328,3 +329,38 @@ func TestRunPostPluginsSkipOnCacheHitTimings(t *testing.T) {
 type skipOnCacheHitPostPlugin struct{ readOnlyPostPlugin }
 
 func (skipOnCacheHitPostPlugin) ShouldSkipOnCacheHit() bool { return true }
+
+// The cache plugin answers from three layers and marks each one the same way.
+// Every one of them is a hit with no provider call behind it, so a plugin that
+// opts out of cache hits (cost, credits) must be skipped for all three.
+func TestRunPostPluginsSkipsEveryCacheHitKind(t *testing.T) {
+	for _, tc := range []struct {
+		status   string
+		cacheHit bool
+		wantRun  bool
+	}{
+		{"hit_exact", true, false},
+		{"hit_semantic", true, false},
+		{"hit_conditional", true, false},
+		{"miss", false, true},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			engine := NewEngine(skipOnCacheHitPostPlugin{readOnlyPostPlugin{name: "billing"}})
+			rc := &models.RequestContext{
+				RequestID: "req",
+				StartTime: time.Now(),
+				Metadata:  map[string]string{"cache_status": tc.status},
+				Timings:   map[string]time.Duration{},
+				Errors:    []error{},
+			}
+			rc.Flags.CacheHit = tc.cacheHit
+			rc.Flags.ShortCircuited = tc.cacheHit
+
+			engine.RunPostPlugins(context.Background(), rc)
+
+			if _, ran := rc.Timings["post_billing"]; ran != tc.wantRun {
+				t.Errorf("cache_status=%s: plugin ran=%v, want %v", tc.status, ran, tc.wantRun)
+			}
+		})
+	}
+}
