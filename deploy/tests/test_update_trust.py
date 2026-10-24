@@ -3771,5 +3771,157 @@ class TrustRound7PublicKeyFileTests(TrustTestCase):
         self.assertEqual((fetched.directory / "trusted-key.pub").read_bytes(), b"k" * MAX_DOWNLOAD_BYTES)
 
 
+class ConditionalTransportTests(TrustTestCase):
+    def test_https_endpoint_normalization_and_rejections(self):
+        self.assertEqual(trust.https_url("https://EXAMPLE.test:443"), "https://example.test/")
+        self.assertEqual(trust.https_url("https://[::1]:8443/x"), "https://[::1]:8443/x")
+        self.assertEqual(trust.https_url("https://host/x?a=1"), "https://host/x?a=1")
+        for value in (None, "https://", "https://u:p@host/x", "http://host/x", "https://host:0/x",
+                      "https://host:wrong/x", "https://host/#fragment", "https://host/\r\nSECRET", "https://host/ x",
+                      "https://host/" + "x" * 8192, "https://host\\\\evil/x", "https://[broken/x", "https://host/é"):
+            with self.subTest(value=str(value)[:80]):
+                with self.assertRaisesRegex(ManifestError, "^unsafe HTTPS endpoint$"):
+                    trust.https_url(value)
+
+    def test_conditional_transport_reads_bounded_body_and_metadata(self):
+        url = "https://example.test/manifest.json"
+        response = FakeResponse(b"payload", url)
+        response.status = 200
+        response.headers = {"ETag": '"etag"', "Last-Modified": "yesterday", "Content-Length": "7", "Link": "link"}
+        opener = mock.Mock()
+        opener.open.return_value = response
+        with mock.patch.object(trust, "build_opener", return_value=opener):
+            result = trust.http_get(url, {"If-None-Match": '"old"'}, timeout=90)
+        self.assertEqual(result, trust.HttpResponse(200, b"payload", '"etag"', "yesterday", url, link="link"))
+        request = opener.open.call_args[0][0]
+        self.assertEqual(request.get_header("If-none-match"), '"old"')
+        self.assertEqual(opener.open.call_args[1]["timeout"], 30)
+        self.assertEqual(response.reads, [MAX_DOWNLOAD_BYTES + 1])
+        self.assertTrue(response.closed)
+
+    def test_truncated_and_oversized_transport_body_are_rejected(self):
+        url = "https://example.test/manifest.json"
+        for length in ("8", "-1", "not-an-integer"):
+            response = FakeResponse(b"payload", url)
+            response.headers = {"Content-Length": length}
+            with mock.patch.object(trust, "build_opener") as builder:
+                builder.return_value.open.return_value = response
+                with self.assertRaisesRegex(ManifestError, "incomplete HTTP body"):
+                    trust.http_get(url, {})
+            self.assertTrue(response.closed)
+        for body, error in ((b"x" * (MAX_DOWNLOAD_BYTES + 1), None),
+                            (b"", http.client.IncompleteRead(b"partial", 123))):
+            with mock.patch.object(trust, "build_opener") as builder:
+                builder.return_value.open.return_value = FakeResponse(body, url, error)
+                with self.assertRaises(ManifestError):
+                    trust.http_get(url, {})
+
+    def test_http_error_metadata_is_bounded_and_body_closed_not_read(self):
+        url = "https://example.test/manifest.json"
+        for status in (304, 403, 404, 410, 429, 500):
+            headers = Message()
+            headers["ETag"] = '"a"'
+            headers["Retry-After"] = "120"
+            body = mock.Mock()
+            error = HTTPError(url, status, "UNTRUSTED", headers, body)
+            with mock.patch.object(trust, "build_opener") as builder:
+                builder.return_value.open.side_effect = error
+                result = trust.http_get(url, {})
+            self.assertEqual(result.status, status)
+            self.assertEqual(result.etag, '"a"')
+            self.assertEqual(result.retry_after, "120")
+            self.assertEqual(result.body, b"")
+            body.read.assert_not_called()
+            body.close.assert_called()
+
+    def test_redirects_validate_before_network_and_never_drain_body(self):
+        from urllib.request import Request
+        handler = trust._HTTPSRedirect(time.monotonic() + 30)
+        handler.parent = mock.Mock()
+        request = Request("https://example.test/manifest", headers={"Authorization": "secret", "Cookie": "secret",
+                          "If-None-Match": '"a"', "If-Modified-Since": "yesterday"})
+        for target in ("http://evil.test/m", "https://u:secret@evil.test/m", "file:///secret"):
+            fp = mock.Mock()
+            with self.assertRaises(ManifestError):
+                handler.http_error_302(request, fp, 302, "redirect", {"location": target})
+            fp.close.assert_called_once()
+            fp.read.assert_not_called()
+        handler.parent.open.assert_not_called()
+        fp = mock.Mock()
+        handler.http_error_302(request, fp, 302, "redirect", {"location": "https://cdn.test/asset?sig=x"})
+        redirected = handler.parent.open.call_args[0][0]
+        self.assertEqual(redirected.full_url, "https://cdn.test/asset?sig=x")
+        for name in ("Authorization", "Cookie", "If-none-match", "If-modified-since"):
+            self.assertIsNone(redirected.get_header(name))
+        fp.read.assert_not_called()
+        self.assertGreater(handler.parent.open.call_args[1]["timeout"], 0)
+        handler.http_error_307(request, mock.Mock(), 307, "redirect", {"location": "/same-host"})
+        redirected = handler.parent.open.call_args[0][0]
+        self.assertEqual(redirected.get_header("Authorization"), "secret")
+        self.assertEqual(redirected.get_header("If-none-match"), '"a"')
+
+    def test_redirect_loops_and_deadline_are_bounded(self):
+        from urllib.request import Request
+        request = Request("https://example.test/m")
+        handler = trust._HTTPSRedirect(time.monotonic() + 30)
+        handler.parent = mock.Mock()
+        for _ in range(5):
+            handler.http_error_302(request, mock.Mock(), 302, "redirect", {"location": "/other"})
+        with self.assertRaises(ManifestError):
+            handler.http_error_302(request, mock.Mock(), 302, "redirect", {"location": "/other"})
+        self.assertEqual(handler.parent.open.call_count, 5)
+        handler = trust._HTTPSRedirect(time.monotonic() - 1)
+        with self.assertRaises(ManifestError):
+            handler.http_error_302(request, mock.Mock(), 302, "redirect", {"location": "/other"})
+        handler = trust._HTTPSRedirect(time.monotonic() + 30)
+        with self.assertRaises(ManifestError):
+            handler.http_error_302(request, mock.Mock(), 302, "redirect", {})
+
+    def test_injected_download_preserves_legacy_pair_fallback(self):
+        source = "https://example.test/m.json"
+        calls = []
+
+        def download(url, **kwargs):
+            calls.append(url)
+            return encode(make_manifest()) if url == source else BUNDLE_BYTES
+
+        fetched = fetch_manifest(source, self.workdir(), cwd=self.caller, download=download)
+        self.assertEqual(fetched.data, make_manifest())
+        self.assertEqual(fetched.bundle_path.read_bytes(), BUNDLE_BYTES)
+        self.assertEqual(calls, [source, "https://example.test/" + BUNDLE_ASSET])
+        self.assertEqual(self.web.calls if hasattr(self.web, "calls") else self.web.requests, [])
+
+    def test_host_only_and_budget_do_not_change_manual_defaults(self):
+        verifier = self.verifier(which=self.docker_only())
+        verifier.host_only = True
+        verification = verifier.verify(self.local_fetch())
+        self.assertFalse(verification.verified)
+        self.assertEqual(verification.error, "host_verifier_required")
+        self.assertEqual(self.runner.calls, [])
+        verifier.deadline = time.monotonic() - 1
+        with self.assertRaisesRegex(VerificationError, "discovery_incomplete"):
+            verifier.timeout(30)
+
+    def test_anchor_fingerprint_covers_content_mode_and_claims(self):
+        verifier = self.verifier()
+        baseline = verifier.trust_fingerprint()
+        for name, value in (("FUTURE_AGI_UPDATE_TRUSTED_IDENTITY", "https://other.test/{version}"),
+                            ("FUTURE_AGI_UPDATE_TRUSTED_ISSUER", "https://other.test"),
+                            ("FUTURE_AGI_UPDATE_COSIGN_OFFLINE", "true")):
+            verifier.settings = raw_settings(**{name: value})
+            self.assertNotEqual(baseline, verifier.trust_fingerprint())
+        key = self.tmp / "key.pub"
+        key.write_bytes(b"key-one")
+        verifier.settings = raw_settings(FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY=str(key))
+        old = verifier.trust_fingerprint()
+        key.write_bytes(b"key-two")
+        self.assertNotEqual(old, verifier.trust_fingerprint())
+        same = self.tmp / "same.pub"
+        same.write_bytes(b"key-two")
+        current = verifier.trust_fingerprint()
+        verifier.settings = raw_settings(FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY=str(same))
+        self.assertEqual(current, verifier.trust_fingerprint())
+
+
 if __name__ == "__main__":
     unittest.main()

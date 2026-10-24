@@ -20,13 +20,14 @@ import re
 import shutil
 import stat
 import subprocess
+import time
 from dataclasses import dataclass, field
 from http.client import HTTPException
 from pathlib import Path
 from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 try:
     import pwd
@@ -367,19 +368,107 @@ class Verification:
                 "issuer": self.issuer, "tool": self.tool, "error": self.error}
 
 
-def _download(url: str, timeout: float = 30.0, *, accept: str = "application/json") -> bytes:
+@dataclass(frozen=True, repr=False)
+class HttpResponse:
+    """Untrusted transport bytes and validators; never a public status object."""
+
+    status: int
+    body: bytes = b""
+    etag: Optional[str] = None
+    last_modified: Optional[str] = None
+    final_url: str = ""
+    retry_after: Optional[str] = None
+    link: Optional[str] = None
+
+
+def https_url(url: str) -> str:
+    """Normalize an HTTPS endpoint without accepting credentials or control bytes."""
+    try:
+        if (not isinstance(url, str) or not url.startswith("https://") or len(url) > 8192
+                or any(ord(c) <= 32 or ord(c) >= 127 for c in url) or "\\" in url):
+            raise ValueError()
+        parsed = urlsplit(url)
+        if (not parsed.hostname or parsed.username is not None or parsed.password is not None
+                or parsed.fragment or parsed.port == 0):
+            raise ValueError()
+        host = parsed.hostname.lower()
+        if ":" in host:
+            host = f"[{host}]"
+        authority = host + (f":{parsed.port}" if parsed.port not in (None, 443) else "")
+        return f"https://{authority}{parsed.path or '/'}" + (f"?{parsed.query}" if parsed.query else "")
+    except ValueError:
+        raise ManifestError("unsafe HTTPS endpoint") from None
+
+
+class _HTTPSRedirect(HTTPRedirectHandler):
+    def __init__(self, deadline: float):
+        self.deadline = deadline
+        self.redirects = 0
+
+    def http_error_302(self, req, fp, code, msg, headers):
+        # urllib's default handler drains redirect bodies without a size cap.
+        # Close instead; every hop shares the original request's time budget.
+        fp.close()
+        target = urljoin(req.full_url, headers.get("location") or headers.get("uri") or "")
+        https_url(target)
+        self.redirects += 1
+        remaining = self.deadline - time.monotonic()
+        if self.redirects > 5 or remaining <= 0 or target == req.full_url:
+            raise ManifestError("unsafe HTTPS redirect")
+        redirected = self.redirect_request(req, fp, code, msg, headers, target)
+        return self.parent.open(redirected, timeout=remaining)
+
+    http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        https_url(newurl)  # Reject a downgrade BEFORE urllib sends the redirected request.
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None and urlsplit(req.full_url).netloc != urlsplit(newurl).netloc:
+            # Neither source credentials nor endpoint validators belong to a CDN.
+            for name in ("Authorization", "Cookie", "If-none-match", "If-modified-since"):
+                redirected.remove_header(name)
+        return redirected
+
+
+def http_get(url: str, headers: Mapping[str, str], timeout: float = 30.0) -> HttpResponse:
+    """Conditional transport; uses the same bounded downloader as explicit checks."""
+    https_url(url)
+    timeout = min(timeout, 30.0)
+    return _download(url, timeout, headers=headers, response_metadata=True,
+                     opener=build_opener(_HTTPSRedirect(time.monotonic() + timeout)).open)
+
+
+def _download(url: str, timeout: float = 30.0, *, accept: str = "application/json",
+              headers: Optional[Mapping[str, str]] = None, response_metadata: bool = False,
+              opener=None):
     if not url.startswith("https://"):
         raise ManifestError(f"refusing to download over a non-https URL: {url}")
     try:
-        request = Request(url, headers={"Accept": accept, "User-Agent": "future-agi-bin-update"})
-        with urlopen(request, timeout=timeout) as response:
+        request = Request(url, headers={"Accept": accept, "User-Agent": "future-agi-bin-update", **(headers or {})})
+        with (opener or urlopen)(request, timeout=timeout) as response:
             final = response.geturl()
             if not final.startswith("https://"):
                 raise ManifestError(f"{url} redirected to a non-https URL")
+            if response_metadata:
+                https_url(final)
             payload = response.read(MAX_DOWNLOAD_BYTES + 1)
+            metadata = getattr(response, "headers", {})
+            length = metadata.get("Content-Length")
+            if length is not None and (not length.isdigit() or int(length) != len(payload)):
+                raise ManifestError("incomplete HTTP body")
+            result = HttpResponse(getattr(response, "status", 200), payload, metadata.get("ETag"),
+                                  metadata.get("Last-Modified"), final, metadata.get("Retry-After"), metadata.get("Link"))
     except ManifestError:
         raise
     except HTTPError as exc:
+        if response_metadata:
+            try:
+                return HttpResponse(exc.code, etag=exc.headers.get("ETag"),
+                                    last_modified=exc.headers.get("Last-Modified"), final_url=exc.geturl(),
+                                    retry_after=exc.headers.get("Retry-After"), link=exc.headers.get("Link"))
+            finally:
+                if exc.fp is not None:
+                    exc.close()
         error = NotFound if exc.code == 404 else ManifestError
         raise error(f"could not download {url}: HTTP {exc.code}") from exc
     except (URLError, TimeoutError, OSError, HTTPException, ValueError) as exc:
@@ -388,7 +477,7 @@ def _download(url: str, timeout: float = 30.0, *, accept: str = "application/jso
         raise ManifestError(f"could not download {url}: {getattr(exc, 'reason', exc)}") from exc
     if len(payload) > MAX_DOWNLOAD_BYTES:
         raise ManifestError(f"{url} is larger than {MAX_DOWNLOAD_BYTES} bytes")
-    return payload
+    return result if response_metadata else payload
 
 
 def _special_kind(mode: int) -> Optional[str]:
@@ -457,8 +546,31 @@ def _is_url(source: str) -> bool:
     return "://" in source
 
 
+def release_records(releases: Any, channel: str = "stable") -> List[Dict[str, Any]]:
+    """Shared legacy/scheduled channel filter. The API's order is not semver order."""
+    result = []
+    for release in releases if isinstance(releases, list) else []:
+        if not isinstance(release, dict) or release.get("draft"):
+            continue
+        tag = release.get("tag_name")
+        if not is_version(tag):
+            continue
+        pre = is_prerelease(tag)
+        if pre != (channel == "beta") or bool(release.get("prerelease")) != pre:
+            continue
+        result.append(release)
+    return sorted(result, key=lambda record: parse_version(record["tag_name"]), reverse=True)
+
+
+def has_release_assets(release: Mapping[str, Any], *required: str) -> bool:
+    assets = release.get("assets")
+    names = {a.get("name") for a in assets if isinstance(a, dict) and isinstance(a.get("name"), str)} \
+        if isinstance(assets, list) else set()
+    return all(name in names for name in required)
+
+
 def _newest_release_with_manifest(latest_url: str, owner: str, repo: str,
-                                  asset: str, *, required_bundle: Optional[str] = None
+                                  asset: str, *, required_bundle: Optional[str] = None, download=None
                                   ) -> Tuple[str, str, Optional[str]]:
     """The URL of `asset` in the newest stable release that has it and (when required) its signature bundle.
 
@@ -486,9 +598,10 @@ def _newest_release_with_manifest(latest_url: str, owner: str, repo: str,
     else:
         missing = (f"No stable release of {owner}/{repo} has both {asset} and its signature bundle "
                    f"{required_bundle}. Retry later, or pass --manifest and --bundle for a specific release")
+    download = download or _download
     api = f"{_GITHUB_API}/repos/{owner}/{repo}/releases?per_page=30"
     try:
-        releases = _parse_json(_download(api, accept="application/vnd.github+json"), f"the release list {api}")
+        releases = _parse_json(download(api, accept="application/vnd.github+json"), f"the release list {api}")
     except ManifestError as exc:  # the download failed, or the body is not JSON
         if required_bundle is not None:
             raise  # the caller says what it was looking for
@@ -496,18 +609,12 @@ def _newest_release_with_manifest(latest_url: str, owner: str, repo: str,
 
     newest: Optional[str] = None  # the newest stable release, with or without the manifest
     chosen: Optional[str] = None
-    for release in releases if isinstance(releases, list) else []:
-        if not isinstance(release, dict) or release.get("draft") or release.get("prerelease"):
-            continue
-        tag = release.get("tag_name")
-        if not is_version(tag) or is_prerelease(tag):
-            continue  # an ad-hoc release such as a demo build, or a beta
-        if newest is None or parse_version(tag) > parse_version(newest):
+    for release in release_records(releases):
+        tag = release["tag_name"]
+        if newest is None:
             newest = tag
-        assets = release.get("assets")
-        names = [a.get("name") for a in assets if isinstance(a, dict)] if isinstance(assets, list) else []
-        if (asset in names and (required_bundle is None or required_bundle in names)
-                and (chosen is None or parse_version(tag) > parse_version(chosen))):
+        required = (asset, required_bundle) if required_bundle else (asset,)
+        if chosen is None and has_release_assets(release, *required):
             chosen = tag
     if chosen is None:
         raise ManifestError(missing) if required_bundle is None else NoCompleteRelease(missing)
@@ -522,13 +629,15 @@ def _newest_release_with_manifest(latest_url: str, owner: str, repo: str,
     return f"https://github.com/{owner}/{repo}/releases/download/{chosen}/{asset}", note, newer
 
 
-def fetch_manifest(source: str, workdir: Path, *, cwd: Path, bundle: Optional[str] = None) -> FetchedManifest:
+def fetch_manifest(source: str, workdir: Path, *, cwd: Path, bundle: Optional[str] = None,
+                   download=None) -> FetchedManifest:
     """Copy the manifest (and its bundle, when found) into `workdir`.
 
     `workdir` is 0755 (see _write_private): the cosign container reads it
     through a read-only bind mount, as a uid that need not own it.
     """
 
+    download = download or _download
     workdir.mkdir(mode=0o755, parents=True, exist_ok=True)
     os.chmod(str(workdir), 0o755)  # the mode given to mkdir is cut by the umask
     note = newer = None
@@ -541,14 +650,15 @@ def fetch_manifest(source: str, workdir: Path, *, cwd: Path, bundle: Optional[st
         if parsed.scheme != "https":
             raise ManifestError(f"manifest URL must use https, not {parsed.scheme}://")
         try:
-            raw = _download(source)
+            raw = download(source)
         except NotFound:
             latest = _GITHUB_LATEST_RE.fullmatch(source)
             if not latest:
                 raise
             owner, repo = latest.groups()
-            source, note, newer = _newest_release_with_manifest(source, owner, repo, source.rsplit("/", 1)[1])
-            raw = _download(source)
+            source, note, newer = _newest_release_with_manifest(source, owner, repo, source.rsplit("/", 1)[1],
+                                                               download=download)
+            raw = download(source)
     else:
         path = Path(source)
         if not path.is_absolute():
@@ -581,7 +691,7 @@ def fetch_manifest(source: str, workdir: Path, *, cwd: Path, bundle: Optional[st
     fetched.bundle_source = bundle_source
     try:
         if _is_url(bundle_source):
-            bundle_bytes = _download(bundle_source)
+            bundle_bytes = download(bundle_source)
         else:
             bundle_path = Path(bundle_source)
             if not bundle_path.is_absolute():
@@ -599,7 +709,7 @@ def fetch_manifest(source: str, workdir: Path, *, cwd: Path, bundle: Optional[st
         # explicit bundle is the operator's choice and is never replaced.
         if latest and not bundle:
             try:
-                return _complete_pair(requested, *latest.groups(), fetched) or fetched
+                return _complete_pair(requested, *latest.groups(), fetched, download=download) or fetched
             except NoCompleteRelease as nothing:
                 fetched.bundle_error += f". {nothing}"
             except (ManifestError, OSError) as fallback_error:
@@ -610,24 +720,26 @@ def fetch_manifest(source: str, workdir: Path, *, cwd: Path, bundle: Optional[st
     return fetched
 
 
-def _complete_pair(latest_url: str, owner: str, repo: str, fetched: FetchedManifest) -> Optional[FetchedManifest]:
+def _complete_pair(latest_url: str, owner: str, repo: str, fetched: FetchedManifest, *,
+                   download=None) -> Optional[FetchedManifest]:
     """The manifest and bundle of the newest stable release that has both, in fetched's workdir (see fetch_manifest).
 
     None when that is the release `fetched` already holds (its bundle was
     attached between the two requests): nothing better is there to use.
     """
 
+    download = download or _download
     bundle_name = fetched.data["signature"]["bundle"]
     source, note, newer = _newest_release_with_manifest(latest_url, owner, repo, latest_url.rsplit("/", 1)[1],
-                                                        required_bundle=bundle_name)
+                                                        required_bundle=bundle_name, download=download)
     version = source.split("/releases/download/", 1)[1].split("/", 1)[0]
     if version == fetched.data["version"]:
         return None
-    raw = _download(source)
+    raw = download(source)
     data = validate_manifest(_parse_json(raw, "manifest"))
     bundle_source = (f"https://github.com/{owner}/{repo}/releases/download/{data['version']}/"
                      f"{data['signature']['bundle']}")
-    bundle_bytes = _download(bundle_source)
+    bundle_bytes = download(bundle_source)
     # The latest release's manifest copy is replaced: bin/update created it, and nothing has read it yet.
     fetched.manifest_path.unlink()
     _write_private(fetched.manifest_path, raw)
@@ -668,7 +780,8 @@ class Verifier:
 
     def __init__(self, settings: Settings, *, docker: Optional[List[str]] = None,
                  runner: Optional[Runner] = None, which: Callable[[str], Optional[str]] = shutil.which,
-                 probe: Optional[Runner] = None, environ: Optional[Mapping[str, str]] = None) -> None:
+                 probe: Optional[Runner] = None, environ: Optional[Mapping[str, str]] = None,
+                 host_only: bool = False, deadline: Optional[float] = None) -> None:
         self.settings = settings
         self.docker = docker or ["docker"]
         self.runner = runner or subprocess.run
@@ -676,6 +789,46 @@ class Verifier:
         self.probe = probe or subprocess.run
         self.environ = os.environ if environ is None else environ
         self._versions: Dict[str, Tuple[Optional[Tuple[int, int, int]], str]] = {}
+        self.host_only = host_only
+        self.deadline = deadline
+
+    def begin_discovery(self, deadline: float) -> None:
+        """A verifier instance belongs to one serialized host tick at a time."""
+        self.deadline = deadline
+        self._versions.clear()  # Re-probe the registered binary each tick.
+        self.require_host()
+
+    def timeout(self, maximum: float) -> float:
+        remaining = maximum if self.deadline is None else min(maximum, self.deadline - time.monotonic())
+        if remaining <= 0:
+            raise VerificationError("discovery_incomplete")
+        return remaining
+
+    def require_host(self) -> str:
+        """Never start a Docker helper for scheduled observation or verification."""
+        cosign = self.which("cosign")
+        if not self.host_only or not cosign:
+            raise VerificationError("host_verifier_required")
+        version, _ = self.cosign_version(cosign)
+        if version is None or version[0] < MIN_COSIGN_MAJOR:
+            raise VerificationError("host_verifier_required")
+        return cosign
+
+    def trust_fingerprint(self, fetched: Optional[FetchedManifest] = None) -> str:
+        """Pin content, mode and claim rules, not a public-key filename.
+
+        With fetched, fingerprint the exact key copy used by cosign as well as
+        the current claim policy, so a key swap during acquisition fails closed.
+        """
+        key = self.settings.get("FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY")
+        key_path = fetched.directory / "trusted-key.pub" if fetched is not None else Path(key)
+        fields = {name: self.settings.get(name) for name in (
+            "FUTURE_AGI_UPDATE_TRUSTED_IDENTITY", "FUTURE_AGI_UPDATE_TRUSTED_ISSUER",
+            "FUTURE_AGI_UPDATE_COSIGN_OFFLINE")}
+        fields.update(key_sha256=hashlib.sha256(_read_local(key_path)).hexdigest() if key else "",
+                      mode="public-key" if key else "keyless", claims="exact-github-repository-and-tag-v1",
+                      minimum_cosign_major=MIN_COSIGN_MAJOR, host_only=self.host_only)
+        return hashlib.sha256(json.dumps(fields, sort_keys=True).encode("utf-8")).hexdigest()
 
     def expected_signer(self, version: str) -> str:
         template = self.settings.get("FUTURE_AGI_UPDATE_TRUSTED_IDENTITY")
@@ -694,7 +847,7 @@ class Verifier:
             reported = ""
             for args in ([cosign, "version", "--json"], [cosign, "version"]):
                 try:
-                    result = self.probe(args, capture_output=True, text=True, check=False, timeout=60)
+                    result = self.probe(args, capture_output=True, text=True, check=False, timeout=self.timeout(60))
                 except (OSError, subprocess.TimeoutExpired):
                     break  # it does not run at all: the text form will not either
                 stdout = result.stdout if isinstance(result.stdout, str) else ""
@@ -718,6 +871,9 @@ class Verifier:
     def _command(self, fetched: FetchedManifest, args: List[str]) -> _CosignRun:
         """How cosign runs: a cosign v3+ on PATH, else the pinned image, and why that tool when notable."""
 
+        if self.host_only:
+            cosign = self.require_host()
+            return _CosignRun([cosign, *args], cosign)
         image = self.settings.get("FUTURE_AGI_UPDATE_COSIGN_IMAGE")
         cosign = self.which("cosign")
         note = host_cosign = ""
@@ -890,7 +1046,7 @@ class Verifier:
         # a `docker run` that failed (or could not start) ran no cosign at all.
         why = f" ({run.note})" if run.note else ""
         try:
-            result = self.runner(run.command, capture_output=True, text=True, check=False, timeout=300)
+            result = self.runner(run.command, capture_output=True, text=True, check=False, timeout=self.timeout(300))
         except (OSError, subprocess.TimeoutExpired) as exc:
             return Verification(False, method=method, signer=signer, issuer=issuer, tool=tool,
                                 error=f"could not run cosign: {exc}{'' if run.in_docker else why}")
