@@ -45,7 +45,61 @@ from deploy.update.manifest import (  # noqa: E402
     deployment_hashes, left_out_of_digests, read_deployment_file_list, read_upgrade_floor, validate_manifest,
 )
 
+from deploy.update.compatibility import (  # noqa: E402
+    MAX_PROOF_BYTES, PROOF_ASSET, decode_document, inputs_hash, validate_release_proof,
+)
+
 PROG = "generate_update_manifest"
+DEFAULT_POLICY = ROOT / "deploy" / "update" / "release-policy.json"
+
+
+def read_evidence(path: Path) -> bytes:
+    """Local release inputs only. Never download or execute a policy/proof."""
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_PROOF_BYTES + 1)
+    except OSError:
+        raise ManifestError("release policy/proof is unreadable") from None
+    if len(raw) > MAX_PROOF_BYTES:
+        raise ManifestError("release policy/proof exceeds size limit")
+    return raw
+
+
+def apply_release_policy(manifest: dict, args: argparse.Namespace) -> dict:
+    import hashlib
+
+    version = getattr(args, "schema_version", SCHEMA_VERSION)
+    policy_path = getattr(args, "release_policy", None)
+    proof_path = getattr(args, "compatibility_proof", None)
+    run_id = getattr(args, "proof_run_id", None)
+    manifest["schema_version"] = version
+    if version == 1:
+        if policy_path or proof_path or run_id is not None:
+            raise ManifestError("schema 1 cannot carry release certification")
+        return validate_manifest(manifest)
+    policy = decode_document(read_evidence(Path(policy_path) if policy_path else DEFAULT_POLICY))
+    if (set(policy) != {"schema_version", "migration", "compatibility"}
+            or type(policy["schema_version"]) is not int or policy["schema_version"] != 1):
+        raise ManifestError("unsupported release policy")
+    manifest["compatibility"] = policy["compatibility"]
+    manifest["migration"] = policy["migration"]
+    if not isinstance(policy["compatibility"], dict) or policy["compatibility"].get("validation") is not None:
+        raise ManifestError("release policy validation must be null; supply independently checked proof")
+    raw = None
+    if proof_path:
+        if type(run_id) is not int or not 1 <= run_id <= 9007199254740991:
+            raise ManifestError("compatibility proof requires canonical --proof-run-id")
+        raw = read_evidence(Path(proof_path))
+        manifest["compatibility"]["validation"] = {
+            "asset": PROOF_ASSET, "sha256": hashlib.sha256(raw).hexdigest(),
+            "inputs_hash": inputs_hash(manifest), "run_id": run_id,
+        }
+    elif run_id is not None:
+        raise ManifestError("--proof-run-id requires --compatibility-proof")
+    manifest = validate_manifest(manifest)
+    if raw is not None:
+        validate_release_proof(raw, manifest, repository=getattr(args, "proof_repository", "future-agi/future-agi"))
+    return manifest
 
 
 def tracked_files(repo: Path, directories: Sequence[str]) -> Optional[List[str]]:
@@ -126,7 +180,7 @@ def build(args: argparse.Namespace) -> dict:
     if args.signature_identity:
         manifest["signature"]["identity"] = args.signature_identity
         manifest["signature"]["issuer"] = args.signature_issuer
-    return validate_manifest(manifest)
+    return apply_release_policy(manifest, args)
 
 
 def main(argv=None) -> int:
@@ -143,6 +197,11 @@ def main(argv=None) -> int:
     parser.add_argument("--signature-identity", help="informational copy of the signing identity")
     parser.add_argument("--signature-issuer", default="https://token.actions.githubusercontent.com")
     parser.add_argument("--repo-root", default=str(ROOT), help="checkout of the release tag (deployment files)")
+    parser.add_argument("--schema-version", type=int, choices=(1, 2), default=SCHEMA_VERSION)
+    parser.add_argument("--release-policy", help="reviewed local policy; default is uncertified and requires initialization")
+    parser.add_argument("--compatibility-proof", help="local machine-produced proof, never inferred from semver")
+    parser.add_argument("--proof-run-id", type=int, help="expected same-repository Actions run ID")
+    parser.add_argument("--proof-repository", default="future-agi/future-agi", help="expected proof producer repository")
     parser.add_argument("--output", help="write here instead of stdout")
     args = parser.parse_args(argv)
     try:

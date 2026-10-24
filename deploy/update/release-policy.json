@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "migration": {
+    "requires_bootstrap": true,
+    "rollback": "manual"
+  },
+  "compatibility": {
+    "contract_version": 1,
+    "automatic_apply": false,
+    "requires_operator_initialization": true,
+    "required_env": [],
+    "state_domains": [],
+    "predecessors": [],
+    "automatic_rollback": {
+      "strategy": "never"
+    },
+    "validation": null
+  }
+}

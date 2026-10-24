@@ -17,9 +17,11 @@ against fake gh, cosign, docker and oras binaries (no network, no Docker).
 from __future__ import annotations
 
 import ast
+import copy
 import datetime
 import functools
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -29,6 +31,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 from unittest import mock
@@ -38,6 +41,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from deploy.update import trust  # noqa: E402
+from deploy.update.compatibility import (  # noqa: E402
+    CompatibilityError, evaluate_automatic_apply, validate_release_proof,
+)
+from deploy.update.contracts import ReasonCode  # noqa: E402
 from deploy.update.manifest import (  # noqa: E402
     BUNDLE_ASSET, CHANNELS, COMPONENT_REPOSITORIES, COMPONENT_TAG_SUFFIX, MANIFEST_ASSET, PRODUCT,
     SCHEMA_VERSION, ManifestError, component_tag, is_prerelease, is_version, parse_image_ref,
@@ -1288,6 +1295,31 @@ class GeneratedManifestTests(unittest.TestCase):
     def test_it_conforms_to_the_published_schema(self):
         self.assertEqual(schema_errors(self.manifest), [])
 
+    def test_workflow_generation_never_certifies_by_default(self):
+        self.assertEqual(self.manifest["schema_version"], 2)
+        self.assertEqual(self.manifest["compatibility"], uncertified_compatibility())
+        self.assertEqual(self.manifest["migration"], {"requires_bootstrap": True, "rollback": "manual"})
+        policy = json.loads((UPDATE_DIR / "release-policy.json").read_text(encoding="utf-8"))
+        self.assertEqual(policy, {"schema_version": 1, "compatibility": uncertified_compatibility(),
+                                  "migration": {"requires_bootstrap": True, "rollback": "manual"}})
+        # This executes the ordinary workflow invocation, not just an isolated
+        # policy fixture: publishing a release is not itself certification.
+
+    def test_explicit_legacy_generation_remains_valid_for_manual_use(self):
+        command = [sys.executable, str(GENERATOR), "--schema-version", "1", "--version", self.version,
+                   "--source-sha", self.head, "--published-at", self.manifest["published_at"],
+                   "--helm-chart", HELM_CHART, "--helm-digest", self.chart_digest]
+        for name, image in self.images.items():
+            command += ["--component", f"{name}={image}@{fake_digest(image)}"]
+        result = subprocess.run(command, cwd=str(ROOT), capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads(result.stdout)
+        self.assertEqual(manifest["schema_version"], 1)
+        self.assertNotIn("compatibility", manifest)
+        self.assertEqual(validate_manifest(manifest), manifest)
+        self.assertEqual(schema_errors(manifest), [])
+        self.assertEqual(manifest["migration"], {"requires_bootstrap": True, "rollback": "manual"})
+
     def test_version_channel_and_floor(self):
         self.assertEqual(self.manifest["version"], self.version)
         self.assertEqual(self.manifest["channel"], "stable")
@@ -1829,8 +1861,12 @@ def _is_type(value: Any, kind: str) -> bool:
         "array": isinstance(value, list),
         "string": isinstance(value, str),
         "boolean": isinstance(value, bool),
-        "integer": isinstance(value, int) and not isinstance(value, bool),
+        # JSON Schema treats integral JSON numbers as integers; the runtime
+        # manifest validator intentionally requires an actual JSON integer.
+        "integer": (isinstance(value, int) and not isinstance(value, bool))
+                   or (isinstance(value, float) and value.is_integer()),
         "number": isinstance(value, (int, float)) and not isinstance(value, bool),
+        "null": value is None,
     }[kind]
 
 
@@ -1841,19 +1877,29 @@ def schema_errors(instance: Any, schema: Optional[Dict[str, Any]] = None, root: 
     if root is None:
         root = json.loads(SCHEMA.read_text(encoding="utf-8"))
         schema = root
-    if "$ref" in schema:
-        return schema_errors(instance, _resolve_ref(root, schema["$ref"]), root, path)
     errors: List[str] = []
-    supported = {"$schema", "$id", "title", "description", "$defs", "type", "const", "enum", "pattern",
-                 "minLength", "required", "properties", "additionalProperties", "minProperties",
-                 "minItems", "uniqueItems", "items", "allOf", "if", "then", "else", "propertyNames"}
+    supported = {"$schema", "$id", "$ref", "title", "description", "$defs", "type", "const", "enum", "pattern",
+                 "minLength", "maxLength", "minimum", "maximum", "required", "properties", "additionalProperties",
+                 "minProperties", "minItems", "maxItems", "uniqueItems", "items", "allOf", "anyOf", "not",
+                 "if", "then", "else", "propertyNames"}
     unknown = set(schema) - supported
     if unknown:
         raise AssertionError(f"schema keyword(s) {sorted(unknown)} at {path} are not understood by this test")
+    if "$ref" in schema:
+        # In 2020-12 a reference does not discard its sibling constraints.
+        errors += schema_errors(instance, _resolve_ref(root, schema["$ref"]), root, path)
     if "type" in schema and not _is_type(instance, schema["type"]):
-        return [f"{path}: not {schema['type']}"]
+        return errors + [f"{path}: not {schema['type']}"]
     for subschema in schema.get("allOf", []):
         errors += schema_errors(instance, subschema, root, path)
+    if "anyOf" in schema:
+        # Evaluate every branch: do not swallow unsupported-keyword assertions
+        # or short-circuit past one just because an earlier branch accepted.
+        branches = [schema_errors(instance, subschema, root, path) for subschema in schema["anyOf"]]
+        if all(branches):
+            errors.append(f"{path}: no anyOf branch matched")
+    if "not" in schema and not schema_errors(instance, schema["not"], root, path):
+        errors.append(f"{path}: matches forbidden schema")
     if "if" in schema:
         branch = "else" if schema_errors(instance, schema["if"], root, path) else "then"
         if branch in schema:
@@ -1870,6 +1916,13 @@ def schema_errors(instance: Any, schema: Optional[Dict[str, Any]] = None, root: 
             errors.append(f"{path}: does not match {schema['pattern']}")
         if "minLength" in schema and len(instance) < schema["minLength"]:
             errors.append(f"{path}: shorter than {schema['minLength']}")
+        if "maxLength" in schema and len(instance) > schema["maxLength"]:
+            errors.append(f"{path}: longer than {schema['maxLength']}")
+    if _is_type(instance, "number"):
+        if "minimum" in schema and instance < schema["minimum"]:
+            errors.append(f"{path}: less than {schema['minimum']}")
+        if "maximum" in schema and instance > schema["maximum"]:
+            errors.append(f"{path}: greater than {schema['maximum']}")
     if isinstance(instance, dict):
         for key in schema.get("required", []):
             if key not in instance:
@@ -1887,6 +1940,8 @@ def schema_errors(instance: Any, schema: Optional[Dict[str, Any]] = None, root: 
     if isinstance(instance, list):
         if len(instance) < schema.get("minItems", 0):
             errors.append(f"{path}: fewer than {schema['minItems']} items")
+        if "maxItems" in schema and len(instance) > schema["maxItems"]:
+            errors.append(f"{path}: more than {schema['maxItems']} items")
         if schema.get("uniqueItems") and len({json.dumps(v, sort_keys=True) for v in instance}) != len(instance):
             errors.append(f"{path}: items are not unique")
         if "items" in schema:
@@ -1895,9 +1950,23 @@ def schema_errors(instance: Any, schema: Optional[Dict[str, Any]] = None, root: 
     return errors
 
 
-def sample_manifest(version: str = "v1.60.0") -> Dict[str, Any]:
+def uncertified_compatibility() -> Dict[str, Any]:
+    # An independent expectation, not copied from the policy under test.
     return {
-        "schema_version": SCHEMA_VERSION,
+        "contract_version": 1,
+        "automatic_apply": False,
+        "requires_operator_initialization": True,
+        "required_env": [],
+        "state_domains": [],
+        "predecessors": [],
+        "automatic_rollback": {"strategy": "never"},
+        "validation": None,
+    }
+
+
+def sample_manifest(version: str = "v1.60.0", *, schema_version: int = SCHEMA_VERSION) -> Dict[str, Any]:
+    manifest = {
+        "schema_version": schema_version,
         "product": PRODUCT,
         "channel": "stable",
         "version": version,
@@ -1916,6 +1985,9 @@ def sample_manifest(version: str = "v1.60.0") -> Dict[str, Any]:
         "deployment": {"files": {"docker-compose.yml": "0" * 64}},
         "migration": {"requires_bootstrap": True, "rollback": "manual"},
     }
+    if schema_version == 2:
+        manifest["compatibility"] = uncertified_compatibility()
+    return manifest
 
 
 def _mutated(path: Tuple[str, ...], value: Any) -> Dict[str, Any]:
@@ -1960,7 +2032,8 @@ class SchemaTests(unittest.TestCase):
 
     def test_constants_match_the_validator(self):
         properties = self.schema["properties"]
-        self.assertEqual(properties["schema_version"], {"const": SCHEMA_VERSION})
+        self.assertEqual(SCHEMA_VERSION, 2)
+        self.assertEqual(properties["schema_version"], {"type": "integer", "enum": [1, 2]})
         self.assertEqual(properties["product"], {"const": PRODUCT})
         self.assertEqual(properties["channel"], {"enum": list(CHANNELS)})
 
@@ -1968,16 +2041,21 @@ class SchemaTests(unittest.TestCase):
         def nested(path: Tuple[str, ...]) -> Dict[str, Any]:
             node = self.schema
             for key in path:
-                node = node["properties"][key] if "properties" in node else _resolve_ref(self.schema, node["$ref"])
+                if "$ref" in node:
+                    node = _resolve_ref(self.schema, node["$ref"])
+                node = node["properties"][key]
             return _resolve_ref(self.schema, node["$ref"]) if "$ref" in node else node
 
-        objects = [(), ("signature",), ("helm",), ("deployment",), ("migration",)]
+        objects = [(), ("signature",), ("helm",), ("deployment",), ("migration",),
+                   ("compatibility",), ("compatibility", "automatic_rollback")]
         objects += [("components", name) for name in COMPONENT_REPOSITORIES]
         for path in objects:
             spec = nested(path)
             for key in spec["properties"]:
                 with self.subTest(path=".".join(path + (key,))):
-                    required = key in spec.get("required", [])
+                    # The root's allOf requires compatibility conditionally
+                    # for v2; it is forbidden, not optional, in v1.
+                    required = key in spec.get("required", []) or (path == () and key == "compatibility")
                     self.assertEqual(_accepted(_mutated(path + (key,), _DELETE)), not required)
                     self.assertEqual(schema_errors(_mutated(path + (key,), _DELETE)) == [], not required)
             with self.subTest(path=".".join(path) + ".<unknown>"):
@@ -1988,9 +2066,28 @@ class SchemaTests(unittest.TestCase):
         self.assertTrue(_accepted(sample_manifest()))
         self.assertEqual(schema_errors(sample_manifest()), [])
 
+    def test_v1_manual_and_v2_uncertified_manifests_are_both_accepted(self):
+        for version in (1, 2):
+            with self.subTest(schema_version=version):
+                manifest = sample_manifest(schema_version=version)
+                self.assertEqual(validate_manifest(manifest), manifest)
+                self.assertEqual(schema_errors(manifest), [])
+                if version == 1:
+                    self.assertNotIn("compatibility", manifest)
+                else:
+                    self.assertEqual(manifest["compatibility"], uncertified_compatibility())
+
+    def test_compatibility_is_required_in_v2_and_forbidden_in_v1(self):
+        legacy = sample_manifest(schema_version=1)
+        legacy["compatibility"] = uncertified_compatibility()
+        self.assertBothReject(legacy)
+        self.assertBothReject(_mutated(("compatibility",), _DELETE))
+        self.assertBothReject(_mutated(("schema_version",), 3))
+
     def test_whatever_the_validator_accepts_conforms_to_the_schema(self):
         mutations = [
-            (("schema_version",), 1.0), (("schema_version",), "1"), (("schema_version",), 2),
+            (("schema_version",), 1.0), (("schema_version",), 2.0), (("schema_version",), "1"),
+            (("schema_version",), 1), (("schema_version",), 2), (("schema_version",), 3),
             (("product",), "Future-AGI"), (("channel",), "beta"), (("channel",), "Stable"),
             (("source_sha",), "A" * 40), (("source_sha",), "0" * 39), (("source_sha",), "0" * 40 + "\n"),
             (("published_at",), "2026-10-19 00:00:00Z"), (("published_at",), "2026-10-19T00:00:00Z\n"),
@@ -2141,9 +2238,178 @@ class SchemaEvaluatorTests(unittest.TestCase):
         self.assertNotEqual(self.errors("abc\n", {"pattern": "^abc$"}), [])
         self.assertNotEqual(self.errors("١", {"pattern": "^\\d$"}), [])
 
+    def test_any_of_accepts_one_or_more_matches_but_not_zero(self):
+        schema = {"anyOf": [{"type": "string"}, {"const": "x"}, {"type": "null"}]}
+        for value in ("x", "other", None):
+            with self.subTest(value=value):
+                self.assertEqual(self.errors(value, schema), [])
+        for value in (0, False, {}, []):
+            with self.subTest(value=value):
+                self.assertNotEqual(self.errors(value, schema), [])
+        self.assertNotEqual(self.errors("x", {"anyOf": schema["anyOf"], "maxLength": 0}), [])
+
+    def test_not_inverts_validity_without_swallowing_helper_errors(self):
+        schema = {"not": {"required": ["compatibility"]}}
+        self.assertEqual(self.errors({}, schema), [])
+        self.assertNotEqual(self.errors({"compatibility": None}, schema), [])
+        self.assertNotEqual(self.errors(None, {"not": {}}), [])
+        self.assertEqual(self.errors(None, {"not": {"not": {}}}), [])
+        with self.assertRaisesRegex(AssertionError, "not understood"):
+            self.errors({}, {"not": {"oneOf": [{}]}})
+
+    def test_null_is_not_false_zero_empty_string_or_container(self):
+        self.assertEqual(self.errors(None, {"type": "null"}), [])
+        for value in (False, 0, "", [], {}):
+            with self.subTest(value=value):
+                self.assertNotEqual(self.errors(value, {"type": "null"}), [])
+
+    def test_max_length_counts_characters_and_applies_only_to_strings(self):
+        for value, accepted in (("", True), ("é\U0001d11e", True), ("abc", False), (0, True), (None, True)):
+            with self.subTest(value=value):
+                self.assertEqual(self.errors(value, {"maxLength": 2}) == [], accepted)
+        self.assertNotEqual(self.errors("a", {"maxLength": 0}), [])
+
+    def test_max_items_bounds_arrays_inclusively_not_other_types(self):
+        for value, accepted in (([], True), ([1, 2], True), ([1, 2, 3], False), ("abc", True), ({}, True)):
+            with self.subTest(value=value):
+                self.assertEqual(self.errors(value, {"maxItems": 2}) == [], accepted)
+        self.assertNotEqual(self.errors([None], {"maxItems": 0}), [])
+
+    def test_numeric_bounds_are_inclusive_and_ignore_non_numbers(self):
+        schema = {"minimum": 1, "maximum": 3}
+        for value, accepted in ((0, False), (1, True), (1.5, True), (3, True), (4, False),
+                                (True, True), (False, True), ("0", True), (None, True)):
+            with self.subTest(value=value):
+                self.assertEqual(self.errors(value, schema) == [], accepted)
+
+    def test_integer_type_accepts_integral_numbers_but_never_booleans(self):
+        for value, accepted in ((1, True), (1.0, True), (2.0, True), (1.5, False),
+                                (True, False), (False, False), ("1", False)):
+            with self.subTest(value=value):
+                self.assertEqual(self.errors(value, {"type": "integer"}) == [], accepted)
+
+    def test_reference_siblings_are_enforced_and_unknown_keywords_are_not_hidden(self):
+        schema = {"$defs": {"name": {"type": "string"}}, "$ref": "#/$defs/name", "maxLength": 2}
+        self.assertEqual(self.errors("ab", schema), [])
+        self.assertNotEqual(self.errors("abc", schema), [])
+        self.assertNotEqual(self.errors(None, schema), [])
+        schema["oneOf"] = [{}]
+        with self.assertRaisesRegex(AssertionError, "not understood"):
+            self.errors("ab", schema)
+        with self.assertRaisesRegex(AssertionError, "not understood"):
+            self.errors("x", {"anyOf": [{}, {"oneOf": [{}]}]})
+
     def test_unknown_keywords_fail_loudly(self):
         with self.assertRaisesRegex(AssertionError, "not understood"):
             self.errors("x", {"oneOf": [{}]})
+
+    @unittest.skipUnless(importlib.util.find_spec("jsonschema"), "optional jsonschema is not installed")
+    def test_v2_keyword_semantics_match_jsonschema(self):
+        from jsonschema import Draft202012Validator
+        schemas = [
+            {"anyOf": [{"type": "null"}, {"type": "string", "maxLength": 2}]},
+            {"not": {"required": ["compatibility"]}},
+            {"type": "integer", "minimum": 0, "maximum": 2},
+            {"maxItems": 2}, {"maxLength": 2}, {"minimum": 0, "maximum": 2},
+            {"$defs": {"s": {"type": "string"}}, "$ref": "#/$defs/s", "maxLength": 2},
+            json.loads(SCHEMA.read_text(encoding="utf-8")),
+        ]
+        values = [None, True, False, -1, 0, 1, 1.0, 1.5, 2, 3, "", "é\U0001d11e", "abc", [], [1, 2], [1, 2, 3],
+                  {}, {"compatibility": None}, sample_manifest(schema_version=1), sample_manifest(),
+                  _mutated(("compatibility", "validation"), {}), _mutated(("compatibility",), _DELETE)]
+        for index, schema in enumerate(schemas):
+            Draft202012Validator.check_schema(schema)
+            validator = Draft202012Validator(schema)
+            for value in values:
+                with self.subTest(schema=index, value=value):
+                    self.assertEqual(self.errors(value, schema) == [], validator.is_valid(value))
+
+
+class ReleaseCompatibilityStaticTests(unittest.TestCase):
+    """Synthetic release evidence only; no signature, topology or release is qualified."""
+
+    def setUp(self):
+        # Shared pure fixtures, not production observations or filesystem mocks.
+        from deploy.tests import test_update_compatibility as fixtures
+        self.fixtures = fixtures
+
+    def test_uncertified_v2_and_manual_v1_cannot_automatically_apply(self):
+        prepared, observations, controls, backup = self.fixtures.synthetic_context()
+        positive = evaluate_automatic_apply(prepared, observations, controls, backup)
+        self.assertTrue(positive.allowed, positive.reason_codes)
+        self.assertFalse(positive.backup_pending)
+        for schema_version in (1, 2):
+            target = sample_manifest(prepared.manifest["version"], schema_version=schema_version)
+            self.assertEqual(validate_manifest(target), target)
+            candidate = self.fixtures.prepare(target)
+            for boundary in ("before_backup", "after_backup", "before_env_commit", "before_rollout"):
+                for evidence in ("pending", backup):
+                    with self.subTest(schema_version=schema_version, boundary=boundary, backup=evidence == "pending"):
+                        result = evaluate_automatic_apply(candidate, replace(observations, release_proof=b"",
+                                                          boundary=boundary), controls, evidence)
+                        self.assertFalse(result.allowed)
+                        self.assertFalse(result.backup_pending)
+                        self.assertEqual(result.reason_codes, (ReasonCode.UNCERTIFIED_RELEASE,))
+
+    def test_forged_or_mismatched_proof_never_authorizes_automatic_apply(self):
+        prepared, observations, controls, backup = self.fixtures.synthetic_context()
+        self.assertTrue(evaluate_automatic_apply(prepared, observations, controls, backup).allowed)
+        for raw in (b"", b'{}', observations.release_proof + b"\n"):
+            with self.subTest(proof=raw[:20]):
+                with self.assertRaises(CompatibilityError):
+                    validate_release_proof(raw, prepared.manifest, repository=CANONICAL_REPOSITORY)
+                result = evaluate_automatic_apply(prepared, replace(observations, release_proof=raw), controls, backup)
+                self.assertFalse(result.allowed)
+                self.assertEqual(result.reason_codes, (ReasonCode.UNCERTIFIED_RELEASE,))
+
+    def test_rehashed_forgery_is_refused_by_host_and_generator(self):
+        from argparse import Namespace
+        from scripts.generate_update_manifest import apply_release_policy
+
+        target, _, proof, raw = self.fixtures.synthetic_release()
+        self.assertEqual(schema_errors(target), [])
+        self.assertEqual(validate_release_proof(raw, target, repository=CANONICAL_REPOSITORY), proof)
+        policy = {"schema_version": 1, "migration": copy.deepcopy(target["migration"]),
+                  "compatibility": copy.deepcopy(target["compatibility"])}
+        policy["compatibility"]["validation"] = None
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            policy_path, proof_path = directory / "policy.json", directory / "proof.json"
+            policy_path.write_text(json.dumps(policy), encoding="utf-8")
+            proof_path.write_bytes(raw)
+            args = Namespace(schema_version=2, release_policy=str(policy_path), compatibility_proof=str(proof_path),
+                             proof_run_id=proof["run_id"], proof_repository=CANONICAL_REPOSITORY)
+            self.assertEqual(apply_release_policy(copy.deepcopy(target), args), target)
+            # Recompute the byte hash so failures exercise content binding and
+            # suite outcomes, rather than only the outer digest comparison.
+            mutations = [
+                (("repository",), "other/repository"), (("run_id",), proof["run_id"] + 1),
+                (("tag",), "v1.99.0"), (("source_sha",), "f" * 40), (("inputs_hash",), "f" * 64),
+                (("components", "backend", "digest"), fake_digest("forged")),
+                (("predecessors", 0, "predecessor", "manifest_hash"), "f" * 64),
+                (("predecessors", 0, "suites", "backup_restore"), "failed"),
+                (("predecessors", 0, "suites", "no_migrations"), "skipped"),
+            ]
+            for path, value in mutations:
+                with self.subTest(field=path):
+                    damaged = copy.deepcopy(proof)
+                    node = damaged
+                    for key in path[:-1]:
+                        node = node[key]
+                    node[path[-1]] = value
+                    changed_raw = json.dumps(damaged, sort_keys=True).encode("utf-8")
+                    forged = copy.deepcopy(target)
+                    forged["compatibility"]["validation"]["sha256"] = hashlib.sha256(changed_raw).hexdigest()
+                    self.assertEqual(validate_manifest(forged), forged)
+                    with self.assertRaises(CompatibilityError):
+                        validate_release_proof(changed_raw, forged, repository=CANONICAL_REPOSITORY)
+                    proof_path.write_bytes(changed_raw)
+                    with self.assertRaises(ManifestError):
+                        apply_release_policy(copy.deepcopy(target), args)
+            args.compatibility_proof = None
+            args.proof_run_id = None
+            with self.assertRaises(ManifestError):
+                apply_release_policy(copy.deepcopy(target), args)
 
 
 # ==================================================================== README --

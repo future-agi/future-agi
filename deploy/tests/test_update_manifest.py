@@ -151,7 +151,7 @@ class ContractConstantTests(unittest.TestCase):
         self.assertEqual(COMPONENT_TAG_SUFFIX, {"serving_gpu": "-gpu"})
 
     def test_schema_version_product_channels_and_asset_names(self):
-        self.assertEqual(SCHEMA_VERSION, 1)
+        self.assertEqual(SCHEMA_VERSION, 2)
         self.assertEqual(PRODUCT, "future-agi")
         self.assertEqual(CHANNELS, ("stable", "beta"))
         self.assertEqual(MANIFEST_ASSET, "future-agi-update-manifest.json")
@@ -543,8 +543,8 @@ class ManifestShapeTests(ManifestCase):
 class ManifestFieldTests(ManifestCase):
     # schema_version / product / channel
 
-    def test_schema_version_must_be_1(self):
-        for value in (2, 0, -1, "1", None, [1], 1.5):
+    def test_schema_version_must_be_supported(self):
+        for value in (3, 0, -1, "1", None, [1], 1.5):
             with self.subTest(value=value):
                 self.assertRejected(self.mutated(lambda m: m.__setitem__("schema_version", value)),
                                     "unsupported manifest schema_version .*; update bin/update")
@@ -1282,7 +1282,10 @@ class GeneratorTests(unittest.TestCase):
     def test_writes_a_valid_manifest_to_stdout(self):
         manifest = self.generate()
         self.assertEqual(validate_manifest(manifest), manifest)
-        self.assertEqual(manifest["schema_version"], 1)
+        self.assertEqual(manifest["schema_version"], 2)
+        self.assertFalse(manifest["compatibility"]["automatic_apply"])
+        self.assertEqual(manifest["compatibility"]["automatic_rollback"]["strategy"], "never")
+        self.assertIsNone(manifest["compatibility"]["validation"])
         self.assertEqual(manifest["product"], "future-agi")
         self.assertEqual(manifest["channel"], "stable")
         self.assertEqual(manifest["version"], VERSION)
@@ -1756,7 +1759,10 @@ class SchemaStructureTests(unittest.TestCase):
 
     def test_top_level_keys_match_the_validator(self):
         self.assertEqual(set(self.schema["required"]), set(TOP_LEVEL_REQUIRED))
-        self.assertEqual(set(self.schema["properties"]), set(TOP_LEVEL_REQUIRED) | {"release_notes"})
+        self.assertEqual(set(self.schema["properties"]), set(TOP_LEVEL_REQUIRED) | {"release_notes", "compatibility"})
+        rule = self.schema["allOf"][0]
+        self.assertEqual(rule["then"], {"required": ["compatibility"]})
+        self.assertEqual(rule["else"], {"not": {"required": ["compatibility"]}})
 
     def test_components_match_the_validator(self):
         components = self.schema["properties"]["components"]
@@ -1784,7 +1790,7 @@ class SchemaStructureTests(unittest.TestCase):
 
     def test_constants_and_enums_match_the_module(self):
         properties = self.schema["properties"]
-        self.assertEqual(properties["schema_version"], {"const": SCHEMA_VERSION})
+        self.assertEqual(properties["schema_version"], {"type": "integer", "enum": [1, SCHEMA_VERSION]})
         self.assertEqual(properties["product"], {"const": PRODUCT})
         self.assertEqual(properties["channel"]["enum"], list(CHANNELS))
         self.assertEqual(properties["migration"]["properties"]["rollback"]["enum"], ["manual", "unsupported"])
@@ -2818,7 +2824,8 @@ class IntegratorRound6SchemaVersionLengthTests(unittest.TestCase):
     def test_the_schema_caps_every_version_number_it_matches(self):
         schema = SCHEMA_PATH.read_text(encoding="utf-8")
         self.assertNotIn("[1-9][0-9]*", schema)
-        self.assertEqual(schema.count("(0|[1-9][0-9]{0,17})"), 47)
+        # v2 adds the exact predecessor version (three numbers + prerelease).
+        self.assertEqual(schema.count("(0|[1-9][0-9]{0,17})"), 51)
 
 
 # ------------------------------------------------ hardening: small corners --
@@ -2889,6 +2896,109 @@ class HardeningLeftOutOfDigestsTests(unittest.TestCase):
             self.assertEqual(left_out_of_digests(root, ["catalog"], ["catalog"]), [])
             self.assertEqual(left_out_of_digests(root, ["catalog"], ["catalog", "catalog/sub/.hidden"]),
                              ["catalog/sub/.hidden"])
+
+
+class GeneratorV2Tests(unittest.TestCase):
+    """Machine proof inputs are explicitly synthetic, never production evidence."""
+
+    setUp = GeneratorTests.setUp
+    run_generator = GeneratorTests.run_generator
+    generate = GeneratorTests.generate
+    assertGeneratorFails = GeneratorTests.assertGeneratorFails
+
+    def evidence(self):
+        from deploy.tests.test_update_compatibility import bind_proof, synthetic_release
+        from deploy.update.compatibility import inputs_hash
+        generated = self.generate()
+        target, _, proof, _ = synthetic_release()
+        target["deployment"] = generated["deployment"]
+        target["minimum_version"] = generated["minimum_version"]
+        proof["deployment"] = copy.deepcopy(generated["deployment"])
+        proof["predecessors"][0]["predecessor_deployment"] = copy.deepcopy(generated["deployment"])
+        # This fixture's predecessor manifest is not fetched by the generator;
+        # the host later verifies its exact hashes/components independently.
+        raw = bind_proof(target, proof)
+        policy = {"schema_version": 1, "migration": target["migration"],
+                  "compatibility": copy.deepcopy(target["compatibility"])}
+        policy["compatibility"]["validation"] = None
+        policy_path, proof_path = self.base / "policy.json", self.base / "proof.json"
+        policy_path.write_text(json.dumps(policy), encoding="utf-8")
+        proof_path.write_bytes(raw)
+        return policy_path, proof_path, policy, proof, inputs_hash(target)
+
+    def test_explicit_schema1_preserves_legacy_manual_generation(self):
+        manifest = self.generate("--schema-version", "1")
+        self.assertEqual(manifest["schema_version"], 1)
+        self.assertNotIn("compatibility", manifest)
+        self.assertEqual(manifest["migration"], {"requires_bootstrap": True, "rollback": "manual"})
+
+    def test_patch_minor_major_and_beta_defaults_are_never_certification(self):
+        for version in ("v1.52.1", "v1.53.0", "v2.0.0", "v1.53.0-beta.1"):
+            manifest = self.generate("--channel", "beta", version=version)
+            compatibility = manifest["compatibility"]
+            self.assertFalse(compatibility["automatic_apply"])
+            self.assertTrue(compatibility["requires_operator_initialization"])
+            self.assertEqual(compatibility["automatic_rollback"], {"strategy": "never"})
+            self.assertEqual(compatibility["predecessors"], [])
+            self.assertEqual(compatibility["state_domains"], [])
+            self.assertIsNone(compatibility["validation"])
+
+    def test_affirmative_policy_requires_independent_matching_proof(self):
+        policy_path, _, _, _, _ = self.evidence()
+        self.assertGeneratorFails(self.run_generator("--release-policy", str(policy_path)), "uncertified_release")
+
+    def test_matching_synthetic_proof_is_pinned_and_inputs_are_deterministic(self):
+        policy_path, proof_path, _, _, expected_hash = self.evidence()
+        args = ("--release-policy", str(policy_path), "--compatibility-proof", str(proof_path), "--proof-run-id", "42")
+        first, second = self.run_generator(*args), self.run_generator(*args)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(first.stdout, second.stdout)
+        result = json.loads(first.stdout)
+        self.assertTrue(result["compatibility"]["automatic_apply"])
+        self.assertEqual(result["compatibility"]["validation"]["inputs_hash"], expected_hash)
+        self.assertEqual(result["compatibility"]["validation"]["sha256"], sha256_hex(proof_path.read_bytes()))
+
+    def test_tampered_failing_and_cross_release_proofs_refused(self):
+        policy_path, proof_path, _, original, _ = self.evidence()
+        for key, value in (("tag", "v9.0.0"), ("source_sha", "f" * 40), ("repository", "attacker/fork"),
+                           ("run_id", 43), ("inputs_hash", "f" * 64), ("predecessors", [])):
+            proof = copy.deepcopy(original)
+            proof[key] = value
+            proof_path.write_text(json.dumps(proof), encoding="utf-8")
+            with self.subTest(key=key):
+                self.assertGeneratorFails(self.run_generator("--release-policy", str(policy_path),
+                    "--compatibility-proof", str(proof_path), "--proof-run-id", "42"), "uncertified_release")
+        original["predecessors"][0]["suites"]["no_migrations"] = "skipped"
+        proof_path.write_text(json.dumps(original), encoding="utf-8")
+        self.assertGeneratorFails(self.run_generator("--release-policy", str(policy_path),
+            "--compatibility-proof", str(proof_path), "--proof-run-id", "42"), "uncertified_release")
+
+    def test_changed_component_after_proof_never_gets_certified(self):
+        policy_path, proof_path, _, _, _ = self.evidence()
+        args = component_args()
+        index = next(i for i, item in enumerate(args) if item.startswith("standalone="))
+        args[index] = args[index].split("@", 1)[0] + "@sha256:" + "f" * 64
+        result = self.run_generator("--release-policy", str(policy_path), "--compatibility-proof", str(proof_path),
+                                    "--proof-run-id", "42", components=args)
+        self.assertGeneratorFails(result, "uncertified_release")
+
+    def test_proof_run_id_required_and_legacy_rejects_certificate_inputs(self):
+        policy_path, proof_path, _, _, _ = self.evidence()
+        self.assertGeneratorFails(self.run_generator("--release-policy", str(policy_path),
+            "--compatibility-proof", str(proof_path)), "canonical --proof-run-id")
+        self.assertGeneratorFails(self.run_generator("--proof-run-id", "42"), "requires --compatibility-proof")
+        self.assertGeneratorFails(self.run_generator("--schema-version", "1", "--release-policy", str(policy_path)),
+                                  "schema 1 cannot carry release certification")
+
+    def test_unreadable_unknown_and_duplicate_policy_fields_are_sanitized(self):
+        policy_path = self.base / "policy.json"
+        self.assertGeneratorFails(self.run_generator("--release-policy", str(policy_path)), "unreadable")
+        for raw in ('{"schema_version":1,"schema_version":1}', '{"schema_version":2}',
+                    '{"command":"SECRET /private/backup"}'):
+            policy_path.write_text(raw, encoding="utf-8")
+            result = self.run_generator("--release-policy", str(policy_path))
+            self.assertGeneratorFails(result, "uncertified_release|unsupported release policy")
+            self.assertNotIn("SECRET", result.stderr)
 
 
 if __name__ == "__main__":

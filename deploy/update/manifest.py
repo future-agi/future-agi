@@ -5,9 +5,10 @@ updater share this module, so both sides enforce one contract. The manifest
 never changes which images a host pulls: those always come from the host's
 own compose files, and bin/update refuses an install whose compose files pull
 a component from another image (registry included) than the manifest names,
-so registry mirrors are not supported yet. The manifest only names a version,
-the digest each image of that version must have, and the deployment files it
-was built with.
+so registry mirrors are not supported yet. Both readable schema versions pin
+release/image/deployment identity. Schema 2 additionally carries closed signed
+compatibility claims; these are not authorization without independently checked
+proof bytes and fresh host observations. Schema 1 manual use remains unchanged.
 """
 
 from __future__ import annotations
@@ -20,7 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSIONS = (1, 2)
 PRODUCT = "future-agi"
 CHANNELS = ("stable", "beta")
 MANIFEST_ASSET = "future-agi-update-manifest.json"
@@ -222,17 +224,19 @@ def validate_manifest(value: Any) -> Dict[str, Any]:
     """
 
     manifest = json.loads(json.dumps(value)) if isinstance(value, Mapping) else value
+    schema_version = manifest.get("schema_version") if isinstance(manifest, Mapping) else None
+    if isinstance(manifest, Mapping) and "schema_version" in manifest and (
+        type(schema_version) is not int or schema_version not in SUPPORTED_SCHEMA_VERSIONS
+    ):
+        raise ManifestError(f"unsupported manifest schema_version {schema_version!r}; update bin/update")
     _exact_keys(
         manifest,
         "manifest",
         ("schema_version", "product", "channel", "version", "source_sha", "published_at",
-         "minimum_version", "signature", "components", "helm", "deployment", "migration"),
+         "minimum_version", "signature", "components", "helm", "deployment", "migration")
+        + (("compatibility",) if schema_version == 2 else ()),
         ("release_notes",),
     )
-    schema_version = manifest["schema_version"]
-    # type() rather than isinstance(): JSON true is a Python int equal to 1.
-    if type(schema_version) is not int or schema_version != SCHEMA_VERSION:
-        raise ManifestError(f"unsupported manifest schema_version {schema_version!r}; update bin/update")
     if manifest["product"] != PRODUCT:
         raise ManifestError(f"manifest is for {manifest['product']!r}, not {PRODUCT!r}")
     channel = manifest["channel"]
@@ -306,6 +310,10 @@ def validate_manifest(value: Any) -> Dict[str, Any]:
         raise ManifestError("manifest.migration.requires_bootstrap must be true or false")
     if migration["rollback"] not in ("manual", "unsupported"):
         raise ManifestError("manifest.migration.rollback must be manual or unsupported")
+    if schema_version == 2:
+        # Deferred import avoids a contracts -> manifest -> contracts cycle.
+        from .compatibility import validate_compatibility
+        validate_compatibility(manifest)
     return manifest
 
 
