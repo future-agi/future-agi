@@ -65,11 +65,11 @@ This release's code, measured 2026-10-23 by the release gate on a Google Cloud n
 
 | Benchmark | One operation | Median ns/op | Range ns/op (40 samples) | allocs/op |
 |---|---|---:|---:|---:|
-| `BenchmarkChatCompletionNonStreaming` | one request at a time, internal key | **246 984** (about 247 µs) | 222 837 – 264 014 | 311 |
-| `BenchmarkChatCompletionParallel` | the same request from 4 goroutines at once (`b.RunParallel`); ns/op is the wall time divided by all requests completed, not the time any one request takes | **59 464** | 56 449 – 62 152 | 310 |
-| `BenchmarkChatCompletionOwnKey` | NonStreaming with an org key (`byok`) whose org's own `openai` provider serves the `openai/gpt-4o` it asks for | **255 754** (about 256 µs) | 236 153 – 272 477 | 318 |
+| `BenchmarkChatCompletionNonStreaming` | one request at a time, internal key | **248 921** (about 249 µs) | 228 828 – 284 328 | 311 |
+| `BenchmarkChatCompletionParallel` | the same request from 4 goroutines at once (`b.RunParallel`); ns/op is the wall time divided by all requests completed, not the time any one request takes | **57 468** | 54 731 – 63 537 | 310 |
+| `BenchmarkChatCompletionOwnKey` | NonStreaming with an org key (`byok`) whose org's own `openai` provider serves the `openai/gpt-4o` it asks for | **248 874** (about 249 µs) | 238 455 – 276 124 | 318 |
 
-In the same run, dev 44285494be measured 231 962 ns/op and 304 allocs/op for NonStreaming, and 59 444 ns/op and 303 allocs/op for Parallel. So this release's NonStreaming median is 6.5 % (15 022 ns, about 15 µs) higher than dev's, and it allocates 7 more objects per request: 311 and 310 allocs/op are the ceilings the release's benchmark pin allows ([`release_bench_pin.txt`](./scripts/scenarios/gates/lib/release_bench_pin.txt): dev + 7, both built with the same Go). Dev has no OwnKey benchmark.
+In the same run, dev 44285494be measured 235 190 ns/op and 304 allocs/op for NonStreaming, and 59 138 ns/op and 303 allocs/op for Parallel. So this release's NonStreaming median is 5.8 % (13 731 ns, about 14 µs) higher than dev's, and it allocates 7 more objects per request: 311 and 310 allocs/op are the ceilings the release's benchmark pin allows ([`release_bench_pin.txt`](./scripts/scenarios/gates/lib/release_bench_pin.txt): dev + 7, both built with the same Go). Dev has no OwnKey benchmark.
 
 Reproduce: `GOMAXPROCS=4 go test ./internal/server -run '^$' -bench '^BenchmarkChatCompletion' -benchmem -count 40` (from `agentcc-gateway/`; see [Reproduce the benchmarks](#-reproduce-the-benchmarks)).
 
@@ -726,7 +726,7 @@ Combines with provider-key rotation (`POST /-/admin/providers/{id}/rotate` · `/
 |---|:---:|---:|:---:|---|
 | 🐳 Docker | ✅ | 30.8 MB image | — | `futureagi/agentcc-gateway:vX.Y.Z` on Docker Hub, one tag per release (also `vX.Y`, and `latest` for the newest; [all tags](https://hub.docker.com/r/futureagi/agentcc-gateway/tags)); mount a config at `/app/config.yaml` |
 | ☸️ Kubernetes (Helm) | ✅ | — | ✅ replicas + Redis | HPA-ready, rolling upgrades, PDBs, liveness/readiness probes |
-| ⚡ Bare metal (systemd) | ✅ | 28.5 MB binary | ✅ | single binary + YAML config |
+| ⚡ Bare metal (systemd) | ✅ | 28.6 MB binary | ✅ | single binary + YAML config |
 | ☁️ AWS | ✅ | — | ✅ | Fargate · EKS · EC2; SigV4 native for Bedrock |
 | ☁️ GCP | ✅ | — | ✅ | Cloud Run · GKE; Vertex auth native |
 | ☁️ Azure | ✅ | — | ✅ | ACI · AKS; Azure OpenAI native auth |
@@ -734,7 +734,7 @@ Combines with provider-key rotation (`POST /-/admin/providers/{id}/rotate` · `/
 | 🔒 Air-gapped / on-prem | ✅ | the image or the binary | ✅ | no phone-home, fully offline |
 | 🖱️ One-click PaaS | via Docker | — | — | Render · Railway · Fly · Northflank |
 
-Sizes of this release's code on linux/amd64, measured 2026-10-23 by the release gate on a Google Cloud n2d-standard-8 VM. The image built from [`Dockerfile`](./Dockerfile) (`docker build -f agentcc-gateway/Dockerfile agentcc-gateway`) is 30,772,707 bytes uncompressed (`docker image inspect --format '{{.Size}}'`). Compressed, as a registry stores its layers after a push (what `docker pull` downloads, and what the CI size budget in [`image_size_budget.json`](../scripts/image_size_budget.json) checks), it is 9.9 MB on linux/amd64 and 8.9 MB on linux/arm64. Its `/app/agentcc-gateway` is 28,549,282 bytes, compiled with go.mod's toolchain (go1.26.10, which the Dockerfile sets as `GOTOOLCHAIN`), and byte-identical to the release binary that [`scripts/release/build-reproducible.sh`](./scripts/release/build-reproducible.sh) builds with `GOOS=linux GOARCH=amd64` and the same Go. On linux/arm64 the release binary is 26,476,706 bytes, and the image (`docker buildx build --platform linux/arm64`) is 28,687,843 bytes, its binary byte-identical to that release binary.
+Sizes of this release's code on linux/amd64, measured 2026-10-23 by the release gate on a Google Cloud n2d-standard-8 VM. The image built from [`Dockerfile`](./Dockerfile) (`docker build -f agentcc-gateway/Dockerfile agentcc-gateway`) is 30,789,091 bytes uncompressed (`docker image inspect --format '{{.Size}}'`). Compressed, as a registry stores its layers after a push (what `docker pull` downloads, and what the CI size budget in [`image_size_budget.json`](../scripts/image_size_budget.json) checks), it is 9.9 MB on linux/amd64 and 8.9 MB on linux/arm64. Its `/app/agentcc-gateway` is 28,565,666 bytes, compiled with go.mod's toolchain (go1.26.10, which the Dockerfile sets as `GOTOOLCHAIN`), and byte-identical to the release binary that [`scripts/release/build-reproducible.sh`](./scripts/release/build-reproducible.sh) builds with `GOOS=linux GOARCH=amd64` and the same Go. On linux/arm64 the release binary is 26,542,242 bytes, and the image (`docker buildx build --platform linux/arm64`) is 28,753,379 bytes, its binary byte-identical to that release binary.
 
 ---
 
