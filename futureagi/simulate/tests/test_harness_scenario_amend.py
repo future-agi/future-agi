@@ -188,6 +188,46 @@ class TestScenarioNumbersSurviveADeletion:
         index_scenarios(job, [suite[0], suite[2], {"name": "four", "tests": "t"}], prune=True)
         assert self._numbers(job) == {"one": 1, "three": 3, "four": 4}
 
+    def test_a_new_scenario_under_a_renamed_ones_old_name_gets_its_own_row(
+        self, user, workspace
+    ):
+        from simulate.models import HostedHarnessScenario
+        from simulate.services.harness_scenarios import index_scenarios
+
+        suite = [
+            {"name": name, "scenario_key": name, "tests": "t"}
+            for name in ("one", "two")
+        ]
+        job = _job(user, workspace, suite)
+        index_scenarios(job, suite)
+        renamed = {"name": "second", "scenario_key": "two", "tests": "t"}
+        reused = {"name": "two", "scenario_key": "two-2", "tests": "t"}
+        index_scenarios(job, [suite[0], renamed, reused], prune=True)
+
+        rows = {
+            row.scenario_key: (row.number, row.name)
+            for row in HostedHarnessScenario.no_workspace_objects.filter(job=job)
+        }
+        assert rows == {"one": (1, "one"), "two": (2, "second"), "two-2": (3, "two")}
+
+        index_scenarios(job, [suite[0], renamed, reused], prune=True)
+        again = {
+            row.scenario_key: (row.number, row.name)
+            for row in HostedHarnessScenario.no_workspace_objects.filter(job=job)
+        }
+        assert again == rows
+
+    def test_an_older_suite_that_repeats_a_name_still_saves_onto_its_row(
+        self, user, workspace
+    ):
+        from simulate.services.harness_scenarios import index_scenarios
+
+        suite = [{"name": name, "tests": "t"} for name in ("one", "two")]
+        job = _job(user, workspace, suite)
+        index_scenarios(job, suite)
+        index_scenarios(job, [suite[0], {"name": "one", "tests": "u"}], prune=True)
+        assert self._numbers(job) == {"one": 1}
+
     def test_a_number_means_the_row_the_table_shows(self, user, workspace):
         from simulate.services.harness_provider import scenarios_meant
         from simulate.services.harness_scenarios import index_scenarios

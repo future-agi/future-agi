@@ -408,15 +408,34 @@ def index_scenarios(
     )
     written = 0
     seen: set[str] = set()
-    for position, doc in enumerate(docs, start=1):
-        held = next(
-            (
-                by_token[token]
-                for value in (doc.get("scenario_key"), doc.get("name"))
-                if (token := _scenario_token(value)) in by_token
-            ),
-            None,
-        )
+    # A scenario takes the row holding its key first; only scenarios left over fall
+    # back to a row their key or name spells, and never to one already used (a renamed
+    # scenario keeps its key).
+    by_key_token = {
+        _scenario_token(row.scenario_key): row
+        for row in sorted(rows, key=lambda row: not row.deleted)
+        if row.scenario_key
+    }
+    held_rows = [
+        by_key_token.get(_scenario_token(doc.get("scenario_key"))) for doc in docs
+    ]
+    used = {row.id for row in held_rows if row is not None}
+    for index, doc in enumerate(docs):
+        if held_rows[index] is not None:
+            continue
+        for value in (doc.get("scenario_key"), doc.get("name")):
+            row = by_token.get(_scenario_token(value))
+            if row is not None and row.id not in used:
+                held_rows[index] = row
+                used.add(row.id)
+                break
+        if held_rows[index] is None:
+            # A key is never created twice: a scenario without one that repeats a
+            # name writes over the row holding that name as its key.
+            held_rows[index] = by_key_token.get(
+                _scenario_token(doc.get("scenario_key") or doc.get("name"))
+            )
+    for position, (doc, held) in enumerate(zip(docs, held_rows, strict=True), start=1):
         key = (
             held.scenario_key
             if held is not None
