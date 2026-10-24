@@ -288,6 +288,8 @@ def create_run(
 
 
 def _authorized_metric(metric: DerivedMetric) -> bool:
+    from tracer.models.project import Project
+
     project = metric.project
     # Jobs reauthorize after dequeue. Default-workspace legacy projects have
     # null workspace; no job may follow a project across an organization boundary.
