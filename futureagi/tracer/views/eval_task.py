@@ -85,6 +85,11 @@ from tracer.serializers.eval_task import (
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.eval_tasks.edit_options import validate_edit_action
 from tracer.services.eval_tasks.entries import soft_delete_live
+from tracer.services.eval_tasks.sampling.policy import (
+    InvalidSamplingPolicy,
+    normalize_policy_update,
+    population_changed,
+)
 from tracer.services.filter_principal_context import (
     FilterPrincipalContextError,
     bind_request_my_annotations_principal,
@@ -96,6 +101,7 @@ from tracer.utils.eval import (
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import get_default_eval_task_config
+from tracer.views.eval_sampling import SamplingPreviewMixin
 
 logger = structlog.get_logger(__name__)
 
@@ -1485,7 +1491,7 @@ def _eval_task_progress_by_id(tasks):
     }
 
 
-class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
+class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = _EvalTaskPageNumberPagination
     _gm = GeneralMethods()
@@ -3045,6 +3051,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 original_evals = set(eval_task.evals.values_list("id", flat=True))
                 original_run_type = eval_task.run_type
                 update_fields = self._extract_update_fields(validated_data)
+                try:
+                    normalize_policy_update(eval_task, update_fields)
+                except InvalidSamplingPolicy as exc:
+                    return self._gm.bad_request(str(exc))
 
                 # Validate the requested evals belong to the task's project.
                 requested_evals = validated_data.get("evals")
@@ -3069,17 +3079,33 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 rows_changed = any(
                     field in update_fields
                     and update_fields[field] != getattr(eval_task, field)
-                    for field in ("filters", "sampling_rate", "spans_limit")
+                    for field in (
+                        "filters",
+                        "sampling_rate",
+                        "spans_limit",
+                        "sampling_policy",
+                    )
                 )
                 new_run_type = update_fields.get("run_type")
 
-                # Enforce which rerun action is allowed for what changed.
-                action_error = validate_edit_action(
-                    edit_type,
-                    original_run_type=original_run_type,
-                    new_run_type=new_run_type,
-                    evals_changed=evals_changed,
-                    rows_changed=rows_changed,
+                # A new sampling population must not mix completed results from
+                # the old cohort with newly selected rows under different p.
+                sampling_changed = population_changed(eval_task, update_fields)
+                if sampling_changed and edit_type != "fresh_run":
+                    return self._gm.bad_request(
+                        "Sampling population changes require Delete & rerun; duplicate the task to preserve the prior results."
+                    )
+                # Preserve historical action rules for unchanged/legacy populations.
+                action_error = (
+                    None
+                    if sampling_changed
+                    else validate_edit_action(
+                        edit_type,
+                        original_run_type=original_run_type,
+                        new_run_type=new_run_type,
+                        evals_changed=evals_changed,
+                        rows_changed=rows_changed,
+                    )
                 )
                 if action_error:
                     return self._gm.bad_request(action_error)
@@ -3091,6 +3117,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     and original_run_type == RunType.CONTINUOUS
                     and not update_fields.get("spans_limit")
                     and not eval_task.spans_limit
+                    and not update_fields.get(
+                        "sampling_policy", eval_task.sampling_policy
+                    )
                 ):
                     return self._gm.bad_request(
                         "Switching to a historical task requires a row limit."
@@ -3175,6 +3204,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             "name",
             "filters",
             "sampling_rate",
+            "sampling_policy",
             "spans_limit",
             "evals",
             "run_type",
@@ -3182,7 +3212,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
         for field in allowed_fields:
             value = validated_data.get(field)
-            if value is not None:
+            if value is not None or (
+                field == "sampling_policy" and field in validated_data
+            ):
                 update_fields[field] = value
 
         return update_fields
@@ -3258,6 +3290,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 "evals_applied": evals_rich,
                 "spans_limit": queryset.spans_limit,
                 "sampling_rate": queryset.sampling_rate,
+                "sampling_policy": queryset.sampling_policy,
                 "last_run": queryset.last_run,
                 "run_type": queryset.run_type,
                 "row_type": queryset.row_type,

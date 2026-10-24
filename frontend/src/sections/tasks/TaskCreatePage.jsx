@@ -153,6 +153,7 @@ const TaskCreatePage = () => {
       rowType,
       spansLimit,
       samplingRate,
+      samplingPolicy,
       evalsDetails,
       startDate,
       endDate,
@@ -166,6 +167,7 @@ const TaskCreatePage = () => {
         ? { spans_limit: spansLimit }
         : {}),
       sampling_rate: samplingRate,
+      ...(samplingPolicy ? { sampling_policy: samplingPolicy } : {}),
       evals_details: evalsDetails,
       start_date: startDate,
       end_date: endDate,

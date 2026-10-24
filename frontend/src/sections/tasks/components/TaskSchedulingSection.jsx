@@ -419,6 +419,7 @@ const TaskSchedulingSection = ({ control, isEdit = false }) => {
   });
 
   const runType = useWatch({ control, name: "runType" });
+  const policy = useWatch({ control, name: "samplingPolicy" });
   const { field: datePresetField } = useController({
     control,
     name: "datePreset",
@@ -457,56 +458,67 @@ const TaskSchedulingSection = ({ control, isEdit = false }) => {
       {/* ── Historical-only fields ── */}
       {runType === "historical" && (
         <>
-          <Box>
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 0.5,
-                mb: 0.75,
-              }}
-            >
-              <Typography
-                variant="caption"
-                sx={{ fontSize: "12px", fontWeight: 600 }}
-              >
-                Time window
-                {startDateField.value && endDateField.value && (
-                  <Box
-                    component="span"
-                    sx={{ fontSize: "10px", fontWeight: 500, ml: 0.5 }}
-                  >
-                    {`(${formatTimeWindow(
-                      startDateField.value,
-                      endDateField.value,
-                      { isCustom: datePresetField.value === "Custom" },
-                    )})`}
-                  </Box>
-                )}
-              </Typography>
-            </Box>
+          {policy ? (
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ fontSize: "11px", display: "block", mb: 1 }}
+              sx={{ fontSize: "11px", display: "block" }}
             >
-              Which time range of existing traces to run on
+              Time window: set by the sampling policy below. Its UTC event-time
+              window is the only date range for this population.
             </Typography>
-            <DateTimeRangePicker
-              setParentDateFilter={handleDateFilterChange}
-              dateOption={datePresetField.value}
-              setDateOption={datePresetField.onChange}
-              dateFilter={dateFilter}
-              isEdit={isEdit}
-            />
-          </Box>
+          ) : (
+            <Box>
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.5,
+                  mb: 0.75,
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  sx={{ fontSize: "12px", fontWeight: 600 }}
+                >
+                  Time window
+                  {startDateField.value && endDateField.value && (
+                    <Box
+                      component="span"
+                      sx={{ fontSize: "10px", fontWeight: 500, ml: 0.5 }}
+                    >
+                      {`(${formatTimeWindow(
+                        startDateField.value,
+                        endDateField.value,
+                        { isCustom: datePresetField.value === "Custom" },
+                      )})`}
+                    </Box>
+                  )}
+                </Typography>
+              </Box>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ fontSize: "11px", display: "block", mb: 1 }}
+              >
+                Which time range of existing traces to run on
+              </Typography>
+              <DateTimeRangePicker
+                setParentDateFilter={handleDateFilterChange}
+                dateOption={datePresetField.value}
+                setDateOption={datePresetField.onChange}
+                dateFilter={dateFilter}
+                isEdit={isEdit}
+              />
+            </Box>
+          )}
 
-          <RowLimitField control={control} />
+          {!policy && <RowLimitField control={control} />}
         </>
       )}
 
       {/* ── Sampling rate (both modes) ── */}
-      <SamplingRateField control={control} />
+      {!policy && <SamplingRateField control={control} />}
     </Box>
   );
 };

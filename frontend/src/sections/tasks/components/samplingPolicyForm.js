@@ -1,0 +1,193 @@
+export const defaultSamplingPolicy = () => ({
+  version: 1,
+  sampling_unit: "session",
+  missing_id: "exclude",
+  mode: "closed",
+  window: {
+    start: new Date(Date.now() - 86400000).toISOString(),
+    end: new Date(Date.now() - 1000).toISOString(),
+  },
+  strata: [],
+  group_by: [],
+  default: { rate: 10 },
+});
+
+// The selection mode is the rule's explicit key, never inferred from whether
+// that key currently holds a value: a cleared quota keeps `target_n: ""` so the
+// control cannot flip back to a percentage while the user is retyping.
+export const selectionMode = (rule) =>
+  rule && Object.hasOwn(rule, "target_n") ? "target_n" : "rate";
+
+export const SAMPLING_QUOTA_LIMIT = 1000000;
+const OPTIONAL_COUNTS = ["min_n", "max_n", "rare_below"];
+
+const isWholeCount = (value) =>
+  typeof value === "number" &&
+  Number.isInteger(value) &&
+  value >= 0 &&
+  value <= SAMPLING_QUOTA_LIMIT;
+
+const isRate = (value) =>
+  typeof value === "number" &&
+  Number.isFinite(value) &&
+  value >= 0 &&
+  value <= 100 &&
+  Math.round(value * 1e6) / 1e6 === value;
+
+// Field-level problems for one slice/default rule, keyed by policy key. A
+// missing or blank required value is an error, never an implied 100% or 0.
+export const samplingRuleErrors = (rule) => {
+  const errors = {};
+  if (!rule || typeof rule !== "object") {
+    errors.rate = "Enter a rate from 0 to 100.";
+    return errors;
+  }
+  const mode = selectionMode(rule);
+  const value = rule[mode];
+  if (mode === "target_n") {
+    if (value === "" || value === undefined || value === null) {
+      errors.target_n = "Enter the number of target units.";
+    } else if (!isWholeCount(value)) {
+      errors.target_n = "Use a whole number from 0 to 1,000,000.";
+    }
+  } else if (value === "" || value === undefined || value === null) {
+    errors.rate = "Enter a rate from 0 to 100.";
+  } else if (!isRate(value)) {
+    errors.rate = "Use a percentage from 0 to 100 with at most six decimals.";
+  }
+  OPTIONAL_COUNTS.forEach((key) => {
+    if (Object.hasOwn(rule, key) && !isWholeCount(rule[key])) {
+      errors[key] = "Use a whole number from 0 to 1,000,000, or clear it.";
+    }
+  });
+  if (
+    !errors.min_n &&
+    !errors.max_n &&
+    isWholeCount(rule.min_n) &&
+    isWholeCount(rule.max_n) &&
+    rule.min_n > rule.max_n
+  ) {
+    errors.min_n = "Minimum units cannot exceed maximum units.";
+  }
+  return errors;
+};
+
+export const isNumericPredicate = (predicate) =>
+  ["gt", "gte", "lt", "lte"].includes(predicate.op);
+
+// Drafts remain text until preview/save: Number("") is 0 and converting "0."
+// or "1e-" on every keystroke destroys the value the user is still entering.
+const COMPLETE_NUMBER = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+const isCompleteNumber = (value) =>
+  (typeof value === "number" ||
+    (typeof value === "string" && COMPLETE_NUMBER.test(value.trim()))) &&
+  Number.isFinite(Number(value));
+
+export const samplingPredicateError = (predicate) =>
+  isNumericPredicate(predicate) &&
+  (!Array.isArray(predicate.values) ||
+    predicate.values.length !== 1 ||
+    !isCompleteNumber(predicate.values[0]))
+    ? "Enter one complete, finite number."
+    : undefined;
+
+// Only the wire copy is normalized; preview/save never rewrite the form draft.
+export const samplingPolicyForApi = (policy) => {
+  if (!policy) return policy;
+  if (Object.keys(samplingPolicyErrors(policy)).length) {
+    throw new Error(
+      "Complete the sampling policy before previewing or saving.",
+    );
+  }
+  return {
+    ...policy,
+    ...(policy.strata && {
+      strata: policy.strata.map((rule) => ({
+        ...rule,
+        ...(rule.filters && {
+          filters: rule.filters.map((predicate) =>
+            isNumericPredicate(predicate)
+              ? { ...predicate, values: [Number(predicate.values[0])] }
+              : predicate,
+          ),
+        }),
+      })),
+    }),
+  };
+};
+
+// Every invalid numeric control in the policy, keyed by its wire path
+// (`default.rate`, `strata.0.target_n`, ...). Empty when the policy may be
+// previewed and saved.
+export const samplingPolicyErrors = (policy) => {
+  const errors = {};
+  if (!policy) return errors;
+  const collect = (rule, prefix) =>
+    Object.entries(samplingRuleErrors(rule)).forEach(([key, message]) => {
+      errors[`${prefix}.${key}`] = message;
+    });
+  (policy.strata || []).forEach((rule, index) => {
+    collect(rule, `strata.${index}`);
+    (rule.filters || []).forEach((predicate, predicateIndex) => {
+      const error = samplingPredicateError(predicate);
+      if (error)
+        errors[`strata.${index}.filters.${predicateIndex}.values`] = error;
+    });
+  });
+  collect(policy.default, "default");
+  Object.assign(errors, samplingCoordinationErrors(policy));
+  return errors;
+};
+
+const PRN_PANEL = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
+
+// Coordinated policies share one permanent random number per unit across the
+// project (and panel). The keys exist only in project mode; mirrors the
+// backend's validation so an invalid value never reaches preview or save.
+export const samplingCoordinationErrors = (policy) => {
+  const errors = {};
+  if (!policy || policy.coordination !== "project") return errors;
+  if (
+    Object.hasOwn(policy, "panel") &&
+    policy.panel !== "" &&
+    !(typeof policy.panel === "string" && PRN_PANEL.test(policy.panel))
+  ) {
+    errors.panel =
+      "Use 1-64 letters, digits, '_', '.', ':' or '-', starting with a letter or digit.";
+  }
+  if (
+    Object.hasOwn(policy, "prn_start") &&
+    !(isRate(policy.prn_start) && policy.prn_start < 100)
+  ) {
+    errors.prn_start =
+      "Use a percentage from 0 up to (not including) 100 with at most six decimals.";
+  }
+  return errors;
+};
+
+// Independent is the historical default and is stored without any
+// coordination keys, so switching back restores the exact original policy.
+export const withCoordination = (policy, mode) => {
+  const next = { ...policy };
+  delete next.coordination;
+  delete next.panel;
+  delete next.prn_start;
+  if (mode === "project") next.coordination = "project";
+  return next;
+};
+
+export const samplingStratumLabel = (identity) => {
+  try {
+    const [name, groups] = JSON.parse(identity);
+    if (typeof name !== "string" || !Array.isArray(groups)) return identity;
+    return [
+      name === "default" ? "All remaining contacts" : name,
+      ...groups.map((encoded) => {
+        const [present, value] = JSON.parse(encoded);
+        return present ? String(value) : "(missing)";
+      }),
+    ].join(" · ");
+  } catch {
+    return identity;
+  }
+};

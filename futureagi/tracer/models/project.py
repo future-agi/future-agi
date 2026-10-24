@@ -75,6 +75,9 @@ class Project(BaseModel):
     metadata = models.JSONField(null=True, blank=True)
     config = models.JSONField(default=list, null=True, blank=True)
     session_config = models.JSONField(default=list, null=True, blank=True)
+    sampling_contact_attribute = models.CharField(
+        max_length=200, default="", db_default="", blank=True
+    )
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,

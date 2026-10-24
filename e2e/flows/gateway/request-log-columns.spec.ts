@@ -331,7 +331,7 @@ test(
     await test.step('UI: Tab reaches the truncated tenant value and its tooltip shows it in full', async () => {
       await expect(columnsButton).toBeFocused({ timeout: UI_READY });
       await pressUntilFocused(page, tenantCells.getByText(longPreview, { exact: true }), 'Tab');
-      await expect(page.getByRole('tooltip')).toHaveText(longTenant, { timeout: UI_READY });
+      await expect(page.getByRole('tooltip', { name: longTenant, exact: true })).toHaveText(longTenant, { timeout: UI_READY });
     }, { timeout: STEP_BUDGET });
 
     await test.step('UI: the selection survives a reload and reset clears only this record', async () => {

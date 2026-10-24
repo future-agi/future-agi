@@ -29,6 +29,8 @@ import TaskHeader from "./components/TaskHeader";
 import TaskConfigPanel from "./components/TaskConfigPanel";
 import TaskLivePreview from "./components/TaskLivePreview";
 import TaskUsageTab from "./components/TaskUsageTab";
+import SamplingAuditPanel from "./components/SamplingAuditPanel";
+import { samplingPolicyForApi } from "./components/samplingPolicyForm";
 import {
   NewTaskValidationSchema,
   getDefaultTaskValues,
@@ -47,6 +49,12 @@ const TAB_OPTIONS = [
   { label: "Logs", value: "logs", icon: "solar:notebook-linear" },
   { label: "Usage", value: "usage", icon: "solar:chart-2-linear" },
 ];
+// Shown only for tasks with a sampling policy: an advisory, read-only audit.
+const SAMPLING_AUDIT_TAB = {
+  label: "Sampling audit",
+  value: "sampling",
+  icon: "solar:pie-chart-2-linear",
+};
 
 const firstFilterValue = (value) => {
   if (Array.isArray(value)) return value.find(Boolean) || null;
@@ -135,6 +143,10 @@ const TaskDetailPage = () => {
     mutationFn: ({ payload }) =>
       axios.patch(endpoints.project.patchEvalTask(), {
         ...payload,
+        // Confirmation reads raw watched form state, not the resolver's output.
+        ...(payload.sampling_policy !== undefined
+          ? { sampling_policy: samplingPolicyForApi(payload.sampling_policy) }
+          : {}),
         eval_task_id: taskId,
       }),
     onSuccess: (_data, { mode }) => {
@@ -244,7 +256,12 @@ const TaskDetailPage = () => {
 
   const { mutate: duplicateTask, isPending: isDuplicating } = useMutation({
     mutationFn: (payload) =>
-      axios.post(endpoints.project.createEvalTask(), payload),
+      axios.post(endpoints.project.createEvalTask(), {
+        ...payload,
+        ...(payload.sampling_policy !== undefined
+          ? { sampling_policy: samplingPolicyForApi(payload.sampling_policy) }
+          : {}),
+      }),
     meta: { errorHandled: true },
     onSuccess: (resp) => {
       queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
@@ -254,7 +271,9 @@ const TaskDetailPage = () => {
     },
     onError: (err) => {
       enqueueSnackbar(
-        err?.response?.data?.result || err?.message || "Failed to duplicate task",
+        err?.response?.data?.result ||
+          err?.message ||
+          "Failed to duplicate task",
         { variant: "error" },
       );
     },
@@ -302,12 +321,11 @@ const TaskDetailPage = () => {
         ? { spans_limit: Number(src.spansLimit) }
         : {}),
       sampling_rate: src.samplingRate,
+      ...(src.samplingPolicy ? { sampling_policy: src.samplingPolicy } : {}),
       evals: src.evalsDetails?.map((item) => item.id || item) || [],
       filters: {
         ...wireFilters,
-        ...(attributeFilters?.length > 0
-          ? { filters: attributeFilters }
-          : {}),
+        ...(attributeFilters?.length > 0 ? { filters: attributeFilters } : {}),
       },
     };
     duplicateTask(payload, {
@@ -338,13 +356,16 @@ const TaskDetailPage = () => {
         project: data.project,
         run_type: data.runType,
         sampling_rate: data.samplingRate,
+        ...(data.samplingPolicy || taskDetails.sampling_policy
+          ? { sampling_policy: data.samplingPolicy ?? null }
+          : {}),
         spans_limit: data.spansLimit ? Number(data.spansLimit) : undefined,
         edit_type: editType,
       };
       updateTask({ payload: transformedData, mode: confirmMode });
       setConfirmMode(null);
     },
-    [formValues, updateTask, confirmMode],
+    [formValues, updateTask, confirmMode, taskDetails],
   );
 
   if (isLoading && !taskDetails) {
@@ -603,7 +624,10 @@ const TaskDetailPage = () => {
                 : "background.neutral",
           }}
         >
-          {TAB_OPTIONS.map((t) => (
+          {(taskDetails?.sampling_policy
+            ? [...TAB_OPTIONS, SAMPLING_AUDIT_TAB]
+            : TAB_OPTIONS
+          ).map((t) => (
             <Tab
               key={t.value}
               value={t.value}
@@ -680,6 +704,12 @@ const TaskDetailPage = () => {
         {tab === "usage" && (
           <Box sx={{ height: "100%", overflow: "hidden" }}>
             <TaskUsageTab taskId={taskId} />
+          </Box>
+        )}
+
+        {tab === "sampling" && taskDetails?.sampling_policy && (
+          <Box sx={{ height: "100%", overflow: "auto", p: 2 }}>
+            <SamplingAuditPanel taskId={taskId} />
           </Box>
         )}
       </Box>

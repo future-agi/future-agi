@@ -190,7 +190,9 @@ after=$(kubectl -n "$ns" get secret "$release-secrets" -o jsonpath='{.data.SECRE
 [ -n "$before" ] && [ "$before" = "$after" ] || fail "SECRET_KEY changed on upgrade"
 kubectl -n "$ns" get "job/$release-bootstrap" -o jsonpath='{.status.succeeded}' | grep -qx 1 ||
   fail "the pre-upgrade bootstrap job did not succeed"
-kubectl -n "$ns" logs "job/$release-bootstrap" | grep -qF "first admin $admin_email already exists: left unchanged" ||
+# Drain logs before matching: grep -q can SIGPIPE kubectl under pipefail.
+kubectl -n "$ns" logs "job/$release-bootstrap" >"$work/upgrade-bootstrap.log"
+grep -qF "first admin $admin_email already exists: left unchanged" "$work/upgrade-bootstrap.log" ||
   fail "the pre-upgrade bootstrap job did not leave the first admin as it was"
 kubectl -n "$ns" rollout status "deploy/$release-backend" --timeout=5m
 helm test "$release" --namespace "$ns" --timeout 5m

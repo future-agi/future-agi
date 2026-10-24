@@ -44,6 +44,7 @@ from tracer.views.project import ProjectView
 from tracer.views.project_version import ProjectVersionView
 from tracer.views.replay_session import ReplaySessionView
 from tracer.views.saved_view import SavedViewViewSet
+from tracer.views.sql_query import SQLQueryViewSet, SavedSQLQueryViewSet
 from tracer.views.shared_link import SharedLinkViewSet, resolve_shared_link
 from tracer.views.trace import GetUserCodeExampleView, TraceView, UsersView
 from tracer.views.trace_grouping import (
@@ -77,6 +78,9 @@ from tracer.views.trace_severity import (
 )
 
 router = DefaultRouter()
+
+router.register(r"sql-query", SQLQueryViewSet, basename="sql-query")
+router.register(r"saved-sql-query", SavedSQLQueryViewSet, basename="saved-sql-query")
 
 router.register(r"project", ProjectView, basename="project")
 router.register(r"project-version", ProjectVersionView, basename="project-version")

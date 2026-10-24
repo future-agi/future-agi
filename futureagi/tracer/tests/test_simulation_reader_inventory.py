@@ -49,8 +49,8 @@ SPAN_TABLES = (
     "observation_span",
 )
 
-# The open-source tree has no ``ee`` package, so its readers cannot be missing there.
-ENTERPRISE_PREFIX = "ee."
+# Public ``ee`` code is always scanned; only the private cloud checkout is optional.
+CLOUD_PREFIX = "ee.cloud."
 
 # ---------------------------------------------------------------------------
 # The categories
@@ -1784,6 +1784,43 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "_backfill_status": _EVAL_LOG_BACKFILL,
         "backfill_blank_completed_status": _EVAL_LOG_BACKFILL,
     },
+    "tracer.services.eval_tasks.sampling.query": {
+        "SamplingQuery._source": filed(
+            PROJECT_SET,
+            ROW_DRIVEN,
+            CHILDREN_SPAN_EVAL_TASKS,
+            why=(
+                "shared sampling source: preview builds an unsaved EvalTask from "
+                "Project.objects through the scoped project queryset; reconciliation, "
+                "pending proofs and frozen audit populations use the stored EvalTask's "
+                "project. Task creation resolves Project.objects, which excludes "
+                "hidden projects, and simulation creates no EvalTask. The audit also "
+                "rechecks the visible project manager before reading. Span tasks "
+                "include children; query parameters always bind that task's project"
+            ),
+            row="tracer.EvalTask",
+        ),
+        "live_scan_windows": filed(
+            ROW_DRIVEN,
+            why=(
+                "arrival-day discovery called only by reconcile_policy for the "
+                "stored EvalTask's project; simulation never creates that task row"
+            ),
+            row="tracer.EvalTask",
+        ),
+    },
+    "tracer.services.eval_tasks.sampling.unit_scope": {
+        "physical_unit_scope": filed(
+            ROW_DRIVEN,
+            why=(
+                "member expansion and first-admission proof fragments of "
+                "SamplingQuery._source, used only with persisted cohort members or "
+                "live candidates of an EvalTask. The caller binds sp_project from "
+                "that task, never from a unit id; simulation makes no EvalTask"
+            ),
+            row="tracer.EvalTask",
+        ),
+    },
     "tracer.services.grouping.feature_store": {
         "GroupingFeatureStore.read_vectors": _GROUPING_STORE,
         "GroupingFeatureStore.write_and_verify": _GROUPING_STORE,
@@ -1791,6 +1828,52 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
     },
     "tracer.services.users_list_manager": {
         "_users_attr_enrichment_query": _SESSION_OR_USER,
+    },
+    "tracer.sql_workbench.catalog": {
+        "sources": filed(
+            PROJECT_SET,
+            why=(
+                "SQL workbench source templates, built for the one scope a caller "
+                "passes in. Every caller takes that project from access.authorize or "
+                "from the operator command, and both resolve it through "
+                "Project.no_workspace_objects, a project manager that leaves out "
+                "simulation projects, so the id of a hidden project is refused "
+                "before a source is built"
+            ),
+        ),
+    },
+    "tracer.sql_workbench.examples": {
+        "EXAMPLES": filed(
+            PROJECT_SET,
+            why=(
+                "editor examples are virtual-catalog SQL, not directly executed "
+                "physical reads; Run goes through service.submit and "
+                "access.authorize's simulation-excluding Project.no_workspace_objects "
+                "before the compiler builds scoped sources"
+            ),
+        ),
+    },
+    "scripts.sql_workbench.capability_check": {
+        "QUERIES": filed(
+            PROJECT_SET,
+            why=(
+                "fixed test corpus executed by the isolated ClickHouse capability "
+                "test through service.submit and the real worker; project ids "
+                "are authorized using the same simulation-excluding project "
+                "manager as a normal workbench run"
+            ),
+        ),
+    },
+    "tracer.sql_workbench.runner": {
+        "derived_metrics_availability": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "schema and grant probe: a LIMIT 0 select over the derived metrics "
+                "view returns no row at all, and that view holds metric results, "
+                "not spans"
+            ),
+            table="derived_metrics",
+        ),
     },
     "tracer.views.dashboard": {
         "_read_dashboard_rollup_fast_path": filed(
@@ -2213,22 +2296,21 @@ def test_every_spans_reading_function_is_filed():
         "tracer.services.clickhouse.v2.span_reader:CHSpanReader.get" in readers
     ), "the scan did not reach the code it is meant to cover"
 
-    enterprise_present = (FUTUREAGI / ENTERPRISE_PREFIX.rstrip(".")).is_dir()
+    cloud_present = (FUTUREAGI / "ee" / "cloud").is_dir()
     unfiled = sorted(set(readers) - set(FILED))
     stale = sorted(
         key
         for key in set(FILED) - set(readers)
-        if enterprise_present or not key.startswith(ENTERPRISE_PREFIX)
+        if cloud_present or not key.startswith(CLOUD_PREFIX)
     )
     assert not unfiled, (
         "these functions or templates read a span table and nobody filed them; "
         "decide which category covers each, then add it to FILED with a reason:\n"
         + "\n".join(unfiled)
     )
-    assert (
-        not stale
-    ), "these filings no longer match a reader; rename or remove them:\n" + "\n".join(
-        stale
+    assert not stale, (
+        "these filings no longer match a reader; rename or remove them:\n"
+        + "\n".join(stale)
     )
 
     unlisted = {
@@ -2239,11 +2321,45 @@ def test_every_spans_reading_function_is_filed():
     assert not unlisted, f"filed under a category that does not exist: {unlisted}"
     assert not [key for key, filing in FILED.items() if not filing.why.strip()]
     used = {bucket for filing in FILED.values() for bucket in filing.buckets}
-    assert used == set(
-        BUCKETS
-    ), f"categories nothing is filed under: {sorted(set(BUCKETS) - used)}"
+    assert used == set(BUCKETS), (
+        f"categories nothing is filed under: {sorted(set(BUCKETS) - used)}"
+    )
     claims = _filing_problems(readers)
     assert not claims, "\n".join(claims)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("cloud_present", [False, True])
+@pytest.mark.parametrize(
+    "missing_reader",
+    [
+        "ee.cloud.tasks.retention:missing_reader",
+        "ee.usage.tasks:missing_reader",
+        "ee.cloudlike.tasks:missing_reader",
+        "tracer.tasks:missing_reader",
+    ],
+)
+def test_reader_inventory_only_exempts_absent_private_cloud(
+    monkeypatch, tmp_path, cloud_present, missing_reader
+):
+    (tmp_path / "ee").mkdir()
+    if cloud_present:
+        (tmp_path / "ee" / "cloud").mkdir()
+
+    # Isolate checkout detection from the AST scan and the filings' own claims.
+    readers = dict.fromkeys(FILED)
+    filings = dict(FILED)
+    filings[missing_reader] = next(iter(FILED.values()))
+    monkeypatch.setitem(globals(), "FUTUREAGI", tmp_path)
+    monkeypatch.setitem(globals(), "FILED", filings)
+    monkeypatch.setitem(globals(), "scan_readers", lambda: (readers, 1001))
+    monkeypatch.setitem(globals(), "_filing_problems", lambda readers: [])
+
+    if cloud_present or not missing_reader.startswith("ee.cloud."):
+        with pytest.raises(AssertionError, match=re.escape(missing_reader)):
+            test_every_spans_reading_function_is_filed()
+    else:
+        test_every_spans_reading_function_is_filed()
 
 
 @pytest.mark.unit
@@ -2804,7 +2920,7 @@ def creator_problems(found, pinned, present):
                     f"{key} (line {creator.call.lineno}) is pinned as {claim!r} and "
                     "the code does not show it"
                 )
-    for key, (claim, _why) in sorted(pinned.items()):
+    for key, (_claim, _why) in sorted(pinned.items()):
         if key in found:
             continue
         relative = key.split(":", 1)[0]
@@ -2964,6 +3080,11 @@ ROW_TYPES = {
     "tracer.ProjectVersion.project": USER_MADE,
     "tracer.ProjectVersionWinner.project": USER_MADE,
     "tracer.ReplaySession.project": USER_MADE,
+    # Both are made only by the SQL workbench's submit and save paths, which take
+    # the project from access.authorize, a project manager that refuses a
+    # simulation project; a simulated run has no path to them.
+    "tracer.SQLExecution.project": USER_MADE,
+    "tracer.SavedSQLQuery.project": USER_MADE,
     "tracer.SavedView.project": USER_MADE,
     "tracer.Trace.project": TRACE_STORE_ROW,
     "tracer.TraceErrorAnalysis.project": JOB_THROUGH_MANAGERS,
@@ -3228,9 +3349,9 @@ def test_no_postgres_row_names_a_hidden_project_after_a_simulated_run(
                 f"below would prove nothing for it: {recorder.project_names}"
             )
         else:
-            assert (
-                not recorder.project_names
-            ), f"{name} exported {recorder.project_names}"
+            assert not recorder.project_names, (
+                f"{name} exported {recorder.project_names}"
+            )
 
     # The run's own rows exist, so a row that is missing below is not for lack of one.
     assert RunTest.objects.filter(pk=run.pk).exists()
