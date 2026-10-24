@@ -15,6 +15,7 @@ type Router struct {
 	modelTargets    map[string][]RoutingTarget // model → routing targets
 	defaultStrategy Strategy
 	latencyTracker  *LatencyTracker
+	healthMonitor   *HealthMonitor
 }
 
 // RoutingResult is returned by Select with the chosen target and strategy name.
@@ -26,16 +27,31 @@ type RoutingResult struct {
 // NewRouter creates a router from config.
 // providerIDs is the set of valid provider IDs for validation.
 // modelProviders maps model name → list of provider IDs that serve it.
-func NewRouter(cfg config.RoutingConfig, providerIDs map[string]bool, modelProviders map[string][]string) (*Router, error) {
-	strategy, err := NewStrategy(cfg.DefaultStrategy)
-	if err != nil {
-		return nil, fmt.Errorf("creating default strategy: %w", err)
+func NewRouter(cfg config.RoutingConfig, providerIDs map[string]bool, modelProviders map[string][]string, existingHealth ...*HealthMonitor) (*Router, error) {
+	var strategy Strategy
+	if cfg.DefaultStrategy != "adaptive" {
+		var err error
+		strategy, err = NewStrategy(cfg.DefaultStrategy)
+		if err != nil {
+			return nil, fmt.Errorf("creating default strategy: %w", err)
+		}
+	}
+
+	tracker := NewLatencyTracker(0.3)
+	health := NewHealthMonitor(tracker, nil)
+	if len(existingHealth) > 0 && existingHealth[0] != nil {
+		health = existingHealth[0]
+		if health.tracker == nil {
+			return nil, fmt.Errorf("existing health monitor has no latency tracker")
+		}
+		tracker = health.tracker
 	}
 
 	r := &Router{
 		modelTargets:    make(map[string][]RoutingTarget),
 		defaultStrategy: strategy,
-		latencyTracker:  NewLatencyTracker(0.3),
+		latencyTracker:  tracker,
+		healthMonitor:   health,
 	}
 
 	// Build targets from explicit config.
@@ -73,6 +89,13 @@ func NewRouter(cfg config.RoutingConfig, providerIDs map[string]bool, modelProvi
 				Healthy:    true,
 			})
 		}
+	}
+
+	// Initialize adaptive routing only after all target validation has passed:
+	// its constructor starts a background weight-update loop.
+	if cfg.DefaultStrategy == "adaptive" {
+		strategy = NewAdaptiveStrategy(cfg.Adaptive, tracker, health)
+		r.defaultStrategy = strategy
 	}
 
 	slog.Info("router initialized",
@@ -200,4 +223,20 @@ func (r *Router) Strategy() string {
 // GetLatencyTracker returns the latency tracker for external health monitoring.
 func (r *Router) GetLatencyTracker() *LatencyTracker {
 	return r.latencyTracker
+}
+
+// GetHealthMonitor exposes the monitor used to score adaptive routing.
+// The server records request results into this same monitor.
+func (r *Router) GetHealthMonitor() *HealthMonitor {
+	return r.healthMonitor
+}
+
+// Close stops strategy-owned background workers. It is safe to call repeatedly.
+func (r *Router) Close() {
+	if r == nil {
+		return
+	}
+	if adaptive, ok := r.defaultStrategy.(*AdaptiveStrategy); ok {
+		adaptive.Stop()
+	}
 }
