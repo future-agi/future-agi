@@ -5,6 +5,8 @@ import { usePromptNodeQueries } from "./usePromptNodeQueries";
 import { useModelParameters } from "./useModelParameters";
 import { savePromptNode } from "./promptNodeFormUtils";
 
+const SUPPORTED_AGENT_BUILDER_OUTPUT_FORMATS = new Set(["string", "json"]);
+
 /**
  * Main custom hook for PromptNodeForm component
  * Manages all form state, effects, and handlers
@@ -29,7 +31,8 @@ export function usePromptNodeForm() {
   const watchedMessages = watch("messages");
   const watchedOutputFormat = watch("outputFormat");
   const isUnsupportedOutputFormat = Boolean(
-    watchedOutputFormat && watchedOutputFormat !== "string",
+    watchedOutputFormat &&
+      !SUPPORTED_AGENT_BUILDER_OUTPUT_FORMATS.has(watchedOutputFormat),
   );
 
   const modelConfig = useMemo(
@@ -61,17 +64,21 @@ export function usePromptNodeForm() {
   // even before the response-schema API list has loaded.
   const responseFormatMenuItems = useMemo(() => {
     const currentSchema = modelConfig?.responseSchema;
+    const menuItems = [...baseMenuItems];
+    if (
+      responseFormatField.value === "json_schema" &&
+      !menuItems.some((m) => m.value === "json_schema")
+    ) {
+      menuItems.push({ label: "JSON Schema", value: "json_schema" });
+    }
     if (
       currentSchema?.id &&
-      !baseMenuItems.some((m) => m.value === currentSchema.id)
+      !menuItems.some((m) => m.value === currentSchema.id)
     ) {
-      return [
-        ...baseMenuItems,
-        { label: currentSchema.name, value: currentSchema.id },
-      ];
+      menuItems.push({ label: currentSchema.name, value: currentSchema.id });
     }
-    return baseMenuItems;
-  }, [baseMenuItems, modelConfig?.responseSchema]);
+    return menuItems;
+  }, [baseMenuItems, modelConfig?.responseSchema, responseFormatField.value]);
 
   // Model parameters management
   const {
