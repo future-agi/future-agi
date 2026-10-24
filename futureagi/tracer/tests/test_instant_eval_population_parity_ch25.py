@@ -1,0 +1,325 @@
+"""Live ClickHouse 25: for the same filters and window, the population an
+Instant eval run (or an Insights report) reads equals the view's own total.
+
+Traces, spans and sessions are compared with the count statement their list
+builder runs for an exact page total. Users are compared with the Users list
+itself: its numbered page total when its statement decides every filter, and
+every user its cursor pages publish when it decides some per user. Both sides
+also equal the seeded truth, so a shared mistake can't pass.
+
+Runs on a lane database carrying the deployed schema (``_users_live_ch``).
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from tracer.services import instant_eval_users as users_service
+from tracer.services.clickhouse.list_cursor import ListCursor
+from tracer.services.clickhouse.v2.dispatch import get_v2_class
+from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
+from tracer.services.users_list_manager import UsersListManager
+from tracer.tests._users_live_ch import lane_client
+
+pytestmark = [pytest.mark.integration, pytest.mark.django_db]
+
+WINDOW_START = datetime(2026, 8, 3, tzinfo=UTC)
+WINDOW_END = WINDOW_START + timedelta(days=3)
+WINDOW = {
+    "column_id": "created_at",
+    "filter_config": {
+        "filter_type": "datetime",
+        "filter_op": "between",
+        "filter_value": [
+            WINDOW_START.isoformat().replace("+00:00", "Z"),
+            WINDOW_END.isoformat().replace("+00:00", "Z"),
+        ],
+    },
+}
+ERRORED = {
+    "column_id": "status",
+    "filter_config": {
+        "col_type": "SYSTEM_METRIC",
+        "filter_type": "text",
+        "filter_op": "equals",
+        "filter_value": "ERROR",
+    },
+}
+CLAUDE = {
+    "column_id": "model",
+    "filter_config": {
+        "col_type": "SYSTEM_METRIC",
+        "filter_type": "text",
+        "filter_op": "equals",
+        "filter_value": "claude-3",
+    },
+}
+
+
+def _more_than(column_id, value):
+    return {
+        "column_id": column_id,
+        "filter_config": {
+            "filter_type": "number",
+            "filter_op": "greater_than",
+            "filter_value": value,
+        },
+    }
+
+
+@pytest.fixture
+def ch_client():
+    with lane_client() as client:
+        yield client
+
+
+@pytest.fixture
+def seeded(ch_client, observe_project):
+    """Four users active in the window and one only before it:
+
+    ======  ========  ======  =================================
+    user    sessions  traces  notes
+    ======  ========  ======  =================================
+    U1      3         6
+    U2      1         1       its trace errored
+    U3      2         2       its LLM calls ran on claude-3
+    U4      1         3
+    U5      1         2       five days before the window
+    ======  ========  ======  =================================
+
+    plus one trace with no user or session. Each trace is a root span and one
+    LLM span under it.
+    """
+    project = observe_project.id
+    users = {name: uuid.uuid4() for name in ("U1", "U2", "U3", "U4", "U5")}
+    layout = {
+        "U1": ([2, 2, 2], {}),
+        "U2": ([1], {"status": "ERROR"}),
+        "U3": ([1, 1], {"model": "claude-3"}),
+        "U4": ([3], {}),
+        "U5": ([2], {"days": -5}),
+    }
+    rows = []
+    hour = 0
+
+    def trace(user, session, *, status="OK", model="gpt-4o", days=0):
+        nonlocal hour
+        hour += 1
+        start = WINDOW_START + timedelta(days=days, hours=hour)
+        trace_id = str(uuid.uuid4())
+        for kind, parent, span_model in (
+            ("agent", "", ""),
+            ("llm", f"{trace_id}-root", model),
+        ):
+            rows.append(
+                {
+                    "project_id": project,
+                    "observation_type": kind,
+                    "service_name": "svc",
+                    "start_time": start,
+                    "end_time": start + timedelta(seconds=2),
+                    "trace_id": trace_id,
+                    "id": f"{trace_id}-{'root' if not parent else 'llm'}",
+                    "parent_span_id": parent,
+                    "name": kind,
+                    "trace_session_id": session,
+                    "end_user_id": user,
+                    "latency_ms": 2000,
+                    "status": status,
+                    "model": span_model,
+                    "cost": 0.01,
+                    "total_tokens": 10,
+                    "prompt_tokens": 6,
+                    "completion_tokens": 4,
+                }
+            )
+
+    for name, (traces_per_session, extra) in layout.items():
+        for count in traces_per_session:
+            session = uuid.uuid4()
+            for _ in range(count):
+                trace(users[name], session, **extra)
+    trace(None, None)
+
+    columns = list(rows[0])
+    ch_client.execute(
+        f"INSERT INTO spans ({', '.join(columns)}) VALUES",
+        [tuple(row[c] for c in columns) for row in rows],
+    )
+    ch_client.execute(
+        "INSERT INTO end_users (project_id, end_user_id, organization_id, "
+        "user_id, user_id_type, first_seen) VALUES",
+        [
+            (
+                project,
+                user,
+                observe_project.organization_id,
+                f"user-{name}",
+                "string",
+                WINDOW_START - timedelta(days=10),
+            )
+            for name, user in users.items()
+        ],
+    )
+    try:
+        yield {name: str(user) for name, user in users.items()}
+    finally:
+        for table in ("spans", "end_users"):
+            ch_client.execute(
+                f"ALTER TABLE {table} DELETE WHERE project_id = %(project)s "
+                "SETTINGS mutations_sync = 2",
+                {"project": project},
+            )
+
+
+def _list_total(query_type: str, project_id: str, filters: list[dict]) -> int:
+    """The total a list page reports on its exact path: its builder's count."""
+    builder = get_v2_class(query_type)(project_id=project_id, filters=filters)
+    builder.build()
+    sql, params = builder.build_count_query()
+    rows = V2AnalyticsQueryService().execute_ch_query(sql, params).data
+    return int(rows[0]["total"]) if rows else 0
+
+
+def _users_manager(project, filters):
+    return UsersListManager(
+        organization_id=str(project.organization_id),
+        allowed_project_ids=[str(project.id)],
+        project_id=str(project.id),
+        filters=filters,
+        requested_columns=[],
+    )
+
+
+USERS = "/tracer/users/"
+
+
+def _users_page(client, project, filters, **params):
+    response = client.get(
+        USERS,
+        {
+            "project_id": str(project.id),
+            "filters": json.dumps(filters),
+            "page_size": 50,
+            **params,
+        },
+    )
+    assert response.status_code == 200, response.content
+    return response.json()["result"]
+
+
+def _users_listed_over_http(client, project, filters) -> set[str]:
+    """Every user the Users view's cursor pages publish, as the page asks."""
+    listed: set[str] = set()
+    cursor = None
+    while True:
+        page = _users_page(
+            client,
+            project,
+            filters,
+            page_size=2,
+            cursor_mode="true",
+            **({"cursor": cursor} if cursor else {}),
+        )
+        listed.update(str(r["end_user_id"]) for r in page["table"])
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return listed
+
+
+def _users_listed(project, filters) -> set[str]:
+    """Every user the Users list's cursor pages publish."""
+    listed: set[str] = set()
+    cursor = None
+    while True:
+        read = _users_manager(project, filters).list_cursor_payload(
+            page_size=2, cursor=cursor
+        )
+        listed.update(str(r["end_user_id"]) for r in read.payload["table"])
+        if not read.has_more:
+            return listed
+        cursor = ListCursor(
+            window_start=read.window_start,
+            window_end=read.window_end,
+            order=tuple(read.checkpoint_order),
+            seen_rows=read.seen_rows,
+        )
+
+
+@pytest.mark.parametrize(
+    ("unit", "query_type", "extra", "truth"),
+    [
+        ("traces", "TRACE_LIST", [], 13),
+        ("traces", "TRACE_LIST", [ERRORED], 1),
+        ("spans", "SPAN_LIST", [], 26),
+        ("spans", "SPAN_LIST", [CLAUDE], 2),
+        ("sessions", "SESSION_LIST", [], 7),
+    ],
+)
+def test_traces_spans_and_sessions_equal_their_lists_total(
+    seeded, observe_project, unit, query_type, extra, truth
+):
+    project_id = str(observe_project.id)
+    filters = [WINDOW, *extra]
+    population = users_service.count_view(project_id, unit, filters)
+    assert population.count == _list_total(query_type, project_id, filters) == truth
+    picked = users_service.pick_view(
+        project_id, unit, population.filters, n=100, after=None
+    )
+    assert len(picked) == truth
+
+
+def test_users_decided_in_the_lists_statement_equal_its_page_total(
+    seeded, observe_project, auth_client
+):
+    project_id = str(observe_project.id)
+    for filters, truth in [
+        ([WINDOW], {"U1", "U2", "U3", "U4"}),
+        ([WINDOW, _more_than("num_traces", 2)], {"U1", "U4"}),
+    ]:
+        population = users_service.count_users(project_id, filters)
+        listed = _users_manager(observe_project, filters).list_payload(
+            page_size=50, current_page=0
+        )
+        assert population.count == listed["total_count"] == len(truth)
+        # The Users view's numbered page reports the same total.
+        page = _users_page(auth_client, observe_project, filters, current_page_index=0)
+        assert page["total_count"] == population.count
+        picked = users_service.pick_users(project_id, filters, n=50, after=None)
+        assert (
+            {rid for rid, _ in picked}
+            == {str(r["end_user_id"]) for r in listed["table"]}
+            == {seeded[name] for name in truth}
+        )
+
+
+def test_users_decided_per_user_equal_every_user_the_list_publishes(
+    seeded, observe_project, auth_client
+):
+    project_id = str(observe_project.id)
+    for filters, truth in [
+        ([WINDOW, _more_than("num_sessions", 1)], {"U1", "U3"}),
+        ([WINDOW, _more_than("avg_trace_latency", 1000)], {"U1", "U2", "U3", "U4"}),
+    ]:
+        assert not users_service._UsersView(project_id, filters, None).in_sql
+        population = users_service.count_users(project_id, filters, finish=True)
+        listed = _users_listed(observe_project, filters)
+        assert (population.count, population.lower_bound) == (len(listed), False)
+        assert _users_listed_over_http(auth_client, observe_project, filters) == listed
+        picked = users_service.pick_users(project_id, filters, n=50, after=None)
+        assert {rid for rid, _ in picked} == listed == {seeded[n] for n in truth}
+
+
+def test_each_users_sessions_are_read_inside_the_window(seeded, observe_project):
+    sessions = users_service.user_sessions(
+        str(observe_project.id),
+        [seeded["U1"], seeded["U5"]],
+        WINDOW_START,
+        WINDOW_END,
+    )
+    # U1's three sessions; U5's only session is before the window.
+    assert len(sessions) == 3

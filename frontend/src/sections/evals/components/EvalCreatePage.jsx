@@ -19,9 +19,20 @@ import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
 import { useSnackbar } from "notistack";
-import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import {
+  useFeatureLocked,
+  CAPABILITY,
+  useFeatureDenied,
+} from "src/hooks/useCapabilities";
 import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
-import { FAGI_MODEL_VALUES } from "./ModelSelector";
+import { FAGI_MODEL_VALUES, JEV_MODEL_VALUES } from "./ModelSelector";
+import JevOutputConfig from "./JevOutputConfig";
+import {
+  buildJevMapping,
+  getJevValidationErrors,
+  hasExtraJevMessages,
+  orderChoiceScores,
+} from "../utils/jevMapping";
 
 import { useCreateEval } from "../hooks/useCreateEval";
 import { useUpdateEval } from "../hooks/useEvalDetail";
@@ -157,6 +168,9 @@ const EvalCreatePage = () => {
   // Fail closed while capabilities load (both flags true) so we never flash
   // Turing models or agent evals as available before the fetch resolves.
   const { locked: fagiLocked } = useFeatureLocked(CAPABILITY.TURING_MODELS);
+  // Only a confirmed denial locks Jev: not while capabilities load, and not
+  // when their fetch fails (self-hosted always allows Jev; the server checks).
+  const jevLocked = useFeatureDenied(CAPABILITY.JEV_MODELS);
   const { locked: agentEvalLocked, isLoading: capabilitiesLoading } =
     useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
@@ -182,6 +196,9 @@ const EvalCreatePage = () => {
   const [model, setModel] = useState("turing_large");
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
+  // Jev question details (criteria, choice descriptions, score levels). The
+  // output category locks after save, so they must be editable here.
+  const [jevMapping, setJevMapping] = useState({});
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
   const [multiChoice, setMultiChoice] = useState(false);
@@ -306,7 +323,14 @@ const EvalCreatePage = () => {
             setModel(config.model || d.model || "turing_large");
             setOutputType(d.output_type_normalized || "pass_fail");
             setPassThreshold(d.pass_threshold ?? 0.5);
-            setChoiceScores(d.choice_scores || {});
+            // jsonb returns choice_scores keys shortest first; autosave them
+            // in the order the author saved.
+            setChoiceScores(
+              orderChoiceScores(
+                d.choice_scores || {},
+                config.jev_mapping?.choice?.labels || d.choices,
+              ),
+            );
             setMultiChoice(d.multi_choice ?? config.multi_choice ?? false);
             setDescription(d.description || "");
             setCheckInternet(config.check_internet ?? false);
@@ -330,6 +354,7 @@ const EvalCreatePage = () => {
               d.template_format || config.template_format || "mustache",
             );
             if (config.messages) setMessages(config.messages);
+            setJevMapping(config.jev_mapping || {});
             if (config.few_shot_examples) {
               setFewShotExamples(config.few_shot_examples || []);
             }
@@ -371,7 +396,30 @@ const EvalCreatePage = () => {
 
   // Auto-save config to draft (debounced, skip initial load)
   const autoSaveTimer = useRef(null);
+  const autoSaveErrorRef = useRef(null);
   const autoSaveSkipFirst = useRef(!!urlDraftId); // skip first trigger when loading existing draft
+  const isJevModel = JEV_MODEL_VALUES.has(model);
+  const jevErrors = isJevModel
+    ? getJevValidationErrors({
+        mapping: buildJevMapping(outputType, choiceScores, jevMapping),
+        config: {
+          check_internet: checkInternet,
+          few_shot_examples: fewShotExamples,
+          ...(evalType === "agent"
+            ? {
+                agent_mode: agentMode,
+                tools: buildToolsPayload(connectorIds),
+                knowledge_bases: knowledgeBaseIds,
+                data_injection: buildDataInjection(contextOptions),
+              }
+            : {}),
+        },
+        multiChoice,
+        choiceScores,
+        messages: evalType === "llm" ? messages : [],
+      })
+    : [];
+
   const buildUpdatePayload = useCallback(() => {
     const dataInjection = buildDataInjection(contextOptions);
 
@@ -414,6 +462,12 @@ const EvalCreatePage = () => {
           ? fewShotExamples.map((ds) => ({ id: ds.id, name: ds.name }))
           : undefined,
       template_format: templateFormat,
+      // Without it the server would keep the draft's earlier mapping, which
+      // no longer matches the output type once the user changes it.
+      // A code eval runs no model: no Jev mapping for it.
+      ...(isJevModel && evalType !== "code"
+        ? { jev_mapping: buildJevMapping(outputType, choiceScores, jevMapping) }
+        : {}),
     };
   }, [
     evalType,
@@ -436,6 +490,8 @@ const EvalCreatePage = () => {
     messages,
     fewShotExamples,
     templateFormat,
+    jevMapping,
+    isJevModel,
   ]);
 
   useEffect(() => {
@@ -446,7 +502,22 @@ const EvalCreatePage = () => {
     }
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
-      updateDraft.mutate(buildUpdatePayload());
+      updateDraft.mutate(buildUpdatePayload(), {
+        // A refused autosave (a Score with no levels, say) used to leave
+        // later edits silently unsaved. Say why, once per reason.
+        onError: (error) => {
+          const message = getSafeActionErrorMessage(
+            error,
+            "Your latest changes couldn't be saved.",
+          );
+          if (autoSaveErrorRef.current === message) return;
+          autoSaveErrorRef.current = message;
+          enqueueSnackbar(message, { variant: "error" });
+        },
+        onSuccess: () => {
+          autoSaveErrorRef.current = null;
+        },
+      });
     }, 800);
     return () => {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
@@ -675,8 +746,16 @@ const EvalCreatePage = () => {
           .length > 0
       : !!instructions.trim() &&
         extractVariables(instructions, templateFormat).length > 0;
+  // What the detail page blocks on: a Jev setup Jev can't run, or Jev
+  // locked on the plan. Test and Save stay off until it is fixed.
+  const jevBlockedReason =
+    isJevModel && evalType !== "code"
+      ? jevErrors[0] ||
+        (jevLocked ? "Jev models aren't included in your plan." : "")
+      : "";
   const canSaveSingle =
     !!name.trim() &&
+    !jevBlockedReason &&
     (evalType === "code" ? !!code.trim() : singleHasInstructionVariables);
   const canSaveComposite = compositeName.trim() && selectedChildren.length > 0;
   // Single evals require a successful test run before save. Composites
@@ -1117,6 +1196,19 @@ const EvalCreatePage = () => {
                       onPassThresholdChange={setPassThreshold}
                       multiChoice={multiChoice}
                       onMultiChoiceChange={setMultiChoice}
+                      isJevModel={isJevModel}
+                    />
+                  )}
+
+                  {isJevModel && evalType !== "code" && (
+                    <JevOutputConfig
+                      outputType={outputType}
+                      choiceScores={choiceScores}
+                      mapping={jevMapping}
+                      onChange={setJevMapping}
+                      errors={jevErrors}
+                      hasExtraMessages={hasExtraJevMessages(messages)}
+                      locked={jevLocked}
                     />
                   )}
 
@@ -1398,12 +1490,17 @@ const EvalCreatePage = () => {
                         ? hasCode
                         : instructionsReady;
                   const testDisabled =
-                    isTesting || !hasTestInput || !canEditEvals;
+                    isTesting ||
+                    !hasTestInput ||
+                    !canEditEvals ||
+                    (mode !== "composite" && !!jevBlockedReason);
 
                   let testDisabledReason = "";
                   if (!canEditEvals) {
                     testDisabledReason =
                       "You don't have permission to create or edit evaluations.";
+                  } else if (mode !== "composite" && jevBlockedReason) {
+                    testDisabledReason = jevBlockedReason;
                   } else if (isTesting) {
                     testDisabledReason = "Test is already running.";
                   } else if (mode === "composite" && !hasCompositeChildren) {
@@ -1481,6 +1578,8 @@ const EvalCreatePage = () => {
                       saveDisabledReason =
                         "Add at least one child evaluation before saving.";
                     }
+                  } else if (jevBlockedReason) {
+                    saveDisabledReason = jevBlockedReason;
                   } else if (!name.trim()) {
                     saveDisabledReason =
                       "Give this evaluation a name before saving.";

@@ -350,3 +350,93 @@ class TestApiFilterParity:
         _make_spans(project, 4, observation_type="llm", prefix="llm")
         task = _make_task(project, row_type=RowType.VOICE_CALLS, sampling_rate=100.0)
         assert set(_ids(task)) == {c.id for c in calls}
+
+
+class TestExplicitIdRows:
+    """A historical task naming its traces outright is read by id."""
+
+    @staticmethod
+    def _task(filters):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            run_type=RunType.HISTORICAL,
+            row_type=RowType.TRACES,
+            filters=filters,
+            project_id=uuid.uuid4(),
+        )
+
+    @staticmethod
+    def _reader(monkeypatch, present):
+        from contextlib import contextmanager
+
+        from tracer.selectors.eval_tasks import row_resolver
+
+        class Reader:
+            def root_ids_by_trace_ids(self, ids, project_ids):
+                return [i for i in ids if i in present]
+
+        @contextmanager
+        def get_reader():
+            yield Reader()
+
+        monkeypatch.setattr(row_resolver, "get_reader", get_reader)
+
+    def test_the_limit_counts_rows_that_exist(self, monkeypatch):
+        from tracer.selectors.eval_tasks.row_resolver import _explicit_id_rows
+
+        self._reader(monkeypatch, present={"b", "c", "d"})
+        rows = _explicit_id_rows(
+            self._task({"trace_id": ["a", "b", "c", "d"]}),
+            limit=2,
+            sampling_rate=100.0,
+        )
+        assert rows.matched_ids == ("b", "c")
+
+    def test_ids_with_a_date_range_keep_the_bounded_proof(self, monkeypatch):
+        """This read doesn't apply a range, so a saved task with ids and a
+        date range is not read by id (it would evaluate rows outside it)."""
+        from tracer.selectors.eval_tasks.row_resolver import _explicit_id_rows
+
+        self._reader(monkeypatch, present={"a"})
+        task = self._task(
+            {"trace_id": ["a"], "date_range": ["2026-01-01", "2026-01-02"]}
+        )
+        assert _explicit_id_rows(task, limit=None, sampling_rate=100.0) is None
+
+    def test_sessions_are_read_by_their_own_roots_not_a_project_scan(self, monkeypatch):
+        """Session ids are checked through ``roots_by_session_ids`` (only
+        those sessions and their remap groups), not the FINAL project scan
+        behind ``distinct_session_ids_with_filters``; an id comes back as it
+        was asked."""
+        from contextlib import contextmanager
+        from types import SimpleNamespace
+
+        from tracer.selectors.eval_tasks import row_resolver
+        from tracer.selectors.eval_tasks.row_resolver import _explicit_id_rows
+
+        asked = []
+
+        class Reader:
+            def roots_by_session_ids(self, ids, *, project_id):
+                asked.append(list(ids))
+                return [
+                    SimpleNamespace(trace_session_id=i, trace_id=f"t-{i}")
+                    for i in ids
+                    if i != "gone"
+                ]
+
+        @contextmanager
+        def get_reader():
+            yield Reader()
+
+        monkeypatch.setattr(row_resolver, "get_reader", get_reader)
+        task = SimpleNamespace(
+            run_type=RunType.HISTORICAL,
+            row_type=RowType.SESSIONS,
+            filters={"session_id": ["a", "gone", "b", "c"]},
+            project_id=uuid.uuid4(),
+        )
+        rows = _explicit_id_rows(task, limit=2, sampling_rate=100.0)
+        assert rows.matched_ids == ("a", "b")
+        assert asked == [["a", "gone", "b", "c"]]

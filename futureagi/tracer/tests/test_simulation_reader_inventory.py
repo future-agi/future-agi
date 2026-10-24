@@ -1641,6 +1641,14 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "latest_physical_span_rows_sql": _SESSION_OR_USER,
     },
     "tracer.services.clickhouse.v2.span_reader": {
+        "CHSpanReader._roots_resolved": filed(
+            BY_ID_ALONE,
+            why=(
+                "root spans of the session or end-user ids it is given (Instant "
+                "eval and Insights, through roots_by_session_ids and "
+                "roots_by_end_user_ids); the project only narrows the read"
+            ),
+        ),
         "CHSpanReader._session_filter_remap": filed(
             NO_SPAN_TABLE,
             why=(
@@ -1788,6 +1796,22 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "GroupingFeatureStore.read_vectors": _GROUPING_STORE,
         "GroupingFeatureStore.write_and_verify": _GROUPING_STORE,
         "nearest_sql": _GROUPING_STORE,
+    },
+    "tracer.services.instant_eval_rows": {
+        "_FACET_SQL": filed(
+            BY_ID_ALONE,
+            why=(
+                "Instant eval facets of the trace, session or user ids a run reads; "
+                "the run's project only narrows the read"
+            ),
+        ),
+        "_extent_sql": filed(
+            BY_ID_ALONE,
+            why=(
+                "first and last span start of the trace, session or user ids an "
+                "Instant eval run reads; the run's project only narrows the read"
+            ),
+        ),
     },
     "tracer.services.users_list_manager": {
         "_users_attr_enrichment_query": _SESSION_OR_USER,
@@ -2187,7 +2211,8 @@ def _filing_problems(readers):
                     )
                 ]
                 if not any(
-                    name.endswith(("_id", "_ids")) and name not in SCOPE_IDS
+                    (name == "ids" or name.endswith(("_id", "_ids")))
+                    and name not in SCOPE_IDS
                     for name in names
                 ):
                     problems.append(
@@ -2992,6 +3017,12 @@ ROW_TYPES = {
     "tracer.EvalTask.project": USER_MADE,
     "tracer.EvaluationRun.project": USER_MADE,
     "tracer.ImagineAnalysis.project": USER_MADE,
+    # Insights reports and Instant eval runs are started from the Insights and
+    # Ask pages, whose views resolve the project through Project.objects, which
+    # leaves the hidden project out.
+    "tracer.InsightConfig.project": USER_MADE,
+    "tracer.InsightRun.project": USER_MADE,
+    "tracer.InstantEvalRun.project": USER_MADE,
     "tracer.ObservabilityProvider.project": OTHER_PROJECTS_ROW,
     "tracer.ObservationSpan.project": TRACE_STORE_ROW,
     "tracer.ProjectCapability.project": JOB_THROUGH_MANAGERS,

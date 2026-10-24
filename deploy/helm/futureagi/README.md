@@ -682,8 +682,12 @@ turns on the Enterprise features in the public `futureagi/future-agi` image.
   the datastore hosts; add an S3 or MinIO endpoint to `noProxy` when it is
   reachable directly. Object storage goes through the proxy too, unless the
   host it connects to matches `noProxy` (for AWS S3 with no endpoint set,
-  `<bucket>.s3.<region>.amazonaws.com`). The LLM gateway does not use the
-  proxy yet.
+  `<bucket>.s3.<region>.amazonaws.com`). The LLM gateway uses the proxy for
+  its System One decision calls (Jev on TypeSafe, Perplexity Decider),
+  decision calls made with the caller's own key, and its speech relay. Its
+  chat providers connect directly, and so do an organization's OpenAI-format
+  decision provider with its own base URL and the `openai` provider when it
+  serves `/v1/decisions`: allow that egress.
 - **Custom CA.** `global.caBundle.configMap` (or `.secret`) mounts a PEM
   bundle at `/etc/futureagi/ca/ca.crt` and points `SSL_CERT_FILE`,
   `REQUESTS_CA_BUNDLE` and friends at it. It replaces the pods' trust store,

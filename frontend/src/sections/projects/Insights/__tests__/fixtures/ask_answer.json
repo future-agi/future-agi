@@ -1,0 +1,31 @@
+{
+  "status": true,
+  "result": {
+    "answer": [
+      {
+        "text": "Customers who ask for a human are hit hardest: all 4 conversations in Ignored Explicit Requests for Human Agent ended abandoned, with sentiment 1.0.",
+        "unit_ids": ["abf42ede-1742-5a77-acf0-6023fe8c2d61"],
+        "category_ids": ["dbabb1b07db7"],
+        "evidence": [
+          {
+            "unit_id": "abf42ede-1742-5a77-acf0-6023fe8c2d61",
+            "quote": "no. a human. agent. representative"
+          }
+        ]
+      },
+      {
+        "text": "Next are customers chasing late orders: 10 had their order number re-asked, and 9 of them left unresolved.",
+        "unit_ids": [
+          "5b2ca31b-3453-52f3-a646-a8801b377c16",
+          "910105df-fc0e-5444-84e2-9f14361b21ff"
+        ],
+        "category_ids": ["21d2b5dfc84e"],
+        "evidence": []
+      }
+    ],
+    "follow_ups": [
+      "Which of these users came back later?",
+      "How many asked for a human more than once?"
+    ]
+  }
+}

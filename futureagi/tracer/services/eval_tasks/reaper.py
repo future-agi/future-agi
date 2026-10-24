@@ -8,6 +8,8 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
+import structlog
+from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
@@ -16,6 +18,10 @@ from tracer.models.observation_span import EvalEntryStatus, EvalLogger
 
 if TYPE_CHECKING:
     from tracer.models.eval_task import EvalTask
+
+logger = structlog.get_logger(__name__)
+
+_GAVE_UP = "reaper: max attempts exceeded"
 
 # The shortest staleness a reap may act on when it does not know whether a
 # workflow is draining the task. A reap taken blind races a run it cannot see:
@@ -82,12 +88,34 @@ def reap_stale_running(
     failed = stale.filter(attempts__gte=max_attempts).update(
         status=EvalEntryStatus.ERRORED,
         error=True,
-        error_message="reaper: max attempts exceeded",
+        error_message=_GAVE_UP,
         updated_at=now,
     )
+    if failed:
+        _record_instant_answers(task, now)
     requeued = stale.filter(attempts__lt=max_attempts).update(
         status=EvalEntryStatus.PENDING,
         attempts=F("attempts") + 1,
         updated_at=now,
     )
     return requeued, failed
+
+
+def _record_instant_answers(task: EvalTask, at) -> None:
+    """An Instant eval run shows the entries just given up on as failed (not
+    still pending) while it runs. Never fails the reap."""
+    from tracer.services.instant_eval_answers import record_answers
+
+    ids = EvalLogger.objects.filter(
+        eval_task_id=str(task.id),
+        status=EvalEntryStatus.ERRORED,
+        error_message=_GAVE_UP,
+        updated_at=at,
+    ).values_list("id", flat=True)
+    try:
+        with transaction.atomic():
+            record_answers(task.id, ids)
+    except Exception:
+        logger.warning(
+            "instant_eval_reaped_answers_failed", task_id=str(task.id), exc_info=True
+        )

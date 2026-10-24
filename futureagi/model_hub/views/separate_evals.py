@@ -32,6 +32,10 @@ from agentic_eval.core.embeddings.serving_client import (
     serving_available,
 )
 from agentic_eval.core_evals.fi_utils.exceptions import CodeEvalSetupError
+from agentic_eval.core_evals.run_prompt.litellm_models import (
+    MissingProviderKeyError,
+    missing_provider_key_message,
+)
 from model_hub.constants import (
     EVAL_PLAYGROUND_CURL_CODE,
     EVAL_PLAYGROUND_JS_CODE,
@@ -2598,6 +2602,8 @@ class EvalTemplateListView(APIView):
                     EvalListItem(
                         id=tid,
                         name=template.name,
+                        model=template.model,
+                        jev_mapping=(template.config or {}).get("jev_mapping"),
                         template_type=template.template_type or "single",
                         eval_type=eval_type,
                         output_type=derive_output_type(template),
@@ -2964,15 +2970,22 @@ class EvalTemplateCreateV2View(APIView):
                         )
                         return self._gm.bad_request("Instructions are required.")
 
-            # 5. Validate scoring fields
+            from model_hub.utils.jev_templates import validate_jev_template_save
+            from tfc.ee_gates import is_jev_model
+
+            # 5. Validate scoring fields. A Jev model reports missing choices
+            # with its own typed code (validate_jev_template_save below); the
+            # scores themselves are checked the same for every model.
             if req.output_type == "deterministic":
                 if not req.choice_scores:
-                    return self._gm.bad_request(
-                        "choice_scores is required when output_type is 'deterministic'."
-                    )
-                errors = validate_choice_scores(req.choice_scores)
-                if errors:
-                    return self._gm.bad_request("; ".join(errors))
+                    if not is_jev_model(req.model):
+                        return self._gm.bad_request(
+                            "choice_scores is required when output_type is 'deterministic'."
+                        )
+                else:
+                    errors = validate_choice_scores(req.choice_scores)
+                    if errors:
+                        return self._gm.bad_request("; ".join(errors))
 
             threshold_errors = validate_pass_threshold(req.pass_threshold)
             if threshold_errors:
@@ -3103,7 +3116,7 @@ class EvalTemplateCreateV2View(APIView):
                     config["choices"] = choices_list
                 if choices_map:
                     config["choices_map"] = choices_map
-                    config["multi_choice"] = False
+                    config["multi_choice"] = req.multi_choice
                 criteria = req.instructions
 
             else:
@@ -3133,7 +3146,7 @@ class EvalTemplateCreateV2View(APIView):
                     config["choices"] = choices_list
                 if choices_map:
                     config["choices_map"] = choices_map
-                    config["multi_choice"] = False
+                    config["multi_choice"] = req.multi_choice
                 criteria = req.instructions
 
             # Store template_format in config
@@ -3143,6 +3156,34 @@ class EvalTemplateCreateV2View(APIView):
             config["pass_threshold"] = req.pass_threshold
             config["choice_scores"] = req.choice_scores
             config["error_localizer_enabled"] = bool(req.error_localizer_enabled)
+
+            if is_jev_model(req.model) or "jev_mapping" in request.validated_data:
+                if "jev_mapping" in request.validated_data:
+                    config["jev_mapping"] = req.jev_mapping
+                for key in (
+                    "tools",
+                    "knowledge_bases",
+                    "data_injection",
+                    "input_data_types",
+                ):
+                    value = getattr(req, key, None)
+                    if value is not None:
+                        config[key] = value
+                if req.mode is not None:
+                    config["agent_mode"] = req.mode
+                if req.few_shot_examples:
+                    config["few_shot_examples"] = req.few_shot_examples
+                if req.messages:
+                    config["messages"] = req.messages
+            jev_error = validate_jev_template_save(
+                config,
+                model=req.model,
+                mapping_provided="jev_mapping" in request.validated_data,
+                choice_scores=req.choice_scores,
+                multi_choice=req.multi_choice,
+            )
+            if jev_error is not None:
+                return jev_error
 
             # Build eval_tags — category tags only (not type)
             eval_tags = list(req.tags) if req.tags else []
@@ -3158,7 +3199,7 @@ class EvalTemplateCreateV2View(APIView):
                 choices=choices_list,
                 description=req.description or "",
                 criteria=criteria,
-                multi_choice=False,
+                multi_choice=req.multi_choice,
                 proxy_agi=True,
                 visible_ui=not is_draft,
                 model=req.model,
@@ -3292,6 +3333,7 @@ class EvalTemplateDetailView(APIView):
                 eval_type=derive_eval_type(template),
                 instructions=detail_criteria,
                 model=detail_model,
+                jev_mapping=config.get("jev_mapping"),
                 output_type=(
                     template.output_type_normalized
                     if template.output_type_normalized
@@ -3658,6 +3700,32 @@ class EvalTemplateUpdateView(APIView):
                 template.config = {}
             template.config["template_format"] = template_format
 
+            from model_hub.utils.jev_templates import (
+                drop_jev_model_from_code_eval,
+                validate_jev_template_save,
+            )
+
+            if "jev_mapping" in request.validated_data:
+                template.config["jev_mapping"] = req.jev_mapping
+            # A code eval runs no model: a Jev model kept from an LLM draft
+            # would route it to Jev, which can't run code, and the picker that
+            # could change it is hidden on the Code tab.
+            drop_jev_model_from_code_eval(template)
+            if req.input_data_types is not None:
+                template.config["input_data_types"] = req.input_data_types
+            jev_error = validate_jev_template_save(
+                template.config,
+                model=template.model or template.config.get("model"),
+                previous_model=_original_field_values.get("model")
+                or (_original_field_values.get("config") or {}).get("model"),
+                mapping_provided="jev_mapping" in request.validated_data
+                and "jev_mapping" in template.config,
+                choice_scores=template.choice_scores,
+                multi_choice=template.multi_choice,
+            )
+            if jev_error is not None:
+                return jev_error
+
             # Publish draft → make visible in UI
             if req.publish:
                 template.visible_ui = True
@@ -3775,6 +3843,7 @@ class EvalTemplateVersionListView(APIView):
                         criteria=v.criteria or "",
                         model=v.model or "",
                         config_snapshot=cs,
+                        jev_mapping=cs.get("jev_mapping"),
                         created_by_name=created_by_name,
                         created_at=v.created_at.isoformat() if v.created_at else "",
                         # Column-level fields the FE reads directly.
@@ -3853,7 +3922,34 @@ class EvalTemplateVersionCreateView(APIView):
                 return self._gm.not_found("Eval template not found or not editable.")
 
             # Use live template.config; FE-supplied snapshot is incomplete.
-            effective_config = template.config or {}
+            from model_hub.utils.jev_templates import validate_jev_template_save
+
+            effective_config = copy.deepcopy(template.config or {})
+            supplied_snapshot = req.config_snapshot or {}
+            mapping_provided = (
+                "jev_mapping" in request.validated_data
+                or "jev_mapping" in supplied_snapshot
+            )
+            if mapping_provided:
+                effective_config["jev_mapping"] = (
+                    req.jev_mapping
+                    if "jev_mapping" in request.validated_data
+                    else supplied_snapshot["jev_mapping"]
+                )
+            effective_model = (
+                req.model or template.model or effective_config.get("model") or ""
+            )
+            effective_config["model"] = effective_model
+            jev_error = validate_jev_template_save(
+                effective_config,
+                model=effective_model,
+                previous_model=template.model,
+                mapping_provided=mapping_provided,
+                choice_scores=template.choice_scores,
+                multi_choice=template.multi_choice,
+            )
+            if jev_error is not None:
+                return jev_error
             version = EvalTemplateVersion.objects.create_version(
                 eval_template=template,
                 prompt_messages=effective_config.get("messages") or [],
@@ -6313,7 +6409,8 @@ class EvalUsageStatsView(APIView):
                 result_label = ""
                 if isinstance(output_data, dict):
                     raw_output = output_data.get("output")
-                    reason = output_data.get("reason", "")
+                    # A stored null reason (older Jev runs) reads as no reason.
+                    reason = output_data.get("reason") or ""
                     if isinstance(raw_output, dict):
                         # Choice object
                         result_label = raw_output.get("label", "")
@@ -6714,6 +6811,8 @@ class TraceEvalView(APIView):
                 )
 
             except Exception as eval_error:
+                from tfc.ee_gates import jev_error_message
+
                 logger.exception(
                     "trace_evaluation_execution_failed",
                     error_type=type(eval_error).__name__,
@@ -6722,7 +6821,10 @@ class TraceEvalView(APIView):
                     template_id=str(template_id),
                     trace_id=req.trace_id,
                     status="failed",
-                    reason="Evaluation could not be completed. Please retry.",
+                    reason=(
+                        jev_error_message(eval_error)
+                        or "Evaluation could not be completed. Please retry."
+                    ),
                 )
 
             return self._gm.success_response(response.model_dump())
@@ -6871,10 +6973,10 @@ class EvalPlayGroundAPIView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
+        from tfc.ee_gates import ee_model_gate_for_template
 
         validated_data = request.validated_data
-        gate = turing_oss_gate_for_template(
+        gate = ee_model_gate_for_template(
             validated_data.get("model"), validated_data.get("template_id")
         )
         if gate is not None:
@@ -7374,6 +7476,14 @@ class EvalPlayGroundAPIView(APIView):
             except EvalTemplate.DoesNotExist:
                 return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
 
+            from model_hub.utils.jev_templates import validate_jev_binding
+
+            jev_error = validate_jev_binding(
+                eval_template, model=model, runtime_config=runtime_config
+            )
+            if jev_error is not None:
+                return jev_error
+
             # Validate + coerce function params (matches Dataset / Experiments
             # paths). Without this, FE-sent blank strings flow straight into
             # int()/float() inside eval bodies and crash with cryptic errors.
@@ -7416,6 +7526,17 @@ class EvalPlayGroundAPIView(APIView):
                     error_type=type(exc).__name__,
                 )
                 return self._gm.bad_request(str(exc))
+            except MissingProviderKeyError as exc:
+                from model_hub.utils.jev_templates import jev_error_response
+
+                # A missing TypeSafe key is the typed JEV_KEY_MISSING, as on the
+                # SDK path, so the frontend can key off the code.
+                jev_error = jev_error_response(exc)
+                if jev_error is not None:
+                    return jev_error
+                # Bring-your-own-key models: say which key to add, from a fixed
+                # template rather than the exception text.
+                return self._gm.bad_request(missing_provider_key_message(exc.provider))
             except Exception as exc:
                 if UsageLimitExceeded is not None and isinstance(
                     exc, UsageLimitExceeded
@@ -7425,6 +7546,16 @@ class EvalPlayGroundAPIView(APIView):
                         error_type=type(exc).__name__,
                     )
                     return self._gm.usage_limit_response(exc.check_result)
+                from model_hub.utils.jev_templates import jev_error_response
+
+                # A failed Jev run says what to fix: a rejected key will never
+                # succeed on retry. The text is fixed per typed code.
+                jev_error = jev_error_response(exc)
+                if jev_error is not None:
+                    logger.warning(
+                        "eval_playground_jev_error", code=jev_error.data["code"]
+                    )
+                    return jev_error
                 logger.exception(
                     "eval_playground_execution_failed",
                     error_type=type(exc).__name__,
@@ -7953,10 +8084,10 @@ class TestEvaluationTemplateAPIView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
+        from tfc.ee_gates import ee_model_gate_for_template
 
         validated_data = request.validated_data
-        gate = turing_oss_gate_for_template(
+        gate = ee_model_gate_for_template(
             validated_data.get("model"),
             template_id=validated_data.get("template_id"),
             eval_type=validated_data.get("eval_type"),
@@ -8078,6 +8209,14 @@ class TestEvaluationTemplateAPIView(APIView):
                     model=model,
                 )
 
+            from model_hub.utils.jev_templates import validate_jev_binding
+
+            jev_error = validate_jev_binding(
+                eval_template, model=model, runtime_config=config
+            )
+            if jev_error is not None:
+                return jev_error
+
             # Run the evaluation with the provided config
             response = run_eval_func(
                 config,
@@ -8103,7 +8242,24 @@ class TestEvaluationTemplateAPIView(APIView):
                 error_type=type(exc).__name__,
             )
             return self._gm.bad_request(str(exc))
+        except MissingProviderKeyError as exc:
+            from model_hub.utils.jev_templates import jev_error_response
+
+            # As in the eval playground: a missing TypeSafe key is typed, any
+            # other says which key to add.
+            jev_error = jev_error_response(exc)
+            if jev_error is not None:
+                return jev_error
+            return self._gm.bad_request(missing_provider_key_message(exc.provider))
         except Exception as exc:
+            from model_hub.utils.jev_templates import jev_error_response
+
+            jev_error = jev_error_response(exc)
+            if jev_error is not None:
+                logger.warning(
+                    "evaluation_template_test_jev_error", code=jev_error.data["code"]
+                )
+                return jev_error
             logger.exception(
                 "evaluation_template_test_failed",
                 error_type=type(exc).__name__,

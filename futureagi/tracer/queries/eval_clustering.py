@@ -13,11 +13,11 @@ import json
 import math
 import re
 from datetime import timedelta
-from typing import List, Optional, Tuple
 
 import structlog
-from django.db import IntegrityError, transaction
-from django.db.models import Exists, OuterRef, Q
+from django.db import DatabaseError, IntegrityError, ProgrammingError, transaction
+from django.db.models import CharField, Exists, OuterRef, Q
+from django.db.models.functions import Cast
 from django.utils import timezone
 
 from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
@@ -42,6 +42,8 @@ COSINE_THRESHOLD = 0.45
 # Only cluster recent eval failures — old results aren't actionable and
 # bound the per-run work unit.
 _CLUSTER_WINDOW_DAYS = 60
+# Rows read per page while collecting a batch of unclustered failures.
+_FETCH_PAGE = 2000
 
 # Clustering is scoped to eval-TASK results — rows carrying an ``eval_task_id``.
 # The (now-retired) eval-task cron was the sole clustering trigger, but the old
@@ -102,7 +104,9 @@ def _eval_result_score(entry: EvalLogger) -> float | None:
     if score is not None:
         return score
 
-    template = getattr(getattr(entry, "custom_eval_config", None), "eval_template", None)
+    template = getattr(
+        getattr(entry, "custom_eval_config", None), "eval_template", None
+    )
     if template is None:
         return None
     choice_scores = getattr(template, "choice_scores", None) or {}
@@ -167,9 +171,71 @@ def is_clusterable_eval_failure(entry: EvalLogger) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _instant_eval_task_ids():
+    """The eval tasks Instant eval started, as the text ``eval_task_id``, or
+    None when the Instant eval table doesn't exist yet.
+
+    Workers can be deployed before migration 0117 is applied, and without
+    the table there are no Instant eval runs to exclude. Only that case
+    fails open: any other database error still fails the fetch, because
+    Instant eval answers clustered by mistake stay in Error Feed, while a
+    failed fetch only leaves its rows for a later drain.
+    """
+    from tracer.models.instant_eval import InstantEvalRun
+
+    runs = InstantEvalRun.objects.all()
+    try:
+        # A savepoint, so a failed read can't break a surrounding transaction.
+        with transaction.atomic(using=runs.db):
+            runs.exists()
+    except ProgrammingError as exc:
+        # Only "no such table" (42P01) is the before-0117 case; an undefined
+        # column or bad SQL must fail the fetch, not cluster Instant eval rows.
+        cause = exc.__cause__
+        code = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
+        if code != "42P01":
+            raise
+        logger.warning("instant_eval_runs_unreadable", exc_info=True)
+        return None
+    return runs.annotate(tid=Cast("eval_task_id", output_field=CharField())).values(
+        "tid"
+    )
+
+
+def is_instant_eval_task(eval_task_id) -> bool:
+    """Whether an eval task was started by Instant eval, whose answers stay
+    out of Error Feed clustering.
+
+    Every regular eval task asks this for each failing result, so a failed
+    read (the Instant eval table not migrated yet, for one) answers "no"
+    rather than failing the entry. That only starts a clustering run, and
+    the fetch for that run excludes Instant eval answers again.
+    """
+    import uuid
+
+    from tracer.models.instant_eval import InstantEvalRun
+
+    try:
+        task_id = uuid.UUID(str(eval_task_id))
+    except (TypeError, ValueError):
+        return False
+    runs = InstantEvalRun.objects.filter(eval_task_id=task_id)
+    try:
+        # A savepoint, so a failed read can't break a surrounding transaction.
+        with transaction.atomic(using=runs.db):
+            return runs.exists()
+    except DatabaseError:
+        logger.warning(
+            "instant_eval_task_check_failed",
+            eval_task_id=str(task_id),
+            exc_info=True,
+        )
+        return False
+
+
 def get_unclustered_eval_results(
-    project_id: str, limit: Optional[int] = None
-) -> List[ClusterableEvalResult]:
+    project_id: str, limit: int | None = None
+) -> list[ClusterableEvalResult]:
     """
     Fetch EvalLogger rows that failed, have an explanation, and haven't
     been assigned to a cluster yet.
@@ -200,14 +266,18 @@ def get_unclustered_eval_results(
     # session→project. ``trace_id`` / ``trace_session_id`` are read below from the
     # eval row's own FK columns (no join). Targets still never co-cluster: the
     # centroid family is keyed by (target_type, eval_name) downstream.
+    evals = EvalLogger.objects.filter(
+        _FAILING_EVAL_Q,
+        custom_eval_config__project_id=project_id,
+        created_at__gte=since,
+    ).select_related("custom_eval_config", "custom_eval_config__eval_template")
+    # Instant eval answers never cluster, even when a regular eval's failure
+    # starts the drain.
+    instant_task_ids = _instant_eval_task_ids()
+    if instant_task_ids is not None:
+        evals = evals.exclude(eval_task_id__in=instant_task_ids)
     evals = (
-        EvalLogger.objects.filter(
-            _FAILING_EVAL_Q,
-            custom_eval_config__project_id=project_id,
-            created_at__gte=since,
-        )
-        .select_related("custom_eval_config", "custom_eval_config__eval_template")
-        .filter(
+        evals.filter(
             ~Exists(
                 ErrorClusterTraces.objects.filter(
                     eval_logger_id=OuterRef("pk"),
@@ -236,28 +306,46 @@ def get_unclustered_eval_results(
         .order_by("created_at")
     )
 
-    results: List[ClusterableEvalResult] = []
-    # .iterator() so a huge backlog isn't all loaded into memory just to
-    # stop early once `limit` unclustered rows have been collected.
-    for ev in evals.iterator(chunk_size=2000):
-        if not is_clusterable_eval_failure(ev):
-            continue
-        results.append(
-            ClusterableEvalResult(
-                eval_logger_id=str(ev.id),
-                project_id=project_id,
-                eval_name=ev.custom_eval_config.name,
-                eval_config_id=str(ev.custom_eval_config_id),
-                explanation=ev.eval_explanation,
-                target_type=ev.target_type,
-                trace_id=str(ev.trace_id) if ev.trace_id else None,
-                session_id=(
-                    str(ev.trace_session_id) if ev.trace_session_id else None
-                ),
-                score=_eval_result_score(ev),
+    results: list[ClusterableEvalResult] = []
+    # Page through the backlog by (created_at, id) with a LIMIT in SQL, so
+    # stopping at ``limit`` reads only the pages it needs. ``.iterator()``
+    # can't promise that: with DISABLE_SERVER_SIDE_CURSORS (pgbouncer) it
+    # fetches the whole result before yielding a row, which on a project with
+    # a big backlog (an Instant eval run's "No" answers) held every failing
+    # eval of the window in memory on each drain batch.
+    after = None
+    while True:
+        page_q = evals.order_by("created_at", "id")
+        if after is not None:
+            page_q = page_q.filter(
+                Q(created_at__gt=after[0]) | Q(created_at=after[0], id__gt=after[1])
             )
-        )
-        if limit is not None and len(results) >= limit:
+        page = list(page_q[:_FETCH_PAGE])
+        if not page:
+            break
+        after = (page[-1].created_at, page[-1].id)
+        for ev in page:
+            if not is_clusterable_eval_failure(ev):
+                continue
+            results.append(
+                ClusterableEvalResult(
+                    eval_logger_id=str(ev.id),
+                    project_id=project_id,
+                    eval_name=ev.custom_eval_config.name,
+                    eval_config_id=str(ev.custom_eval_config_id),
+                    explanation=ev.eval_explanation,
+                    target_type=ev.target_type,
+                    trace_id=str(ev.trace_id) if ev.trace_id else None,
+                    session_id=(
+                        str(ev.trace_session_id) if ev.trace_session_id else None
+                    ),
+                    score=_eval_result_score(ev),
+                )
+            )
+            if limit is not None and len(results) >= limit:
+                break
+        full = limit is not None and len(results) >= limit
+        if full or len(page) < _FETCH_PAGE:
             break
 
     return results
@@ -271,7 +359,7 @@ def get_unclustered_eval_results(
 _EMBED_BATCH_SIZE = 64
 
 
-def embed_texts(texts: List[str]) -> List[List[float]]:
+def embed_texts(texts: list[str]) -> list[list[float]]:
     """Embed texts via the serving client in bounded batches.
 
     Chunked rather than per-row or all-at-once: one request carries up to
@@ -294,7 +382,7 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
         text_embed = model_manager.text_model
         return [text_embed(t) for t in texts]
 
-    embeddings: List[List[float]] = []
+    embeddings: list[list[float]] = []
     for start in range(0, len(texts), _EMBED_BATCH_SIZE):
         chunk = texts[start : start + _EMBED_BATCH_SIZE]
         try:
@@ -333,20 +421,22 @@ def _eval_family(eval_name: str, target_type: str = "span") -> str:
 
 
 def _update_centroid(
-    current: List[float], new_vector: List[float], count: int
-) -> List[float]:
+    current: list[float], new_vector: list[float], count: int
+) -> list[float]:
     """Incremental centroid update: (centroid * count + new) / (count + 1)."""
     if not current:
         return new_vector
-    return [(c * count + n) / (count + 1) for c, n in zip(current, new_vector)]
+    return [
+        (c * count + n) / (count + 1) for c, n in zip(current, new_vector, strict=False)
+    ]
 
 
 def find_nearest_centroid(
-    embedding: List[float],
+    embedding: list[float],
     project_id: str,
     eval_name: str,
     target_type: str = "span",
-) -> Optional[Tuple[str, float]]:
+) -> tuple[str, float] | None:
     """
     Find nearest cluster centroid for the given eval within threshold.
 
@@ -385,7 +475,7 @@ def find_nearest_centroid(
 # ---------------------------------------------------------------------------
 
 
-def _score_to_impact(avg_score: Optional[float]) -> str:
+def _score_to_impact(avg_score: float | None) -> str:
     """Map average eval score to impact level for the cluster."""
     if avg_score is None:
         return "MEDIUM"
@@ -457,7 +547,7 @@ def _eval_cluster_meta(eval_name: str, reasoning: str) -> EvalClusterMeta:
 def create_cluster(
     project_id: str,
     result: ClusterableEvalResult,
-    embedding: List[float],
+    embedding: list[float],
 ) -> str:
     """
     Create a new TraceErrorGroup cluster for an eval result + ClickHouse centroid.
@@ -605,7 +695,7 @@ def assign_to_cluster(
     cluster_id: str,
     project_id: str,
     result: ClusterableEvalResult,
-    embedding: List[float],
+    embedding: list[float],
 ) -> None:
     """Assign an eval result to an existing cluster and update centroid."""
     cluster = TraceErrorGroup.objects.get(cluster_id=cluster_id, project_id=project_id)

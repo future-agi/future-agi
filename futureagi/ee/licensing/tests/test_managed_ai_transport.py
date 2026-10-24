@@ -263,7 +263,37 @@ class TestSelfHostedTransport:
         assert result == expected
         mock_activation.assert_called_once()
         assert mock_activation.call_args.kwargs["path"] == "/v1/chat/completions"
+        # Without a timeout of its own, the activation flow keeps its default.
+        assert "timeout" not in mock_activation.call_args.kwargs
         mock_post.assert_not_called()
+
+    def test_ee_passes_the_callers_timeout_to_the_activation_flow(self):
+        with (
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=False),
+            patch(
+                "ee.licensing.managed_ai.call_managed_service",
+                return_value={"choices": []},
+            ) as mock_activation,
+        ):
+            chat_completion({"model": "turing_flash", "messages": []}, timeout=180)
+
+        assert mock_activation.call_args.kwargs["timeout"] == 180
+
+
+class TestTimeout:
+    @pytest.mark.parametrize(("timeout", "expected"), [(None, 300.0), (180, 180)])
+    def test_cloud_uses_the_callers_timeout_or_its_own(self, timeout, expected):
+        with (
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
+            patch(
+                "ee.usage.services.gateway_llm_client._get_setting",
+                side_effect=_internal_setting,
+            ),
+            patch("httpx.post", return_value=_ok_response()) as mock_post,
+        ):
+            chat_completion({"model": "turing_flash", "messages": []}, timeout=timeout)
+
+        assert mock_post.call_args.kwargs["timeout"] == expected
 
 
 class TestModelGuard:

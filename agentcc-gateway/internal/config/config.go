@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -381,6 +382,14 @@ type ProviderConfig struct {
 	// place of the default dialer. Set by the gateway, not in config.yaml: org
 	// providers use it to check every address they connect to.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error) `yaml:"-" json:"-"`
+
+	// Proxy, when set, picks the proxy for each upstream request, as
+	// http.Transport.Proxy does; unset, the provider connects directly. Set by
+	// the gateway, not in config.yaml: decision providers use the operator's
+	// HTTP_PROXY, HTTPS_PROXY and NO_PROXY. A DialContext that checks addresses
+	// needs a Proxy made to match it (netguard.Proxied), since through a proxy
+	// it would see only the proxy's address.
+	Proxy func(*http.Request) (*url.URL, error) `yaml:"-" json:"-"`
 }
 
 type LoggingConfig struct {

@@ -21,7 +21,8 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError, ApplicationError
+from temporalio.exceptions import ActivityError, ApplicationError, TimeoutType
+from temporalio.exceptions import TimeoutError as ActivityTimeoutError
 
 from tfc.temporal.eval_tasks.search_attributes import (
     ORG_ID,
@@ -92,6 +93,17 @@ _RECONCILE_TIMEOUT = timedelta(hours=3)
 # what the sweep's stale-threshold floor is derived from.
 _RUN_ENTRY_TIMEOUT = timedelta(minutes=30)
 _HEARTBEAT = timedelta(minutes=5)
+# Quick, idempotent control activities (labels, state reads, status writes,
+# requeues, failing one entry) heartbeat, so a worker that dies under one is
+# noticed in a minute rather than at their thirty-minute ceiling. Claim and
+# finalize keep the ceiling alone: a retry of an attempt that is still
+# running would claim (or finalize) a second time.
+_CONTROL_HEARTBEAT = timedelta(minutes=1)
+# An eval whose attempts all ended because their worker stopped heartbeating
+# (it died: an OOM kill, a deploy) goes back to pending once per execution,
+# its continue-as-new hops included, instead of being stamped errored: a lost
+# worker is not a failed answer.
+_LOST_WORKER_REQUEUE_PATCH = "eval-entry-lost-worker-requeue-v1"
 _CONTINUOUS_RECONCILE_BUDGET_DEFERRAL_PATCH = (
     "continuous-eval-reconcile-budget-deferral-v1"
 )
@@ -135,6 +147,7 @@ async def _apply_labels(task_id: str) -> None:
         "get_workflow_labels_activity",
         WorkflowLabelsInput(task_id=task_id),
         start_to_close_timeout=_CONTROL_TIMEOUT,
+        heartbeat_timeout=_CONTROL_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
     workflow.upsert_search_attributes(
@@ -171,6 +184,7 @@ async def _set_db_status(
         "set_eval_task_status_activity",
         SetStatusInput(task_id=task_id, status=status, expected_status=expected_status),
         start_to_close_timeout=_CONTROL_TIMEOUT,
+        heartbeat_timeout=_CONTROL_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
 
@@ -268,6 +282,7 @@ async def _task_state(task_id: str) -> dict:
         "get_eval_task_state_activity",
         TaskStateInput(task_id=task_id),
         start_to_close_timeout=_CONTROL_TIMEOUT,
+        heartbeat_timeout=_CONTROL_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
 
@@ -291,8 +306,23 @@ async def _finalize(task_id: str) -> bool:
     return result["finalized"]
 
 
+def _worker_lost(exc: BaseException) -> bool:
+    """The eval's last attempt ended because its worker stopped heartbeating."""
+    cause = getattr(exc, "cause", None)
+    return (
+        isinstance(exc, ActivityError)
+        and isinstance(cause, ActivityTimeoutError)
+        and cause.type == TimeoutType.HEARTBEAT
+    )
+
+
 async def _drain_batch(
-    entry_ids: list[str], max_concurrent: int, is_paused=None
+    entry_ids: list[str],
+    max_concurrent: int,
+    is_paused=None,
+    *,
+    heartbeat: timedelta | None = None,
+    lost: set | None = None,
 ) -> list[str]:
     """Run a claimed batch, capping concurrent eval activities at the per-task
     bound. run_entry self-converges to a terminal state, so retries
@@ -305,7 +335,8 @@ async def _drain_batch(
 
     Checks ``is_paused`` before launching each eval so a mid-batch pause lets
     in-flight evals finish but starts no new ones; the unstarted entries are
-    returned for the caller to requeue.
+    returned for the caller to requeue. So are entries whose worker was lost
+    (``lost`` holds those already given back once in this execution).
     """
     semaphore = asyncio.Semaphore(max_concurrent)
     skipped: list[str] = []
@@ -325,14 +356,24 @@ async def _drain_batch(
                     "run_eval_entry_activity",
                     RunEntryInput(entry_id=entry_id),
                     start_to_close_timeout=_RUN_ENTRY_TIMEOUT,
-                    heartbeat_timeout=_HEARTBEAT,
+                    heartbeat_timeout=heartbeat or _HEARTBEAT,
                     retry_policy=RUN_ENTRY_RETRY_POLICY,
                 )
-            except Exception:
+            except Exception as exc:
+                if (
+                    lost is not None
+                    and entry_id not in lost
+                    and _worker_lost(exc)
+                    and workflow.patched(_LOST_WORKER_REQUEUE_PATCH)
+                ):
+                    lost.add(entry_id)
+                    skipped.append(entry_id)
+                    return
                 await workflow.execute_activity(
                     "fail_eval_entry_activity",
                     RunEntryInput(entry_id=entry_id),
                     start_to_close_timeout=_CONTROL_TIMEOUT,
+                    heartbeat_timeout=_CONTROL_HEARTBEAT,
                     retry_policy=CONTROL_RETRY_POLICY,
                 )
 
@@ -347,8 +388,18 @@ async def _requeue(task_id: str, entry_ids: list[str]) -> None:
         "requeue_eval_entries_activity",
         RequeueEntriesInput(task_id=task_id, entry_ids=entry_ids),
         start_to_close_timeout=_CONTROL_TIMEOUT,
+        heartbeat_timeout=_CONTROL_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
+
+
+# The most lost entries a continue-as-new carries (about 40 bytes each).
+_LOST_CARRIED = 5000
+
+
+def _carried_lost(lost: set[str]) -> list[str]:
+    """The lost entries for the next hop's input, in a replayable order."""
+    return sorted(lost)[:_LOST_CARRIED]
 
 
 def _should_continue_as_new(batches: int, threshold) -> bool:
@@ -366,6 +417,9 @@ class _ObservableEvalWorkflow:
         self._phase = PHASE_STARTING
         self._recheck = False
         self._paused = False
+        # Entries given back once because their worker died, in this
+        # execution or a hop before it (see ``lost_entry_ids``).
+        self._lost: set[str] = set()
 
     @workflow.query
     def phase(self) -> str:
@@ -411,6 +465,7 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
             raise
 
     async def _run(self, input: EvalTaskWorkflowInput) -> EvalTaskWorkflowOutput:
+        self._lost.update(input.lost_entry_ids or ())
         self._phase = PHASE_MATERIALIZING
         await _apply_labels(input.task_id)
         _set_status(STATUS_RUNNING)
@@ -487,7 +542,13 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                 continue
 
             skipped = await _drain_batch(
-                entry_ids, input.max_concurrent, lambda: self._paused
+                entry_ids,
+                input.max_concurrent,
+                lambda: self._paused,
+                heartbeat=(
+                    timedelta(seconds=input.heartbeat_s) if input.heartbeat_s else None
+                ),
+                lost=self._lost,
             )
             if skipped:
                 # Pause landed mid-batch: return the unstarted entries to pending
@@ -506,9 +567,11 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                         task_queue=input.task_queue,
                         batch_size=input.batch_size,
                         max_concurrent=input.max_concurrent,
+                        heartbeat_s=input.heartbeat_s,
                         already_reconciled=True,
                         processed=processed,
                         continue_as_new_after_batches=input.continue_as_new_after_batches,
+                        lost_entry_ids=_carried_lost(self._lost),
                     )
                 )
 
@@ -533,6 +596,7 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
             raise
 
     async def _run(self, state: ContinuousDrainState) -> None:
+        self._lost.update(state.lost_entry_ids or ())
         self._phase = PHASE_MATERIALIZING
         await _apply_labels(state.task_id)
         _set_status(STATUS_RUNNING)
@@ -590,7 +654,10 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
             if entry_ids:
                 self._phase = PHASE_DRAINING
                 skipped = await _drain_batch(
-                    entry_ids, state.max_concurrent, lambda: self._paused
+                    entry_ids,
+                    state.max_concurrent,
+                    lambda: self._paused,
+                    lost=self._lost,
                 )
                 if skipped:
                     await _requeue(state.task_id, skipped)
@@ -629,6 +696,7 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                         processed=state.processed,
                         batches=0,
                         continue_as_new_after_batches=state.continue_as_new_after_batches,
+                        lost_entry_ids=_carried_lost(self._lost),
                     )
                 )
 

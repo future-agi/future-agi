@@ -4,6 +4,10 @@ import optimizationPreview from "src/assets/oss-gate/optimization_light.png";
 import optimizationPreviewDark from "src/assets/oss-gate/optimization_dark.png";
 import falconAIPreview from "src/assets/oss-gate/falcon_ai_light.png";
 import falconAIPreviewDark from "src/assets/oss-gate/falcon_ai_dark.png";
+import instantEvalPreview from "src/assets/oss-gate/instant_eval_light.png";
+import instantEvalPreviewDark from "src/assets/oss-gate/instant_eval_dark.png";
+import insightsPreview from "src/assets/oss-gate/insights_light.png";
+import insightsPreviewDark from "src/assets/oss-gate/insights_dark.png";
 
 export const CONTACT_URL = "https://futureagi.com/talk-to-human";
 export const DOCS_URL = "https://docs.futureagi.com";
@@ -64,6 +68,34 @@ export const FEATURES = {
       "Talk to us to enable Falcon AI on your workspace.",
       "Connect your tools so Falcon AI can act on your data.",
       "Ask in plain language and Falcon AI does the work for you.",
+    ],
+  },
+  instantEval: {
+    eyebrow: "Cloud feature",
+    title: "Upgrade to use Instant eval",
+    description:
+      "Ask a question in plain English and Jev answers it for a sample or every trace, session or user in view; the first answers come in seconds.",
+    image: instantEvalPreview,
+    imageDark: instantEvalPreviewDark,
+    steps: [
+      "Talk to us to enable Instant eval on your workspace.",
+      "Pick a view in Observe and ask Jev a yes/no or category question.",
+      "Answers land on a timeline as they come in, with what stands out.",
+    ],
+    footnote:
+      "Jev evaluators come with every edition, open source included: add one from Evals with your own TypeSafe key.",
+  },
+  insights: {
+    eyebrow: "Cloud feature",
+    title: "Upgrade to use Insights",
+    description:
+      "Reports that sort your traces, sessions or users into categories, with the numbers behind each and what sets them apart.",
+    image: insightsPreview,
+    imageDark: insightsPreviewDark,
+    steps: [
+      "Talk to us to enable Insights on your workspace.",
+      "Choose what to learn (usage, failures, experience) and which data to read.",
+      "Get categories, findings and examples, and run the report again as your traffic changes.",
     ],
   },
   usageSummary: {

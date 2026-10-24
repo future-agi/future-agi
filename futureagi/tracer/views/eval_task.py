@@ -216,6 +216,7 @@ class _EvalTaskListRowResponseSerializer(serializers.Serializer):
     project_name = serializers.CharField(required=False)
     status = serializers.CharField(allow_null=True)
     run_type = serializers.CharField(allow_null=True)
+    row_type = serializers.CharField(allow_null=True)
     filters_applied = serializers.JSONField(allow_null=True)
     created_at = serializers.DateTimeField()
     evals_applied = serializers.ListField(child=serializers.CharField(allow_null=True))
@@ -305,6 +306,7 @@ def _bounded_eval_task_compatibility_rows(queryset):
             "name",
             "status",
             "run_type",
+            "row_type",
             "filters",
             "created_at",
             "sampling_rate",
@@ -1433,6 +1435,7 @@ def _serialize_eval_task_list_page(tasks, *, include_project_name):
             "name": eval_task.name,
             "status": eval_task.status,
             "run_type": eval_task.run_type,
+            "row_type": eval_task.row_type,
             "filters_applied": eval_task.filters,
             "created_at": datetime_field.to_representation(eval_task.created_at),
             "evals_applied": [

@@ -1,13 +1,26 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { ButtonBase, Typography } from "@mui/material";
+import EnterpriseMark from "src/components/capability-gate/EnterpriseMark";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
-const FixedTab = ({ tabKey, label, icon, shortcut, isActive, onClick }) => (
+// `locked`: the tab's feature isn't in this deployment's license or plan. It
+// still opens, onto the upgrade gate; a lock says so.
+const FixedTab = ({
+  tabKey,
+  label,
+  icon,
+  shortcut,
+  isActive,
+  locked = false,
+  onClick,
+}) => (
   <CustomTooltip
     show={!isActive}
-    title={`Press ${shortcut}`}
+    title={
+      locked ? `Enterprise feature · Press ${shortcut}` : `Press ${shortcut}`
+    }
     placement="bottom"
     arrow
     size="small"
@@ -47,6 +60,7 @@ const FixedTab = ({ tabKey, label, icon, shortcut, isActive, onClick }) => (
       >
         {label}
       </Typography>
+      {locked && <EnterpriseMark compact />}
     </ButtonBase>
   </CustomTooltip>
 );
@@ -57,6 +71,7 @@ FixedTab.propTypes = {
   icon: PropTypes.string,
   shortcut: PropTypes.string.isRequired,
   isActive: PropTypes.bool.isRequired,
+  locked: PropTypes.bool,
   onClick: PropTypes.func.isRequired,
 };
 
