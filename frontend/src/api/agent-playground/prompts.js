@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { getNextLibraryTemplatePageParam } from "./libraryTemplateResponseUtils";
 
 /**
  * Hook for fetching prompt templates filtered by chat modality.
@@ -92,6 +93,39 @@ export const useGetPromptTemplatesInfinite = (search, options = {}) =>
       return undefined;
     },
     initialPageParam: 1,
+    staleTime: 30 * 1000,
+    ...options,
+  });
+
+const LIBRARY_TEMPLATE_PAGE_SIZE = 10;
+
+/**
+ * Infinite-scroll hook for the prompt library/base templates.
+ * Used by PromptNodePopper to show reusable library templates alongside
+ * user-saved prompt templates.
+ * @param {string} search - Search query to filter by name
+ * @param {object} options - Additional react-query options
+ */
+export const useGetLibraryTemplatesInfinite = (search, options = {}) =>
+  useInfiniteQuery({
+    queryKey: ["library-templates-infinite", search],
+    queryFn: ({ pageParam, signal }) =>
+      axios.get(endpoints.develop.runPrompt.promptTemplate, {
+        params: {
+          ...(search && { name: search }),
+          // The live base-template view currently reads zero-indexed
+          // page_number/page_size, while generated contracts expose
+          // one-indexed page/limit. Send both coherent pairs so this
+          // selector stays compatible during that contract convergence.
+          page: pageParam + 1,
+          limit: LIBRARY_TEMPLATE_PAGE_SIZE,
+          page_size: LIBRARY_TEMPLATE_PAGE_SIZE,
+          page_number: pageParam,
+        },
+        signal,
+      }),
+    getNextPageParam: getNextLibraryTemplatePageParam,
+    initialPageParam: 0,
     staleTime: 30 * 1000,
     ...options,
   });
